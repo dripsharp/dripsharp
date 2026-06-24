@@ -8,13 +8,20 @@
 #_ ; alternatively, use MAJOR.MINOR.COMMITS:
 (def version (format "1.0.%s" (b/git-count-revs nil)))
 (def class-dir "target/classes")
+(def base-test-java-opts ["-Dslf4j.internal.verbosity=WARN"])
+
+(defn- test-java-opts []
+  (cond-> base-test-java-opts
+    (>= (.feature (Runtime/version)) 24)
+    (conj "--sun-misc-unsafe-memory-access=allow")))
 
 (defn test "Run all the tests." [opts]
   (let [basis    (b/create-basis {:aliases [:test]})
         cmds     (b/java-command
                   {:basis      basis
-                    :main      'clojure.main
-                    :main-args ["-m" "cognitect.test-runner"]})
+                   :java-opts  (test-java-opts)
+                   :main       'clojure.main
+                   :main-args  ["-m" "cognitect.test-runner"]})
         {:keys [exit]} (b/process cmds)]
     (when-not (zero? exit) (throw (ex-info "Tests failed" {}))))
   opts)
