@@ -1,8 +1,13 @@
 (ns vibeformer.vibeformer-test
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]])
   (:import (java.nio.charset StandardCharsets)
            (java.nio.file Files)
+           (org.jetbrains.kotlin.com.intellij.openapi.util Disposer)
+           (org.jetbrains.kotlin.cli.jvm.compiler EnvironmentConfigFiles KotlinCoreEnvironment)
+           (org.jetbrains.kotlin.config CompilerConfiguration)
+           (org.jetbrains.kotlin.psi KtCallExpression KtClass KtNamedFunction KtNullableType KtObjectDeclaration KtProperty KtPsiFactory KtSafeQualifiedExpression)
            (spoon Launcher)
            (spoon.reflect.code CtInvocation)
            (spoon.reflect.declaration ModifierKind)
@@ -25,6 +30,28 @@ public final class Greeter {
     return \"Hello, \" + normalized.trim();
   }
 }
+")
+
+(def kotlin-sample
+  "package com.acme.parser
+
+import java.util.Locale
+
+object Fixture {
+  val defaultName: String? = \"world\"
+}
+
+class KotlinGreeter(private val initialName: String?) {
+  val name: String? = initialName
+  val salutation: String = \"Hello\"
+
+  fun greeting(locale: Locale): String {
+    val normalized: String? = name?.uppercase(locale)
+    return \"$salutation, ${normalized?.trim() ?: Fixture.defaultName}\"
+  }
+}
+
+fun topLevelMessage(value: String?): String = value?.trim() ?: \"empty\"
 ")
 
 (defn- write-java-sample! []
@@ -51,6 +78,36 @@ public final class Greeter {
          (= "Greeter.java" (.getName (io/file (.getFile position))))
          (pos? (.getLine position))
          (pos? (.getColumn position)))))
+
+(defn- parse-kotlin-source [source]
+  (let [disposable (Disposer/newDisposable)
+        environment (KotlinCoreEnvironment/createForProduction
+                     disposable
+                     (CompilerConfiguration.)
+                     EnvironmentConfigFiles/JVM_CONFIG_FILES)
+        psi-factory (KtPsiFactory. (.getProject environment) false)]
+    {:disposable disposable
+     :file (.createFile psi-factory "Sample.kt" source)}))
+
+(defn- find-declaration [declarations clazz name]
+  (some #(when (and (instance? clazz %)
+                    (= name (.getName %)))
+           %)
+        declarations))
+
+(defn- collect-psi-elements [root clazz]
+  (letfn [(walk [element]
+            (concat (when (instance? clazz element) [element])
+                    (mapcat walk (.getChildren element))))]
+    (doall (walk root))))
+
+(defn- offset->line-column [source offset]
+  (let [lines-before-offset (str/split (subs source 0 offset) #"\n" -1)]
+    {:line (count lines-before-offset)
+     :column (inc (count (last lines-before-offset)))}))
+
+(defn- element-start-offset [element]
+  (.getStartOffset (.getTextRange element)))
 
 (deftest spoon-parses-java-source-into-useful-model
   (let [greeter (parse-java-source (write-java-sample!))
@@ -80,3 +137,42 @@ public final class Greeter {
       (is (contains? invocation-names "toUpperCase"))
       (is (contains? invocation-names "trim"))
       (is (valid-position? greeting-method)))))
+
+(deftest kotlin-psi-parses-source-into-useful-model
+  (let [{:keys [disposable file]} (parse-kotlin-source kotlin-sample)]
+    (try
+      (let [top-level-declarations (.getDeclarations file)
+            fixture (find-declaration top-level-declarations KtObjectDeclaration "Fixture")
+            greeter (find-declaration top-level-declarations KtClass "KotlinGreeter")
+            top-level-message (find-declaration top-level-declarations KtNamedFunction "topLevelMessage")
+            greeter-declarations (.getDeclarations greeter)
+            name-property (find-declaration greeter-declarations KtProperty "name")
+            greeting-function (find-declaration greeter-declarations KtNamedFunction "greeting")
+            greeting-params (.getValueParameters greeting-function)
+            call-names (set (keep #(some-> (.getCalleeExpression %) .getText)
+                                  (collect-psi-elements greeting-function KtCallExpression)))]
+        (testing "package, object, class, and top-level function facts"
+          (is (= "com.acme.parser" (.asString (.getPackageFqName file))))
+          (is (= "Fixture" (.getName fixture)))
+          (is (= "KotlinGreeter" (.getName greeter)))
+          (is (= "topLevelMessage" (.getName top-level-message))))
+
+        (testing "property and function facts include type references and nullability"
+          (is (= "name" (.getName name-property)))
+          (is (= "String?" (.getText (.getTypeReference name-property))))
+          (is (instance? KtNullableType (.getTypeElement (.getTypeReference name-property))))
+          (is (= "greeting" (.getName greeting-function)))
+          (is (= "String" (.getText (.getTypeReference greeting-function))))
+          (is (= ["Locale"] (mapv #(.getText (.getTypeReference %)) greeting-params))))
+
+        (testing "expression facts include calls and safe-call syntax"
+          (is (contains? call-names "uppercase"))
+          (is (contains? call-names "trim"))
+          (is (seq (collect-psi-elements greeting-function KtSafeQualifiedExpression))))
+
+        (testing "source positions can be recovered from PSI text offsets"
+          (is (= {:line 9 :column 1} (offset->line-column kotlin-sample (element-start-offset greeter))))
+          (is (= {:line 13 :column 3} (offset->line-column kotlin-sample (element-start-offset greeting-function))))
+          (is (= "Sample.kt" (.getName (.getContainingFile greeter))))))
+      (finally
+        (Disposer/dispose disposable)))))

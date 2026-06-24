@@ -184,6 +184,11 @@ Kotlin-specific constructs must be modeled explicitly, including:
 
 KSP is not enough as the main extractor because it does not expose full expression and statement-level detail.
 
+Initial dependency choice:
+
+* `org.jetbrains.kotlin/kotlin-compiler-embeddable` at `2.2.21` is the first dependency because it exposes `KotlinCoreEnvironment`, `KtPsiFactory`, and Kotlin PSI classes from ordinary JVM code. The smoke test currently exercises PSI parsing only: package names, object/class/function/property declarations, type references, nullable type syntax, call expressions, safe calls, and text-offset source positions.
+* Kotlin Analysis API remains the semantic follow-on. Its `KaSession` model is intended for type and symbol resolution, but it requires module/session setup and a richer classpath story than the first parser smoke test. Add it when the extractor starts resolving symbols beyond syntax.
+
 ### C# Output Validation
 
 Use the C# compiler directly through:
