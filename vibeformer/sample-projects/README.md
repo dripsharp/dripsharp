@@ -38,3 +38,14 @@ target/
   provenance.edn   # source-to-output mapping snapshot
 ```
 
+Run the default smoke sample from the Vibeformer checkout with:
+
+```bash
+clojure -T:build sample
+```
+
+Run a specific sample with:
+
+```bash
+clojure -T:build sample :name sample-name
+```

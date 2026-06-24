@@ -26,6 +26,28 @@
     (when-not (zero? exit) (throw (ex-info "Tests failed" {}))))
   opts)
 
+(defn sample
+  "Run a committed sample project through the supported pipeline stages.
+
+  Defaults to the java-word-count smoke sample:
+    clojure -T:build sample
+
+  Select another sample with:
+    clojure -T:build sample :name my-sample"
+  [opts]
+  (let [basis (b/create-basis {:aliases [:sample-runner]})
+        sample-name (or (:name opts) "java-word-count")
+        cmds (b/java-command
+              {:basis basis
+               :java-opts (test-java-opts)
+               :main 'clojure.main
+               :main-args ["-m" "vibeformer.sample-runner" (str sample-name)]})
+        {:keys [exit]} (b/process cmds)]
+    (when-not (zero? exit)
+      (throw (ex-info "Sample run failed." {:sample/name sample-name
+                                            :exit exit})))
+    opts))
+
 (defn- pom-template [version]
   [[:description "FIXME: my new library."]
    [:url "https://github.com/vibeformer/vibeformer"]

@@ -73,6 +73,17 @@ Run the CI-style build:
 clojure -T:build ci
 ```
 
+Run the first committed sample project through the supported integration stages:
+
+```bash
+clojure -T:build sample
+```
+
+The sample runner writes disposable output under
+`sample-projects/<name>/target/`, including diagnostics, exported source facts,
+and provenance. C# emission and `dotnet build` are recorded as skipped until
+project generation exists.
+
 Important project files:
 
 * `deps.edn` contains runtime and test dependencies.
