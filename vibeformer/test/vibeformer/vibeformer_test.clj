@@ -3,7 +3,8 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [datomic.client.api :as d]
-            [datomic.local :as dl])
+            [datomic.local :as dl]
+            [vibeformer.datomic.schema :as schema])
   (:import (java.nio.charset StandardCharsets)
            (java.nio.file Files)
            (java.util UUID)
@@ -56,47 +57,6 @@ class KotlinGreeter(private val initialName: String?) {
 
 fun topLevelMessage(value: String?): String = value?.trim() ?: \"empty\"
 ")
-
-(def datomic-smoke-schema
-  [{:db/ident :file/path
-    :db/valueType :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/unique :db.unique/identity}
-   {:db/ident :file/lang
-    :db/valueType :db.type/keyword
-    :db/cardinality :db.cardinality/one}
-   {:db/ident :node/id
-    :db/valueType :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/unique :db.unique/identity}
-   {:db/ident :node/lang
-    :db/valueType :db.type/keyword
-    :db/cardinality :db.cardinality/one}
-   {:db/ident :node/kind
-    :db/valueType :db.type/keyword
-    :db/cardinality :db.cardinality/one}
-   {:db/ident :node/name
-    :db/valueType :db.type/string
-    :db/cardinality :db.cardinality/one}
-   {:db/ident :node/file
-    :db/valueType :db.type/ref
-    :db/cardinality :db.cardinality/one}
-   {:db/ident :decl/id
-    :db/valueType :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/unique :db.unique/identity}
-   {:db/ident :decl/lang
-    :db/valueType :db.type/keyword
-    :db/cardinality :db.cardinality/one}
-   {:db/ident :decl/kind
-    :db/valueType :db.type/keyword
-    :db/cardinality :db.cardinality/one}
-   {:db/ident :decl/name
-    :db/valueType :db.type/string
-    :db/cardinality :db.cardinality/one}
-   {:db/ident :decl/source-node
-    :db/valueType :db.type/ref
-    :db/cardinality :db.cardinality/one}])
 
 (defn- write-java-sample! []
   (let [root (Files/createTempDirectory "vibeformer-spoon-" (make-array java.nio.file.attribute.FileAttribute 0))
@@ -233,34 +193,189 @@ fun topLevelMessage(value: String?): String = value?.trim() ?: \"empty\"
       (reset! created? true)
       (let [conn (d/connect client {:db-name db-name})
             file-path "src/main/java/com/acme/parser/Greeter.java"
-            node-id (str "test:" file-path ":class:com.acme.parser.Greeter")
-            decl-id "java:com.acme.parser.Greeter"]
-        (d/transact conn {:tx-data datomic-smoke-schema})
-        (d/transact conn {:tx-data [{:file/path file-path
-                                     :db/id "file"
-                                     :file/lang :lang/java}
-                                    {:node/id node-id
-                                     :db/id "node"
-                                     :node/lang :lang/java
-                                     :node/kind :java.node/class
-                                     :node/name "Greeter"
-                                     :node/file "file"}
-                                    {:decl/id decl-id
-                                     :decl/lang :lang/java
-                                     :decl/kind :decl.kind/class
-                                     :decl/name "Greeter"
-                                     :decl/source-node "node"}]})
-        (is (= [[file-path :lang/java :java.node/class "Greeter" :decl.kind/class]]
-               (d/q '[:find ?path ?lang ?node-kind ?decl-name ?decl-kind
-                      :where
-                      [?file :file/path ?path]
-                      [?file :file/lang ?lang]
-                      [?node :node/file ?file]
-                      [?node :node/kind ?node-kind]
-                      [?decl :decl/source-node ?node]
-                      [?decl :decl/name ?decl-name]
-                      [?decl :decl/kind ?decl-kind]]
-                    (d/db conn)))))
+            class-node-id (str "test:" file-path ":class:com.acme.parser.Greeter")
+            method-node-id (str "test:" file-path ":method:com.acme.parser.Greeter.greeting")
+            invocation-node-id (str "test:" file-path ":call:com.acme.parser.Greeter.greeting:toUpperCase")]
+        (schema/install! conn)
+        (d/transact conn
+                    {:tx-data
+                     [{:db/id "project"
+                       :project/id "test-project"
+                       :project/name "Test Project"
+                       :project/root "/workspace/test-project"}
+                      {:db/id "file"
+                       :file/id (str "test-project:" file-path)
+                       :file/path file-path
+                       :file/lang :lang/java
+                       :file/hash "sha256:file"
+                       :file/project "project"
+                       :file/package "com.acme.parser"}
+                      {:db/id "string-type"
+                       :type/id "java.lang.String"
+                       :type/lang :lang/java
+                       :type/name "java.lang.String"
+                       :type/nullable? false}
+                      {:db/id "greeter-type"
+                       :type/id "java:com.acme.parser.Greeter"
+                       :type/lang :lang/java
+                       :type/name "com.acme.parser.Greeter"
+                       :type/nullable? false}
+                      {:db/id "locale-type"
+                       :type/id "java.util.Locale"
+                       :type/lang :lang/java
+                       :type/name "java.util.Locale"
+                       :type/nullable? false}
+                      {:db/id "list-type"
+                       :type/id "java.util.List<java.lang.String>"
+                       :type/lang :lang/java
+                       :type/name "java.util.List"
+                       :type/nullable? false
+                       :type/args [{:type.arg/ordinal 0
+                                    :type.arg/type "string-type"}]}
+                      {:db/id "class-node"
+                       :node/id class-node-id
+                       :node/lang :lang/java
+                       :node/kind :java.node/class
+                       :node/name "Greeter"
+                       :node/file "file"
+                       :node/ordinal 0
+                       :node/start-line 5
+                       :node/start-column 1
+                       :node/end-line 16
+                       :node/end-column 2
+                       :node/source-hash "sha256:class"}
+                      {:db/id "method-node"
+                       :node/id method-node-id
+                       :node/lang :lang/java
+                       :node/kind :java.node/method
+                       :node/name "greeting"
+                       :node/file "file"
+                       :node/parent "class-node"
+                       :node/ordinal 1
+                       :node/start-line 12
+                       :node/start-column 3
+                       :node/end-line 15
+                       :node/end-column 4
+                       :node/source-hash "sha256:method"}
+                      {:db/id "invocation-node"
+                       :node/id invocation-node-id
+                       :node/lang :lang/java
+                       :node/kind :java.node/method-call
+                       :node/name "toUpperCase"
+                       :node/file "file"
+                       :node/parent "method-node"
+                       :node/ordinal 0
+                       :node/start-line 13
+                       :node/start-column 25
+                       :node/end-line 13
+                       :node/end-column 48
+                       :node/source-hash "sha256:call"}
+                      {:db/id "class-decl"
+                       :decl/id "java:com.acme.parser.Greeter"
+                       :decl/lang :lang/java
+                       :decl/kind :decl.kind/class
+                       :decl/name "Greeter"
+                       :decl/qualified-name "com.acme.parser.Greeter"
+                       :decl/source-node "class-node"
+                       :decl/type "greeter-type"
+                       :decl/modifiers #{:public :final}}
+                      {:db/id "method-decl"
+                       :decl/id "java:com.acme.parser.Greeter#greeting(java.util.Locale)"
+                       :decl/lang :lang/java
+                       :decl/kind :decl.kind/method
+                       :decl/name "greeting"
+                       :decl/qualified-name "com.acme.parser.Greeter.greeting"
+                       :decl/source-node "method-node"
+                       :decl/return-type "string-type"
+                       :decl/modifiers #{:public}}
+                      {:ref/id "java:Greeter.greeting:call:toUpperCase"
+                       :ref/kind :ref.kind/method-call
+                       :ref/from-node "invocation-node"
+                       :ref/to-decl "method-decl"
+                       :ref/to-type "string-type"
+                       :ref/name "toUpperCase"
+                       :ref/owner-type "string-type"
+                       :ref/resolved? true}
+                      {:ref/id "java:Greeter.greeting:call:missing"
+                       :ref/kind :ref.kind/method-call
+                       :ref/from-node "method-node"
+                       :ref/name "missing"
+                       :ref/resolved? false
+                       :ref/reason :resolve.reason/missing-classpath}
+                      {:feature/id "java:Greeter:feature:class"
+                       :feature/lang :lang/java
+                       :feature/kind :java.feature/class
+                       :feature/node "class-node"
+                       :feature/status :feature.status/supported
+                       :feature/severity :feature.severity/info}
+                      {:feature/id "java:Greeter:feature:reflection"
+                       :feature/lang :lang/java
+                       :feature/kind :java.feature/reflection
+                       :feature/node "method-node"
+                       :feature/status :feature.status/unsupported
+                       :feature/severity :feature.severity/hard}]})
+        (let [db (d/db conn)]
+          (testing "file -> node -> declaration"
+            (is (= #{[file-path :java.node/class "Greeter" "com.acme.parser.Greeter"]
+                     [file-path :java.node/method "greeting" "com.acme.parser.Greeter.greeting"]}
+                   (set (d/q '[:find ?path ?node-kind ?decl-name ?decl-qname
+                               :where
+                               [?file :file/path ?path]
+                               [?node :node/file ?file]
+                               [?node :node/kind ?node-kind]
+                               [?decl :decl/source-node ?node]
+                               [?decl :decl/name ?decl-name]
+                               [?decl :decl/qualified-name ?decl-qname]]
+                             db)))))
+          (testing "declaration -> return type"
+            (is (= #{["greeting" "java.lang.String" false]}
+                   (set (d/q '[:find ?decl-name ?type-id ?nullable?
+                               :where
+                               [?decl :decl/name ?decl-name]
+                               [?decl :decl/return-type ?type]
+                               [?type :type/id ?type-id]
+                               [?type :type/nullable? ?nullable?]]
+                             db)))))
+          (testing "reference -> source node -> target declaration and type"
+            (is (= #{["toUpperCase" "toUpperCase" "greeting" "java.lang.String"]}
+                   (set (d/q '[:find ?ref-name ?node-name ?decl-name ?type-id
+                               :where
+                               [?ref :ref/resolved? true]
+                               [?ref :ref/name ?ref-name]
+                               [?ref :ref/from-node ?node]
+                               [?node :node/name ?node-name]
+                               [?ref :ref/to-decl ?decl]
+                               [?decl :decl/name ?decl-name]
+                               [?ref :ref/to-type ?type]
+                               [?type :type/id ?type-id]]
+                             db))))
+            (is (= #{["missing" "greeting" :resolve.reason/missing-classpath]}
+                   (set (d/q '[:find ?ref-name ?node-name ?reason
+                               :where
+                               [?ref :ref/resolved? false]
+                               [?ref :ref/name ?ref-name]
+                               [?ref :ref/from-node ?node]
+                               [?node :node/name ?node-name]
+                               [?ref :ref/reason ?reason]]
+                             db)))))
+          (testing "feature inventory counts by kind and status"
+            (is (= #{[:java.feature/class :feature.status/supported 1]
+                     [:java.feature/reflection :feature.status/unsupported 1]}
+                   (set (d/q '[:find ?kind ?status (count ?feature)
+                               :where
+                               [?feature :feature/kind ?kind]
+                               [?feature :feature/status ?status]]
+                             db)))))
+          (testing "unsupported features by file"
+            (is (= #{[file-path :java.feature/reflection 1]}
+                   (set (d/q '[:find ?path ?kind (count ?feature)
+                               :where
+                               [?feature :feature/status :feature.status/unsupported]
+                               [?feature :feature/kind ?kind]
+                               [?feature :feature/node ?node]
+                               [?node :node/file ?file]
+                               [?file :file/path ?path]]
+                             db)))))))
       (finally
         (when @created?
           (dl/release-db {:system system

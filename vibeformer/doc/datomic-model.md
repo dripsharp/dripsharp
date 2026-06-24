@@ -2,10 +2,15 @@
 
 ## Files
 
+Files use `:file/id` as their stable identity. `:file/path` stays queryable, but
+is not unique by itself because multiple projects can contain the same relative
+path.
+
 Example:
 
 ```clojure
-{:file/path "src/main/java/com/acme/Foo.java"
+{:file/id "my-project:src/main/java/com/acme/Foo.java"
+ :file/path "src/main/java/com/acme/Foo.java"
  :file/lang :lang/java
  :file/hash "sha256..."
  :file/project [:project/id "my-project"]
@@ -15,7 +20,8 @@ Example:
 For Kotlin:
 
 ```clojure
-{:file/path "src/main/kotlin/com/acme/Foo.kt"
+{:file/id "my-project:src/main/kotlin/com/acme/Foo.kt"
+ :file/path "src/main/kotlin/com/acme/Foo.kt"
  :file/lang :lang/kotlin
  :file/hash "sha256..."
  :file/project [:project/id "my-project"]
@@ -31,7 +37,7 @@ Use normalized source nodes for AST-ish structure.
  :node/lang :lang/java
  :node/kind :java.node/method
  :node/name "bar"
- :node/file [:file/path "src/main/java/com/acme/Foo.java"]
+ :node/file [:file/id "my-project:src/main/java/com/acme/Foo.java"]
  :node/parent [:node/id "..."]
  :node/ordinal 3
  :node/start-line 44
@@ -87,9 +93,14 @@ Represent source-language types explicitly.
 {:type/id "java.util.List<com.acme.Customer>"
  :type/lang :lang/java
  :type/name "java.util.List"
- :type/args [[:type/id "com.acme.Customer"]]
+ :type/args [{:type.arg/ordinal 0
+              :type.arg/type [:type/id "com.acme.Customer"]}]
  :type/nullable? false}
 ```
+
+`:type/args` is a component collection. Datomic does not preserve order for
+cardinality-many refs, so consumers should query `:type.arg/ordinal` and sort by
+it when reconstructing parameterized type order.
 
 Kotlin nullability should be first-class:
 
