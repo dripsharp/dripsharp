@@ -1,0 +1,220 @@
+(ns vibeformer.ingest.kotlin-psi-test
+  (:require [clojure.set :as set]
+            [clojure.test :refer [deftest is testing]]
+            [datomic.client.api :as d]
+            [datomic.local :as dl]
+            [vibeformer.datomic.schema :as schema]
+            [vibeformer.ingest.kotlin-psi :as kotlin-psi]
+            [vibeformer.ingest.source :as source])
+  (:import (java.nio.charset StandardCharsets)
+           (java.nio.file Files Path)
+           (java.util UUID)))
+
+(def kotlin-fixture
+  "package com.acme.parser
+
+import java.util.Locale
+
+object Fixture {
+  val defaultName: String? = \"world\"
+}
+
+class KotlinGreeter(private val initialName: String?) {
+  companion object {
+    val fallback: String = \"empty\"
+  }
+
+  val name: String? = initialName
+  val salutation: String = \"Hello\"
+
+  fun greeting(locale: Locale): String {
+    val normalized: String? = name?.uppercase(locale)
+    return \"$salutation, ${normalized?.trim() ?: Fixture.defaultName}\"
+  }
+}
+
+fun topLevelMessage(value: String?): String = value?.trim() ?: Fixture.fallback
+")
+
+(defn- with-empty-db [f]
+  (let [system (str "vibeformer-kotlin-psi-test-" (UUID/randomUUID))
+        db-name (str "facts-" (UUID/randomUUID))
+        client (d/client {:server-type :datomic-local
+                          :storage-dir :mem
+                          :system system})
+        created? (atom false)]
+    (try
+      (is (true? (d/create-database client {:db-name db-name})))
+      (reset! created? true)
+      (f (d/connect client {:db-name db-name}))
+      (finally
+        (when @created?
+          (dl/release-db {:system system
+                          :storage-dir :mem
+                          :db-name db-name}))))))
+
+(defn- temp-root []
+  (Files/createTempDirectory "vibeformer-kotlin-psi-" (make-array java.nio.file.attribute.FileAttribute 0)))
+
+(defn- write-file! [^Path root relative-path content]
+  (let [file (.resolve root relative-path)]
+    (Files/createDirectories (.getParent file) (make-array java.nio.file.attribute.FileAttribute 0))
+    (Files/writeString file content StandardCharsets/UTF_8 (make-array java.nio.file.OpenOption 0))
+    file))
+
+(defn- entity-counts [db]
+  {:nodes (ffirst (d/q '[:find (count ?node)
+                         :where [?node :node/id]]
+                       db))
+   :decls (ffirst (d/q '[:find (count ?decl)
+                         :where [?decl :decl/id]]
+                       db))
+   :types (ffirst (d/q '[:find (count ?type)
+                         :where [?type :type/id]]
+                       db))
+   :refs (ffirst (d/q '[:find (count ?ref)
+                        :where [?ref :ref/id]]
+                      db))
+   :features (ffirst (d/q '[:find (count ?feature)
+                            :where [?feature :feature/id]]
+                          db))})
+
+(deftest extracts-normalized-kotlin-facts-with-psi
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/kotlin/com/acme/parser/Greeter.kt"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path kotlin-fixture)
+        (source/ingest! conn opts)
+        (let [first-run (kotlin-psi/ingest! conn {:project/id "fixture"})
+              db (d/db conn)
+              counts (entity-counts db)]
+          (is (= {:project/id "fixture"
+                  :kotlin-files 1}
+                 (select-keys first-run [:project/id :kotlin-files])))
+          (is (pos? (:transacted-facts first-run)))
+
+          (testing "packages, classes, objects, companion objects, top-level functions, and properties are queryable"
+            (is (= #{["com.acme.parser"]}
+                   (set (d/q '[:find ?node-name
+                               :where
+                               [?node :node/file [:file/id "fixture:src/main/kotlin/com/acme/parser/Greeter.kt"]]
+                               [?node :node/kind :kotlin.node/package]
+                               [?node :node/name ?node-name]]
+                             db))))
+            (is (set/subset?
+                 #{[:kotlin.node/object "Fixture" :decl.kind/object "com.acme.parser.Fixture"]
+                   [:kotlin.node/class "KotlinGreeter" :decl.kind/class "com.acme.parser.KotlinGreeter"]
+                   [:kotlin.node/companion-object "Companion" :decl.kind/companion-object "com.acme.parser.KotlinGreeter.Companion"]
+                   [:kotlin.node/property "name" :decl.kind/property "com.acme.parser.KotlinGreeter.name"]
+                   [:kotlin.node/function "greeting" :decl.kind/function "com.acme.parser.KotlinGreeter.greeting(Locale)"]
+                   [:kotlin.node/function "topLevelMessage" :decl.kind/function "com.acme.parser.topLevelMessage(String?)"]}
+                 (set (d/q '[:find ?node-kind ?node-name ?decl-kind ?decl-qname
+                             :where
+                             [?node :node/file [:file/id "fixture:src/main/kotlin/com/acme/parser/Greeter.kt"]]
+                             [?node :node/kind ?node-kind]
+                             [?node :node/name ?node-name]
+                             [(contains? #{:kotlin.node/package
+                                           :kotlin.node/object
+                                           :kotlin.node/class
+                                           :kotlin.node/companion-object
+                                           :kotlin.node/property
+                                           :kotlin.node/function}
+                                          ?node-kind)]
+                             [?decl :decl/source-node ?node]
+                             [?decl :decl/kind ?decl-kind]
+                             [?decl :decl/qualified-name ?decl-qname]]
+                           db)))))
+
+          (testing "nullable source-language type syntax and type-use refs are queryable"
+            (is (= #{["kotlin:String?" "String" true]
+                     ["kotlin:String" "String" false]
+                     ["kotlin:Locale" "Locale" false]}
+                   (set (d/q '[:find ?type-id ?type-name ?nullable?
+                               :where
+                               [?type :type/lang :lang/kotlin]
+                               [?type :type/id ?type-id]
+                               [?type :type/name ?type-name]
+                               [?type :type/nullable? ?nullable?]
+                               [(contains? #{"kotlin:String?" "kotlin:String" "kotlin:Locale"} ?type-id)]]
+                             db))))
+            (is (set/subset?
+                 #{["name" "kotlin:String?"]
+                   ["greeting" "kotlin:String"]
+                   ["topLevelMessage" "kotlin:String?"]}
+                 (set (d/q '[:find ?node-name ?type-id
+                             :where
+                             [?ref :ref/kind :ref.kind/type-use]
+                             [?ref :ref/from-node ?node]
+                             [?node :node/name ?node-name]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]
+                             [(contains? #{"name" "greeting" "topLevelMessage"} ?node-name)]
+                             [(contains? #{"kotlin:String?" "kotlin:String"} ?type-id)]]
+                           db)))))
+
+          (testing "call expressions, safe calls, Elvis expressions, and features are queryable"
+            (is (= #{["uppercase" false]
+                     ["trim" false]}
+                   (set (d/q '[:find ?name ?resolved?
+                               :where
+                               [?ref :ref/kind :ref.kind/function-call]
+                               [?ref :ref/name ?name]
+                               [?ref :ref/resolved? ?resolved?]]
+                             db))))
+            (is (= #{[:kotlin.feature/class :feature.status/supported]
+                     [:kotlin.feature/object :feature.status/supported]
+                     [:kotlin.feature/companion-object :feature.status/supported]
+                     [:kotlin.feature/top-level-declaration :feature.status/supported]
+                     [:kotlin.feature/nullable-type :feature.status/supported]
+                     [:kotlin.feature/safe-call :feature.status/supported]
+                     [:kotlin.feature/elvis-expression :feature.status/supported]
+                     [:kotlin.feature/call-expression :feature.status/supported]}
+                   (set (d/q '[:find ?kind ?status
+                               :where
+                               [?feature :feature/kind ?kind]
+                               [?feature :feature/status ?status]
+                               [(contains? #{:kotlin.feature/class
+                                             :kotlin.feature/object
+                                             :kotlin.feature/companion-object
+                                             :kotlin.feature/top-level-declaration
+                                             :kotlin.feature/nullable-type
+                                             :kotlin.feature/safe-call
+                                             :kotlin.feature/elvis-expression
+                                             :kotlin.feature/call-expression}
+                                            ?kind)]]
+                             db))))
+            (is (= #{[:kotlin.node/safe-call "?."]
+                     [:kotlin.node/elvis-expression "?:"]}
+                   (set (d/q '[:find ?kind ?name
+                               :where
+                               [?node :node/kind ?kind]
+                               [?node :node/name ?name]
+                               [(contains? #{:kotlin.node/safe-call :kotlin.node/elvis-expression} ?kind)]]
+                             db)))))
+
+          (testing "source spans are captured from Kotlin PSI offsets"
+            (is (= #{[9 1 "KotlinGreeter"]
+                     [17 3 "greeting"]}
+                   (set (d/q '[:find ?line ?column ?name
+                               :where
+                               [?node :node/name ?name]
+                               [?node :node/start-line ?line]
+                               [?node :node/start-column ?column]
+                               [(contains? #{"KotlinGreeter" "greeting"} ?name)]]
+                             db))))
+            (is (every? #(re-find #"^sha256:" %)
+                        (map first
+                             (d/q '[:find ?hash
+                                    :where
+                                    [?node :node/lang :lang/kotlin]
+                                    [?node :node/source-hash ?hash]]
+                                  db)))))
+
+          (testing "unchanged reruns keep logical fact counts stable"
+            (kotlin-psi/ingest! conn {:project/id "fixture"})
+            (is (= counts (entity-counts (d/db conn))))))))))
