@@ -92,14 +92,16 @@
                                          :decl/id
                                          :type/id
                                          :ref/id
-                                         :feature/id])))]
+                                         :feature/id
+                                         :rule/id])))]
         (is (= #{:project/id
                  :file/id
                  :node/id
                  :decl/id
                  :type/id
                  :ref/id
-                 :feature/id}
+                 :feature/id
+                 :rule/id}
                idents))))))
 
 (deftest unique-identity-attrs-support-lookup-refs

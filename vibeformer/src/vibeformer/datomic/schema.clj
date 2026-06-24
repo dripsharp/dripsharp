@@ -179,8 +179,32 @@
     :db/valueType :db.type/keyword
     :db/cardinality :db.cardinality/one}])
 
+(def transform-rule
+  [{:db/ident :rule/id
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :rule/source-lang
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :rule/input-kind
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :rule/input-feature
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :rule/output-feature
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :rule/status
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :rule/version
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one}])
+
 (def all
-  (vec (concat project file node declaration source-type reference feature)))
+  (vec (concat project file node declaration source-type reference feature transform-rule)))
 
 (def schema all)
 
