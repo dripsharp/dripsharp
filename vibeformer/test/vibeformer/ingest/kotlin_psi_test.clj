@@ -36,6 +36,26 @@ class KotlinGreeter(private val initialName: String?) {
 fun topLevelMessage(value: String?): String = value?.trim() ?: Fixture.fallback
 ")
 
+(def kotlin-semantic-fixture
+  "package com.acme.semantic
+
+import java.util.Locale
+
+class LocalValue
+
+fun helper(value: String): String = value
+
+fun choose(value: String): String = value
+fun choose(value: String?): String = value ?: \"\"
+
+fun usesHelper(value: String, local: LocalValue, locale: Locale, missing: MissingType): String {
+  val localAgain: LocalValue = local
+  val helped: String = helper(value)
+  val unclear: String = choose(value)
+  return MissingApi.format(helped)
+}
+")
+
 (defn- with-empty-db [f]
   (let [system (str "vibeformer-kotlin-psi-test-" (UUID/randomUUID))
         db-name (str "facts-" (UUID/randomUUID))
@@ -218,3 +238,64 @@ fun topLevelMessage(value: String?): String = value?.trim() ?: Fixture.fallback
           (testing "unchanged reruns keep logical fact counts stable"
             (kotlin-psi/ingest! conn {:project/id "fixture"})
             (is (= counts (entity-counts (d/db conn))))))))))
+
+(deftest enriches-kotlin-refs-with-conservative-semantic-resolution
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/kotlin/com/acme/semantic/Semantics.kt"
+            opts {:source/root root
+                  :project/id "semantic"
+                  :project/name "Semantic Fixture"}]
+        (write-file! root file-path kotlin-semantic-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "semantic"})
+        (let [before-counts (entity-counts (d/db conn))
+              first-run (kotlin-psi/enrich! conn {:project/id "semantic"
+                                                  :kotlin/classpath-types #{"Locale"}})
+              db (d/db conn)]
+          (is (= {:project/id "semantic"}
+                 (select-keys first-run [:project/id])))
+          (is (pos? (:semantic-refs first-run)))
+
+          (testing "project-local function calls resolve to declaration facts"
+            (is (= #{["helper" "helper" true]}
+                   (set (d/q '[:find ?ref-name ?decl-name ?resolved?
+                               :where
+                               [?ref :ref/kind :ref.kind/function-call]
+                               [?ref :ref/name ?ref-name]
+                               [?ref :ref/resolved? ?resolved?]
+                               [?ref :ref/to-decl ?decl]
+                               [?decl :decl/name ?decl-name]
+                               [(= ?ref-name "helper")]]
+                             db)))))
+
+          (testing "source and declared classpath types resolve deliberately"
+            (is (= #{["LocalValue" true]
+                     ["Locale" true]
+                     ["String" true]}
+                   (set (d/q '[:find ?type-name ?resolved?
+                               :where
+                               [?ref :ref/kind :ref.kind/type-use]
+                               [?ref :ref/name ?type-name]
+                               [?ref :ref/resolved? ?resolved?]
+                               [(contains? #{"LocalValue" "Locale" "String"} ?type-name)]]
+                             db)))))
+
+          (testing "unresolved refs keep explicit reasons"
+            (is (= #{["MissingType" :resolve.reason/missing-classpath]
+                     ["format" :resolve.reason/missing-classpath]
+                     ["choose" :resolve.reason/analysis-api-limitation]}
+                   (set (d/q '[:find ?name ?reason
+                               :where
+                               [?ref :ref/resolved? false]
+                               [?ref :ref/name ?name]
+                               [?ref :ref/reason ?reason]
+                               [(contains? #{"MissingType" "format" "choose"} ?name)]]
+                             db)))))
+
+          (testing "semantic reruns keep logical fact counts stable"
+            (kotlin-psi/enrich! conn {:project/id "semantic"
+                                      :kotlin/classpath-types #{"Locale"}})
+            (is (= before-counts (entity-counts (d/db conn))))))))))

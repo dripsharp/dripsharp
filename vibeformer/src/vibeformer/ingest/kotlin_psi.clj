@@ -132,6 +132,12 @@
           (str/replace #"\s+" "")
           (str/replace #"\?$" "")))
 
+(defn- simple-type-name [type-name]
+  (some-> type-name
+          (str/replace #"<.*$" "")
+          (str/split #"\.")
+          last))
+
 (defn- type-id [syntax nullable?]
   (when-let [name (type-name syntax)]
     (str "kotlin:" name (when nullable? "?"))))
@@ -450,6 +456,209 @@
   Kotlin file records must already exist, usually from vibeformer.ingest.source."
   [db project-id]
   (dedupe-facts (mapcat file-facts (file-records db project-id))))
+
+(def ^:private kotlin-stdlib-types
+  {"Any" "kotlin:Any"
+   "Boolean" "kotlin:Boolean"
+   "Byte" "kotlin:Byte"
+   "Char" "kotlin:Char"
+   "Double" "kotlin:Double"
+   "Float" "kotlin:Float"
+   "Int" "kotlin:Int"
+   "Long" "kotlin:Long"
+   "Nothing" "kotlin:Nothing"
+   "Short" "kotlin:Short"
+   "String" "kotlin:String"
+   "Unit" "kotlin:Unit"})
+
+(def ^:private absent :vibeformer.query/absent)
+
+(defn- nil-if-absent [value]
+  (when-not (= absent value)
+    value))
+
+(defn- type-identity [db value]
+  (when-let [value (nil-if-absent value)]
+    (if (string? value)
+      value
+      (:type/id (d/pull db [:type/id] value)))))
+
+(defn- project-declarations [db project-id]
+  (mapv (fn [[decl-id kind name qualified-name decl-type return-type]]
+          {:decl/id decl-id
+           :decl/kind kind
+           :decl/name name
+           :decl/qualified-name qualified-name
+           :decl/type (type-identity db decl-type)
+           :decl/return-type (type-identity db return-type)})
+        (d/q '[:find ?decl-id ?kind ?name ?qualified-name ?decl-type ?return-type
+               :in $ ?project-id
+               :where
+               [?project :project/id ?project-id]
+               [?file :file/project ?project]
+               [?node :node/file ?file]
+               [?decl :decl/source-node ?node]
+               [?decl :decl/id ?decl-id]
+               [?decl :decl/kind ?kind]
+               [?decl :decl/name ?name]
+               [?decl :decl/qualified-name ?qualified-name]
+               [(get-else $ ?decl :decl/type :vibeformer.query/absent) ?decl-type]
+               [(get-else $ ?decl :decl/return-type :vibeformer.query/absent) ?return-type]]
+             db project-id)))
+
+(defn- project-refs [db project-id]
+  (mapv (fn [[ref-id kind name to-type node-id]]
+          {:ref/id ref-id
+           :ref/kind kind
+           :ref/name name
+           :ref/to-type (type-identity db to-type)
+           :node/id node-id})
+        (d/q '[:find ?ref-id ?kind ?name ?to-type ?node-id
+               :in $ ?project-id
+               :where
+               [?project :project/id ?project-id]
+               [?file :file/project ?project]
+               [?node :node/file ?file]
+               [?node :node/id ?node-id]
+               [?ref :ref/from-node ?node]
+               [?ref :ref/id ?ref-id]
+               [?ref :ref/kind ?kind]
+               [?ref :ref/name ?name]
+               [(get-else $ ?ref :ref/to-type :vibeformer.query/absent) ?to-type]]
+             db project-id)))
+
+(defn- normalize-classpath-types [classpath-types]
+  (cond
+    (map? classpath-types)
+    (into {}
+          (map (fn [[name type-id]]
+                 [(str name) (str type-id)]))
+          classpath-types)
+
+    (sequential? classpath-types)
+    (into {}
+          (map (fn [name]
+                 [(str name) (str "kotlin:" name)]))
+          classpath-types)
+
+    (set? classpath-types)
+    (normalize-classpath-types (seq classpath-types))
+
+    :else {}))
+
+(defn- source-type-index [decls]
+  (let [decl-types (keep :decl/type decls)
+        source-decl-types (keep (fn [{:decl/keys [kind qualified-name]}]
+                                  (when (contains? #{:decl.kind/class
+                                                     :decl.kind/object
+                                                     :decl.kind/companion-object}
+                                                   kind)
+                                    (str "kotlin:" qualified-name)))
+                                decls)]
+    (->> (concat decl-types source-decl-types)
+         (map (fn [type-id]
+                (let [type-name (str/replace type-id #"^kotlin:" "")]
+                  [(simple-type-name type-name) type-id])))
+         (into {}))))
+
+(defn- function-index [decls]
+  (->> decls
+       (filter #(= :decl.kind/function (:decl/kind %)))
+       (group-by :decl/name)))
+
+(defn- owner-type-id [source-types {:decl/keys [qualified-name]}]
+  (some (fn [[_ type-id]]
+          (let [qname (str/replace type-id #"^kotlin:" "")]
+            (when (str/starts-with? qualified-name (str qname "."))
+              type-id)))
+        (sort-by (comp count val) > source-types)))
+
+(defn- current-ref-reason [db ref-id]
+  (ffirst (d/q '[:find ?reason
+                 :in $ ?ref-id
+                 :where
+                 [?ref :ref/id ?ref-id]
+                 [?ref :ref/reason ?reason]]
+               db ref-id)))
+
+(defn- resolved-ref-tx [db ref-id attrs]
+  (let [reason (current-ref-reason db ref-id)]
+    (cond-> [(assoc attrs
+                    :db/id [:ref/id ref-id]
+                    :ref/resolved? true)]
+      reason (conj [:db/retract [:ref/id ref-id] :ref/reason reason]))))
+
+(defn- unresolved-ref-tx [ref-id reason]
+  [{:db/id [:ref/id ref-id]
+    :ref/resolved? false
+    :ref/reason reason}])
+
+(defn- type-resolution-tx [db type-index {:ref/keys [id name to-type]}]
+  (let [resolved-type-id (or (get type-index name)
+                             (get type-index (simple-type-name name))
+                             to-type)]
+    (if (or (get type-index name)
+            (get type-index (simple-type-name name)))
+      (resolved-ref-tx db id {:ref/to-type [:type/id resolved-type-id]})
+      (unresolved-ref-tx id :resolve.reason/missing-classpath))))
+
+(defn- function-resolution-tx [db functions source-types {:ref/keys [id name]}]
+  (let [candidates (get functions name)]
+    (case (count candidates)
+      0 (unresolved-ref-tx id :resolve.reason/missing-classpath)
+      1 (let [decl (first candidates)
+              owner-type (owner-type-id source-types decl)]
+          (resolved-ref-tx db id
+                           (cond-> {:ref/to-decl [:decl/id (:decl/id decl)]}
+                             (:decl/return-type decl)
+                             (assoc :ref/to-type [:type/id (:decl/return-type decl)])
+
+                             owner-type
+                             (assoc :ref/owner-type [:type/id owner-type]))))
+      (unresolved-ref-tx id :resolve.reason/analysis-api-limitation))))
+
+(defn semantic-resolution-facts
+  "Return idempotent tx-data that enriches Kotlin refs with semantic links.
+
+  This is the conservative fallback used until a full Kotlin Analysis API
+  session can be created for the source module. It resolves project-local
+  functions and known classpath/source types, and records deliberate reasons
+  for everything it cannot prove."
+  [db project-id opts]
+  (let [decls (project-declarations db project-id)
+        source-types (source-type-index decls)
+        type-index (merge kotlin-stdlib-types
+                          (normalize-classpath-types (:kotlin/classpath-types opts))
+                          source-types)
+        functions (function-index decls)]
+    (vec
+     (mapcat (fn [ref]
+               (case (:ref/kind ref)
+                 :ref.kind/type-use
+                 (type-resolution-tx db type-index ref)
+
+                 :ref.kind/function-call
+                 (function-resolution-tx db functions source-types ref)
+
+                 []))
+             (project-refs db project-id)))))
+
+(defn enrich!
+  "Enrich existing Kotlin PSI facts with conservative semantic resolution.
+
+  Options:
+  - :project/id project identity to enrich
+  - :kotlin/classpath-types collection or map of known type names available on
+    the analysis classpath. Collection entries resolve to existing syntax type
+    facts such as kotlin:Locale; map values may provide explicit type ids."
+  [conn {:project/keys [id] :as opts}]
+  (let [db (d/db conn)
+        tx-data (semantic-resolution-facts db id opts)]
+    (when (seq tx-data)
+      (d/transact conn {:tx-data tx-data}))
+    {:project/id id
+     :semantic-refs (count (filter map? tx-data))
+     :semantic-tx (count tx-data)}))
 
 (defn ingest!
   "Extract normalized Kotlin facts from ingested Kotlin files and transact them."

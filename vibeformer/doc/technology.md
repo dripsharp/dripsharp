@@ -128,6 +128,25 @@ Initial dependency choice:
   and a richer classpath story than the first parser smoke test. Add it when
   the extractor starts resolving symbols beyond syntax.
 
+Current semantic enrichment constraints:
+
+* `vibeformer.ingest.kotlin-psi/enrich!` is a separate pass after PSI ingestion.
+  It updates existing Kotlin `:ref/*` facts idempotently instead of replacing
+  syntax extraction.
+* The pass resolves project-local function calls when a call name has exactly
+  one matching Kotlin function declaration in the ingested project. Ambiguous
+  overloads are kept unresolved with `:resolve.reason/analysis-api-limitation`
+  until a real `KaSession` can disambiguate by receiver, argument, and smart-cast
+  context.
+* Source types are resolved from ingested Kotlin class/object declarations.
+  Standard Kotlin scalar types are treated as available classpath types.
+  Additional dependency types must be provided through `:kotlin/classpath-types`;
+  anything not declared or listed remains unresolved with
+  `:resolve.reason/missing-classpath`.
+* The pass does not cache Analysis API lifetime-owned values. A full Analysis
+  API module/session integration must keep `KaSession`, symbols, and types
+  inside the analysis block and store only stable ids in Datomic.
+
 ## C# Output Validation
 
 Use the C# compiler directly through:
