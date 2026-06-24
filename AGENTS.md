@@ -1,3 +1,5 @@
+The main project we are working on is /vibeformer (clojure).
+
 <!-- br-agent-instructions-v1 -->
 
 ---
