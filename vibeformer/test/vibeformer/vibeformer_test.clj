@@ -1,9 +1,12 @@
 (ns vibeformer.vibeformer-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]])
+            [clojure.test :refer [deftest is testing]]
+            [datomic.client.api :as d]
+            [datomic.local :as dl])
   (:import (java.nio.charset StandardCharsets)
            (java.nio.file Files)
+           (java.util UUID)
            (org.jetbrains.kotlin.com.intellij.openapi.util Disposer)
            (org.jetbrains.kotlin.cli.jvm.compiler EnvironmentConfigFiles KotlinCoreEnvironment)
            (org.jetbrains.kotlin.config CompilerConfiguration)
@@ -53,6 +56,47 @@ class KotlinGreeter(private val initialName: String?) {
 
 fun topLevelMessage(value: String?): String = value?.trim() ?: \"empty\"
 ")
+
+(def datomic-smoke-schema
+  [{:db/ident :file/path
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :file/lang
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :node/id
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :node/lang
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :node/kind
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :node/name
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :node/file
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :decl/id
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :decl/lang
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :decl/kind
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :decl/name
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :decl/source-node
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}])
 
 (defn- write-java-sample! []
   (let [root (Files/createTempDirectory "vibeformer-spoon-" (make-array java.nio.file.attribute.FileAttribute 0))
@@ -176,3 +220,49 @@ fun topLevelMessage(value: String?): String = value?.trim() ?: \"empty\"
           (is (= "Sample.kt" (.getName (.getContainingFile greeter))))))
       (finally
         (Disposer/dispose disposable)))))
+
+(deftest datomic-local-stores-and-queries-vibeformer-shaped-facts
+  (let [system (str "vibeformer-test-" (UUID/randomUUID))
+        db-name (str "facts-" (UUID/randomUUID))
+        client (d/client {:server-type :datomic-local
+                          :storage-dir :mem
+                          :system system})
+        created? (atom false)]
+    (try
+      (is (true? (d/create-database client {:db-name db-name})))
+      (reset! created? true)
+      (let [conn (d/connect client {:db-name db-name})
+            file-path "src/main/java/com/acme/parser/Greeter.java"
+            node-id (str "test:" file-path ":class:com.acme.parser.Greeter")
+            decl-id "java:com.acme.parser.Greeter"]
+        (d/transact conn {:tx-data datomic-smoke-schema})
+        (d/transact conn {:tx-data [{:file/path file-path
+                                     :db/id "file"
+                                     :file/lang :lang/java}
+                                    {:node/id node-id
+                                     :db/id "node"
+                                     :node/lang :lang/java
+                                     :node/kind :java.node/class
+                                     :node/name "Greeter"
+                                     :node/file "file"}
+                                    {:decl/id decl-id
+                                     :decl/lang :lang/java
+                                     :decl/kind :decl.kind/class
+                                     :decl/name "Greeter"
+                                     :decl/source-node "node"}]})
+        (is (= [[file-path :lang/java :java.node/class "Greeter" :decl.kind/class]]
+               (d/q '[:find ?path ?lang ?node-kind ?decl-name ?decl-kind
+                      :where
+                      [?file :file/path ?path]
+                      [?file :file/lang ?lang]
+                      [?node :node/file ?file]
+                      [?node :node/kind ?node-kind]
+                      [?decl :decl/source-node ?node]
+                      [?decl :decl/name ?decl-name]
+                      [?decl :decl/kind ?decl-kind]]
+                    (d/db conn)))))
+      (finally
+        (when @created?
+          (dl/release-db {:system system
+                          :storage-dir :mem
+                          :db-name db-name}))))))

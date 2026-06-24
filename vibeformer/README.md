@@ -130,6 +130,12 @@ Good Datomic facts:
 
 Avoid storing every token, punctuation mark, whitespace node, or opaque serialized compiler object.
 
+### Datomic Local Development and Tests
+
+The project includes `com.datomic/local` so tests and early analysis code can use the Datomic Client API without a server. The smoke test creates a unique Datomic Local system/database with `:storage-dir :mem`, transacts a small file/source-node/declaration fact graph, queries it back, and calls `datomic.local/release-db` so the in-memory database is disposable and repeatable in local development or CI.
+
+Datomic Local is Apache 2.0 licensed and available from Maven, so this project does not need Datomic Pro credentials or a transactor for the embedded smoke tests. Durable local databases use filesystem storage instead: either pass an explicit `:storage-dir` to the local client or configure `~/.datomic/local.edn`; Datomic stores databases below `<storage-dir>/<system-name>/<database-name>`, which must be cleaned up manually if durable test storage is ever introduced.
+
 ### Java Frontend: Spoon
 
 Use Spoon as the Java analysis frontend.
