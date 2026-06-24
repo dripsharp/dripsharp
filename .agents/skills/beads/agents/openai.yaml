@@ -1,0 +1,4 @@
+interface:
+  display_name: "Beads Workflow"
+  short_description: "Manual Beads issue tracking workflow"
+  default_prompt: "Use $beads to manage beads issues for this repository."
