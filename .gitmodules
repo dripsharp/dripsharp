@@ -1,0 +1,3 @@
+[submodule "research/pkl"]
+	path = research/pkl
+	url = https://github.com/apple/pkl.git
