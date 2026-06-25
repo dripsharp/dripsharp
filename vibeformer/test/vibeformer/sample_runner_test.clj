@@ -57,6 +57,7 @@ public final class Hello {
               :source/discover
               :source/ingest
               :java/ingest
+              :transform/rules
               :diagnostics/inventory
               :coverage/check
               :csharp/emit
@@ -66,7 +67,10 @@ public final class Hello {
              (mapv :status (take-last 2 stages)))))
     (testing "diagnostic artifacts identify current transform coverage gaps"
       (is (false? (:ok? coverage)))
-      (is (pos? (count (:failures coverage)))))
+      (is (pos? (count (:failures coverage))))
+      (is (empty? (filter #(= :coverage.reason/missing-rule (:coverage/reason %))
+                          (:failures coverage))))
+      (is (every? seq (map :coverage/rules (:failures coverage)))))
     (testing "facts and provenance point at disposable output"
       (is (= ["src/main/java/com/example/Hello.java"]
              (mapv :file/path source-files)))

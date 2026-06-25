@@ -165,6 +165,9 @@
                               #(source/ingest! conn opts))
             stages (run-stage stages sample :java/ingest
                               #(java-spoon/ingest! conn {:project/id project-id}))
+            stages (run-stage stages sample :transform/rules
+                              #(do (rules/register! conn rules/initial-java-rules)
+                                   {:rules/registered (count rules/initial-java-rules)}))
             stages (if (stop-after-failure? stages)
                      stages
                      (let [db (d/db conn)

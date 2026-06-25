@@ -101,6 +101,33 @@
   (schema/install! conn)
   (d/transact conn {:tx-data source-fixture}))
 
+(deftest initial-java-rule-catalog-covers-word-count-construct-kinds
+  (let [node-rules (filter :rule/input-kind rules/initial-java-rules)
+        feature-rules (filter :rule/input-feature rules/initial-java-rules)
+        rules-by-kind (group-by :rule/input-kind node-rules)
+        rules-by-feature (group-by :rule/input-feature feature-rules)]
+    (is (= #{:java.node/class
+             :java.node/constructor
+             :java.node/field
+             :java.node/method
+             :java.node/method-call}
+           (set (remove nil? (keys rules-by-kind)))))
+    (is (= #{:java.feature/class
+             :java.feature/field
+             :java.feature/package-private-member
+             :java.feature/checked-exception}
+           (set (remove nil? (keys rules-by-feature)))))
+    (is (every? #(= 1 (count %)) (vals rules-by-kind)))
+    (is (every? #(= 1 (count %)) (vals rules-by-feature)))
+    (is (= :rule.status/unsupported
+           (:rule/status (first (rules-by-feature :java.feature/checked-exception)))))
+    (is (every? #(= :rule.status/stubbed (:rule/status %))
+                (remove #(= :java.checked-exception/unsupported (:rule/id %))
+                        rules/initial-java-rules)))
+    (is (= (set rules/initial-java-rules)
+           (set (map #(dissoc % :rule/version)
+                     (rules/tx-data rules/initial-java-rules)))))))
+
 (deftest rules-can-be-registered-and-queried
   (with-empty-db
     (fn [conn]
