@@ -261,6 +261,21 @@
     stages
     (conj stages (stage sample stage-name f))))
 
+(defn- coverage-opts [opts]
+  (cond-> {}
+    (or (:coverage/allow-stubs? opts) (:allow-stubs? opts))
+    (assoc :allow-stubs? true)
+    (or (:coverage/allow-unsupported? opts) (:allow-unsupported? opts))
+    (assoc :allow-unsupported? true)))
+
+(defn- coverage-stage [coverage-report coverage-opts]
+  (let [allow-mode (select-keys coverage-opts [:allow-stubs? :allow-unsupported?])]
+    (cond-> {:stage :coverage/check
+             :status (if (:ok? coverage-report) :ok :failed)
+             :coverage/ok? (:ok? coverage-report)
+             :coverage/failures (count (:failures coverage-report))}
+      (seq allow-mode) (assoc :coverage/allow-mode allow-mode))))
+
 (defn- run-analysis-stages [sample paths opts]
   (with-empty-db
     (fn [conn]
@@ -289,7 +304,8 @@
                      stages
                      (let [db (d/db conn)
                            inventory-report (inventory/summary db)
-                           coverage-report (rules/coverage-report db)]
+                           coverage-opts (coverage-opts opts)
+                           coverage-report (rules/coverage-report db coverage-opts)]
                        (write-edn! (.resolve (:target/diagnostics paths) "inventory.edn")
                                   inventory-report)
                        (write-edn! (.resolve (:target/diagnostics paths) "coverage.edn")
@@ -298,10 +314,7 @@
                              {:stage :diagnostics/inventory
                               :status :ok
                               :unsupported/features (count (:unsupported-rankings inventory-report))}
-                             {:stage :coverage/check
-                              :status :ok
-                              :coverage/ok? (:ok? coverage-report)
-                              :coverage/failures (count (:failures coverage-report))})))
+                             (coverage-stage coverage-report coverage-opts))))
             stages (cond-> stages
                      (not (stop-after-failure? stages))
                      (run-stage sample :csharp/emit

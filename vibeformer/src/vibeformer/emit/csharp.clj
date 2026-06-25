@@ -247,20 +247,88 @@
         (:db/id node)
         role)))
 
+(defn- type-pull-pattern []
+  [:type/id
+   :type/lang
+   :type/name
+   :type/nullable?
+   {:type/args [:type.arg/ordinal
+                {:type.arg/type [:type/id
+                                 :type/lang
+                                 :type/name
+                                 :type/nullable?]}]}])
+
+(defn- parent-node [db node]
+  (ffirst
+   (d/q '[:find (pull ?parent pattern)
+          :in $ ?node pattern
+          :where
+          [?node :node/parent ?parent]]
+        db
+        (:db/id node)
+        (node-pull-pattern))))
+
+(defn- enclosing-executable-node [db node]
+  (loop [current node]
+    (when-let [parent (parent-node db current)]
+      (if (contains? #{:java.node/method :java.node/constructor} (:node/kind parent))
+        parent
+        (recur parent)))))
+
 (defn- method-call-ref [db node]
   (ffirst
    (d/q '[:find (pull ?ref [:ref/id
                             :ref/name
                             :ref/resolved?
+                            :ref/reason
                             {:ref/to-type [:type/id :type/lang :type/name :type/nullable?]}
                             {:ref/owner-type [:type/id :type/lang :type/name :type/nullable?]}
-                            {:ref/to-decl [:decl/id :decl/name :decl/qualified-name]}])
+                            {:ref/to-decl [:decl/id
+                                           :decl/name
+                                           :decl/qualified-name
+                                           {:decl/source-node [:db/id :node/id :node/kind :node/name]}]}])
           :in $ ?node
           :where
           [?ref :ref/from-node ?node]
           [?ref :ref/kind :ref.kind/method-call]]
         db
         (:db/id node))))
+
+(defn- variable-read-type [db node]
+  (when-let [name (:node/name node)]
+    (when-let [executable (enclosing-executable-node db node)]
+      (ffirst
+       (d/q '[:find (pull ?type pattern)
+              :in $ ?executable ?name pattern
+              :where
+              [?ref :ref/from-node ?executable]
+              [?ref :ref/kind :ref.kind/type-use]
+              [?ref :ref/source-name ?name]
+              [?ref :ref/to-type ?type]]
+            db
+            (:db/id executable)
+            name
+            (type-pull-pattern))))))
+
+(defn- expression-type [ctx node]
+  (let [db (:db ctx)]
+    (case (:node/kind node)
+      :java.node/method-call
+      (get-in (method-call-ref db node) [:ref/to-type])
+
+      :java.node/variable-read
+      (variable-read-type db node)
+
+      :java.node/local-variable
+      (node-type-ref db node :local-type)
+
+      nil)))
+
+(defn- array-type? [source-type]
+  (str/ends-with? (or (:type/name source-type) "") "[]"))
+
+(defn- project-local-call? [call-ref]
+  (boolean (get-in call-ref [:ref/to-decl :decl/source-node :node/id])))
 
 (defn- source-context [node]
   {:source/node-id (:node/id node)
@@ -625,6 +693,21 @@
           (with-text (str "System.IO.File.ReadAllText(" args ")"))
           (apply-rule node :java.files-read-string/to-csharp-file-read-all-text :rule-app.status/success))
 
+      (not (:ref/resolved? call-ref))
+      (unsupported node
+                   :java.method-call-node/to-csharp-invocation
+                   {:method source-method-name
+                    :owner owner
+                    :reason (or (:ref/reason call-ref)
+                                :resolve.reason/missing-method-call-ref)})
+
+      (not (project-local-call? call-ref))
+      (unsupported node
+                   :java.method-call-node/to-csharp-invocation
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-external-method})
+
       :else
       (let [call-text (str (when target (str target-text "."))
                            (method-name {:decl/name source-method-name})
@@ -638,15 +721,25 @@
         target-result (when target (emit-expression ctx target))
         target-text (:text target-result)
         field-name (:node/name node)
+        system-target? (and (= :java.node/type-access (:node/kind target))
+                            (= "java.lang.System" (:node/value target)))
+        target-type (when target (expression-type ctx target))
         text (cond
-               (and (= "System" target-text) (= "err" field-name)) "System.Console.Error"
-               (and (= "System" target-text) (= "out" field-name)) "System.Console"
-               (and target (= "length" field-name)) (str target-text ".Length")
+               (and system-target? (= "err" field-name)) "System.Console.Error"
+               (and system-target? (= "out" field-name)) "System.Console"
+               (and target (= "length" field-name) (array-type? target-type)) (str target-text ".Length")
+               (and target (= "length" field-name)) nil
                target (str target-text "." field-name)
                :else field-name)]
-    (-> (or target-result (merge-emits []))
-        (with-text text)
-        (apply-rule node :java.field-read-node/to-csharp-member :rule-app.status/success))))
+    (if text
+      (-> (or target-result (merge-emits []))
+          (with-text text)
+          (apply-rule node :java.field-read-node/to-csharp-member :rule-app.status/success))
+      (unsupported node
+                   :java.field-read-node/to-csharp-member
+                   {:field field-name
+                    :target-type (:type/name target-type)
+                    :reason :emit.reason/unsupported-length-target}))))
 
 (defn- emit-expression [ctx node]
   (case (:node/kind node)

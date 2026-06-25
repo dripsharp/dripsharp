@@ -31,6 +31,16 @@ public final class Counter {
 }
 ")
 
+(def unsupported-call-fixture
+  "package com.example.tools;
+
+public final class UnsupportedCall {
+  static void call(String text) {
+    text.substring(1);
+  }
+}
+")
+
 (defn- sample-word-counter-source []
   (slurp (str (Paths/get "sample-projects/java-word-count/source/src/main/java/com/example/wordcount/WordCounter.java"
                          (make-array String 0)))))
@@ -60,6 +70,103 @@ public final class Counter {
     (Files/createDirectories (.getParent file) (make-array java.nio.file.attribute.FileAttribute 0))
     (Files/writeString file content StandardCharsets/UTF_8 (make-array java.nio.file.OpenOption 0))
     file))
+
+(def ambiguous-length-facts
+  [{:db/id "project"
+    :project/id "fixture"
+    :project/name "Fixture"
+    :project/root "/workspace/fixture"}
+   {:db/id "file"
+    :file/id "fixture:src/LengthLike.java"
+    :file/path "src/LengthLike.java"
+    :file/lang :lang/java
+    :file/hash "sha256:file"
+    :file/project "project"
+    :file/package "com.example.tools"}
+   {:db/id "class-node"
+    :node/id "fixture:src/LengthLike.java:class:LengthLike"
+    :node/lang :lang/java
+    :node/kind :java.node/class
+    :node/name "LengthLike"
+    :node/file "file"
+    :node/ordinal 0
+    :node/start-line 3
+    :node/start-column 1
+    :node/end-line 7
+    :node/end-column 2}
+   {:db/id "class-decl"
+    :decl/id "java:com.example.tools.LengthLike"
+    :decl/lang :lang/java
+    :decl/kind :decl.kind/class
+    :decl/name "LengthLike"
+    :decl/qualified-name "com.example.tools.LengthLike"
+    :decl/source-node "class-node"
+    :decl/modifiers #{:public :final}}
+   {:db/id "int-type"
+    :type/id "int"
+    :type/lang :lang/java
+    :type/name "int"
+    :type/nullable? false}
+   {:db/id "method-node"
+    :node/id "fixture:src/LengthLike.java:method:LengthLike#measure"
+    :node/lang :lang/java
+    :node/kind :java.node/method
+    :node/name "measure"
+    :node/file "file"
+    :node/parent "class-node"
+    :node/ordinal 0
+    :node/start-line 4
+    :node/start-column 3
+    :node/end-line 6
+    :node/end-column 4}
+   {:db/id "method-decl"
+    :decl/id "java:com.example.tools.LengthLike#measure()"
+    :decl/lang :lang/java
+    :decl/kind :decl.kind/method
+    :decl/name "measure"
+    :decl/qualified-name "com.example.tools.LengthLike.measure"
+    :decl/source-node "method-node"
+    :decl/return-type "int-type"
+    :decl/modifiers #{:static}}
+   {:db/id "return-node"
+    :node/id "fixture:src/LengthLike.java:method:LengthLike#measure:body:0"
+    :node/lang :lang/java
+    :node/kind :java.node/return-statement
+    :node/name "return"
+    :node/file "file"
+    :node/parent "method-node"
+    :node/role :body
+    :node/ordinal 0
+    :node/start-line 5
+    :node/start-column 5
+    :node/end-line 5
+    :node/end-column 18}
+   {:db/id "field-node"
+    :node/id "fixture:src/LengthLike.java:method:LengthLike#measure:body:0:return:length"
+    :node/lang :lang/java
+    :node/kind :java.node/field-read
+    :node/name "length"
+    :node/file "file"
+    :node/parent "return-node"
+    :node/role :return-expression
+    :node/ordinal 0
+    :node/start-line 5
+    :node/start-column 12
+    :node/end-line 5
+    :node/end-column 18}
+   {:db/id "target-node"
+    :node/id "fixture:src/LengthLike.java:method:LengthLike#measure:body:0:return:length:target"
+    :node/lang :lang/java
+    :node/kind :java.node/variable-read
+    :node/name "value"
+    :node/file "file"
+    :node/parent "field-node"
+    :node/role :target
+    :node/ordinal 0
+    :node/start-line 5
+    :node/start-column 12
+    :node/end-line 5
+    :node/end-column 17}])
 
 (deftest emits-java-declarations-as-csharp-skeletons
   (with-empty-db
@@ -169,5 +276,70 @@ public final class Counter {
                                 (:emit/rule %)
                                 (:rule %))
                           provenance))
+              (doseq [rule-id [:java.regex-pattern-compile/to-csharp-regex
+                               :java.string-trim/to-csharp-trim
+                               :java.string-is-empty/to-csharp-is-null-or-empty
+                               :java.regex-split/to-csharp-regex-split
+                               :java.printstream-println/to-csharp-console
+                               :java.system-exit/to-csharp-environment-exit
+                               :java.path-of/to-csharp-string-path
+                               :java.files-read-string/to-csharp-file-read-all-text]]
+                (let [entry (some #(when (= rule-id (get-in % [:rule :rule/id])) %)
+                                  provenance)]
+                  (is (some? entry))
+                  (is (= 1 (get-in entry [:rule :rule/version])))
+                  (is (= :rule.status/implemented (get-in entry [:rule :rule/status])))
+                  (is (= :lang/java (get-in entry [:rule :rule/source-lang])))
+                  (is (some? (get-in entry [:rule :rule/input-feature])))))
               (is (not-any? #(contains? % :source/text) provenance))))
           (is (not (str/includes? emitter-source "source-text"))))))))
+
+(deftest unsupported-external-method-calls-produce-diagnostics
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/tools/UnsupportedCall.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path unsupported-call-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [result (csharp/emit! (d/db conn) target)
+              generated (.resolve target "com/example/tools/UnsupportedCall.cs")
+              content (slurp (str generated))
+              diagnostic (first (:csharp/diagnostics result))
+              failed-app (some #(when (= :rule-app.status/failed (:rule-app/status %)) %)
+                               (:csharp/rule-applications result))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "Unsupported Java node method-call"))
+          (is (= :java.method-call-node/to-csharp-invocation (:rule/id diagnostic)))
+          (is (= :emit.reason/unsupported-external-method
+                 (get-in diagnostic [:rule/context :reason])))
+          (is (= :java.method-call-node/to-csharp-invocation
+                 (second (:rule-app/rule failed-app)))))))))
+
+(deftest ambiguous-length-field-access-produces-diagnostics
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (d/transact conn {:tx-data ambiguous-length-facts})
+      (rules/register! conn rules/initial-java-rules)
+      (let [target (.resolve (temp-root) "target/csharp")
+            result (csharp/emit! (d/db conn) target)
+            generated (.resolve target "com/example/tools/LengthLike.cs")
+            content (slurp (str generated))
+            diagnostic (first (:csharp/diagnostics result))
+            failed-app (some #(when (= :rule-app.status/failed (:rule-app/status %)) %)
+                             (:csharp/rule-applications result))]
+        (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+        (is (str/includes? content "Unsupported Java node field-read"))
+        (is (= :java.field-read-node/to-csharp-member (:rule/id diagnostic)))
+        (is (= :emit.reason/unsupported-length-target
+               (get-in diagnostic [:rule/context :reason])))
+        (is (= :java.field-read-node/to-csharp-member
+               (second (:rule-app/rule failed-app))))))))

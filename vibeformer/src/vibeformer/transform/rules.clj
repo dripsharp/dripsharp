@@ -67,6 +67,46 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/binary-operator
     :rule/status implemented-status}
+   {:rule/id :java.regex-pattern-compile/to-csharp-regex
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/pattern-compile
+    :rule/output-feature :csharp.api/regex
+    :rule/status implemented-status}
+   {:rule/id :java.string-trim/to-csharp-trim
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/string-trim
+    :rule/output-feature :csharp.api/string-trim
+    :rule/status implemented-status}
+   {:rule/id :java.string-is-empty/to-csharp-is-null-or-empty
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/string-is-empty
+    :rule/output-feature :csharp.api/string-is-null-or-empty
+    :rule/status implemented-status}
+   {:rule/id :java.regex-split/to-csharp-regex-split
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/pattern-split
+    :rule/output-feature :csharp.api/regex-split
+    :rule/status implemented-status}
+   {:rule/id :java.printstream-println/to-csharp-console
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/printstream-println
+    :rule/output-feature :csharp.api/console-write-line
+    :rule/status implemented-status}
+   {:rule/id :java.system-exit/to-csharp-environment-exit
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/system-exit
+    :rule/output-feature :csharp.api/environment-exit
+    :rule/status implemented-status}
+   {:rule/id :java.path-of/to-csharp-string-path
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/path-of
+    :rule/output-feature :csharp.api/string-path
+    :rule/status implemented-status}
+   {:rule/id :java.files-read-string/to-csharp-file-read-all-text
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/files-read-string
+    :rule/output-feature :csharp.api/file-read-all-text
+    :rule/status implemented-status}
    {:rule/id :java.statement-node/to-csharp-stub
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/statement

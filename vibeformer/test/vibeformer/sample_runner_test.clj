@@ -16,6 +16,27 @@ public final class Hello {
 }
 ")
 
+(def lambda-fixture
+  "package com.example;
+
+public final class LambdaCase {
+  public static void main(String[] args) {
+    Runnable r = () -> System.out.println(\"hello\");
+    r.run();
+  }
+}
+")
+
+(def checked-exception-fixture
+  "package com.example;
+
+public final class CheckedExceptionCase {
+  public static void main(String[] args) throws java.io.IOException {
+    System.out.println(\"hello\");
+  }
+}
+")
+
 (defn- temp-root []
   (Files/createTempDirectory "vibeformer-sample-runner-test-" (make-array java.nio.file.attribute.FileAttribute 0)))
 
@@ -32,6 +53,17 @@ public final class Hello {
   (let [root (temp-root)]
     (write-file! root "sample-projects/hello/source/src/main/java/com/example/Hello.java" java-fixture)
     (write-file! root "sample-projects/ignored/README.md" "no source root\n")
+    root))
+
+(defn- coverage-failure-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/lambda/source/src/main/java/com/example/LambdaCase.java" lambda-fixture)
+    root))
+
+(defn- coverage-allow-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/checked/source/src/main/java/com/example/CheckedExceptionCase.java"
+                 checked-exception-fixture)
     root))
 
 (deftest discovers-samples-with-source-roots
@@ -99,6 +131,37 @@ public final class Hello {
       (is (str/includes? @project-content "<Nullable>enable</Nullable>"))
       (is (str/includes? @project-content "<EnableDefaultCompileItems>false</EnableDefaultCompileItems>"))
       (is (str/includes? @project-content "<Compile Include=\"com/example/Hello.cs\" />")))))
+
+(deftest coverage-failure-stops-before-emission
+  (let [root (coverage-failure-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "lambda"
+                                          :dotnet/enabled? false})
+        target (.resolve root "sample-projects/lambda/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        coverage-stage (some #(when (= :coverage/check (:stage %)) %) stages)]
+    (is (false? (:ok? result)))
+    (is (= :failed (:status coverage-stage)))
+    (is (false? (:ok? coverage)))
+    (is (seq (:failures coverage)))
+    (is (not-any? #(= :csharp/emit (:stage %)) stages))
+    (is (= :skipped (:status provenance)))))
+
+(deftest explicit-coverage-allow-mode-is-recorded
+  (let [root (coverage-allow-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "checked"
+                                          :dotnet/enabled? false
+                                          :coverage/allow-unsupported? true})
+        target (.resolve root "sample-projects/checked/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage-stage (some #(when (= :coverage/check (:stage %)) %) stages)]
+    (is (:ok? result))
+    (is (= :ok (:status coverage-stage)))
+    (is (= {:allow-unsupported? true} (:coverage/allow-mode coverage-stage)))
+    (is (some #(= :csharp/emit (:stage %)) stages))))
 
 (deftest captures-dotnet-build-diagnostics
   (let [root (sample-checkout)

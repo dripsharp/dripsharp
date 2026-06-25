@@ -105,7 +105,15 @@
   (let [node-rules (filter :rule/input-kind rules/initial-java-rules)
         feature-rules (filter :rule/input-feature rules/initial-java-rules)
         rules-by-kind (group-by :rule/input-kind node-rules)
-        rules-by-feature (group-by :rule/input-feature feature-rules)]
+        rules-by-feature (group-by :rule/input-feature feature-rules)
+        special-api-rules #{:java.regex-pattern-compile/to-csharp-regex
+                            :java.string-trim/to-csharp-trim
+                            :java.string-is-empty/to-csharp-is-null-or-empty
+                            :java.regex-split/to-csharp-regex-split
+                            :java.printstream-println/to-csharp-console
+                            :java.system-exit/to-csharp-environment-exit
+                            :java.path-of/to-csharp-string-path
+                            :java.files-read-string/to-csharp-file-read-all-text}]
     (is (= #{:java.node/class
              :java.node/array-read
              :java.node/binary-operator
@@ -126,7 +134,15 @@
     (is (= #{:java.feature/class
              :java.feature/field
              :java.feature/package-private-member
-             :java.feature/checked-exception}
+             :java.feature/checked-exception
+             :java.api/pattern-compile
+             :java.api/string-trim
+             :java.api/string-is-empty
+             :java.api/pattern-split
+             :java.api/printstream-println
+             :java.api/system-exit
+             :java.api/path-of
+             :java.api/files-read-string}
            (set (remove nil? (keys rules-by-feature)))))
     (is (every? #(= 1 (count %)) (vals rules-by-kind)))
     (is (every? #(= 1 (count %)) (vals rules-by-feature)))
@@ -155,7 +171,12 @@
              :java.field-feature/to-csharp-field
              :java.package-private-member/to-csharp-internal}
            (set (map :rule/id
-                     (filter #(= :rule.status/implemented (:rule/status %))
+                     (remove #(contains? special-api-rules (:rule/id %))
+                             (filter #(= :rule.status/implemented (:rule/status %))
+                                     rules/initial-java-rules))))))
+    (is (= special-api-rules
+           (set (map :rule/id
+                     (filter #(contains? special-api-rules (:rule/id %))
                              rules/initial-java-rules)))))
     (is (= (set rules/initial-java-rules)
            (set (map #(dissoc % :rule/version)
