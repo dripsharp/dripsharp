@@ -91,6 +91,18 @@ public enum Token {
 }
 ")
 
+(def enum-unsupported-method-fixture
+  "package com.example.token;
+
+public enum Token {
+  IDENTIFIER;
+
+  public String text() {
+    return name();
+  }
+}
+")
+
 (def default-interface-fixture
   "package com.example.value;
 
@@ -515,7 +527,7 @@ public final class Demo {
           (is (some? constant-entry))
           (is (= :java.node/field (:source/kind constant-entry))))))))
 
-(deftest enum-methods-produce-structured-diagnostics
+(deftest emits-token-style-enum-switch-methods
   (with-empty-db
     (fn [conn]
       (schema/install! conn)
@@ -535,19 +547,58 @@ public final class Demo {
               result (csharp/emit! db target)
               generated (.resolve target "com/example/token/Token.cs")
               content (slurp (str generated))
-              diagnostic (first (:csharp/diagnostics result))
-              failed-app (some #(when (= :rule-app.status/failed (:rule-app/status %)) %)
-                               (:csharp/rule-applications result))]
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))
+              switch-entry (some #(when (= :java.node/switch-expression (:source/kind %)) %)
+                                 (:csharp/provenance result))
+              case-entries (filter #(= :java.node/switch-case (:source/kind %))
+                                   (:csharp/provenance result))]
           (is (= {:ok? true :failures []} coverage))
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
           (is (str/includes? content "public enum Token"))
           (is (str/includes? content "ABSTRACT,"))
-          (is (not (str/includes? content "isModifier")))
+          (is (str/includes? content "public static class TokenExtensions"))
+          (is (str/includes? content "public static bool isModifier(this Token value)"))
+          (is (str/includes? content "return value switch"))
+          (is (str/includes? content "Token.ABSTRACT or Token.OPEN or Token.LOCAL => true,"))
+          (is (str/includes? content "_ => false,"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (every? rule-ids
+                      [:java.method-node/to-csharp-method
+                       :java.switch-expression-node/to-csharp-switch
+                       :java.switch-case-node/to-csharp-switch-arm]))
+          (is (some? switch-entry))
+          (is (= 2 (count case-entries))))))))
+
+(deftest unsupported-enum-methods-produce-structured-diagnostics
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/token/Token.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path enum-unsupported-method-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [result (csharp/emit! (d/db conn) target)
+              generated (.resolve target "com/example/token/Token.cs")
+              content (slurp (str generated))
+              diagnostic (first (:csharp/diagnostics result))
+              failed-app (some #(when (= :rule-app.status/failed (:rule-app/status %)) %)
+                               (:csharp/rule-applications result))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "public enum Token"))
+          (is (not (str/includes? content "text()")))
           (is (= :java.method-node/to-csharp-method (:rule/id diagnostic)))
           (is (= :emit.reason/unsupported-enum-method
                  (get-in diagnostic [:rule/context :reason])))
           (is (= file-path (:source/file diagnostic)))
-          (is (= 9 (get-in diagnostic [:source/span :start-line])))
+          (is (= 6 (get-in diagnostic [:source/span :start-line])))
           (is (= :java.method-node/to-csharp-method
                  (second (:rule-app/rule failed-app)))))))))
 

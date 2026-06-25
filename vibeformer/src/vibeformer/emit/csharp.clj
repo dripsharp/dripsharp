@@ -1168,6 +1168,42 @@
               rule
               :rule-app.status/failed))
 
+(defn- bool-return-type? [method-decl]
+  (= "bool" (type-name (:decl/return-type method-decl))))
+
+(defn- bool-literal-node? [node]
+  (and (= :java.node/literal (:node/kind node))
+       (boolean? (edn/read-string (:node/value node)))))
+
+(defn- enum-switch-case-supported? [db case-node]
+  (let [labels (child-nodes db (:db/id case-node) :case-label)
+        results (child-nodes db (:db/id case-node) :case-result)]
+    (and (= "arrow" (:node/value case-node))
+         (= 1 (count results))
+         (every? #(= :java.node/field-read (:node/kind %)) labels)
+         (bool-literal-node? (first results)))))
+
+(defn- enum-switch-method-shape [db method-decl]
+  (let [statements (child-nodes db (get-in method-decl [:decl/source-node :db/id]) :body)
+        return-node (first statements)
+        switch-node (when (= :java.node/return-statement (:node/kind return-node))
+                      (child-node db (:db/id return-node) :return-expression))
+        selector (when (= :java.node/switch-expression (:node/kind switch-node))
+                   (child-node db (:db/id switch-node) :selector))
+        cases (when switch-node
+                (child-nodes db (:db/id switch-node) :case))
+        mods (modifiers method-decl)]
+    (when (and (contains? mods :public)
+               (not (contains? mods :static))
+               (bool-return-type? method-decl)
+               (= 1 (count statements))
+               (= :java.node/this (:node/kind selector))
+               (seq cases)
+               (every? #(enum-switch-case-supported? db %) cases))
+      {:return return-node
+       :switch switch-node
+       :cases cases})))
+
 (defn- enum-constant? [enum-decl field-decl]
   (let [mods (modifiers field-decl)]
     (and (= (:decl/qualified-name enum-decl)
@@ -1180,6 +1216,74 @@
            (:decl/source-node field-decl)
            :java.field-node/to-csharp-field))
 
+(defn- enum-switch-arm-pattern [db enum-decl case-node]
+  (let [labels (child-nodes db (:db/id case-node) :case-label)]
+    (if (seq labels)
+      (->> labels
+           (map #(str (:decl/name enum-decl) "." (:node/name %)))
+           (str/join " or "))
+      "_")))
+
+(defn- enum-switch-case-arm [db enum-decl case-node]
+  (let [result-node (first (child-nodes db (:db/id case-node) :case-result))
+        result (emit-expression {:db db} result-node)
+        text (str (indent 4)
+                  (enum-switch-arm-pattern db enum-decl case-node)
+                  " => "
+                  (:text result)
+                  ",\n")]
+    (-> result
+        (with-text text)
+        (apply-rule case-node
+                    :java.switch-case-node/to-csharp-switch-arm
+                    :rule-app.status/success))))
+
+(defn- enum-switch-expression [db enum-decl switch-node cases]
+  (let [arms (mapv #(enum-switch-case-arm db enum-decl %) cases)
+        arms-result (merge-emits arms)
+        text (str "value switch\n"
+                  (indent 3) "{\n"
+                  (:text arms-result)
+                  (indent 3) "}")]
+    (-> arms-result
+        (with-text text)
+        (apply-rule switch-node
+                    :java.switch-expression-node/to-csharp-switch
+                    :rule-app.status/success))))
+
+(defn- enum-extension-method [db enum-decl method-decl shape]
+  (let [switch-result (enum-switch-expression db enum-decl (:switch shape) (:cases shape))
+        signature (str "public static "
+                       (type-name (:decl/return-type method-decl))
+                       " "
+                       (method-name method-decl)
+                       "(this "
+                       (:decl/name enum-decl)
+                       " value)")
+        text (str "        " signature "\n"
+                  "        {\n"
+                  (indent 3) "return " (:text switch-result) ";\n"
+                  "        }\n")]
+    (-> switch-result
+        (with-text text)
+        (apply-rule (:decl/source-node method-decl)
+                    :java.method-node/to-csharp-method
+                    :rule-app.status/success))))
+
+(defn- enum-extension-content [db enum-decl method-shapes]
+  (when (seq method-shapes)
+    (let [methods (mapv (fn [[method-decl shape]]
+                          (enum-extension-method db enum-decl method-decl shape))
+                        method-shapes)
+          method-result (merge-emits "\n" methods)
+          text (str "\n"
+                    "    public static class " (:decl/name enum-decl) "Extensions\n"
+                    "    {\n"
+                    (:text method-result)
+                    "\n"
+                    "    }\n")]
+      (with-text method-result text))))
+
 (defn- enum-content [db enum-decl]
   (let [namespace (csharp-namespace enum-decl)
         members (member-groups db enum-decl)
@@ -1190,6 +1294,16 @@
         enum-methods (->> (get members :decl.kind/method)
                           (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
                           vec)
+        method-shapes (->> enum-methods
+                           (map (fn [method-decl]
+                                  [method-decl (enum-switch-method-shape db method-decl)])))
+        supported-methods (->> method-shapes
+                               (filter second)
+                               vec)
+        unsupported-methods (->> method-shapes
+                                 (remove second)
+                                 (map first)
+                                 vec)
         constant-lines (mapv (fn [field-decl index]
                                (enum-constant-line field-decl (= index (dec (count constants)))))
                              constants
@@ -1197,22 +1311,29 @@
         unsupported-members (mapv #(unsupported-declaration %
                                                             :java.method-node/to-csharp-method
                                                             :emit.reason/unsupported-enum-method)
-                                  enum-methods)
-        body-metadata (merge-emits (concat constant-lines unsupported-members))
+                                  unsupported-methods)
+        body-metadata (merge-emits constant-lines)
         body (:text body-metadata)
+        enum-section (with-text body-metadata
+                       (str "    " (visibility (modifiers enum-decl)) " enum " (:decl/name enum-decl) "\n"
+                            "    {\n"
+                            body
+                            (when (seq body) "\n")
+                            "    }\n"))
+        extension-section (enum-extension-content db enum-decl supported-methods)
+        content-metadata (merge-emits (concat [enum-section]
+                                              (when extension-section
+                                                [extension-section])
+                                              unsupported-members))
         text (str "// <auto-generated>\n"
                   "// Generated by Vibeformer. Changes under target/csharp are disposable.\n"
                   "// </auto-generated>\n\n"
                   (when-not (str/blank? namespace)
                     (str "namespace " namespace "\n{\n"))
-                  "    " (visibility (modifiers enum-decl)) " enum " (:decl/name enum-decl) "\n"
-                  "    {\n"
-                  body
-                  (when (seq body) "\n")
-                  "    }\n"
+                  (:text content-metadata)
                   (when-not (str/blank? namespace)
                     "}\n"))]
-    (-> body-metadata
+    (-> content-metadata
         (with-text text)
         (apply-rule (:decl/source-node enum-decl)
                     :java.enum-node/to-csharp-enum
