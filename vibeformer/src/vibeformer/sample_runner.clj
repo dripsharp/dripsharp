@@ -1,5 +1,6 @@
 (ns vibeformer.sample-runner
-  (:require [clojure.java.shell :as sh]
+  (:require [clojure.edn :as edn]
+            [clojure.java.shell :as sh]
             [clojure.string :as str]
             [datomic.client.api :as d]
             [datomic.local :as dl]
@@ -276,6 +277,11 @@
              :coverage/failures (count (:failures coverage-report))}
       (seq allow-mode) (assoc :coverage/allow-mode allow-mode))))
 
+(defn- coverage-artifact [coverage-report coverage-opts]
+  (let [allow-mode (select-keys coverage-opts [:allow-stubs? :allow-unsupported?])]
+    (cond-> coverage-report
+      (seq allow-mode) (assoc :coverage/allow-mode allow-mode))))
+
 (defn- run-analysis-stages [sample paths opts]
   (with-empty-db
     (fn [conn]
@@ -309,7 +315,7 @@
                        (write-edn! (.resolve (:target/diagnostics paths) "inventory.edn")
                                   inventory-report)
                        (write-edn! (.resolve (:target/diagnostics paths) "coverage.edn")
-                                  coverage-report)
+                                  (coverage-artifact coverage-report coverage-opts))
                        (conj stages
                              {:stage :diagnostics/inventory
                               :status :ok
@@ -347,11 +353,16 @@
                  :ok? (not (stop-after-failure? stages))
                  :stages stages}]
      (write-edn! (.resolve (:target/diagnostics paths) "stages.edn") stages)
-     (let [emit-stage (some #(when (= :csharp/emit (:stage %)) %) stages)]
+     (let [emit-stage (some #(when (= :csharp/emit (:stage %)) %) stages)
+           coverage-stage (some #(when (= :coverage/check (:stage %)) %) stages)
+           coverage-allow-mode (:coverage/allow-mode coverage-stage)]
        (write-edn! (:target/provenance paths)
                   (cond-> {:sample/name (:sample/name sample)
                            :source/root (:source/root sample)
                            :target/csharp (slash-path (normalize-path (:target/csharp paths)))}
+                    (seq coverage-allow-mode)
+                    (assoc :coverage/allow-mode coverage-allow-mode)
+
                     (= :ok (:status emit-stage))
                     (assoc :status :generated
                            :csharp/files (:csharp/files emit-stage)
@@ -370,17 +381,34 @@
                            :reason :pipeline.stage/not-implemented))))
      result)))
 
+(defn- parse-cli-opts [value]
+  (if (nil? value)
+    {}
+    (let [opts (edn/read-string value)]
+      (when-not (map? opts)
+        (throw (ex-info "Sample runner options must be an EDN map."
+                        {:value value
+                         :parsed opts})))
+      opts)))
+
 (defn -main [& args]
-  (let [sample-name (or (first args) default-sample)
-        result (run-sample {:name sample-name})]
-    (println (str "Sample " (:sample/name result)
-                  " -> " (if (:ok? result) "ok" "failed")))
-    (doseq [{:keys [stage status] :as stage-result} (:stages result)]
-      (println (format "%-24s %s" (display-keyword stage) (display-keyword status)))
-      (when (= :coverage/check stage)
-        (println (format "  coverage ok: %s, failures: %s"
-                         (:coverage/ok? stage-result)
-                         (:coverage/failures stage-result)))))
-    (shutdown-agents)
-    (when-not (:ok? result)
-      (System/exit 1))))
+  (let [[sample-name opts-edn & extra] args]
+    (when (seq extra)
+      (throw (ex-info "Unexpected sample runner arguments."
+                      {:args args
+                       :expected "sample-name optionally followed by one EDN options map"})))
+    (let [sample-name (or sample-name default-sample)
+          result (run-sample (assoc (parse-cli-opts opts-edn) :name sample-name))]
+      (println (str "Sample " (:sample/name result)
+                    " -> " (if (:ok? result) "ok" "failed")))
+      (doseq [{:keys [stage status] :as stage-result} (:stages result)]
+        (println (format "%-24s %s" (display-keyword stage) (display-keyword status)))
+        (when (= :coverage/check stage)
+          (println (format "  coverage ok: %s, failures: %s"
+                           (:coverage/ok? stage-result)
+                           (:coverage/failures stage-result)))
+          (when-let [allow-mode (:coverage/allow-mode stage-result)]
+            (println (format "  coverage allow mode: %s" (pr-str allow-mode))))))
+      (shutdown-agents)
+      (when-not (:ok? result)
+        (System/exit 1)))))

@@ -9,6 +9,16 @@
 (def version (format "1.0.%s" (b/git-count-revs nil)))
 (def class-dir "target/classes")
 (def base-test-java-opts ["-Dslf4j.internal.verbosity=WARN"])
+(def default-sample "java-word-count")
+
+(def default-sample-runner-opts
+  {default-sample {:coverage/allow-unsupported? true}})
+
+(def sample-runner-option-keys
+  [:coverage/allow-stubs?
+   :coverage/allow-unsupported?
+   :allow-stubs?
+   :allow-unsupported?])
 
 (defn- test-java-opts []
   (cond-> base-test-java-opts
@@ -36,12 +46,16 @@
     clojure -T:build sample :name my-sample"
   [opts]
   (let [basis (b/create-basis {:aliases [:sample-runner]})
-        sample-name (or (:name opts) "java-word-count")
+        sample-name (or (:name opts) default-sample)
+        runner-opts (merge (get default-sample-runner-opts sample-name)
+                           (select-keys opts sample-runner-option-keys))
+        main-args (cond-> ["-m" "vibeformer.sample-runner" (str sample-name)]
+                    (seq runner-opts) (conj (pr-str runner-opts)))
         cmds (b/java-command
               {:basis basis
                :java-opts (test-java-opts)
                :main 'clojure.main
-               :main-args ["-m" "vibeformer.sample-runner" (str sample-name)]})
+               :main-args main-args})
         {:keys [exit]} (b/process cmds)]
     (when-not (zero? exit)
       (throw (ex-info "Sample run failed." {:sample/name sample-name

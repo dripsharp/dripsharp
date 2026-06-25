@@ -157,11 +157,22 @@ public final class CheckedExceptionCase {
                                           :coverage/allow-unsupported? true})
         target (.resolve root "sample-projects/checked/target")
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
         coverage-stage (some #(when (= :coverage/check (:stage %)) %) stages)]
     (is (:ok? result))
     (is (= :ok (:status coverage-stage)))
     (is (= {:allow-unsupported? true} (:coverage/allow-mode coverage-stage)))
+    (is (= {:allow-unsupported? true} (:coverage/allow-mode coverage)))
+    (is (= {:allow-unsupported? true} (:coverage/allow-mode provenance)))
     (is (some #(= :csharp/emit (:stage %)) stages))))
+
+(deftest sample-runner-cli-parses-edn-options
+  (is (= {:coverage/allow-unsupported? true}
+         (#'sample-runner/parse-cli-opts "{:coverage/allow-unsupported? true}")))
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                        #"EDN map"
+                        (#'sample-runner/parse-cli-opts "[:not :a :map]"))))
 
 (deftest captures-dotnet-build-diagnostics
   (let [root (sample-checkout)
