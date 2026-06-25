@@ -203,6 +203,16 @@ public enum Operator {
 }
 ")
 
+(def record-fixture
+  "package com.acme.parser;
+
+public record Span(int charIndex, int length) {
+  public Span move(int amount) {
+    return new Span(charIndex + amount, length);
+  }
+}
+")
+
 (def enum-call-demo-fixture
   "package com.acme.tokens;
 
@@ -690,6 +700,49 @@ public final class Demo {
                              [?ref :ref/kind :ref.kind/constructor-call]
                              [?ref :ref/to-type ?type]
                              [?type :type/id ?type-id]]
+                           db)))))))))
+
+(deftest extracts-java-record-component-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/parser/Span.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path record-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["Span" :java.node/record :decl.kind/record :java.feature/record]}
+                 (set (d/q '[:find ?name ?node-kind ?decl-kind ?feature-kind
+                             :where
+                             [?node :node/kind :java.node/record]
+                             [?node :node/name ?name]
+                             [?node :node/kind ?node-kind]
+                             [?decl :decl/source-node ?node]
+                             [?decl :decl/kind ?decl-kind]
+                             [?feature :feature/node ?node]
+                             [?feature :feature/kind ?feature-kind]]
+                           db))))
+          (is (= #{["charIndex" :java.node/record-component :decl.kind/record-component "int"]
+                   ["length" :java.node/record-component :decl.kind/record-component "int"]}
+                 (set (d/q '[:find ?name ?node-kind ?decl-kind ?type-id
+                             :where
+                             [?node :node/kind :java.node/record-component]
+                             [?node :node/name ?name]
+                             [?node :node/kind ?node-kind]
+                             [?decl :decl/source-node ?node]
+                             [?decl :decl/kind ?decl-kind]
+                             [?decl :decl/type ?type]
+                             [?type :type/id ?type-id]]
+                           db))))
+          (is (= #{["move"]}
+                 (set (d/q '[:find ?name
+                             :where
+                             [?node :node/kind :java.node/method]
+                             [?node :node/name ?name]]
                            db)))))))))
 
 (deftest canonicalizes-method-call-source-nodes

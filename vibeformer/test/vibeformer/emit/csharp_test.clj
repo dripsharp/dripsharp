@@ -194,6 +194,20 @@ public enum Operator {
 }
 ")
 
+(def record-fixture
+  "package com.example.parser;
+
+public record Span(int charIndex, int length) {
+  public Span move(int amount) {
+    return new Span(charIndex + amount, length);
+  }
+
+  public boolean contains(Span other) {
+    return charIndex <= other.charIndex && other.charIndex + other.length <= charIndex + length;
+  }
+}
+")
+
 (def default-interface-fixture
   "package com.example.value;
 
@@ -617,6 +631,44 @@ public final class Demo {
           (is (= :java.node/enum (:source/kind enum-entry)))
           (is (some? constant-entry))
           (is (= :java.node/field (:source/kind constant-entry))))))))
+
+(deftest emits-java-records-from-components
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/parser/Span.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path record-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/parser/Span.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "public sealed record Span(int charIndex, int length)"))
+          (is (not (str/includes? content "charIndex()")))
+          (is (not (str/includes? content "length()")))
+          (is (str/includes? content "public Span move(int amount)"))
+          (is (str/includes? content "return new Span(this.charIndex + amount, this.length);"))
+          (is (str/includes? content "return this.charIndex <= other.charIndex && other.charIndex + other.length <= this.charIndex + this.length;"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (every? rule-ids
+                      [:java.record-node/to-csharp-record
+                       :java.record-component-node/to-csharp-parameter
+                       :java.method-node/to-csharp-method
+                       :java.object-creation-node/to-csharp-new
+                       :java.field-read-node/to-csharp-member])))))))
 
 (deftest emits-token-style-enum-switch-methods
   (with-empty-db

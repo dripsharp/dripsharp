@@ -5,7 +5,7 @@
            (java.security MessageDigest)
            (spoon Launcher)
            (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtVariableRead CtVariableWrite CtYieldStatement)
-           (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtType)
+           (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtRecord CtRecordComponent CtType)
            (spoon.reflect.reference CtExecutableReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
 
@@ -154,6 +154,7 @@
 (defn- node-kind [type]
   (cond
     (instance? CtAnnotationType type) :java.node/annotation
+    (instance? CtRecord type) :java.node/record
     (instance? CtEnum type) :java.node/enum
     (instance? CtInterface type) :java.node/interface
     (instance? CtClass type) :java.node/class
@@ -162,6 +163,7 @@
 (defn- decl-kind [type]
   (cond
     (instance? CtAnnotationType type) :decl.kind/annotation
+    (instance? CtRecord type) :decl.kind/record
     (instance? CtEnum type) :decl.kind/enum
     (instance? CtInterface type) :decl.kind/interface
     (instance? CtClass type) :decl.kind/class
@@ -170,6 +172,7 @@
 (defn- type-feature-kind [type]
   (cond
     (instance? CtAnnotationType type) :java.feature/annotation
+    (instance? CtRecord type) :java.feature/record
     (instance? CtEnum type) :java.feature/enum
     (instance? CtInterface type) :java.feature/interface
     :else :java.feature/class))
@@ -194,6 +197,9 @@
 
 (defn- field-node-id [file-id ^CtField field]
   (str file-id ":field:" (qname (.getDeclaringType field)) "#" (.getSimpleName field)))
+
+(defn- record-component-node-id [file-id record-type ^CtRecordComponent component]
+  (str file-id ":record-component:" (qname record-type) "#" (.getSimpleName component)))
 
 (defn- executable-signature [^CtExecutable executable]
   (cond
@@ -467,6 +473,26 @@
        [(supported-feature (str node-id ":feature:package-private-member")
                            :java.feature/package-private-member
                            node-id)]))))
+
+(defn- record-component-facts [file-id parent-node-id ordinal record-type ^CtRecordComponent component]
+  (let [node-id (record-component-node-id file-id record-type component)
+        decl-id (str "java:" (qname record-type) "#component:" (.getSimpleName component))
+        component-type (.getType component)]
+    (concat
+     [(node-fact node-id :java.node/record-component (.getSimpleName component) file-id ordinal component
+                 :parent parent-node-id)
+      (cond-> {:db/id decl-id
+               :decl/id decl-id
+               :decl/lang lang
+               :decl/kind :decl.kind/record-component
+               :decl/name (.getSimpleName component)
+               :decl/qualified-name (str (qname record-type) "." (.getSimpleName component))
+               :decl/source-node node-id}
+        component-type (assoc :decl/type (type-id component-type)))
+      (supported-feature (str node-id ":feature:record-component")
+                         :java.feature/record-component
+                         node-id)]
+     (type-ref-facts node-id :component-type component-type (.getSimpleName component)))))
 
 (defn- executable-feature-facts [node-id executable]
   (concat
@@ -840,6 +866,15 @@
     (.getConstructors ^CtClass type)
     []))
 
+(defn- record-components [type]
+  (if (instance? CtRecord type)
+    (vec (.getRecordComponents ^CtRecord type))
+    []))
+
+(defn- record-accessor-method? [component-names ^CtMethod method]
+  (and (contains? component-names (.getSimpleName method))
+       (empty? (.getParameters method))))
+
 (defn- file-facts [file-record]
   (let [file-id (:file/id file-record)
         project-root (get-in file-record [:file/project :project/root])
@@ -848,12 +883,23 @@
     (mapcat
      (fn [type-ordinal type]
        (let [type-node-id (type-node-id file-id type)
-             fields (sort-by #(source-order-key % (.getSimpleName %)) (.getFields type))
+             record? (instance? CtRecord type)
+             components (sort-by #(source-order-key % (.getSimpleName %)) (record-components type))
+             component-names (set (map #(.getSimpleName %) components))
+             fields (cond->> (.getFields type)
+                      record? (remove #(contains? component-names (.getSimpleName %)))
+                      true (sort-by #(source-order-key % (.getSimpleName %))))
              constructors (sort-by #(.getSignature %) (constructors type))
-             methods (sort-by #(.getSignature %) (.getMethods type))
+             methods (cond->> (.getMethods type)
+                       record? (remove #(record-accessor-method? component-names %))
+                       true (sort-by #(.getSignature %)))
              executables (concat constructors methods)]
          (concat
           (type-facts file-id type-ordinal type)
+          (mapcat (fn [ordinal component]
+                    (record-component-facts file-id type-node-id ordinal type component))
+                  (range)
+                  components)
           (mapcat (fn [ordinal field] (field-facts file-id type-node-id ordinal field))
                   (range)
                   fields)

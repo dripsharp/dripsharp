@@ -129,9 +129,11 @@
 	             :java.node/interface
              :java.node/literal
 	             :java.node/local-variable
-	             :java.node/method
+             :java.node/method
 	             :java.node/method-call
              :java.node/object-creation
+             :java.node/record
+             :java.node/record-component
 	             :java.node/return-statement
              :java.node/statement
              :java.node/switch-case
@@ -148,6 +150,8 @@
              :java.feature/generic-method
              :java.feature/interface
              :java.feature/enum
+             :java.feature/record
+             :java.feature/record-component
              :java.feature/package-private-member
              :java.feature/checked-exception
              :java.feature/synchronized-method
@@ -189,6 +193,8 @@
 	             :java.method-node/to-csharp-method
 	             :java.method-call-node/to-csharp-invocation
              :java.object-creation-node/to-csharp-new
+             :java.record-node/to-csharp-record
+             :java.record-component-node/to-csharp-parameter
              :java.return-statement-node/to-csharp-return
              :java.switch-case-node/to-csharp-switch-arm
              :java.switch-expression-node/to-csharp-switch
@@ -203,6 +209,8 @@
              :java.checked-exception/to-csharp-unchecked-signature
              :java.enum-feature/to-csharp-enum
              :java.interface-feature/to-csharp-interface
+             :java.record-feature/to-csharp-record
+             :java.record-component-feature/to-csharp-parameter
              :java.package-private-member/to-csharp-internal}
            (set (map :rule/id
                      (remove #(contains? special-api-rules (:rule/id %))

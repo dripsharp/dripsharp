@@ -23,6 +23,14 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/enum
     :rule/status implemented-status}
+   {:rule/id :java.record-node/to-csharp-record
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/record
+    :rule/status implemented-status}
+   {:rule/id :java.record-component-node/to-csharp-parameter
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/record-component
+    :rule/status implemented-status}
    {:rule/id :java.assignment-node/to-csharp-assignment
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/assignment
@@ -178,6 +186,16 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/enum
     :rule/output-feature :csharp.feature/enum
+    :rule/status implemented-status}
+   {:rule/id :java.record-feature/to-csharp-record
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/record
+    :rule/output-feature :csharp.feature/record
+    :rule/status implemented-status}
+   {:rule/id :java.record-component-feature/to-csharp-parameter
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/record-component
+    :rule/output-feature :csharp.feature/record-parameter
     :rule/status implemented-status}
    {:rule/id :java.generic-method-feature/to-csharp-generic-method
     :rule/source-lang :lang/java
