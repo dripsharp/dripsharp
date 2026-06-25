@@ -412,9 +412,6 @@
      (mapcat #(type-ref-facts node-id :throws %) (.getThrownTypes executable))
      (executable-feature-facts node-id executable))))
 
-(defn- invocation-node-id [file-id parent-node-id ordinal ^CtInvocation invocation]
-  (str file-id ":method-call:" parent-node-id ":" ordinal ":" (.getSimpleName (.getExecutable invocation))))
-
 (defn- constructor-invocation? [^CtInvocation invocation]
   (= "<init>" (.getSimpleName (.getExecutable invocation))))
 
@@ -467,14 +464,6 @@
         owner-type (assoc :ref/owner-type (type-id owner-type))
         (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))]
      (invocation-feature-facts node-id invocation))))
-
-(defn- invocation-facts [file-id parent-node-id ordinal ^CtInvocation invocation]
-  (let [node-id (invocation-node-id file-id parent-node-id ordinal invocation)
-        executable-ref (.getExecutable invocation)]
-    (concat
-     [(node-fact node-id :java.node/method-call (.getSimpleName executable-ref) file-id ordinal invocation
-                 :parent parent-node-id)]
-     (invocation-reference-facts node-id invocation))))
 
 (defn- targeted-expression-target [expression]
   (when (instance? CtTargetedExpression expression)
@@ -607,16 +596,6 @@
             (range)
             (if body (.getStatements body) []))))
 
-(defn- executable-invocation-facts [file-id executable]
-  (let [parent-node-id (executable-node-id file-id executable)
-        invocations (->> (.getElements executable (TypeFilter. CtInvocation))
-                         (filter valid-position)
-                         (remove constructor-invocation?))]
-    (mapcat (fn [ordinal invocation]
-              (invocation-facts file-id parent-node-id ordinal invocation))
-            (range)
-            invocations)))
-
 (defn- expression-feature-facts [file-id executable]
   (let [parent-node-id (executable-node-id file-id executable)]
     (concat
@@ -659,7 +638,6 @@
                   (range)
                   executables)
           (mapcat #(executable-body-facts file-id %) executables)
-          (mapcat #(executable-invocation-facts file-id %) executables)
           (mapcat #(expression-feature-facts file-id %) executables))))
      (range)
      types)))

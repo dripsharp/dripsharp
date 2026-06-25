@@ -42,6 +42,26 @@ public final class Greeter extends Base implements GreeterApi {
 }
 ")
 
+(def canonical-method-call-fixture
+  "package com.acme.calls;
+
+public final class Calls {
+  private String name;
+
+  public void chain() {
+    name.toUpperCase().trim();
+  }
+
+  public long streamCount() {
+    return java.util.Arrays.asList(name.trim()).stream().count();
+  }
+
+  public Class<?> reflected() throws Exception {
+    return Class.forName(name);
+  }
+}
+")
+
 (defn- with-empty-db [f]
   (let [system (str "vibeformer-java-spoon-test-" (UUID/randomUUID))
         db-name (str "facts-" (UUID/randomUUID))
@@ -204,3 +224,63 @@ public final class Greeter extends Base implements GreeterApi {
           (testing "unchanged reruns keep logical fact counts stable"
             (java-spoon/ingest! conn {:project/id "fixture"})
             (is (= counts (entity-counts (d/db conn))))))))))
+
+(deftest canonicalizes-method-call-source-nodes
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/calls/Calls.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path canonical-method-call-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              expected-call-counts #{["asList" 1]
+                                     ["count" 1]
+                                     ["forName" 1]
+                                     ["stream" 1]
+                                     ["toUpperCase" 1]
+                                     ["trim" 2]}]
+          (testing "each source invocation has one canonical method-call node"
+            (is (= expected-call-counts
+                   (set (d/q '[:find ?name (count ?node)
+                               :where
+                               [?node :node/kind :java.node/method-call]
+                               [?node :node/name ?name]]
+                             db))))
+            (is (empty?
+                 (d/q '[:find ?node-id ?name
+                        :where
+                        [?node :node/kind :java.node/method-call]
+                        [?node :node/id ?node-id]
+                        [?node :node/name ?name]
+                        (not [?node :node/role])]
+                      db))))
+
+          (testing "method-call refs attach to the canonical structural nodes"
+            (is (= expected-call-counts
+                   (set (d/q '[:find ?name (count ?ref)
+                               :where
+                               [?node :node/kind :java.node/method-call]
+                               [?node :node/name ?name]
+                               [?ref :ref/from-node ?node]
+                               [?ref :ref/kind :ref.kind/method-call]]
+                             db)))))
+
+          (testing "invocation feature facts attach to canonical method-call nodes"
+            (is (set/subset?
+                 #{[:java.feature/reflection "forName" :java.node/method-call]
+                   [:java.feature/stream-api "stream" :java.node/method-call]}
+                 (set (d/q '[:find ?kind ?node-name ?node-kind
+                             :where
+                             [?feature :feature/kind ?kind]
+                             [(contains? #{:java.feature/reflection
+                                           :java.feature/stream-api}
+                                          ?kind)]
+                             [?feature :feature/node ?node]
+                             [?node :node/name ?node-name]
+                             [?node :node/kind ?node-kind]]
+                           db))))))))))
