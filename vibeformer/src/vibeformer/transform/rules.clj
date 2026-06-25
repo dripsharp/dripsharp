@@ -139,6 +139,11 @@
     :rule/input-feature :java.api/files-read-string
     :rule/output-feature :csharp.api/file-read-all-text
     :rule/status implemented-status}
+   {:rule/id :java.integer-to-string/to-csharp-convert-to-string
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/integer-to-string
+    :rule/output-feature :csharp.api/convert-to-string
+    :rule/status implemented-status}
    {:rule/id :java.statement-node/to-csharp-stub
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/statement
@@ -172,9 +177,14 @@
     :rule/input-feature :java.feature/package-private-member
     :rule/output-feature :csharp.feature/internal-member
     :rule/status implemented-status}
-   {:rule/id :java.checked-exception/unsupported
+   {:rule/id :java.checked-exception/to-csharp-unchecked-signature
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/checked-exception
+    :rule/output-feature :csharp.feature/unchecked-exception-signature
+    :rule/status implemented-status}
+   {:rule/id :java.synchronized-method/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/synchronized-method
     :rule/status unsupported-status}])
 
 (defn- require-key [rule k]

@@ -12,13 +12,15 @@
 (def default-sample "java-word-count")
 
 (def default-sample-runner-opts
-  {default-sample {:coverage/allow-unsupported? true}})
+  {})
 
 (def sample-runner-option-keys
   [:coverage/allow-stubs?
    :coverage/allow-unsupported?
    :allow-stubs?
-   :allow-unsupported?])
+   :allow-unsupported?
+   :csharp/allow-diagnostics?
+   :allow-csharp-diagnostics?])
 
 (defn sample-runner-opts
   "Return the options forwarded from the build sample task to sample-runner."

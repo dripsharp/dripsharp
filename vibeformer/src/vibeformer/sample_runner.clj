@@ -282,6 +282,32 @@
     (cond-> coverage-report
       (seq allow-mode) (assoc :coverage/allow-mode allow-mode))))
 
+(defn- csharp-allow-diagnostics? [opts]
+  (boolean (or (:csharp/allow-diagnostics? opts)
+               (:allow-csharp-diagnostics? opts))))
+
+(defn- error-diagnostics [diagnostics]
+  (->> diagnostics
+       (filter #(= :diagnostic.severity/error (:diagnostic/severity %)))
+       vec))
+
+(defn- csharp-emit-stage [conn paths opts]
+  (let [emit-result (csharp/emit! (d/db conn) (:target/csharp paths))
+        project-result (write-csharp-project! (:sample opts) paths emit-result)
+        errors (error-diagnostics (:csharp/diagnostics emit-result))
+        allow? (csharp-allow-diagnostics? opts)]
+    (cond-> (merge emit-result project-result)
+      (seq errors)
+      (assoc :csharp/error-diagnostics errors
+             :csharp/error-diagnostics-count (count errors))
+
+      (and (seq errors) allow?)
+      (assoc :csharp/allow-mode {:allow-diagnostics? true})
+
+      (and (seq errors) (not allow?))
+      (assoc :status :failed
+             :reason :csharp/emit-diagnostics))))
+
 (defn- run-analysis-stages [sample paths opts]
   (with-empty-db
     (fn [conn]
@@ -324,9 +350,7 @@
             stages (cond-> stages
                      (not (stop-after-failure? stages))
                      (run-stage sample :csharp/emit
-                                #(let [emit-result (csharp/emit! (d/db conn) (:target/csharp paths))]
-                                   (merge emit-result
-                                          (write-csharp-project! sample paths emit-result)))))
+                                #(csharp-emit-stage conn paths (assoc opts :sample sample))))
             stages (cond-> stages
                      (not (stop-after-failure? stages))
                      (run-stage sample :dotnet/build
@@ -363,20 +387,24 @@
                     (seq coverage-allow-mode)
                     (assoc :coverage/allow-mode coverage-allow-mode)
 
-                    (= :ok (:status emit-stage))
-                    (assoc :status :generated
+                    emit-stage
+                    (assoc :status (if (= :ok (:status emit-stage)) :generated :failed)
+                           :reason (:reason emit-stage)
                            :csharp/files (:csharp/files emit-stage)
                            :csharp/files-written (:csharp/files-written emit-stage)
                            :csharp/rule-applications (:csharp/rule-applications emit-stage)
                            :csharp/provenance (:csharp/provenance emit-stage)
                            :csharp/diagnostics (:csharp/diagnostics emit-stage)
+                           :csharp/error-diagnostics (:csharp/error-diagnostics emit-stage)
+                           :csharp/error-diagnostics-count (:csharp/error-diagnostics-count emit-stage)
+                           :csharp/allow-mode (:csharp/allow-mode emit-stage)
                            :csharp/helpers (:csharp/helpers emit-stage)
                            :csharp/usings (:csharp/usings emit-stage)
                            :csharp/project (:csharp/project emit-stage)
                            :csharp/project-target-framework (:csharp/project-target-framework emit-stage)
                            :csharp/project-files (:csharp/project-files emit-stage))
 
-                    (not= :ok (:status emit-stage))
+                    (nil? emit-stage)
                     (assoc :status :skipped
                            :reason :pipeline.stage/not-implemented))))
      result)))
@@ -408,7 +436,10 @@
                            (:coverage/ok? stage-result)
                            (:coverage/failures stage-result)))
           (when-let [allow-mode (:coverage/allow-mode stage-result)]
-            (println (format "  coverage allow mode: %s" (pr-str allow-mode))))))
+            (println (format "  coverage allow mode: %s" (pr-str allow-mode)))))
+        (when (and (= :csharp/emit stage) (:csharp/allow-mode stage-result))
+          (println (format "  csharp allow mode: %s"
+                           (pr-str (:csharp/allow-mode stage-result))))))
       (shutdown-agents)
       (when-not (:ok? result)
         (System/exit 1)))))

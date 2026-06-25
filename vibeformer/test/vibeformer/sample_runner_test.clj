@@ -27,12 +27,22 @@ public final class LambdaCase {
 }
 ")
 
-(def checked-exception-fixture
+(def synchronized-method-fixture
   "package com.example;
 
-public final class CheckedExceptionCase {
-  public static void main(String[] args) throws java.io.IOException {
+public final class SynchronizedCase {
+  public synchronized void run() {
     System.out.println(\"hello\");
+  }
+}
+")
+
+(def unsupported-expression-fixture
+  "package com.example;
+
+public final class UnsupportedExpressionCase {
+  public static String call(String text) {
+    return text.substring(1);
   }
 }
 ")
@@ -62,8 +72,14 @@ public final class CheckedExceptionCase {
 
 (defn- coverage-allow-checkout []
   (let [root (temp-root)]
-    (write-file! root "sample-projects/checked/source/src/main/java/com/example/CheckedExceptionCase.java"
-                 checked-exception-fixture)
+    (write-file! root "sample-projects/synchronized/source/src/main/java/com/example/SynchronizedCase.java"
+                 synchronized-method-fixture)
+    root))
+
+(defn- csharp-diagnostic-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/unsupported-expression/source/src/main/java/com/example/UnsupportedExpressionCase.java"
+                 unsupported-expression-fixture)
     root))
 
 (deftest discovers-samples-with-source-roots
@@ -152,10 +168,10 @@ public final class CheckedExceptionCase {
 (deftest explicit-coverage-allow-mode-is-recorded
   (let [root (coverage-allow-checkout)
         result (sample-runner/run-sample {:project-root root
-                                          :name "checked"
+                                          :name "synchronized"
                                           :dotnet/enabled? false
                                           :coverage/allow-unsupported? true})
-        target (.resolve root "sample-projects/checked/target")
+        target (.resolve root "sample-projects/synchronized/target")
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
         coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
         provenance (read-edn (.resolve target "provenance.edn"))
@@ -166,6 +182,45 @@ public final class CheckedExceptionCase {
     (is (= {:allow-unsupported? true} (:coverage/allow-mode coverage)))
     (is (= {:allow-unsupported? true} (:coverage/allow-mode provenance)))
     (is (some #(= :csharp/emit (:stage %)) stages))))
+
+(deftest csharp-error-diagnostics-stop-before-dotnet-build
+  (let [root (csharp-diagnostic-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "unsupported-expression"})
+        target (.resolve root "sample-projects/unsupported-expression/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        csharp-stage (some #(when (= :csharp/emit (:stage %)) %) stages)
+        generated (.resolve target "csharp/com/example/UnsupportedExpressionCase.cs")
+        content (slurp (str generated))]
+    (is (false? (:ok? result)))
+    (is (= :failed (:status csharp-stage)))
+    (is (= :csharp/emit-diagnostics (:reason csharp-stage)))
+    (is (= 1 (:csharp/error-diagnostics-count csharp-stage)))
+    (is (not-any? #(= :dotnet/build (:stage %)) stages))
+    (is (= :failed (:status provenance)))
+    (is (= :csharp/emit-diagnostics (:reason provenance)))
+    (is (= 1 (:csharp/error-diagnostics-count provenance)))
+    (is (str/includes? content "default! /* Unsupported Java node method-call */"))
+    (is (not (str/includes? content "Unsupported Java node method-call\");;")))))
+
+(deftest explicit-csharp-diagnostic-allow-mode-is-recorded
+  (let [root (csharp-diagnostic-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "unsupported-expression"
+                                          :dotnet/enabled? false
+                                          :csharp/allow-diagnostics? true})
+        target (.resolve root "sample-projects/unsupported-expression/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        csharp-stage (some #(when (= :csharp/emit (:stage %)) %) stages)
+        dotnet-stage (some #(when (= :dotnet/build (:stage %)) %) stages)]
+    (is (:ok? result))
+    (is (= :ok (:status csharp-stage)))
+    (is (= {:allow-diagnostics? true} (:csharp/allow-mode csharp-stage)))
+    (is (= 1 (:csharp/error-diagnostics-count csharp-stage)))
+    (is (= :skipped (:status dotnet-stage)))
+    (is (= {:allow-diagnostics? true} (:csharp/allow-mode provenance)))))
 
 (deftest sample-runner-cli-parses-edn-options
   (is (= {:coverage/allow-unsupported? true}

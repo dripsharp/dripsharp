@@ -41,6 +41,52 @@ public final class UnsupportedCall {
 }
 ")
 
+(def integer-to-string-fixture
+  "package com.example.tools;
+
+public final class IntegerDisplay {
+  static String show(int value) {
+    return Integer.toString(value);
+  }
+}
+")
+
+(def integer-to-string-overload-fixture
+  "package com.example.tools;
+
+public final class IntegerDisplay {
+  static String show(int value) {
+    return Integer.toString(value, 16);
+  }
+}
+")
+
+(def default-interface-fixture
+  "package com.example.value;
+
+public interface Value {
+  <T> T accept(ValueConverter<T> converter);
+}
+
+public interface ValueConverter<T> {
+  T convertString(StringValue value);
+
+  default T convert(Object value) {
+    if (value instanceof Value v) {
+      return v.accept(this);
+    }
+
+    throw new IllegalArgumentException(\"Unsupported value: \" + value);
+  }
+}
+
+public final class StringValue implements Value {
+  public <T> T accept(ValueConverter<T> converter) {
+    return converter.convertString(this);
+  }
+}
+")
+
 (def interface-generic-fixture
   "package com.example.value;
 
@@ -122,6 +168,44 @@ public final class Name {
 public final class Thrower {
   public static void fail(Object value) {
     throw new IllegalArgumentException(\"Unsupported value: \" + value);
+  }
+}
+")
+
+(def local-call-formatter-fixture
+  "package com.example.localcalls;
+
+public interface Formatter<T> {
+  T convert(Name value);
+}
+")
+
+(def local-call-display-fixture
+  "package com.example.localcalls;
+
+public final class DisplayFormatter implements Formatter<String> {
+  public String convert(Name value) {
+    return value.text();
+  }
+}
+")
+
+(def local-call-name-fixture
+  "package com.example.localcalls;
+
+public final class Name {
+  public String text() {
+    return \"pkl\";
+  }
+}
+")
+
+(def local-call-demo-fixture
+  "package com.example.localcalls;
+
+public final class Demo {
+  public static String run(Formatter<String> formatter, Name name) {
+    return formatter.convert(name);
   }
 }
 ")
@@ -277,6 +361,7 @@ public final class Thrower {
             (doseq [snippet ["namespace com.example.tools"
                              "public sealed class Counter"
                              "private static readonly string EMPTY = \"\";"
+                             "private int ignored;"
                              "private Counter()"
                              "public static void Main(string[] args)"
                              "internal static int countWords(string text)"
@@ -287,8 +372,15 @@ public final class Thrower {
             (is (seq (:csharp/rule-applications result)))
             (is (seq (:csharp/provenance result)))
             (is (empty? (:csharp/diagnostics result))))
-          (testing "non-static instance fields are outside the initial declaration subset"
-            (is (not (str/includes? content "ignored")))))))))
+          (testing "instance field declarations keep field provenance"
+            (let [field-entry (some #(when (and (= :java.field-node/to-csharp-field
+                                                  (get-in % [:rule :rule/id]))
+                                             (= "ignored" (:source/name %)))
+                                      %)
+                                    (:csharp/provenance result))]
+              (is (some? field-entry))
+              (is (= :rule.status/implemented
+                     (get-in field-entry [:rule :rule/status]))))))))))
 
 (deftest emits-java-interfaces-generic-signatures-and-implements-clauses
   (with-empty-db
@@ -341,6 +433,55 @@ public final class Thrower {
                      (get-in interface-entry [:rule :rule/status])))
               (is (= :java.node/interface (:source/kind interface-entry))))))))))
 
+(deftest emits-default-interface-method-bodies
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/value/Value.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path default-interface-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              converter-file (.resolve target "com/example/value/ValueConverter.cs")
+              converter-content (slurp (str converter-file))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))
+              method-entry (some #(when (and (= :java.method-node/to-csharp-method
+                                                (get-in % [:rule :rule/id]))
+                                             (= "convert" (:source/name %)))
+                                    %)
+                                  (:csharp/provenance result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile converter-file (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["T convert(object value)"
+                           "if (value is Value v)"
+                           "return v.accept(this);"
+                           "throw new ArgumentException(\"Unsupported value: \" + value);"]]
+            (is (str/includes? converter-content snippet)))
+          (is (not (str/includes? converter-content "Default Java interface method body is not emitted yet")))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (every? rule-ids
+                      [:java.method-node/to-csharp-method
+                       :java.if-statement-node/to-csharp-if
+                       :java.type-pattern-node/to-csharp-pattern
+                       :java.return-statement-node/to-csharp-return
+                       :java.method-call-node/to-csharp-invocation
+                       :java.throw-statement-node/to-csharp-throw
+                       :java.object-creation-node/to-csharp-new]))
+          (is (some? method-entry))
+          (is (= :rule.status/implemented
+                 (get-in method-entry [:rule :rule/status])))
+          (is (= :java.node/method (:source/kind method-entry))))))))
+
 (deftest emits-this-and-field-assignment-statements
   (with-empty-db
     (fn [conn]
@@ -365,11 +506,13 @@ public final class Thrower {
                                  (:csharp/rule-applications result)))]
           (is (= {:ok? true :failures []} coverage))
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "private string value;"))
           (is (str/includes? content "this.value = value;"))
           (is (str/includes? content "return this.value;"))
           (is (empty? (:csharp/diagnostics result)))
           (is (every? rule-ids
-                      [:java.assignment-node/to-csharp-assignment
+                      [:java.field-node/to-csharp-field
+                       :java.assignment-node/to-csharp-assignment
                        :java.field-write-node/to-csharp-member
                        :java.field-read-node/to-csharp-member
                        :java.this-node/to-csharp-this]))
@@ -501,6 +644,118 @@ public final class Thrower {
               (is (= :rule.status/implemented
                      (get-in entry [:rule :rule/status])))
               (is (= :java.node/throw-statement (:source/kind entry))))))))))
+
+(deftest emits-project-local-method-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root "src/main/java/com/example/localcalls/Formatter.java" local-call-formatter-fixture)
+        (write-file! source-root "src/main/java/com/example/localcalls/DisplayFormatter.java" local-call-display-fixture)
+        (write-file! source-root "src/main/java/com/example/localcalls/Name.java" local-call-name-fixture)
+        (write-file! source-root "src/main/java/com/example/localcalls/Demo.java" local-call-demo-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              display-content (slurp (str (.resolve target "com/example/localcalls/DisplayFormatter.cs")))
+              demo-content (slurp (str (.resolve target "com/example/localcalls/Demo.cs")))
+              call-provenance (filter #(= :java.method-call-node/to-csharp-invocation
+                                          (get-in % [:rule :rule/id]))
+                                      (:csharp/provenance result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (str/includes? display-content "return value.text();"))
+          (is (str/includes? demo-content "return formatter.convert(name);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (seq call-provenance))
+          (is (every? #(= :rule.status/implemented
+                          (get-in % [:rule :rule/status]))
+                      call-provenance)))))))
+
+(deftest emits-integer-to-string-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/tools/IntegerDisplay.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path integer-to-string-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/tools/IntegerDisplay.cs")
+              content (slurp (str generated))
+              call-ref (ffirst
+                        (d/q '[:find (pull ?ref [:ref/name
+                                                 :ref/resolved?
+                                                 {:ref/owner-type [:type/name]}])
+                               :where
+                               [?node :node/name "toString"]
+                               [?node :node/kind :java.node/method-call]
+                               [?ref :ref/from-node ?node]
+                               [?ref :ref/kind :ref.kind/method-call]]
+                             db))
+              entry (some #(when (= :java.integer-to-string/to-csharp-convert-to-string
+                                    (get-in % [:rule :rule/id]))
+                             %)
+                          (:csharp/provenance result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (= {:ref/name "toString"
+                  :ref/resolved? true
+                  :ref/owner-type {:type/name "java.lang.Integer"}}
+                 call-ref))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return System.Convert.ToString(value);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (some? entry))
+          (is (= :rule.status/implemented
+                 (get-in entry [:rule :rule/status])))
+          (is (= :java.api/integer-to-string
+                 (get-in entry [:rule :rule/input-feature]))))))))
+
+(deftest unsupported-integer-to-string-overloads-produce-diagnostics
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/tools/IntegerDisplay.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path integer-to-string-overload-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [result (csharp/emit! (d/db conn) target)
+              generated (.resolve target "com/example/tools/IntegerDisplay.cs")
+              content (slurp (str generated))
+              diagnostic (first (:csharp/diagnostics result))
+              failed-app (some #(when (= :rule-app.status/failed (:rule-app/status %)) %)
+                               (:csharp/rule-applications result))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "Unsupported Java node method-call"))
+          (is (= :java.integer-to-string/to-csharp-convert-to-string (:rule/id diagnostic)))
+          (is (= :emit.reason/unsupported-overload
+                 (get-in diagnostic [:rule/context :reason])))
+          (is (= 2 (get-in diagnostic [:rule/context :arity])))
+          (is (= :java.integer-to-string/to-csharp-convert-to-string
+                 (second (:rule-app/rule failed-app)))))))))
 
 (deftest emits-word-counter-statement-and-expression-subset
   (with-empty-db

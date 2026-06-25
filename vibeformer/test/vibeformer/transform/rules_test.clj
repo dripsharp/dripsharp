@@ -113,7 +113,8 @@
                             :java.printstream-println/to-csharp-console
                             :java.system-exit/to-csharp-environment-exit
                             :java.path-of/to-csharp-string-path
-                            :java.files-read-string/to-csharp-file-read-all-text}]
+                            :java.files-read-string/to-csharp-file-read-all-text
+                            :java.integer-to-string/to-csharp-convert-to-string}]
 	    (is (= #{:java.node/class
              :java.node/assignment
 	             :java.node/array-read
@@ -145,6 +146,7 @@
              :java.feature/interface
              :java.feature/package-private-member
              :java.feature/checked-exception
+             :java.feature/synchronized-method
              :java.api/pattern-compile
              :java.api/string-trim
              :java.api/string-is-empty
@@ -152,12 +154,15 @@
              :java.api/printstream-println
              :java.api/system-exit
              :java.api/path-of
-             :java.api/files-read-string}
+             :java.api/files-read-string
+             :java.api/integer-to-string}
            (set (remove nil? (keys rules-by-feature)))))
     (is (every? #(= 1 (count %)) (vals rules-by-kind)))
     (is (every? #(= 1 (count %)) (vals rules-by-feature)))
-    (is (= :rule.status/unsupported
+    (is (= :rule.status/implemented
            (:rule/status (first (rules-by-feature :java.feature/checked-exception)))))
+    (is (= :rule.status/unsupported
+           (:rule/status (first (rules-by-feature :java.feature/synchronized-method)))))
     (is (= #{:java.statement-node/to-csharp-stub
              :java.expression-node/to-csharp-stub}
            (set (map :rule/id
@@ -188,6 +193,7 @@
              :java.variable-write-node/to-csharp-variable
              :java.class-feature/to-csharp-class
              :java.field-feature/to-csharp-field
+             :java.checked-exception/to-csharp-unchecked-signature
              :java.interface-feature/to-csharp-interface
              :java.package-private-member/to-csharp-internal}
            (set (map :rule/id

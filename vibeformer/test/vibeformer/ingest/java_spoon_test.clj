@@ -130,6 +130,44 @@ public final class Thrower {
 }
 ")
 
+(def local-call-formatter-fixture
+  "package com.acme.localcalls;
+
+public interface Formatter<T> {
+  T convert(Name value);
+}
+")
+
+(def local-call-display-fixture
+  "package com.acme.localcalls;
+
+public final class DisplayFormatter implements Formatter<String> {
+  public String convert(Name value) {
+    return value.text();
+  }
+}
+")
+
+(def local-call-name-fixture
+  "package com.acme.localcalls;
+
+public final class Name {
+  public String text() {
+    return \"pkl\";
+  }
+}
+")
+
+(def local-call-demo-fixture
+  "package com.acme.localcalls;
+
+public final class Demo {
+  public static String run(Formatter<String> formatter, Name name) {
+    return formatter.convert(name);
+  }
+}
+")
+
 (defn- with-empty-db [f]
   (let [system (str "vibeformer-java-spoon-test-" (UUID/randomUUID))
         db-name (str "facts-" (UUID/randomUUID))
@@ -453,6 +491,34 @@ public final class Thrower {
                              [?ref :ref/kind :ref.kind/constructor-call]
                              [?ref :ref/to-type ?type]
                              [?type :type/id ?type-id]]
+                           db)))))))))
+
+(deftest resolves-project-local-method-call-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/localcalls/Formatter.java" local-call-formatter-fixture)
+        (write-file! root "src/main/java/com/acme/localcalls/DisplayFormatter.java" local-call-display-fixture)
+        (write-file! root "src/main/java/com/acme/localcalls/Name.java" local-call-name-fixture)
+        (write-file! root "src/main/java/com/acme/localcalls/Demo.java" local-call-demo-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["convert" "java:com.acme.localcalls.Formatter#convert(com.acme.localcalls.Name)" true]
+                   ["text" "java:com.acme.localcalls.Name#text()" true]}
+                 (set (d/q '[:find ?name ?decl-id ?resolved?
+                             :where
+                             [?ref :ref/kind :ref.kind/method-call]
+                             [?ref :ref/name ?name]
+                             [(contains? #{"convert" "text"} ?name)]
+                             [?ref :ref/resolved? ?resolved?]
+                             [?ref :ref/to-decl ?decl]
+                             [?decl :decl/id ?decl-id]
+                             [?decl :decl/source-node]]
                            db)))))))))
 
 (deftest canonicalizes-method-call-source-nodes

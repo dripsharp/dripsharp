@@ -434,9 +434,14 @@
                rule
                :rule-app.status/success)))
 
+(defn- unsupported-placeholder [node context]
+  (let [message (str "Unsupported Java node " (name (:node/kind node)))]
+    (if (= :statement (:context context))
+      (str "throw new System.NotImplementedException(\"" message "\");")
+      (str "default! /* " message " */"))))
+
 (defn- unsupported [node rule context]
-  (let [text (str "throw new System.NotImplementedException(\"Unsupported Java node "
-                  (name (:node/kind node)) "\");")]
+  (let [text (unsupported-placeholder node context)]
     (apply-rule {:text text
                  :usings #{}
                  :helpers #{}
@@ -751,6 +756,19 @@
           (with-text (str "System.IO.File.ReadAllText(" args ")"))
           (apply-rule node :java.files-read-string/to-csharp-file-read-all-text :rule-app.status/success))
 
+      (and (= "java.lang.Integer" owner) (= "toString" source-method-name) (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (-> args-result
+          (with-text (str "System.Convert.ToString(" args ")"))
+          (apply-rule node :java.integer-to-string/to-csharp-convert-to-string :rule-app.status/success))
+
+      (and (= "java.lang.Integer" owner) (= "toString" source-method-name))
+      (unsupported node
+                   :java.integer-to-string/to-csharp-convert-to-string
+                   {:method source-method-name
+                    :owner owner
+                    :arity (count (child-nodes db (:db/id node) :argument))
+                    :reason :emit.reason/unsupported-overload})
+
       (not (:ref/resolved? call-ref))
       (unsupported node
                    :java.method-call-node/to-csharp-invocation
@@ -1024,17 +1042,16 @@
 
 (defn- field-line [db field-decl]
   (let [mods (modifiers field-decl)]
-    (when (and (contains? mods :static)
-               (contains? mods :final)
-               (:decl/type field-decl))
+    (when (:decl/type field-decl)
       (let [initializer-node (child-node db (get-in field-decl [:decl/source-node :db/id]) :initializer)
             initializer (when initializer-node (emit-expression {:db db} initializer-node))
+            field-modifiers (cond-> [(visibility mods)]
+                              (contains? mods :static) (conj "static")
+                              (contains? mods :final) (conj "readonly"))
             text (str "        "
-                      (str/join " " [(visibility mods)
-                                     "static"
-                                     "readonly"
-                                     (type-name (:decl/type field-decl))
-                                     (:decl/name field-decl)])
+                      (str/join " " (conj field-modifiers
+                                          (type-name (:decl/type field-decl))
+                                          (:decl/name field-decl)))
                       (when initializer (str " = " (:text initializer)))
                       ";\n")]
         (-> (or initializer (merge-emits []))
@@ -1080,17 +1097,22 @@
 (defn- method-block [db method-decl interface?]
   (if interface?
     (let [body-statements (child-nodes db (get-in method-decl [:decl/source-node :db/id]) :body)
-          text (str "        " (method-signature db method-decl true) ";\n")
-          diagnostics (when (seq body-statements)
-                        [(assoc (source-context (:decl/source-node method-decl))
-                                :diagnostic/severity :diagnostic.severity/error
-                                :diagnostic/message "Default Java interface method body is not emitted yet."
-                                :rule/id :java.method-node/to-csharp-method
-                                :rule/context {:reason :emit.reason/unsupported-default-interface-method})])]
-      (emitted text
-               (:decl/source-node method-decl)
-               :java.method-node/to-csharp-method
-               {:diagnostics diagnostics}))
+          signature (method-signature db method-decl true)]
+      (if (seq body-statements)
+        (let [body (emit-body db method-decl 3)]
+          (-> body
+              (with-text (str "        "
+                              signature
+                              "\n"
+                              "        {\n"
+                              (:text body) "\n"
+                              "        }\n"))
+              (apply-rule (:decl/source-node method-decl)
+                          :java.method-node/to-csharp-method
+                          :rule-app.status/success)))
+        (emitted (str "        " signature ";\n")
+                 (:decl/source-node method-decl)
+                 :java.method-node/to-csharp-method)))
     (let [body (emit-body db method-decl 3)]
       (-> body
           (with-text (str "        "

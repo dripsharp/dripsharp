@@ -455,10 +455,9 @@
                            node-id
                            :feature.severity/hard)])
    (when (seq (.getThrownTypes executable))
-     [(unsupported-feature (str node-id ":feature:checked-exception")
-                           :java.feature/checked-exception
-                           node-id
-                           :feature.severity/medium)])
+     [(supported-feature (str node-id ":feature:checked-exception")
+                         :java.feature/checked-exception
+                         node-id)])
    (when (and (instance? CtMethod executable) (seq (.getFormalCtTypeParameters executable)))
      [(supported-feature (str node-id ":feature:generic-method")
                          :java.feature/generic-method
@@ -824,19 +823,90 @@
            {:index {} :facts []}
            facts)))
 
+(defn- strip-type-args [type-name]
+  (some-> type-name
+          (str/replace #"<.*$" "")))
+
+(defn- param-count-from-decl-id [decl-id]
+  (when-let [[_ params] (re-matches #".*\((.*)\)$" (or decl-id ""))]
+    (if (str/blank? params)
+      0
+      (count (str/split params #",")))))
+
+(defn- owner-from-method-decl-id [decl-id]
+  (when-let [[_ owner] (re-matches #"java:(.+)#.+\(.*\)$" (or decl-id ""))]
+    owner))
+
+(defn- method-decl-index [facts]
+  (->> facts
+       (filter #(and (= :decl.kind/method (:decl/kind %))
+                     (:decl/source-node %)))
+       (reduce (fn [index decl]
+                 (if-let [owner (owner-from-method-decl-id (:decl/id decl))]
+                   (update index
+                           [(strip-type-args owner)
+                            (:decl/name decl)
+                            (param-count-from-decl-id (:decl/id decl))]
+                           (fnil conj [])
+                           decl)
+                   index))
+               {})))
+
+(defn- type-name-index [facts]
+  (->> facts
+       (filter :type/id)
+       (map (juxt :type/id :type/name))
+       (into {})))
+
+(defn- argument-counts [facts]
+  (->> facts
+       (filter #(= :argument (:node/role %)))
+       (reduce (fn [counts node]
+                 (update counts (:node/parent node) (fnil inc 0)))
+               {})))
+
+(defn- unambiguous [xs]
+  (when (= 1 (count xs))
+    (first xs)))
+
+(defn- local-method-target [method-index type-names argument-counts ref]
+  (let [owner-type-id (:ref/owner-type ref)
+        owner (strip-type-args (or (get type-names owner-type-id)
+                                   owner-type-id))
+        arity (get argument-counts (:ref/from-node ref) 0)]
+    (when (and owner (:ref/name ref))
+      (unambiguous (get method-index [owner (:ref/name ref) arity])))))
+
+(defn- resolve-local-method-refs [facts]
+  (let [deduped (dedupe-facts facts)
+        method-index (method-decl-index deduped)
+        type-names (type-name-index deduped)
+        argument-counts (argument-counts deduped)]
+    (mapv (fn [fact]
+            (if (and (= :ref.kind/method-call (:ref/kind fact))
+                     (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
+              (if-let [target (local-method-target method-index type-names argument-counts fact)]
+                (-> fact
+                    (assoc :ref/to-decl (:decl/id target)
+                           :ref/resolved? true)
+                    (dissoc :ref/reason))
+                fact)
+              fact))
+          deduped)))
+
 (defn extract-project-facts
   "Read Java file records for project-id from db and return normalized Java facts.
 
   Java file records must already exist, usually from vibeformer.ingest.source."
   [db project-id]
-  (dedupe-facts (mapcat file-facts (file-records db project-id))))
+  (resolve-local-method-refs (mapcat file-facts (file-records db project-id))))
 
 (defn ingest!
   "Extract normalized Java facts from ingested Java files and transact them."
   [conn {:project/keys [id]}]
   (let [db (d/db conn)
         files (file-records db id)
-        facts (dedupe-facts (mapcat file-facts files))]
+        facts (resolve-local-method-refs (mapcat file-facts files))]
     (when (seq facts)
       (d/transact conn {:tx-data facts}))
     {:project/id id
