@@ -35,11 +35,11 @@ br sync --status
 
 ## Workflow
 
-1. Start by running `br ready` to find actionable work.
-2. Claim work with `br update <id> --status=in_progress`.
-3. Implement the task.
-4. Close completed issues with `br close <id> --reason="Completed"`.
-5. Run `br sync --flush-only` before ending a session if Beads data changed.
+1. **Start**: Run `br ready` to find actionable work
+2. **Claim**: Use `br update <id> --status=in_progress`
+3. **Work**: Implement the task
+4. **Complete**: Use `br close <id>`
+5. **Sync**: Run `br sync --flush-only` then manually commit
 
 ## Concepts
 
