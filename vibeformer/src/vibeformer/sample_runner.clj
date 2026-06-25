@@ -1,5 +1,6 @@
 (ns vibeformer.sample-runner
-  (:require [clojure.string :as str]
+  (:require [clojure.java.shell :as sh]
+            [clojure.string :as str]
             [datomic.client.api :as d]
             [datomic.local :as dl]
             [vibeformer.datomic.schema :as schema]
@@ -12,6 +13,8 @@
            (java.util UUID)))
 
 (def default-sample "java-word-count")
+(def csharp-target-framework "net8.0")
+(def default-dotnet-command "dotnet")
 
 (defn- path
   ([value]
@@ -90,6 +93,119 @@
   (spit (str file) (str (pr-str value) "\n"))
   (slash-path (normalize-path file)))
 
+(defn- write-string! [file value]
+  (ensure-dir! (.getParent (path file)))
+  (spit (str file) value)
+  (slash-path (normalize-path file)))
+
+(defn- relative-slash-path [^Path root value]
+  (slash-path (.relativize (.normalize root) (.normalize (path value)))))
+
+(defn- xml-escape [value]
+  (-> (str value)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")
+      (str/replace "\"" "&quot;")
+      (str/replace "'" "&apos;")))
+
+(defn- csharp-project-file [sample paths]
+  (.resolve (:target/csharp paths) (str (:sample/name sample) ".csproj")))
+
+(defn- csharp-project-content [target-dir csharp-files]
+  (let [compile-items (->> csharp-files
+                           (map #(relative-slash-path target-dir %))
+                           (sort)
+                           (map #(str "    <Compile Include=\"" (xml-escape %) "\" />\n"))
+                           (apply str))]
+    (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+         "  <PropertyGroup>\n"
+         "    <OutputType>Exe</OutputType>\n"
+         "    <TargetFramework>" csharp-target-framework "</TargetFramework>\n"
+         "    <ImplicitUsings>disable</ImplicitUsings>\n"
+         "    <Nullable>enable</Nullable>\n"
+         "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
+         "  </PropertyGroup>\n"
+         "\n"
+         "  <ItemGroup>\n"
+         compile-items
+         "  </ItemGroup>\n"
+         "</Project>\n")))
+
+(defn- write-csharp-project! [sample paths emit-result]
+  (let [target-dir (:target/csharp paths)
+        csharp-files (:csharp/files emit-result)
+        project-file (csharp-project-file sample paths)
+        content (csharp-project-content target-dir csharp-files)]
+    (spit (str project-file) content)
+    {:csharp/project (slash-path (normalize-path project-file))
+     :csharp/project-target-framework csharp-target-framework
+     :csharp/project-files (mapv #(relative-slash-path target-dir %) csharp-files)}))
+
+(def dotnet-diagnostic-pattern
+  #"^(.+)\((\d+),(\d+)\):\s+(warning|error)\s+([A-Za-z]+\d+):\s+(.+?)(?:\s+\[.+\])?$")
+
+(defn- parse-dotnet-diagnostic-line [line]
+  (when-let [[_ file line-number column severity code message]
+             (re-matches dotnet-diagnostic-pattern line)]
+    {:file file
+     :line (parse-long line-number)
+     :column (parse-long column)
+     :severity (keyword "diagnostic.severity" severity)
+     :code code
+     :message message}))
+
+(defn- parse-dotnet-diagnostics [stdout stderr]
+  (->> (str/split-lines (str stdout "\n" stderr))
+       (keep parse-dotnet-diagnostic-line)
+       vec))
+
+(declare skipped-stage throwable-data)
+
+(defn- dotnet-build! [sample paths opts]
+  (let [project-file (csharp-project-file sample paths)
+        diagnostics-dir (:target/diagnostics paths)
+        command (str (or (:dotnet/command opts) default-dotnet-command))
+        command-args [command "build" (str project-file) "--nologo"]
+        context {:sample/name (:sample/name sample)
+                 :source/root (:source/root sample)
+                 :target/project (slash-path (normalize-path project-file))
+                 :stage :dotnet/build
+                 :command command-args}
+        enabled? (not= false (:dotnet/enabled? opts))]
+    (cond
+      (not enabled?)
+      (skipped-stage :dotnet/build :dotnet/build-disabled)
+
+      (not (Files/isRegularFile project-file (make-array java.nio.file.LinkOption 0)))
+      (skipped-stage :dotnet/build :dotnet/project-not-found)
+
+      :else
+      (try
+        (let [{:keys [exit out err]} (apply sh/sh (concat command-args [:dir (str (:target/csharp paths))]))
+              stdout-file (write-string! (.resolve diagnostics-dir "dotnet-build.stdout.log") out)
+              stderr-file (write-string! (.resolve diagnostics-dir "dotnet-build.stderr.log") err)
+              diagnostics (parse-dotnet-diagnostics out err)
+              diagnostic-report (merge context
+                                       {:exit exit
+                                        :stdout stdout-file
+                                        :stderr stderr-file
+                                        :diagnostics diagnostics})
+              diagnostics-file (write-edn! (.resolve diagnostics-dir "dotnet-build.edn")
+                                           diagnostic-report)]
+          (merge context
+                 {:status (if (zero? exit) :ok :failed)
+                  :dotnet/exit exit
+                  :dotnet/stdout stdout-file
+                  :dotnet/stderr stderr-file
+                  :dotnet/diagnostics-file diagnostics-file
+                  :dotnet/diagnostics diagnostics
+                  :dotnet/diagnostics-count (count diagnostics)}))
+        (catch java.io.IOException e
+          (merge (skipped-stage :dotnet/build :dotnet/command-not-found)
+                 context
+                 {:error (throwable-data e)}))))))
+
 (defn- throwable-data [^Throwable throwable]
   (cond-> {:class (some-> throwable class .getName)
            :message (ex-message throwable)}
@@ -145,25 +261,25 @@
     stages
     (conj stages (stage sample stage-name f))))
 
-(defn- run-analysis-stages [sample paths]
+(defn- run-analysis-stages [sample paths opts]
   (with-empty-db
     (fn [conn]
       (let [project-id (:sample/name sample)
             source-root (:source/root sample)
-            opts {:source/root source-root
-                  :project/id project-id
-                  :project/name project-id}
+            source-opts {:source/root source-root
+                         :project/id project-id
+                         :project/name project-id}
             stages []
             stages (run-stage stages sample :schema/install
                               #(do (schema/install! conn)
                                    {:installed? true}))
             stages (run-stage stages sample :source/discover
-                              #(let [source-files (source/source-file-facts opts)]
+                              #(let [source-files (source/source-file-facts source-opts)]
                                  (write-edn! (.resolve (:target/facts paths) "source-files.edn")
                                             source-files)
                                  {:source/files (count source-files)}))
             stages (run-stage stages sample :source/ingest
-                              #(source/ingest! conn opts))
+                              #(source/ingest! conn source-opts))
             stages (run-stage stages sample :java/ingest
                               #(java-spoon/ingest! conn {:project/id project-id}))
             stages (run-stage stages sample :transform/rules
@@ -189,10 +305,13 @@
             stages (cond-> stages
                      (not (stop-after-failure? stages))
                      (run-stage sample :csharp/emit
-                                #(csharp/emit! (d/db conn) (:target/csharp paths))))
+                                #(let [emit-result (csharp/emit! (d/db conn) (:target/csharp paths))]
+                                   (merge emit-result
+                                          (write-csharp-project! sample paths emit-result)))))
             stages (cond-> stages
                      (not (stop-after-failure? stages))
-                     (conj (skipped-stage :dotnet/build :pipeline.stage/not-implemented)))]
+                     (run-stage sample :dotnet/build
+                                #(dotnet-build! sample paths opts)))]
         stages))))
 
 (defn run-sample
@@ -207,7 +326,7 @@
          sample-name (or (:name opts) default-sample)
          sample (sample-project root sample-name)
          paths (ensure-target! sample)
-         stages (run-analysis-stages sample paths)
+         stages (run-analysis-stages sample paths opts)
          result {:sample/name (:sample/name sample)
                  :sample/root (:sample/root sample)
                  :source/root (:source/root sample)
@@ -228,7 +347,10 @@
                            :csharp/provenance (:csharp/provenance emit-stage)
                            :csharp/diagnostics (:csharp/diagnostics emit-stage)
                            :csharp/helpers (:csharp/helpers emit-stage)
-                           :csharp/usings (:csharp/usings emit-stage))
+                           :csharp/usings (:csharp/usings emit-stage)
+                           :csharp/project (:csharp/project emit-stage)
+                           :csharp/project-target-framework (:csharp/project-target-framework emit-stage)
+                           :csharp/project-files (:csharp/project-files emit-stage))
 
                     (not= :ok (:status emit-stage))
                     (assoc :status :skipped
@@ -246,5 +368,6 @@
         (println (format "  coverage ok: %s, failures: %s"
                          (:coverage/ok? stage-result)
                          (:coverage/failures stage-result)))))
+    (shutdown-agents)
     (when-not (:ok? result)
       (System/exit 1))))

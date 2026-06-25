@@ -42,13 +42,16 @@ public final class Hello {
 (deftest runs-supported-sample-stages-and-writes-artifacts
   (let [root (sample-checkout)
         result (sample-runner/run-sample {:project-root root
-                                          :name "hello"})
+                                          :name "hello"
+                                          :dotnet/enabled? false})
         target (.resolve root "sample-projects/hello/target")
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
         coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
         source-files (read-edn (.resolve target "facts/source-files.edn"))
         provenance (read-edn (.resolve target "provenance.edn"))
-        csharp-file (.resolve target "csharp/com/example/Hello.cs")]
+        csharp-file (.resolve target "csharp/com/example/Hello.cs")
+        project-file (.resolve target "csharp/hello.csproj")
+        project-content (delay (slurp (str project-file)))]
     (is (:ok? result))
     (testing "target layout is created"
       (doseq [dir ["csharp" "diagnostics" "facts"]]
@@ -66,7 +69,8 @@ public final class Hello {
               :dotnet/build]
              (mapv :stage stages)))
       (is (= :ok (:status (some #(when (= :csharp/emit (:stage %)) %) stages))))
-      (is (= :skipped (:status (last stages)))))
+      (is (= :skipped (:status (last stages))))
+      (is (= :dotnet/build-disabled (:reason (last stages)))))
     (testing "diagnostic artifacts identify transform coverage"
       (is (true? (:ok? coverage)))
       (is (empty? (:failures coverage))))
@@ -75,6 +79,7 @@ public final class Hello {
              (mapv :file/path source-files)))
       (is (= :generated (:status provenance)))
       (is (= 1 (:csharp/files-written provenance)))
+      (is (= ["com/example/Hello.cs"] (:csharp/project-files provenance)))
       (is (seq (:csharp/rule-applications provenance)))
       (is (seq (:csharp/provenance provenance)))
       (is (some #(and (= :java.class-node/to-csharp-class
@@ -86,5 +91,46 @@ public final class Hello {
                 (:csharp/provenance provenance)))
       (is (empty? (:csharp/diagnostics provenance)))
       (is (Files/isRegularFile csharp-file (make-array java.nio.file.LinkOption 0)))
+      (is (Files/isRegularFile project-file (make-array java.nio.file.LinkOption 0)))
       (is (str/includes? (slurp (str csharp-file))
-                         "public static void Main(string[] args)")))))
+                         "public static void Main(string[] args)"))
+      (is (str/includes? @project-content "<TargetFramework>net8.0</TargetFramework>"))
+      (is (str/includes? @project-content "<ImplicitUsings>disable</ImplicitUsings>"))
+      (is (str/includes? @project-content "<Nullable>enable</Nullable>"))
+      (is (str/includes? @project-content "<EnableDefaultCompileItems>false</EnableDefaultCompileItems>"))
+      (is (str/includes? @project-content "<Compile Include=\"com/example/Hello.cs\" />")))))
+
+(deftest captures-dotnet-build-diagnostics
+  (let [root (sample-checkout)
+        fake-dotnet (.resolve root "fake-dotnet")
+        diagnostic-file (.resolve root "sample-projects/hello/target/diagnostics/dotnet-build.edn")
+        stdout-file (.resolve root "sample-projects/hello/target/diagnostics/dotnet-build.stdout.log")
+        stderr-file (.resolve root "sample-projects/hello/target/diagnostics/dotnet-build.stderr.log")
+        script (str "#!/bin/sh\n"
+                    "echo \"Determining projects to restore...\"\n"
+                    "echo \"$PWD/com/example/Hello.cs(7,13): error CS1002: ; expected [$PWD/hello.csproj]\"\n"
+                    "echo \"fake stderr\" >&2\n"
+                    "exit 1\n")]
+    (write-file! root "fake-dotnet" script)
+    (.setExecutable (.toFile fake-dotnet) true)
+    (let [result (sample-runner/run-sample {:project-root root
+                                            :name "hello"
+                                            :dotnet/command (str fake-dotnet)})
+          build-stage (some #(when (= :dotnet/build (:stage %)) %) (:stages result))
+          diagnostic-report (read-edn diagnostic-file)
+          diagnostic (first (:diagnostics diagnostic-report))]
+      (is (false? (:ok? result)))
+      (is (= :failed (:status build-stage)))
+      (is (= 1 (:dotnet/exit build-stage)))
+      (is (Files/isRegularFile stdout-file (make-array java.nio.file.LinkOption 0)))
+      (is (Files/isRegularFile stderr-file (make-array java.nio.file.LinkOption 0)))
+      (is (= "fake stderr\n" (slurp (str stderr-file))))
+      (is (str/ends-with? (:file diagnostic) "/sample-projects/hello/target/csharp/com/example/Hello.cs"))
+      (is (= {:line 7
+              :column 13
+              :severity :diagnostic.severity/error
+              :code "CS1002"
+              :message "; expected"}
+             (dissoc diagnostic :file)))
+      (is (= (:command diagnostic-report) (:command build-stage)))
+      (is (= (:target/project diagnostic-report) (:target/project build-stage))))))
