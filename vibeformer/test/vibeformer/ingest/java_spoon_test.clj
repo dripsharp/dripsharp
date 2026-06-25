@@ -186,6 +186,16 @@ public enum Token {
 }
 ")
 
+(def enum-call-demo-fixture
+  "package com.acme.tokens;
+
+public final class Demo {
+  public static void main(String[] args) {
+    Token.ABSTRACT.isModifier();
+  }
+}
+")
+
 (defn- with-empty-db [f]
   (let [system (str "vibeformer-java-spoon-test-" (UUID/randomUUID))
         db-name (str "facts-" (UUID/randomUUID))
@@ -537,6 +547,38 @@ public enum Token {
                              [?ref :ref/to-decl ?decl]
                              [?decl :decl/id ?decl-id]
                              [?decl :decl/source-node]]
+                           db)))))))))
+
+(deftest resolves-enum-constant-method-call-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/tokens/Token.java" switch-expression-fixture)
+        (write-file! root "src/main/java/com/acme/tokens/Demo.java" enum-call-demo-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["isModifier"
+                    "java:com.acme.tokens.Token#isModifier()"
+                    "com.acme.tokens.Token"
+                    true]}
+                 (set (d/q '[:find ?name ?decl-id ?owner-name ?resolved?
+                             :where
+                             [?call :node/kind :java.node/method-call]
+                             [?call :node/name "isModifier"]
+                             [?ref :ref/from-node ?call]
+                             [?ref :ref/kind :ref.kind/method-call]
+                             [?ref :ref/name ?name]
+                             [?ref :ref/resolved? ?resolved?]
+                             [?ref :ref/to-decl ?decl]
+                             [?decl :decl/id ?decl-id]
+                             [?decl :decl/source-node]
+                             [?ref :ref/owner-type ?owner]
+                             [?owner :type/name ?owner-name]]
                            db)))))))))
 
 (deftest extracts-switch-expression-facts

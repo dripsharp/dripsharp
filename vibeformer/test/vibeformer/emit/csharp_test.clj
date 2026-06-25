@@ -91,6 +91,19 @@ public enum Token {
 }
 ")
 
+(def enum-call-demo-fixture
+  "package com.example.token;
+
+public final class TokenDemo {
+  private TokenDemo() {
+  }
+
+  public static void main(String[] args) {
+    Token.ABSTRACT.isModifier();
+  }
+}
+")
+
 (def enum-unsupported-method-fixture
   "package com.example.token;
 
@@ -539,6 +552,7 @@ public final class Demo {
                   :project/id "fixture"
                   :project/name "Fixture"}]
         (write-file! source-root file-path enum-switch-fixture)
+        (write-file! source-root "src/main/java/com/example/token/TokenDemo.java" enum-call-demo-fixture)
         (source/ingest! conn opts)
         (java-spoon/ingest! conn {:project/id "fixture"})
         (rules/register! conn rules/initial-java-rules)
@@ -546,7 +560,9 @@ public final class Demo {
               coverage (rules/coverage-report db)
               result (csharp/emit! db target)
               generated (.resolve target "com/example/token/Token.cs")
+              demo-generated (.resolve target "com/example/token/TokenDemo.cs")
               content (slurp (str generated))
+              demo-content (slurp (str demo-generated))
               rule-ids (set (map (comp second :rule-app/rule)
                                  (:csharp/rule-applications result)))
               switch-entry (some #(when (= :java.node/switch-expression (:source/kind %)) %)
@@ -562,6 +578,7 @@ public final class Demo {
           (is (str/includes? content "return value switch"))
           (is (str/includes? content "Token.ABSTRACT or Token.OPEN or Token.LOCAL => true,"))
           (is (str/includes? content "_ => false,"))
+          (is (str/includes? demo-content "Token.ABSTRACT.isModifier();"))
           (is (empty? (:csharp/diagnostics result)))
           (is (every? rule-ids
                       [:java.method-node/to-csharp-method

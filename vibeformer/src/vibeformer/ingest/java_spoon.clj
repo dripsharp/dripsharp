@@ -915,31 +915,95 @@
                  (update counts (:node/parent node) (fnil inc 0)))
                {})))
 
+(defn- child-node-index [facts]
+  (->> facts
+       (filter #(and (:node/id %) (:node/parent %) (:node/role %)))
+       (reduce (fn [index node]
+                 (update index [(:node/parent node) (:node/role node)] (fnil conj []) node))
+               {})
+       (map (fn [[k nodes]]
+              [k (vec (sort-by (juxt #(or (:node/ordinal %) 0) :node/id) nodes))]))
+       (into {})))
+
+(defn- field-decl-index [facts]
+  (->> facts
+       (filter #(and (= :decl.kind/field (:decl/kind %))
+                     (:decl/type %)
+                     (:decl/name %)
+                     (:decl/qualified-name %)))
+       (reduce (fn [index decl]
+                 (update index (:decl/name decl) (fnil conj []) decl))
+               {})
+       (map (fn [[field-name decls]]
+              [field-name (vec (sort-by :decl/qualified-name decls))]))
+       (into {})))
+
 (defn- unambiguous [xs]
   (when (= 1 (count xs))
     (first xs)))
 
-(defn- local-method-target [method-index type-names argument-counts ref]
+(defn- child-node [child-index parent-id role]
+  (first (get child-index [parent-id role])))
+
+(defn- enum-constant-field-decl [field-index target-type-name field-name]
+  (let [suffix (when (and target-type-name field-name)
+                 (str target-type-name "." field-name))]
+    (->> (get field-index field-name)
+         (filter (fn [decl]
+                   (let [decl-type (:decl/type decl)
+                         qualified-name (:decl/qualified-name decl)
+                         expected-qualified-name (str decl-type "." field-name)]
+                     (and (= qualified-name expected-qualified-name)
+                          (or (= qualified-name suffix)
+                              (some-> qualified-name (str/ends-with? (str "." suffix)))
+                              (= decl-type target-type-name)
+                              (some-> decl-type (str/ends-with? (str "." target-type-name))))))))
+         unambiguous)))
+
+(defn- enum-constant-target-type [child-index field-index ref]
+  (when-let [target (child-node child-index (:ref/from-node ref) :target)]
+    (when (= :java.node/field-read (:node/kind target))
+      (let [type-access (child-node child-index (:node/id target) :target)
+            target-type-name (:node/value type-access)
+            field-name (:node/name target)]
+        (some-> (enum-constant-field-decl field-index target-type-name field-name)
+                :decl/type)))))
+
+(defn- local-method-target [method-index type-names argument-counts child-index field-index ref]
   (let [owner-type-id (:ref/owner-type ref)
         owner (strip-type-args (or (get type-names owner-type-id)
                                    owner-type-id))
+        enum-target-owner (some-> (enum-constant-target-type child-index field-index ref)
+                                  strip-type-args)
         arity (get argument-counts (:ref/from-node ref) 0)]
-    (when (and owner (:ref/name ref))
-      (unambiguous (get method-index [owner (:ref/name ref) arity])))))
+    (when (:ref/name ref)
+      (or (when owner
+            (unambiguous (get method-index [owner (:ref/name ref) arity])))
+          (when enum-target-owner
+            (unambiguous (get method-index [enum-target-owner (:ref/name ref) arity])))))))
 
 (defn- resolve-local-method-refs [facts]
   (let [deduped (dedupe-facts facts)
         method-index (method-decl-index deduped)
         type-names (type-name-index deduped)
-        argument-counts (argument-counts deduped)]
+        argument-counts (argument-counts deduped)
+        child-index (child-node-index deduped)
+        field-index (field-decl-index deduped)]
     (mapv (fn [fact]
             (if (and (= :ref.kind/method-call (:ref/kind fact))
                      (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
-              (if-let [target (local-method-target method-index type-names argument-counts fact)]
-                (-> fact
-                    (assoc :ref/to-decl (:decl/id target)
-                           :ref/resolved? true)
-                    (dissoc :ref/reason))
+              (if-let [target (local-method-target method-index
+                                                   type-names
+                                                   argument-counts
+                                                   child-index
+                                                   field-index
+                                                   fact)]
+                (let [owner (owner-from-method-decl-id (:decl/id target))]
+                  (-> fact
+                      (assoc :ref/to-decl (:decl/id target)
+                             :ref/resolved? true)
+                      (cond-> owner (assoc :ref/owner-type owner))
+                      (dissoc :ref/reason)))
                 fact)
               fact))
           deduped)))
