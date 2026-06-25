@@ -4,7 +4,7 @@
   (:import (java.nio.file Paths)
            (java.security MessageDigest)
            (spoon Launcher)
-           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtVariableRead CtVariableWrite)
+           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtVariableRead CtVariableWrite CtYieldStatement)
            (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtType)
            (spoon.reflect.reference CtExecutableReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
@@ -322,6 +322,7 @@
 
 (defn- expression-kind [expression]
   (cond
+    (instance? CtSwitchExpression expression) :java.node/switch-expression
     (instance? CtConstructorCall expression) :java.node/object-creation
     (instance? CtInvocation expression) :java.node/method-call
     (instance? CtAssignment expression) :java.node/assignment
@@ -339,6 +340,9 @@
 
 (defn- expression-name [expression]
   (cond
+    (instance? CtSwitchExpression expression)
+    "switch"
+
     (instance? CtInvocation expression)
     (.getSimpleName (.getExecutable ^CtInvocation expression))
 
@@ -386,6 +390,19 @@
     (instance? CtBinaryOperator expression) (binary-operator-name expression)
     (instance? CtTypePattern expression) (some-> ^CtTypePattern expression .getVariable .getType type-id)
     (instance? CtTypeAccess expression) (type-access-name expression)
+    :else nil))
+
+(defn- case-kind-name [^CtCase case]
+  (some-> case .getCaseKind .name str/lower-case))
+
+(defn- yield-expression [statement]
+  (cond
+    (instance? CtYieldStatement statement)
+    (.getExpression ^CtYieldStatement statement)
+
+    (instance? CtExpression statement)
+    statement
+
     :else nil))
 
 (defn- type-facts [file-id ordinal ^CtType type]
@@ -596,6 +613,9 @@
 
 (defn- expression-children [expression]
   (cond
+    (instance? CtSwitchExpression expression)
+    [[:selector 0 (.getSelector ^CtSwitchExpression expression)]]
+
     (instance? CtConstructorCall expression)
     (map-indexed (fn [index arg] [:argument index arg])
                  (.getArguments ^CtConstructorCall expression))
@@ -630,6 +650,25 @@
     :else
     []))
 
+(defn- switch-case-facts [file-id parent-node-id ordinal ^CtCase case]
+  (let [node-id (child-node-id parent-node-id :case ordinal case)
+        result-expression (first (keep yield-expression (.getStatements case)))]
+    (concat
+     [(node-fact node-id
+                 :java.node/switch-case
+                 (if (.getIncludesDefault case) "default" "case")
+                 file-id
+                 ordinal
+                 case
+                 :parent parent-node-id
+                 :role :case
+                 :value (case-kind-name case))]
+     (mapcat (fn [index label]
+               (expression-facts file-id node-id :case-label index label))
+             (range)
+             (.getCaseExpressions case))
+     (expression-facts file-id node-id :case-result 0 result-expression))))
+
 (defn- expression-facts [file-id parent-node-id role ordinal ^CtExpression expression]
   (when expression
     (let [node-id (child-node-id parent-node-id role ordinal expression)]
@@ -652,7 +691,12 @@
            (type-ref-facts node-id :pattern-type (.getType variable) (.getSimpleName variable))))
        (mapcat (fn [[child-role child-ordinal child-expression]]
                  (expression-facts file-id node-id child-role child-ordinal child-expression))
-               (expression-children expression))))))
+               (expression-children expression))
+       (when (instance? CtSwitchExpression expression)
+         (mapcat (fn [case-ordinal case]
+                   (switch-case-facts file-id node-id case-ordinal case))
+                 (range)
+                 (.getCases ^CtSwitchExpression expression)))))))
 
 (defn- branch-statements [statement]
   (cond

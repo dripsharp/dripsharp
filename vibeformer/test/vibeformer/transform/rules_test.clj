@@ -134,6 +134,8 @@
              :java.node/object-creation
 	             :java.node/return-statement
              :java.node/statement
+             :java.node/switch-case
+             :java.node/switch-expression
              :java.node/this
              :java.node/throw-statement
              :java.node/type-pattern
@@ -188,6 +190,8 @@
 	             :java.method-call-node/to-csharp-invocation
              :java.object-creation-node/to-csharp-new
              :java.return-statement-node/to-csharp-return
+             :java.switch-case-node/to-csharp-switch-arm
+             :java.switch-expression-node/to-csharp-switch
              :java.this-node/to-csharp-this
              :java.throw-statement-node/to-csharp-throw
              :java.type-pattern-node/to-csharp-pattern

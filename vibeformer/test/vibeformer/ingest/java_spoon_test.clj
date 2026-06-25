@@ -168,6 +168,24 @@ public final class Demo {
 }
 ")
 
+(def switch-expression-fixture
+  "package com.acme.tokens;
+
+public enum Token {
+  ABSTRACT,
+  OPEN,
+  LOCAL,
+  IDENTIFIER;
+
+  public boolean isModifier() {
+    return switch (this) {
+      case ABSTRACT, OPEN, LOCAL -> true;
+      default -> false;
+    };
+  }
+}
+")
+
 (defn- with-empty-db [f]
   (let [system (str "vibeformer-java-spoon-test-" (UUID/randomUUID))
         db-name (str "facts-" (UUID/randomUUID))
@@ -519,6 +537,61 @@ public final class Demo {
                              [?ref :ref/to-decl ?decl]
                              [?decl :decl/id ?decl-id]
                              [?decl :decl/source-node]]
+                           db)))))))))
+
+(deftest extracts-switch-expression-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/tokens/Token.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path switch-expression-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["switch" :return-expression]}
+                 (set (d/q '[:find ?name ?role
+                             :where
+                             [?node :node/kind :java.node/switch-expression]
+                             [?node :node/name ?name]
+                             [?node :node/role ?role]]
+                           db))))
+          (is (= #{[0 "case" :case "arrow"]
+                   [1 "case" :case "arrow"]}
+                 (set (d/q '[:find ?ordinal ?name ?role ?value
+                             :where
+                             [?node :node/kind :java.node/switch-case]
+                             [?node :node/ordinal ?ordinal]
+                             [?node :node/name ?name]
+                             [?node :node/role ?role]
+                             [?node :node/value ?value]]
+                           db))))
+          (is (= #{["this" :selector]}
+                 (set (d/q '[:find ?name ?role
+                             :where
+                             [?switch :node/kind :java.node/switch-expression]
+                             [?child :node/parent ?switch]
+                             [?child :node/name ?name]
+                             [?child :node/role ?role]
+                             [(= :selector ?role)]]
+                           db))))
+          (is (= #{[0 "ABSTRACT" :case-label]
+                   [0 "OPEN" :case-label]
+                   [0 "LOCAL" :case-label]
+                   [0 "Boolean" :case-result]
+                   [1 "Boolean" :case-result]}
+                 (set (d/q '[:find ?case-ordinal ?name ?role
+                             :where
+                             [?switch :node/kind :java.node/switch-expression]
+                             [?case :node/parent ?switch]
+                             [?case :node/kind :java.node/switch-case]
+                             [?case :node/ordinal ?case-ordinal]
+                             [?child :node/parent ?case]
+                             [?child :node/name ?name]
+                             [?child :node/role ?role]]
                            db)))))))))
 
 (deftest canonicalizes-method-call-source-nodes

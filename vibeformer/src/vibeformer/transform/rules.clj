@@ -103,6 +103,14 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/binary-operator
     :rule/status implemented-status}
+   {:rule/id :java.switch-expression-node/to-csharp-switch
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/switch-expression
+    :rule/status implemented-status}
+   {:rule/id :java.switch-case-node/to-csharp-switch-arm
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/switch-case
+    :rule/status implemented-status}
    {:rule/id :java.regex-pattern-compile/to-csharp-regex
     :rule/source-lang :lang/java
     :rule/input-feature :java.api/pattern-compile

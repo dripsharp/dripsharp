@@ -73,6 +73,24 @@ public enum MemberLookupMode {
 }
 ")
 
+(def enum-switch-fixture
+  "package com.example.token;
+
+public enum Token {
+  ABSTRACT,
+  OPEN,
+  LOCAL,
+  IDENTIFIER;
+
+  public boolean isModifier() {
+    return switch (this) {
+      case ABSTRACT, OPEN, LOCAL -> true;
+      default -> false;
+    };
+  }
+}
+")
+
 (def default-interface-fixture
   "package com.example.value;
 
@@ -496,6 +514,42 @@ public final class Demo {
           (is (= :java.node/enum (:source/kind enum-entry)))
           (is (some? constant-entry))
           (is (= :java.node/field (:source/kind constant-entry))))))))
+
+(deftest enum-methods-produce-structured-diagnostics
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/token/Token.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path enum-switch-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/token/Token.cs")
+              content (slurp (str generated))
+              diagnostic (first (:csharp/diagnostics result))
+              failed-app (some #(when (= :rule-app.status/failed (:rule-app/status %)) %)
+                               (:csharp/rule-applications result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "public enum Token"))
+          (is (str/includes? content "ABSTRACT,"))
+          (is (not (str/includes? content "isModifier")))
+          (is (= :java.method-node/to-csharp-method (:rule/id diagnostic)))
+          (is (= :emit.reason/unsupported-enum-method
+                 (get-in diagnostic [:rule/context :reason])))
+          (is (= file-path (:source/file diagnostic)))
+          (is (= 9 (get-in diagnostic [:source/span :start-line])))
+          (is (= :java.method-node/to-csharp-method
+                 (second (:rule-app/rule failed-app)))))))))
 
 (deftest emits-default-interface-method-bodies
   (with-empty-db
