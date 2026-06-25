@@ -1302,18 +1302,39 @@
                     :java.method-node/to-csharp-method
                     :rule-app.status/success))))
 
-(defn- enum-body-extension-method [db enum-decl method-decl]
-  (let [body (emit-body db method-decl 3 {:this-text "value"})
-        signature (enum-extension-signature db enum-decl method-decl)]
-    (when (empty? (:diagnostics body))
-      (-> body
-          (with-text (str "        " signature "\n"
-                          "        {\n"
-                          (:text body) "\n"
-                          "        }\n"))
-          (apply-rule (:decl/source-node method-decl)
-                      :java.method-node/to-csharp-method
-                      :rule-app.status/success)))))
+(defn- descendant-nodes [db root-eid]
+  (loop [queue (child-nodes db root-eid)
+         result []]
+    (if-let [node (first queue)]
+      (recur (into (vec (rest queue)) (child-nodes db (:db/id node)))
+             (conj result node))
+      result)))
+
+(defn- stateful-enum-field-read? [db stateful-field-names node]
+  (let [target (child-node db (:db/id node) :target)]
+    (and (= :java.node/field-read (:node/kind node))
+         (contains? stateful-field-names (:node/name node))
+         (or (nil? target)
+             (= :java.node/this (:node/kind target))))))
+
+(defn- enum-body-extension-method [db enum-decl method-decl stateful-field-names]
+  (let [mods (modifiers method-decl)
+        stateful-read? (some #(stateful-enum-field-read? db stateful-field-names %)
+                             (descendant-nodes db (get-in method-decl [:decl/source-node :db/id])))]
+    (when (and (contains? mods :public)
+               (not (contains? mods :static))
+               (not stateful-read?))
+      (let [body (emit-body db method-decl 3 {:this-text "value"})
+            signature (enum-extension-signature db enum-decl method-decl)]
+        (when (empty? (:diagnostics body))
+          (-> body
+              (with-text (str "        " signature "\n"
+                              "        {\n"
+                              (:text body) "\n"
+                              "        }\n"))
+              (apply-rule (:decl/source-node method-decl)
+                          :java.method-node/to-csharp-method
+                          :rule-app.status/success)))))))
 
 (defn- enum-extension-content [db enum-decl method-shapes]
   (when (seq method-shapes)
@@ -1338,6 +1359,15 @@
                        (filter #(enum-constant? enum-decl %))
                        (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
                        vec)
+        stateful-fields (->> (get members :decl.kind/field)
+                             (remove #(enum-constant? enum-decl %))
+                             (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
+                             vec)
+        enum-ctors (->> (get members :decl.kind/constructor)
+                        (filter #(seq (type-ref-params db %)))
+                        (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
+                        vec)
+        stateful-field-names (set (map :decl/name stateful-fields))
         enum-methods (->> (get members :decl.kind/method)
                           (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
                           vec)
@@ -1346,7 +1376,7 @@
                                   [method-decl
                                    (if-let [switch-shape (enum-switch-method-shape db method-decl)]
                                      (assoc switch-shape :kind :enum.method/switch)
-                                     (when-let [body-result (enum-body-extension-method db enum-decl method-decl)]
+                                     (when-let [body-result (enum-body-extension-method db enum-decl method-decl stateful-field-names)]
                                        {:kind :enum.method/body
                                         :result body-result}))])))
         supported-methods (->> method-shapes
@@ -1364,6 +1394,14 @@
                                                             :java.method-node/to-csharp-method
                                                             :emit.reason/unsupported-enum-method)
                                   unsupported-methods)
+        unsupported-fields (mapv #(unsupported-declaration %
+                                                           :java.field-node/to-csharp-field
+                                                           :emit.reason/unsupported-stateful-enum-field)
+                                 stateful-fields)
+        unsupported-ctors (mapv #(unsupported-declaration %
+                                                          :java.constructor-node/to-csharp-constructor
+                                                          :emit.reason/unsupported-enum-constructor)
+                                enum-ctors)
         body-metadata (merge-emits constant-lines)
         body (:text body-metadata)
         enum-section (with-text body-metadata
@@ -1376,6 +1414,8 @@
         content-metadata (merge-emits (concat [enum-section]
                                               (when extension-section
                                                 [extension-section])
+                                              unsupported-fields
+                                              unsupported-ctors
                                               unsupported-members))
         text (str "// <auto-generated>\n"
                   "// Generated by Vibeformer. Changes under target/csharp are disposable.\n"

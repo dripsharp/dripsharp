@@ -161,6 +161,39 @@ public enum Token {
 }
 ")
 
+(def operator-enum-fixture
+  "package com.example.operator;
+
+public enum Operator {
+  NULL_COALESCE(1, false),
+  PIPE(2, true);
+
+  private final int prec;
+  private final boolean leftAssoc;
+
+  Operator(int prec, boolean leftAssoc) {
+    this.prec = prec;
+    this.leftAssoc = leftAssoc;
+  }
+
+  public int getPrec() {
+    return prec;
+  }
+
+  public boolean isLeftAssoc() {
+    return leftAssoc;
+  }
+
+  public static Operator byName(String name) {
+    return switch (name) {
+      case \"??\" -> NULL_COALESCE;
+      case \"|>\" -> PIPE;
+      default -> throw new RuntimeException(\"Unknown operator: \" + name);
+    };
+  }
+}
+")
+
 (def default-interface-fixture
   "package com.example.value;
 
@@ -678,6 +711,40 @@ public final class Demo {
           (is (= 6 (get-in diagnostic [:source/span :start-line])))
           (is (= :java.method-node/to-csharp-method
                  (second (:rule-app/rule failed-app)))))))))
+
+(deftest stateful-enum-members-produce-structured-diagnostics
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/operator/Operator.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path operator-enum-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [result (csharp/emit! (d/db conn) target)
+              generated (.resolve target "com/example/operator/Operator.cs")
+              content (slurp (str generated))
+              reasons (frequencies (map #(get-in % [:rule/context :reason])
+                                        (:csharp/diagnostics result)))
+              failed-rules (frequencies (map (comp second :rule-app/rule)
+                                             (filter #(= :rule-app.status/failed (:rule-app/status %))
+                                                     (:csharp/rule-applications result))))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "public enum Operator"))
+          (is (str/includes? content "NULL_COALESCE,"))
+          (is (not (str/includes? content "prec;")))
+          (is (= 2 (:emit.reason/unsupported-stateful-enum-field reasons)))
+          (is (= 1 (:emit.reason/unsupported-enum-constructor reasons)))
+          (is (= 3 (:emit.reason/unsupported-enum-method reasons)))
+          (is (= 2 (:java.field-node/to-csharp-field failed-rules)))
+          (is (= 1 (:java.constructor-node/to-csharp-constructor failed-rules)))
+          (is (= 3 (:java.method-node/to-csharp-method failed-rules))))))))
 
 (deftest emits-default-interface-method-bodies
   (with-empty-db
