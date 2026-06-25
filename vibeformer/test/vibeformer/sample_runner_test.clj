@@ -76,6 +76,14 @@ public final class Hello {
       (is (= :generated (:status provenance)))
       (is (= 1 (:csharp/files-written provenance)))
       (is (seq (:csharp/rule-applications provenance)))
+      (is (seq (:csharp/provenance provenance)))
+      (is (some #(and (= :java.class-node/to-csharp-class
+                         (get-in % [:rule :rule/id]))
+                      (= "src/main/java/com/example/Hello.java"
+                         (:source/file %))
+                      (seq (:source/declarations %))
+                      (:emit/dest-span %))
+                (:csharp/provenance provenance)))
       (is (empty? (:csharp/diagnostics provenance)))
       (is (Files/isRegularFile csharp-file (make-array java.nio.file.LinkOption 0)))
       (is (str/includes? (slurp (str csharp-file))

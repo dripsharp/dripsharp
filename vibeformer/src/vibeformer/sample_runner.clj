@@ -225,6 +225,7 @@
                            :csharp/files (:csharp/files emit-stage)
                            :csharp/files-written (:csharp/files-written emit-stage)
                            :csharp/rule-applications (:csharp/rule-applications emit-stage)
+                           :csharp/provenance (:csharp/provenance emit-stage)
                            :csharp/diagnostics (:csharp/diagnostics emit-stage)
                            :csharp/helpers (:csharp/helpers emit-stage)
                            :csharp/usings (:csharp/usings emit-stage))

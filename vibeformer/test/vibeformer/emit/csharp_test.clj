@@ -6,7 +6,8 @@
             [vibeformer.datomic.schema :as schema]
             [vibeformer.emit.csharp :as csharp]
             [vibeformer.ingest.java-spoon :as java-spoon]
-            [vibeformer.ingest.source :as source])
+            [vibeformer.ingest.source :as source]
+            [vibeformer.transform.rules :as rules])
   (:import (java.nio.charset StandardCharsets)
            (java.nio.file Files Path Paths)
            (java.util UUID)))
@@ -74,6 +75,7 @@ public final class Counter {
         (write-file! source-root file-path java-fixture)
         (source/ingest! conn opts)
         (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
         (let [result (csharp/emit! (d/db conn) target)
               generated (.resolve target "com/example/tools/Counter.cs")
               content (slurp (str generated))]
@@ -91,6 +93,7 @@ public final class Counter {
               (is (str/includes? content snippet))))
           (testing "emission returns provenance-friendly rule applications"
             (is (seq (:csharp/rule-applications result)))
+            (is (seq (:csharp/provenance result)))
             (is (empty? (:csharp/diagnostics result))))
           (testing "non-static instance fields are outside the initial declaration subset"
             (is (not (str/includes? content "ignored")))))))))
@@ -109,6 +112,7 @@ public final class Counter {
         (write-file! source-root file-path (sample-word-counter-source))
         (source/ingest! conn opts)
         (java-spoon/ingest! conn {:project/id "word-count"})
+        (rules/register! conn rules/initial-java-rules)
         (let [result (csharp/emit! (d/db conn) target)
               generated (.resolve target "com/example/wordcount/WordCounter.cs")
               content (slurp (str generated))
@@ -140,4 +144,30 @@ public final class Counter {
                        :java.system-exit/to-csharp-environment-exit
                        :java.path-of/to-csharp-string-path
                        :java.files-read-string/to-csharp-file-read-all-text]))
+          (testing "provenance is deterministic structural emitter output"
+            (let [provenance (:csharp/provenance result)
+                  second-result (csharp/emit! (d/db conn) target)
+                  word-counter (some #(when (= :java.class-node/to-csharp-class
+                                               (get-in % [:rule :rule/id]))
+                                        %)
+                                     provenance)
+                  count-words (some #(when (and (= :java.method-node/to-csharp-method
+                                                  (get-in % [:rule :rule/id]))
+                                               (= "countWords" (:source/name %)))
+                                       %)
+                                    provenance)]
+              (is (= provenance (:csharp/provenance second-result)))
+              (is (= "src/main/java/com/example/wordcount/WordCounter.java"
+                     (:source/file word-counter)))
+              (is (= :java.node/class (:source/kind word-counter)))
+              (is (= 1 (get-in word-counter [:rule :rule/version])))
+              (is (some? (:emit/dest-span word-counter)))
+              (is (some? count-words))
+              (is (= :java.node/method (:source/kind count-words)))
+              (is (some? (:emit/dest-span count-words)))
+              (is (every? #(and (:emit/source-node %)
+                                (:emit/rule %)
+                                (:rule %))
+                          provenance))
+              (is (not-any? #(contains? % :source/text) provenance))))
           (is (not (str/includes? emitter-source "source-text"))))))))

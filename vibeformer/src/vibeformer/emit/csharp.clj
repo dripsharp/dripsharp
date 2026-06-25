@@ -276,41 +276,253 @@
    :rule-app/source-node [:node/id (:node/id node)]
    :rule-app/status status})
 
+(defn- provenance-entry [node rule status text]
+  (cond-> {:emit/source-node [:node/id (:node/id node)]
+           :emit/rule [:rule/id rule]
+           :emit/status status}
+    (some? text) (assoc :emit/start-offset 0
+                        :emit/end-offset (count text))))
+
+(defn- apply-rule [result node rule status]
+  (-> result
+      (update :rule-applications conj (rule-app node rule status))
+      (update :provenance conj (provenance-entry node rule status (:text result)))))
+
+(defn- shift-provenance [offset provenance]
+  (mapv (fn [entry]
+          (cond-> entry
+            (:emit/start-offset entry) (update :emit/start-offset + offset)
+            (:emit/end-offset entry) (update :emit/end-offset + offset)))
+        provenance))
+
 (defn- emitted
   ([text node rule]
    (emitted text node rule {}))
   ([text node rule {:keys [usings helpers diagnostics rule-applications]}]
-   {:text text
-    :usings (set usings)
-    :helpers (set helpers)
-    :diagnostics (vec diagnostics)
-    :rule-applications (conj (vec rule-applications)
-                             (rule-app node rule :rule-app.status/success))}))
+   (apply-rule {:text text
+                :usings (set usings)
+                :helpers (set helpers)
+                :diagnostics (vec diagnostics)
+                :rule-applications (vec rule-applications)
+                :provenance []}
+               node
+               rule
+               :rule-app.status/success)))
 
 (defn- unsupported [node rule context]
-  {:text (str "throw new System.NotImplementedException(\"Unsupported Java node "
-              (name (:node/kind node)) "\");")
-   :usings #{}
-   :helpers #{}
-   :diagnostics [(assoc (source-context node)
-                        :diagnostic/severity :diagnostic.severity/error
-                        :diagnostic/message (str "Unsupported Java node " (:node/kind node))
-                        :rule/id rule
-                        :rule/context context)]
-   :rule-applications [(rule-app node rule :rule-app.status/failed)]})
+  (let [text (str "throw new System.NotImplementedException(\"Unsupported Java node "
+                  (name (:node/kind node)) "\");")]
+    (apply-rule {:text text
+                 :usings #{}
+                 :helpers #{}
+                 :diagnostics [(assoc (source-context node)
+                                      :diagnostic/severity :diagnostic.severity/error
+                                      :diagnostic/message (str "Unsupported Java node " (:node/kind node))
+                                      :rule/id rule
+                                      :rule/context context)]
+                 :rule-applications []
+                 :provenance []}
+                node
+                rule
+                :rule-app.status/failed)))
 
 (defn- merge-emits
   ([parts]
    (merge-emits "" parts))
   ([separator parts]
-   {:text (str/join separator (map :text parts))
-    :usings (set (mapcat :usings parts))
-    :helpers (set (mapcat :helpers parts))
-    :diagnostics (vec (mapcat :diagnostics parts))
-    :rule-applications (vec (mapcat :rule-applications parts))}))
+   (let [parts (vec (remove nil? parts))]
+     (loop [remaining parts
+            offset 0
+            text []
+            usings #{}
+            helpers #{}
+            diagnostics []
+            rule-applications []
+            provenance []]
+       (if-let [part (first remaining)]
+         (let [part-text (or (:text part) "")
+               separator-text (when (seq text) separator)
+               prefix-length (count (or separator-text ""))
+               part-offset (+ offset prefix-length)]
+           (recur (next remaining)
+                  (+ part-offset (count part-text))
+                  (cond-> text
+                    separator-text (conj separator-text)
+                    true (conj part-text))
+                  (into usings (:usings part))
+                  (into helpers (:helpers part))
+                  (into diagnostics (:diagnostics part))
+                  (into rule-applications (:rule-applications part))
+                  (into provenance (shift-provenance part-offset (:provenance part)))))
+         {:text (apply str text)
+          :usings usings
+          :helpers helpers
+          :diagnostics (vec diagnostics)
+          :rule-applications (vec rule-applications)
+          :provenance (vec provenance)})))))
 
 (defn- with-text [result text]
-  (assoc result :text text))
+  (let [old-text (:text result)
+        offset (when (and (seq old-text)
+                          (str/includes? text old-text))
+                 (str/index-of text old-text))
+        provenance (if (some? offset)
+                     (shift-provenance offset (:provenance result))
+                     (mapv #(dissoc % :emit/start-offset :emit/end-offset)
+                           (:provenance result)))]
+    (assoc result
+           :text text
+           :provenance provenance)))
+
+(defn- offset->line-column [text offset]
+  (let [bounded-offset (max 0 (min offset (count text)))]
+    (loop [index 0
+           line 1
+           column 1]
+      (if (= index bounded-offset)
+        {:line line :column column}
+        (let [ch (.charAt text index)]
+          (if (= \newline ch)
+            (recur (inc index) (inc line) 1)
+            (recur (inc index) line (inc column))))))))
+
+(defn- dest-span [text start-offset end-offset]
+  (let [start (offset->line-column text start-offset)
+        end (offset->line-column text end-offset)]
+    {:start-line (:line start)
+     :start-column (:column start)
+     :end-line (:line end)
+     :end-column (:column end)}))
+
+(defn- source-span-summary [node]
+  {:start-line (:node/start-line node)
+   :start-column (:node/start-column node)
+   :end-line (:node/end-line node)
+   :end-column (:node/end-column node)})
+
+(defn- source-node-summary [node]
+  {:source/node-id (:node/id node)
+   :source/lang (:node/lang node)
+   :source/kind (:node/kind node)
+   :source/name (:node/name node)
+   :source/file (get-in node [:node/file :file/path])
+   :source/span (source-span-summary node)})
+
+(defn- declaration-summary [decl]
+  (select-keys decl [:decl/id :decl/kind :decl/name :decl/qualified-name]))
+
+(defn- feature-summary [feature]
+  (select-keys feature [:feature/id :feature/lang :feature/kind :feature/status :feature/severity]))
+
+(defn- rule-summary [rule-id rule]
+  {:rule/id rule-id
+   :rule/version (long (or (:rule/version rule) 1))
+   :rule/status (:rule/status rule)
+   :rule/source-lang (:rule/source-lang rule)
+   :rule/input-kind (:rule/input-kind rule)
+   :rule/input-feature (:rule/input-feature rule)
+   :rule/output-feature (:rule/output-feature rule)})
+
+(defn- source-node-index [db]
+  (->> (d/q '[:find (pull ?node [:node/id
+                                  :node/lang
+                                  :node/kind
+                                  :node/name
+                                  :node/start-line
+                                  :node/start-column
+                                  :node/end-line
+                                  :node/end-column
+                                  {:node/file [:file/id :file/path :file/lang :file/package]}])
+              :where
+              [?node :node/id]]
+            db)
+       (map first)
+       (map (juxt :node/id identity))
+       (into {})))
+
+(defn- declarations-by-node [db]
+  (->> (d/q '[:find ?node-id (pull ?decl [:decl/id
+                                           :decl/kind
+                                           :decl/name
+                                           :decl/qualified-name])
+              :where
+              [?decl :decl/source-node ?node]
+              [?node :node/id ?node-id]]
+            db)
+       (reduce (fn [acc [node-id decl]]
+                 (update acc node-id (fnil conj []) (declaration-summary decl)))
+               {})
+       (map (fn [[node-id decls]]
+              [node-id (vec (sort-by (juxt :decl/kind :decl/qualified-name :decl/id) decls))]))
+       (into {})))
+
+(defn- features-by-node [db]
+  (->> (d/q '[:find ?node-id (pull ?feature [:feature/id
+                                              :feature/lang
+                                              :feature/kind
+                                              :feature/status
+                                              :feature/severity])
+              :where
+              [?feature :feature/node ?node]
+              [?node :node/id ?node-id]]
+            db)
+       (reduce (fn [acc [node-id feature]]
+                 (update acc node-id (fnil conj []) (feature-summary feature)))
+               {})
+       (map (fn [[node-id features]]
+              [node-id (vec (sort-by (juxt :feature/kind :feature/id) features))]))
+       (into {})))
+
+(defn- rule-index [db]
+  (->> (d/q '[:find (pull ?rule [:rule/id
+                                  :rule/source-lang
+                                  :rule/input-kind
+                                  :rule/input-feature
+                                  :rule/output-feature
+                                  :rule/status
+                                  :rule/version])
+              :where
+              [?rule :rule/id]]
+            db)
+       (map first)
+       (map (juxt :rule/id identity))
+       (into {})))
+
+(defn- provenance-indexes [db]
+  {:nodes (source-node-index db)
+   :declarations (declarations-by-node db)
+   :features (features-by-node db)
+   :rules (rule-index db)})
+
+(defn- finalize-provenance [indexes dest-file text provenance]
+  (->> provenance
+       (map-indexed
+        (fn [index entry]
+          (let [source-node-id (second (:emit/source-node entry))
+                rule-id (second (:emit/rule entry))
+                source-node (get-in indexes [:nodes source-node-id])
+                rule (get-in indexes [:rules rule-id])
+                span (when (and (:emit/start-offset entry)
+                                (:emit/end-offset entry))
+                       (dest-span text (:emit/start-offset entry) (:emit/end-offset entry)))]
+            (cond-> (-> entry
+                        (dissoc :emit/start-offset :emit/end-offset)
+                        (assoc :emit/id (str dest-file "#" (format "%04d" (inc index)))
+                               :emit/dest-file dest-file
+                               :rule (rule-summary rule-id rule)))
+              span (assoc :emit/dest-span span)
+              source-node (merge (source-node-summary source-node))
+              (seq (get-in indexes [:declarations source-node-id]))
+              (assoc :source/declarations (get-in indexes [:declarations source-node-id]))
+              (seq (get-in indexes [:features source-node-id]))
+              (assoc :source/features (get-in indexes [:features source-node-id]))))))
+       (sort-by (juxt :emit/dest-file
+                      #(get-in % [:emit/dest-span :start-line] Long/MAX_VALUE)
+                      #(get-in % [:emit/dest-span :start-column] Long/MAX_VALUE)
+                      #(get-in % [:rule :rule/id])
+                      :source/node-id
+                      :emit/id))
+       vec))
 
 (defn- csharp-string [value]
   (pr-str value))
@@ -375,43 +587,43 @@
       (-> combined
           (with-text (str "new Regex(" args ")"))
           (update :usings conj "System.Text.RegularExpressions")
-          (update :rule-applications conj (rule-app node :java.regex-pattern-compile/to-csharp-regex :rule-app.status/success)))
+          (apply-rule node :java.regex-pattern-compile/to-csharp-regex :rule-app.status/success))
 
       (and (= "java.lang.String" owner) (= "trim" source-method-name) target)
       (-> combined
           (with-text (str target-text ".Trim()"))
-          (update :rule-applications conj (rule-app node :java.string-trim/to-csharp-trim :rule-app.status/success)))
+          (apply-rule node :java.string-trim/to-csharp-trim :rule-app.status/success))
 
       (and (= "java.lang.String" owner) (= "isEmpty" source-method-name) target)
       (-> combined
           (with-text (str "string.IsNullOrEmpty(" target-text ")"))
-          (update :rule-applications conj (rule-app node :java.string-is-empty/to-csharp-is-null-or-empty :rule-app.status/success)))
+          (apply-rule node :java.string-is-empty/to-csharp-is-null-or-empty :rule-app.status/success))
 
       (and (= "java.util.regex.Pattern" owner) (= "split" source-method-name) target)
       (-> combined
           (with-text (str target-text ".Split(" args ")"))
-          (update :rule-applications conj (rule-app node :java.regex-split/to-csharp-regex-split :rule-app.status/success)))
+          (apply-rule node :java.regex-split/to-csharp-regex-split :rule-app.status/success))
 
       (and (= "java.io.PrintStream" owner) (= "println" source-method-name))
       (-> combined
           (with-text (if (= "System.Console.Error" target-text)
                        (str "System.Console.Error.WriteLine(" args ")")
                        (str "System.Console.WriteLine(" args ")")))
-          (update :rule-applications conj (rule-app node :java.printstream-println/to-csharp-console :rule-app.status/success)))
+          (apply-rule node :java.printstream-println/to-csharp-console :rule-app.status/success))
 
       (and (= "java.lang.System" owner) (= "exit" source-method-name))
       (-> combined
           (with-text (str "System.Environment.Exit(" args ")"))
-          (update :rule-applications conj (rule-app node :java.system-exit/to-csharp-environment-exit :rule-app.status/success)))
+          (apply-rule node :java.system-exit/to-csharp-environment-exit :rule-app.status/success))
 
       (and (= "java.nio.file.Path" owner) (= "of" source-method-name) (= 1 (count (child-nodes db (:db/id node) :argument))))
       (-> args-result
-          (update :rule-applications conj (rule-app node :java.path-of/to-csharp-string-path :rule-app.status/success)))
+          (apply-rule node :java.path-of/to-csharp-string-path :rule-app.status/success))
 
       (and (= "java.nio.file.Files" owner) (= "readString" source-method-name))
       (-> args-result
           (with-text (str "System.IO.File.ReadAllText(" args ")"))
-          (update :rule-applications conj (rule-app node :java.files-read-string/to-csharp-file-read-all-text :rule-app.status/success)))
+          (apply-rule node :java.files-read-string/to-csharp-file-read-all-text :rule-app.status/success))
 
       :else
       (let [call-text (str (when target (str target-text "."))
@@ -419,7 +631,7 @@
                            "(" args ")")]
         (-> combined
             (with-text call-text)
-            (update :rule-applications conj (rule-app node :java.method-call-node/to-csharp-invocation :rule-app.status/success)))))))
+            (apply-rule node :java.method-call-node/to-csharp-invocation :rule-app.status/success))))))
 
 (defn- emit-field-read [ctx node]
   (let [target (child-node (:db ctx) (:db/id node) :target)
@@ -434,7 +646,7 @@
                :else field-name)]
     (-> (or target-result (merge-emits []))
         (with-text text)
-        (update :rule-applications conj (rule-app node :java.field-read-node/to-csharp-member :rule-app.status/success)))))
+        (apply-rule node :java.field-read-node/to-csharp-member :rule-app.status/success))))
 
 (defn- emit-expression [ctx node]
   (case (:node/kind node)
@@ -455,7 +667,7 @@
           index (emit-child-expression ctx node :index)]
       (-> (merge-emits [target index])
           (with-text (str (:text target) "[" (:text index) "]"))
-          (update :rule-applications conj (rule-app node :java.array-read-node/to-csharp-indexer :rule-app.status/success))))
+          (apply-rule node :java.array-read-node/to-csharp-indexer :rule-app.status/success)))
 
     :java.node/binary-operator
     (let [left (emit-child-expression ctx node :left)
@@ -464,7 +676,7 @@
       (if op
         (-> (merge-emits [left right])
             (with-text (str (:text left) " " op " " (:text right)))
-            (update :rule-applications conj (rule-app node :java.binary-operator-node/to-csharp-binary :rule-app.status/success)))
+            (apply-rule node :java.binary-operator-node/to-csharp-binary :rule-app.status/success))
         (unsupported node :java.binary-operator-node/to-csharp-binary {:operator (:node/value node)})))
 
     :java.node/method-call
@@ -489,13 +701,13 @@
           text (str (type-name source-type) " " (:node/name node) " = " (:text initializer) ";")]
       (-> initializer
           (with-text (indent-lines indent-level text))
-          (update :rule-applications conj (rule-app node :java.local-variable-node/to-csharp-local :rule-app.status/success))))
+          (apply-rule node :java.local-variable-node/to-csharp-local :rule-app.status/success)))
 
     :java.node/return-statement
     (let [expr (emit-child-expression ctx node :return-expression)]
       (-> expr
           (with-text (indent-lines indent-level (str "return " (:text expr) ";")))
-          (update :rule-applications conj (rule-app node :java.return-statement-node/to-csharp-return :rule-app.status/success))))
+          (apply-rule node :java.return-statement-node/to-csharp-return :rule-app.status/success)))
 
     :java.node/if-statement
     (let [condition (emit-child-expression ctx node :condition)
@@ -516,7 +728,7 @@
                            (indent-lines indent-level "}"))))]
       (-> (merge-emits [condition then-result else-result])
           (with-text text)
-          (update :rule-applications conj (rule-app node :java.if-statement-node/to-csharp-if :rule-app.status/success))))
+          (apply-rule node :java.if-statement-node/to-csharp-if :rule-app.status/success)))
 
     :java.node/method-call
     (let [expr (emit-expression ctx node)]
@@ -534,7 +746,8 @@
        :usings #{}
        :helpers #{}
        :diagnostics []
-       :rule-applications []})))
+       :rule-applications []
+       :provenance []})))
 
 (defn- class-line [class-decl]
   (let [mods (modifiers class-decl)]
@@ -562,9 +775,9 @@
                       ";\n")]
         (-> (or initializer (merge-emits []))
             (with-text text)
-            (update :rule-applications conj (rule-app (:decl/source-node field-decl)
-                                                      :java.field-node/to-csharp-field
-                                                      :rule-app.status/success)))))))
+            (apply-rule (:decl/source-node field-decl)
+                        :java.field-node/to-csharp-field
+                        :rule-app.status/success))))))
 
 (defn- method-name [method-decl]
   (if (= "main" (:decl/name method-decl))
@@ -585,9 +798,9 @@
                         "        {\n"
                         (:text body) "\n"
                         "        }\n"))
-        (update :rule-applications conj (rule-app (:decl/source-node ctor-decl)
-                                                  :java.constructor-node/to-csharp-constructor
-                                                  :rule-app.status/success)))))
+        (apply-rule (:decl/source-node ctor-decl)
+                    :java.constructor-node/to-csharp-constructor
+                    :rule-app.status/success))))
 
 (defn- method-block [db method-decl]
   (let [return-type (type-name (:decl/return-type method-decl))
@@ -601,9 +814,9 @@
                         "        {\n"
                         (:text body) "\n"
                         "        }\n"))
-        (update :rule-applications conj (rule-app (:decl/source-node method-decl)
-                                                  :java.method-node/to-csharp-method
-                                                  :rule-app.status/success)))))
+        (apply-rule (:decl/source-node method-decl)
+                    :java.method-node/to-csharp-method
+                    :rule-app.status/success))))
 
 (defn- emitted-field-decls [db members]
   (->> (get members :decl.kind/field)
@@ -634,12 +847,6 @@
          sort
          vec)))
 
-(defn- join-sections [sections]
-  (->> sections
-       (remove empty?)
-       (map #(str/join "\n" %))
-       (str/join "\n\n")))
-
 (defn- class-content [db class-decl]
   (let [namespace (csharp-namespace class-decl)
         members (member-groups db class-decl)
@@ -647,11 +854,11 @@
         fields (emitted-field-decls db members)
         ctors (emitted-ctor-decls db (:decl/name class-decl) members)
         methods (emitted-method-decls db members)
-        body-results (vec (concat fields ctors methods))
-        body (join-sections [(mapv :text fields)
-                             (mapv :text ctors)
-                             (mapv :text methods)])
-        body-metadata (merge-emits body-results)
+        body-sections (->> [fields ctors methods]
+                           (remove empty?)
+                           (mapv #(merge-emits "\n" %)))
+        body-metadata (merge-emits "\n\n" body-sections)
+        body (:text body-metadata)
         all-usings (->> (concat usings (:usings body-metadata))
                         (remove #(= namespace %))
                         set
@@ -673,23 +880,30 @@
                     "}\n"))]
     (-> body-metadata
         (with-text text)
-        (update :rule-applications conj (rule-app (:decl/source-node class-decl)
-                                                  :java.class-node/to-csharp-class
-                                                  :rule-app.status/success)))))
+        (apply-rule (:decl/source-node class-decl)
+                    :java.class-node/to-csharp-class
+                    :rule-app.status/success))))
 
 (defn emit!
   "Regenerate disposable C# declaration skeletons for Java class facts."
   [db target-dir]
   (let [target-dir (path target-dir)
-        classes (class-decls db)]
+        classes (class-decls db)
+        indexes (provenance-indexes db)]
     (clear-directory! target-dir)
     (let [emitted-classes (mapv (fn [class-decl]
                                   (let [file (class-output-path target-dir class-decl)
                                         result (class-content db class-decl)
-                                        file-path (slash-path (normalize-path file))]
-                                    (write-string! file (:text result))
+                                        file-path (slash-path (normalize-path file))
+                                        text (:text result)
+                                        provenance (finalize-provenance indexes
+                                                                        file-path
+                                                                        text
+                                                                        (:provenance result))]
+                                    (write-string! file text)
                                     (assoc result
                                            :dest-file file-path
+                                           :provenance provenance
                                            :text nil)))
                                 classes)
           files (mapv :dest-file emitted-classes)
@@ -697,6 +911,7 @@
       {:csharp/files-written (count files)
        :csharp/files files
        :csharp/rule-applications (:rule-applications metadata)
+       :csharp/provenance (:provenance metadata)
        :csharp/diagnostics (:diagnostics metadata)
        :csharp/helpers (vec (sort (:helpers metadata)))
        :csharp/usings (vec (sort (:usings metadata)))})))
