@@ -223,7 +223,11 @@
                     (= :ok (:status emit-stage))
                     (assoc :status :generated
                            :csharp/files (:csharp/files emit-stage)
-                           :csharp/files-written (:csharp/files-written emit-stage))
+                           :csharp/files-written (:csharp/files-written emit-stage)
+                           :csharp/rule-applications (:csharp/rule-applications emit-stage)
+                           :csharp/diagnostics (:csharp/diagnostics emit-stage)
+                           :csharp/helpers (:csharp/helpers emit-stage)
+                           :csharp/usings (:csharp/usings emit-stage))
 
                     (not= :ok (:status emit-stage))
                     (assoc :status :skipped

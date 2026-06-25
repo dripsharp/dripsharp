@@ -8,7 +8,7 @@
             [vibeformer.ingest.java-spoon :as java-spoon]
             [vibeformer.ingest.source :as source])
   (:import (java.nio.charset StandardCharsets)
-           (java.nio.file Files Path)
+           (java.nio.file Files Path Paths)
            (java.util UUID)))
 
 (def java-fixture
@@ -29,6 +29,10 @@ public final class Counter {
   }
 }
 ")
+
+(defn- sample-word-counter-source []
+  (slurp (str (Paths/get "sample-projects/java-word-count/source/src/main/java/com/example/wordcount/WordCounter.java"
+                         (make-array String 0)))))
 
 (defn- with-empty-db [f]
   (let [system (str "vibeformer-csharp-emit-test-" (UUID/randomUUID))
@@ -78,11 +82,62 @@ public final class Counter {
           (testing "namespace, class, static final field, constructor, and methods are emitted"
             (doseq [snippet ["namespace com.example.tools"
                              "public sealed class Counter"
-                             "private static readonly string EMPTY;"
+                             "private static readonly string EMPTY = \"\";"
                              "private Counter()"
                              "public static void Main(string[] args)"
                              "internal static int countWords(string text)"
+                             "return 0;"
                              "throw new System.NotImplementedException();"]]
               (is (str/includes? content snippet))))
+          (testing "emission returns provenance-friendly rule applications"
+            (is (seq (:csharp/rule-applications result)))
+            (is (empty? (:csharp/diagnostics result))))
           (testing "non-static instance fields are outside the initial declaration subset"
             (is (not (str/includes? content "ignored")))))))))
+
+(deftest emits-word-counter-statement-and-expression-subset
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/wordcount/WordCounter.java"
+            opts {:source/root source-root
+                  :project/id "word-count"
+                  :project/name "Word Count"}]
+        (write-file! source-root file-path (sample-word-counter-source))
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "word-count"})
+        (let [result (csharp/emit! (d/db conn) target)
+              generated (.resolve target "com/example/wordcount/WordCounter.cs")
+              content (slurp (str generated))
+              rules (set (map (comp second :rule-app/rule)
+                              (:csharp/rule-applications result)))
+              emitter-source (slurp "src/vibeformer/emit/csharp.clj")]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["using System.Text.RegularExpressions;"
+                           "private static readonly Regex WHITESPACE = new Regex(\"\\\\s+\");"
+                           "if (args.Length != 1)"
+                           "System.Console.Error.WriteLine(\"Usage: WordCounter <file>\");"
+                           "System.Environment.Exit(1);"
+                           "string input = args[0];"
+                           "string text = System.IO.File.ReadAllText(input);"
+                           "int words = WordCounter.countWords(text);"
+                           "System.Console.WriteLine(words);"
+                           "string trimmed = text.Trim();"
+                           "if (string.IsNullOrEmpty(trimmed))"
+                           "return 0;"
+                           "return WordCounter.WHITESPACE.Split(trimmed).Length;"]]
+            (is (str/includes? content snippet)))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (every? rules
+                      [:java.regex-pattern-compile/to-csharp-regex
+                       :java.string-trim/to-csharp-trim
+                       :java.string-is-empty/to-csharp-is-null-or-empty
+                       :java.regex-split/to-csharp-regex-split
+                       :java.printstream-println/to-csharp-console
+                       :java.system-exit/to-csharp-environment-exit
+                       :java.path-of/to-csharp-string-path
+                       :java.files-read-string/to-csharp-file-read-all-text]))
+          (is (not (str/includes? emitter-source "source-text"))))))))

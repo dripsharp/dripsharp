@@ -30,6 +30,50 @@
    {:rule/id :java.method-call-node/to-csharp-invocation
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/method-call
+    :rule/status implemented-status}
+   {:rule/id :java.local-variable-node/to-csharp-local
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/local-variable
+    :rule/status implemented-status}
+   {:rule/id :java.return-statement-node/to-csharp-return
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/return-statement
+    :rule/status implemented-status}
+   {:rule/id :java.if-statement-node/to-csharp-if
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/if-statement
+    :rule/status implemented-status}
+   {:rule/id :java.literal-node/to-csharp-literal
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/literal
+    :rule/status implemented-status}
+   {:rule/id :java.variable-read-node/to-csharp-variable
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/variable-read
+    :rule/status implemented-status}
+   {:rule/id :java.field-read-node/to-csharp-member
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/field-read
+    :rule/status implemented-status}
+   {:rule/id :java.type-access-node/to-csharp-type
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/type-access
+    :rule/status implemented-status}
+   {:rule/id :java.array-read-node/to-csharp-indexer
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/array-read
+    :rule/status implemented-status}
+   {:rule/id :java.binary-operator-node/to-csharp-binary
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/binary-operator
+    :rule/status implemented-status}
+   {:rule/id :java.statement-node/to-csharp-stub
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/statement
+    :rule/status stubbed-status}
+   {:rule/id :java.expression-node/to-csharp-stub
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/expression
     :rule/status stubbed-status}
    {:rule/id :java.class-feature/to-csharp-class
     :rule/source-lang :lang/java

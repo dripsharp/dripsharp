@@ -75,7 +75,9 @@
 
 (def java-known-types
   {"java.util.regex.Pattern" {:csharp/type "Regex"
-                              :csharp/usings #{"System.Text.RegularExpressions"}}})
+                              :csharp/usings #{"System.Text.RegularExpressions"}}
+   "java.nio.file.Path" {:csharp/type "string"
+                         :csharp/usings #{}}})
 
 (def collection-mappings
   {"java.util.Collection" ["ICollection" #{collection-using}]

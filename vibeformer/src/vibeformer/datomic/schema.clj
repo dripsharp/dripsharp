@@ -71,6 +71,12 @@
     :db/cardinality :db.cardinality/one}
    {:db/ident :node/source-hash
     :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :node/role
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :node/value
+    :db/valueType :db.type/string
     :db/cardinality :db.cardinality/one}])
 
 (def declaration

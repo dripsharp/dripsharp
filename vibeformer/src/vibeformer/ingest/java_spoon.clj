@@ -4,7 +4,7 @@
   (:import (java.nio.file Paths)
            (java.security MessageDigest)
            (spoon Launcher)
-           (spoon.reflect.code CtInvocation CtLambda CtSynchronized)
+           (spoon.reflect.code CtArrayRead CtBinaryOperator CtBlock CtExpression CtFieldRead CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSynchronized CtTargetedExpression CtTypeAccess CtVariableRead)
            (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtType)
            (spoon.reflect.reference CtExecutableReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
@@ -191,7 +191,7 @@
   (when-let [owner (some-> executable-ref .getDeclaringType qname)]
     (str owner "." (.getSimpleName executable-ref))))
 
-(defn- node-fact [id kind name file-id ordinal element & {:keys [parent]}]
+(defn- node-fact [id kind name file-id ordinal element & {:keys [parent role value]}]
   (cond-> {:db/id id
            :node/id id
            :node/lang lang
@@ -201,6 +201,8 @@
            :node/ordinal ordinal
            :node/source-hash (sha256 element)}
     parent (assoc :node/parent parent)
+    role (assoc :node/role role)
+    value (assoc :node/value value)
     true (merge (source-span element))))
 
 (defn- type-ref-facts
@@ -233,6 +235,65 @@
                 :ref/name (:type/name type-fact)
                 :ref/resolved? resolved?}
          (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))
+
+(declare expression-facts statement-facts)
+
+(defn- child-node-id [parent-node-id role ordinal element]
+  (str parent-node-id ":" (name role) ":" ordinal ":" (sha256 element)))
+
+(defn- literal-value [^CtLiteral literal]
+  (let [value (.getValue literal)]
+    (if (nil? value)
+      "nil"
+      (pr-str value))))
+
+(defn- type-access-name [^CtTypeAccess type-access]
+  (or (some-> type-access .getAccessedType qname)
+      (some-> type-access .getAccessedType str)))
+
+(defn- binary-operator-name [^CtBinaryOperator expression]
+  (-> (.getKind expression) .name str/lower-case (str/replace "_" "-")))
+
+(defn- expression-kind [expression]
+  (cond
+    (instance? CtInvocation expression) :java.node/method-call
+    (instance? CtBinaryOperator expression) :java.node/binary-operator
+    (instance? CtArrayRead expression) :java.node/array-read
+    (instance? CtFieldRead expression) :java.node/field-read
+    (instance? CtVariableRead expression) :java.node/variable-read
+    (instance? CtTypeAccess expression) :java.node/type-access
+    (instance? CtLiteral expression) :java.node/literal
+    :else :java.node/expression))
+
+(defn- expression-name [expression]
+  (cond
+    (instance? CtInvocation expression)
+    (.getSimpleName (.getExecutable ^CtInvocation expression))
+
+    (instance? CtBinaryOperator expression)
+    (binary-operator-name expression)
+
+    (instance? CtFieldRead expression)
+    (.getSimpleName (.getVariable ^CtFieldRead expression))
+
+    (instance? CtVariableRead expression)
+    (.getSimpleName (.getVariable ^CtVariableRead expression))
+
+    (instance? CtTypeAccess expression)
+    (type-access-name expression)
+
+    (instance? CtLiteral expression)
+    (some-> (.getValue ^CtLiteral expression) class .getSimpleName)
+
+    :else
+    (some-> expression class .getSimpleName)))
+
+(defn- expression-value [expression]
+  (cond
+    (instance? CtLiteral expression) (literal-value expression)
+    (instance? CtBinaryOperator expression) (binary-operator-name expression)
+    (instance? CtTypeAccess expression) (type-access-name expression)
+    :else nil))
 
 (defn- type-facts [file-id ordinal ^CtType type]
   (let [node-id (type-node-id file-id type)
@@ -281,6 +342,7 @@
         (seq (modifiers field)) (assoc :decl/modifiers (modifiers field)))
       (supported-feature (str node-id ":feature:field") :java.feature/field node-id)]
      (type-ref-facts node-id :field-type field-type)
+     (expression-facts file-id node-id :initializer 0 (.getDefaultExpression field))
      (when (package-private? field)
        [(supported-feature (str node-id ":feature:package-private-member")
                            :java.feature/package-private-member
@@ -353,6 +415,9 @@
 (defn- invocation-node-id [file-id parent-node-id ordinal ^CtInvocation invocation]
   (str file-id ":method-call:" parent-node-id ":" ordinal ":" (.getSimpleName (.getExecutable invocation))))
 
+(defn- constructor-invocation? [^CtInvocation invocation]
+  (= "<init>" (.getSimpleName (.getExecutable invocation))))
+
 (defn- invocation-feature-facts [node-id ^CtInvocation invocation]
   (let [executable-ref (.getExecutable invocation)
         owner (some-> executable-ref .getDeclaringType qname)
@@ -372,9 +437,8 @@
                              node-id
                              :feature.severity/medium)]))))
 
-(defn- invocation-facts [file-id parent-node-id ordinal ^CtInvocation invocation]
-  (let [node-id (invocation-node-id file-id parent-node-id ordinal invocation)
-        executable-ref (.getExecutable invocation)
+(defn- invocation-reference-facts [node-id ^CtInvocation invocation]
+  (let [executable-ref (.getExecutable invocation)
         target-decl-id (executable-ref-decl-id executable-ref)
         return-type (.getType invocation)
         owner-type (some-> executable-ref .getDeclaringType)
@@ -382,8 +446,6 @@
                                 (or (nil? owner-type)
                                     (type-reference-resolved? owner-type))))]
     (concat
-     [(node-fact node-id :java.node/method-call (.getSimpleName executable-ref) file-id ordinal invocation
-                 :parent parent-node-id)]
      (when return-type [(type-fact return-type)])
      (when owner-type [(type-fact owner-type)])
      (when resolved?
@@ -406,9 +468,150 @@
         (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))]
      (invocation-feature-facts node-id invocation))))
 
+(defn- invocation-facts [file-id parent-node-id ordinal ^CtInvocation invocation]
+  (let [node-id (invocation-node-id file-id parent-node-id ordinal invocation)
+        executable-ref (.getExecutable invocation)]
+    (concat
+     [(node-fact node-id :java.node/method-call (.getSimpleName executable-ref) file-id ordinal invocation
+                 :parent parent-node-id)]
+     (invocation-reference-facts node-id invocation))))
+
+(defn- targeted-expression-target [expression]
+  (when (instance? CtTargetedExpression expression)
+    (.getTarget ^CtTargetedExpression expression)))
+
+(defn- expression-children [expression]
+  (cond
+    (instance? CtInvocation expression)
+    (let [target (targeted-expression-target expression)
+          args (.getArguments ^CtInvocation expression)]
+      (concat
+       (when target [[:target 0 target]])
+       (map-indexed (fn [index arg] [:argument index arg]) args)))
+
+    (instance? CtBinaryOperator expression)
+    [[:left 0 (.getLeftHandOperand ^CtBinaryOperator expression)]
+     [:right 1 (.getRightHandOperand ^CtBinaryOperator expression)]]
+
+    (instance? CtArrayRead expression)
+    [[:target 0 (.getTarget ^CtArrayRead expression)]
+     [:index 1 (.getIndexExpression ^CtArrayRead expression)]]
+
+    (instance? CtFieldRead expression)
+    (when-let [target (targeted-expression-target expression)]
+      [[:target 0 target]])
+
+    :else
+    []))
+
+(defn- expression-facts [file-id parent-node-id role ordinal ^CtExpression expression]
+  (when expression
+    (let [node-id (child-node-id parent-node-id role ordinal expression)]
+      (concat
+       [(node-fact node-id
+                   (expression-kind expression)
+                   (expression-name expression)
+                   file-id
+                   ordinal
+                   expression
+                   :parent parent-node-id
+                   :role role
+                   :value (expression-value expression))]
+       (when (instance? CtInvocation expression)
+         (invocation-reference-facts node-id expression))
+       (mapcat (fn [[child-role child-ordinal child-expression]]
+                 (expression-facts file-id node-id child-role child-ordinal child-expression))
+               (expression-children expression))))))
+
+(defn- branch-statements [statement]
+  (cond
+    (nil? statement) []
+    (instance? CtBlock statement) (.getStatements ^CtBlock statement)
+    :else [statement]))
+
+(defn- statement-facts [file-id parent-node-id role ordinal ^CtStatement statement]
+  (when statement
+    (let [node-id (child-node-id parent-node-id role ordinal statement)]
+      (cond
+        (instance? CtLocalVariable statement)
+        (let [local ^CtLocalVariable statement
+              default-expression (.getDefaultExpression local)
+              local-type (.getType local)]
+          (concat
+           [(node-fact node-id
+                       :java.node/local-variable
+                       (.getSimpleName local)
+                       file-id
+                       ordinal
+                       statement
+                       :parent parent-node-id
+                       :role role)]
+           (type-ref-facts node-id :local-type local-type (.getSimpleName local))
+           (expression-facts file-id node-id :initializer 0 default-expression)))
+
+        (instance? CtReturn statement)
+        (concat
+         [(node-fact node-id
+                     :java.node/return-statement
+                     "return"
+                     file-id
+                     ordinal
+                     statement
+                     :parent parent-node-id
+                     :role role)]
+         (expression-facts file-id node-id :return-expression 0 (.getReturnedExpression ^CtReturn statement)))
+
+        (instance? CtIf statement)
+        (let [if-statement ^CtIf statement]
+          (concat
+           [(node-fact node-id
+                       :java.node/if-statement
+                       "if"
+                       file-id
+                       ordinal
+                       statement
+                       :parent parent-node-id
+                       :role role)]
+           (expression-facts file-id node-id :condition 0 (.getCondition if-statement))
+           (mapcat (fn [index then-statement]
+                     (statement-facts file-id node-id :then index then-statement))
+                   (range)
+                   (branch-statements (.getThenStatement if-statement)))
+           (mapcat (fn [index else-statement]
+                     (statement-facts file-id node-id :else index else-statement))
+                   (range)
+                   (branch-statements (.getElseStatement if-statement)))))
+
+        (and (instance? CtInvocation statement)
+             (constructor-invocation? statement))
+        []
+
+        (instance? CtInvocation statement)
+        (expression-facts file-id parent-node-id role ordinal statement)
+
+        :else
+        [(node-fact node-id
+                    :java.node/statement
+                    (some-> statement class .getSimpleName)
+                    file-id
+                    ordinal
+                    statement
+                    :parent parent-node-id
+                    :role role)]))))
+
+(defn- executable-body-facts [file-id executable]
+  (let [parent-node-id (executable-node-id file-id executable)
+        body (when (instance? CtExecutable executable) (.getBody ^CtExecutable executable))]
+    (mapcat (fn [ordinal statement]
+              (statement-facts file-id parent-node-id :body ordinal statement))
+            (range)
+            (if body (.getStatements body) []))))
+
 (defn- executable-invocation-facts [file-id executable]
   (let [parent-node-id (executable-node-id file-id executable)
-        invocations (filter valid-position (.getElements executable (TypeFilter. CtInvocation)))]
+        invocations (->> (.getElements executable (TypeFilter. CtInvocation))
+                         (filter valid-position)
+                         (remove constructor-invocation?))]
     (mapcat (fn [ordinal invocation]
               (invocation-facts file-id parent-node-id ordinal invocation))
             (range)
@@ -455,6 +658,7 @@
                     (executable-facts file-id type-node-id ordinal executable))
                   (range)
                   executables)
+          (mapcat #(executable-body-facts file-id %) executables)
           (mapcat #(executable-invocation-facts file-id %) executables)
           (mapcat #(expression-feature-facts file-id %) executables))))
      (range)

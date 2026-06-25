@@ -107,10 +107,21 @@
         rules-by-kind (group-by :rule/input-kind node-rules)
         rules-by-feature (group-by :rule/input-feature feature-rules)]
     (is (= #{:java.node/class
+             :java.node/array-read
+             :java.node/binary-operator
              :java.node/constructor
+             :java.node/expression
              :java.node/field
+             :java.node/field-read
+             :java.node/if-statement
+             :java.node/literal
+             :java.node/local-variable
              :java.node/method
-             :java.node/method-call}
+             :java.node/method-call
+             :java.node/return-statement
+             :java.node/statement
+             :java.node/type-access
+             :java.node/variable-read}
            (set (remove nil? (keys rules-by-kind)))))
     (is (= #{:java.feature/class
              :java.feature/field
@@ -121,14 +132,25 @@
     (is (every? #(= 1 (count %)) (vals rules-by-feature)))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.feature/checked-exception)))))
-    (is (= #{:java.method-call-node/to-csharp-invocation}
+    (is (= #{:java.statement-node/to-csharp-stub
+             :java.expression-node/to-csharp-stub}
            (set (map :rule/id
                      (filter #(= :rule.status/stubbed (:rule/status %))
                              rules/initial-java-rules)))))
     (is (= #{:java.class-node/to-csharp-class
+             :java.array-read-node/to-csharp-indexer
+             :java.binary-operator-node/to-csharp-binary
              :java.constructor-node/to-csharp-constructor
              :java.field-node/to-csharp-field
+             :java.field-read-node/to-csharp-member
+             :java.if-statement-node/to-csharp-if
+             :java.literal-node/to-csharp-literal
+             :java.local-variable-node/to-csharp-local
              :java.method-node/to-csharp-method
+             :java.method-call-node/to-csharp-invocation
+             :java.return-statement-node/to-csharp-return
+             :java.type-access-node/to-csharp-type
+             :java.variable-read-node/to-csharp-variable
              :java.class-feature/to-csharp-class
              :java.field-feature/to-csharp-field
              :java.package-private-member/to-csharp-internal}
