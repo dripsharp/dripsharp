@@ -114,25 +114,35 @@
                             :java.system-exit/to-csharp-environment-exit
                             :java.path-of/to-csharp-string-path
                             :java.files-read-string/to-csharp-file-read-all-text}]
-    (is (= #{:java.node/class
-             :java.node/array-read
-             :java.node/binary-operator
+	    (is (= #{:java.node/class
+             :java.node/assignment
+	             :java.node/array-read
+	             :java.node/binary-operator
              :java.node/constructor
              :java.node/expression
-             :java.node/field
-             :java.node/field-read
-             :java.node/if-statement
+	             :java.node/field
+	             :java.node/field-read
+             :java.node/field-write
+	             :java.node/if-statement
+	             :java.node/interface
              :java.node/literal
-             :java.node/local-variable
-             :java.node/method
-             :java.node/method-call
-             :java.node/return-statement
+	             :java.node/local-variable
+	             :java.node/method
+	             :java.node/method-call
+             :java.node/object-creation
+	             :java.node/return-statement
              :java.node/statement
-             :java.node/type-access
-             :java.node/variable-read}
+             :java.node/this
+             :java.node/throw-statement
+             :java.node/type-pattern
+	             :java.node/type-access
+             :java.node/variable-read
+             :java.node/variable-write}
            (set (remove nil? (keys rules-by-kind)))))
     (is (= #{:java.feature/class
              :java.feature/field
+             :java.feature/generic-method
+             :java.feature/interface
              :java.feature/package-private-member
              :java.feature/checked-exception
              :java.api/pattern-compile
@@ -153,22 +163,32 @@
            (set (map :rule/id
                      (filter #(= :rule.status/stubbed (:rule/status %))
                              rules/initial-java-rules)))))
-    (is (= #{:java.class-node/to-csharp-class
-             :java.array-read-node/to-csharp-indexer
+	    (is (= #{:java.class-node/to-csharp-class
+             :java.assignment-node/to-csharp-assignment
+	             :java.array-read-node/to-csharp-indexer
              :java.binary-operator-node/to-csharp-binary
              :java.constructor-node/to-csharp-constructor
-             :java.field-node/to-csharp-field
-             :java.field-read-node/to-csharp-member
+	             :java.field-node/to-csharp-field
+	             :java.field-read-node/to-csharp-member
+             :java.field-write-node/to-csharp-member
+             :java.generic-method-feature/to-csharp-generic-method
              :java.if-statement-node/to-csharp-if
+             :java.interface-node/to-csharp-interface
              :java.literal-node/to-csharp-literal
              :java.local-variable-node/to-csharp-local
-             :java.method-node/to-csharp-method
-             :java.method-call-node/to-csharp-invocation
+	             :java.method-node/to-csharp-method
+	             :java.method-call-node/to-csharp-invocation
+             :java.object-creation-node/to-csharp-new
              :java.return-statement-node/to-csharp-return
-             :java.type-access-node/to-csharp-type
-             :java.variable-read-node/to-csharp-variable
+             :java.this-node/to-csharp-this
+             :java.throw-statement-node/to-csharp-throw
+             :java.type-pattern-node/to-csharp-pattern
+	             :java.type-access-node/to-csharp-type
+	             :java.variable-read-node/to-csharp-variable
+             :java.variable-write-node/to-csharp-variable
              :java.class-feature/to-csharp-class
              :java.field-feature/to-csharp-field
+             :java.interface-feature/to-csharp-interface
              :java.package-private-member/to-csharp-internal}
            (set (map :rule/id
                      (remove #(contains? special-api-rules (:rule/id %))

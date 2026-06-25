@@ -4,7 +4,7 @@
   (:import (java.nio.file Paths)
            (java.security MessageDigest)
            (spoon Launcher)
-           (spoon.reflect.code CtArrayRead CtBinaryOperator CtBlock CtExpression CtFieldRead CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSynchronized CtTargetedExpression CtTypeAccess CtVariableRead)
+           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtVariableRead CtVariableWrite)
            (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtType)
            (spoon.reflect.reference CtExecutableReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
@@ -81,8 +81,21 @@
     (instance? CtTypeReference value) (.getQualifiedName ^CtTypeReference value)
     :else (str value)))
 
-(defn- type-display-name [^CtTypeReference type-ref]
+(defn- type-base-name [^CtTypeReference type-ref]
   (or (qname type-ref) (some-> type-ref str)))
+
+(declare type-id)
+
+(defn- actual-type-arguments [^CtTypeReference type-ref]
+  (vec (.getActualTypeArguments type-ref)))
+
+(defn- type-display-name [^CtTypeReference type-ref]
+  (let [base-name (type-base-name type-ref)
+        args (actual-type-arguments type-ref)]
+    (cond
+      (nil? base-name) nil
+      (empty? args) base-name
+      :else (str base-name "<" (str/join "," (map type-id args)) ">"))))
 
 (defn- type-id [^CtTypeReference type-ref]
   (type-display-name type-ref))
@@ -102,13 +115,27 @@
     (boolean (or (contains? built-in-types id)
                  (type-declaration type-ref)))))
 
-(defn- type-fact [type-ref]
+(defn- type-fact [^CtTypeReference type-ref]
   (when-let [id (type-id type-ref)]
-    {:db/id id
-     :type/id id
-     :type/lang lang
-     :type/name id
-     :type/nullable? false}))
+    (let [args (actual-type-arguments type-ref)]
+      (cond-> {:db/id id
+               :type/id id
+               :type/lang lang
+               :type/name (or (type-base-name type-ref) id)
+               :type/nullable? false}
+        (seq args)
+        (assoc :type/args
+               (mapv (fn [ordinal arg]
+                       {:type.arg/ordinal ordinal
+                        :type.arg/type (type-id arg)})
+                     (range)
+                     args))))))
+
+(defn- type-reference-facts [type-ref]
+  (when type-ref
+    (let [args (actual-type-arguments type-ref)]
+      (cons (type-fact type-ref)
+            (mapcat type-reference-facts args)))))
 
 (defn- source-type-fact [^CtType type]
   (when-let [id (qname type)]
@@ -164,7 +191,10 @@
 
 (defn- executable-signature [^CtExecutable executable]
   (cond
-    (instance? CtConstructor executable) (.getSignature executable)
+    (instance? CtConstructor executable) (str (qname (.getDeclaringType executable))
+                                             "("
+                                             (str/join "," (map #(qname (.getType %)) (.getParameters executable)))
+                                             ")")
     (instance? CtMethod executable) (str (qname (.getDeclaringType executable))
                                         "#"
                                         (.getSimpleName executable)
@@ -191,6 +221,12 @@
   (when-let [owner (some-> executable-ref .getDeclaringType qname)]
     (str owner "." (.getSimpleName executable-ref))))
 
+(defn- constructor-ref-decl-id [^CtExecutableReference executable-ref]
+  (when-let [owner (some-> executable-ref .getDeclaringType qname)]
+    (str "java:" owner "("
+         (str/join "," (map qname (.getParameters executable-ref)))
+         ")")))
+
 (defn- node-fact [id kind name file-id ordinal element & {:keys [parent role value]}]
   (cond-> {:db/id id
            :node/id id
@@ -205,36 +241,60 @@
     value (assoc :node/value value)
     true (merge (source-span element))))
 
+(defn- formal-type-parameters [owner]
+  (try
+    (vec (.getFormalCtTypeParameters owner))
+    (catch Throwable _
+      [])))
+
+(defn- type-param-name [type-param]
+  (or (some-> type-param .getSimpleName)
+      (qname type-param)
+      (str type-param)))
+
+(defn- type-param-facts [owner-id owner]
+  (mapv (fn [ordinal type-param]
+          (let [name (type-param-name type-param)
+                id (str owner-id ":type-param:" ordinal ":" name)]
+            {:db/id id
+             :type-param/id id
+             :type-param/ordinal ordinal
+             :type-param/name name}))
+        (range)
+        (formal-type-parameters owner)))
+
 (defn- type-ref-facts
   ([node-id role type-ref]
    (type-ref-facts node-id role type-ref nil))
   ([node-id role type-ref source-name]
    (when-let [type-fact (type-fact type-ref)]
      (let [resolved? (type-reference-resolved? type-ref)]
-       [type-fact
-        (cond-> {:ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
-                 :db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
-                 :ref/kind :ref.kind/type-use
-                 :ref/from-node node-id
-                 :ref/to-type (:type/id type-fact)
-                 :ref/name (:type/name type-fact)
-                 :ref/role role
-                 :ref/resolved? resolved?}
-          source-name (assoc :ref/source-name source-name)
-          (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))]))))
+       (concat
+        (type-reference-facts type-ref)
+        [(cond-> {:ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
+                  :db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
+                  :ref/kind :ref.kind/type-use
+                  :ref/from-node node-id
+                  :ref/to-type (:type/id type-fact)
+                  :ref/name (:type/name type-fact)
+                  :ref/role role
+                  :ref/resolved? resolved?}
+           source-name (assoc :ref/source-name source-name)
+           (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))))
 
 (defn- inheritance-ref-facts [node-id kind type-ref]
   (when-let [type-fact (type-fact type-ref)]
     (let [resolved? (type-reference-resolved? type-ref)]
-      [type-fact
-       (cond-> {:ref/id (str node-id ":" (name kind) ":" (:type/id type-fact))
-                :db/id (str node-id ":" (name kind) ":" (:type/id type-fact))
-                :ref/kind kind
-                :ref/from-node node-id
-                :ref/to-type (:type/id type-fact)
-                :ref/name (:type/name type-fact)
-                :ref/resolved? resolved?}
-         (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))
+      (concat
+       (type-reference-facts type-ref)
+       [(cond-> {:ref/id (str node-id ":" (name kind) ":" (:type/id type-fact))
+                 :db/id (str node-id ":" (name kind) ":" (:type/id type-fact))
+                 :ref/kind kind
+                 :ref/from-node node-id
+                 :ref/to-type (:type/id type-fact)
+                 :ref/name (:type/name type-fact)
+                 :ref/resolved? resolved?}
+          (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))]))))
 
 (declare expression-facts statement-facts)
 
@@ -256,11 +316,17 @@
 
 (defn- expression-kind [expression]
   (cond
+    (instance? CtConstructorCall expression) :java.node/object-creation
     (instance? CtInvocation expression) :java.node/method-call
+    (instance? CtAssignment expression) :java.node/assignment
     (instance? CtBinaryOperator expression) :java.node/binary-operator
     (instance? CtArrayRead expression) :java.node/array-read
+    (instance? CtFieldWrite expression) :java.node/field-write
     (instance? CtFieldRead expression) :java.node/field-read
+    (instance? CtVariableWrite expression) :java.node/variable-write
     (instance? CtVariableRead expression) :java.node/variable-read
+    (instance? CtThisAccess expression) :java.node/this
+    (instance? CtTypePattern expression) :java.node/type-pattern
     (instance? CtTypeAccess expression) :java.node/type-access
     (instance? CtLiteral expression) :java.node/literal
     :else :java.node/expression))
@@ -270,14 +336,32 @@
     (instance? CtInvocation expression)
     (.getSimpleName (.getExecutable ^CtInvocation expression))
 
+    (instance? CtConstructorCall expression)
+    (some-> expression .getType qname)
+
+    (instance? CtAssignment expression)
+    "assignment"
+
     (instance? CtBinaryOperator expression)
     (binary-operator-name expression)
+
+    (instance? CtFieldWrite expression)
+    (.getSimpleName (.getVariable ^CtFieldWrite expression))
 
     (instance? CtFieldRead expression)
     (.getSimpleName (.getVariable ^CtFieldRead expression))
 
+    (instance? CtVariableWrite expression)
+    (.getSimpleName (.getVariable ^CtVariableWrite expression))
+
     (instance? CtVariableRead expression)
     (.getSimpleName (.getVariable ^CtVariableRead expression))
+
+    (instance? CtThisAccess expression)
+    "this"
+
+    (instance? CtTypePattern expression)
+    (some-> ^CtTypePattern expression .getVariable .getSimpleName)
 
     (instance? CtTypeAccess expression)
     (type-access-name expression)
@@ -291,7 +375,10 @@
 (defn- expression-value [expression]
   (cond
     (instance? CtLiteral expression) (literal-value expression)
+    (instance? CtConstructorCall expression) (some-> expression .getType type-id)
+    (instance? CtAssignment expression) "="
     (instance? CtBinaryOperator expression) (binary-operator-name expression)
+    (instance? CtTypePattern expression) (some-> ^CtTypePattern expression .getVariable .getType type-id)
     (instance? CtTypeAccess expression) (type-access-name expression)
     :else nil))
 
@@ -300,7 +387,8 @@
         decl-id (str "java:" (qname type))
         type-id (qname type)
         superclass (.getSuperclass type)
-        interfaces (.getSuperInterfaces type)]
+        interfaces (.getSuperInterfaces type)
+        type-params (type-param-facts decl-id type)]
     (concat
      [(source-type-fact type)
       (node-fact node-id (node-kind type) (.getSimpleName type) file-id ordinal type)
@@ -312,10 +400,12 @@
                :decl/qualified-name (qname type)
                :decl/source-node node-id
                :decl/type type-id}
-        (seq (modifiers type)) (assoc :decl/modifiers (modifiers type)))
+        (seq (modifiers type)) (assoc :decl/modifiers (modifiers type))
+        (seq type-params) (assoc :decl/type-params (mapv :db/id type-params)))
       (supported-feature (str node-id ":feature:" (name (type-feature-kind type)))
                          (type-feature-kind type)
                          node-id)]
+     type-params
      (when superclass
        (inheritance-ref-facts node-id :ref.kind/extends superclass))
      (mapcat #(inheritance-ref-facts node-id :ref.kind/implements %) interfaces)
@@ -376,8 +466,10 @@
 
 (defn- executable-facts [file-id parent-node-id ordinal executable]
   (let [node-id (executable-node-id file-id executable)
+        decl-id (executable-decl-id executable)
         return-type (when (instance? CtMethod executable) (.getType ^CtMethod executable))
-        params (.getParameters executable)]
+        params (.getParameters executable)
+        type-params (type-param-facts decl-id executable)]
     (concat
      [(node-fact node-id
                  (if (instance? CtConstructor executable) :java.node/constructor :java.node/method)
@@ -386,8 +478,8 @@
                  ordinal
                  executable
                  :parent parent-node-id)
-      (cond-> {:db/id (executable-decl-id executable)
-               :decl/id (executable-decl-id executable)
+      (cond-> {:db/id decl-id
+               :decl/id decl-id
                :decl/lang lang
                :decl/kind (if (instance? CtConstructor executable)
                             :decl.kind/constructor
@@ -399,7 +491,9 @@
                :decl/source-node node-id}
         return-type (assoc :decl/return-type (type-id return-type))
         (instance? CtConstructor executable) (assoc :decl/type (qname (.getDeclaringType executable)))
-        (seq (modifiers executable)) (assoc :decl/modifiers (modifiers executable)))]
+        (seq (modifiers executable)) (assoc :decl/modifiers (modifiers executable))
+        (seq type-params) (assoc :decl/type-params (mapv :db/id type-params)))]
+     type-params
      (when return-type
        (type-ref-facts node-id :return-type return-type))
      (mapcat (fn [index param]
@@ -441,10 +535,10 @@
         owner-type (some-> executable-ref .getDeclaringType)
         resolved? (boolean (and target-decl-id
                                 (or (nil? owner-type)
-                                    (type-reference-resolved? owner-type))))]
+                                     (type-reference-resolved? owner-type))))]
     (concat
-     (when return-type [(type-fact return-type)])
-     (when owner-type [(type-fact owner-type)])
+     (when return-type (type-reference-facts return-type))
+     (when owner-type (type-reference-facts owner-type))
      (when resolved?
        [(cond-> {:db/id target-decl-id
                  :decl/id target-decl-id
@@ -465,12 +559,42 @@
         (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))]
      (invocation-feature-facts node-id invocation))))
 
+(defn- constructor-call-reference-facts [node-id ^CtConstructorCall constructor-call]
+  (let [executable-ref (.getExecutable constructor-call)
+        target-decl-id (constructor-ref-decl-id executable-ref)
+        object-type (.getType constructor-call)
+        resolved? (boolean (and target-decl-id object-type))]
+    (concat
+     (when object-type (type-reference-facts object-type))
+     (when resolved?
+       [(cond-> {:db/id target-decl-id
+                 :decl/id target-decl-id
+                 :decl/lang lang
+                 :decl/kind :decl.kind/constructor
+                 :decl/name (some-> object-type type-base-name)
+                 :decl/qualified-name (some-> object-type type-base-name)}
+          object-type (assoc :decl/type (type-id object-type)))])
+     [(cond-> {:db/id (str node-id ":ref")
+               :ref/id (str node-id ":ref")
+               :ref/kind :ref.kind/constructor-call
+               :ref/from-node node-id
+               :ref/name (or (some-> object-type type-base-name) "<init>")
+               :ref/resolved? resolved?}
+        resolved? (assoc :ref/to-decl target-decl-id)
+        object-type (assoc :ref/to-type (type-id object-type)
+                           :ref/owner-type (type-id object-type))
+        (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))
+
 (defn- targeted-expression-target [expression]
   (when (instance? CtTargetedExpression expression)
     (.getTarget ^CtTargetedExpression expression)))
 
 (defn- expression-children [expression]
   (cond
+    (instance? CtConstructorCall expression)
+    (map-indexed (fn [index arg] [:argument index arg])
+                 (.getArguments ^CtConstructorCall expression))
+
     (instance? CtInvocation expression)
     (let [target (targeted-expression-target expression)
           args (.getArguments ^CtInvocation expression)]
@@ -482,11 +606,19 @@
     [[:left 0 (.getLeftHandOperand ^CtBinaryOperator expression)]
      [:right 1 (.getRightHandOperand ^CtBinaryOperator expression)]]
 
+    (instance? CtAssignment expression)
+    [[:left 0 (.getAssigned ^CtAssignment expression)]
+     [:right 1 (.getAssignment ^CtAssignment expression)]]
+
     (instance? CtArrayRead expression)
     [[:target 0 (.getTarget ^CtArrayRead expression)]
      [:index 1 (.getIndexExpression ^CtArrayRead expression)]]
 
     (instance? CtFieldRead expression)
+    (when-let [target (targeted-expression-target expression)]
+      [[:target 0 target]])
+
+    (instance? CtFieldWrite expression)
     (when-let [target (targeted-expression-target expression)]
       [[:target 0 target]])
 
@@ -508,6 +640,11 @@
                    :value (expression-value expression))]
        (when (instance? CtInvocation expression)
          (invocation-reference-facts node-id expression))
+       (when (instance? CtConstructorCall expression)
+         (constructor-call-reference-facts node-id expression))
+       (when (instance? CtTypePattern expression)
+         (let [variable (.getVariable ^CtTypePattern expression)]
+           (type-ref-facts node-id :pattern-type (.getType variable) (.getSimpleName variable))))
        (mapcat (fn [[child-role child-ordinal child-expression]]
                  (expression-facts file-id node-id child-role child-ordinal child-expression))
                (expression-children expression))))))
@@ -522,6 +659,20 @@
   (when statement
     (let [node-id (child-node-id parent-node-id role ordinal statement)]
       (cond
+        (instance? CtAssignment statement)
+        (concat
+         [(node-fact node-id
+                     :java.node/assignment
+                     "assignment"
+                     file-id
+                     ordinal
+                     statement
+                     :parent parent-node-id
+                     :role role
+                     :value "=")]
+         (expression-facts file-id node-id :left 0 (.getAssigned ^CtAssignment statement))
+         (expression-facts file-id node-id :right 1 (.getAssignment ^CtAssignment statement)))
+
         (instance? CtLocalVariable statement)
         (let [local ^CtLocalVariable statement
               default-expression (.getDefaultExpression local)
@@ -549,6 +700,18 @@
                      :parent parent-node-id
                      :role role)]
          (expression-facts file-id node-id :return-expression 0 (.getReturnedExpression ^CtReturn statement)))
+
+        (instance? CtThrow statement)
+        (concat
+         [(node-fact node-id
+                     :java.node/throw-statement
+                     "throw"
+                     file-id
+                     ordinal
+                     statement
+                     :parent parent-node-id
+                     :role role)]
+         (expression-facts file-id node-id :thrown-expression 0 (.getThrownExpression ^CtThrow statement)))
 
         (instance? CtIf statement)
         (let [if-statement ^CtIf statement]
@@ -644,21 +807,22 @@
 
 (defn- unique-key [fact]
   (some (fn [attr] (when-let [value (get fact attr)] [attr value]))
-        [:node/id :decl/id :type/id :ref/id :feature/id]))
+        [:node/id :decl/id :type/id :type-param/id :ref/id :feature/id]))
 
 (defn- dedupe-facts [facts]
-  (->> facts
-       (filter map?)
-       (reduce (fn [acc fact]
-                 (if-let [key (unique-key fact)]
-                   (if (contains? (:seen acc) key)
-                     acc
-                     (-> acc
-                         (update :seen conj key)
-                         (update :facts conj fact)))
-                   (update acc :facts conj fact)))
-               {:seen #{} :facts []})
-       :facts))
+  (:facts
+   (reduce (fn [acc fact]
+             (if-not (map? fact)
+               acc
+               (if-let [key (unique-key fact)]
+                 (if-let [index (get-in acc [:index key])]
+                   (update-in acc [:facts index] merge fact)
+                   (-> acc
+                       (assoc-in [:index key] (count (:facts acc)))
+                       (update :facts conj fact)))
+                 (update acc :facts conj fact))))
+           {:index {} :facts []}
+           facts)))
 
 (defn extract-project-facts
   "Read Java file records for project-id from db and return normalized Java facts.

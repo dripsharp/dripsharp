@@ -52,7 +52,9 @@
 (def java-scalars
   (merge java-primitives
          java-boxed
-         {"java.lang.String" "string"
+         {"java.lang.Object" "object"
+          "Object" "object"
+          "java.lang.String" "string"
           "String" "string"
           "java.math.BigDecimal" "decimal"}))
 
@@ -186,13 +188,18 @@
        (not (str/starts-with? type-name "kotlin."))
        (contains? #{:lang/java :lang/kotlin} lang)))
 
+(declare type-args generic-result)
+
 (defn- local-type-result
-  [type-name]
+  [source-type type-name]
   (let [segments (str/split type-name #"\.")
         simple-name (last segments)
         namespace (when (< 1 (count segments))
-                    (str/join "." (butlast segments)))]
-    (result simple-name (cond-> #{} namespace (conj namespace)) #{})))
+                    (str/join "." (butlast segments)))
+        args (type-args source-type)]
+    (if (seq args)
+      (generic-result source-type simple-name (cond-> #{} namespace (conj namespace)))
+      (result simple-name (cond-> #{} namespace (conj namespace)) #{}))))
 
 (defn- type-args
   [source-type]
@@ -353,7 +360,7 @@
           (generic-result source-type target usings))
 
         (local-type? lang type-name)
-        (local-type-result type-name)
+        (local-type-result source-type type-name)
 
         :else
         (fail! source-type :mapping.reason/unknown-type)))))

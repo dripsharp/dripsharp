@@ -15,6 +15,14 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/class
     :rule/status implemented-status}
+   {:rule/id :java.interface-node/to-csharp-interface
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/interface
+    :rule/status implemented-status}
+   {:rule/id :java.assignment-node/to-csharp-assignment
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/assignment
+    :rule/status implemented-status}
    {:rule/id :java.constructor-node/to-csharp-constructor
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/constructor
@@ -30,6 +38,10 @@
    {:rule/id :java.method-call-node/to-csharp-invocation
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/method-call
+    :rule/status implemented-status}
+   {:rule/id :java.object-creation-node/to-csharp-new
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/object-creation
     :rule/status implemented-status}
    {:rule/id :java.local-variable-node/to-csharp-local
     :rule/source-lang :lang/java
@@ -55,9 +67,29 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/field-read
     :rule/status implemented-status}
+   {:rule/id :java.field-write-node/to-csharp-member
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/field-write
+    :rule/status implemented-status}
+   {:rule/id :java.this-node/to-csharp-this
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/this
+    :rule/status implemented-status}
+   {:rule/id :java.throw-statement-node/to-csharp-throw
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/throw-statement
+    :rule/status implemented-status}
+   {:rule/id :java.type-pattern-node/to-csharp-pattern
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/type-pattern
+    :rule/status implemented-status}
    {:rule/id :java.type-access-node/to-csharp-type
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/type-access
+    :rule/status implemented-status}
+   {:rule/id :java.variable-write-node/to-csharp-variable
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/variable-write
     :rule/status implemented-status}
    {:rule/id :java.array-read-node/to-csharp-indexer
     :rule/source-lang :lang/java
@@ -119,6 +151,16 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/class
     :rule/output-feature :csharp.feature/class
+    :rule/status implemented-status}
+   {:rule/id :java.interface-feature/to-csharp-interface
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/interface
+    :rule/output-feature :csharp.feature/interface
+    :rule/status implemented-status}
+   {:rule/id :java.generic-method-feature/to-csharp-generic-method
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/generic-method
+    :rule/output-feature :csharp.feature/generic-method
     :rule/status implemented-status}
    {:rule/id :java.field-feature/to-csharp-field
     :rule/source-lang :lang/java

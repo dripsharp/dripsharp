@@ -41,6 +41,91 @@ public final class UnsupportedCall {
 }
 ")
 
+(def interface-generic-fixture
+  "package com.example.value;
+
+public interface Value {
+  <T> T accept(ValueConverter<T> converter);
+}
+
+public interface ValueConverter<T> {
+  T convert(Value value);
+}
+
+public final class DisplayValueConverter implements ValueConverter<String> {
+  public String convert(Value value) {
+    return \"\";
+  }
+}
+")
+
+(def assignment-fixture
+  "package com.example.tools;
+
+public final class Holder {
+  private String value;
+
+  public Holder(String value) {
+    this.value = value;
+  }
+
+  public String value() {
+    return value;
+  }
+}
+")
+
+(def object-creation-fixture
+  "package com.example.tools;
+
+public final class Factory {
+  public static Holder make(String value) {
+    Holder holder = new Holder(value);
+    return holder;
+  }
+}
+")
+
+(def object-holder-fixture
+  "package com.example.tools;
+
+public final class Holder {
+  Holder(String value) {
+  }
+}
+")
+
+(def pattern-fixture
+  "package com.example.patterns;
+
+public final class PatternDemo {
+  public static Object show(Object value) {
+    if (value instanceof Name n) {
+      return n;
+    }
+
+    return \"\";
+  }
+}
+")
+
+(def pattern-name-fixture
+  "package com.example.patterns;
+
+public final class Name {
+}
+")
+
+(def throw-fixture
+  "package com.example.errors;
+
+public final class Thrower {
+  public static void fail(Object value) {
+    throw new IllegalArgumentException(\"Unsupported value: \" + value);
+  }
+}
+")
+
 (defn- sample-word-counter-source []
   (slurp (str (Paths/get "sample-projects/java-word-count/source/src/main/java/com/example/wordcount/WordCounter.java"
                          (make-array String 0)))))
@@ -204,6 +289,218 @@ public final class UnsupportedCall {
             (is (empty? (:csharp/diagnostics result))))
           (testing "non-static instance fields are outside the initial declaration subset"
             (is (not (str/includes? content "ignored")))))))))
+
+(deftest emits-java-interfaces-generic-signatures-and-implements-clauses
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/value/Value.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path interface-generic-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              value-file (.resolve target "com/example/value/Value.cs")
+              converter-file (.resolve target "com/example/value/ValueConverter.cs")
+              display-file (.resolve target "com/example/value/DisplayValueConverter.cs")
+              value-content (slurp (str value-file))
+              converter-content (slurp (str converter-file))
+              display-content (slurp (str display-file))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (= 3 (:csharp/files-written result)))
+          (doseq [file [value-file converter-file display-file]]
+            (is (Files/isRegularFile file (make-array java.nio.file.LinkOption 0))))
+          (is (str/includes? value-content "public interface Value"))
+          (is (str/includes? value-content "T accept<T>(ValueConverter<T> converter);"))
+          (is (str/includes? converter-content "public interface ValueConverter<T>"))
+          (is (str/includes? converter-content "T convert(Value value);"))
+          (is (str/includes? display-content "public sealed class DisplayValueConverter : ValueConverter<string>"))
+          (is (str/includes? display-content "public string convert(Value value)"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (every? rule-ids
+                      [:java.interface-node/to-csharp-interface
+                       :java.method-node/to-csharp-method
+                       :java.class-node/to-csharp-class]))
+          (testing "interface provenance has registered rule metadata"
+            (let [interface-entry (some #(when (= :java.interface-node/to-csharp-interface
+                                                  (get-in % [:rule :rule/id]))
+                                           %)
+                                        (:csharp/provenance result))]
+              (is (some? interface-entry))
+              (is (= :rule.status/implemented
+                     (get-in interface-entry [:rule :rule/status])))
+              (is (= :java.node/interface (:source/kind interface-entry))))))))))
+
+(deftest emits-this-and-field-assignment-statements
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/tools/Holder.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path assignment-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/tools/Holder.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "this.value = value;"))
+          (is (str/includes? content "return this.value;"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (every? rule-ids
+                      [:java.assignment-node/to-csharp-assignment
+                       :java.field-write-node/to-csharp-member
+                       :java.field-read-node/to-csharp-member
+                       :java.this-node/to-csharp-this]))
+          (testing "assignment provenance has registered rule metadata"
+            (let [assignment-entry (some #(when (= :java.assignment-node/to-csharp-assignment
+                                                   (get-in % [:rule :rule/id]))
+                                            %)
+                                         (:csharp/provenance result))]
+              (is (some? assignment-entry))
+              (is (= :rule.status/implemented
+                     (get-in assignment-entry [:rule :rule/status])))
+              (is (= :java.node/assignment (:source/kind assignment-entry))))))))))
+
+(deftest emits-project-local-object-creation
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/tools/Factory.java"
+            holder-path "src/main/java/com/example/tools/Holder.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path object-creation-fixture)
+        (write-file! source-root holder-path object-holder-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/tools/Factory.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "Holder holder = new Holder(value);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.object-creation-node/to-csharp-new))
+          (testing "object creation provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.object-creation-node/to-csharp-new
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/object-creation (:source/kind entry))))))))))
+
+(deftest emits-instanceof-type-patterns
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/patterns/PatternDemo.java"
+            name-path "src/main/java/com/example/patterns/Name.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path pattern-fixture)
+        (write-file! source-root name-path pattern-name-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/patterns/PatternDemo.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "if (value is Name n)"))
+          (is (str/includes? content "return n;"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.type-pattern-node/to-csharp-pattern))
+          (testing "type-pattern provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.type-pattern-node/to-csharp-pattern
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/type-pattern (:source/kind entry))))))))))
+
+(deftest emits-throw-statements-and-known-java-exceptions
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/errors/Thrower.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path throw-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/errors/Thrower.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "using System;"))
+          (is (str/includes? content "throw new ArgumentException(\"Unsupported value: \" + value);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (every? rule-ids
+                      [:java.throw-statement-node/to-csharp-throw
+                       :java.object-creation-node/to-csharp-new]))
+          (testing "throw provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.throw-statement-node/to-csharp-throw
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/throw-statement (:source/kind entry))))))))))
 
 (deftest emits-word-counter-statement-and-expression-subset
   (with-empty-db

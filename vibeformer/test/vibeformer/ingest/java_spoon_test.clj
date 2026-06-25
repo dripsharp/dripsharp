@@ -62,6 +62,74 @@ public final class Calls {
 }
 ")
 
+(def generic-interface-fixture
+  "package com.acme.generic;
+
+public interface Box<T> {
+  <U> U map(Mapper<T, U> mapper);
+}
+
+interface Mapper<T, U> {
+  U apply(T value);
+}
+
+final class StringBox implements Box<String> {
+  public <U> U map(Mapper<String, U> mapper) {
+    return mapper.apply(\"\");
+  }
+}
+")
+
+(def object-creation-fixture
+  "package com.acme.objects;
+
+public final class Factory {
+  public Holder make(String value) {
+    Holder holder = new Holder(value);
+    return holder;
+  }
+}
+")
+
+(def object-holder-fixture
+  "package com.acme.objects;
+
+public final class Holder {
+  Holder(String value) {
+  }
+}
+")
+
+(def pattern-fixture
+  "package com.acme.patterns;
+
+public final class PatternDemo {
+  public static String show(Object value) {
+    if (value instanceof Name n) {
+      return n.text();
+    }
+
+    return \"\";
+  }
+}
+
+final class Name {
+  public String text() {
+    return \"\";
+  }
+}
+")
+
+(def throw-fixture
+  "package com.acme.errors;
+
+public final class Thrower {
+  public static void fail(Object value) {
+    throw new IllegalArgumentException(\"Unsupported value: \" + value);
+  }
+}
+")
+
 (defn- with-empty-db [f]
   (let [system (str "vibeformer-java-spoon-test-" (UUID/randomUUID))
         db-name (str "facts-" (UUID/randomUUID))
@@ -190,6 +258,22 @@ public final class Calls {
                                [(contains? #{:param-0} ?role)]]
                              db)))))
 
+          (testing "assignments, field writes, and this expressions are normalized"
+            (is (= #{[:java.node/assignment "assignment" :body]
+                     [:java.node/field-write "name" :left]
+                     [:java.node/this "this" :target]}
+                   (set (d/q '[:find ?kind ?name ?role
+                               :where
+                               [?node :node/file [:file/id "fixture:src/main/java/com/acme/parser/Greeter.java"]]
+                               [?node :node/kind ?kind]
+                               [?node :node/name ?name]
+                               [?node :node/role ?role]
+                               [(contains? #{:java.node/assignment
+                                             :java.node/field-write
+                                             :java.node/this}
+                                            ?kind)]]
+                             db)))))
+
           (testing "method calls and unresolved missing-classpath references are explicit"
             (is (= #{["toUpperCase" true]
                      ["trim" true]
@@ -221,9 +305,155 @@ public final class Calls {
                                [?feature :feature/status ?status]]
                              db)))))
 
-          (testing "unchanged reruns keep logical fact counts stable"
-            (java-spoon/ingest! conn {:project/id "fixture"})
-            (is (= counts (entity-counts (d/db conn))))))))))
+	          (testing "unchanged reruns keep logical fact counts stable"
+	            (java-spoon/ingest! conn {:project/id "fixture"})
+	            (is (= counts (entity-counts (d/db conn))))))))))
+
+(deftest extracts-generic-interface-type-parameters
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/generic/Box.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path generic-interface-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (testing "declaration type parameters are ordered and queryable"
+            (is (= #{["java:com.acme.generic.Box" 0 "T"]
+                     ["java:com.acme.generic.Mapper" 0 "T"]
+                     ["java:com.acme.generic.Mapper" 1 "U"]
+                     ["java:com.acme.generic.Box#map(com.acme.generic.Mapper)" 0 "U"]
+                     ["java:com.acme.generic.StringBox#map(com.acme.generic.Mapper)" 0 "U"]}
+                   (set (d/q '[:find ?decl-id ?ordinal ?name
+                               :where
+                               [?decl :decl/type-params ?param]
+                               [?decl :decl/id ?decl-id]
+                               [?param :type-param/ordinal ?ordinal]
+                               [?param :type-param/name ?name]]
+                             db)))))
+          (testing "parameterized source types retain ordered type arguments"
+            (is (= #{["com.acme.generic.Box<java.lang.String>" "com.acme.generic.Box" 0 "java.lang.String"]
+                     ["com.acme.generic.Mapper<T,U>" "com.acme.generic.Mapper" 0 "T"]
+                     ["com.acme.generic.Mapper<T,U>" "com.acme.generic.Mapper" 1 "U"]
+                     ["com.acme.generic.Mapper<java.lang.String,U>" "com.acme.generic.Mapper" 0 "java.lang.String"]
+                     ["com.acme.generic.Mapper<java.lang.String,U>" "com.acme.generic.Mapper" 1 "U"]}
+                   (set (d/q '[:find ?type-id ?type-name ?ordinal ?arg-name
+                               :where
+                               [?type :type/args ?arg]
+                               [?type :type/id ?type-id]
+                               [?type :type/name ?type-name]
+                               [?arg :type.arg/ordinal ?ordinal]
+                               [?arg :type.arg/type ?arg-type]
+                               [?arg-type :type/name ?arg-name]]
+                             db)))))
+          (testing "implements refs point at the parameterized interface type"
+            (is (= #{["com.acme.generic.Box<java.lang.String>" true]}
+                   (set (d/q '[:find ?type-id ?resolved?
+                               :where
+                               [?node :node/name "StringBox"]
+                               [?ref :ref/from-node ?node]
+                               [?ref :ref/kind :ref.kind/implements]
+                               [?ref :ref/to-type ?type]
+                               [?type :type/id ?type-id]
+                               [?ref :ref/resolved? ?resolved?]]
+                             db))))))))))
+
+(deftest extracts-object-creation-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/objects/Factory.java"
+            holder-path "src/main/java/com/acme/objects/Holder.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path object-creation-fixture)
+        (write-file! root holder-path object-holder-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["com.acme.objects.Holder" :java.node/object-creation :initializer]}
+                 (set (d/q '[:find ?name ?kind ?role
+                             :where
+                             [?node :node/kind :java.node/object-creation]
+                             [?node :node/name ?name]
+                             [?node :node/kind ?kind]
+                             [?node :node/role ?role]]
+                           db))))
+          (is (= #{["com.acme.objects.Holder" "com.acme.objects.Holder" true]}
+                 (set (d/q '[:find ?name ?type-id ?resolved?
+                             :where
+                             [?node :node/kind :java.node/object-creation]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/kind :ref.kind/constructor-call]
+                             [?ref :ref/name ?name]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]
+                             [?ref :ref/resolved? ?resolved?]]
+                           db)))))))))
+
+(deftest extracts-instanceof-type-pattern-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/patterns/PatternDemo.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path pattern-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["n" :java.node/type-pattern :right "com.acme.patterns.Name"]}
+                 (set (d/q '[:find ?name ?kind ?role ?type-id
+                             :where
+                             [?node :node/kind :java.node/type-pattern]
+                             [?node :node/name ?name]
+                             [?node :node/kind ?kind]
+                             [?node :node/role ?role]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/role :pattern-type]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]]
+                           db)))))))))
+
+(deftest extracts-throw-statement-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/errors/Thrower.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path throw-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{[:java.node/throw-statement "throw" :body
+                   :java.node/object-creation :thrown-expression
+                   "java.lang.IllegalArgumentException"]}
+                 (set (d/q '[:find ?throw-kind ?throw-name ?throw-role
+                                    ?expr-kind ?expr-role ?type-id
+                             :where
+                             [?throw :node/kind :java.node/throw-statement]
+                             [?throw :node/kind ?throw-kind]
+                             [?throw :node/name ?throw-name]
+                             [?throw :node/role ?throw-role]
+                             [?expr :node/parent ?throw]
+                             [?expr :node/kind ?expr-kind]
+                             [?expr :node/role ?expr-role]
+                             [?ref :ref/from-node ?expr]
+                             [?ref :ref/kind :ref.kind/constructor-call]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]]
+                           db)))))))))
 
 (deftest canonicalizes-method-call-source-nodes
   (with-empty-db
@@ -274,7 +504,7 @@ public final class Calls {
             (is (set/subset?
                  #{[:java.feature/reflection "forName" :java.node/method-call]
                    [:java.feature/stream-api "stream" :java.node/method-call]}
-                 (set (d/q '[:find ?kind ?node-name ?node-kind
+                                   (set (d/q '[:find ?kind ?node-name ?node-kind
                              :where
                              [?feature :feature/kind ?kind]
                              [(contains? #{:java.feature/reflection

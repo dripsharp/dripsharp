@@ -50,6 +50,7 @@
     (maps-to (type-fact :lang/java "int") "int" [] [])
     (maps-to (type-fact :lang/java "java.lang.Integer" true) "int?" [] [])
     (maps-to (type-fact :lang/java "java.lang.String") "string" [] [])
+    (maps-to (type-fact :lang/java "java.lang.Object") "object" [] [])
     (maps-to (type-fact :lang/java "java.math.BigDecimal") "decimal" [] [])
     (maps-to (type-fact :lang/java "java.math.BigInteger") "BigInteger" ["System.Numerics"] [])
     (maps-to (type-fact :lang/java "java.util.regex.Pattern") "Regex" ["System.Text.RegularExpressions"] [])
@@ -82,6 +83,13 @@
   (testing "project-local types keep a namespace using and simple C# type name"
     (maps-to (type-fact :lang/java "com.acme.parser.Greeter")
              "Greeter"
+             ["com.acme.parser"]
+             [])
+    (maps-to (type-fact :lang/java
+                        "com.acme.parser.Box"
+                        false
+                        [(type-fact :lang/java "T")])
+             "Box<T>"
              ["com.acme.parser"]
              [])))
 

@@ -107,7 +107,21 @@
     :db/cardinality :db.cardinality/one}
    {:db/ident :decl/modifiers
     :db/valueType :db.type/keyword
-    :db/cardinality :db.cardinality/many}])
+    :db/cardinality :db.cardinality/many}
+   {:db/ident :decl/type-params
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/isComponent true}
+   {:db/ident :type-param/id
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :type-param/ordinal
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :type-param/name
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}])
 
 (def source-type
   [{:db/ident :type/id

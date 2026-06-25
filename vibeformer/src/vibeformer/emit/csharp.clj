@@ -68,6 +68,15 @@
 (defn- type-name [source-type]
   (:csharp/type (map-type source-type)))
 
+(defn- type-params [decl]
+  (->> (:decl/type-params decl)
+       (sort-by #(or (:type-param/ordinal %) 0))
+       (mapv :type-param/name)))
+
+(defn- type-param-suffix [decl]
+  (when-let [params (seq (type-params decl))]
+    (str "<" (str/join ", " params) ">")))
+
 (defn- csharp-namespace [class-decl]
   (let [file-package (get-in class-decl [:decl/source-node :node/file :file/package])
         qualified-name (:decl/qualified-name class-decl)]
@@ -84,14 +93,19 @@
                       (str/split namespace #"\.")))]
     (.resolve dir (str (:decl/name class-decl) ".cs"))))
 
-(defn- class-decls [db]
+(defn- type-decls [db]
   (->> (d/q '[:find (pull ?decl [:db/id
                                   :decl/id
+                                  :decl/kind
                                   :decl/name
                                   :decl/qualified-name
                                   :decl/modifiers
+                                  {:decl/type-params [:type-param/id
+                                                      :type-param/ordinal
+                                                      :type-param/name]}
                                   {:decl/source-node [:db/id
                                                       :node/id
+                                                      :node/kind
                                                       :node/name
                                                       :node/ordinal
                                                       {:node/file [:file/id
@@ -99,7 +113,8 @@
                                                                    :file/package]}]}])
               :where
               [?decl :decl/lang :lang/java]
-              [?decl :decl/kind :decl.kind/class]]
+              [?decl :decl/kind ?kind]
+              [(contains? #{:decl.kind/class :decl.kind/interface} ?kind)]]
             db)
        (map first)
        (sort-by :decl/qualified-name)
@@ -131,6 +146,9 @@
                                                                                       :type/lang
                                                                                       :type/name
                                                                                       :type/nullable?]}]}]}
+                                    {:decl/type-params [:type-param/id
+                                                        :type-param/ordinal
+                                                        :type-param/name]}
                                     {:decl/source-node [:db/id
                                                         :node/id
                                                         :node/kind
@@ -294,6 +312,32 @@
         db
         (:db/id node))))
 
+(defn- constructor-call-ref [db node]
+  (ffirst
+   (d/q '[:find (pull ?ref [:ref/id
+                            :ref/name
+                            :ref/resolved?
+                            :ref/reason
+                            {:ref/to-type [:type/id
+                                           :type/lang
+                                           :type/name
+                                           :type/nullable?
+                                           {:type/args [:type.arg/ordinal
+                                                        {:type.arg/type [:type/id
+                                                                         :type/lang
+                                                                         :type/name
+                                                                         :type/nullable?]}]}]}
+                            {:ref/to-decl [:decl/id
+                                           :decl/name
+                                           :decl/qualified-name
+                                           {:decl/source-node [:db/id :node/id :node/kind :node/name]}]}])
+          :in $ ?node
+          :where
+          [?ref :ref/from-node ?node]
+          [?ref :ref/kind :ref.kind/constructor-call]]
+        db
+        (:db/id node))))
+
 (defn- variable-read-type [db node]
   (when-let [name (:node/name node)]
     (when-let [executable (enclosing-executable-node db node)]
@@ -316,6 +360,9 @@
       :java.node/method-call
       (get-in (method-call-ref db node) [:ref/to-type])
 
+      :java.node/object-creation
+      (get-in (constructor-call-ref db node) [:ref/to-type])
+
       :java.node/variable-read
       (variable-read-type db node)
 
@@ -329,6 +376,16 @@
 
 (defn- project-local-call? [call-ref]
   (boolean (get-in call-ref [:ref/to-decl :decl/source-node :node/id])))
+
+(def supported-java-exception-constructors
+  #{"java.lang.Exception"
+    "java.lang.RuntimeException"
+    "java.lang.IllegalArgumentException"
+    "java.lang.IllegalStateException"
+    "java.io.IOException"})
+
+(defn- supported-java-exception-constructor? [source-type]
+  (contains? supported-java-exception-constructors (:type/name source-type)))
 
 (defn- source-context [node]
   {:source/node-id (:node/id node)
@@ -621,6 +678,7 @@
     "ge" ">="
     "and" "&&"
     "or" "||"
+    "instanceof" "is"
     "plus" "+"
     "minus" "-"
     "mul" "*"
@@ -716,6 +774,35 @@
             (with-text call-text)
             (apply-rule node :java.method-call-node/to-csharp-invocation :rule-app.status/success))))))
 
+(defn- emit-object-creation [ctx node]
+  (let [db (:db ctx)
+        call-ref (constructor-call-ref db node)
+        args-result (emit-arguments ctx node)
+        args (:text args-result)
+        source-type (:ref/to-type call-ref)
+        mapped-type (when source-type (map-type source-type))
+        target-type (:csharp/type mapped-type)]
+    (cond
+      (not (:ref/resolved? call-ref))
+      (unsupported node
+                   :java.object-creation-node/to-csharp-new
+                   {:type (:ref/name call-ref)
+                    :reason (or (:ref/reason call-ref)
+                                :resolve.reason/missing-constructor-call-ref)})
+
+      (and (not (project-local-call? call-ref))
+           (not (supported-java-exception-constructor? source-type)))
+      (unsupported node
+                   :java.object-creation-node/to-csharp-new
+                   {:type (:ref/name call-ref)
+                    :reason :emit.reason/unsupported-external-constructor})
+
+      :else
+      (-> args-result
+          (update :usings into (:csharp/usings mapped-type))
+          (with-text (str "new " target-type "(" args ")"))
+          (apply-rule node :java.object-creation-node/to-csharp-new :rule-app.status/success)))))
+
 (defn- emit-field-read [ctx node]
   (let [target (child-node (:db ctx) (:db/id node) :target)
         target-result (when target (emit-expression ctx target))
@@ -741,6 +828,34 @@
                     :target-type (:type/name target-type)
                     :reason :emit.reason/unsupported-length-target}))))
 
+(defn- emit-field-write [ctx node]
+  (let [target (child-node (:db ctx) (:db/id node) :target)
+        target-result (when target (emit-expression ctx target))
+        target-text (:text target-result)
+        field-name (:node/name node)
+        text (if target
+               (str target-text "." field-name)
+               field-name)]
+    (-> (or target-result (merge-emits []))
+        (with-text text)
+        (apply-rule node :java.field-write-node/to-csharp-member :rule-app.status/success))))
+
+(defn- emit-assignment-expression [ctx node]
+  (let [left (emit-child-expression ctx node :left)
+        right (emit-child-expression ctx node :right)]
+    (-> (merge-emits [left right])
+        (with-text (str (:text left) " = " (:text right)))
+        (apply-rule node :java.assignment-node/to-csharp-assignment :rule-app.status/success))))
+
+(defn- emit-type-pattern [ctx node]
+  (if-let [source-type (node-type-ref (:db ctx) node :pattern-type)]
+    (emitted (str (type-name source-type) " " (:node/name node))
+             node
+             :java.type-pattern-node/to-csharp-pattern)
+    (unsupported node
+                 :java.type-pattern-node/to-csharp-pattern
+                 {:reason :emit.reason/missing-pattern-type})))
+
 (defn- emit-expression [ctx node]
   (case (:node/kind node)
     :java.node/literal
@@ -749,11 +864,26 @@
     :java.node/variable-read
     (emitted (:node/name node) node :java.variable-read-node/to-csharp-variable)
 
+    :java.node/variable-write
+    (emitted (:node/name node) node :java.variable-write-node/to-csharp-variable)
+
+    :java.node/this
+    (emitted "this" node :java.this-node/to-csharp-this)
+
     :java.node/type-access
     (emitted (csharp-type-access (:node/value node)) node :java.type-access-node/to-csharp-type)
 
+    :java.node/type-pattern
+    (emit-type-pattern ctx node)
+
     :java.node/field-read
     (emit-field-read ctx node)
+
+    :java.node/field-write
+    (emit-field-write ctx node)
+
+    :java.node/assignment
+    (emit-assignment-expression ctx node)
 
     :java.node/array-read
     (let [target (emit-child-expression ctx node :target)
@@ -774,6 +904,9 @@
 
     :java.node/method-call
     (emit-method-call ctx node)
+
+    :java.node/object-creation
+    (emit-object-creation ctx node)
 
     (unsupported node :java.expression-node/to-csharp-stub {:context :expression})))
 
@@ -823,8 +956,19 @@
           (with-text text)
           (apply-rule node :java.if-statement-node/to-csharp-if :rule-app.status/success)))
 
+    :java.node/throw-statement
+    (let [expr (emit-child-expression ctx node :thrown-expression)]
+      (-> expr
+          (with-text (indent-lines indent-level (str "throw " (:text expr) ";")))
+          (apply-rule node :java.throw-statement-node/to-csharp-throw :rule-app.status/success)))
+
     :java.node/method-call
     (let [expr (emit-expression ctx node)]
+      (-> expr
+          (with-text (indent-lines indent-level (str (:text expr) ";")))))
+
+    :java.node/assignment
+    (let [expr (emit-assignment-expression ctx node)]
       (-> expr
           (with-text (indent-lines indent-level (str (:text expr) ";")))))
 
@@ -842,14 +986,41 @@
        :rule-applications []
        :provenance []})))
 
-(defn- class-line [class-decl]
-  (let [mods (modifiers class-decl)]
-    (str "    "
-         (str/join " " (cond-> [(visibility mods)]
-                         (contains? mods :final) (conj "sealed")
-                         true (conj "class")
-                         true (conj (:decl/name class-decl))))
-         "\n")))
+(defn- inherited-types [db type-decl]
+  (let [node-eid (get-in type-decl [:decl/source-node :db/id])]
+    (->> (d/q '[:find ?kind (pull ?type pattern)
+                :in $ ?node pattern
+                :where
+                [?ref :ref/from-node ?node]
+                [?ref :ref/kind ?kind]
+                [?ref :ref/to-type ?type]
+                [(contains? #{:ref.kind/extends :ref.kind/implements} ?kind)]]
+              db
+              node-eid
+              (type-pull-pattern))
+         (sort-by (fn [[kind source-type]]
+                    [(if (= :ref.kind/extends kind) 0 1) (:type/id source-type)]))
+         (mapv second))))
+
+(defn- base-list [db type-decl]
+  (when-let [bases (seq (map type-name (inherited-types db type-decl)))]
+    (str " : " (str/join ", " bases))))
+
+(defn- type-line [db type-decl]
+  (let [mods (modifiers type-decl)]
+    (if (= :decl.kind/interface (:decl/kind type-decl))
+      (str "    " (visibility mods) " interface " (:decl/name type-decl)
+           (type-param-suffix type-decl)
+           (base-list db type-decl)
+           "\n")
+      (str "    "
+           (str/join " " (cond-> [(visibility mods)]
+                           (contains? mods :final) (conj "sealed")
+                           true (conj "class")
+                           true (conj (str (:decl/name type-decl)
+                                           (type-param-suffix type-decl)))))
+           (base-list db type-decl)
+           "\n"))))
 
 (defn- field-line [db field-decl]
   (let [mods (modifiers field-decl)]
@@ -882,6 +1053,17 @@
     (cond-> [(visibility mods)]
       (contains? mods :static) (conj "static"))))
 
+(defn- method-signature [db method-decl interface?]
+  (let [return-type (type-name (:decl/return-type method-decl))
+        prefix (if interface?
+                 []
+                 (signature-modifiers method-decl))]
+    (str/join " " (concat prefix
+                          [return-type
+                           (str (method-name method-decl)
+                                (type-param-suffix method-decl)
+                                "(" (param-list db method-decl) ")")]))))
+
 (defn- constructor-block [db class-name ctor-decl]
   (let [body (emit-body db ctor-decl 3)]
     (-> body
@@ -895,21 +1077,31 @@
                     :java.constructor-node/to-csharp-constructor
                     :rule-app.status/success))))
 
-(defn- method-block [db method-decl]
-  (let [return-type (type-name (:decl/return-type method-decl))
-        body (emit-body db method-decl 3)]
-    (-> body
-        (with-text (str "        "
-                        (str/join " " (conj (signature-modifiers method-decl)
-                                            return-type
-                                            (method-name method-decl)))
-                        "(" (param-list db method-decl) ")\n"
-                        "        {\n"
-                        (:text body) "\n"
-                        "        }\n"))
-        (apply-rule (:decl/source-node method-decl)
-                    :java.method-node/to-csharp-method
-                    :rule-app.status/success))))
+(defn- method-block [db method-decl interface?]
+  (if interface?
+    (let [body-statements (child-nodes db (get-in method-decl [:decl/source-node :db/id]) :body)
+          text (str "        " (method-signature db method-decl true) ";\n")
+          diagnostics (when (seq body-statements)
+                        [(assoc (source-context (:decl/source-node method-decl))
+                                :diagnostic/severity :diagnostic.severity/error
+                                :diagnostic/message "Default Java interface method body is not emitted yet."
+                                :rule/id :java.method-node/to-csharp-method
+                                :rule/context {:reason :emit.reason/unsupported-default-interface-method})])]
+      (emitted text
+               (:decl/source-node method-decl)
+               :java.method-node/to-csharp-method
+               {:diagnostics diagnostics}))
+    (let [body (emit-body db method-decl 3)]
+      (-> body
+          (with-text (str "        "
+                          (method-signature db method-decl false)
+                          "\n"
+                          "        {\n"
+                          (:text body) "\n"
+                          "        }\n"))
+          (apply-rule (:decl/source-node method-decl)
+                      :java.method-node/to-csharp-method
+                      :rule-app.status/success)))))
 
 (defn- emitted-field-decls [db members]
   (->> (get members :decl.kind/field)
@@ -922,18 +1114,19 @@
        (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
        (mapv #(constructor-block db class-name %))))
 
-(defn- emitted-method-decls [db members]
+(defn- emitted-method-decls [db members interface?]
   (->> (get members :decl.kind/method)
        (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
-       (mapv #(method-block db %))))
+       (mapv #(method-block db % interface?))))
 
-(defn- declaration-usings [db namespace members]
+(defn- declaration-usings [db namespace type-decl members]
   (let [field-types (keep :decl/type (get members :decl.kind/field))
         method-return-types (keep :decl/return-type (get members :decl.kind/method))
+        inherited (inherited-types db type-decl)
         param-types (mapcat #(map :source-type (type-ref-params db %))
                             (concat (get members :decl.kind/constructor)
                                     (get members :decl.kind/method)))]
-    (->> (concat field-types method-return-types param-types)
+    (->> (concat inherited field-types method-return-types param-types)
          (mapcat (comp :csharp/usings map-type))
          (remove #(= namespace %))
          set
@@ -942,11 +1135,13 @@
 
 (defn- class-content [db class-decl]
   (let [namespace (csharp-namespace class-decl)
+        interface? (= :decl.kind/interface (:decl/kind class-decl))
         members (member-groups db class-decl)
-        usings (declaration-usings db namespace members)
+        usings (declaration-usings db namespace class-decl members)
         fields (emitted-field-decls db members)
-        ctors (emitted-ctor-decls db (:decl/name class-decl) members)
-        methods (emitted-method-decls db members)
+        ctors (when-not interface?
+                (emitted-ctor-decls db (:decl/name class-decl) members))
+        methods (emitted-method-decls db members interface?)
         body-sections (->> [fields ctors methods]
                            (remove empty?)
                            (mapv #(merge-emits "\n" %)))
@@ -964,7 +1159,7 @@
                     (str (str/join "\n" (map #(str "using " % ";") all-usings)) "\n\n"))
                   (when-not (str/blank? namespace)
                     (str "namespace " namespace "\n{\n"))
-                  (class-line class-decl)
+                  (type-line db class-decl)
                   "    {\n"
                   body
                   (when (seq body) "\n")
@@ -974,14 +1169,16 @@
     (-> body-metadata
         (with-text text)
         (apply-rule (:decl/source-node class-decl)
-                    :java.class-node/to-csharp-class
+                    (if interface?
+                      :java.interface-node/to-csharp-interface
+                      :java.class-node/to-csharp-class)
                     :rule-app.status/success))))
 
 (defn emit!
   "Regenerate disposable C# declaration skeletons for Java class facts."
   [db target-dir]
   (let [target-dir (path target-dir)
-        classes (class-decls db)
+        classes (type-decls db)
         indexes (provenance-indexes db)]
     (clear-directory! target-dir)
     (let [emitted-classes (mapv (fn [class-decl]

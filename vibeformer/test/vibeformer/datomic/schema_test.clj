@@ -92,6 +92,7 @@
                                          :file/id
                                          :node/id
                                          :decl/id
+                                         :type-param/id
                                          :type/id
                                          :ref/id
                                          :feature/id
@@ -100,6 +101,7 @@
                  :file/id
                  :node/id
                  :decl/id
+                 :type-param/id
                  :type/id
                  :ref/id
                  :feature/id
@@ -187,7 +189,20 @@
                               :type/args [{:type.arg/ordinal 0
                                            :type.arg/type "string-type"}
                                           {:type.arg/ordinal 1
-                                           :type.arg/type "integer-type"}]}]})
+                                           :type.arg/type "integer-type"}]}
+                             {:db/id "box-decl"
+                              :decl/id "java:Box"
+                              :decl/lang :lang/java
+                              :decl/kind :decl.kind/class
+                              :decl/name "Box"
+                              :decl/qualified-name "Box"
+                              :decl/source-node "node-a"
+                              :decl/type-params [{:type-param/id "java:Box:type-param:0:T"
+                                                  :type-param/ordinal 0
+                                                  :type-param/name "T"}
+                                                 {:type-param/id "java:Box:type-param:1:U"
+                                                  :type-param/ordinal 1
+                                                  :type-param/name "U"}]}]})
       (let [db (d/db conn)
             nodes (sort-by first (d/q '[:find ?ordinal ?name
                                         :where
@@ -202,6 +217,14 @@
                                             [?arg :type.arg/ordinal ?ordinal]
                                             [?arg :type.arg/type ?arg-type]
                                             [?arg-type :type/name ?type-name]]
-                                          db))]
+                                          db))
+            type-params (sort-by first (d/q '[:find ?ordinal ?name
+                                              :where
+                                              [?decl :decl/id "java:Box"]
+                                              [?decl :decl/type-params ?param]
+                                              [?param :type-param/ordinal ?ordinal]
+                                              [?param :type-param/name ?name]]
+                                            db))]
         (is (= [[0 "first"] [1 "second"]] nodes))
-        (is (= [[0 "java.lang.String"] [1 "java.lang.Integer"]] type-args))))))
+        (is (= [[0 "java.lang.String"] [1 "java.lang.Integer"]] type-args))
+        (is (= [[0 "T"] [1 "U"]] type-params))))))
