@@ -405,6 +405,13 @@
 
     :else nil))
 
+(defn- switch-case-result [statements]
+  (some (fn [statement]
+          (if-let [expression (yield-expression statement)]
+            [:expression expression]
+            [:statement statement]))
+        statements))
+
 (defn- type-facts [file-id ordinal ^CtType type]
   (let [node-id (type-node-id file-id type)
         decl-id (str "java:" (qname type))
@@ -652,11 +659,14 @@
 
 (defn- switch-case-facts [file-id parent-node-id ordinal ^CtCase case]
   (let [node-id (child-node-id parent-node-id :case ordinal case)
-        result-expression (first (keep yield-expression (.getStatements case)))]
+        [result-kind result] (switch-case-result (.getStatements case))]
     (concat
      [(node-fact node-id
                  :java.node/switch-case
-                 (if (.getIncludesDefault case) "default" "case")
+                 (if (or (.getIncludesDefault case)
+                         (empty? (.getCaseExpressions case)))
+                   "default"
+                   "case")
                  file-id
                  ordinal
                  case
@@ -667,7 +677,9 @@
                (expression-facts file-id node-id :case-label index label))
              (range)
              (.getCaseExpressions case))
-     (expression-facts file-id node-id :case-result 0 result-expression))))
+     (cond
+       (= :expression result-kind) (expression-facts file-id node-id :case-result 0 result)
+       (= :statement result-kind) (statement-facts file-id node-id :case-result 0 result)))))
 
 (defn- expression-facts [file-id parent-node-id role ordinal ^CtExpression expression]
   (when expression

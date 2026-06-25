@@ -68,6 +68,29 @@
 (defn- type-name [source-type]
   (:csharp/type (map-type source-type)))
 
+(def csharp-keywords
+  #{"abstract" "as" "base" "bool" "break" "byte" "case" "catch" "char"
+    "checked" "class" "const" "continue" "decimal" "default" "delegate"
+    "do" "double" "else" "enum" "event" "explicit" "extern" "false"
+    "finally" "fixed" "float" "for" "foreach" "goto" "if" "implicit"
+    "in" "int" "interface" "internal" "is" "lock" "long" "namespace"
+    "new" "null" "object" "operator" "out" "override" "params" "private"
+    "protected" "public" "readonly" "ref" "return" "sbyte" "sealed"
+    "short" "sizeof" "stackalloc" "static" "string" "struct" "switch"
+    "this" "throw" "true" "try" "typeof" "uint" "ulong" "unchecked"
+    "unsafe" "ushort" "using" "virtual" "void" "volatile" "while"})
+
+(defn- csharp-identifier [name]
+  (if (contains? csharp-keywords name)
+    (str "@" name)
+    name))
+
+(defn- csharp-qualified-name [name]
+  (when name
+    (->> (str/split name #"\.")
+         (map csharp-identifier)
+         (str/join "."))))
+
 (defn- type-params [decl]
   (->> (:decl/type-params decl)
        (sort-by #(or (:type-param/ordinal %) 0))
@@ -77,15 +100,19 @@
   (when-let [params (seq (type-params decl))]
     (str "<" (str/join ", " params) ">")))
 
-(defn- csharp-namespace [class-decl]
+(defn- source-namespace [class-decl]
   (let [file-package (get-in class-decl [:decl/source-node :node/file :file/package])
         qualified-name (:decl/qualified-name class-decl)]
     (or file-package
         (when (str/includes? qualified-name ".")
           (str/join "." (butlast (str/split qualified-name #"\.")))))))
 
+(defn- csharp-namespace [class-decl]
+  (when-let [namespace (source-namespace class-decl)]
+    (csharp-qualified-name namespace)))
+
 (defn- class-output-path [^Path target-dir class-decl]
-  (let [namespace (csharp-namespace class-decl)
+  (let [namespace (source-namespace class-decl)
         dir (reduce (fn [^Path current segment] (.resolve current segment))
                     target-dir
                     (if (str/blank? namespace)
@@ -698,7 +725,7 @@
     "mod" "%"
     nil))
 
-(declare emit-expression emit-statement method-name)
+(declare emit-expression emit-statement method-name indent)
 
 (defn- emit-child-expression [ctx node role]
   (if-let [child (child-node (:db ctx) (:db/id node) role)]
@@ -902,6 +929,65 @@
                  :java.type-pattern-node/to-csharp-pattern
                  {:reason :emit.reason/missing-pattern-type})))
 
+(defn- emit-throw-expression [ctx node]
+  (let [expr (emit-child-expression ctx node :thrown-expression)]
+    (-> expr
+        (with-text (str "throw " (:text expr)))
+        (apply-rule node :java.throw-statement-node/to-csharp-throw :rule-app.status/success))))
+
+(defn- emit-switch-arm-pattern [ctx case-node]
+  (let [labels (child-nodes (:db ctx) (:db/id case-node) :case-label)]
+    (if (seq labels)
+      (merge-emits " or " (mapv #(emit-expression ctx %) labels))
+      {:text "_"
+       :usings #{}
+       :helpers #{}
+       :diagnostics []
+       :rule-applications []
+       :provenance []})))
+
+(defn- emit-switch-arm-result [ctx node]
+  (case (:node/kind node)
+    :java.node/throw-statement
+    (emit-throw-expression ctx node)
+
+    (emit-expression ctx node)))
+
+(defn- emit-switch-case-arm [ctx case-node]
+  (let [results (child-nodes (:db ctx) (:db/id case-node) :case-result)]
+    (if (and (= "arrow" (:node/value case-node))
+             (= 1 (count results)))
+      (let [pattern (emit-switch-arm-pattern ctx case-node)
+            result (emit-switch-arm-result ctx (first results))
+            combined (merge-emits [pattern result])
+            text (str (indent 1) (:text pattern) " => " (:text result) ",\n")]
+        (-> combined
+            (with-text text)
+            (apply-rule case-node
+                        :java.switch-case-node/to-csharp-switch-arm
+                        :rule-app.status/success)))
+      (unsupported case-node
+                   :java.switch-case-node/to-csharp-switch-arm
+                   {:reason :emit.reason/unsupported-switch-case
+                    :case-kind (:node/value case-node)
+                    :result-count (count results)}))))
+
+(defn- emit-switch-expression [ctx node]
+  (let [selector (emit-child-expression ctx node :selector)
+        cases (child-nodes (:db ctx) (:db/id node) :case)
+        arms (mapv #(emit-switch-case-arm ctx %) cases)
+        arms-result (merge-emits arms)
+        combined (merge-emits [selector arms-result])
+        text (str (:text selector) " switch\n"
+                  "{\n"
+                  (:text arms-result)
+                  "}")]
+    (-> combined
+        (with-text text)
+        (apply-rule node
+                    :java.switch-expression-node/to-csharp-switch
+                    :rule-app.status/success))))
+
 (defn- emit-expression [ctx node]
   (case (:node/kind node)
     :java.node/literal
@@ -949,9 +1035,7 @@
         (unsupported node :java.binary-operator-node/to-csharp-binary {:operator (:node/value node)})))
 
     :java.node/switch-expression
-    (unsupported node
-                 :java.switch-expression-node/to-csharp-switch
-                 {:reason :emit.reason/unsupported-switch-expression})
+    (emit-switch-expression ctx node)
 
     :java.node/method-call
     (emit-method-call ctx node)
@@ -1008,10 +1092,8 @@
           (apply-rule node :java.if-statement-node/to-csharp-if :rule-app.status/success)))
 
     :java.node/throw-statement
-    (let [expr (emit-child-expression ctx node :thrown-expression)]
-      (-> expr
-          (with-text (indent-lines indent-level (str "throw " (:text expr) ";")))
-          (apply-rule node :java.throw-statement-node/to-csharp-throw :rule-app.status/success)))
+    (let [expr (emit-throw-expression ctx node)]
+      (with-text expr (indent-lines indent-level (str (:text expr) ";"))))
 
     :java.node/method-call
     (let [expr (emit-expression ctx node)]
@@ -1266,10 +1348,9 @@
         ctors (mapv #(stateful-enum-constructor-block db enum-decl %) enum-ctors)
         method-shapes (mapv (fn [method-decl]
                               [method-decl
-                               (when (not (contains? (modifiers method-decl) :static))
-                                 (let [result (method-block db method-decl false)]
-                                   (when (empty? (:diagnostics result))
-                                     result)))])
+                               (let [result (method-block db method-decl false)]
+                                 (when (empty? (:diagnostics result))
+                                   result))])
                             enum-methods)
         supported-methods (->> method-shapes (keep second) vec)
         unsupported-methods (->> method-shapes
@@ -1285,9 +1366,17 @@
                            (mapv #(merge-emits "\n" %)))
         body-metadata (merge-emits "\n\n" body-sections)
         content-metadata (merge-emits (concat [body-metadata] unsupported-members))
+        all-usings (->> (:usings content-metadata)
+                        (map csharp-qualified-name)
+                        (remove #(= namespace %))
+                        set
+                        sort
+                        vec)
         text (str "// <auto-generated>\n"
                   "// Generated by Vibeformer. Changes under target/csharp are disposable.\n"
                   "// </auto-generated>\n\n"
+                  (when (seq all-usings)
+                    (str (str/join "\n" (map #(str "using " % ";") all-usings)) "\n\n"))
                   (when-not (str/blank? namespace)
                     (str "namespace " namespace "\n{\n"))
                   "    " (visibility (modifiers enum-decl)) " sealed class " (:decl/name enum-decl) "\n"
@@ -1504,6 +1593,7 @@
                                     (get members :decl.kind/method)))]
     (->> (concat inherited field-types method-return-types param-types)
          (mapcat (comp :csharp/usings map-type))
+         (map csharp-qualified-name)
          (remove #(= namespace %))
          set
          sort
@@ -1524,6 +1614,7 @@
         body-metadata (merge-emits "\n\n" body-sections)
         body (:text body-metadata)
         all-usings (->> (concat usings (:usings body-metadata))
+                        (map csharp-qualified-name)
                         (remove #(= namespace %))
                         set
                         sort

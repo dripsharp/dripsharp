@@ -186,6 +186,23 @@ public enum Token {
 }
 ")
 
+(def switch-expression-throw-fixture
+  "package com.acme.operators;
+
+public enum Operator {
+  NULL_COALESCE,
+  PIPE;
+
+  public static Operator byName(String name) {
+    return switch (name) {
+      case \"??\" -> NULL_COALESCE;
+      case \"|>\" -> PIPE;
+      default -> throw new RuntimeException(\"Unknown operator: \" + name);
+    };
+  }
+}
+")
+
 (def enum-call-demo-fixture
   "package com.acme.tokens;
 
@@ -602,7 +619,7 @@ public final class Demo {
                              [?node :node/role ?role]]
                            db))))
           (is (= #{[0 "case" :case "arrow"]
-                   [1 "case" :case "arrow"]}
+                   [1 "default" :case "arrow"]}
                  (set (d/q '[:find ?ordinal ?name ?role ?value
                              :where
                              [?node :node/kind :java.node/switch-case]
@@ -634,6 +651,45 @@ public final class Demo {
                              [?child :node/parent ?case]
                              [?child :node/name ?name]
                              [?child :node/role ?role]]
+                           db)))))))))
+
+(deftest extracts-switch-default-throw-result-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/operators/Operator.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path switch-expression-throw-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{[2 "default" :case "arrow"
+                    :java.node/throw-statement :case-result
+                    :java.node/object-creation :thrown-expression
+                    "java.lang.RuntimeException"]}
+                 (set (d/q '[:find ?case-ordinal ?case-name ?case-role ?case-value
+                                    ?throw-kind ?throw-role
+                                    ?expr-kind ?expr-role ?type-id
+                             :where
+                             [?case :node/kind :java.node/switch-case]
+                             [?case :node/ordinal ?case-ordinal]
+                             [?case :node/name ?case-name]
+                             [?case :node/role ?case-role]
+                             [?case :node/value ?case-value]
+                             [?throw :node/parent ?case]
+                             [?throw :node/kind ?throw-kind]
+                             [?throw :node/kind :java.node/throw-statement]
+                             [?throw :node/role ?throw-role]
+                             [?expr :node/parent ?throw]
+                             [?expr :node/kind ?expr-kind]
+                             [?expr :node/role ?expr-role]
+                             [?ref :ref/from-node ?expr]
+                             [?ref :ref/kind :ref.kind/constructor-call]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]]
                            db)))))))))
 
 (deftest canonicalizes-method-call-source-nodes

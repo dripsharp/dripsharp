@@ -712,7 +712,7 @@ public final class Demo {
           (is (= :java.method-node/to-csharp-method
                  (second (:rule-app/rule failed-app)))))))))
 
-(deftest stateful-enum-members-produce-structured-diagnostics
+(deftest emits-stateful-enum-members-and-static-by-name-switch
   (with-empty-db
     (fn [conn]
       (schema/install! conn)
@@ -738,6 +738,9 @@ public final class Demo {
               rule-ids (set (map (comp second :rule-app/rule)
                                  (:csharp/rule-applications result)))]
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "using System;"))
+          (is (not (str/includes? content "using com.example.operator;")))
+          (is (str/includes? content "namespace com.example.@operator"))
           (is (str/includes? content "public sealed class Operator"))
           (is (str/includes? content "public static readonly Operator NULL_COALESCE = new Operator(1, false);"))
           (is (str/includes? content "public static readonly Operator PIPE = new Operator(2, true);"))
@@ -750,12 +753,21 @@ public final class Demo {
           (is (str/includes? content "return this.prec;"))
           (is (str/includes? content "public bool isLeftAssoc()"))
           (is (str/includes? content "return this.leftAssoc;"))
-          (is (= {:emit.reason/unsupported-enum-method 1} reasons))
-          (is (= {:java.method-node/to-csharp-method 1} failed-rules))
+          (is (str/includes? content "public static Operator byName(string name)"))
+          (is (str/includes? content "return name switch"))
+          (is (str/includes? content "\"??\" => Operator.NULL_COALESCE,"))
+          (is (str/includes? content "\"|>\" => Operator.PIPE,"))
+          (is (str/includes? content "_ => throw new Exception(\"Unknown operator: \" + name),"))
+          (is (= {} reasons))
+          (is (= {} failed-rules))
           (is (every? rule-ids
                       [:java.field-node/to-csharp-field
                        :java.constructor-node/to-csharp-constructor
-                       :java.method-node/to-csharp-method])))))))
+                       :java.method-node/to-csharp-method
+                       :java.switch-expression-node/to-csharp-switch
+                       :java.switch-case-node/to-csharp-switch-arm
+                       :java.throw-statement-node/to-csharp-throw
+                       :java.object-creation-node/to-csharp-new])))))))
 
 (deftest emits-default-interface-method-bodies
   (with-empty-db
