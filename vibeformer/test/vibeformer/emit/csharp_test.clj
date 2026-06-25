@@ -734,17 +734,28 @@ public final class Demo {
                                         (:csharp/diagnostics result)))
               failed-rules (frequencies (map (comp second :rule-app/rule)
                                              (filter #(= :rule-app.status/failed (:rule-app/status %))
-                                                     (:csharp/rule-applications result))))]
+                                                     (:csharp/rule-applications result))))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
-          (is (str/includes? content "public enum Operator"))
-          (is (str/includes? content "NULL_COALESCE,"))
-          (is (not (str/includes? content "prec;")))
-          (is (= 2 (:emit.reason/unsupported-stateful-enum-field reasons)))
-          (is (= 1 (:emit.reason/unsupported-enum-constructor reasons)))
-          (is (= 3 (:emit.reason/unsupported-enum-method reasons)))
-          (is (= 2 (:java.field-node/to-csharp-field failed-rules)))
-          (is (= 1 (:java.constructor-node/to-csharp-constructor failed-rules)))
-          (is (= 3 (:java.method-node/to-csharp-method failed-rules))))))))
+          (is (str/includes? content "public sealed class Operator"))
+          (is (str/includes? content "public static readonly Operator NULL_COALESCE = new Operator(1, false);"))
+          (is (str/includes? content "public static readonly Operator PIPE = new Operator(2, true);"))
+          (is (str/includes? content "private readonly int prec;"))
+          (is (str/includes? content "private readonly bool leftAssoc;"))
+          (is (str/includes? content "private Operator(int prec, bool leftAssoc)"))
+          (is (str/includes? content "this.prec = prec;"))
+          (is (str/includes? content "this.leftAssoc = leftAssoc;"))
+          (is (str/includes? content "public int getPrec()"))
+          (is (str/includes? content "return this.prec;"))
+          (is (str/includes? content "public bool isLeftAssoc()"))
+          (is (str/includes? content "return this.leftAssoc;"))
+          (is (= {:emit.reason/unsupported-enum-method 1} reasons))
+          (is (= {:java.method-node/to-csharp-method 1} failed-rules))
+          (is (every? rule-ids
+                      [:java.field-node/to-csharp-field
+                       :java.constructor-node/to-csharp-constructor
+                       :java.method-node/to-csharp-method])))))))
 
 (deftest emits-default-interface-method-bodies
   (with-empty-db
