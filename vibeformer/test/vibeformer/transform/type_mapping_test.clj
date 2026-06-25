@@ -52,6 +52,7 @@
     (maps-to (type-fact :lang/java "java.lang.String") "string" [] [])
     (maps-to (type-fact :lang/java "java.math.BigDecimal") "decimal" [] [])
     (maps-to (type-fact :lang/java "java.math.BigInteger") "BigInteger" ["System.Numerics"] [])
+    (maps-to (type-fact :lang/java "java.util.regex.Pattern") "Regex" ["System.Text.RegularExpressions"] [])
     (maps-to (type-fact :lang/java "java.lang.String[]") "string[]" [] [])
     (maps-to (type-fact :lang/java "java.lang.IllegalArgumentException") "ArgumentException" ["System"] []))
   (testing "collections and optionals include required usings and helpers"

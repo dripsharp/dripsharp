@@ -152,17 +152,22 @@
        :type/name (type-name syntax)
        :type/nullable? nullable?})))
 
-(defn- type-ref-facts [node-id role ^KtTypeReference type-reference]
-  (when-let [type-fact (type-fact type-reference)]
-    [type-fact
-     {:db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
-      :ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
-      :ref/kind :ref.kind/type-use
-      :ref/from-node node-id
-      :ref/to-type (:type/id type-fact)
-      :ref/name (:type/name type-fact)
-      :ref/resolved? false
-      :ref/reason :resolve.reason/syntax-only}]))
+(defn- type-ref-facts
+  ([node-id role ^KtTypeReference type-reference]
+   (type-ref-facts node-id role type-reference nil))
+  ([node-id role ^KtTypeReference type-reference source-name]
+   (when-let [type-fact (type-fact type-reference)]
+     [type-fact
+      (cond-> {:db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
+               :ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
+               :ref/kind :ref.kind/type-use
+               :ref/from-node node-id
+               :ref/to-type (:type/id type-fact)
+               :ref/name (:type/name type-fact)
+               :ref/role role
+               :ref/resolved? false
+               :ref/reason :resolve.reason/syntax-only}
+        source-name (assoc :ref/source-name source-name))])))
 
 (defn- nullable-type-feature-facts [node-id type-reference role]
   (when (nullable-type? type-reference)
@@ -230,7 +235,8 @@
   (mapcat (fn [ordinal parameter]
             (type-ref-facts node-id
                             (keyword (str "param-" ordinal))
-                            (.getTypeReference parameter)))
+                            (.getTypeReference parameter)
+                            (.getName parameter)))
           (range)
           value-parameters))
 

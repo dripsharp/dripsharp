@@ -73,6 +73,10 @@
    "java.io.IOException" {:csharp/type "IOException"
                           :csharp/usings #{io-using}}})
 
+(def java-known-types
+  {"java.util.regex.Pattern" {:csharp/type "Regex"
+                              :csharp/usings #{"System.Text.RegularExpressions"}}})
+
 (def collection-mappings
   {"java.util.Collection" ["ICollection" #{collection-using}]
    "java.util.List" ["List" #{collection-using}]
@@ -324,6 +328,10 @@
 
         (contains? java-exceptions type-name)
         (let [{:csharp/keys [type usings]} (get java-exceptions type-name)]
+          (result type usings #{}))
+
+        (contains? java-known-types type-name)
+        (let [{:csharp/keys [type usings]} (get java-known-types type-name)]
           (result type usings #{}))
 
         (= "java.util.Optional" type-name)

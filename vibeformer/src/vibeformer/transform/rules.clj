@@ -14,19 +14,19 @@
   [{:rule/id :java.class-node/to-csharp-class
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/class
-    :rule/status stubbed-status}
+    :rule/status implemented-status}
    {:rule/id :java.constructor-node/to-csharp-constructor
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/constructor
-    :rule/status stubbed-status}
+    :rule/status implemented-status}
    {:rule/id :java.field-node/to-csharp-field
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/field
-    :rule/status stubbed-status}
+    :rule/status implemented-status}
    {:rule/id :java.method-node/to-csharp-method
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/method
-    :rule/status stubbed-status}
+    :rule/status implemented-status}
    {:rule/id :java.method-call-node/to-csharp-invocation
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/method-call
@@ -35,17 +35,17 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/class
     :rule/output-feature :csharp.feature/class
-    :rule/status stubbed-status}
+    :rule/status implemented-status}
    {:rule/id :java.field-feature/to-csharp-field
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/field
     :rule/output-feature :csharp.feature/field
-    :rule/status stubbed-status}
+    :rule/status implemented-status}
    {:rule/id :java.package-private-member/to-csharp-internal
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/package-private-member
     :rule/output-feature :csharp.feature/internal-member
-    :rule/status stubbed-status}
+    :rule/status implemented-status}
    {:rule/id :java.checked-exception/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/checked-exception

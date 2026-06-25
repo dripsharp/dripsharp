@@ -1,5 +1,6 @@
 (ns vibeformer.sample-runner-test
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.sample-runner :as sample-runner])
   (:import (java.nio.charset StandardCharsets)
@@ -46,7 +47,8 @@ public final class Hello {
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
         coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
         source-files (read-edn (.resolve target "facts/source-files.edn"))
-        provenance (read-edn (.resolve target "provenance.edn"))]
+        provenance (read-edn (.resolve target "provenance.edn"))
+        csharp-file (.resolve target "csharp/com/example/Hello.cs")]
     (is (:ok? result))
     (testing "target layout is created"
       (doseq [dir ["csharp" "diagnostics" "facts"]]
@@ -63,8 +65,8 @@ public final class Hello {
               :csharp/emit
               :dotnet/build]
              (mapv :stage stages)))
-      (is (= [:skipped :skipped]
-             (mapv :status (take-last 2 stages)))))
+      (is (= :ok (:status (some #(when (= :csharp/emit (:stage %)) %) stages))))
+      (is (= :skipped (:status (last stages)))))
     (testing "diagnostic artifacts identify current transform coverage gaps"
       (is (false? (:ok? coverage)))
       (is (pos? (count (:failures coverage))))
@@ -74,4 +76,8 @@ public final class Hello {
     (testing "facts and provenance point at disposable output"
       (is (= ["src/main/java/com/example/Hello.java"]
              (mapv :file/path source-files)))
-      (is (= :pipeline.stage/not-implemented (:reason provenance))))))
+      (is (= :generated (:status provenance)))
+      (is (= 1 (:csharp/files-written provenance)))
+      (is (Files/isRegularFile csharp-file (make-array java.nio.file.LinkOption 0)))
+      (is (str/includes? (slurp (str csharp-file))
+                         "public static void Main(string[] args)")))))

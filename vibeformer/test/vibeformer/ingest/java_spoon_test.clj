@@ -157,6 +157,19 @@ public final class Greeter extends Base implements GreeterApi {
                                [(contains? #{:ref.kind/extends :ref.kind/implements} ?kind)]]
                              db)))))
 
+          (testing "parameter type refs retain roles and source names for emission"
+            (is (= #{[:param-0 "name" "java.lang.String"]
+                     [:param-0 "locale" "java.util.Locale"]}
+                   (set (d/q '[:find ?role ?source-name ?type-id
+                               :where
+                               [?ref :ref/kind :ref.kind/type-use]
+                               [?ref :ref/role ?role]
+                               [?ref :ref/source-name ?source-name]
+                               [?ref :ref/to-type ?type]
+                               [?type :type/id ?type-id]
+                               [(contains? #{:param-0} ?role)]]
+                             db)))))
+
           (testing "method calls and unresolved missing-classpath references are explicit"
             (is (= #{["toUpperCase" true]
                      ["trim" true]

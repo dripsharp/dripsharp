@@ -148,6 +148,12 @@
    {:db/ident :ref/name
     :db/valueType :db.type/string
     :db/cardinality :db.cardinality/one}
+   {:db/ident :ref/role
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :ref/source-name
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
    {:db/ident :ref/owner-type
     :db/valueType :db.type/ref
     :db/cardinality :db.cardinality/one}

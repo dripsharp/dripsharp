@@ -203,18 +203,23 @@
     parent (assoc :node/parent parent)
     true (merge (source-span element))))
 
-(defn- type-ref-facts [node-id role type-ref]
-  (when-let [type-fact (type-fact type-ref)]
-    (let [resolved? (type-reference-resolved? type-ref)]
-      [type-fact
-       (cond-> {:ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
-                :db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
-                :ref/kind :ref.kind/type-use
-                :ref/from-node node-id
-                :ref/to-type (:type/id type-fact)
-                :ref/name (:type/name type-fact)
-                :ref/resolved? resolved?}
-         (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))
+(defn- type-ref-facts
+  ([node-id role type-ref]
+   (type-ref-facts node-id role type-ref nil))
+  ([node-id role type-ref source-name]
+   (when-let [type-fact (type-fact type-ref)]
+     (let [resolved? (type-reference-resolved? type-ref)]
+       [type-fact
+        (cond-> {:ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
+                 :db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
+                 :ref/kind :ref.kind/type-use
+                 :ref/from-node node-id
+                 :ref/to-type (:type/id type-fact)
+                 :ref/name (:type/name type-fact)
+                 :ref/role role
+                 :ref/resolved? resolved?}
+          source-name (assoc :ref/source-name source-name)
+          (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))]))))
 
 (defn- inheritance-ref-facts [node-id kind type-ref]
   (when-let [type-fact (type-fact type-ref)]
@@ -336,7 +341,10 @@
      (when return-type
        (type-ref-facts node-id :return-type return-type))
      (mapcat (fn [index param]
-               (type-ref-facts node-id (keyword (str "param-" index)) (.getType param)))
+               (type-ref-facts node-id
+                               (keyword (str "param-" index))
+                               (.getType param)
+                               (.getSimpleName param)))
              (range)
              params)
      (mapcat #(type-ref-facts node-id :throws %) (.getThrownTypes executable))

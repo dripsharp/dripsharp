@@ -3,6 +3,7 @@
             [datomic.client.api :as d]
             [datomic.local :as dl]
             [vibeformer.datomic.schema :as schema]
+            [vibeformer.emit.csharp :as csharp]
             [vibeformer.ingest.java-spoon :as java-spoon]
             [vibeformer.ingest.source :as source]
             [vibeformer.inventory :as inventory]
@@ -187,8 +188,11 @@
                               :coverage/failures (count (:failures coverage-report))})))
             stages (cond-> stages
                      (not (stop-after-failure? stages))
-                     (conj (skipped-stage :csharp/emit :pipeline.stage/not-implemented)
-                           (skipped-stage :dotnet/build :pipeline.stage/not-implemented)))]
+                     (run-stage sample :csharp/emit
+                                #(csharp/emit! (d/db conn) (:target/csharp paths))))
+            stages (cond-> stages
+                     (not (stop-after-failure? stages))
+                     (conj (skipped-stage :dotnet/build :pipeline.stage/not-implemented)))]
         stages))))
 
 (defn run-sample
@@ -211,12 +215,19 @@
                  :ok? (not (stop-after-failure? stages))
                  :stages stages}]
      (write-edn! (.resolve (:target/diagnostics paths) "stages.edn") stages)
-     (write-edn! (:target/provenance paths)
-                {:sample/name (:sample/name sample)
-                 :source/root (:source/root sample)
-                 :target/csharp (slash-path (normalize-path (:target/csharp paths)))
-                 :status :skipped
-                 :reason :pipeline.stage/not-implemented})
+     (let [emit-stage (some #(when (= :csharp/emit (:stage %)) %) stages)]
+       (write-edn! (:target/provenance paths)
+                  (cond-> {:sample/name (:sample/name sample)
+                           :source/root (:source/root sample)
+                           :target/csharp (slash-path (normalize-path (:target/csharp paths)))}
+                    (= :ok (:status emit-stage))
+                    (assoc :status :generated
+                           :csharp/files (:csharp/files emit-stage)
+                           :csharp/files-written (:csharp/files-written emit-stage))
+
+                    (not= :ok (:status emit-stage))
+                    (assoc :status :skipped
+                           :reason :pipeline.stage/not-implemented))))
      result)))
 
 (defn -main [& args]

@@ -121,9 +121,20 @@
     (is (every? #(= 1 (count %)) (vals rules-by-feature)))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.feature/checked-exception)))))
-    (is (every? #(= :rule.status/stubbed (:rule/status %))
-                (remove #(= :java.checked-exception/unsupported (:rule/id %))
-                        rules/initial-java-rules)))
+    (is (= #{:java.method-call-node/to-csharp-invocation}
+           (set (map :rule/id
+                     (filter #(= :rule.status/stubbed (:rule/status %))
+                             rules/initial-java-rules)))))
+    (is (= #{:java.class-node/to-csharp-class
+             :java.constructor-node/to-csharp-constructor
+             :java.field-node/to-csharp-field
+             :java.method-node/to-csharp-method
+             :java.class-feature/to-csharp-class
+             :java.field-feature/to-csharp-field
+             :java.package-private-member/to-csharp-internal}
+           (set (map :rule/id
+                     (filter #(= :rule.status/implemented (:rule/status %))
+                             rules/initial-java-rules)))))
     (is (= (set rules/initial-java-rules)
            (set (map #(dissoc % :rule/version)
                      (rules/tx-data rules/initial-java-rules)))))))

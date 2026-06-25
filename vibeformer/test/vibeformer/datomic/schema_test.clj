@@ -50,6 +50,8 @@
     :ref/to-decl "decl"
     :ref/to-type "type"
     :ref/name "String"
+    :ref/role :return-type
+    :ref/source-name "value"
     :ref/owner-type "type"
     :ref/resolved? true}
    {:db/id "feature"
@@ -115,7 +117,11 @@
         (is (= "A" (:node/name (d/pull db [:node/name] [:node/id "project-a:src/A.java:class:A"]))))
         (is (= "a.A" (:decl/qualified-name (d/pull db [:decl/qualified-name] [:decl/id "java:a.A"]))))
         (is (= "java.lang.String" (:type/name (d/pull db [:type/name] [:type/id "java.lang.String"]))))
-        (is (= "String" (:ref/name (d/pull db [:ref/name] [:ref/id "project-a:src/A.java:ref:String"]))))
+        (is (= {:ref/name "String"
+                :ref/role :return-type
+                :ref/source-name "value"}
+               (d/pull db [:ref/name :ref/role :ref/source-name]
+                       [:ref/id "project-a:src/A.java:ref:String"])))
         (is (= :java.feature/class (:feature/kind (d/pull db [:feature/kind] [:feature/id "project-a:src/A.java:feature:class"]))))))))
 
 (deftest identity-retransacts-update-logical-records
