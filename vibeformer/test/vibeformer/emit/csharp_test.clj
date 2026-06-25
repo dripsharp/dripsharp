@@ -77,14 +77,46 @@ public enum MemberLookupMode {
   "package com.example.token;
 
 public enum Token {
+  EXTERNAL,
   ABSTRACT,
   OPEN,
   LOCAL,
+  HIDDEN,
+  FIXED,
+  CONST,
+  WHEN,
+  SWITCH,
+  LINE_COMMENT,
+  BLOCK_COMMENT,
+  SEMICOLON,
   IDENTIFIER;
 
   public boolean isModifier() {
     return switch (this) {
-      case ABSTRACT, OPEN, LOCAL -> true;
+      case EXTERNAL, ABSTRACT, OPEN, LOCAL, HIDDEN, FIXED, CONST -> true;
+      default -> false;
+    };
+  }
+
+  public boolean isKeyword() {
+    return switch (this) {
+      case ABSTRACT,
+          CONST,
+          EXTERNAL,
+          FIXED,
+          HIDDEN,
+          LOCAL,
+          OPEN,
+          WHEN,
+          SWITCH ->
+          true;
+      default -> false;
+    };
+  }
+
+  public boolean isAffix() {
+    return switch (this) {
+      case LINE_COMMENT, BLOCK_COMMENT, SEMICOLON -> true;
       default -> false;
     };
   }
@@ -100,6 +132,8 @@ public final class TokenDemo {
 
   public static void main(String[] args) {
     Token.ABSTRACT.isModifier();
+    Token.WHEN.isKeyword();
+    Token.SEMICOLON.isAffix();
   }
 }
 ")
@@ -575,17 +609,23 @@ public final class Demo {
           (is (str/includes? content "ABSTRACT,"))
           (is (str/includes? content "public static class TokenExtensions"))
           (is (str/includes? content "public static bool isModifier(this Token value)"))
+          (is (str/includes? content "public static bool isKeyword(this Token value)"))
+          (is (str/includes? content "public static bool isAffix(this Token value)"))
           (is (str/includes? content "return value switch"))
-          (is (str/includes? content "Token.ABSTRACT or Token.OPEN or Token.LOCAL => true,"))
+          (is (str/includes? content "Token.EXTERNAL or Token.ABSTRACT or Token.OPEN or Token.LOCAL or Token.HIDDEN or Token.FIXED or Token.CONST => true,"))
+          (is (str/includes? content "Token.ABSTRACT or Token.CONST or Token.EXTERNAL or Token.FIXED or Token.HIDDEN or Token.LOCAL or Token.OPEN or Token.WHEN or Token.SWITCH => true,"))
+          (is (str/includes? content "Token.LINE_COMMENT or Token.BLOCK_COMMENT or Token.SEMICOLON => true,"))
           (is (str/includes? content "_ => false,"))
           (is (str/includes? demo-content "Token.ABSTRACT.isModifier();"))
+          (is (str/includes? demo-content "Token.WHEN.isKeyword();"))
+          (is (str/includes? demo-content "Token.SEMICOLON.isAffix();"))
           (is (empty? (:csharp/diagnostics result)))
           (is (every? rule-ids
                       [:java.method-node/to-csharp-method
                        :java.switch-expression-node/to-csharp-switch
                        :java.switch-case-node/to-csharp-switch-arm]))
           (is (some? switch-entry))
-          (is (= 2 (count case-entries))))))))
+          (is (= 6 (count case-entries))))))))
 
 (deftest unsupported-enum-methods-produce-structured-diagnostics
   (with-empty-db
