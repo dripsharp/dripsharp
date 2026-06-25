@@ -8,5 +8,6 @@ public final class TokenDemo {
         Token.ABSTRACT.isModifier();
         Token.WHEN.isKeyword();
         Token.SEMICOLON.isAffix();
+        Token.UNDERSCORE.text();
     }
 }

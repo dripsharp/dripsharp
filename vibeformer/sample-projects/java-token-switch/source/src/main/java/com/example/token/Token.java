@@ -1,5 +1,7 @@
 package com.example.token;
 
+import java.util.Locale;
+
 public enum Token {
     EXTERNAL,
     ABSTRACT,
@@ -13,6 +15,7 @@ public enum Token {
     LINE_COMMENT,
     BLOCK_COMMENT,
     SEMICOLON,
+    UNDERSCORE,
     IDENTIFIER;
 
     public boolean isModifier() {
@@ -43,5 +46,12 @@ public enum Token {
             case LINE_COMMENT, BLOCK_COMMENT, SEMICOLON -> true;
             default -> false;
         };
+    }
+
+    public String text() {
+        if (this == UNDERSCORE) {
+            return "_";
+        }
+        return name().toLowerCase(Locale.ROOT);
     }
 }

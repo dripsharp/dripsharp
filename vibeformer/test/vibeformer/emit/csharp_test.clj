@@ -76,6 +76,8 @@ public enum MemberLookupMode {
 (def enum-switch-fixture
   "package com.example.token;
 
+import java.util.Locale;
+
 public enum Token {
   EXTERNAL,
   ABSTRACT,
@@ -89,6 +91,7 @@ public enum Token {
   LINE_COMMENT,
   BLOCK_COMMENT,
   SEMICOLON,
+  UNDERSCORE,
   IDENTIFIER;
 
   public boolean isModifier() {
@@ -120,6 +123,13 @@ public enum Token {
       default -> false;
     };
   }
+
+  public String text() {
+    if (this == UNDERSCORE) {
+      return \"_\";
+    }
+    return name().toLowerCase(Locale.ROOT);
+  }
 }
 ")
 
@@ -134,6 +144,7 @@ public final class TokenDemo {
     Token.ABSTRACT.isModifier();
     Token.WHEN.isKeyword();
     Token.SEMICOLON.isAffix();
+    Token.UNDERSCORE.text();
   }
 }
 ")
@@ -145,7 +156,7 @@ public enum Token {
   IDENTIFIER;
 
   public String text() {
-    return name();
+    return System.getProperty(\"pkl.token\");
   }
 }
 ")
@@ -602,7 +613,9 @@ public final class Demo {
               switch-entry (some #(when (= :java.node/switch-expression (:source/kind %)) %)
                                  (:csharp/provenance result))
               case-entries (filter #(= :java.node/switch-case (:source/kind %))
-                                   (:csharp/provenance result))]
+                                   (:csharp/provenance result))
+              method-call-entries (filter #(= :java.node/method-call (:source/kind %))
+                                          (:csharp/provenance result))]
           (is (= {:ok? true :failures []} coverage))
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
           (is (str/includes? content "public enum Token"))
@@ -611,21 +624,28 @@ public final class Demo {
           (is (str/includes? content "public static bool isModifier(this Token value)"))
           (is (str/includes? content "public static bool isKeyword(this Token value)"))
           (is (str/includes? content "public static bool isAffix(this Token value)"))
+          (is (str/includes? content "public static string text(this Token value)"))
           (is (str/includes? content "return value switch"))
           (is (str/includes? content "Token.EXTERNAL or Token.ABSTRACT or Token.OPEN or Token.LOCAL or Token.HIDDEN or Token.FIXED or Token.CONST => true,"))
           (is (str/includes? content "Token.ABSTRACT or Token.CONST or Token.EXTERNAL or Token.FIXED or Token.HIDDEN or Token.LOCAL or Token.OPEN or Token.WHEN or Token.SWITCH => true,"))
           (is (str/includes? content "Token.LINE_COMMENT or Token.BLOCK_COMMENT or Token.SEMICOLON => true,"))
           (is (str/includes? content "_ => false,"))
+          (is (str/includes? content "if (value == Token.UNDERSCORE)"))
+          (is (str/includes? content "return \"_\";"))
+          (is (str/includes? content "return value.ToString().ToLowerInvariant();"))
           (is (str/includes? demo-content "Token.ABSTRACT.isModifier();"))
           (is (str/includes? demo-content "Token.WHEN.isKeyword();"))
           (is (str/includes? demo-content "Token.SEMICOLON.isAffix();"))
+          (is (str/includes? demo-content "Token.UNDERSCORE.text();"))
           (is (empty? (:csharp/diagnostics result)))
           (is (every? rule-ids
                       [:java.method-node/to-csharp-method
                        :java.switch-expression-node/to-csharp-switch
                        :java.switch-case-node/to-csharp-switch-arm]))
           (is (some? switch-entry))
-          (is (= 6 (count case-entries))))))))
+          (is (= 6 (count case-entries)))
+          (is (some #(= "toLowerCase" (:source/name %)) method-call-entries))
+          (is (some #(= "name" (:source/name %)) method-call-entries)))))))
 
 (deftest unsupported-enum-methods-produce-structured-diagnostics
   (with-empty-db

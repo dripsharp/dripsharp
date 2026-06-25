@@ -709,6 +709,13 @@
   (merge-emits ", " (mapv #(emit-expression ctx %)
                           (child-nodes (:db ctx) (:db/id node) :argument))))
 
+(defn- locale-root? [ctx node]
+  (let [target (child-node (:db ctx) (:db/id node) :target)]
+    (and (= :java.node/field-read (:node/kind node))
+         (= "ROOT" (:node/name node))
+         (= :java.node/type-access (:node/kind target))
+         (= "java.util.Locale" (:node/value target)))))
+
 (defn- emit-method-call [ctx node]
   (let [db (:db ctx)
         call-ref (method-call-ref db node)
@@ -736,6 +743,20 @@
       (-> combined
           (with-text (str "string.IsNullOrEmpty(" target-text ")"))
           (apply-rule node :java.string-is-empty/to-csharp-is-null-or-empty :rule-app.status/success))
+
+      (and (= "java.lang.String" owner)
+           (= "toLowerCase" source-method-name)
+           target
+           (= 1 (count (child-nodes db (:db/id node) :argument)))
+           (locale-root? ctx (first (child-nodes db (:db/id node) :argument))))
+      (-> combined
+          (with-text (str target-text ".ToLowerInvariant()"))
+          (apply-rule node :java.method-call-node/to-csharp-invocation :rule-app.status/success))
+
+      (and (= "java.lang.Enum" owner) (= "name" source-method-name) target)
+      (-> target-result
+          (with-text (str target-text ".ToString()"))
+          (apply-rule node :java.method-call-node/to-csharp-invocation :rule-app.status/success))
 
       (and (= "java.util.regex.Pattern" owner) (= "split" source-method-name) target)
       (-> combined
@@ -893,7 +914,7 @@
     (emitted (:node/name node) node :java.variable-write-node/to-csharp-variable)
 
     :java.node/this
-    (emitted "this" node :java.this-node/to-csharp-this)
+    (emitted (or (:this-text ctx) "this") node :java.this-node/to-csharp-this)
 
     :java.node/type-access
     (emitted (csharp-type-access (:node/value node)) node :java.type-access-node/to-csharp-type)
@@ -1005,16 +1026,20 @@
     (let [result (unsupported node :java.statement-node/to-csharp-stub {:context :statement})]
       (with-text result (indent-lines indent-level (:text result))))))
 
-(defn- emit-body [db executable-decl indent-level]
-  (let [statements (child-nodes db (get-in executable-decl [:decl/source-node :db/id]) :body)]
-    (if (seq statements)
-      (merge-emits "\n" (mapv #(emit-statement {:db db} % indent-level) statements))
-      {:text (indent-lines indent-level "throw new System.NotImplementedException();")
-       :usings #{}
-       :helpers #{}
-       :diagnostics []
-       :rule-applications []
-       :provenance []})))
+(defn- emit-body
+  ([db executable-decl indent-level]
+   (emit-body db executable-decl indent-level {}))
+  ([db executable-decl indent-level ctx]
+   (let [statements (child-nodes db (get-in executable-decl [:decl/source-node :db/id]) :body)
+         ctx (assoc ctx :db db)]
+     (if (seq statements)
+       (merge-emits "\n" (mapv #(emit-statement ctx % indent-level) statements))
+       {:text (indent-lines indent-level "throw new System.NotImplementedException();")
+        :usings #{}
+        :helpers #{}
+        :diagnostics []
+        :rule-applications []
+        :provenance []}))))
 
 (defn- inherited-types [db type-decl]
   (let [node-eid (get-in type-decl [:decl/source-node :db/id])]
@@ -1251,15 +1276,22 @@
                     :java.switch-expression-node/to-csharp-switch
                     :rule-app.status/success))))
 
-(defn- enum-extension-method [db enum-decl method-decl shape]
+(defn- enum-extension-signature [db enum-decl method-decl]
+  (let [params (param-list db method-decl)]
+    (str "public static "
+         (type-name (:decl/return-type method-decl))
+         " "
+         (method-name method-decl)
+         "(this "
+         (:decl/name enum-decl)
+         " value"
+         (when-not (str/blank? params)
+           (str ", " params))
+         ")")))
+
+(defn- enum-switch-extension-method [db enum-decl method-decl shape]
   (let [switch-result (enum-switch-expression db enum-decl (:switch shape) (:cases shape))
-        signature (str "public static "
-                       (type-name (:decl/return-type method-decl))
-                       " "
-                       (method-name method-decl)
-                       "(this "
-                       (:decl/name enum-decl)
-                       " value)")
+        signature (enum-extension-signature db enum-decl method-decl)
         text (str "        " signature "\n"
                   "        {\n"
                   (indent 3) "return " (:text switch-result) ";\n"
@@ -1270,10 +1302,25 @@
                     :java.method-node/to-csharp-method
                     :rule-app.status/success))))
 
+(defn- enum-body-extension-method [db enum-decl method-decl]
+  (let [body (emit-body db method-decl 3 {:this-text "value"})
+        signature (enum-extension-signature db enum-decl method-decl)]
+    (when (empty? (:diagnostics body))
+      (-> body
+          (with-text (str "        " signature "\n"
+                          "        {\n"
+                          (:text body) "\n"
+                          "        }\n"))
+          (apply-rule (:decl/source-node method-decl)
+                      :java.method-node/to-csharp-method
+                      :rule-app.status/success)))))
+
 (defn- enum-extension-content [db enum-decl method-shapes]
   (when (seq method-shapes)
     (let [methods (mapv (fn [[method-decl shape]]
-                          (enum-extension-method db enum-decl method-decl shape))
+                          (if (= :enum.method/switch (:kind shape))
+                            (enum-switch-extension-method db enum-decl method-decl shape)
+                            (:result shape)))
                         method-shapes)
           method-result (merge-emits "\n" methods)
           text (str "\n"
@@ -1296,7 +1343,12 @@
                           vec)
         method-shapes (->> enum-methods
                            (map (fn [method-decl]
-                                  [method-decl (enum-switch-method-shape db method-decl)])))
+                                  [method-decl
+                                   (if-let [switch-shape (enum-switch-method-shape db method-decl)]
+                                     (assoc switch-shape :kind :enum.method/switch)
+                                     (when-let [body-result (enum-body-extension-method db enum-decl method-decl)]
+                                       {:kind :enum.method/body
+                                        :result body-result}))])))
         supported-methods (->> method-shapes
                                (filter second)
                                vec)
