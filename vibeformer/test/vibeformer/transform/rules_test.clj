@@ -118,8 +118,9 @@
 	    (is (= #{:java.node/class
              :java.node/assignment
 	             :java.node/array-read
-	             :java.node/binary-operator
+             :java.node/binary-operator
              :java.node/constructor
+             :java.node/enum
              :java.node/expression
 	             :java.node/field
 	             :java.node/field-read
@@ -144,6 +145,7 @@
              :java.feature/field
              :java.feature/generic-method
              :java.feature/interface
+             :java.feature/enum
              :java.feature/package-private-member
              :java.feature/checked-exception
              :java.feature/synchronized-method
@@ -173,6 +175,7 @@
 	             :java.array-read-node/to-csharp-indexer
              :java.binary-operator-node/to-csharp-binary
              :java.constructor-node/to-csharp-constructor
+             :java.enum-node/to-csharp-enum
 	             :java.field-node/to-csharp-field
 	             :java.field-read-node/to-csharp-member
              :java.field-write-node/to-csharp-member
@@ -194,6 +197,7 @@
              :java.class-feature/to-csharp-class
              :java.field-feature/to-csharp-field
              :java.checked-exception/to-csharp-unchecked-signature
+             :java.enum-feature/to-csharp-enum
              :java.interface-feature/to-csharp-interface
              :java.package-private-member/to-csharp-internal}
            (set (map :rule/id

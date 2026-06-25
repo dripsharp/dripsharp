@@ -19,6 +19,10 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/interface
     :rule/status implemented-status}
+   {:rule/id :java.enum-node/to-csharp-enum
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/enum
+    :rule/status implemented-status}
    {:rule/id :java.assignment-node/to-csharp-assignment
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/assignment
@@ -161,6 +165,11 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/interface
     :rule/output-feature :csharp.feature/interface
+    :rule/status implemented-status}
+   {:rule/id :java.enum-feature/to-csharp-enum
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/enum
+    :rule/output-feature :csharp.feature/enum
     :rule/status implemented-status}
    {:rule/id :java.generic-method-feature/to-csharp-generic-method
     :rule/source-lang :lang/java

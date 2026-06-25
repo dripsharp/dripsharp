@@ -51,6 +51,12 @@
      :node/end-line (.getEndLine position)
      :node/end-column (.getEndColumn position)}))
 
+(defn- source-order-key [element fallback-name]
+  (let [span (source-span element)]
+    [(or (:node/start-line span) Long/MAX_VALUE)
+     (or (:node/start-column span) Long/MAX_VALUE)
+     fallback-name]))
+
 (defn- file-records [db project-id]
   (mapv (fn [[file]]
           (d/pull db [:file/id :file/path :file/hash :file/package
@@ -786,7 +792,7 @@
     (mapcat
      (fn [type-ordinal type]
        (let [type-node-id (type-node-id file-id type)
-             fields (sort-by #(.getSimpleName %) (.getFields type))
+             fields (sort-by #(source-order-key % (.getSimpleName %)) (.getFields type))
              constructors (sort-by #(.getSignature %) (constructors type))
              methods (sort-by #(.getSignature %) (.getMethods type))
              executables (concat constructors methods)]

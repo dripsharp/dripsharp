@@ -61,6 +61,18 @@ public final class IntegerDisplay {
 }
 ")
 
+(def enum-fixture
+  "package com.example.lookup;
+
+public enum MemberLookupMode {
+  IMPLICIT_LOCAL,
+  IMPLICIT_LEXICAL,
+  IMPLICIT_BASE,
+  IMPLICIT_THIS,
+  EXPLICIT_RECEIVER
+}
+")
+
 (def default-interface-fixture
   "package com.example.value;
 
@@ -432,6 +444,58 @@ public final class Demo {
               (is (= :rule.status/implemented
                      (get-in interface-entry [:rule :rule/status])))
               (is (= :java.node/interface (:source/kind interface-entry))))))))))
+
+(deftest emits-simple-java-enums
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/lookup/MemberLookupMode.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path enum-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/lookup/MemberLookupMode.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))
+              enum-entry (some #(when (= :java.enum-node/to-csharp-enum
+                                         (get-in % [:rule :rule/id]))
+                                  %)
+                               (:csharp/provenance result))
+              constant-entry (some #(when (and (= :java.field-node/to-csharp-field
+                                                (get-in % [:rule :rule/id]))
+                                             (= "IMPLICIT_LOCAL" (:source/name %)))
+                                      %)
+                                    (:csharp/provenance result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["namespace com.example.lookup"
+                           "public enum MemberLookupMode"
+                           "IMPLICIT_LOCAL,"
+                           "IMPLICIT_LEXICAL,"
+                           "IMPLICIT_BASE,"
+                           "IMPLICIT_THIS,"
+                           "EXPLICIT_RECEIVER"]]
+            (is (str/includes? content snippet)))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (every? rule-ids
+                      [:java.enum-node/to-csharp-enum
+                       :java.field-node/to-csharp-field]))
+          (is (some? enum-entry))
+          (is (= :rule.status/implemented
+                 (get-in enum-entry [:rule :rule/status])))
+          (is (= :java.node/enum (:source/kind enum-entry)))
+          (is (some? constant-entry))
+          (is (= :java.node/field (:source/kind constant-entry))))))))
 
 (deftest emits-default-interface-method-bodies
   (with-empty-db
