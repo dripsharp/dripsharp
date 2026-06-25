@@ -79,10 +79,18 @@ Run the first committed sample project through the supported integration stages:
 clojure -T:build sample
 ```
 
+Pass explicit coverage allow modes to the sample runner when intentionally
+crossing a coverage boundary:
+
+```bash
+clojure -T:build sample :name java-word-count ':coverage/allow-unsupported?' true
+clojure -T:build sample :name java-word-count ':coverage/allow-stubs?' true
+```
+
 The sample runner writes disposable output under
 `sample-projects/<name>/target/`, including diagnostics, exported source facts,
-and provenance. C# emission and `dotnet build` are recorded as skipped until
-project generation exists.
+and provenance. When an allow mode is used, `stages.edn`, `coverage.edn`, and
+`provenance.edn` record it under `:coverage/allow-mode`.
 
 Important project files:
 

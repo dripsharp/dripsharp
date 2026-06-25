@@ -20,6 +20,19 @@
    :allow-stubs?
    :allow-unsupported?])
 
+(defn sample-runner-opts
+  "Return the options forwarded from the build sample task to sample-runner."
+  [sample-name opts]
+  (merge (get default-sample-runner-opts sample-name)
+         (select-keys opts sample-runner-option-keys)))
+
+(defn sample-runner-main-args
+  "Return clojure.main args for invoking vibeformer.sample-runner."
+  [sample-name opts]
+  (let [runner-opts (sample-runner-opts sample-name opts)]
+    (cond-> ["-m" "vibeformer.sample-runner" (str sample-name)]
+      (seq runner-opts) (conj (pr-str runner-opts)))))
+
 (defn- test-java-opts []
   (cond-> base-test-java-opts
     (>= (.feature (Runtime/version)) 24)
@@ -43,14 +56,15 @@
     clojure -T:build sample
 
   Select another sample with:
-    clojure -T:build sample :name my-sample"
+    clojure -T:build sample :name my-sample
+
+  Pass explicit coverage allow modes through to the sample runner with:
+    clojure -T:build sample :name my-sample ':coverage/allow-unsupported?' true
+    clojure -T:build sample :name my-sample ':coverage/allow-stubs?' true"
   [opts]
   (let [basis (b/create-basis {:aliases [:sample-runner]})
         sample-name (or (:name opts) default-sample)
-        runner-opts (merge (get default-sample-runner-opts sample-name)
-                           (select-keys opts sample-runner-option-keys))
-        main-args (cond-> ["-m" "vibeformer.sample-runner" (str sample-name)]
-                    (seq runner-opts) (conj (pr-str runner-opts)))
+        main-args (sample-runner-main-args sample-name opts)
         cmds (b/java-command
               {:basis basis
                :java-opts (test-java-opts)
