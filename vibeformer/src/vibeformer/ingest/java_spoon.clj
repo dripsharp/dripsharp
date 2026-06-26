@@ -677,6 +677,7 @@
    ["java.lang.Class" "getTypeParameters"] :java.reflection.class/get-type-parameters
    ["java.lang.Class" "getComponentType"] :java.reflection.class/get-component-type
    ["java.lang.Class" "isEnum"] :java.reflection.class/is-enum
+   ["java.lang.Class" "getClassLoader"] :java.reflection.class/get-class-loader
    ["java.lang.reflect.Type" "getTypeName"] :java.reflection.type/get-type-name
    ["java.lang.reflect.ParameterizedType" "getActualTypeArguments"] :java.reflection.parameterized-type/get-actual-type-arguments
    ["java.lang.reflect.ParameterizedType" "getRawType"] :java.reflection.parameterized-type/get-raw-type
@@ -693,7 +694,6 @@
    ["java.lang.Class" "getDeclaredMethod"] :java.reflection.class/get-declared-method
    ["java.lang.Class" "getDeclaredMethods"] :java.reflection.class/get-declared-methods
    ["java.lang.Class" "getDeclaredConstructors"] :java.reflection.class/get-declared-constructors
-   ["java.lang.Class" "getClassLoader"] :java.reflection.class/get-class-loader
    ["java.lang.Class" "getAnnotation"] :java.reflection.class/get-annotation
    ["java.lang.reflect.Method" "invoke"] :java.reflection.method/invoke
    ["java.lang.reflect.Constructor" "newInstance"] :java.reflection.constructor/new-instance

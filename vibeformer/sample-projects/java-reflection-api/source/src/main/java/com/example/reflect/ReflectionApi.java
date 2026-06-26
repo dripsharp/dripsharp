@@ -37,6 +37,22 @@ public final class ReflectionApi {
     return type.isEnum();
   }
 
+  public static ClassLoader classLoader(Class<?> type) {
+    return type.getClassLoader();
+  }
+
+  public static ClassLoader localLoader() {
+    return ReflectionApi.class.getClassLoader();
+  }
+
+  public static boolean sameLoader(Class<?> type) {
+    return same(type.getClassLoader(), ReflectionApi.class.getClassLoader());
+  }
+
+  private static boolean same(ClassLoader left, ClassLoader right) {
+    return left == right;
+  }
+
   public static String reflectedTypeName(Type type) {
     return type.getTypeName();
   }

@@ -279,6 +279,11 @@
     :rule/input-feature :java.reflection.class/is-enum
     :rule/output-feature :csharp.api/type-is-enum
     :rule/status implemented-status}
+   {:rule/id :java.class-get-class-loader/to-csharp-assembly
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-class-loader
+    :rule/output-feature :csharp.api/type-assembly
+    :rule/status implemented-status}
    {:rule/id :java.type-get-type-name/to-csharp-full-name
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.type/get-type-name
@@ -338,10 +343,6 @@
    {:rule/id :java.class-get-declared-constructors/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/get-declared-constructors
-    :rule/status unsupported-status}
-   {:rule/id :java.class-get-class-loader/unsupported
-    :rule/source-lang :lang/java
-    :rule/input-feature :java.reflection.class/get-class-loader
     :rule/status unsupported-status}
    {:rule/id :java.class-get-annotation/unsupported
     :rule/source-lang :lang/java

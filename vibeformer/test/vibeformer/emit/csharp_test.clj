@@ -223,6 +223,22 @@ public final class ReflectionApi {
     return type.isEnum();
   }
 
+  public static ClassLoader classLoader(Class<?> type) {
+    return type.getClassLoader();
+  }
+
+  public static ClassLoader localLoader() {
+    return ReflectionApi.class.getClassLoader();
+  }
+
+  public static boolean sameLoader(Class<?> type) {
+    return same(type.getClassLoader(), ReflectionApi.class.getClassLoader());
+  }
+
+  private static boolean same(ClassLoader left, ClassLoader right) {
+    return left == right;
+  }
+
   public static String reflectedTypeName(Type type) {
     return type.getTypeName();
   }
@@ -2563,6 +2579,13 @@ public final class Chain {
                            "return type.GetElementType();"
                            "public static bool isEnumType(Type type)"
                            "return type.IsEnum;"
+                           "public static Assembly classLoader(Type type)"
+                           "return type.Assembly;"
+                           "public static Assembly localLoader()"
+                           "return typeof(ReflectionApi).Assembly;"
+                           "public static bool sameLoader(Type type)"
+                           "return ReflectionApi.same(type.Assembly, typeof(ReflectionApi).Assembly);"
+                           "private static bool same(Assembly left, Assembly right)"
                            "public static string reflectedTypeName(Type type)"
                            "return (type.FullName ?? type.Name);"
                            "public static Type[] actualArgs(Type type)"
@@ -2587,6 +2610,7 @@ public final class Chain {
                         :java.class-get-type-parameters/to-csharp-generic-arguments
                         :java.class-get-component-type/to-csharp-element-type
                         :java.class-is-enum/to-csharp-is-enum
+                        :java.class-get-class-loader/to-csharp-assembly
                         :java.type-get-type-name/to-csharp-full-name
                         :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                         :java.parameterized-type-get-raw-type/to-csharp-type
@@ -2622,7 +2646,6 @@ public final class Chain {
                    :java.class-get-method/unsupported
                    :java.class-get-declared-methods/unsupported
                    :java.class-get-declared-constructors/unsupported
-                   :java.class-get-class-loader/unsupported
                    :java.class-get-annotation/unsupported
                    :java.reflection-method-invoke/unsupported
                    :java.reflection-constructor-new-instance/unsupported

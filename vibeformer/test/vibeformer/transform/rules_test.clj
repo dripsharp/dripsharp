@@ -133,6 +133,7 @@
                             :java.class-get-type-parameters/to-csharp-generic-arguments
                             :java.class-get-component-type/to-csharp-element-type
                             :java.class-is-enum/to-csharp-is-enum
+                            :java.class-get-class-loader/to-csharp-assembly
                             :java.type-get-type-name/to-csharp-full-name
                             :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                             :java.parameterized-type-get-raw-type/to-csharp-type
@@ -300,6 +301,7 @@
            (:rule/status (first (rules-by-feature :java.reflection.class/for-name)))))
     (doseq [feature [:java.stream.collector/to-map
                      :java.stream.collector/to-collection
+                     :java.reflection.class/get-class-loader
                      :java.stream/collect-to-map
                      :java.stream/collect-to-collection]]
       (is (= :rule.status/implemented
@@ -308,7 +310,6 @@
                      :java.reflection.class/get-method
                      :java.reflection.class/get-declared-methods
                      :java.reflection.class/get-declared-constructors
-                     :java.reflection.class/get-class-loader
                      :java.reflection.class/get-annotation
                      :java.reflection.method/invoke
                      :java.reflection.constructor/new-instance

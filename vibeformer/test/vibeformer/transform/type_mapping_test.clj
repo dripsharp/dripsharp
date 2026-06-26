@@ -55,6 +55,7 @@
     (maps-to (type-fact :lang/java "java.math.BigInteger") "BigInteger" ["System.Numerics"] [])
     (maps-to (type-fact :lang/java "java.util.regex.Pattern") "Regex" ["System.Text.RegularExpressions"] [])
     (maps-to (type-fact :lang/java "java.lang.Class") "Type" ["System"] [])
+    (maps-to (type-fact :lang/java "java.lang.ClassLoader") "Assembly" ["System.Reflection"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.Type") "Type" ["System"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.ParameterizedType") "Type" ["System"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.Method") "MethodInfo" ["System.Reflection"] [])

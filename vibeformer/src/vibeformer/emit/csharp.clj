@@ -1096,6 +1096,15 @@
           (with-text (str target-text ".IsEnum"))
           (apply-rule node :java.class-is-enum/to-csharp-is-enum :rule-app.status/success))
 
+      (and (= "java.lang.Class" owner)
+           (= "getClassLoader" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (update :usings conj "System.Reflection")
+          (with-text (str target-text ".Assembly"))
+          (apply-rule node :java.class-get-class-loader/to-csharp-assembly :rule-app.status/success))
+
       (and (= "java.lang.reflect.Type" owner)
            (= "getTypeName" source-method-name)
            target
@@ -1200,14 +1209,6 @@
                    {:method source-method-name
                     :owner owner
                     :reason :emit.reason/unsupported-dynamic-reflection})
-
-      (and (= "java.lang.Class" owner)
-           (= "getClassLoader" source-method-name))
-      (unsupported node
-                   :java.class-get-class-loader/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-class-loader})
 
       (and (= "java.lang.Class" owner)
            (= "getAnnotation" source-method-name))

@@ -220,6 +220,14 @@ public final class ReflectionApi {
     return type.isEnum();
   }
 
+  public ClassLoader classLoader(Class<?> type) {
+    return type.getClassLoader();
+  }
+
+  public ClassLoader localLoader() {
+    return ReflectionApi.class.getClassLoader();
+  }
+
   public String reflectedTypeName(Type type) {
     return type.getTypeName();
   }
@@ -2062,6 +2070,7 @@ public final class Demo {
                                         :java.reflection.class/get-type-parameters
                                         :java.reflection.class/get-component-type
                                         :java.reflection.class/is-enum
+                                        :java.reflection.class/get-class-loader
                                         :java.reflection.type/get-type-name
                                         :java.reflection.parameterized-type/get-actual-type-arguments
                                         :java.reflection.parameterized-type/get-raw-type
@@ -2088,6 +2097,7 @@ public final class Demo {
                    [:java.reflection.class/get-type-parameters "getTypeParameters" :feature.status/supported]
                    [:java.reflection.class/get-component-type "getComponentType" :feature.status/supported]
                    [:java.reflection.class/is-enum "isEnum" :feature.status/supported]
+                   [:java.reflection.class/get-class-loader "getClassLoader" :feature.status/supported]
                    [:java.reflection.type/get-type-name "getTypeName" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-actual-type-arguments "getActualTypeArguments" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-raw-type "getRawType" :feature.status/supported]
@@ -2120,7 +2130,6 @@ public final class Demo {
                                         :java.reflection.class/get-method
                                         :java.reflection.class/get-declared-methods
                                         :java.reflection.class/get-declared-constructors
-                                        :java.reflection.class/get-class-loader
                                         :java.reflection.class/get-annotation
                                         :java.reflection.method/invoke
                                         :java.reflection.constructor/new-instance
@@ -2137,7 +2146,6 @@ public final class Demo {
                    [:java.reflection.class/get-method "getMethod" :feature.status/unsupported]
                    [:java.reflection.class/get-declared-methods "getDeclaredMethods" :feature.status/unsupported]
                    [:java.reflection.class/get-declared-constructors "getDeclaredConstructors" :feature.status/unsupported]
-                   [:java.reflection.class/get-class-loader "getClassLoader" :feature.status/unsupported]
                    [:java.reflection.class/get-annotation "getAnnotation" :feature.status/unsupported]
                    [:java.reflection.method/invoke "invoke" :feature.status/unsupported]
                    [:java.reflection.constructor/new-instance "newInstance" :feature.status/unsupported]

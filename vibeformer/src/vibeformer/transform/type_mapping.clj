@@ -80,6 +80,8 @@
                               :csharp/usings #{"System.Text.RegularExpressions"}}
    "java.lang.Class" {:csharp/type "Type"
                       :csharp/usings #{system-using}}
+   "java.lang.ClassLoader" {:csharp/type "Assembly"
+                            :csharp/usings #{"System.Reflection"}}
    "java.lang.reflect.Type" {:csharp/type "Type"
                              :csharp/usings #{system-using}}
    "java.lang.reflect.ParameterizedType" {:csharp/type "Type"
