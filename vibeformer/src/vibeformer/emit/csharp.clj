@@ -885,6 +885,18 @@
            :usings (set (concat (:csharp/usings mapped)
                                 (:csharp/usings element)))})))))
 
+(defn- stream-max-call-node? [ctx node]
+  (let [call-ref (method-call-ref (:db ctx) node)
+        owner (get-in call-ref [:ref/owner-type :type/name])
+        name (or (:ref/name call-ref) (:node/name node))]
+    (and (= :java.node/method-call (:node/kind node))
+         (= "max" name)
+         (contains? #{"java.util.stream.Stream"
+                      "java.util.stream.IntStream"
+                      "java.util.stream.LongStream"
+                      "java.util.stream.DoubleStream"}
+                    owner))))
+
 (defn- emit-method-call [ctx node]
   (let [db (:db ctx)
         call-ref (method-call-ref db node)
@@ -912,6 +924,14 @@
       (-> combined
           (with-text (str "string.IsNullOrEmpty(" target-text ")"))
           (apply-rule node :java.string-is-empty/to-csharp-is-null-or-empty :rule-app.status/success))
+
+      (and (= "java.lang.String" owner)
+           (= "length" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".Length"))
+          (apply-rule node :java.string-length/to-csharp-length :rule-app.status/success))
 
       (and (= "java.lang.String" owner)
            (= "toLowerCase" source-method-name)
@@ -987,6 +1007,30 @@
       (-> args-result
           (with-text (str "System.HashCode.Combine(" args ")"))
           (apply-rule node :java.objects-hash/to-csharp-hash-code-combine :rule-app.status/success))
+
+      (and (contains? #{"java.util.Optional"
+                        "java.util.OptionalInt"
+                        "java.util.OptionalLong"
+                        "java.util.OptionalDouble"}
+                      owner)
+           (= "orElse" source-method-name)
+           target
+           (stream-max-call-node? ctx target)
+           (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (let [max-source-node (child-node db (:db/id target) :target)
+            max-source-result (when max-source-node (emit-expression ctx max-source-node))
+            default-result (emit-argument ctx node 0)]
+        (if (and max-source-result default-result)
+          (-> (merge-emits [target-result default-result])
+              linq-result
+              (with-text (str (:text max-source-result)
+                              ".DefaultIfEmpty(" (:text default-result) ").Max()"))
+              (apply-rule node :java.optional-or-else/to-csharp-default-if-empty-max :rule-app.status/success))
+          (unsupported node
+                       :java.optional-or-else/to-csharp-default-if-empty-max
+                       {:method source-method-name
+                        :owner owner
+                        :reason :emit.reason/unsupported-optional-or-else})))
 
       (and (= "java.lang.Math" owner)
            (= "round" source-method-name)
@@ -1300,6 +1344,15 @@
             (with-text (str target-text ".Select(" args ")"))
             (apply-rule node :java.stream-map-to-long/to-csharp-select :rule-app.status/success))
 
+        (and (= "mapToInt" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text (str target-text ".Select(" args ")"))
+            (apply-rule node :java.stream-map-to-int/to-csharp-select :rule-app.status/success))
+
         (and (= "filter" source-method-name)
              (= "java.util.stream.Stream" owner)
              target
@@ -1353,6 +1406,19 @@
             linq-result
             (with-text (str target-text ".Sum()"))
             (apply-rule node :java.stream-sum/to-csharp-sum :rule-app.status/success))
+
+        (and (= "max" source-method-name)
+             (contains? #{"java.util.stream.Stream"
+                          "java.util.stream.IntStream"
+                          "java.util.stream.LongStream"
+                          "java.util.stream.DoubleStream"}
+                        owner)
+             target
+             (<= (count (child-nodes db (:db/id node) :argument)) 1))
+        (-> target-result
+            linq-result
+            (with-text (str target-text ".Max()"))
+            (apply-rule node :java.stream-max/to-csharp-max :rule-app.status/success))
 
         (and (= "anyMatch" source-method-name)
              (= "java.util.stream.Stream" owner)

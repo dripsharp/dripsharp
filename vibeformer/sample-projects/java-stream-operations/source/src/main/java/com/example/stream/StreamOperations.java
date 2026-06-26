@@ -53,6 +53,13 @@ public final class StreamOperations {
         .sum();
   }
 
+  public int longest(List<String> names) {
+    return names.stream()
+        .mapToInt(it -> it.length())
+        .max()
+        .orElse(0);
+  }
+
   public Object[] asArray(List<String> names) {
     return names.stream().toArray();
   }

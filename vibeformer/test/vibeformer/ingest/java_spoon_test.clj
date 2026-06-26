@@ -153,6 +153,13 @@ public final class StreamOperations {
         .sum();
   }
 
+  public int longest(List<String> names) {
+    return names.stream()
+        .mapToInt(it -> it.length())
+        .max()
+        .orElse(0);
+  }
+
   public Object[] asArray(List<String> names) {
     return names.stream().toArray();
   }
@@ -1975,14 +1982,17 @@ public final class Demo {
                                      :where
                                      [?feature :feature/kind ?kind]
                                      [(contains? #{:java.stream/flat-map
+                                                   :java.stream/map-to-int
                                                    :java.stream/map-to-long
                                                    :java.stream/to-array
                                                    :java.stream/sum
+                                                   :java.stream/max
                                                    :java.stream/any-match
                                                    :java.stream/all-match
                                                    :java.stream/none-match
                                                    :java.stream/distinct
                                                    :java.stream/sorted
+                                                   :java.optional/or-else
                                                    :java.stream/collect-to-set
                                                    :java.stream/collect-joining
                                                    :java.stream/collect-to-map
@@ -2032,8 +2042,11 @@ public final class Demo {
                    [:java.stream/all-match "allMatch" :feature.status/supported]
                    [:java.stream/none-match "noneMatch" :feature.status/supported]
                    [:java.stream/flat-map "flatMap" :feature.status/supported]
+                   [:java.stream/map-to-int "mapToInt" :feature.status/supported]
                    [:java.stream/map-to-long "mapToLong" :feature.status/supported]
                    [:java.stream/sum "sum" :feature.status/supported]
+                   [:java.stream/max "max" :feature.status/supported]
+                   [:java.optional/or-else "orElse" :feature.status/supported]
                    [:java.stream/to-array "toArray" :feature.status/supported]}
                  supported))
           (is (empty? unsupported))

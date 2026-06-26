@@ -159,6 +159,11 @@
     :rule/input-feature :java.api/string-is-empty
     :rule/output-feature :csharp.api/string-is-null-or-empty
     :rule/status implemented-status}
+   {:rule/id :java.string-length/to-csharp-length
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/string-length
+    :rule/output-feature :csharp.api/string-length
+    :rule/status implemented-status}
    {:rule/id :java.regex-split/to-csharp-regex-split
     :rule/source-lang :lang/java
     :rule/input-feature :java.api/pattern-split
@@ -392,6 +397,11 @@
     :rule/input-feature :java.stream/flat-map
     :rule/output-feature :csharp.api/linq-select-many
     :rule/status implemented-status}
+   {:rule/id :java.stream-map-to-int/to-csharp-select
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/map-to-int
+    :rule/output-feature :csharp.api/linq-select
+    :rule/status implemented-status}
    {:rule/id :java.stream-map-to-long/to-csharp-select
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/map-to-long
@@ -416,6 +426,11 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/sum
     :rule/output-feature :csharp.api/linq-sum
+    :rule/status implemented-status}
+   {:rule/id :java.stream-max/to-csharp-max
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/max
+    :rule/output-feature :csharp.api/linq-max
     :rule/status implemented-status}
    {:rule/id :java.stream-any-match/to-csharp-any
     :rule/source-lang :lang/java
@@ -496,6 +511,11 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect-to-collection
     :rule/output-feature :csharp.api/collection-constructor
+    :rule/status implemented-status}
+   {:rule/id :java.optional-or-else/to-csharp-default-if-empty-max
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.optional/or-else
+    :rule/output-feature :csharp.api/linq-default-if-empty-max
     :rule/status implemented-status}
    {:rule/id :java.stream-collect/unsupported
     :rule/source-lang :lang/java

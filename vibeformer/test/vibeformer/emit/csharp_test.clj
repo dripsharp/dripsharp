@@ -177,6 +177,13 @@ public final class StreamOperations {
         .sum();
   }
 
+  public int longest(List<String> names) {
+    return names.stream()
+        .mapToInt(it -> it.length())
+        .max()
+        .orElse(0);
+  }
+
   public Object[] asArray(List<String> names) {
     return names.stream().toArray();
   }
@@ -2520,6 +2527,7 @@ public final class Chain {
                            "return !(names.Any(it => string.IsNullOrEmpty(it)));"
                            "return names.SelectMany(it => names).ToArray();"
                            "return names.Select(it => 1).Sum();"
+                           "return names.Select(it => it.Length).DefaultIfEmpty(0).Max();"
                            "return names.ToArray();"]]
             (is (str/includes? content snippet)))
           (is (= {:ok? true :failures []} coverage))
@@ -2537,8 +2545,11 @@ public final class Chain {
                         :java.stream-all-match/to-csharp-all
                         :java.stream-none-match/to-csharp-not-any
                         :java.stream-flat-map/to-csharp-select-many
+                        :java.stream-map-to-int/to-csharp-select
                         :java.stream-map-to-long/to-csharp-select
                         :java.stream-sum/to-csharp-sum
+                        :java.stream-max/to-csharp-max
+                        :java.optional-or-else/to-csharp-default-if-empty-max
                         :java.stream-to-array/to-csharp-to-array]]
             (is (contains? applied-rules rule))))))))
 

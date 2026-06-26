@@ -711,11 +711,13 @@
    "map" :java.stream/map
    "filter" :java.stream/filter
    "flatMap" :java.stream/flat-map
+   "mapToInt" :java.stream/map-to-int
    "mapToLong" :java.stream/map-to-long
    "toList" :java.stream/to-list
    "toArray" :java.stream/to-array
    "count" :java.stream/count
    "sum" :java.stream/sum
+   "max" :java.stream/max
    "anyMatch" :java.stream/any-match
    "allMatch" :java.stream/all-match
    "noneMatch" :java.stream/none-match
@@ -735,6 +737,12 @@
 
 (def unsupported-collector-features
   {})
+
+(def supported-optional-features
+  {["java.util.Optional" "orElse"] :java.optional/or-else
+   ["java.util.OptionalInt" "orElse"] :java.optional/or-else
+   ["java.util.OptionalLong" "orElse"] :java.optional/or-else
+   ["java.util.OptionalDouble" "orElse"] :java.optional/or-else})
 
 (defn- stream-owner? [owner]
   (some-> owner (str/starts-with? "java.util.stream")))
@@ -797,6 +805,10 @@
      (when-let [feature-kind (and (or (stream-owner? owner)
                                       (= "stream" name))
                                   (get supported-stream-features name))]
+       [(supported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
+                           feature-kind
+                           node-id)])
+     (when-let [feature-kind (get supported-optional-features [owner name])]
        [(supported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
                            feature-kind
                            node-id)])
@@ -867,6 +879,11 @@
                 (= "max" name))
        [(supported-feature (str node-id ":feature:math-max")
                            :java.api/math-max
+                           node-id)])
+     (when (and (= "java.lang.String" owner)
+                (= "length" name))
+       [(supported-feature (str node-id ":feature:string-length")
+                           :java.api/string-length
                            node-id)])
      (when (and (= "java.lang.Double" owner)
                 (= "hashCode" name))

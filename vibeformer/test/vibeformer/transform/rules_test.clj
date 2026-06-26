@@ -109,6 +109,7 @@
         special-api-rules #{:java.regex-pattern-compile/to-csharp-regex
                             :java.string-trim/to-csharp-trim
                             :java.string-is-empty/to-csharp-is-null-or-empty
+                            :java.string-length/to-csharp-length
                             :java.regex-split/to-csharp-regex-split
                             :java.printstream-println/to-csharp-console
                             :java.system-exit/to-csharp-environment-exit
@@ -146,11 +147,13 @@
                             :java.stream-map/to-csharp-select
                             :java.stream-filter/to-csharp-where
                             :java.stream-flat-map/to-csharp-select-many
+                            :java.stream-map-to-int/to-csharp-select
                             :java.stream-map-to-long/to-csharp-select
                             :java.stream-to-list/to-csharp-to-list
                             :java.stream-to-array/to-csharp-to-array
                             :java.stream-count/to-csharp-count
                             :java.stream-sum/to-csharp-sum
+                            :java.stream-max/to-csharp-max
                             :java.stream-any-match/to-csharp-any
                             :java.stream-all-match/to-csharp-all
                             :java.stream-none-match/to-csharp-not-any
@@ -162,7 +165,8 @@
                             :java.stream-collector-joining/to-csharp-string-join
                             :java.stream-collect-to-list/to-csharp-to-list
                             :java.stream-collect-to-set/to-csharp-to-hash-set
-                            :java.stream-collect-joining/to-csharp-string-join}]
+                            :java.stream-collect-joining/to-csharp-string-join
+                            :java.optional-or-else/to-csharp-default-if-empty-max}]
     (is (= #{:java.node/class
              :java.node/assignment
              :java.node/array-read
@@ -248,11 +252,13 @@
              :java.stream/map
              :java.stream/filter
              :java.stream/flat-map
+             :java.stream/map-to-int
              :java.stream/map-to-long
              :java.stream/to-list
              :java.stream/to-array
              :java.stream/count
              :java.stream/sum
+             :java.stream/max
              :java.stream/any-match
              :java.stream/all-match
              :java.stream/none-match
@@ -270,9 +276,11 @@
              :java.stream/collect-to-map
              :java.stream/collect-to-collection
              :java.stream/collect
+             :java.optional/or-else
              :java.api/pattern-compile
              :java.api/string-trim
              :java.api/string-is-empty
+             :java.api/string-length
              :java.api/pattern-split
              :java.api/printstream-println
              :java.api/system-exit
@@ -302,6 +310,9 @@
     (doseq [feature [:java.stream.collector/to-map
                      :java.stream.collector/to-collection
                      :java.reflection.class/get-class-loader
+                     :java.stream/map-to-int
+                     :java.stream/max
+                     :java.optional/or-else
                      :java.stream/collect-to-map
                      :java.stream/collect-to-collection]]
       (is (= :rule.status/implemented
