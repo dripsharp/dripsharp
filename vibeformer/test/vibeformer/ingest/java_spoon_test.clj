@@ -159,7 +159,11 @@ public final class StreamUnsupportedCollectors {
 (def reflection-api-fixture
   "package com.acme.reflect;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 
 public final class ReflectionApi {
   public boolean canInstantiate(Class<?> requestedType, Class<?> implementationType) {
@@ -173,8 +177,108 @@ public final class ReflectionApi {
     return String.class.getTypeName() + \":\" + String.class.getSimpleName();
   }
 
+  public Type parentType(Class<?> type) {
+    return type.getGenericSuperclass();
+  }
+
+  public Type[] typeParameters(Class<?> type) {
+    return type.getTypeParameters();
+  }
+
+  public Type componentType(Class<?> type) {
+    return type.getComponentType();
+  }
+
+  public boolean isEnumType(Class<?> type) {
+    return type.isEnum();
+  }
+
+  public String reflectedTypeName(Type type) {
+    return type.getTypeName();
+  }
+
+  public Type[] actualArgs(ParameterizedType type) {
+    return type.getActualTypeArguments();
+  }
+
+  public Type rawType(ParameterizedType type) {
+    return type.getRawType();
+  }
+
+  public Type ownerType(ParameterizedType type) {
+    return type.getOwnerType();
+  }
+
+  public Parameter[] parameters(Constructor<?> constructor) {
+    return constructor.getParameters();
+  }
+
+  public String parameterName(Parameter parameter) {
+    return parameter.isNamePresent() ? parameter.getName() : \"\";
+  }
+
   public Class<?> load(String name) throws Exception {
     return Class.forName(name);
+  }
+}
+")
+
+(def reflection-unsupported-api-fixture
+  "package com.acme.reflect;
+
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.lang.reflect.WildcardType;
+
+public final class ReflectionUnsupportedApi {
+  public Method method(Class<?> type) throws Exception {
+    return type.getDeclaredMethod(\"run\");
+  }
+
+  public Method publicMethod(Class<?> type) throws Exception {
+    return type.getMethod(\"run\");
+  }
+
+  public Method[] methods(Class<?> type) {
+    return type.getDeclaredMethods();
+  }
+
+  public Constructor<?>[] constructors(Class<?> type) {
+    return type.getDeclaredConstructors();
+  }
+
+  public ClassLoader classLoader(Class<?> type) {
+    return type.getClassLoader();
+  }
+
+  public Annotation classAnnotation(Class<?> type, Class<? extends Annotation> annotationType) {
+    return type.getAnnotation(annotationType);
+  }
+
+  public Object call(Method method, Object target) throws Exception {
+    return method.invoke(target);
+  }
+
+  public Object construct(Constructor<?> constructor) throws Exception {
+    return constructor.newInstance();
+  }
+
+  public Annotation constructorAnnotation(Constructor<?> constructor, Class<? extends Annotation> annotationType) {
+    return constructor.getAnnotation(annotationType);
+  }
+
+  public Annotation parameterAnnotation(Parameter parameter, Class<? extends Annotation> annotationType) {
+    return parameter.getAnnotation(annotationType);
+  }
+
+  public java.lang.reflect.Type[] lowerBounds(WildcardType wildcardType) {
+    return wildcardType.getLowerBounds();
+  }
+
+  public java.lang.reflect.Type[] upperBounds(WildcardType wildcardType) {
+    return wildcardType.getUpperBounds();
   }
 }
 ")
@@ -1810,6 +1914,17 @@ public final class Demo {
                                         :java.reflection.class/is-assignable-from
                                         :java.reflection.class/is-array
                                         :java.reflection.class/is-primitive
+                                        :java.reflection.class/get-generic-superclass
+                                        :java.reflection.class/get-type-parameters
+                                        :java.reflection.class/get-component-type
+                                        :java.reflection.class/is-enum
+                                        :java.reflection.type/get-type-name
+                                        :java.reflection.parameterized-type/get-actual-type-arguments
+                                        :java.reflection.parameterized-type/get-raw-type
+                                        :java.reflection.parameterized-type/get-owner-type
+                                        :java.reflection.executable/get-parameters
+                                        :java.reflection.parameter/is-name-present
+                                        :java.reflection.parameter/get-name
                                         :java.reflection.modifier/is-abstract
                                         :java.reflection.class/for-name
                                         :java.feature/reflection}
@@ -1825,9 +1940,68 @@ public final class Demo {
                    [:java.reflection.class/is-assignable-from "isAssignableFrom" :feature.status/supported]
                    [:java.reflection.class/is-array "isArray" :feature.status/supported]
                    [:java.reflection.class/is-primitive "isPrimitive" :feature.status/supported]
+                   [:java.reflection.class/get-generic-superclass "getGenericSuperclass" :feature.status/supported]
+                   [:java.reflection.class/get-type-parameters "getTypeParameters" :feature.status/supported]
+                   [:java.reflection.class/get-component-type "getComponentType" :feature.status/supported]
+                   [:java.reflection.class/is-enum "isEnum" :feature.status/supported]
+                   [:java.reflection.type/get-type-name "getTypeName" :feature.status/supported]
+                   [:java.reflection.parameterized-type/get-actual-type-arguments "getActualTypeArguments" :feature.status/supported]
+                   [:java.reflection.parameterized-type/get-raw-type "getRawType" :feature.status/supported]
+                   [:java.reflection.parameterized-type/get-owner-type "getOwnerType" :feature.status/supported]
+                   [:java.reflection.executable/get-parameters "getParameters" :feature.status/supported]
+                   [:java.reflection.parameter/is-name-present "isNamePresent" :feature.status/supported]
+                   [:java.reflection.parameter/get-name "getName" :feature.status/supported]
                    [:java.reflection.modifier/is-abstract "isAbstract" :feature.status/supported]
-                     [:java.reflection.class/for-name "forName" :feature.status/unsupported]}
+                   [:java.reflection.class/for-name "forName" :feature.status/unsupported]}
                    reflection-features)))))))
+
+(deftest classifies-unsupported-reflection-api-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/reflect/ReflectionUnsupportedApi.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path reflection-unsupported-api-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              reflection-features
+              (set (d/q '[:find ?kind ?node-name ?status
+                          :where
+                          [?feature :feature/kind ?kind]
+                          [(contains? #{:java.reflection.class/get-declared-method
+                                        :java.reflection.class/get-method
+                                        :java.reflection.class/get-declared-methods
+                                        :java.reflection.class/get-declared-constructors
+                                        :java.reflection.class/get-class-loader
+                                        :java.reflection.class/get-annotation
+                                        :java.reflection.method/invoke
+                                        :java.reflection.constructor/new-instance
+                                        :java.reflection.constructor/get-annotation
+                                        :java.reflection.parameter/get-annotation
+                                        :java.reflection.wildcard-type/get-lower-bounds
+                                        :java.reflection.wildcard-type/get-upper-bounds}
+                                       ?kind)]
+                          [?feature :feature/status ?status]
+                          [?feature :feature/node ?node]
+                          [?node :node/name ?node-name]]
+                        db))]
+          (is (= #{[:java.reflection.class/get-declared-method "getDeclaredMethod" :feature.status/unsupported]
+                   [:java.reflection.class/get-method "getMethod" :feature.status/unsupported]
+                   [:java.reflection.class/get-declared-methods "getDeclaredMethods" :feature.status/unsupported]
+                   [:java.reflection.class/get-declared-constructors "getDeclaredConstructors" :feature.status/unsupported]
+                   [:java.reflection.class/get-class-loader "getClassLoader" :feature.status/unsupported]
+                   [:java.reflection.class/get-annotation "getAnnotation" :feature.status/unsupported]
+                   [:java.reflection.method/invoke "invoke" :feature.status/unsupported]
+                   [:java.reflection.constructor/new-instance "newInstance" :feature.status/unsupported]
+                   [:java.reflection.constructor/get-annotation "getAnnotation" :feature.status/unsupported]
+                   [:java.reflection.parameter/get-annotation "getAnnotation" :feature.status/unsupported]
+                   [:java.reflection.wildcard-type/get-lower-bounds "getLowerBounds" :feature.status/unsupported]
+                   [:java.reflection.wildcard-type/get-upper-bounds "getUpperBounds" :feature.status/unsupported]}
+                 reflection-features)))))))
 
 (deftest classifies-supported-synchronized-facts
   (with-empty-db

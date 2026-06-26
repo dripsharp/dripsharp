@@ -129,28 +129,39 @@
                             :java.class-is-assignable-from/to-csharp-is-assignable-from
                             :java.class-is-array/to-csharp-is-array
                             :java.class-is-primitive/to-csharp-is-primitive
+                            :java.class-get-generic-superclass/to-csharp-base-type
+                            :java.class-get-type-parameters/to-csharp-generic-arguments
+                            :java.class-get-component-type/to-csharp-element-type
+                            :java.class-is-enum/to-csharp-is-enum
+                            :java.type-get-type-name/to-csharp-full-name
+                            :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
+                            :java.parameterized-type-get-raw-type/to-csharp-type
+                            :java.parameterized-type-get-owner-type/to-csharp-declaring-type
+                            :java.reflection-executable-get-parameters/to-csharp-get-parameters
+                            :java.reflection-parameter-is-name-present/to-csharp-name-check
+                            :java.reflection-parameter-get-name/to-csharp-name
                             :java.modifier-is-abstract/to-csharp-type-attributes
-                              :java.stream-source/to-csharp-enumerable
-                              :java.stream-map/to-csharp-select
-                              :java.stream-filter/to-csharp-where
-                              :java.stream-flat-map/to-csharp-select-many
-                              :java.stream-map-to-long/to-csharp-select
-                              :java.stream-to-list/to-csharp-to-list
-                              :java.stream-to-array/to-csharp-to-array
-                              :java.stream-count/to-csharp-count
-                              :java.stream-sum/to-csharp-sum
-                              :java.stream-any-match/to-csharp-any
-                              :java.stream-all-match/to-csharp-all
-                              :java.stream-none-match/to-csharp-not-any
-                              :java.stream-find-first/to-csharp-first-or-default
-                              :java.stream-distinct/to-csharp-distinct
-                              :java.stream-sorted/to-csharp-order-by
-                              :java.stream-collector-to-list/to-csharp-to-list
-                              :java.stream-collector-to-set/to-csharp-to-hash-set
-                              :java.stream-collector-joining/to-csharp-string-join
-                              :java.stream-collect-to-list/to-csharp-to-list
-                              :java.stream-collect-to-set/to-csharp-to-hash-set
-                              :java.stream-collect-joining/to-csharp-string-join}]
+                            :java.stream-source/to-csharp-enumerable
+                            :java.stream-map/to-csharp-select
+                            :java.stream-filter/to-csharp-where
+                            :java.stream-flat-map/to-csharp-select-many
+                            :java.stream-map-to-long/to-csharp-select
+                            :java.stream-to-list/to-csharp-to-list
+                            :java.stream-to-array/to-csharp-to-array
+                            :java.stream-count/to-csharp-count
+                            :java.stream-sum/to-csharp-sum
+                            :java.stream-any-match/to-csharp-any
+                            :java.stream-all-match/to-csharp-all
+                            :java.stream-none-match/to-csharp-not-any
+                            :java.stream-find-first/to-csharp-first-or-default
+                            :java.stream-distinct/to-csharp-distinct
+                            :java.stream-sorted/to-csharp-order-by
+                            :java.stream-collector-to-list/to-csharp-to-list
+                            :java.stream-collector-to-set/to-csharp-to-hash-set
+                            :java.stream-collector-joining/to-csharp-string-join
+                            :java.stream-collect-to-list/to-csharp-to-list
+                            :java.stream-collect-to-set/to-csharp-to-hash-set
+                            :java.stream-collect-joining/to-csharp-string-join}]
     (is (= #{:java.node/class
              :java.node/assignment
              :java.node/array-read
@@ -206,34 +217,57 @@
              :java.reflection.class/is-assignable-from
              :java.reflection.class/is-array
              :java.reflection.class/is-primitive
+             :java.reflection.class/get-generic-superclass
+             :java.reflection.class/get-type-parameters
+             :java.reflection.class/get-component-type
+             :java.reflection.class/is-enum
+             :java.reflection.type/get-type-name
+             :java.reflection.parameterized-type/get-actual-type-arguments
+             :java.reflection.parameterized-type/get-raw-type
+             :java.reflection.parameterized-type/get-owner-type
+             :java.reflection.executable/get-parameters
+             :java.reflection.parameter/is-name-present
+             :java.reflection.parameter/get-name
              :java.reflection.modifier/is-abstract
              :java.reflection.class/for-name
-               :java.stream/source-to-enumerable
-               :java.stream/map
-               :java.stream/filter
-               :java.stream/flat-map
-               :java.stream/map-to-long
-               :java.stream/to-list
-               :java.stream/to-array
-               :java.stream/count
-               :java.stream/sum
-               :java.stream/any-match
-               :java.stream/all-match
-               :java.stream/none-match
-               :java.stream/find-first
-               :java.stream/distinct
-               :java.stream/sorted
-               :java.stream.collector/to-list
-               :java.stream.collector/to-set
-               :java.stream.collector/joining
-               :java.stream.collector/to-map
-               :java.stream.collector/to-collection
-               :java.stream/collect-to-list
-               :java.stream/collect-to-set
-               :java.stream/collect-joining
-               :java.stream/collect-to-map
-               :java.stream/collect-to-collection
-               :java.stream/collect
+             :java.reflection.class/get-method
+             :java.reflection.class/get-declared-method
+             :java.reflection.class/get-declared-methods
+             :java.reflection.class/get-declared-constructors
+             :java.reflection.class/get-class-loader
+             :java.reflection.class/get-annotation
+             :java.reflection.method/invoke
+             :java.reflection.constructor/new-instance
+             :java.reflection.constructor/get-annotation
+             :java.reflection.parameter/get-annotation
+             :java.reflection.wildcard-type/get-lower-bounds
+             :java.reflection.wildcard-type/get-upper-bounds
+             :java.stream/source-to-enumerable
+             :java.stream/map
+             :java.stream/filter
+             :java.stream/flat-map
+             :java.stream/map-to-long
+             :java.stream/to-list
+             :java.stream/to-array
+             :java.stream/count
+             :java.stream/sum
+             :java.stream/any-match
+             :java.stream/all-match
+             :java.stream/none-match
+             :java.stream/find-first
+             :java.stream/distinct
+             :java.stream/sorted
+             :java.stream.collector/to-list
+             :java.stream.collector/to-set
+             :java.stream.collector/joining
+             :java.stream.collector/to-map
+             :java.stream.collector/to-collection
+             :java.stream/collect-to-list
+             :java.stream/collect-to-set
+             :java.stream/collect-joining
+             :java.stream/collect-to-map
+             :java.stream/collect-to-collection
+             :java.stream/collect
              :java.api/pattern-compile
              :java.api/string-trim
              :java.api/string-is-empty
@@ -263,16 +297,25 @@
            (:rule/status (first (rules-by-feature :java.feature/native-method)))))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.reflection.class/for-name)))))
+    (doseq [feature [:java.reflection.class/get-declared-method
+                     :java.reflection.class/get-method
+                     :java.reflection.class/get-declared-methods
+                     :java.reflection.class/get-declared-constructors
+                     :java.reflection.class/get-class-loader
+                     :java.reflection.class/get-annotation
+                     :java.reflection.method/invoke
+                     :java.reflection.constructor/new-instance
+                     :java.reflection.constructor/get-annotation
+                     :java.reflection.parameter/get-annotation
+                     :java.reflection.wildcard-type/get-lower-bounds
+                     :java.reflection.wildcard-type/get-upper-bounds
+                     :java.stream/collect
+                     :java.stream.collector/to-map
+                     :java.stream.collector/to-collection
+                     :java.stream/collect-to-map
+                     :java.stream/collect-to-collection]]
       (is (= :rule.status/unsupported
-             (:rule/status (first (rules-by-feature :java.stream/collect)))))
-      (is (= :rule.status/unsupported
-             (:rule/status (first (rules-by-feature :java.stream.collector/to-map)))))
-      (is (= :rule.status/unsupported
-             (:rule/status (first (rules-by-feature :java.stream.collector/to-collection)))))
-      (is (= :rule.status/unsupported
-             (:rule/status (first (rules-by-feature :java.stream/collect-to-map)))))
-      (is (= :rule.status/unsupported
-             (:rule/status (first (rules-by-feature :java.stream/collect-to-collection)))))
+             (:rule/status (first (rules-by-feature feature))))))
     (is (= #{:java.statement-node/to-csharp-stub
              :java.expression-node/to-csharp-stub}
            (set (map :rule/id

@@ -1012,6 +1012,94 @@
           (with-text (str target-text ".IsPrimitive"))
           (apply-rule node :java.class-is-primitive/to-csharp-is-primitive :rule-app.status/success))
 
+      (and (= "java.lang.Class" owner)
+           (= "getGenericSuperclass" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".BaseType"))
+          (apply-rule node :java.class-get-generic-superclass/to-csharp-base-type :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "getTypeParameters" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".GetGenericArguments()"))
+          (apply-rule node :java.class-get-type-parameters/to-csharp-generic-arguments :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "getComponentType" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".GetElementType()"))
+          (apply-rule node :java.class-get-component-type/to-csharp-element-type :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "isEnum" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".IsEnum"))
+          (apply-rule node :java.class-is-enum/to-csharp-is-enum :rule-app.status/success))
+
+      (and (= "java.lang.reflect.Type" owner)
+           (= "getTypeName" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str "(" target-text ".FullName ?? " target-text ".Name)"))
+          (apply-rule node :java.type-get-type-name/to-csharp-full-name :rule-app.status/success))
+
+      (and (= "java.lang.reflect.ParameterizedType" owner)
+           (= "getActualTypeArguments" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".GetGenericArguments()"))
+          (apply-rule node :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments :rule-app.status/success))
+
+      (and (= "java.lang.reflect.ParameterizedType" owner)
+           (= "getRawType" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text target-text)
+          (apply-rule node :java.parameterized-type-get-raw-type/to-csharp-type :rule-app.status/success))
+
+      (and (= "java.lang.reflect.ParameterizedType" owner)
+           (= "getOwnerType" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".DeclaringType"))
+          (apply-rule node :java.parameterized-type-get-owner-type/to-csharp-declaring-type :rule-app.status/success))
+
+      (and (contains? #{"java.lang.reflect.Constructor" "java.lang.reflect.Executable"} owner)
+           (= "getParameters" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".GetParameters()"))
+          (apply-rule node :java.reflection-executable-get-parameters/to-csharp-get-parameters :rule-app.status/success))
+
+      (and (= "java.lang.reflect.Parameter" owner)
+           (= "isNamePresent" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str "!string.IsNullOrEmpty(" target-text ".Name)"))
+          (apply-rule node :java.reflection-parameter-is-name-present/to-csharp-name-check :rule-app.status/success))
+
+      (and (= "java.lang.reflect.Parameter" owner)
+           (= "getName" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".Name"))
+          (apply-rule node :java.reflection-parameter-get-name/to-csharp-name :rule-app.status/success))
+
       (and (= "java.lang.reflect.Modifier" owner)
            (= "isAbstract" source-method-name)
            (= 1 (count (child-nodes db (:db/id node) :argument))))
@@ -1028,6 +1116,102 @@
                    {:method source-method-name
                     :owner owner
                     :reason :emit.reason/unsupported-class-for-name})
+
+      (and (= "java.lang.Class" owner)
+           (= "getMethod" source-method-name))
+      (unsupported node
+                   :java.class-get-method/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-dynamic-reflection})
+
+      (and (= "java.lang.Class" owner)
+           (= "getDeclaredMethod" source-method-name))
+      (unsupported node
+                   :java.class-get-declared-method/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-dynamic-reflection})
+
+      (and (= "java.lang.Class" owner)
+           (= "getDeclaredMethods" source-method-name))
+      (unsupported node
+                   :java.class-get-declared-methods/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-dynamic-reflection})
+
+      (and (= "java.lang.Class" owner)
+           (= "getDeclaredConstructors" source-method-name))
+      (unsupported node
+                   :java.class-get-declared-constructors/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-dynamic-reflection})
+
+      (and (= "java.lang.Class" owner)
+           (= "getClassLoader" source-method-name))
+      (unsupported node
+                   :java.class-get-class-loader/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-class-loader})
+
+      (and (= "java.lang.Class" owner)
+           (= "getAnnotation" source-method-name))
+      (unsupported node
+                   :java.class-get-annotation/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-reflection-annotation})
+
+      (and (= "java.lang.reflect.Method" owner)
+           (= "invoke" source-method-name))
+      (unsupported node
+                   :java.reflection-method-invoke/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-dynamic-reflection})
+
+      (and (= "java.lang.reflect.Constructor" owner)
+           (= "newInstance" source-method-name))
+      (unsupported node
+                   :java.reflection-constructor-new-instance/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-dynamic-reflection})
+
+      (and (= "java.lang.reflect.Constructor" owner)
+           (= "getAnnotation" source-method-name))
+      (unsupported node
+                   :java.reflection-constructor-get-annotation/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-reflection-annotation})
+
+      (and (= "java.lang.reflect.Parameter" owner)
+           (= "getAnnotation" source-method-name))
+      (unsupported node
+                   :java.reflection-parameter-get-annotation/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-reflection-annotation})
+
+      (and (= "java.lang.reflect.WildcardType" owner)
+           (= "getLowerBounds" source-method-name))
+      (unsupported node
+                   :java.reflection-wildcard-type-get-lower-bounds/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-wildcard-bounds})
+
+      (and (= "java.lang.reflect.WildcardType" owner)
+           (= "getUpperBounds" source-method-name))
+      (unsupported node
+                   :java.reflection-wildcard-type-get-upper-bounds/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-wildcard-bounds})
 
       (and (= "stream" source-method-name)
            target

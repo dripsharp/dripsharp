@@ -80,6 +80,18 @@
                               :csharp/usings #{"System.Text.RegularExpressions"}}
    "java.lang.Class" {:csharp/type "Type"
                       :csharp/usings #{system-using}}
+   "java.lang.reflect.Type" {:csharp/type "Type"
+                             :csharp/usings #{system-using}}
+   "java.lang.reflect.ParameterizedType" {:csharp/type "Type"
+                                          :csharp/usings #{system-using}}
+   "java.lang.reflect.Method" {:csharp/type "MethodInfo"
+                               :csharp/usings #{"System.Reflection"}}
+   "java.lang.reflect.Constructor" {:csharp/type "ConstructorInfo"
+                                    :csharp/usings #{"System.Reflection"}}
+   "java.lang.reflect.Parameter" {:csharp/type "ParameterInfo"
+                                  :csharp/usings #{"System.Reflection"}}
+   "java.lang.annotation.Annotation" {:csharp/type "Attribute"
+                                      :csharp/usings #{system-using}}
    "java.nio.file.Path" {:csharp/type "string"
                          :csharp/usings #{}}})
 

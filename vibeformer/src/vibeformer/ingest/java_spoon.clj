@@ -623,10 +623,34 @@
    ["java.lang.Class" "isAssignableFrom"] :java.reflection.class/is-assignable-from
    ["java.lang.Class" "isArray"] :java.reflection.class/is-array
    ["java.lang.Class" "isPrimitive"] :java.reflection.class/is-primitive
+   ["java.lang.Class" "getGenericSuperclass"] :java.reflection.class/get-generic-superclass
+   ["java.lang.Class" "getTypeParameters"] :java.reflection.class/get-type-parameters
+   ["java.lang.Class" "getComponentType"] :java.reflection.class/get-component-type
+   ["java.lang.Class" "isEnum"] :java.reflection.class/is-enum
+   ["java.lang.reflect.Type" "getTypeName"] :java.reflection.type/get-type-name
+   ["java.lang.reflect.ParameterizedType" "getActualTypeArguments"] :java.reflection.parameterized-type/get-actual-type-arguments
+   ["java.lang.reflect.ParameterizedType" "getRawType"] :java.reflection.parameterized-type/get-raw-type
+   ["java.lang.reflect.ParameterizedType" "getOwnerType"] :java.reflection.parameterized-type/get-owner-type
+   ["java.lang.reflect.Constructor" "getParameters"] :java.reflection.executable/get-parameters
+   ["java.lang.reflect.Executable" "getParameters"] :java.reflection.executable/get-parameters
+   ["java.lang.reflect.Parameter" "isNamePresent"] :java.reflection.parameter/is-name-present
+   ["java.lang.reflect.Parameter" "getName"] :java.reflection.parameter/get-name
    ["java.lang.reflect.Modifier" "isAbstract"] :java.reflection.modifier/is-abstract})
 
 (def unsupported-reflection-features
-  {["java.lang.Class" "forName"] :java.reflection.class/for-name})
+  {["java.lang.Class" "forName"] :java.reflection.class/for-name
+   ["java.lang.Class" "getMethod"] :java.reflection.class/get-method
+   ["java.lang.Class" "getDeclaredMethod"] :java.reflection.class/get-declared-method
+   ["java.lang.Class" "getDeclaredMethods"] :java.reflection.class/get-declared-methods
+   ["java.lang.Class" "getDeclaredConstructors"] :java.reflection.class/get-declared-constructors
+   ["java.lang.Class" "getClassLoader"] :java.reflection.class/get-class-loader
+   ["java.lang.Class" "getAnnotation"] :java.reflection.class/get-annotation
+   ["java.lang.reflect.Method" "invoke"] :java.reflection.method/invoke
+   ["java.lang.reflect.Constructor" "newInstance"] :java.reflection.constructor/new-instance
+   ["java.lang.reflect.Constructor" "getAnnotation"] :java.reflection.constructor/get-annotation
+   ["java.lang.reflect.Parameter" "getAnnotation"] :java.reflection.parameter/get-annotation
+   ["java.lang.reflect.WildcardType" "getLowerBounds"] :java.reflection.wildcard-type/get-lower-bounds
+   ["java.lang.reflect.WildcardType" "getUpperBounds"] :java.reflection.wildcard-type/get-upper-bounds})
 
 (defn- reflection-owner? [owner]
   (or (= "java.lang.Class" owner)

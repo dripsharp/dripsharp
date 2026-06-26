@@ -142,7 +142,11 @@ public final class StreamOperations {
 (def reflection-api-fixture
   "package com.example.reflect;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 
 public final class ReflectionApi {
   public static void main(String[] args) {
@@ -157,6 +161,106 @@ public final class ReflectionApi {
 
   public static String typeLabel() {
     return String.class.getTypeName() + \":\" + String.class.getSimpleName();
+  }
+
+  public static Type parentType(Class<?> type) {
+    return type.getGenericSuperclass();
+  }
+
+  public static Type[] typeParameters(Class<?> type) {
+    return type.getTypeParameters();
+  }
+
+  public static Type componentType(Class<?> type) {
+    return type.getComponentType();
+  }
+
+  public static boolean isEnumType(Class<?> type) {
+    return type.isEnum();
+  }
+
+  public static String reflectedTypeName(Type type) {
+    return type.getTypeName();
+  }
+
+  public static Type[] actualArgs(ParameterizedType type) {
+    return type.getActualTypeArguments();
+  }
+
+  public static Type rawType(ParameterizedType type) {
+    return type.getRawType();
+  }
+
+  public static Type ownerType(ParameterizedType type) {
+    return type.getOwnerType();
+  }
+
+  public static Parameter[] parameters(Constructor<?> constructor) {
+    return constructor.getParameters();
+  }
+
+  public static String parameterName(Parameter parameter) {
+    return parameter.isNamePresent() ? parameter.getName() : \"\";
+  }
+}
+")
+
+(def reflection-unsupported-api-fixture
+  "package com.example.reflect;
+
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.lang.reflect.WildcardType;
+
+public final class ReflectionUnsupportedApi {
+  public static Method method(Class<?> type) throws Exception {
+    return type.getDeclaredMethod(\"run\");
+  }
+
+  public static Method publicMethod(Class<?> type) throws Exception {
+    return type.getMethod(\"run\");
+  }
+
+  public static Method[] methods(Class<?> type) {
+    return type.getDeclaredMethods();
+  }
+
+  public static Constructor<?>[] constructors(Class<?> type) {
+    return type.getDeclaredConstructors();
+  }
+
+  public static ClassLoader classLoader(Class<?> type) {
+    return type.getClassLoader();
+  }
+
+  public static Annotation classAnnotation(Class<?> type, Class<? extends Annotation> annotationType) {
+    return type.getAnnotation(annotationType);
+  }
+
+  public static Object call(Method method, Object target) throws Exception {
+    return method.invoke(target);
+  }
+
+  public static Object construct(Constructor<?> constructor) throws Exception {
+    return constructor.newInstance();
+  }
+
+  public static Annotation constructorAnnotation(Constructor<?> constructor, Class<? extends Annotation> annotationType) {
+    return constructor.getAnnotation(annotationType);
+  }
+
+  public static Annotation parameterAnnotation(Parameter parameter, Class<? extends Annotation> annotationType) {
+    return parameter.getAnnotation(annotationType);
+  }
+
+  public static java.lang.reflect.Type[] lowerBounds(WildcardType wildcardType) {
+    return wildcardType.getLowerBounds();
+  }
+
+  public static java.lang.reflect.Type[] upperBounds(WildcardType wildcardType) {
+    return wildcardType.getUpperBounds();
   }
 }
 ")
@@ -2135,12 +2239,32 @@ public final class Chain {
                                       (:csharp/rule-applications result)))]
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
           (doseq [snippet ["using System;"
+                           "using System.Reflection;"
                            "public static bool canInstantiate(Type requestedType, Type implementationType)"
                            "requestedType.IsAssignableFrom(implementationType)"
                            "(System.Reflection.TypeAttributes.Abstract & (System.Reflection.TypeAttributes)((int)implementationType.Attributes)) != 0"
                            "!(implementationType.IsArray)"
                            "!(implementationType.IsPrimitive)"
-                           "return (typeof(string).FullName ?? typeof(string).Name) + \":\" + typeof(string).Name;"]]
+                           "return (typeof(string).FullName ?? typeof(string).Name) + \":\" + typeof(string).Name;"
+                           "public static Type parentType(Type type)"
+                           "return type.BaseType;"
+                           "public static Type[] typeParameters(Type type)"
+                           "return type.GetGenericArguments();"
+                           "public static Type componentType(Type type)"
+                           "return type.GetElementType();"
+                           "public static bool isEnumType(Type type)"
+                           "return type.IsEnum;"
+                           "public static string reflectedTypeName(Type type)"
+                           "return (type.FullName ?? type.Name);"
+                           "public static Type[] actualArgs(Type type)"
+                           "public static Type rawType(Type type)"
+                           "return type;"
+                           "public static Type ownerType(Type type)"
+                           "return type.DeclaringType;"
+                           "public static ParameterInfo[] parameters(ConstructorInfo constructor)"
+                           "return constructor.GetParameters();"
+                           "public static string parameterName(ParameterInfo parameter)"
+                           "return !string.IsNullOrEmpty(parameter.Name) ? parameter.Name : \"\";"]]
             (is (str/includes? content snippet)))
           (is (empty? (:csharp/diagnostics result)))
           (doseq [rule [:java.class-type-literal/to-csharp-typeof
@@ -2150,8 +2274,54 @@ public final class Chain {
                         :java.class-is-assignable-from/to-csharp-is-assignable-from
                         :java.class-is-array/to-csharp-is-array
                         :java.class-is-primitive/to-csharp-is-primitive
-                          :java.modifier-is-abstract/to-csharp-type-attributes]]
-              (is (contains? applied-rules rule))))))))
+                        :java.class-get-generic-superclass/to-csharp-base-type
+                        :java.class-get-type-parameters/to-csharp-generic-arguments
+                        :java.class-get-component-type/to-csharp-element-type
+                        :java.class-is-enum/to-csharp-is-enum
+                        :java.type-get-type-name/to-csharp-full-name
+                        :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
+                        :java.parameterized-type-get-raw-type/to-csharp-type
+                        :java.parameterized-type-get-owner-type/to-csharp-declaring-type
+                        :java.reflection-executable-get-parameters/to-csharp-get-parameters
+                        :java.reflection-parameter-is-name-present/to-csharp-name-check
+                        :java.reflection-parameter-get-name/to-csharp-name
+                        :java.modifier-is-abstract/to-csharp-type-attributes]]
+            (is (contains? applied-rules rule))))))))
+
+(deftest unsupported-reflection-api-produces-structured-diagnostics
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/reflect/ReflectionUnsupportedApi.java"
+            opts {:source/root source-root
+                  :project/id "reflection-unsupported-api"
+                  :project/name "Reflection Unsupported API"}]
+        (write-file! source-root file-path reflection-unsupported-api-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "reflection-unsupported-api"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [result (csharp/emit! (d/db conn) target)
+              generated (.resolve target "com/example/reflect/ReflectionUnsupportedApi.cs")
+              content (slurp (str generated))
+              diagnostic-rules (set (map :rule/id (:csharp/diagnostics result)))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "Unsupported Java node method-call"))
+          (is (= #{:java.class-get-declared-method/unsupported
+                   :java.class-get-method/unsupported
+                   :java.class-get-declared-methods/unsupported
+                   :java.class-get-declared-constructors/unsupported
+                   :java.class-get-class-loader/unsupported
+                   :java.class-get-annotation/unsupported
+                   :java.reflection-method-invoke/unsupported
+                   :java.reflection-constructor-new-instance/unsupported
+                   :java.reflection-constructor-get-annotation/unsupported
+                   :java.reflection-parameter-get-annotation/unsupported
+                   :java.reflection-wildcard-type-get-lower-bounds/unsupported
+                   :java.reflection-wildcard-type-get-upper-bounds/unsupported}
+                 diagnostic-rules)))))))
 
 (deftest emits-supported-synchronized-constructs-as-locks
   (with-empty-db

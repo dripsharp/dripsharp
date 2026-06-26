@@ -255,6 +255,61 @@
     :rule/input-feature :java.reflection.class/is-primitive
     :rule/output-feature :csharp.api/type-is-primitive
     :rule/status implemented-status}
+   {:rule/id :java.class-get-generic-superclass/to-csharp-base-type
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-generic-superclass
+    :rule/output-feature :csharp.api/type-base-type
+    :rule/status implemented-status}
+   {:rule/id :java.class-get-type-parameters/to-csharp-generic-arguments
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-type-parameters
+    :rule/output-feature :csharp.api/type-generic-arguments
+    :rule/status implemented-status}
+   {:rule/id :java.class-get-component-type/to-csharp-element-type
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-component-type
+    :rule/output-feature :csharp.api/type-element-type
+    :rule/status implemented-status}
+   {:rule/id :java.class-is-enum/to-csharp-is-enum
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/is-enum
+    :rule/output-feature :csharp.api/type-is-enum
+    :rule/status implemented-status}
+   {:rule/id :java.type-get-type-name/to-csharp-full-name
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.type/get-type-name
+    :rule/output-feature :csharp.api/type-full-name
+    :rule/status implemented-status}
+   {:rule/id :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.parameterized-type/get-actual-type-arguments
+    :rule/output-feature :csharp.api/type-generic-arguments
+    :rule/status implemented-status}
+   {:rule/id :java.parameterized-type-get-raw-type/to-csharp-type
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.parameterized-type/get-raw-type
+    :rule/output-feature :csharp.api/type
+    :rule/status implemented-status}
+   {:rule/id :java.parameterized-type-get-owner-type/to-csharp-declaring-type
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.parameterized-type/get-owner-type
+    :rule/output-feature :csharp.api/type-declaring-type
+    :rule/status implemented-status}
+   {:rule/id :java.reflection-executable-get-parameters/to-csharp-get-parameters
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.executable/get-parameters
+    :rule/output-feature :csharp.api/constructor-parameters
+    :rule/status implemented-status}
+   {:rule/id :java.reflection-parameter-is-name-present/to-csharp-name-check
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.parameter/is-name-present
+    :rule/output-feature :csharp.api/parameter-name
+    :rule/status implemented-status}
+   {:rule/id :java.reflection-parameter-get-name/to-csharp-name
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.parameter/get-name
+    :rule/output-feature :csharp.api/parameter-name
+    :rule/status implemented-status}
    {:rule/id :java.modifier-is-abstract/to-csharp-type-attributes
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.modifier/is-abstract
@@ -263,6 +318,54 @@
    {:rule/id :java.class-for-name/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/for-name
+    :rule/status unsupported-status}
+   {:rule/id :java.class-get-method/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-method
+    :rule/status unsupported-status}
+   {:rule/id :java.class-get-declared-method/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-declared-method
+    :rule/status unsupported-status}
+   {:rule/id :java.class-get-declared-methods/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-declared-methods
+    :rule/status unsupported-status}
+   {:rule/id :java.class-get-declared-constructors/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-declared-constructors
+    :rule/status unsupported-status}
+   {:rule/id :java.class-get-class-loader/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-class-loader
+    :rule/status unsupported-status}
+   {:rule/id :java.class-get-annotation/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-annotation
+    :rule/status unsupported-status}
+   {:rule/id :java.reflection-method-invoke/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.method/invoke
+    :rule/status unsupported-status}
+   {:rule/id :java.reflection-constructor-new-instance/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.constructor/new-instance
+    :rule/status unsupported-status}
+   {:rule/id :java.reflection-constructor-get-annotation/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.constructor/get-annotation
+    :rule/status unsupported-status}
+   {:rule/id :java.reflection-parameter-get-annotation/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.parameter/get-annotation
+    :rule/status unsupported-status}
+   {:rule/id :java.reflection-wildcard-type-get-lower-bounds/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.wildcard-type/get-lower-bounds
+    :rule/status unsupported-status}
+   {:rule/id :java.reflection-wildcard-type-get-upper-bounds/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.wildcard-type/get-upper-bounds
     :rule/status unsupported-status}
    {:rule/id :java.stream-source/to-csharp-enumerable
     :rule/source-lang :lang/java
