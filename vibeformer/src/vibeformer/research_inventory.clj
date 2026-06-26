@@ -270,15 +270,24 @@
    :failure-count (count (:failures coverage-report))
    :failure-rankings
    (->> (:failures coverage-report)
-        (group-by (juxt :reason :kind :feature))
-        (map (fn [[[reason kind feature] failures]]
+        (group-by (juxt :coverage/reason
+                        :coverage/input
+                        :source/lang
+                        :source/kind
+                        :source/status))
+        (map (fn [[[reason input lang kind status] failures]]
                (cond-> {:reason reason
+                        :input input
+                        :lang lang
+                        :kind kind
                         :count (count failures)}
-                 kind (assoc :kind kind)
-                 feature (assoc :feature feature))))
+                 status (assoc :status status))))
         (sort-by (juxt (comp - :count)
                        :reason
-                       #(or (:kind %) (:feature %))))
+                       :input
+                       :lang
+                       :kind
+                       :status))
         vec)})
 
 (defn run-inventory
