@@ -1,5 +1,6 @@
 (ns vibeformer.ingest.kotlin-psi-test
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [datomic.client.api :as d]
             [datomic.local :as dl]
@@ -377,6 +378,39 @@ fun apiCalls(path: Path): URI {
               ranked-targets (filter #(contains? target-names (:name %))
                                      (:unresolved-api-call-rankings (inventory/summary db)))]
           (is (pos? (:type-stubs first-run)))
+          (testing "function body shape is queryable for later deterministic emission"
+            (let [body-values (set (d/q '[:find ?kind ?name ?value
+                                           :where
+                                           [?node :node/kind ?kind]
+                                           [?node :node/name ?name]
+                                           [?node :node/value ?value]
+                                           [(contains? #{:kotlin.node/local-property
+                                                         :kotlin.node/return}
+                                                        ?kind)]]
+                                         db))]
+              (is (contains? (set (map (juxt first second) body-values))
+                             [:kotlin.node/local-property "text"]))
+              (is (contains? body-values
+                             [:kotlin.node/return "return" "URI(\"file:///tmp\").resolve(path.toUri())"]))
+              (is (some #(and (= :kotlin.node/local-property (first %))
+                              (str/includes? (nth % 2) ".trimIndent()"))
+                        body-values)))
+            (is (set/subset?
+                 #{["resolve" :kotlin.node/call-receiver "URI(\"file:///tmp\")"]
+                   ["resolve" :kotlin.node/call-argument "path.toUri()"]
+                   ["URI" :kotlin.node/call-argument "\"file:///tmp\""]}
+                 (set (d/q '[:find ?call-name ?child-kind ?child-value
+                             :where
+                             [?call :node/kind :kotlin.node/call-expression]
+                             [?call :node/name ?call-name]
+                             [?child :node/parent ?call]
+                             [?child :node/kind ?child-kind]
+                             [?child :node/value ?child-value]
+                             [(contains? #{"resolve" "URI"} ?call-name)]
+                             [(contains? #{:kotlin.node/call-receiver
+                                           :kotlin.node/call-argument}
+                                          ?child-kind)]]
+                           db)))))
           (is (= #{["trimIndent" "kotlin:String" "kotlin.text.StringsKt" true]
                    ["listOf" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
                    ["assertThat" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]

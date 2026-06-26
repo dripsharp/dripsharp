@@ -609,6 +609,14 @@
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/call-expression
     :rule/status stubbed-status}
+   {:rule/id :kotlin.call-receiver-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/call-receiver
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.call-argument-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/call-argument
+    :rule/status stubbed-status}
    {:rule/id :kotlin.safe-call-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/safe-call
@@ -616,6 +624,14 @@
    {:rule/id :kotlin.elvis-expression-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/elvis-expression
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.local-property-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/local-property
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.return-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/return
     :rule/status stubbed-status}
    {:rule/id :kotlin.package-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin

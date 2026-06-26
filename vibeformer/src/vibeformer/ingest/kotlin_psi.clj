@@ -9,7 +9,8 @@
            (org.jetbrains.kotlin.config CompilerConfiguration)
            (org.jetbrains.kotlin.psi KtBinaryExpression KtCallExpression KtClass KtFile
                                      KtNamedFunction KtNullableType KtObjectDeclaration
-                                     KtProperty KtPsiFactory KtSafeQualifiedExpression
+                                     KtProperty KtPsiFactory KtQualifiedExpression
+                                     KtReturnExpression KtSafeQualifiedExpression
                                      KtTypeReference)))
 
 (def ^:private lang :lang/kotlin)
@@ -74,7 +75,7 @@
      :node/end-line (:line end)
      :node/end-column (:column end)}))
 
-(defn- node-fact [source id kind name file-id ordinal element & {:keys [parent]}]
+(defn- node-fact [source id kind name file-id ordinal element & {:keys [parent role value]}]
   (cond-> {:db/id id
            :node/id id
            :node/lang lang
@@ -84,6 +85,8 @@
            :node/ordinal ordinal
            :node/source-hash (sha256 (.getText element))}
     parent (assoc :node/parent parent)
+    role (assoc :node/role role)
+    (some? value) (assoc :node/value value)
     true (merge (source-span source element))))
 
 (defn- feature-fact [id kind node-id status severity]
@@ -301,18 +304,47 @@
 (defn- call-facts [source file-id parent-node-id ordinal ^KtCallExpression call]
   (let [name (or (call-name call) "<call>")
         node-id (call-node-id file-id parent-node-id ordinal name)]
-    [(node-fact source node-id :kotlin.node/call-expression name file-id ordinal call
-                :parent parent-node-id)
-     {:db/id (str node-id ":ref")
-      :ref/id (str node-id ":ref")
-      :ref/kind :ref.kind/function-call
-      :ref/from-node node-id
-      :ref/name name
-      :ref/resolved? false
-      :ref/reason :resolve.reason/syntax-only}
-     (supported-feature (str node-id ":feature:call-expression")
-                        :kotlin.feature/call-expression
-                        node-id)]))
+    (concat
+     [(node-fact source node-id :kotlin.node/call-expression name file-id ordinal call
+                 :parent parent-node-id)
+      {:db/id (str node-id ":ref")
+       :ref/id (str node-id ":ref")
+       :ref/kind :ref.kind/function-call
+       :ref/from-node node-id
+       :ref/name name
+       :ref/resolved? false
+       :ref/reason :resolve.reason/syntax-only}
+      (supported-feature (str node-id ":feature:call-expression")
+                         :kotlin.feature/call-expression
+                         node-id)]
+     (when-let [parent (.getParent call)]
+       (when (and (instance? KtQualifiedExpression parent)
+                  (= call (.getSelectorExpression ^KtQualifiedExpression parent)))
+         (let [receiver (.getReceiverExpression ^KtQualifiedExpression parent)]
+           [(node-fact source
+                       (str node-id ":receiver")
+                       :kotlin.node/call-receiver
+                       "receiver"
+                       file-id
+                       0
+                       receiver
+                       :parent node-id
+                       :role :receiver
+                       :value (str/trim (.getText receiver)))])))
+     (mapcat (fn [arg-ordinal argument]
+               (when-let [expression (.getArgumentExpression argument)]
+                 [(node-fact source
+                             (str node-id ":argument:" arg-ordinal)
+                             :kotlin.node/call-argument
+                             (str arg-ordinal)
+                             file-id
+                             arg-ordinal
+                             expression
+                             :parent node-id
+                             :role :argument
+                             :value (str/trim (.getText expression)))]))
+             (range)
+             (.getValueArguments call)))))
 
 (defn- safe-call-node-id [file-id parent-node-id ordinal]
   (str file-id ":safe-call:" parent-node-id ":" ordinal))
@@ -339,20 +371,62 @@
                         :kotlin.feature/elvis-expression
                         node-id)]))
 
+(defn- local-property-facts [source file-id parent-node-id ordinal ^KtProperty property]
+  (let [name (or (.getName property) "<local>")
+        node-id (str file-id ":local-property:" parent-node-id ":" ordinal ":" name)]
+    [(node-fact source
+                node-id
+                :kotlin.node/local-property
+                name
+                file-id
+                ordinal
+                property
+                :parent parent-node-id
+                :role :local-binding
+                :value (some-> property .getInitializer .getText str/trim))]))
+
+(defn- return-facts [source file-id parent-node-id ordinal ^KtReturnExpression expression]
+  (let [node-id (str file-id ":return:" parent-node-id ":" ordinal)]
+    [(node-fact source
+                node-id
+                :kotlin.node/return
+                "return"
+                file-id
+                ordinal
+                expression
+                :parent parent-node-id
+                :role :return
+                :value (some-> expression .getReturnedExpression .getText str/trim))]))
+
 (defn- expression-facts [source file-id parent-node-id declaration]
-  (concat
-   (mapcat (fn [ordinal call]
-             (call-facts source file-id parent-node-id ordinal call))
-           (range)
-           (collect-elements declaration KtCallExpression))
-   (mapcat (fn [ordinal safe-call]
-             (safe-call-facts source file-id parent-node-id ordinal safe-call))
-           (range)
-           (collect-elements declaration KtSafeQualifiedExpression))
-   (mapcat (fn [ordinal elvis]
-             (elvis-facts source file-id parent-node-id ordinal elvis))
-           (range)
-           (filter elvis-expression? (collect-elements declaration KtBinaryExpression)))))
+  (let [calls (collect-elements declaration KtCallExpression)
+        safe-calls (collect-elements declaration KtSafeQualifiedExpression)
+        elvises (filter elvis-expression? (collect-elements declaration KtBinaryExpression))
+        body-shape? (and (instance? KtNamedFunction declaration)
+                         (or (seq calls) (seq safe-calls) (seq elvises)))]
+    (concat
+     (mapcat (fn [ordinal call]
+               (call-facts source file-id parent-node-id ordinal call))
+             (range)
+             calls)
+     (mapcat (fn [ordinal safe-call]
+               (safe-call-facts source file-id parent-node-id ordinal safe-call))
+             (range)
+             safe-calls)
+     (mapcat (fn [ordinal elvis]
+               (elvis-facts source file-id parent-node-id ordinal elvis))
+             (range)
+             elvises)
+     (when body-shape?
+       (concat
+        (mapcat (fn [ordinal property]
+                  (local-property-facts source file-id parent-node-id ordinal property))
+                (range)
+                (collect-elements declaration KtProperty))
+        (mapcat (fn [ordinal expression]
+                  (return-facts source file-id parent-node-id ordinal expression))
+                (range)
+                (collect-elements declaration KtReturnExpression)))))))
 
 (defn- child-declarations [declaration]
   (cond
