@@ -1124,6 +1124,7 @@ public final class Chain {
                                       (:csharp/rule-applications result)))]
           (is (= {:ok? true :failures []} coverage))
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "#nullable enable"))
           (is (str/includes? content "namespace com.example.kotlin"))
           (is (str/includes? content "public static class BasicDeclarations"))
           (is (str/includes? content "public static int count { get; } = default!;"))

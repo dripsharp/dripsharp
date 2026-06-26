@@ -341,6 +341,7 @@ object BasicDeclarations {
     (is (some #(= :kotlin.object-node/to-csharp-stub
                   (get-in % [:rule :rule/id]))
               (:csharp/provenance provenance)))
+    (is (str/includes? content "#nullable enable"))
     (is (str/includes? content "public static class BasicDeclarations"))
     (is (str/includes? content "public static int count { get; } = default!;"))
     (is (str/includes? content "public static string describe(string? name)"))
