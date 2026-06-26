@@ -181,6 +181,11 @@
     :rule/input-feature :java.api/objects-require-non-null
     :rule/output-feature :csharp.api/null-coalescing-throw
     :rule/status implemented-status}
+   {:rule/id :java.objects-equals/to-csharp-object-equals
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/objects-equals
+    :rule/output-feature :csharp.api/object-equals
+    :rule/status implemented-status}
    {:rule/id :java.statement-node/to-csharp-stub
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/statement

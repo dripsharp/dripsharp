@@ -877,6 +877,13 @@
                               "))")))
             (apply-rule node :java.objects-require-non-null/to-csharp-null-check :rule-app.status/success)))
 
+      (and (= "java.util.Objects" owner)
+           (= "equals" source-method-name)
+           (= 2 (count (child-nodes db (:db/id node) :argument))))
+      (-> args-result
+          (with-text (str "object.Equals(" args ")"))
+          (apply-rule node :java.objects-equals/to-csharp-object-equals :rule-app.status/success))
+
       (and (= "java.lang.Integer" owner) (= "toString" source-method-name))
       (unsupported node
                    :java.integer-to-string/to-csharp-convert-to-string

@@ -344,6 +344,24 @@ final class Unit {
 }
 ")
 
+(def objects-equals-fixture
+  "package com.example.values;
+
+import java.util.Objects;
+
+public final class Version {
+  private final String preRelease;
+
+  public Version(String preRelease) {
+    this.preRelease = preRelease;
+  }
+
+  public boolean same(Version other) {
+    return Objects.equals(preRelease, other.preRelease);
+  }
+}
+")
+
 (def pattern-fixture
   "package com.example.patterns;
 
@@ -1181,6 +1199,43 @@ public final class Chain {
           (is (contains? rule-ids :java.objects-require-non-null/to-csharp-null-check))
           (testing "requireNonNull provenance has registered rule metadata"
             (let [entry (some #(when (= :java.objects-require-non-null/to-csharp-null-check
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/method-call (:source/kind entry))))))))))
+
+(deftest emits-objects-equals-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/values/Version.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path objects-equals-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/values/Version.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return object.Equals(this.preRelease, other.preRelease);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.objects-equals/to-csharp-object-equals))
+          (testing "Objects.equals provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.objects-equals/to-csharp-object-equals
                                         (get-in % [:rule :rule/id]))
                                  %)
                               (:csharp/provenance result))]

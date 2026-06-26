@@ -611,6 +611,11 @@
                 (= "requireNonNull" name))
        [(supported-feature (str node-id ":feature:objects-require-non-null")
                            :java.api/objects-require-non-null
+                           node-id)])
+     (when (and (= "java.util.Objects" owner)
+                (= "equals" name))
+       [(supported-feature (str node-id ":feature:objects-equals")
+                           :java.api/objects-equals
                            node-id)]))))
 
 (defn- invocation-reference-facts [node-id ^CtInvocation invocation]

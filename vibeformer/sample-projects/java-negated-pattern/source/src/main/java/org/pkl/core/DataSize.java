@@ -27,7 +27,7 @@ public final class DataSize {
       return false;
     }
 
-    return value == other.value;
+    return value == other.value && Objects.equals(unit, other.unit);
   }
 
   public String label() {
