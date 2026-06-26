@@ -723,7 +723,8 @@
    "noneMatch" :java.stream/none-match
    "findFirst" :java.stream/find-first
    "distinct" :java.stream/distinct
-   "sorted" :java.stream/sorted})
+   "sorted" :java.stream/sorted
+   "iterator" :java.stream/iterator})
 
 (def unsupported-stream-features
   {"collect" :java.stream/collect})
@@ -749,6 +750,15 @@
 
 (defn- collector-owner? [owner]
   (= "java.util.stream.Collectors" owner))
+
+(defn- java-iterator-owner? [owner]
+  (or (= "java.util.Iterator" owner)
+      (some-> owner (str/starts-with? "java.util.PrimitiveIterator"))))
+
+(defn- java-primitive-int-iterator-owner? [owner]
+  (contains? #{"java.util.PrimitiveIterator$OfInt"
+               "java.util.PrimitiveIterator.OfInt"}
+             owner))
 
 (defn- collector-invocation-name [expression]
   (when (instance? CtInvocation expression)
@@ -884,6 +894,21 @@
                 (= "length" name))
        [(supported-feature (str node-id ":feature:string-length")
                            :java.api/string-length
+                           node-id)])
+     (when (and (= "java.lang.String" owner)
+                (= "codePoints" name))
+       [(supported-feature (str node-id ":feature:string-code-points")
+                           :java.api/string-code-points
+                           node-id)])
+     (when (and (java-iterator-owner? owner)
+                (= "hasNext" name))
+       [(supported-feature (str node-id ":feature:iterator-has-next")
+                           :java.iterator/has-next
+                           node-id)])
+     (when (and (java-primitive-int-iterator-owner? owner)
+                (= "nextInt" name))
+       [(supported-feature (str node-id ":feature:primitive-iterator-next-int")
+                           :java.primitive-iterator/next-int
                            node-id)])
      (when (and (= "java.lang.Double" owner)
                 (= "hashCode" name))

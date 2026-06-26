@@ -110,6 +110,7 @@
                             :java.string-trim/to-csharp-trim
                             :java.string-is-empty/to-csharp-is-null-or-empty
                             :java.string-length/to-csharp-length
+                            :java.string-code-points/to-csharp-rune-values
                             :java.regex-split/to-csharp-regex-split
                             :java.printstream-println/to-csharp-console
                             :java.system-exit/to-csharp-environment-exit
@@ -160,6 +161,9 @@
                             :java.stream-find-first/to-csharp-first-or-default
                             :java.stream-distinct/to-csharp-distinct
                             :java.stream-sorted/to-csharp-order-by
+                            :java.stream-iterator/to-csharp-enumerator
+                            :java.iterator-has-next/to-csharp-move-next
+                            :java.primitive-iterator-next-int/to-csharp-current
                             :java.stream-collector-to-list/to-csharp-to-list
                             :java.stream-collector-to-set/to-csharp-to-hash-set
                             :java.stream-collector-joining/to-csharp-string-join
@@ -265,6 +269,9 @@
              :java.stream/find-first
              :java.stream/distinct
              :java.stream/sorted
+             :java.stream/iterator
+             :java.iterator/has-next
+             :java.primitive-iterator/next-int
              :java.stream.collector/to-list
              :java.stream.collector/to-set
              :java.stream.collector/joining
@@ -281,6 +288,7 @@
              :java.api/string-trim
              :java.api/string-is-empty
              :java.api/string-length
+             :java.api/string-code-points
              :java.api/pattern-split
              :java.api/printstream-println
              :java.api/system-exit

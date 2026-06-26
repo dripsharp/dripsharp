@@ -99,7 +99,11 @@
    "URI" {:csharp/type "Uri"
           :csharp/usings #{system-using}}
    "java.nio.file.Path" {:csharp/type "string"
-                         :csharp/usings #{}}})
+                         :csharp/usings #{}}
+   "java.util.PrimitiveIterator$OfInt" {:csharp/type "IEnumerator<int>"
+                                        :csharp/usings #{collection-using}}
+   "java.util.PrimitiveIterator.OfInt" {:csharp/type "IEnumerator<int>"
+                                        :csharp/usings #{collection-using}}})
 
 (def collection-mappings
   {"java.util.Collection" ["ICollection" #{collection-using}]

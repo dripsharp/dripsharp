@@ -190,6 +190,20 @@ public final class StreamUnsupportedCollectors {
 }
 ")
 
+(def code-points-iterator-fixture
+  "package com.acme.text;
+
+public final class CodePointIterator {
+  public int firstCodePoint(String value) {
+    var iterator = value.codePoints().iterator();
+    if (iterator.hasNext()) {
+      return iterator.nextInt();
+    }
+    return 0;
+  }
+}
+")
+
 (def reflection-api-fixture
   "package com.acme.reflect;
 
@@ -2054,6 +2068,47 @@ public final class Demo {
                #{["new" "java.util.LinkedList" :argument "java.util.LinkedList"]
                  ["new" "java.util.LinkedHashSet" :argument "java.util.LinkedHashSet"]}
                constructor-refs)))))))
+
+(deftest classifies-code-points-iterator-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/text/CodePointIterator.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path code-points-iterator-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              supported (set (d/q '[:find ?kind ?node-name ?status
+                                     :where
+                                     [?feature :feature/kind ?kind]
+                                     [(contains? #{:java.api/string-code-points
+                                                   :java.stream/iterator
+                                                   :java.iterator/has-next
+                                                   :java.primitive-iterator/next-int}
+                                                  ?kind)]
+                                     [?feature :feature/status ?status]
+                                     [?feature :feature/node ?node]
+                                     [?node :node/name ?node-name]]
+                                   db))
+              unsupported (set (d/q '[:find ?kind ?node-name ?status
+                                       :where
+                                       [?feature :feature/kind ?kind]
+                                       [(contains? #{:java.feature/stream-api}
+                                                    ?kind)]
+                                       [?feature :feature/status ?status]
+                                       [?feature :feature/node ?node]
+                                       [?node :node/name ?node-name]]
+                                     db))]
+          (is (= #{[:java.api/string-code-points "codePoints" :feature.status/supported]
+                   [:java.stream/iterator "iterator" :feature.status/supported]
+                   [:java.iterator/has-next "hasNext" :feature.status/supported]
+                   [:java.primitive-iterator/next-int "nextInt" :feature.status/supported]}
+                 supported))
+          (is (empty? unsupported)))))))
 
 (deftest classifies-supported-reflection-api-facts
   (with-empty-db

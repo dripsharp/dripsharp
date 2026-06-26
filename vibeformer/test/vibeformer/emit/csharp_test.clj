@@ -190,6 +190,23 @@ public final class StreamOperations {
 }
 ")
 
+(def code-points-iterator-fixture
+  "package com.example.text;
+
+public final class CodePointIterator {
+  public static void main(String[] args) {
+  }
+
+  public int firstCodePoint(String value) {
+    var iterator = value.codePoints().iterator();
+    if (iterator.hasNext()) {
+      return iterator.nextInt();
+    }
+    return 0;
+  }
+}
+")
+
 (def reflection-api-fixture
   "package com.example.reflect;
 
@@ -2551,6 +2568,44 @@ public final class Chain {
                         :java.stream-max/to-csharp-max
                         :java.optional-or-else/to-csharp-default-if-empty-max
                         :java.stream-to-array/to-csharp-to-array]]
+            (is (contains? applied-rules rule))))))))
+
+(deftest emits-code-points-iterator-as-rune-enumerator
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/text/CodePointIterator.java"
+            opts {:source/root source-root
+                  :project/id "code-points-iterator"
+                  :project/name "Code Points Iterator"}]
+        (write-file! source-root file-path code-points-iterator-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "code-points-iterator"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/text/CodePointIterator.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["using System.Collections.Generic;"
+                           "using System.Linq;"
+                           "using System.Text;"
+                           "IEnumerator<int> iterator = value.EnumerateRunes().Select(rune => rune.Value).GetEnumerator();"
+                           "if (iterator.MoveNext())"
+                           "return iterator.Current;"]]
+            (is (str/includes? content snippet)))
+          (is (= {:ok? true :failures []} coverage))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:java.string-code-points/to-csharp-rune-values
+                        :java.stream-iterator/to-csharp-enumerator
+                        :java.iterator-has-next/to-csharp-move-next
+                        :java.primitive-iterator-next-int/to-csharp-current]]
             (is (contains? applied-rules rule))))))))
 
 (deftest emits-supported-reflection-api-as-type-operations

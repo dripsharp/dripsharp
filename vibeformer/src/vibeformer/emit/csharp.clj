@@ -814,6 +814,15 @@
 (defn- linq-result [result]
   (update result :usings conj "System.Linq"))
 
+(defn- java-iterator-owner? [owner]
+  (or (= "java.util.Iterator" owner)
+      (some-> owner (str/starts-with? "java.util.PrimitiveIterator"))))
+
+(defn- java-primitive-int-iterator-owner? [owner]
+  (contains? #{"java.util.PrimitiveIterator$OfInt"
+               "java.util.PrimitiveIterator.OfInt"}
+             owner))
+
 (defn- locale-root? [ctx node]
   (let [target (child-node (:db ctx) (:db/id node) :target)]
     (and (= :java.node/field-read (:node/kind node))
@@ -932,6 +941,16 @@
       (-> target-result
           (with-text (str target-text ".Length"))
           (apply-rule node :java.string-length/to-csharp-length :rule-app.status/success))
+
+      (and (= "java.lang.String" owner)
+           (= "codePoints" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          linq-result
+          (update :usings conj "System.Text")
+          (with-text (str target-text ".EnumerateRunes().Select(rune => rune.Value)"))
+          (apply-rule node :java.string-code-points/to-csharp-rune-values :rule-app.status/success))
 
       (and (= "java.lang.String" owner)
            (= "toLowerCase" source-method-name)
@@ -1326,6 +1345,14 @@
           (with-text args)
           (apply-rule node :java.stream-source/to-csharp-enumerable :rule-app.status/success))
 
+        (and (= "iterator" source-method-name)
+             (some-> owner (str/starts-with? "java.util.stream"))
+             target
+             (zero? (count (child-nodes db (:db/id node) :argument))))
+        (-> target-result
+            (with-text (str target-text ".GetEnumerator()"))
+            (apply-rule node :java.stream-iterator/to-csharp-enumerator :rule-app.status/success))
+
         (and (= "map" source-method-name)
              (= "java.util.stream.Stream" owner)
              target
@@ -1592,6 +1619,22 @@
                    {:method source-method-name
                     :owner owner
                     :reason :emit.reason/unsupported-stream-collector})
+
+      (and (= "hasNext" source-method-name)
+           (java-iterator-owner? owner)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".MoveNext()"))
+          (apply-rule node :java.iterator-has-next/to-csharp-move-next :rule-app.status/success))
+
+      (and (= "nextInt" source-method-name)
+           (java-primitive-int-iterator-owner? owner)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".Current"))
+          (apply-rule node :java.primitive-iterator-next-int/to-csharp-current :rule-app.status/success))
 
       (and (= "java.lang.Integer" owner) (= "toString" source-method-name))
       (unsupported node
@@ -1921,9 +1964,11 @@
   (case (:node/kind node)
     :java.node/local-variable
     (let [source-type (node-type-ref (:db ctx) node :local-type)
+          mapped-type (map-type source-type)
           initializer (emit-child-expression ctx node :initializer)
-          text (str (type-name source-type) " " (:node/name node) " = " (:text initializer) ";")]
+          text (str (:csharp/type mapped-type) " " (:node/name node) " = " (:text initializer) ";")]
       (-> initializer
+          (update :usings into (:csharp/usings mapped-type))
           (with-text (indent-lines indent-level text))
           (apply-rule node :java.local-variable-node/to-csharp-local :rule-app.status/success)))
 

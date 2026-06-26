@@ -164,6 +164,11 @@
     :rule/input-feature :java.api/string-length
     :rule/output-feature :csharp.api/string-length
     :rule/status implemented-status}
+   {:rule/id :java.string-code-points/to-csharp-rune-values
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/string-code-points
+    :rule/output-feature :csharp.api/string-runes
+    :rule/status implemented-status}
    {:rule/id :java.regex-split/to-csharp-regex-split
     :rule/source-lang :lang/java
     :rule/input-feature :java.api/pattern-split
@@ -461,6 +466,21 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/sorted
     :rule/output-feature :csharp.api/linq-order-by
+    :rule/status implemented-status}
+   {:rule/id :java.stream-iterator/to-csharp-enumerator
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/iterator
+    :rule/output-feature :csharp.api/enumerator
+    :rule/status implemented-status}
+   {:rule/id :java.iterator-has-next/to-csharp-move-next
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.iterator/has-next
+    :rule/output-feature :csharp.api/enumerator-move-next
+    :rule/status implemented-status}
+   {:rule/id :java.primitive-iterator-next-int/to-csharp-current
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.primitive-iterator/next-int
+    :rule/output-feature :csharp.api/enumerator-current
     :rule/status implemented-status}
    {:rule/id :java.stream-collector-to-list/to-csharp-to-list
     :rule/source-lang :lang/java

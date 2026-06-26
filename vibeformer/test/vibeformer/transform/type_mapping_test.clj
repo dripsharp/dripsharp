@@ -64,6 +64,10 @@
     (maps-to (type-fact :lang/java "java.lang.annotation.Annotation") "Attribute" ["System"] [])
     (maps-to (type-fact :lang/java "java.net.URI") "Uri" ["System"] [])
     (maps-to (type-fact :lang/java "java.nio.file.Path") "string" [] [])
+    (maps-to (type-fact :lang/java "java.util.PrimitiveIterator$OfInt")
+             "IEnumerator<int>"
+             ["System.Collections.Generic"]
+             [])
     (maps-to (type-fact :lang/java "java.lang.String[]") "string[]" [] [])
     (maps-to (type-fact :lang/java "java.lang.IllegalArgumentException") "ArgumentException" ["System"] []))
   (testing "collections and optionals include required usings and helpers"
