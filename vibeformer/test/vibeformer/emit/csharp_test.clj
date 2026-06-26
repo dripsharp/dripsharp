@@ -338,6 +338,22 @@ public final class PatternDemo {
 }
 ")
 
+(def conditional-expression-fixture
+  "package com.example.values;
+
+public final class DataSize {
+  private final double value;
+
+  public DataSize(double value) {
+    this.value = value;
+  }
+
+  public String label() {
+    return value == 1 ? \"byte\" : \"bytes\";
+  }
+}
+")
+
 (def throw-fixture
   "package com.example.errors;
 
@@ -1116,6 +1132,43 @@ public final class Chain {
               (is (= :rule.status/implemented
                      (get-in entry [:rule :rule/status])))
               (is (= :java.node/unary-operator (:source/kind entry))))))))))
+
+(deftest emits-conditional-expressions
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/values/DataSize.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path conditional-expression-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/values/DataSize.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return this.value == 1 ? \"byte\" : \"bytes\";"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.conditional-expression-node/to-csharp-conditional))
+          (testing "conditional expression provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.conditional-expression-node/to-csharp-conditional
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/conditional-expression (:source/kind entry))))))))))
 
 (deftest emits-throw-statements-and-known-java-exceptions
   (with-empty-db

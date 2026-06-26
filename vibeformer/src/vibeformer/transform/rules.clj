@@ -111,6 +111,10 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/binary-operator
     :rule/status implemented-status}
+   {:rule/id :java.conditional-expression-node/to-csharp-conditional
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/conditional-expression
+    :rule/status implemented-status}
    {:rule/id :java.unary-operator-node/to-csharp-unary
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/unary-operator

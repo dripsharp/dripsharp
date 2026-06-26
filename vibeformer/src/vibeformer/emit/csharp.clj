@@ -1051,6 +1051,16 @@
             (apply-rule node :java.unary-operator-node/to-csharp-unary :rule-app.status/success))
         (unsupported node :java.unary-operator-node/to-csharp-unary {:operator (:node/value node)})))
 
+    :java.node/conditional-expression
+    (let [condition (emit-child-expression ctx node :condition)
+          then-expression (emit-child-expression ctx node :then-expression)
+          else-expression (emit-child-expression ctx node :else-expression)]
+      (-> (merge-emits [condition then-expression else-expression])
+          (with-text (str (:text condition)
+                          " ? " (:text then-expression)
+                          " : " (:text else-expression)))
+          (apply-rule node :java.conditional-expression-node/to-csharp-conditional :rule-app.status/success)))
+
     :java.node/switch-expression
     (emit-switch-expression ctx node)
 

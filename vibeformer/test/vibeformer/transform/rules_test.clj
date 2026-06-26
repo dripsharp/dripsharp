@@ -119,6 +119,7 @@
              :java.node/assignment
 	             :java.node/array-read
              :java.node/binary-operator
+             :java.node/conditional-expression
              :java.node/constructor
              :java.node/enum
              :java.node/expression
@@ -181,6 +182,7 @@
              :java.assignment-node/to-csharp-assignment
 	             :java.array-read-node/to-csharp-indexer
              :java.binary-operator-node/to-csharp-binary
+             :java.conditional-expression-node/to-csharp-conditional
              :java.constructor-node/to-csharp-constructor
              :java.enum-node/to-csharp-enum
 	             :java.field-node/to-csharp-field

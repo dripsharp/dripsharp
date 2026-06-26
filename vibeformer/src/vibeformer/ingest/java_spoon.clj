@@ -4,7 +4,7 @@
   (:import (java.nio.file Paths)
            (java.security MessageDigest)
            (spoon Launcher)
-           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
+           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConditional CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
            (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtRecord CtRecordComponent CtType)
            (spoon.reflect.reference CtExecutableReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
@@ -332,6 +332,7 @@
 (defn- expression-kind [expression]
   (cond
     (instance? CtSwitchExpression expression) :java.node/switch-expression
+    (instance? CtConditional expression) :java.node/conditional-expression
     (instance? CtConstructorCall expression) :java.node/object-creation
     (instance? CtInvocation expression) :java.node/method-call
     (instance? CtAssignment expression) :java.node/assignment
@@ -352,6 +353,9 @@
   (cond
     (instance? CtSwitchExpression expression)
     "switch"
+
+    (instance? CtConditional expression)
+    "conditional"
 
     (instance? CtInvocation expression)
     (.getSimpleName (.getExecutable ^CtInvocation expression))
@@ -398,6 +402,7 @@
 (defn- expression-value [expression]
   (cond
     (instance? CtLiteral expression) (literal-value expression)
+    (instance? CtConditional expression) "?:"
     (instance? CtConstructorCall expression) (some-> expression .getType type-id)
     (instance? CtAssignment expression) "="
     (instance? CtUnaryOperator expression) (unary-operator-name expression)
@@ -660,6 +665,11 @@
     (instance? CtConstructorCall expression)
     (map-indexed (fn [index arg] [:argument index arg])
                  (.getArguments ^CtConstructorCall expression))
+
+    (instance? CtConditional expression)
+    [[:condition 0 (.getCondition ^CtConditional expression)]
+     [:then-expression 1 (.getThenExpression ^CtConditional expression)]
+     [:else-expression 2 (.getElseExpression ^CtConditional expression)]]
 
     (instance? CtInvocation expression)
     (let [target (targeted-expression-target expression)

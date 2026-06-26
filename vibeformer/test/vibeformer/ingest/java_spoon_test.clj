@@ -152,6 +152,22 @@ final class Name {
 }
 ")
 
+(def conditional-expression-fixture
+  "package com.acme.values;
+
+public final class DataSize {
+  private final double value;
+
+  public DataSize(double value) {
+    this.value = value;
+  }
+
+  public String label() {
+    return value == 1 ? \"byte\" : \"bytes\";
+  }
+}
+")
+
 (def throw-fixture
   "package com.acme.errors;
 
@@ -637,6 +653,47 @@ public final class Demo {
                              [?ref :ref/role :pattern-type]
                              [?ref :ref/to-type ?type]
                              [?type :type/id ?pattern-type]]
+                           db)))))))))
+
+(deftest extracts-conditional-expression-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/values/DataSize.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path conditional-expression-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["conditional" "?:" :java.node/conditional-expression :return-expression
+                    "eq" :condition
+                    "\"byte\"" :then-expression
+                    "\"bytes\"" :else-expression]}
+                 (set (d/q '[:find ?conditional-name ?conditional-value ?conditional-kind ?conditional-role
+                                    ?condition-value ?condition-role
+                                    ?then-value ?then-role
+                                    ?else-value ?else-role
+                             :where
+                             [?conditional :node/kind :java.node/conditional-expression]
+                             [?conditional :node/name ?conditional-name]
+                             [?conditional :node/value ?conditional-value]
+                             [?conditional :node/kind ?conditional-kind]
+                             [?conditional :node/role ?conditional-role]
+                             [?condition :node/parent ?conditional]
+                             [?condition :node/role :condition]
+                             [?condition :node/role ?condition-role]
+                             [?condition :node/value ?condition-value]
+                             [?then :node/parent ?conditional]
+                             [?then :node/role :then-expression]
+                             [?then :node/role ?then-role]
+                             [?then :node/value ?then-value]
+                             [?else :node/parent ?conditional]
+                             [?else :node/role :else-expression]
+                             [?else :node/role ?else-role]
+                             [?else :node/value ?else-value]]
                            db)))))))))
 
 (deftest extracts-throw-statement-facts

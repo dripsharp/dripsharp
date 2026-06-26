@@ -9,5 +9,6 @@ public final class DataSizeDemo {
     DataSize second = new DataSize(12);
     first.equals(second);
     first.equals("bytes");
+    first.label();
   }
 }

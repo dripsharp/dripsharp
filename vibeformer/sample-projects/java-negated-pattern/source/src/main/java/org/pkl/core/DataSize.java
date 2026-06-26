@@ -14,4 +14,8 @@ public final class DataSize {
 
     return value == other.value;
   }
+
+  public String label() {
+    return value == 1 ? "byte" : "bytes";
+  }
 }
