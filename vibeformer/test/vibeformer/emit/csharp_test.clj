@@ -61,6 +61,22 @@ public final class IntegerDisplay {
 }
 ")
 
+(def stream-pipeline-fixture
+  "package com.example.stream;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+public final class StreamPipeline {
+  public List<String> normalize(List<String> names) {
+    return names.stream()
+        .filter(it -> !it.isEmpty())
+        .map(it -> it.trim())
+        .collect(Collectors.toList());
+  }
+}
+")
+
 (def enum-fixture
   "package com.example.lookup;
 
@@ -1898,8 +1914,43 @@ public final class Chain {
           (is (= :emit.reason/unsupported-overload
                  (get-in diagnostic [:rule/context :reason])))
           (is (= 2 (get-in diagnostic [:rule/context :arity])))
-          (is (= :java.integer-to-string/to-csharp-convert-to-string
-                 (second (:rule-app/rule failed-app)))))))))
+	          (is (= :java.integer-to-string/to-csharp-convert-to-string
+	                 (second (:rule-app/rule failed-app)))))))))
+
+(deftest emits-supported-stream-pipeline-as-linq
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/stream/StreamPipeline.java"
+            opts {:source/root source-root
+                  :project/id "stream-pipeline"
+                  :project/name "Stream Pipeline"}]
+        (write-file! source-root file-path stream-pipeline-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "stream-pipeline"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [result (csharp/emit! (d/db conn) target)
+              generated (.resolve target "com/example/stream/StreamPipeline.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["using System.Collections.Generic;"
+                           "using System.Linq;"
+                           "public List<string> normalize(List<string> names)"
+                           "return names.Where(it => !(string.IsNullOrEmpty(it))).Select(it => it.Trim()).ToList();"]]
+            (is (str/includes? content snippet)))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:java.lambda-node/to-csharp-lambda
+                        :java.stream-source/to-csharp-enumerable
+                        :java.stream-filter/to-csharp-where
+                        :java.stream-map/to-csharp-select
+                        :java.stream-collect-to-list/to-csharp-to-list
+                        :java.stream-collector-to-list/to-csharp-to-list]]
+            (is (contains? applied-rules rule))))))))
 
 (deftest emits-word-counter-statement-and-expression-subset
   (with-empty-db

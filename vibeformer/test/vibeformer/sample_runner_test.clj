@@ -16,17 +16,6 @@ public final class Hello {
 }
 ")
 
-(def lambda-fixture
-  "package com.example;
-
-public final class LambdaCase {
-  public static void main(String[] args) {
-    Runnable r = () -> System.out.println(\"hello\");
-    r.run();
-  }
-}
-")
-
 (def synchronized-method-fixture
   "package com.example;
 
@@ -67,7 +56,8 @@ public final class UnsupportedExpressionCase {
 
 (defn- coverage-failure-checkout []
   (let [root (temp-root)]
-    (write-file! root "sample-projects/lambda/source/src/main/java/com/example/LambdaCase.java" lambda-fixture)
+    (write-file! root "sample-projects/synchronized/source/src/main/java/com/example/SynchronizedCase.java"
+                 synchronized-method-fixture)
     root))
 
 (defn- coverage-allow-checkout []
@@ -151,9 +141,9 @@ public final class UnsupportedExpressionCase {
 (deftest coverage-failure-stops-before-emission
   (let [root (coverage-failure-checkout)
         result (sample-runner/run-sample {:project-root root
-                                          :name "lambda"
+                                          :name "synchronized"
                                           :dotnet/enabled? false})
-        target (.resolve root "sample-projects/lambda/target")
+        target (.resolve root "sample-projects/synchronized/target")
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
         coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
         provenance (read-edn (.resolve target "provenance.edn"))

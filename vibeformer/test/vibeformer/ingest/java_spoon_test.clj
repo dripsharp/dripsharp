@@ -62,6 +62,22 @@ public final class Calls {
 }
 ")
 
+(def stream-pipeline-fixture
+  "package com.acme.stream;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+public final class StreamPipeline {
+  public List<String> normalize(List<String> names) {
+    return names.stream()
+        .filter(it -> !it.isEmpty())
+        .map(it -> it.trim())
+        .collect(Collectors.toList());
+  }
+}
+")
+
 (def generic-interface-fixture
   "package com.acme.generic;
 
@@ -1488,14 +1504,89 @@ public final class Demo {
           (testing "invocation feature facts attach to canonical method-call nodes"
             (is (set/subset?
                  #{[:java.feature/reflection "forName" :java.node/method-call]
-                   [:java.feature/stream-api "stream" :java.node/method-call]}
+                   [:java.stream/source-to-enumerable "stream" :java.node/method-call]}
                                    (set (d/q '[:find ?kind ?node-name ?node-kind
                              :where
                              [?feature :feature/kind ?kind]
                              [(contains? #{:java.feature/reflection
-                                           :java.feature/stream-api}
+                                           :java.stream/source-to-enumerable}
                                           ?kind)]
                              [?feature :feature/node ?node]
                              [?node :node/name ?node-name]
                              [?node :node/kind ?node-kind]]
                            db))))))))))
+
+(deftest classifies-supported-stream-pipeline-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/stream/StreamPipeline.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path stream-pipeline-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (testing "lambda expressions are normalized as source nodes with expression bodies"
+            (let [lambda-parents (set (d/q '[:find ?lambda-value ?parent-name ?parent-kind
+                                             :where
+                                             [?lambda :node/kind :java.node/lambda]
+                                             [?lambda :node/value ?lambda-value]
+                                             [?lambda :node/parent ?parent]
+                                             [?parent :node/name ?parent-name]
+                                             [?parent :node/kind ?parent-kind]]
+                                           db))
+                  body-names (set (map first
+                                       (d/q '[:find ?body-name
+                                              :where
+                                              [?lambda :node/kind :java.node/lambda]
+                                              [?body :node/parent ?lambda]
+                                              [?body :node/role :body-expression]
+                                              [?body :node/name ?body-name]]
+                                            db)))
+                  nested-body-names (set (map first
+                                              (d/q '[:find ?child-name
+                                                     :where
+                                                     [?lambda :node/kind :java.node/lambda]
+                                                     [?body :node/parent ?lambda]
+                                                     [?body :node/role :body-expression]
+                                                     [?child :node/parent ?body]
+                                                     [?child :node/name ?child-name]]
+                                                   db)))]
+              (is (= #{["it" "filter" :java.node/method-call]
+                       ["it" "map" :java.node/method-call]}
+                     lambda-parents))
+              (is (= #{"not" "trim"} body-names))
+              (is (= #{"it" "isEmpty"} nested-body-names))))
+          (testing "stream API facts are split into supported precise features"
+            (let [stream-features (set (d/q '[:find ?kind ?node-name ?status
+                                              :where
+                                              [?feature :feature/kind ?kind]
+                                              [(contains? #{:java.stream/source-to-enumerable
+                                                            :java.stream/filter
+                                                            :java.stream/map
+                                                            :java.stream/collect-to-list
+                                                            :java.stream.collector/to-list
+                                                            :java.feature/stream-api
+                                                            :java.stream/collect}
+                                                           ?kind)]
+                                              [?feature :feature/status ?status]
+                                              [?feature :feature/node ?node]
+                                              [?node :node/name ?node-name]]
+                                            db))
+                  broad-unsupported (d/q '[:find ?kind
+                                           :where
+                                           [?feature :feature/kind ?kind]
+                                           [(contains? #{:java.feature/stream-api
+                                                         :java.stream/collect}
+                                                        ?kind)]]
+                                         db)]
+              (is (= #{[:java.stream/source-to-enumerable "stream" :feature.status/supported]
+                       [:java.stream/filter "filter" :feature.status/supported]
+                       [:java.stream/map "map" :feature.status/supported]
+                       [:java.stream/collect-to-list "collect" :feature.status/supported]
+                       [:java.stream.collector/to-list "toList" :feature.status/supported]}
+                     stream-features))
+              (is (empty? broad-unsupported)))))))))

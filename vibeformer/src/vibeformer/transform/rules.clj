@@ -119,6 +119,10 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/conditional-expression
     :rule/status implemented-status}
+   {:rule/id :java.lambda-node/to-csharp-lambda
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/lambda
+    :rule/status implemented-status}
    {:rule/id :java.unary-operator-node/to-csharp-unary
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/unary-operator
@@ -210,6 +214,50 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.api/double-hash-code
     :rule/output-feature :csharp.api/get-hash-code
+    :rule/status implemented-status}
+   {:rule/id :java.stream-source/to-csharp-enumerable
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/source-to-enumerable
+    :rule/output-feature :csharp.api/linq
+    :rule/status implemented-status}
+   {:rule/id :java.stream-map/to-csharp-select
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/map
+    :rule/output-feature :csharp.api/linq-select
+    :rule/status implemented-status}
+   {:rule/id :java.stream-filter/to-csharp-where
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/filter
+    :rule/output-feature :csharp.api/linq-where
+    :rule/status implemented-status}
+   {:rule/id :java.stream-to-list/to-csharp-to-list
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/to-list
+    :rule/output-feature :csharp.api/linq-to-list
+    :rule/status implemented-status}
+   {:rule/id :java.stream-count/to-csharp-count
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/count
+    :rule/output-feature :csharp.api/linq-count
+    :rule/status implemented-status}
+   {:rule/id :java.stream-collector-to-list/to-csharp-to-list
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream.collector/to-list
+    :rule/output-feature :csharp.api/linq-to-list
+    :rule/status implemented-status}
+   {:rule/id :java.stream-collect-to-list/to-csharp-to-list
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/collect-to-list
+    :rule/output-feature :csharp.api/linq-to-list
+    :rule/status implemented-status}
+   {:rule/id :java.stream-collect/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/collect
+    :rule/status unsupported-status}
+   {:rule/id :java.lambda-feature/to-csharp-lambda
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/lambda
+    :rule/output-feature :csharp.feature/lambda
     :rule/status implemented-status}
    {:rule/id :java.statement-node/to-csharp-stub
     :rule/source-lang :lang/java

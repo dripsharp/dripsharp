@@ -5,7 +5,7 @@
            (java.security MessageDigest)
            (spoon Launcher)
            (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConditional CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
-           (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtRecord CtRecordComponent CtType)
+           (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtParameter CtRecord CtRecordComponent CtType)
            (spoon.reflect.reference CtExecutableReference CtFieldReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
 
@@ -366,6 +366,7 @@
   (cond
     (instance? CtSwitchExpression expression) :java.node/switch-expression
     (instance? CtConditional expression) :java.node/conditional-expression
+    (instance? CtLambda expression) :java.node/lambda
     (instance? CtConstructorCall expression) :java.node/object-creation
     (instance? CtInvocation expression) :java.node/method-call
     (instance? CtAssignment expression) :java.node/assignment
@@ -389,6 +390,9 @@
 
     (instance? CtConditional expression)
     "conditional"
+
+    (instance? CtLambda expression)
+    "lambda"
 
     (instance? CtInvocation expression)
     (.getSimpleName (.getExecutable ^CtInvocation expression))
@@ -436,6 +440,9 @@
   (cond
     (instance? CtLiteral expression) (literal-value expression)
     (instance? CtConditional expression) "?:"
+    (instance? CtLambda expression) (->> (.getParameters ^CtLambda expression)
+                                         (map #(.getSimpleName ^CtParameter %))
+                                         (str/join ","))
     (instance? CtConstructorCall expression) (some-> expression .getType type-id)
     (instance? CtAssignment expression) "="
     (instance? CtUnaryOperator expression) (unary-operator-name expression)
@@ -610,10 +617,38 @@
 (defn- constructor-invocation? [^CtInvocation invocation]
   (= "<init>" (.getSimpleName (.getExecutable invocation))))
 
+(def supported-stream-features
+  {"stream" :java.stream/source-to-enumerable
+   "map" :java.stream/map
+   "filter" :java.stream/filter
+   "toList" :java.stream/to-list
+   "count" :java.stream/count})
+
+(def unsupported-stream-features
+  {"collect" :java.stream/collect})
+
+(defn- stream-owner? [owner]
+  (some-> owner (str/starts-with? "java.util.stream")))
+
+(defn- collector-owner? [owner]
+  (= "java.util.stream.Collectors" owner))
+
+(defn- collectors-to-list-invocation? [expression]
+  (when (instance? CtInvocation expression)
+    (let [executable-ref (.getExecutable ^CtInvocation expression)
+          owner (some-> executable-ref .getDeclaringType qname)
+          name (.getSimpleName executable-ref)]
+      (and (collector-owner? owner)
+           (= "toList" name)))))
+
 (defn- invocation-feature-facts [node-id ^CtInvocation invocation]
   (let [executable-ref (.getExecutable invocation)
         owner (some-> executable-ref .getDeclaringType qname)
-        name (.getSimpleName executable-ref)]
+        name (.getSimpleName executable-ref)
+        collect-to-list? (and (stream-owner? owner)
+                              (= "collect" name)
+                              (= 1 (count (.getArguments invocation)))
+                              (collectors-to-list-invocation? (first (.getArguments invocation))))]
     (concat
      (when (or (= "java.lang.Class" owner)
                (some-> owner (str/starts-with? "java.lang.reflect"))
@@ -622,8 +657,33 @@
                              :java.feature/reflection
                              node-id
                              :feature.severity/hard)])
-     (when (or (some-> owner (str/starts-with? "java.util.stream"))
-               (= "stream" name))
+     (when-let [feature-kind (and (or (stream-owner? owner)
+                                      (= "stream" name))
+                                  (get supported-stream-features name))]
+       [(supported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
+                           feature-kind
+                           node-id)])
+     (when collect-to-list?
+       [(supported-feature (str node-id ":feature:stream-collect-to-list")
+                           :java.stream/collect-to-list
+                           node-id)])
+     (when-let [feature-kind (and (stream-owner? owner)
+                                  (not collect-to-list?)
+                                  (get unsupported-stream-features name))]
+       [(unsupported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
+                             feature-kind
+                             node-id
+                             :feature.severity/medium)])
+     (when (and (collector-owner? owner) (= "toList" name))
+       [(supported-feature (str node-id ":feature:stream-collector-to-list")
+                           :java.stream.collector/to-list
+                           node-id)])
+     (when (and (or (stream-owner? owner)
+                    (collector-owner? owner)
+                    (= "stream" name))
+                (not (contains? supported-stream-features name))
+                (not (contains? unsupported-stream-features name))
+                (not (and (collector-owner? owner) (= "toList" name))))
        [(unsupported-feature (str node-id ":feature:stream-api")
                              :java.feature/stream-api
                              node-id
@@ -759,6 +819,10 @@
   (cond
     (instance? CtSwitchExpression expression)
     [[:selector 0 (.getSelector ^CtSwitchExpression expression)]]
+
+    (instance? CtLambda expression)
+    (when-let [body-expression (.getExpression ^CtLambda expression)]
+      [[:body-expression 0 body-expression]])
 
     (instance? CtConstructorCall expression)
     (map-indexed (fn [index arg] [:argument index arg])

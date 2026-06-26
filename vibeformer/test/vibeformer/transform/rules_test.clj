@@ -121,7 +121,14 @@
                             :java.math-round/to-csharp-java-round
                             :java.math-min/to-csharp-math-min
                             :java.math-max/to-csharp-math-max
-                            :java.double-hash-code/to-csharp-get-hash-code}]
+                            :java.double-hash-code/to-csharp-get-hash-code
+                            :java.stream-source/to-csharp-enumerable
+                            :java.stream-map/to-csharp-select
+                            :java.stream-filter/to-csharp-where
+                            :java.stream-to-list/to-csharp-to-list
+                            :java.stream-count/to-csharp-count
+                            :java.stream-collector-to-list/to-csharp-to-list
+                            :java.stream-collect-to-list/to-csharp-to-list}]
 	    (is (= #{:java.node/class
              :java.node/assignment
 	             :java.node/array-read
@@ -133,8 +140,9 @@
 	             :java.node/field
 	             :java.node/field-read
              :java.node/field-write
-	             :java.node/if-statement
-	             :java.node/interface
+		             :java.node/if-statement
+		             :java.node/interface
+             :java.node/lambda
              :java.node/literal
 	             :java.node/local-variable
              :java.node/method
@@ -164,7 +172,16 @@
              :java.feature/record-component
              :java.feature/package-private-member
              :java.feature/checked-exception
+             :java.feature/lambda
              :java.feature/synchronized-method
+             :java.stream/source-to-enumerable
+             :java.stream/map
+             :java.stream/filter
+             :java.stream/to-list
+             :java.stream/count
+             :java.stream.collector/to-list
+             :java.stream/collect-to-list
+             :java.stream/collect
              :java.api/pattern-compile
              :java.api/string-trim
              :java.api/string-is-empty
@@ -188,6 +205,8 @@
            (:rule/status (first (rules-by-feature :java.feature/checked-exception)))))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.feature/synchronized-method)))))
+    (is (= :rule.status/unsupported
+           (:rule/status (first (rules-by-feature :java.stream/collect)))))
     (is (= #{:java.statement-node/to-csharp-stub
              :java.expression-node/to-csharp-stub}
            (set (map :rule/id
@@ -206,6 +225,7 @@
              :java.generic-method-feature/to-csharp-generic-method
              :java.if-statement-node/to-csharp-if
              :java.interface-node/to-csharp-interface
+             :java.lambda-node/to-csharp-lambda
              :java.literal-node/to-csharp-literal
              :java.local-variable-node/to-csharp-local
 	             :java.method-node/to-csharp-method
@@ -231,7 +251,8 @@
              :java.interface-feature/to-csharp-interface
              :java.record-feature/to-csharp-record
              :java.record-component-feature/to-csharp-parameter
-             :java.package-private-member/to-csharp-internal}
+             :java.package-private-member/to-csharp-internal
+             :java.lambda-feature/to-csharp-lambda}
            (set (map :rule/id
                      (remove #(contains? special-api-rules (:rule/id %))
                              (filter #(= :rule.status/implemented (:rule/status %))
