@@ -42,6 +42,28 @@ public final class Greeter extends Base implements GreeterApi {
 }
 ")
 
+(def nullable-types-fixture
+  "package com.acme.nullable;
+
+import org.jspecify.annotations.Nullable;
+
+public final class NullableApi {
+  private final @Nullable String label;
+
+  public NullableApi(@Nullable String label) {
+    this.label = label;
+  }
+
+  public @Nullable String getLabel() {
+    return label;
+  }
+
+  public static void demo() {
+    new NullableApi(null).getLabel();
+  }
+}
+")
+
 (def canonical-method-call-fixture
   "package com.acme.calls;
 
@@ -899,9 +921,63 @@ public final class Demo {
                                [?feature :feature/status ?status]]
                              db)))))
 
-            (testing "unchanged reruns keep logical fact counts stable"
-              (java-spoon/ingest! conn {:project/id "fixture"})
-              (is (= counts (entity-counts (d/db conn))))))))))
+          (testing "unchanged reruns keep logical fact counts stable"
+            (java-spoon/ingest! conn {:project/id "fixture"})
+            (is (= counts (entity-counts (d/db conn))))))))))
+
+(deftest extracts-java-nullable-type-use-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/nullable/NullableApi.java"
+            opts {:source/root root
+                  :project/id "nullable"
+                  :project/name "Nullable"}]
+        (write-file! root file-path nullable-types-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "nullable"})
+        (let [db (d/db conn)]
+          (testing "nullable type facts use distinct ids and retain the source type name"
+            (is (= #{["java.lang.String?" "java.lang.String" true]}
+                   (set (d/q '[:find ?type-id ?type-name ?nullable?
+                               :where
+                               [?type :type/id ?type-id]
+                               [?type :type/name ?type-name]
+                               [?type :type/nullable? ?nullable?]
+                               [(= ?type-id "java.lang.String?")]]
+                             db)))))
+          (testing "field, parameter, and return refs point at nullable type facts"
+            (is (= #{[:field-type :missing "java.lang.String?"]
+                     [:param-0 "label" "java.lang.String?"]
+                     [:return-type :missing "java.lang.String?"]}
+                   (set (d/q '[:find ?role ?source-name ?type-id
+                               :where
+                               [?ref :ref/kind :ref.kind/type-use]
+                               [?ref :ref/role ?role]
+                               [(get-else $ ?ref :ref/source-name :missing) ?source-name]
+                               [?ref :ref/to-type ?type]
+                               [?type :type/id ?type-id]
+                               [(contains? #{:field-type :param-0 :return-type} ?role)]
+                               [(= ?type-id "java.lang.String?")]]
+                             db)))))
+          (testing "declarations refer to nullable types where the source type is annotated"
+            (is (= #{["label" "java.lang.String?"]}
+                   (set (d/q '[:find ?name ?type-id
+                               :where
+                               [?decl :decl/name ?name]
+                               [(= ?name "label")]
+                               [?decl :decl/type ?type]
+                               [?type :type/id ?type-id]]
+                             db))))
+            (is (= #{["getLabel" "java.lang.String?"]}
+                   (set (d/q '[:find ?name ?type-id
+                               :where
+                               [?decl :decl/name ?name]
+                               [(= ?name "getLabel")]
+                               [?decl :decl/return-type ?type]
+                               [?type :type/id ?type-id]]
+                             db))))))))))
 
 (deftest extracts-generic-interface-type-parameters
   (with-empty-db

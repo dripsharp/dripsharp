@@ -62,6 +62,28 @@ public final class IntegerDisplay {
 }
 ")
 
+(def nullable-types-fixture
+  "package com.example.nullable;
+
+import org.jspecify.annotations.Nullable;
+
+public final class NullableApi {
+  private final @Nullable String label;
+
+  public NullableApi(@Nullable String label) {
+    this.label = label;
+  }
+
+  public @Nullable String getLabel() {
+    return label;
+  }
+
+  public static void demo() {
+    new NullableApi(null).getLabel();
+  }
+}
+")
+
 (def stream-pipeline-fixture
   "package com.example.stream;
 
@@ -1221,6 +1243,35 @@ public final class Chain {
                         :kotlin.local-property-node/to-csharp-local
                         :kotlin.return-node/to-csharp-return]]
             (is (contains? applied-rules rule))))))))
+
+(deftest emits-java-nullable-type-use-as-csharp-nullable
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/nullable/NullableApi.java"
+            opts {:source/root source-root
+                  :project/id "nullable"
+                  :project/name "Nullable"}]
+        (write-file! source-root file-path nullable-types-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "nullable"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/nullable/NullableApi.cs")
+              content (slurp (str generated))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "#nullable enable"))
+          (is (str/includes? content "private readonly string? label;"))
+          (is (str/includes? content "public NullableApi(string? label)"))
+          (is (str/includes? content "public string? getLabel()"))
+          (is (str/includes? content "new NullableApi(null).getLabel();"))
+          (is (empty? (:csharp/diagnostics result))))))))
 
 (deftest emits-kotlin-object-interface-overrides
   (with-empty-db

@@ -100,19 +100,44 @@
 
 (declare type-id)
 
+(def nullable-annotations
+  #{"Nullable"
+    "javax.annotation.Nullable"
+    "org.jetbrains.annotations.Nullable"
+    "org.jspecify.annotations.Nullable"})
+
+(defn- annotation-qname [annotation]
+  (or (some-> annotation .getAnnotationType qname)
+      (some-> annotation .getAnnotationType .getSimpleName)
+      (some-> annotation str (str/replace #"^@" ""))))
+
+(defn- nullable-annotated? [element]
+  (boolean
+   (try
+     (some nullable-annotations (map annotation-qname (.getAnnotations element)))
+     (catch Throwable _
+       false))))
+
+(defn- nullable-type-ref? [^CtTypeReference type-ref]
+  (nullable-annotated? type-ref))
+
 (defn- actual-type-arguments [^CtTypeReference type-ref]
   (vec (.getActualTypeArguments type-ref)))
 
-(defn- type-display-name [^CtTypeReference type-ref]
+(defn- type-display-name [^CtTypeReference type-ref nullable?]
   (let [base-name (type-base-name type-ref)
         args (actual-type-arguments type-ref)]
-    (cond
-      (nil? base-name) nil
-      (empty? args) base-name
-      :else (str base-name "<" (str/join "," (map type-id args)) ">"))))
+    (when base-name
+      (cond-> (if (empty? args)
+                base-name
+                (str base-name "<" (str/join "," (map type-id args)) ">"))
+        nullable? (str "?")))))
 
-(defn- type-id [^CtTypeReference type-ref]
-  (type-display-name type-ref))
+(defn- type-id
+  ([^CtTypeReference type-ref]
+   (type-id type-ref (nullable-type-ref? type-ref)))
+  ([^CtTypeReference type-ref nullable?]
+   (type-display-name type-ref nullable?)))
 
 (def ^:private built-in-types
   #{"boolean" "byte" "char" "double" "float" "int" "long" "short" "void"})
@@ -125,18 +150,21 @@
         nil))))
 
 (defn- type-reference-resolved? [^CtTypeReference type-ref]
-  (let [id (type-id type-ref)]
+  (let [id (type-id type-ref false)]
     (boolean (or (contains? built-in-types id)
                  (type-declaration type-ref)))))
 
-(defn- type-fact [^CtTypeReference type-ref]
-  (when-let [id (type-id type-ref)]
+(defn- type-fact
+  ([^CtTypeReference type-ref]
+   (type-fact type-ref (nullable-type-ref? type-ref)))
+  ([^CtTypeReference type-ref nullable?]
+   (when-let [id (type-id type-ref nullable?)]
     (let [args (actual-type-arguments type-ref)]
       (cond-> {:db/id id
                :type/id id
                :type/lang lang
                :type/name (or (type-base-name type-ref) id)
-               :type/nullable? false}
+               :type/nullable? (boolean nullable?)}
         (seq args)
         (assoc :type/args
                (->> args
@@ -144,7 +172,7 @@
                                     (when-let [arg-id (type-id arg)]
                                       {:type.arg/ordinal ordinal
                                        :type.arg/type arg-id})))
-                    vec))))))
+                    vec)))))))
 
 (defn- erased-type-fact [^CtTypeReference type-ref]
   (let [id (type-id type-ref)
@@ -157,14 +185,17 @@
        :type/name base-name
        :type/nullable? false})))
 
-(defn- type-reference-facts [type-ref]
-  (when type-ref
+(defn- type-reference-facts
+  ([type-ref]
+   (type-reference-facts type-ref (nullable-type-ref? type-ref)))
+  ([type-ref nullable?]
+   (when type-ref
     (let [args (actual-type-arguments type-ref)]
       (concat
-       [(type-fact type-ref)
+       [(type-fact type-ref nullable?)
         (erased-type-fact type-ref)]
        (keep type-fact args)
-       (mapcat type-reference-facts args)))))
+       (mapcat type-reference-facts args))))))
 
 (defn- source-type-fact [^CtType type]
   (when-let [id (qname type)]
@@ -306,10 +337,12 @@
   ([node-id role type-ref]
    (type-ref-facts node-id role type-ref nil))
   ([node-id role type-ref source-name]
-   (when-let [type-fact (type-fact type-ref)]
+   (type-ref-facts node-id role type-ref source-name (nullable-type-ref? type-ref)))
+  ([node-id role type-ref source-name nullable?]
+   (when-let [type-fact (type-fact type-ref nullable?)]
      (let [resolved? (type-reference-resolved? type-ref)]
        (concat
-        (type-reference-facts type-ref)
+        (type-reference-facts type-ref nullable?)
         [(cond-> {:ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
                   :db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
                   :ref/kind :ref.kind/type-use
@@ -506,7 +539,9 @@
 (defn- field-facts [file-id parent-node-id ordinal ^CtField field]
   (let [node-id (field-node-id file-id field)
         decl-id (str "java:" (qname (.getDeclaringType field)) "#field:" (.getSimpleName field))
-        field-type (.getType field)]
+        field-type (.getType field)
+        nullable? (or (nullable-type-ref? field-type)
+                      (nullable-annotated? field))]
     (concat
      [(node-fact node-id :java.node/field (.getSimpleName field) file-id ordinal field
                  :parent parent-node-id)
@@ -517,10 +552,10 @@
                :decl/name (.getSimpleName field)
                :decl/qualified-name (str (qname (.getDeclaringType field)) "." (.getSimpleName field))
                :decl/source-node node-id}
-        field-type (assoc :decl/type (type-id field-type))
+        field-type (assoc :decl/type (type-id field-type nullable?))
         (seq (modifiers field)) (assoc :decl/modifiers (modifiers field)))
       (supported-feature (str node-id ":feature:field") :java.feature/field node-id)]
-     (type-ref-facts node-id :field-type field-type)
+     (type-ref-facts node-id :field-type field-type nil nullable?)
      (expression-facts file-id node-id :initializer 0 (.getDefaultExpression field))
      (when (package-private? field)
        [(supported-feature (str node-id ":feature:package-private-member")
@@ -575,6 +610,8 @@
   (let [node-id (executable-node-id file-id executable)
         decl-id (executable-decl-id executable)
         return-type (when (instance? CtMethod executable) (.getType ^CtMethod executable))
+        return-nullable? (or (nullable-type-ref? return-type)
+                             (nullable-annotated? executable))
         params (.getParameters executable)
         type-params (type-param-facts decl-id executable)]
     (concat
@@ -596,18 +633,22 @@
                                       (qname (.getDeclaringType executable))
                                       (str (qname (.getDeclaringType executable)) "." (.getSimpleName executable)))
                :decl/source-node node-id}
-        return-type (assoc :decl/return-type (type-id return-type))
+        return-type (assoc :decl/return-type (type-id return-type return-nullable?))
         (instance? CtConstructor executable) (assoc :decl/type (qname (.getDeclaringType executable)))
         (seq (modifiers executable)) (assoc :decl/modifiers (modifiers executable))
         (seq type-params) (assoc :decl/type-params (mapv :db/id type-params)))]
      type-params
      (when return-type
-       (type-ref-facts node-id :return-type return-type))
+       (type-ref-facts node-id :return-type return-type nil return-nullable?))
      (mapcat (fn [index param]
-               (type-ref-facts node-id
-                               (keyword (str "param-" index))
-                               (.getType param)
-                               (.getSimpleName param)))
+               (let [param-type (.getType param)
+                     nullable? (or (nullable-type-ref? param-type)
+                                   (nullable-annotated? param))]
+                 (type-ref-facts node-id
+                                 (keyword (str "param-" index))
+                                 param-type
+                                 (.getSimpleName param)
+                                 nullable?)))
              (range)
              params)
      (mapcat #(type-ref-facts node-id :throws %) (.getThrownTypes executable))
@@ -1244,6 +1285,14 @@
   (some (fn [attr] (when-let [value (get fact attr)] [attr value]))
         [:node/id :decl/id :type/id :type-param/id :ref/id :feature/id]))
 
+(defn- merge-duplicate-fact [existing incoming]
+  (cond-> (merge existing incoming)
+    (contains? existing :decl/type)
+    (assoc :decl/type (:decl/type existing))
+
+    (contains? existing :decl/return-type)
+    (assoc :decl/return-type (:decl/return-type existing))))
+
 (defn- dedupe-facts [facts]
   (:facts
    (reduce (fn [acc fact]
@@ -1251,7 +1300,7 @@
                acc
                (if-let [key (unique-key fact)]
                  (if-let [index (get-in acc [:index key])]
-                   (update-in acc [:facts index] merge fact)
+                   (update-in acc [:facts index] merge-duplicate-fact fact)
                    (-> acc
                        (assoc-in [:index key] (count (:facts acc)))
                        (update :facts conj fact)))
