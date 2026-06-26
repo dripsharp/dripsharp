@@ -192,6 +192,22 @@ public final class DataSize {
 }
 ")
 
+(def type-cast-fixture
+  "package com.acme.values;
+
+public final class DataSize {
+  private final double value;
+
+  public DataSize(double value) {
+    this.value = value;
+  }
+
+  public String label() {
+    return value == 1 ? (long) value + \" byte\" : value + \" bytes\";
+  }
+}
+")
+
 (def throw-fixture
   "package com.acme.errors;
 
@@ -753,6 +769,41 @@ public final class Demo {
                              [?else :node/role :else-expression]
                              [?else :node/role ?else-role]
                              [?else :node/value ?else-value]]
+                           db)))))))))
+
+(deftest extracts-type-cast-expression-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/values/DataSize.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path type-cast-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["cast" "long" :java.node/type-cast :left
+                    "value" :java.node/field-read :operand
+                    "long"]}
+                 (set (d/q '[:find ?cast-name ?cast-value ?cast-kind ?cast-role
+                                    ?operand-name ?operand-kind ?operand-role
+                                    ?cast-type
+                             :where
+                             [?cast :node/kind :java.node/type-cast]
+                             [?cast :node/name ?cast-name]
+                             [?cast :node/value ?cast-value]
+                             [?cast :node/kind ?cast-kind]
+                             [?cast :node/role ?cast-role]
+                             [?operand :node/parent ?cast]
+                             [?operand :node/name ?operand-name]
+                             [?operand :node/kind ?operand-kind]
+                             [?operand :node/role ?operand-role]
+                             [?ref :ref/from-node ?cast]
+                             [?ref :ref/role :cast-type]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/name ?cast-type]]
                            db)))))))))
 
 (deftest extracts-throw-statement-facts

@@ -143,6 +143,7 @@
              :java.node/throw-statement
              :java.node/type-pattern
 	             :java.node/type-access
+             :java.node/type-cast
              :java.node/unary-operator
              :java.node/variable-read
              :java.node/variable-write}
@@ -205,6 +206,7 @@
              :java.throw-statement-node/to-csharp-throw
              :java.type-pattern-node/to-csharp-pattern
 	             :java.type-access-node/to-csharp-type
+             :java.type-cast-node/to-csharp-cast
              :java.unary-operator-node/to-csharp-unary
 	             :java.variable-read-node/to-csharp-variable
              :java.variable-write-node/to-csharp-variable

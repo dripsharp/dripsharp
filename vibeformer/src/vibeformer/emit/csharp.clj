@@ -1042,6 +1042,17 @@
     :java.node/type-access
     (emitted (csharp-type-access (:node/value node)) node :java.type-access-node/to-csharp-type)
 
+    :java.node/type-cast
+    (let [cast-type (node-type-ref (:db ctx) node :cast-type)
+          mapped-type (when cast-type (map-type cast-type))
+          operand (emit-child-expression ctx node :operand)]
+      (if-let [target-type (:csharp/type mapped-type)]
+        (-> operand
+            (update :usings into (:csharp/usings mapped-type))
+            (with-text (str "(" target-type ")(" (:text operand) ")"))
+            (apply-rule node :java.type-cast-node/to-csharp-cast :rule-app.status/success))
+        (unsupported node :java.type-cast-node/to-csharp-cast {:type (:node/value node)})))
+
     :java.node/type-pattern
     (emit-type-pattern ctx node)
 

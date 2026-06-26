@@ -99,6 +99,10 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/type-access
     :rule/status implemented-status}
+   {:rule/id :java.type-cast-node/to-csharp-cast
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/type-cast
+    :rule/status implemented-status}
    {:rule/id :java.variable-write-node/to-csharp-variable
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/variable-write

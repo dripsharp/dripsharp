@@ -29,6 +29,6 @@ public final class DataSize {
   }
 
   public String label() {
-    return value == 1 ? "byte." + unit : "bytes." + unit;
+    return value == 1 ? (long) value + ".byte." + unit : value + ".bytes." + unit;
   }
 }

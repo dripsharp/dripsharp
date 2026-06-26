@@ -770,37 +770,58 @@
        (= :expression result-kind) (expression-facts file-id node-id :case-result 0 result)
        (= :statement result-kind) (statement-facts file-id node-id :case-result 0 result)))))
 
-(defn- expression-facts [file-id parent-node-id role ordinal ^CtExpression expression]
-  (when expression
-    (let [node-id (child-node-id parent-node-id role ordinal expression)]
-      (concat
-       [(node-fact node-id
-                   (expression-kind expression)
-                   (expression-name expression)
-                   file-id
-                   ordinal
-                   expression
-                   :parent parent-node-id
-                   :role role
-                   :value (expression-value expression))]
-       (when (instance? CtInvocation expression)
-         (invocation-reference-facts node-id expression))
-       (when (instance? CtConstructorCall expression)
-         (constructor-call-reference-facts node-id expression))
-       (when (or (instance? CtFieldRead expression)
-                 (instance? CtFieldWrite expression))
-         (field-reference-facts node-id expression))
-       (when (instance? CtTypePattern expression)
-         (let [variable (.getVariable ^CtTypePattern expression)]
-           (type-ref-facts node-id :pattern-type (.getType variable) (.getSimpleName variable))))
-       (mapcat (fn [[child-role child-ordinal child-expression]]
-                 (expression-facts file-id node-id child-role child-ordinal child-expression))
-               (expression-children expression))
-       (when (instance? CtSwitchExpression expression)
-         (mapcat (fn [case-ordinal case]
-                   (switch-case-facts file-id node-id case-ordinal case))
-                 (range)
-                 (.getCases ^CtSwitchExpression expression)))))))
+(defn- expression-type-casts [^CtExpression expression]
+  (seq (.getTypeCasts expression)))
+
+(defn- expression-facts
+  ([file-id parent-node-id role ordinal expression]
+   (expression-facts file-id parent-node-id role ordinal expression true))
+  ([file-id parent-node-id role ordinal ^CtExpression expression wrap-casts?]
+   (when expression
+     (let [node-id (child-node-id parent-node-id role ordinal expression)
+           type-casts (expression-type-casts expression)]
+       (if (and wrap-casts? type-casts)
+         (let [cast-type (first type-casts)]
+           (concat
+            [(node-fact node-id
+                        :java.node/type-cast
+                        "cast"
+                        file-id
+                        ordinal
+                        expression
+                        :parent parent-node-id
+                        :role role
+                        :value (type-id cast-type))]
+            (type-ref-facts node-id :cast-type cast-type)
+            (expression-facts file-id node-id :operand 0 expression false)))
+         (concat
+          [(node-fact node-id
+                      (expression-kind expression)
+                      (expression-name expression)
+                      file-id
+                      ordinal
+                      expression
+                      :parent parent-node-id
+                      :role role
+                      :value (expression-value expression))]
+          (when (instance? CtInvocation expression)
+            (invocation-reference-facts node-id expression))
+          (when (instance? CtConstructorCall expression)
+            (constructor-call-reference-facts node-id expression))
+          (when (or (instance? CtFieldRead expression)
+                    (instance? CtFieldWrite expression))
+            (field-reference-facts node-id expression))
+          (when (instance? CtTypePattern expression)
+            (let [variable (.getVariable ^CtTypePattern expression)]
+              (type-ref-facts node-id :pattern-type (.getType variable) (.getSimpleName variable))))
+          (mapcat (fn [[child-role child-ordinal child-expression]]
+                    (expression-facts file-id node-id child-role child-ordinal child-expression))
+                  (expression-children expression))
+          (when (instance? CtSwitchExpression expression)
+            (mapcat (fn [case-ordinal case]
+                      (switch-case-facts file-id node-id case-ordinal case))
+                    (range)
+                    (.getCases ^CtSwitchExpression expression)))))))))
 
 (defn- branch-statements [statement]
   (cond
