@@ -150,7 +150,31 @@
     :feature/kind :kotlin.feature/class
     :feature/node "kotlin-c-class"
     :feature/status :feature.status/supported
-    :feature/severity :feature.severity/info}])
+    :feature/severity :feature.severity/info}
+   {:db/id "java-list-type"
+    :type/id "java.util.List"
+    :type/lang :lang/java
+    :type/name "java.util.List"
+    :type/nullable? false}
+   {:ref/id "fixture:src/A.java:call:stream:ref"
+    :ref/kind :ref.kind/method-call
+    :ref/from-node "java-a-reflection-1"
+    :ref/name "stream"
+    :ref/owner-type "java-list-type"
+    :ref/resolved? false
+    :ref/reason :resolve.reason/missing-classpath}
+   {:ref/id "fixture:src/B.java:call:invoke:ref"
+    :ref/kind :ref.kind/method-call
+    :ref/from-node "java-b-reflection"
+    :ref/name "invoke"
+    :ref/resolved? false
+    :ref/reason :resolve.reason/missing-classpath}
+   {:ref/id "fixture:src/C.kt:call:apply:ref"
+    :ref/kind :ref.kind/function-call
+    :ref/from-node "kotlin-c-class"
+    :ref/name "apply"
+    :ref/resolved? false
+    :ref/reason :resolve.reason/analysis-api-limitation}])
 
 (deftest summarizes-feature-inventory
   (with-empty-db
@@ -214,9 +238,46 @@
                    :file/lang :lang/kotlin}]
                  (inventory/files-without-unsupported db))))
 
+        (testing "unresolved refs and API gaps are ranked by count and file spread"
+          (is (= [{:lang :lang/java
+                   :kind :ref.kind/method-call
+                   :reason :resolve.reason/missing-classpath
+                   :count 2
+                   :file-count 2}
+                  {:lang :lang/kotlin
+                   :kind :ref.kind/function-call
+                   :reason :resolve.reason/analysis-api-limitation
+                   :count 1
+                   :file-count 1}]
+                 (inventory/unresolved-ref-rankings db)))
+          (is (= [{:lang :lang/java
+                   :kind :ref.kind/method-call
+                   :name "invoke"
+                   :owner ""
+                   :reason :resolve.reason/missing-classpath
+                   :count 1
+                   :file-count 1}
+                  {:lang :lang/java
+                   :kind :ref.kind/method-call
+                   :name "stream"
+                   :owner "java.util.List"
+                   :reason :resolve.reason/missing-classpath
+                   :count 1
+                   :file-count 1}
+                  {:lang :lang/kotlin
+                   :kind :ref.kind/function-call
+                   :name "apply"
+                   :owner ""
+                   :reason :resolve.reason/analysis-api-limitation
+                   :count 1
+                   :file-count 1}]
+                 (inventory/unresolved-api-call-rankings db))))
+
         (testing "summary returns the task-friendly inventory report"
           (is (= (inventory/feature-counts db)
                  (:feature-counts (inventory/summary db))))
+          (is (= (inventory/unresolved-ref-rankings db)
+                 (:unresolved-ref-rankings (inventory/summary db))))
           (is (= (inventory/files-without-unsupported db {:langs #{:lang/kotlin}})
                  (:files-without-unsupported
                   (inventory/summary db {:langs #{:lang/kotlin}})))))))))

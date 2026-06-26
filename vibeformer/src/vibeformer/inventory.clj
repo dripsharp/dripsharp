@@ -122,6 +122,80 @@
           (sort-by (juxt :file/path :file/id))
           vec))))
 
+(defn unresolved-ref-rankings
+  "Ranks unresolved references by language, ref kind, and reason."
+  ([db]
+   (unresolved-ref-rankings db {}))
+  ([db opts]
+   (let [{:keys [langs]} (normalize-opts opts)]
+     (->> (d/q '[:find ?lang ?kind ?reason (count ?ref) (count-distinct ?file)
+                 :where
+                 [?ref :ref/resolved? false]
+                 [?ref :ref/kind ?kind]
+                 [?ref :ref/reason ?reason]
+                 [?ref :ref/from-node ?node]
+                 [?node :node/file ?file]
+                 [?file :file/lang ?lang]]
+               db)
+          (keep (fn [[lang kind reason count file-count]]
+                  (when (lang-matches? langs lang)
+                    {:lang lang
+                     :kind kind
+                     :reason reason
+                     :count count
+                     :file-count file-count})))
+          (sort-by (juxt (comp - :count)
+                         (comp - :file-count)
+                         :lang
+                         :kind
+                         :reason))
+          vec))))
+
+(def api-ref-kinds
+  #{:ref.kind/constructor-call
+    :ref.kind/field-access
+    :ref.kind/function-call
+    :ref.kind/method-call})
+
+(defn unresolved-api-call-rankings
+  "Ranks unresolved call/member refs by owner/name and affected file count."
+  ([db]
+   (unresolved-api-call-rankings db {}))
+  ([db opts]
+   (let [{:keys [langs]} (normalize-opts opts)]
+     (->> (d/q '[:find (pull ?ref [:ref/kind
+                                   :ref/name
+                                   :ref/reason
+                                   {:ref/owner-type [:type/name]}
+                                   {:ref/from-node [{:node/file [:file/id :file/lang]}]}])
+                 :where
+                 [?ref :ref/resolved? false]]
+               db)
+          (map first)
+          (keep (fn [{:ref/keys [kind name reason owner-type from-node]}]
+                  (let [lang (get-in from-node [:node/file :file/lang])]
+                    (when (and (contains? api-ref-kinds kind)
+                               (lang-matches? langs lang))
+                      {:lang lang
+                       :kind kind
+                       :name (or name "")
+                       :owner (or (:type/name owner-type) "")
+                       :reason reason
+                       :file/id (get-in from-node [:node/file :file/id])}))))
+          (group-by #(select-keys % [:lang :kind :name :owner :reason]))
+          (map (fn [[k rows]]
+                 (assoc k
+                        :count (count rows)
+                        :file-count (count (set (map :file/id rows))))))
+          (sort-by (juxt (comp - :count)
+                         (comp - :file-count)
+                         :lang
+                         :kind
+                         :owner
+                         :name
+                         :reason))
+          vec))))
+
 (defn summary
   "Builds a task-friendly feature inventory report map for a Datomic db value."
   ([db]
@@ -130,4 +204,6 @@
    {:feature-counts (feature-counts db opts)
     :unsupported-rankings (unsupported-rankings db opts)
     :unsupported-by-file (unsupported-by-file db opts)
-    :files-without-unsupported (files-without-unsupported db opts)}))
+    :files-without-unsupported (files-without-unsupported db opts)
+    :unresolved-ref-rankings (unresolved-ref-rankings db opts)
+    :unresolved-api-call-rankings (unresolved-api-call-rankings db opts)}))

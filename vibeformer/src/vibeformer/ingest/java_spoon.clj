@@ -139,17 +139,32 @@
                :type/nullable? false}
         (seq args)
         (assoc :type/args
-               (mapv (fn [ordinal arg]
-                       {:type.arg/ordinal ordinal
-                        :type.arg/type (type-id arg)})
-                     (range)
-                     args))))))
+               (->> args
+                    (keep-indexed (fn [ordinal arg]
+                                    (when-let [arg-id (type-id arg)]
+                                      {:type.arg/ordinal ordinal
+                                       :type.arg/type arg-id})))
+                    vec))))))
+
+(defn- erased-type-fact [^CtTypeReference type-ref]
+  (let [id (type-id type-ref)
+        base-name (type-base-name type-ref)
+        args (actual-type-arguments type-ref)]
+    (when (and (seq args) base-name (not= id base-name))
+      {:db/id base-name
+       :type/id base-name
+       :type/lang lang
+       :type/name base-name
+       :type/nullable? false})))
 
 (defn- type-reference-facts [type-ref]
   (when type-ref
     (let [args (actual-type-arguments type-ref)]
-      (cons (type-fact type-ref)
-            (mapcat type-reference-facts args)))))
+      (concat
+       [(type-fact type-ref)
+        (erased-type-fact type-ref)]
+       (keep type-fact args)
+       (mapcat type-reference-facts args)))))
 
 (defn- source-type-fact [^CtType type]
   (when-let [id (qname type)]

@@ -78,6 +78,33 @@
                                             :exit exit})))
     opts))
 
+(def research-inventory-option-keys
+  [:research/root
+   :research-root
+   :out])
+
+(defn research-inventory-main-args [opts]
+  (let [runner-opts (select-keys opts research-inventory-option-keys)]
+    (cond-> ["-m" "vibeformer.research-inventory"]
+      (seq runner-opts) (conj (pr-str runner-opts)))))
+
+(defn research-inventory
+  "Run a read-only inventory over ../research/pkl and write target/research-pkl/inventory.edn.
+
+  Override the source or output path with:
+    clojure -T:build research-inventory ':research/root' ../research/pkl ':out' target/research-pkl/inventory.edn"
+  [opts]
+  (let [basis (b/create-basis {:aliases [:sample-runner]})
+        cmds (b/java-command
+              {:basis basis
+               :java-opts (test-java-opts)
+               :main 'clojure.main
+               :main-args (research-inventory-main-args opts)})
+        {:keys [exit]} (b/process cmds)]
+    (when-not (zero? exit)
+      (throw (ex-info "Research inventory failed." {:exit exit})))
+    opts))
+
 (defn- pom-template [version]
   [[:description "FIXME: my new library."]
    [:url "https://github.com/vibeformer/vibeformer"]

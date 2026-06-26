@@ -671,7 +671,7 @@
   [conn {:project/keys [id]}]
   (let [db (d/db conn)
         files (file-records db id)
-        facts (dedupe-facts (mapcat file-facts files))]
+        facts (extract-project-facts db id)]
     (when (seq facts)
       (d/transact conn {:tx-data facts}))
     {:project/id id
