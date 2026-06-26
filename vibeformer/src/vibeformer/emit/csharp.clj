@@ -817,6 +817,22 @@
          (= "java.util.stream.Collectors" (get-in call-ref [:ref/owner-type :type/name]))
          (= "toList" (or (:ref/name call-ref) (:node/name node))))))
 
+(defn- collector-node? [ctx node collector-name]
+  (let [call-ref (method-call-ref (:db ctx) node)]
+    (and (= :java.node/method-call (:node/kind node))
+         (= "java.util.stream.Collectors" (get-in call-ref [:ref/owner-type :type/name]))
+         (= collector-name (or (:ref/name call-ref) (:node/name node))))))
+
+(defn- collector-joining-delimiter [ctx node]
+  (if-let [delimiter (emit-argument ctx node 0)]
+    delimiter
+    {:text "\"\""
+     :usings #{}
+     :helpers #{}
+     :diagnostics []
+     :rule-applications []
+     :provenance []}))
+
 (defn- emit-method-call [ctx node]
   (let [db (:db ctx)
         call-ref (method-call-ref db node)
@@ -1029,63 +1045,213 @@
           (with-text args)
           (apply-rule node :java.stream-source/to-csharp-enumerable :rule-app.status/success))
 
-      (and (= "map" source-method-name)
-           (= "java.util.stream.Stream" owner)
-           target
+        (and (= "map" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (-> combined
+          linq-result
+            (with-text (str target-text ".Select(" args ")"))
+            (apply-rule node :java.stream-map/to-csharp-select :rule-app.status/success))
+
+        (and (= "mapToLong" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text (str target-text ".Select(" args ")"))
+            (apply-rule node :java.stream-map-to-long/to-csharp-select :rule-app.status/success))
+
+        (and (= "filter" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
            (= 1 (count (child-nodes db (:db/id node) :argument))))
       (-> combined
           linq-result
-          (with-text (str target-text ".Select(" args ")"))
-          (apply-rule node :java.stream-map/to-csharp-select :rule-app.status/success))
+            (with-text (str target-text ".Where(" args ")"))
+            (apply-rule node :java.stream-filter/to-csharp-where :rule-app.status/success))
 
-      (and (= "filter" source-method-name)
-           (= "java.util.stream.Stream" owner)
-           target
-           (= 1 (count (child-nodes db (:db/id node) :argument))))
-      (-> combined
-          linq-result
-          (with-text (str target-text ".Where(" args ")"))
-          (apply-rule node :java.stream-filter/to-csharp-where :rule-app.status/success))
+        (and (= "flatMap" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text (str target-text ".SelectMany(" args ")"))
+            (apply-rule node :java.stream-flat-map/to-csharp-select-many :rule-app.status/success))
 
-      (and (= "toList" source-method-name)
-           (= "java.util.stream.Stream" owner)
-           target
+        (and (= "toList" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
            (zero? (count (child-nodes db (:db/id node) :argument))))
       (-> target-result
           linq-result
-          (with-text (str target-text ".ToList()"))
-          (apply-rule node :java.stream-to-list/to-csharp-to-list :rule-app.status/success))
+            (with-text (str target-text ".ToList()"))
+            (apply-rule node :java.stream-to-list/to-csharp-to-list :rule-app.status/success))
 
-      (and (= "count" source-method-name)
-           (= "java.util.stream.Stream" owner)
-           target
+        (and (= "toArray" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (<= (count (child-nodes db (:db/id node) :argument)) 1))
+        (-> target-result
+            linq-result
+            (with-text (str target-text ".ToArray()"))
+            (apply-rule node :java.stream-to-array/to-csharp-to-array :rule-app.status/success))
+
+        (and (= "count" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
            (zero? (count (child-nodes db (:db/id node) :argument))))
       (-> target-result
           linq-result
-          (with-text (str target-text ".Count()"))
-          (apply-rule node :java.stream-count/to-csharp-count :rule-app.status/success))
+            (with-text (str target-text ".Count()"))
+            (apply-rule node :java.stream-count/to-csharp-count :rule-app.status/success))
 
-      (and (= "toList" source-method-name)
-           (= "java.util.stream.Collectors" owner)
-           (zero? (count (child-nodes db (:db/id node) :argument))))
+        (and (= "sum" source-method-name)
+             (= "java.util.stream.LongStream" owner)
+             target
+             (zero? (count (child-nodes db (:db/id node) :argument))))
+        (-> target-result
+            linq-result
+            (with-text (str target-text ".Sum()"))
+            (apply-rule node :java.stream-sum/to-csharp-sum :rule-app.status/success))
+
+        (and (= "anyMatch" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text (str target-text ".Any(" args ")"))
+            (apply-rule node :java.stream-any-match/to-csharp-any :rule-app.status/success))
+
+        (and (= "allMatch" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text (str target-text ".All(" args ")"))
+            (apply-rule node :java.stream-all-match/to-csharp-all :rule-app.status/success))
+
+        (and (= "noneMatch" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text (str "!(" target-text ".Any(" args "))"))
+            (apply-rule node :java.stream-none-match/to-csharp-not-any :rule-app.status/success))
+
+        (and (= "findFirst" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (zero? (count (child-nodes db (:db/id node) :argument))))
+        (-> target-result
+            linq-result
+            (with-text (str target-text ".FirstOrDefault()"))
+            (apply-rule node :java.stream-find-first/to-csharp-first-or-default :rule-app.status/success))
+
+        (and (= "distinct" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (zero? (count (child-nodes db (:db/id node) :argument))))
+        (-> target-result
+            linq-result
+            (with-text (str target-text ".Distinct()"))
+            (apply-rule node :java.stream-distinct/to-csharp-distinct :rule-app.status/success))
+
+        (and (= "sorted" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (zero? (count (child-nodes db (:db/id node) :argument))))
+        (-> target-result
+            linq-result
+            (with-text (str target-text ".OrderBy(it => it)"))
+            (apply-rule node :java.stream-sorted/to-csharp-order-by :rule-app.status/success))
+
+        (and (= "toList" source-method-name)
+             (= "java.util.stream.Collectors" owner)
+             (zero? (count (child-nodes db (:db/id node) :argument))))
       (-> combined
           linq-result
-          (with-text "System.Linq.Enumerable.ToList")
-          (apply-rule node :java.stream-collector-to-list/to-csharp-to-list :rule-app.status/success))
+            (with-text "System.Linq.Enumerable.ToList")
+            (apply-rule node :java.stream-collector-to-list/to-csharp-to-list :rule-app.status/success))
 
-      (and (= "collect" source-method-name)
-           (= "java.util.stream.Stream" owner)
-           target
+        (and (= "toSet" source-method-name)
+             (= "java.util.stream.Collectors" owner)
+             (zero? (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text "System.Linq.Enumerable.ToHashSet")
+            (apply-rule node :java.stream-collector-to-set/to-csharp-to-hash-set :rule-app.status/success))
+
+        (and (= "joining" source-method-name)
+             (= "java.util.stream.Collectors" owner)
+             (<= (count (child-nodes db (:db/id node) :argument)) 1))
+        (let [delimiter (collector-joining-delimiter ctx node)]
+          (-> (merge-emits [delimiter])
+              (with-text (:text delimiter))
+              (apply-rule node :java.stream-collector-joining/to-csharp-string-join :rule-app.status/success)))
+
+        (and (= "collect" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
            (= 1 (count (child-nodes db (:db/id node) :argument)))
            (collector-to-list-node? ctx (first (child-nodes db (:db/id node) :argument))))
       (-> combined
           linq-result
-          (with-text (str target-text ".ToList()"))
-          (apply-rule node :java.stream-collect-to-list/to-csharp-to-list :rule-app.status/success))
+            (with-text (str target-text ".ToList()"))
+            (apply-rule node :java.stream-collect-to-list/to-csharp-to-list :rule-app.status/success))
 
-      (and (= "collect" source-method-name)
-           (= "java.util.stream.Stream" owner))
-      (unsupported node
+        (and (= "collect" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument)))
+             (collector-node? ctx (first (child-nodes db (:db/id node) :argument)) "toSet"))
+        (-> combined
+            linq-result
+            (with-text (str target-text ".ToHashSet()"))
+            (apply-rule node :java.stream-collect-to-set/to-csharp-to-hash-set :rule-app.status/success))
+
+        (and (= "collect" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument)))
+             (collector-node? ctx (first (child-nodes db (:db/id node) :argument)) "joining"))
+        (let [collector-node (first (child-nodes db (:db/id node) :argument))
+              delimiter (collector-joining-delimiter ctx collector-node)]
+          (-> (merge-emits [target-result delimiter])
+              linq-result
+              (with-text (str "string.Join(" (:text delimiter) ", " target-text ")"))
+              (apply-rule node :java.stream-collect-joining/to-csharp-string-join :rule-app.status/success)))
+
+        (and (= "collect" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             (= 1 (count (child-nodes db (:db/id node) :argument)))
+             (collector-node? ctx (first (child-nodes db (:db/id node) :argument)) "toMap"))
+        (unsupported node
+                     :java.stream-collect-to-map/unsupported
+                     {:method source-method-name
+                      :owner owner
+                      :collector "toMap"
+                      :reason :emit.reason/unsupported-stream-collector})
+
+        (and (= "collect" source-method-name)
+             (= "java.util.stream.Stream" owner)
+             (= 1 (count (child-nodes db (:db/id node) :argument)))
+             (collector-node? ctx (first (child-nodes db (:db/id node) :argument)) "toCollection"))
+        (unsupported node
+                     :java.stream-collect-to-collection/unsupported
+                     {:method source-method-name
+                      :owner owner
+                      :collector "toCollection"
+                      :reason :emit.reason/unsupported-stream-collector})
+
+        (and (= "collect" source-method-name)
+             (= "java.util.stream.Stream" owner))
+        (unsupported node
                    :java.stream-collect/unsupported
                    {:method source-method-name
                     :owner owner

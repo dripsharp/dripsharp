@@ -279,26 +279,112 @@
     :rule/input-feature :java.stream/filter
     :rule/output-feature :csharp.api/linq-where
     :rule/status implemented-status}
+   {:rule/id :java.stream-flat-map/to-csharp-select-many
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/flat-map
+    :rule/output-feature :csharp.api/linq-select-many
+    :rule/status implemented-status}
+   {:rule/id :java.stream-map-to-long/to-csharp-select
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/map-to-long
+    :rule/output-feature :csharp.api/linq-select
+    :rule/status implemented-status}
    {:rule/id :java.stream-to-list/to-csharp-to-list
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/to-list
     :rule/output-feature :csharp.api/linq-to-list
+    :rule/status implemented-status}
+   {:rule/id :java.stream-to-array/to-csharp-to-array
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/to-array
+    :rule/output-feature :csharp.api/linq-to-array
     :rule/status implemented-status}
    {:rule/id :java.stream-count/to-csharp-count
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/count
     :rule/output-feature :csharp.api/linq-count
     :rule/status implemented-status}
+   {:rule/id :java.stream-sum/to-csharp-sum
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/sum
+    :rule/output-feature :csharp.api/linq-sum
+    :rule/status implemented-status}
+   {:rule/id :java.stream-any-match/to-csharp-any
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/any-match
+    :rule/output-feature :csharp.api/linq-any
+    :rule/status implemented-status}
+   {:rule/id :java.stream-all-match/to-csharp-all
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/all-match
+    :rule/output-feature :csharp.api/linq-all
+    :rule/status implemented-status}
+   {:rule/id :java.stream-none-match/to-csharp-not-any
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/none-match
+    :rule/output-feature :csharp.api/linq-any
+    :rule/status implemented-status}
+   {:rule/id :java.stream-find-first/to-csharp-first-or-default
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/find-first
+    :rule/output-feature :csharp.api/linq-first-or-default
+    :rule/status implemented-status}
+   {:rule/id :java.stream-distinct/to-csharp-distinct
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/distinct
+    :rule/output-feature :csharp.api/linq-distinct
+    :rule/status implemented-status}
+   {:rule/id :java.stream-sorted/to-csharp-order-by
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/sorted
+    :rule/output-feature :csharp.api/linq-order-by
+    :rule/status implemented-status}
    {:rule/id :java.stream-collector-to-list/to-csharp-to-list
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream.collector/to-list
     :rule/output-feature :csharp.api/linq-to-list
     :rule/status implemented-status}
+   {:rule/id :java.stream-collector-to-set/to-csharp-to-hash-set
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream.collector/to-set
+    :rule/output-feature :csharp.api/linq-to-hash-set
+    :rule/status implemented-status}
+   {:rule/id :java.stream-collector-joining/to-csharp-string-join
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream.collector/joining
+    :rule/output-feature :csharp.api/string-join
+    :rule/status implemented-status}
+   {:rule/id :java.stream-collector-to-map/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream.collector/to-map
+    :rule/status unsupported-status}
+   {:rule/id :java.stream-collector-to-collection/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream.collector/to-collection
+    :rule/status unsupported-status}
    {:rule/id :java.stream-collect-to-list/to-csharp-to-list
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect-to-list
     :rule/output-feature :csharp.api/linq-to-list
     :rule/status implemented-status}
+   {:rule/id :java.stream-collect-to-set/to-csharp-to-hash-set
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/collect-to-set
+    :rule/output-feature :csharp.api/linq-to-hash-set
+    :rule/status implemented-status}
+   {:rule/id :java.stream-collect-joining/to-csharp-string-join
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/collect-joining
+    :rule/output-feature :csharp.api/string-join
+    :rule/status implemented-status}
+   {:rule/id :java.stream-collect-to-map/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/collect-to-map
+    :rule/status unsupported-status}
+   {:rule/id :java.stream-collect-to-collection/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/collect-to-collection
+    :rule/status unsupported-status}
    {:rule/id :java.stream-collect/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect

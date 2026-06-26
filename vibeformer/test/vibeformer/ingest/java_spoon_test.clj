@@ -78,6 +78,84 @@ public final class StreamPipeline {
 }
 ")
 
+(def stream-operations-fixture
+  "package com.acme.stream;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.stream.Collectors;
+
+public final class StreamOperations {
+  public List<String> sortedUnique(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .distinct()
+        .sorted()
+        .toList();
+  }
+
+  public HashSet<String> uniqueSet(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .collect(Collectors.toSet());
+  }
+
+  public String joined(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .map(it -> it.trim())
+        .collect(Collectors.joining(\",\"));
+  }
+
+  public boolean hasEmpty(List<String> names) {
+    return names.stream().anyMatch(it -> it.isEmpty());
+  }
+
+  public boolean allHaveText(List<String> names) {
+    return names.stream().allMatch(it -> !it.isEmpty());
+  }
+
+  public boolean noneEmpty(List<String> names) {
+    return names.stream().noneMatch(it -> it.isEmpty());
+  }
+
+  public Object[] flatten(List<String> names) {
+    return names.stream()
+        .flatMap(it -> names.stream())
+        .toArray();
+  }
+
+  public long fixedTotal(List<String> names) {
+    return names.stream()
+        .mapToLong(it -> 1)
+        .sum();
+  }
+
+  public Object[] asArray(List<String> names) {
+    return names.stream().toArray();
+  }
+}
+")
+
+(def stream-unsupported-collectors-fixture
+  "package com.acme.stream;
+
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+public final class StreamUnsupportedCollectors {
+  public Map<String, String> keyed(List<String> names) {
+    return names.stream().collect(Collectors.toMap(it -> it, it -> it));
+  }
+
+  public LinkedList<String> linked(List<String> names) {
+    return names.stream().collect(Collectors.toCollection(LinkedList::new));
+  }
+}
+")
+
 (def reflection-api-fixture
   "package com.acme.reflect;
 
@@ -700,9 +778,9 @@ public final class Demo {
                                [?feature :feature/status ?status]]
                              db)))))
 
-	          (testing "unchanged reruns keep logical fact counts stable"
-	            (java-spoon/ingest! conn {:project/id "fixture"})
-	            (is (= counts (entity-counts (d/db conn))))))))))
+            (testing "unchanged reruns keep logical fact counts stable"
+              (java-spoon/ingest! conn {:project/id "fixture"})
+              (is (= counts (entity-counts (d/db conn))))))))))
 
 (deftest extracts-generic-interface-type-parameters
   (with-empty-db
@@ -1630,13 +1708,83 @@ public final class Demo {
                                                          :java.stream/collect}
                                                         ?kind)]]
                                          db)]
-              (is (= #{[:java.stream/source-to-enumerable "stream" :feature.status/supported]
-                       [:java.stream/filter "filter" :feature.status/supported]
-                       [:java.stream/map "map" :feature.status/supported]
-                       [:java.stream/collect-to-list "collect" :feature.status/supported]
-                       [:java.stream.collector/to-list "toList" :feature.status/supported]}
-                      stream-features))
-              (is (empty? broad-unsupported)))))))))
+                (is (= #{[:java.stream/source-to-enumerable "stream" :feature.status/supported]
+                         [:java.stream/filter "filter" :feature.status/supported]
+                         [:java.stream/map "map" :feature.status/supported]
+                         [:java.stream/collect-to-list "collect" :feature.status/supported]
+                         [:java.stream.collector/to-list "toList" :feature.status/supported]}
+                        stream-features))
+                (is (empty? broad-unsupported)))))))))
+
+(deftest classifies-stream-operation-and-collector-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/stream/StreamOperations.java"
+            unsupported-path "src/main/java/com/acme/stream/StreamUnsupportedCollectors.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path stream-operations-fixture)
+        (write-file! root unsupported-path stream-unsupported-collectors-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              supported (set (d/q '[:find ?kind ?node-name ?status
+                                     :where
+                                     [?feature :feature/kind ?kind]
+                                     [(contains? #{:java.stream/flat-map
+                                                   :java.stream/map-to-long
+                                                   :java.stream/to-array
+                                                   :java.stream/sum
+                                                   :java.stream/any-match
+                                                   :java.stream/all-match
+                                                   :java.stream/none-match
+                                                   :java.stream/distinct
+                                                   :java.stream/sorted
+                                                   :java.stream/collect-to-set
+                                                   :java.stream/collect-joining
+                                                   :java.stream.collector/to-set
+                                                   :java.stream.collector/joining}
+                                                  ?kind)]
+                                     [?feature :feature/status ?status]
+                                     [?feature :feature/node ?node]
+                                     [?node :node/name ?node-name]]
+                                   db))
+              unsupported (set (d/q '[:find ?kind ?node-name ?status
+                                       :where
+                                       [?feature :feature/kind ?kind]
+                                       [(contains? #{:java.stream/collect-to-map
+                                                     :java.stream/collect-to-collection
+                                                     :java.stream.collector/to-map
+                                                     :java.stream.collector/to-collection
+                                                     :java.feature/stream-api
+                                                     :java.stream/collect}
+                                                    ?kind)]
+                                       [?feature :feature/status ?status]
+                                       [?feature :feature/node ?node]
+                                       [?node :node/name ?node-name]]
+                                     db))]
+          (is (= #{[:java.stream/distinct "distinct" :feature.status/supported]
+                   [:java.stream/sorted "sorted" :feature.status/supported]
+                   [:java.stream/collect-to-set "collect" :feature.status/supported]
+                   [:java.stream/collect-joining "collect" :feature.status/supported]
+                   [:java.stream.collector/to-set "toSet" :feature.status/supported]
+                   [:java.stream.collector/joining "joining" :feature.status/supported]
+                   [:java.stream/any-match "anyMatch" :feature.status/supported]
+                   [:java.stream/all-match "allMatch" :feature.status/supported]
+                   [:java.stream/none-match "noneMatch" :feature.status/supported]
+                   [:java.stream/flat-map "flatMap" :feature.status/supported]
+                   [:java.stream/map-to-long "mapToLong" :feature.status/supported]
+                   [:java.stream/sum "sum" :feature.status/supported]
+                   [:java.stream/to-array "toArray" :feature.status/supported]}
+                 supported))
+          (is (= #{[:java.stream/collect-to-map "collect" :feature.status/unsupported]
+                   [:java.stream/collect-to-collection "collect" :feature.status/unsupported]
+                   [:java.stream.collector/to-map "toMap" :feature.status/unsupported]
+                   [:java.stream.collector/to-collection "toCollection" :feature.status/unsupported]}
+                 unsupported)))))))
 
 (deftest classifies-supported-reflection-api-facts
   (with-empty-db
@@ -1678,8 +1826,8 @@ public final class Demo {
                    [:java.reflection.class/is-array "isArray" :feature.status/supported]
                    [:java.reflection.class/is-primitive "isPrimitive" :feature.status/supported]
                    [:java.reflection.modifier/is-abstract "isAbstract" :feature.status/supported]
-	                   [:java.reflection.class/for-name "forName" :feature.status/unsupported]}
-	                 reflection-features)))))))
+                     [:java.reflection.class/for-name "forName" :feature.status/unsupported]}
+                   reflection-features)))))))
 
 (deftest classifies-supported-synchronized-facts
   (with-empty-db

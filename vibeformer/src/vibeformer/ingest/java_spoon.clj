@@ -636,11 +636,30 @@
   {"stream" :java.stream/source-to-enumerable
    "map" :java.stream/map
    "filter" :java.stream/filter
+   "flatMap" :java.stream/flat-map
+   "mapToLong" :java.stream/map-to-long
    "toList" :java.stream/to-list
-   "count" :java.stream/count})
+   "toArray" :java.stream/to-array
+   "count" :java.stream/count
+   "sum" :java.stream/sum
+   "anyMatch" :java.stream/any-match
+   "allMatch" :java.stream/all-match
+   "noneMatch" :java.stream/none-match
+   "findFirst" :java.stream/find-first
+   "distinct" :java.stream/distinct
+   "sorted" :java.stream/sorted})
 
 (def unsupported-stream-features
   {"collect" :java.stream/collect})
+
+(def supported-collector-features
+  {"toList" :java.stream.collector/to-list
+   "toSet" :java.stream.collector/to-set
+   "joining" :java.stream.collector/joining})
+
+(def unsupported-collector-features
+  {"toMap" :java.stream.collector/to-map
+   "toCollection" :java.stream.collector/to-collection})
 
 (defn- stream-owner? [owner]
   (some-> owner (str/starts-with? "java.util.stream")))
@@ -648,22 +667,37 @@
 (defn- collector-owner? [owner]
   (= "java.util.stream.Collectors" owner))
 
-(defn- collectors-to-list-invocation? [expression]
+(defn- collector-invocation-name [expression]
   (when (instance? CtInvocation expression)
     (let [executable-ref (.getExecutable ^CtInvocation expression)
-          owner (some-> executable-ref .getDeclaringType qname)
-          name (.getSimpleName executable-ref)]
-      (and (collector-owner? owner)
-           (= "toList" name)))))
+          owner (some-> executable-ref .getDeclaringType qname)]
+      (when (collector-owner? owner)
+        (.getSimpleName executable-ref)))))
+
+(defn- collector-feature-kind [expression]
+  (some-> expression collector-invocation-name supported-collector-features))
+
+(defn- unsupported-collector-feature-kind [expression]
+  (some-> expression collector-invocation-name unsupported-collector-features))
+
+(def collect-feature-by-collector
+  {:java.stream.collector/to-list :java.stream/collect-to-list
+   :java.stream.collector/to-set :java.stream/collect-to-set
+   :java.stream.collector/joining :java.stream/collect-joining
+   :java.stream.collector/to-map :java.stream/collect-to-map
+   :java.stream.collector/to-collection :java.stream/collect-to-collection})
 
 (defn- invocation-feature-facts [node-id ^CtInvocation invocation]
   (let [executable-ref (.getExecutable invocation)
         owner (some-> executable-ref .getDeclaringType qname)
         name (.getSimpleName executable-ref)
-        collect-to-list? (and (stream-owner? owner)
-                              (= "collect" name)
-                              (= 1 (count (.getArguments invocation)))
-                              (collectors-to-list-invocation? (first (.getArguments invocation))))]
+        collect-collector-feature (when (and (stream-owner? owner)
+                                             (= "collect" name)
+                                             (= 1 (count (.getArguments invocation))))
+                                    (or (collector-feature-kind (first (.getArguments invocation)))
+                                        (unsupported-collector-feature-kind (first (.getArguments invocation)))))
+        collect-feature (get collect-feature-by-collector collect-collector-feature)
+        collect-supported? (contains? (set (vals supported-collector-features)) collect-collector-feature)]
     (concat
      (when (or (= "java.lang.Class" owner)
                (some-> owner (str/starts-with? "java.lang.reflect"))
@@ -691,27 +725,40 @@
        [(supported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
                            feature-kind
                            node-id)])
-     (when collect-to-list?
-       [(supported-feature (str node-id ":feature:stream-collect-to-list")
-                           :java.stream/collect-to-list
+     (when (and collect-feature collect-supported?)
+       [(supported-feature (str node-id ":feature:" (clojure.core/name collect-feature))
+                           collect-feature
                            node-id)])
+     (when (and collect-feature (not collect-supported?))
+       [(unsupported-feature (str node-id ":feature:" (clojure.core/name collect-feature))
+                             collect-feature
+                             node-id
+                             :feature.severity/medium)])
      (when-let [feature-kind (and (stream-owner? owner)
-                                  (not collect-to-list?)
+                                  (not collect-feature)
                                   (get unsupported-stream-features name))]
        [(unsupported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
                              feature-kind
                              node-id
                              :feature.severity/medium)])
-     (when (and (collector-owner? owner) (= "toList" name))
-       [(supported-feature (str node-id ":feature:stream-collector-to-list")
-                           :java.stream.collector/to-list
+     (when-let [feature-kind (and (collector-owner? owner)
+                                  (get supported-collector-features name))]
+       [(supported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
+                           feature-kind
                            node-id)])
+     (when-let [feature-kind (and (collector-owner? owner)
+                                  (get unsupported-collector-features name))]
+       [(unsupported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
+                             feature-kind
+                             node-id
+                             :feature.severity/medium)])
      (when (and (or (stream-owner? owner)
                     (collector-owner? owner)
                     (= "stream" name))
                 (not (contains? supported-stream-features name))
                 (not (contains? unsupported-stream-features name))
-                (not (and (collector-owner? owner) (= "toList" name))))
+                (not (contains? supported-collector-features name))
+                (not (contains? unsupported-collector-features name)))
        [(unsupported-feature (str node-id ":feature:stream-api")
                              :java.feature/stream-api
                              node-id

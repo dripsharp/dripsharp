@@ -77,6 +77,68 @@ public final class StreamPipeline {
 }
 ")
 
+(def stream-operations-fixture
+  "package com.example.stream;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.stream.Collectors;
+
+public final class StreamOperations {
+  public static void main(String[] args) {
+  }
+
+  public List<String> sortedUnique(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .distinct()
+        .sorted()
+        .toList();
+  }
+
+  public HashSet<String> uniqueSet(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .collect(Collectors.toSet());
+  }
+
+  public String joined(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .map(it -> it.trim())
+        .collect(Collectors.joining(\",\"));
+  }
+
+  public boolean hasEmpty(List<String> names) {
+    return names.stream().anyMatch(it -> it.isEmpty());
+  }
+
+  public boolean allHaveText(List<String> names) {
+    return names.stream().allMatch(it -> !it.isEmpty());
+  }
+
+  public boolean noneEmpty(List<String> names) {
+    return names.stream().noneMatch(it -> it.isEmpty());
+  }
+
+  public Object[] flatten(List<String> names) {
+    return names.stream()
+        .flatMap(it -> names.stream())
+        .toArray();
+  }
+
+  public long fixedTotal(List<String> names) {
+    return names.stream()
+        .mapToLong(it -> 1)
+        .sum();
+  }
+
+  public Object[] asArray(List<String> names) {
+    return names.stream().toArray();
+  }
+}
+")
+
 (def reflection-api-fixture
   "package com.example.reflect;
 
@@ -1963,8 +2025,8 @@ public final class Chain {
           (is (= :emit.reason/unsupported-overload
                  (get-in diagnostic [:rule/context :reason])))
           (is (= 2 (get-in diagnostic [:rule/context :arity])))
-	          (is (= :java.integer-to-string/to-csharp-convert-to-string
-	                 (second (:rule-app/rule failed-app)))))))))
+            (is (= :java.integer-to-string/to-csharp-convert-to-string
+                   (second (:rule-app/rule failed-app)))))))))
 
 (deftest emits-supported-stream-pipeline-as-linq
   (with-empty-db
@@ -1997,8 +2059,58 @@ public final class Chain {
                         :java.stream-source/to-csharp-enumerable
                         :java.stream-filter/to-csharp-where
                         :java.stream-map/to-csharp-select
-                        :java.stream-collect-to-list/to-csharp-to-list
-                        :java.stream-collector-to-list/to-csharp-to-list]]
+                          :java.stream-collect-to-list/to-csharp-to-list
+                          :java.stream-collector-to-list/to-csharp-to-list]]
+              (is (contains? applied-rules rule))))))))
+
+(deftest emits-supported-stream-operations-as-linq
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/stream/StreamOperations.java"
+            opts {:source/root source-root
+                  :project/id "stream-operations"
+                  :project/name "Stream Operations"}]
+        (write-file! source-root file-path stream-operations-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "stream-operations"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/stream/StreamOperations.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["using System.Linq;"
+                           "return names.Where(it => it != null).Distinct().OrderBy(it => it).ToList();"
+                           "return names.Where(it => it != null).ToHashSet();"
+                           "return string.Join(\",\", names.Where(it => it != null).Select(it => it.Trim()));"
+                           "return names.Any(it => string.IsNullOrEmpty(it));"
+                           "return names.All(it => !(string.IsNullOrEmpty(it)));"
+                           "return !(names.Any(it => string.IsNullOrEmpty(it)));"
+                           "return names.SelectMany(it => names).ToArray();"
+                           "return names.Select(it => 1).Sum();"
+                           "return names.ToArray();"]]
+            (is (str/includes? content snippet)))
+          (is (= {:ok? true :failures []} coverage))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:java.stream-filter/to-csharp-where
+                        :java.stream-distinct/to-csharp-distinct
+                        :java.stream-sorted/to-csharp-order-by
+                        :java.stream-collect-to-set/to-csharp-to-hash-set
+                        :java.stream-collect-joining/to-csharp-string-join
+                        :java.stream-any-match/to-csharp-any
+                        :java.stream-all-match/to-csharp-all
+                        :java.stream-none-match/to-csharp-not-any
+                        :java.stream-flat-map/to-csharp-select-many
+                        :java.stream-map-to-long/to-csharp-select
+                        :java.stream-sum/to-csharp-sum
+                        :java.stream-to-array/to-csharp-to-array]]
             (is (contains? applied-rules rule))))))))
 
 (deftest emits-supported-reflection-api-as-type-operations
@@ -2038,8 +2150,8 @@ public final class Chain {
                         :java.class-is-assignable-from/to-csharp-is-assignable-from
                         :java.class-is-array/to-csharp-is-array
                         :java.class-is-primitive/to-csharp-is-primitive
-	                        :java.modifier-is-abstract/to-csharp-type-attributes]]
-	            (is (contains? applied-rules rule))))))))
+                          :java.modifier-is-abstract/to-csharp-type-attributes]]
+              (is (contains? applied-rules rule))))))))
 
 (deftest emits-supported-synchronized-constructs-as-locks
   (with-empty-db
@@ -2064,12 +2176,12 @@ public final class Chain {
               applied-rules (set (map (comp second :rule-app/rule)
                                       (:csharp/rule-applications result)))]
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
-	          (doseq [snippet ["public int increment()"
-	                           "lock (this)"
-	                           "public int add(int amount)"
-	                           "public static int zero()"
-	                           "lock (typeof(SynchronizedCase))"
-	                           "this.value = this.value + amount;"]]
+            (doseq [snippet ["public int increment()"
+                             "lock (this)"
+                             "public int add(int amount)"
+                             "public static int zero()"
+                             "lock (typeof(SynchronizedCase))"
+                             "this.value = this.value + amount;"]]
             (is (str/includes? content snippet)))
           (is (= {:ok? true :failures []} coverage))
           (is (empty? (:csharp/diagnostics result)))
