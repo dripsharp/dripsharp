@@ -4,7 +4,7 @@
   (:import (java.nio.file Paths)
            (java.security MessageDigest)
            (spoon Launcher)
-           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtVariableRead CtVariableWrite CtYieldStatement)
+           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
            (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtRecord CtRecordComponent CtType)
            (spoon.reflect.reference CtExecutableReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
@@ -326,12 +326,16 @@
 (defn- binary-operator-name [^CtBinaryOperator expression]
   (-> (.getKind expression) .name str/lower-case (str/replace "_" "-")))
 
+(defn- unary-operator-name [^CtUnaryOperator expression]
+  (-> (.getKind expression) .name str/lower-case (str/replace "_" "-")))
+
 (defn- expression-kind [expression]
   (cond
     (instance? CtSwitchExpression expression) :java.node/switch-expression
     (instance? CtConstructorCall expression) :java.node/object-creation
     (instance? CtInvocation expression) :java.node/method-call
     (instance? CtAssignment expression) :java.node/assignment
+    (instance? CtUnaryOperator expression) :java.node/unary-operator
     (instance? CtBinaryOperator expression) :java.node/binary-operator
     (instance? CtArrayRead expression) :java.node/array-read
     (instance? CtFieldWrite expression) :java.node/field-write
@@ -360,6 +364,9 @@
 
     (instance? CtBinaryOperator expression)
     (binary-operator-name expression)
+
+    (instance? CtUnaryOperator expression)
+    (unary-operator-name expression)
 
     (instance? CtFieldWrite expression)
     (.getSimpleName (.getVariable ^CtFieldWrite expression))
@@ -393,6 +400,7 @@
     (instance? CtLiteral expression) (literal-value expression)
     (instance? CtConstructorCall expression) (some-> expression .getType type-id)
     (instance? CtAssignment expression) "="
+    (instance? CtUnaryOperator expression) (unary-operator-name expression)
     (instance? CtBinaryOperator expression) (binary-operator-name expression)
     (instance? CtTypePattern expression) (some-> ^CtTypePattern expression .getVariable .getType type-id)
     (instance? CtTypeAccess expression) (type-access-name expression)
@@ -663,6 +671,9 @@
     (instance? CtBinaryOperator expression)
     [[:left 0 (.getLeftHandOperand ^CtBinaryOperator expression)]
      [:right 1 (.getRightHandOperand ^CtBinaryOperator expression)]]
+
+    (instance? CtUnaryOperator expression)
+    [[:operand 0 (.getOperand ^CtUnaryOperator expression)]]
 
     (instance? CtAssignment expression)
     [[:left 0 (.getAssigned ^CtAssignment expression)]

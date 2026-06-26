@@ -111,6 +111,10 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/binary-operator
     :rule/status implemented-status}
+   {:rule/id :java.unary-operator-node/to-csharp-unary
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/unary-operator
+    :rule/status implemented-status}
    {:rule/id :java.switch-expression-node/to-csharp-switch
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/switch-expression

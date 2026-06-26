@@ -309,6 +309,20 @@ public final class Name {
 }
 ")
 
+(def negated-pattern-fixture
+  "package com.example.patterns;
+
+public final class PatternDemo {
+  public static boolean same(Object value) {
+    if (!(value instanceof Name n)) {
+      return false;
+    }
+
+    return true;
+  }
+}
+")
+
 (def throw-fixture
   "package com.example.errors;
 
@@ -1010,6 +1024,46 @@ public final class Chain {
               (is (= :rule.status/implemented
                      (get-in entry [:rule :rule/status])))
               (is (= :java.node/type-pattern (:source/kind entry))))))))))
+
+(deftest emits-logical-not-unary-expressions
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/patterns/PatternDemo.java"
+            name-path "src/main/java/com/example/patterns/Name.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path negated-pattern-fixture)
+        (write-file! source-root name-path pattern-name-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/patterns/PatternDemo.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "if (!(value is Name n))"))
+          (is (str/includes? content "return false;"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.unary-operator-node/to-csharp-unary))
+          (testing "logical-not provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.unary-operator-node/to-csharp-unary
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/unary-operator (:source/kind entry))))))))))
 
 (deftest emits-throw-statements-and-known-java-exceptions
   (with-empty-db

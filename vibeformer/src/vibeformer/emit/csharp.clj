@@ -725,6 +725,11 @@
     "mod" "%"
     nil))
 
+(defn- unary-operator [operator-name]
+  (case operator-name
+    "not" "!"
+    nil))
+
 (declare emit-expression emit-statement method-name indent)
 
 (defn- emit-child-expression [ctx node role]
@@ -1036,6 +1041,15 @@
             (with-text (str (:text left) " " op " " (:text right)))
             (apply-rule node :java.binary-operator-node/to-csharp-binary :rule-app.status/success))
         (unsupported node :java.binary-operator-node/to-csharp-binary {:operator (:node/value node)})))
+
+    :java.node/unary-operator
+    (let [operand (emit-child-expression ctx node :operand)
+          op (unary-operator (:node/value node))]
+      (if op
+        (-> operand
+            (with-text (str op "(" (:text operand) ")"))
+            (apply-rule node :java.unary-operator-node/to-csharp-unary :rule-app.status/success))
+        (unsupported node :java.unary-operator-node/to-csharp-unary {:operator (:node/value node)})))
 
     :java.node/switch-expression
     (emit-switch-expression ctx node)

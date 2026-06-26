@@ -120,6 +120,23 @@ final class Name {
 }
 ")
 
+(def negated-pattern-fixture
+  "package com.acme.patterns;
+
+public final class PatternDemo {
+  public static boolean same(Object value) {
+    if (!(value instanceof Name n)) {
+      return false;
+    }
+
+    return true;
+  }
+}
+
+final class Name {
+}
+")
+
 (def throw-fixture
   "package com.acme.errors;
 
@@ -532,6 +549,48 @@ public final class Demo {
                              [?ref :ref/role :pattern-type]
                              [?ref :ref/to-type ?type]
                              [?type :type/id ?type-id]]
+                           db)))))))))
+
+(deftest extracts-logical-not-unary-expression-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/patterns/PatternDemo.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path negated-pattern-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["not" "not" :java.node/unary-operator :condition
+                    "instanceof" :java.node/binary-operator :operand
+                    "n" :java.node/type-pattern :right
+                    "com.acme.patterns.Name"]}
+                 (set (d/q '[:find ?unary-name ?unary-value ?unary-kind ?unary-role
+                                    ?operand-value ?operand-kind ?operand-role
+                                    ?pattern-name ?pattern-kind ?pattern-role
+                                    ?pattern-type
+                             :where
+                             [?unary :node/kind :java.node/unary-operator]
+                             [?unary :node/name ?unary-name]
+                             [?unary :node/value ?unary-value]
+                             [?unary :node/kind ?unary-kind]
+                             [?unary :node/role ?unary-role]
+                             [?operand :node/parent ?unary]
+                             [?operand :node/role ?operand-role]
+                             [?operand :node/value ?operand-value]
+                             [?operand :node/kind ?operand-kind]
+                             [?pattern :node/parent ?operand]
+                             [?pattern :node/kind :java.node/type-pattern]
+                             [?pattern :node/name ?pattern-name]
+                             [?pattern :node/kind ?pattern-kind]
+                             [?pattern :node/role ?pattern-role]
+                             [?ref :ref/from-node ?pattern]
+                             [?ref :ref/role :pattern-type]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?pattern-type]]
                            db)))))))))
 
 (deftest extracts-throw-statement-facts
