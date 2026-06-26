@@ -61,6 +61,7 @@
     (maps-to (type-fact :lang/java "java.lang.reflect.Constructor") "ConstructorInfo" ["System.Reflection"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.Parameter") "ParameterInfo" ["System.Reflection"] [])
     (maps-to (type-fact :lang/java "java.lang.annotation.Annotation") "Attribute" ["System"] [])
+    (maps-to (type-fact :lang/java "java.net.URI") "Uri" ["System"] [])
     (maps-to (type-fact :lang/java "java.nio.file.Path") "string" [] [])
     (maps-to (type-fact :lang/java "java.lang.String[]") "string[]" [] [])
     (maps-to (type-fact :lang/java "java.lang.IllegalArgumentException") "ArgumentException" ["System"] []))
@@ -112,6 +113,13 @@
                         [(type-fact :lang/kotlin "String")])
              "List<string>"
              ["System.Collections.Generic"]
+             [])
+    (maps-to (type-fact :lang/kotlin
+                        "List"
+                        false
+                        [(type-fact :lang/kotlin "URI")])
+             "List<Uri>"
+             ["System" "System.Collections.Generic"]
              [])
     (maps-to (type-fact :lang/kotlin
                         "MutableMap"
