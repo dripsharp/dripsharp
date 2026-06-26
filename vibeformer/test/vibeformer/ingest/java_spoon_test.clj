@@ -101,6 +101,30 @@ public final class ReflectionApi {
 }
 ")
 
+(def synchronized-fixture
+  "package com.acme.sync;
+
+public final class SynchronizedCase {
+  private int value;
+
+  public synchronized int increment() {
+    value = value + 1;
+    return value;
+  }
+
+  public int add(int amount) {
+    synchronized (this) {
+      value = value + amount;
+      return value;
+    }
+  }
+
+  public static synchronized int zero() {
+    return 0;
+  }
+}
+")
+
 (def generic-interface-fixture
   "package com.acme.generic;
 
@@ -1654,5 +1678,49 @@ public final class Demo {
                    [:java.reflection.class/is-array "isArray" :feature.status/supported]
                    [:java.reflection.class/is-primitive "isPrimitive" :feature.status/supported]
                    [:java.reflection.modifier/is-abstract "isAbstract" :feature.status/supported]
-                   [:java.reflection.class/for-name "forName" :feature.status/unsupported]}
-                 reflection-features)))))))
+	                   [:java.reflection.class/for-name "forName" :feature.status/unsupported]}
+	                 reflection-features)))))))
+
+(deftest classifies-supported-synchronized-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/sync/SynchronizedCase.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path synchronized-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              block-shape (set (d/q '[:find ?block-name ?lock-kind ?lock-role ?body-kind ?body-role
+                                       :where
+                                       [?block :node/kind :java.node/synchronized-block]
+                                       [?block :node/name ?block-name]
+                                       [?lock :node/parent ?block]
+                                       [?lock :node/role ?lock-role]
+                                       [?lock :node/kind ?lock-kind]
+                                       [?body :node/parent ?block]
+                                       [?body :node/role ?body-role]
+                                       [?body :node/kind ?body-kind]
+                                       [(= :lock ?lock-role)]
+                                       [(= :body ?body-role)]]
+                                     db))
+              features (set (d/q '[:find ?kind ?node-name ?status
+                                    :where
+                                    [?feature :feature/kind ?kind]
+                                    [(contains? #{:java.feature/synchronized-method
+                                                  :java.feature/synchronized-block}
+                                                 ?kind)]
+                                    [?feature :feature/status ?status]
+                                    [?feature :feature/node ?node]
+                                    [?node :node/name ?node-name]]
+                                  db))]
+          (is (= #{["synchronized" :java.node/this :lock :java.node/assignment :body]
+                   ["synchronized" :java.node/this :lock :java.node/return-statement :body]}
+                 block-shape))
+          (is (= #{[:java.feature/synchronized-method "increment" :feature.status/supported]
+                   [:java.feature/synchronized-method "zero" :feature.status/supported]
+                   [:java.feature/synchronized-block "synchronized" :feature.status/supported]}
+                 features)))))))

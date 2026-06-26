@@ -16,13 +16,11 @@ public final class Hello {
 }
 ")
 
-(def synchronized-method-fixture
+(def native-method-fixture
   "package com.example;
 
-public final class SynchronizedCase {
-  public synchronized void run() {
-    System.out.println(\"hello\");
-  }
+public final class NativeCase {
+  public native void run();
 }
 ")
 
@@ -56,14 +54,14 @@ public final class UnsupportedExpressionCase {
 
 (defn- coverage-failure-checkout []
   (let [root (temp-root)]
-    (write-file! root "sample-projects/synchronized/source/src/main/java/com/example/SynchronizedCase.java"
-                 synchronized-method-fixture)
+    (write-file! root "sample-projects/native-method/source/src/main/java/com/example/NativeCase.java"
+                 native-method-fixture)
     root))
 
 (defn- coverage-allow-checkout []
   (let [root (temp-root)]
-    (write-file! root "sample-projects/synchronized/source/src/main/java/com/example/SynchronizedCase.java"
-                 synchronized-method-fixture)
+    (write-file! root "sample-projects/native-method/source/src/main/java/com/example/NativeCase.java"
+                 native-method-fixture)
     root))
 
 (defn- csharp-diagnostic-checkout []
@@ -141,9 +139,9 @@ public final class UnsupportedExpressionCase {
 (deftest coverage-failure-stops-before-emission
   (let [root (coverage-failure-checkout)
         result (sample-runner/run-sample {:project-root root
-                                          :name "synchronized"
+                                          :name "native-method"
                                           :dotnet/enabled? false})
-        target (.resolve root "sample-projects/synchronized/target")
+        target (.resolve root "sample-projects/native-method/target")
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
         coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
         provenance (read-edn (.resolve target "provenance.edn"))
@@ -158,10 +156,10 @@ public final class UnsupportedExpressionCase {
 (deftest explicit-coverage-allow-mode-is-recorded
   (let [root (coverage-allow-checkout)
         result (sample-runner/run-sample {:project-root root
-                                          :name "synchronized"
+                                          :name "native-method"
                                           :dotnet/enabled? false
                                           :coverage/allow-unsupported? true})
-        target (.resolve root "sample-projects/synchronized/target")
+        target (.resolve root "sample-projects/native-method/target")
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
         coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
         provenance (read-edn (.resolve target "provenance.edn"))

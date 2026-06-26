@@ -137,35 +137,36 @@
                             :java.stream-count/to-csharp-count
                             :java.stream-collector-to-list/to-csharp-to-list
                             :java.stream-collect-to-list/to-csharp-to-list}]
-	    (is (= #{:java.node/class
+    (is (= #{:java.node/class
              :java.node/assignment
-	             :java.node/array-read
+             :java.node/array-read
              :java.node/binary-operator
              :java.node/conditional-expression
              :java.node/constructor
              :java.node/enum
              :java.node/expression
-	             :java.node/field
-	             :java.node/field-read
+             :java.node/field
+             :java.node/field-read
              :java.node/field-write
-		             :java.node/if-statement
-		             :java.node/interface
+             :java.node/if-statement
+             :java.node/interface
              :java.node/lambda
              :java.node/literal
-	             :java.node/local-variable
+             :java.node/local-variable
              :java.node/method
-	             :java.node/method-call
+             :java.node/method-call
              :java.node/object-creation
              :java.node/record
              :java.node/record-component
-	             :java.node/return-statement
+             :java.node/return-statement
              :java.node/statement
+             :java.node/synchronized-block
              :java.node/switch-case
              :java.node/switch-expression
              :java.node/this
              :java.node/throw-statement
              :java.node/type-pattern
-	             :java.node/type-access
+             :java.node/type-access
              :java.node/type-cast
              :java.node/unary-operator
              :java.node/variable-read
@@ -181,6 +182,8 @@
              :java.feature/package-private-member
              :java.feature/checked-exception
              :java.feature/lambda
+             :java.feature/native-method
+             :java.feature/synchronized-block
              :java.feature/synchronized-method
              :java.reflection.class/type-literal
              :java.reflection.class/get-type-name
@@ -220,8 +223,12 @@
     (is (every? #(= 1 (count %)) (vals rules-by-feature)))
     (is (= :rule.status/implemented
            (:rule/status (first (rules-by-feature :java.feature/checked-exception)))))
-    (is (= :rule.status/unsupported
+    (is (= :rule.status/implemented
            (:rule/status (first (rules-by-feature :java.feature/synchronized-method)))))
+    (is (= :rule.status/implemented
+           (:rule/status (first (rules-by-feature :java.feature/synchronized-block)))))
+    (is (= :rule.status/unsupported
+           (:rule/status (first (rules-by-feature :java.feature/native-method)))))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.reflection.class/for-name)))))
     (is (= :rule.status/unsupported
@@ -231,15 +238,15 @@
            (set (map :rule/id
                      (filter #(= :rule.status/stubbed (:rule/status %))
                              rules/initial-java-rules)))))
-	    (is (= #{:java.class-node/to-csharp-class
+    (is (= #{:java.class-node/to-csharp-class
              :java.assignment-node/to-csharp-assignment
-	             :java.array-read-node/to-csharp-indexer
+             :java.array-read-node/to-csharp-indexer
              :java.binary-operator-node/to-csharp-binary
              :java.conditional-expression-node/to-csharp-conditional
              :java.constructor-node/to-csharp-constructor
              :java.enum-node/to-csharp-enum
-	             :java.field-node/to-csharp-field
-	             :java.field-read-node/to-csharp-member
+             :java.field-node/to-csharp-field
+             :java.field-read-node/to-csharp-member
              :java.field-write-node/to-csharp-member
              :java.generic-method-feature/to-csharp-generic-method
              :java.if-statement-node/to-csharp-if
@@ -247,21 +254,24 @@
              :java.lambda-node/to-csharp-lambda
              :java.literal-node/to-csharp-literal
              :java.local-variable-node/to-csharp-local
-	             :java.method-node/to-csharp-method
-	             :java.method-call-node/to-csharp-invocation
+             :java.method-node/to-csharp-method
+             :java.method-call-node/to-csharp-invocation
              :java.object-creation-node/to-csharp-new
              :java.record-node/to-csharp-record
              :java.record-component-node/to-csharp-parameter
              :java.return-statement-node/to-csharp-return
              :java.switch-case-node/to-csharp-switch-arm
              :java.switch-expression-node/to-csharp-switch
+             :java.synchronized-block-node/to-csharp-lock
+             :java.synchronized-block/to-csharp-lock
+             :java.synchronized-method/to-csharp-lock
              :java.this-node/to-csharp-this
              :java.throw-statement-node/to-csharp-throw
              :java.type-pattern-node/to-csharp-pattern
-	             :java.type-access-node/to-csharp-type
+             :java.type-access-node/to-csharp-type
              :java.type-cast-node/to-csharp-cast
              :java.unary-operator-node/to-csharp-unary
-	             :java.variable-read-node/to-csharp-variable
+             :java.variable-read-node/to-csharp-variable
              :java.variable-write-node/to-csharp-variable
              :java.class-feature/to-csharp-class
              :java.field-feature/to-csharp-field

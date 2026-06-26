@@ -554,10 +554,9 @@
                          :java.feature/package-private-member
                          node-id)])
    (when (has-modifier? executable :synchronized)
-     [(unsupported-feature (str node-id ":feature:synchronized-method")
-                           :java.feature/synchronized-method
-                           node-id
-                           :feature.severity/medium)])
+     [(supported-feature (str node-id ":feature:synchronized-method")
+                         :java.feature/synchronized-method
+                         node-id)])
    (when (has-modifier? executable :native)
      [(unsupported-feature (str node-id ":feature:native-method")
                            :java.feature/native-method
@@ -1020,6 +1019,27 @@
            (type-ref-facts node-id :local-type local-type (.getSimpleName local))
            (expression-facts file-id node-id :initializer 0 default-expression)))
 
+        (instance? CtSynchronized statement)
+        (let [synchronized-statement ^CtSynchronized statement
+              block (.getBlock synchronized-statement)]
+          (concat
+           [(node-fact node-id
+                       :java.node/synchronized-block
+                       "synchronized"
+                       file-id
+                       ordinal
+                       statement
+                       :parent parent-node-id
+                       :role role)
+            (supported-feature (str node-id ":feature:synchronized-block")
+                               :java.feature/synchronized-block
+                               node-id)]
+           (expression-facts file-id node-id :lock 0 (.getExpression synchronized-statement))
+           (mapcat (fn [index body-statement]
+                     (statement-facts file-id node-id :body index body-statement))
+                   (range)
+                   (if block (.getStatements block) []))))
+
         (instance? CtReturn statement)
         (concat
          [(node-fact node-id
@@ -1092,18 +1112,11 @@
 
 (defn- expression-feature-facts [file-id executable]
   (let [parent-node-id (executable-node-id file-id executable)]
-    (concat
-     (map-indexed (fn [ordinal block]
-                    (unsupported-feature (str parent-node-id ":synchronized-block:" ordinal)
-                                         :java.feature/synchronized-block
-                                         parent-node-id
-                                         :feature.severity/medium))
-                  (.getElements executable (TypeFilter. CtSynchronized)))
-     (map-indexed (fn [ordinal lambda]
-                    (supported-feature (str parent-node-id ":lambda:" ordinal)
-                                       :java.feature/lambda
-                                       parent-node-id))
-                  (.getElements executable (TypeFilter. CtLambda))))))
+    (map-indexed (fn [ordinal lambda]
+                   (supported-feature (str parent-node-id ":lambda:" ordinal)
+                                      :java.feature/lambda
+                                      parent-node-id))
+                 (.getElements executable (TypeFilter. CtLambda)))))
 
 (defn- constructors [type]
   (if (instance? CtClass type)

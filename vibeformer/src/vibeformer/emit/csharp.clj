@@ -1441,6 +1441,26 @@
           (with-text text)
           (apply-rule node :java.if-statement-node/to-csharp-if :rule-app.status/success)))
 
+    :java.node/synchronized-block
+    (let [lock-node (child-node (:db ctx) (:db/id node) :lock)]
+      (if lock-node
+        (let [lock-expression (emit-expression ctx lock-node)
+              body-statements (mapv #(emit-statement ctx % (inc indent-level))
+                                     (child-nodes (:db ctx) (:db/id node) :body))
+              body-result (merge-emits "\n" body-statements)
+              text (str (indent-lines indent-level (str "lock (" (:text lock-expression) ")")) "\n"
+                        (indent-lines indent-level "{")
+                        (when (seq body-statements)
+                          (str "\n" (:text body-result)))
+                        "\n"
+                        (indent-lines indent-level "}"))]
+          (-> (merge-emits [lock-expression body-result])
+              (with-text text)
+              (apply-rule node :java.synchronized-block-node/to-csharp-lock :rule-app.status/success)))
+        (unsupported node
+                     :java.synchronized-block-node/to-csharp-lock
+                     {:reason :emit.reason/missing-lock-expression})))
+
     :java.node/throw-statement
     (let [expr (emit-throw-expression ctx node)]
       (with-text expr (indent-lines indent-level (str (:text expr) ";"))))
@@ -1472,6 +1492,22 @@
         :diagnostics []
         :rule-applications []
         :provenance []}))))
+
+(defn- emit-synchronized-method-body [db type-decl method-decl indent-level]
+  (let [body (emit-body db method-decl (inc indent-level))
+        mods (modifiers method-decl)
+        lock-target (if (contains? mods :static)
+                      (str "typeof(" (csharp-identifier (:decl/name type-decl)) ")")
+                      "this")
+        text (str (indent-lines indent-level (str "lock (" lock-target ")")) "\n"
+                  (indent-lines indent-level "{") "\n"
+                  (:text body) "\n"
+                  (indent-lines indent-level "}"))]
+    (-> body
+        (with-text text)
+        (apply-rule (:decl/source-node method-decl)
+                    :java.synchronized-method/to-csharp-lock
+                    :rule-app.status/success))))
 
 (defn- inherited-types [db type-decl]
   (let [node-eid (get-in type-decl [:decl/source-node :db/id])]
@@ -1563,7 +1599,7 @@
                     :java.constructor-node/to-csharp-constructor
                     :rule-app.status/success))))
 
-(defn- method-block [db method-decl interface?]
+(defn- method-block [db type-decl method-decl interface?]
   (if interface?
     (let [body-statements (child-nodes db (get-in method-decl [:decl/source-node :db/id]) :body)
           signature (method-signature db method-decl true)]
@@ -1582,7 +1618,9 @@
         (emitted (str "        " signature ";\n")
                  (:decl/source-node method-decl)
                  :java.method-node/to-csharp-method)))
-    (let [body (emit-body db method-decl 3)]
+    (let [body (if (contains? (modifiers method-decl) :synchronized)
+                 (emit-synchronized-method-body db type-decl method-decl 3)
+                 (emit-body db method-decl 3))]
       (-> body
           (with-text (str "        "
                           (method-signature db method-decl false)
@@ -1605,10 +1643,10 @@
        (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
        (mapv #(constructor-block db class-name %))))
 
-(defn- emitted-method-decls [db members interface?]
+(defn- emitted-method-decls [db type-decl members interface?]
   (->> (get members :decl.kind/method)
        (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
-       (mapv #(method-block db % interface?))))
+       (mapv #(method-block db type-decl % interface?))))
 
 (defn- record-component-param [component-decl]
   (emitted (str (type-name (:decl/type component-decl))
@@ -1710,7 +1748,7 @@
         ctors (mapv #(stateful-enum-constructor-block db enum-decl %) enum-ctors)
         method-shapes (mapv (fn [method-decl]
                               [method-decl
-                               (let [result (method-block db method-decl false)]
+                               (let [result (method-block db enum-decl method-decl false)]
                                  (when (empty? (:diagnostics result))
                                    result))])
                             enum-methods)
@@ -1950,7 +1988,7 @@
   (let [namespace (csharp-namespace record-decl)
         members (member-groups db record-decl)
         components (emitted-record-components (get members :decl.kind/record-component))
-        methods (emitted-method-decls db members false)
+        methods (emitted-method-decls db record-decl members false)
         components-metadata (merge-emits ", " components)
         methods-metadata (merge-emits "\n" methods)
         content-metadata (merge-emits [components-metadata methods-metadata])
@@ -2006,7 +2044,7 @@
         fields (emitted-field-decls db members)
         ctors (when-not interface?
                 (emitted-ctor-decls db (:decl/name class-decl) members))
-        methods (emitted-method-decls db members interface?)
+        methods (emitted-method-decls db class-decl members interface?)
         body-sections (->> [fields ctors methods]
                            (remove empty?)
                            (mapv #(merge-emits "\n" %)))

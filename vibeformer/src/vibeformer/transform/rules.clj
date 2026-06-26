@@ -135,6 +135,11 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/switch-case
     :rule/status implemented-status}
+   {:rule/id :java.synchronized-block-node/to-csharp-lock
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/synchronized-block
+    :rule/output-feature :csharp.feature/lock
+    :rule/status implemented-status}
    {:rule/id :java.regex-pattern-compile/to-csharp-regex
     :rule/source-lang :lang/java
     :rule/input-feature :java.api/pattern-compile
@@ -356,10 +361,20 @@
     :rule/input-feature :java.feature/checked-exception
     :rule/output-feature :csharp.feature/unchecked-exception-signature
     :rule/status implemented-status}
-   {:rule/id :java.synchronized-method/unsupported
+   {:rule/id :java.native-method/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/native-method
+    :rule/status unsupported-status}
+   {:rule/id :java.synchronized-method/to-csharp-lock
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/synchronized-method
-    :rule/status unsupported-status}])
+    :rule/output-feature :csharp.feature/lock
+    :rule/status implemented-status}
+   {:rule/id :java.synchronized-block/to-csharp-lock
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/synchronized-block
+    :rule/output-feature :csharp.feature/lock
+    :rule/status implemented-status}])
 
 (defn- require-key [rule k]
   (when-not (contains? rule k)

@@ -99,6 +99,33 @@ public final class ReflectionApi {
 }
 ")
 
+(def synchronized-fixture
+  "package com.example.sync;
+
+public final class SynchronizedCase {
+  private int value;
+
+  public static void main(String[] args) {
+  }
+
+  public synchronized int increment() {
+    value = value + 1;
+    return value;
+  }
+
+  public int add(int amount) {
+    synchronized (this) {
+      value = value + amount;
+      return value;
+    }
+  }
+
+  public static synchronized int zero() {
+    return 0;
+  }
+}
+")
+
 (def enum-fixture
   "package com.example.lookup;
 
@@ -2011,7 +2038,43 @@ public final class Chain {
                         :java.class-is-assignable-from/to-csharp-is-assignable-from
                         :java.class-is-array/to-csharp-is-array
                         :java.class-is-primitive/to-csharp-is-primitive
-                        :java.modifier-is-abstract/to-csharp-type-attributes]]
+	                        :java.modifier-is-abstract/to-csharp-type-attributes]]
+	            (is (contains? applied-rules rule))))))))
+
+(deftest emits-supported-synchronized-constructs-as-locks
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/sync/SynchronizedCase.java"
+            opts {:source/root source-root
+                  :project/id "synchronized"
+                  :project/name "Synchronized"}]
+        (write-file! source-root file-path synchronized-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "synchronized"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/sync/SynchronizedCase.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+	          (doseq [snippet ["public int increment()"
+	                           "lock (this)"
+	                           "public int add(int amount)"
+	                           "public static int zero()"
+	                           "lock (typeof(SynchronizedCase))"
+	                           "this.value = this.value + amount;"]]
+            (is (str/includes? content snippet)))
+          (is (= {:ok? true :failures []} coverage))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:java.synchronized-block-node/to-csharp-lock
+                        :java.synchronized-method/to-csharp-lock]]
             (is (contains? applied-rules rule))))))))
 
 (deftest emits-word-counter-statement-and-expression-subset
