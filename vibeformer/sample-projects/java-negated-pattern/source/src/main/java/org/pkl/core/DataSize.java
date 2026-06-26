@@ -37,4 +37,8 @@ public final class DataSize {
   public long inWholeBytes() {
     return Math.round(value);
   }
+
+  public int hashCode() {
+    return Double.hashCode(value);
+  }
 }

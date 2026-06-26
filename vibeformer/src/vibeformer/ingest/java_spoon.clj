@@ -621,6 +621,11 @@
                 (= "round" name))
        [(supported-feature (str node-id ":feature:math-round")
                            :java.api/math-round
+                           node-id)])
+     (when (and (= "java.lang.Double" owner)
+                (= "hashCode" name))
+       [(supported-feature (str node-id ":feature:double-hash-code")
+                           :java.api/double-hash-code
                            node-id)]))))
 
 (defn- invocation-reference-facts [node-id ^CtInvocation invocation]

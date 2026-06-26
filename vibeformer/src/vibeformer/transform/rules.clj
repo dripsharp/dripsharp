@@ -191,6 +191,11 @@
     :rule/input-feature :java.api/math-round
     :rule/output-feature :csharp.api/math-floor-cast
     :rule/status implemented-status}
+   {:rule/id :java.double-hash-code/to-csharp-get-hash-code
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/double-hash-code
+    :rule/output-feature :csharp.api/get-hash-code
+    :rule/status implemented-status}
    {:rule/id :java.statement-node/to-csharp-stub
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/statement

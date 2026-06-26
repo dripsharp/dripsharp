@@ -12,6 +12,7 @@ public final class DataSizeDemo {
     first.equals("bytes");
     first.label();
     first.inWholeBytes();
+    first.hashCode();
     bytes.label();
   }
 }

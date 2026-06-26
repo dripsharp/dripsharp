@@ -378,6 +378,22 @@ public final class DataSize {
 }
 ")
 
+(def double-hash-code-fixture
+  "package com.example.values;
+
+public final class DataSize {
+  private final double value;
+
+  public DataSize(double value) {
+    this.value = value;
+  }
+
+  public int hashCode() {
+    return Double.hashCode(value);
+  }
+}
+")
+
 (def pattern-fixture
   "package com.example.patterns;
 
@@ -1289,6 +1305,43 @@ public final class Chain {
           (is (contains? rule-ids :java.math-round/to-csharp-java-round))
           (testing "Math.round provenance has registered rule metadata"
             (let [entry (some #(when (= :java.math-round/to-csharp-java-round
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/method-call (:source/kind entry))))))))))
+
+(deftest emits-double-hash-code-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/values/DataSize.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path double-hash-code-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/values/DataSize.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return (this.value).GetHashCode();"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.double-hash-code/to-csharp-get-hash-code))
+          (testing "Double.hashCode provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.double-hash-code/to-csharp-get-hash-code
                                         (get-in % [:rule :rule/id]))
                                  %)
                               (:csharp/provenance result))]
