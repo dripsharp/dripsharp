@@ -105,6 +105,7 @@ public final class StreamPipeline {
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public final class StreamOperations {
@@ -123,6 +124,12 @@ public final class StreamOperations {
     return names.stream()
         .filter(it -> it != null)
         .collect(Collectors.toSet());
+  }
+
+  public Map<String, String> keyed(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .collect(Collectors.toMap(it -> it, it -> it.trim()));
   }
 
   public String joined(List<String> names) {
@@ -2474,6 +2481,7 @@ public final class Chain {
           (doseq [snippet ["using System.Linq;"
                            "return names.Where(it => it != null).Distinct().OrderBy(it => it).ToList();"
                            "return names.Where(it => it != null).ToHashSet();"
+                           "return names.Where(it => it != null).ToDictionary(it => it, it => it.Trim());"
                            "return string.Join(\",\", names.Where(it => it != null).Select(it => it.Trim()));"
                            "return names.Any(it => string.IsNullOrEmpty(it));"
                            "return names.All(it => !(string.IsNullOrEmpty(it)));"
@@ -2488,6 +2496,8 @@ public final class Chain {
                         :java.stream-distinct/to-csharp-distinct
                         :java.stream-sorted/to-csharp-order-by
                         :java.stream-collect-to-set/to-csharp-to-hash-set
+                        :java.stream-collect-to-map/to-csharp-to-dictionary
+                        :java.stream-collector-to-map/to-csharp-to-dictionary
                         :java.stream-collect-joining/to-csharp-string-join
                         :java.stream-any-match/to-csharp-any
                         :java.stream-all-match/to-csharp-all

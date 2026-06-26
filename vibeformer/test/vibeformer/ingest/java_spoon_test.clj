@@ -1972,8 +1972,10 @@ public final class Demo {
                                                    :java.stream/sorted
                                                    :java.stream/collect-to-set
                                                    :java.stream/collect-joining
+                                                   :java.stream/collect-to-map
                                                    :java.stream.collector/to-set
-                                                   :java.stream.collector/joining}
+                                                   :java.stream.collector/joining
+                                                   :java.stream.collector/to-map}
                                                   ?kind)]
                                      [?feature :feature/status ?status]
                                      [?feature :feature/node ?node]
@@ -1982,9 +1984,7 @@ public final class Demo {
               unsupported (set (d/q '[:find ?kind ?node-name ?status
                                        :where
                                        [?feature :feature/kind ?kind]
-                                       [(contains? #{:java.stream/collect-to-map
-                                                     :java.stream/collect-to-collection
-                                                     :java.stream.collector/to-map
+                                       [(contains? #{:java.stream/collect-to-collection
                                                      :java.stream.collector/to-collection
                                                      :java.feature/stream-api
                                                      :java.stream/collect}
@@ -1997,8 +1997,10 @@ public final class Demo {
                    [:java.stream/sorted "sorted" :feature.status/supported]
                    [:java.stream/collect-to-set "collect" :feature.status/supported]
                    [:java.stream/collect-joining "collect" :feature.status/supported]
+                   [:java.stream/collect-to-map "collect" :feature.status/supported]
                    [:java.stream.collector/to-set "toSet" :feature.status/supported]
                    [:java.stream.collector/joining "joining" :feature.status/supported]
+                   [:java.stream.collector/to-map "toMap" :feature.status/supported]
                    [:java.stream/any-match "anyMatch" :feature.status/supported]
                    [:java.stream/all-match "allMatch" :feature.status/supported]
                    [:java.stream/none-match "noneMatch" :feature.status/supported]
@@ -2007,9 +2009,7 @@ public final class Demo {
                    [:java.stream/sum "sum" :feature.status/supported]
                    [:java.stream/to-array "toArray" :feature.status/supported]}
                  supported))
-          (is (= #{[:java.stream/collect-to-map "collect" :feature.status/unsupported]
-                   [:java.stream/collect-to-collection "collect" :feature.status/unsupported]
-                   [:java.stream.collector/to-map "toMap" :feature.status/unsupported]
+          (is (= #{[:java.stream/collect-to-collection "collect" :feature.status/unsupported]
                    [:java.stream.collector/to-collection "toCollection" :feature.status/unsupported]}
                  unsupported)))))))
 

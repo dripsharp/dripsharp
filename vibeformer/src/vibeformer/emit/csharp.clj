@@ -841,6 +841,12 @@
      :rule-applications []
      :provenance []}))
 
+(defn- collector-to-map-args [ctx node]
+  (let [args (child-nodes (:db ctx) (:db/id node) :argument)]
+    (when (= 2 (count args))
+      [(emit-argument ctx node 0)
+       (emit-argument ctx node 1)])))
+
 (defn- emit-method-call [ctx node]
   (let [db (:db ctx)
         call-ref (method-call-ref db node)
@@ -1387,6 +1393,14 @@
               (with-text (:text delimiter))
               (apply-rule node :java.stream-collector-joining/to-csharp-string-join :rule-app.status/success)))
 
+        (and (= "toMap" source-method-name)
+             (= "java.util.stream.Collectors" owner)
+             (= 2 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text "System.Linq.Enumerable.ToDictionary")
+            (apply-rule node :java.stream-collector-to-map/to-csharp-to-dictionary :rule-app.status/success))
+
         (and (= "collect" source-method-name)
              (= "java.util.stream.Stream" owner)
              target
@@ -1423,12 +1437,20 @@
              (= "java.util.stream.Stream" owner)
              (= 1 (count (child-nodes db (:db/id node) :argument)))
              (collector-node? ctx (first (child-nodes db (:db/id node) :argument)) "toMap"))
-        (unsupported node
-                     :java.stream-collect-to-map/unsupported
-                     {:method source-method-name
-                      :owner owner
-                      :collector "toMap"
-                      :reason :emit.reason/unsupported-stream-collector})
+        (let [collector-node (first (child-nodes db (:db/id node) :argument))
+              collector-result (emit-expression ctx collector-node)
+              [key-result value-result] (collector-to-map-args ctx collector-node)]
+          (if (and target key-result value-result)
+            (-> (merge-emits [target-result collector-result])
+                linq-result
+                (with-text (str target-text ".ToDictionary(" (:text key-result) ", " (:text value-result) ")"))
+                (apply-rule node :java.stream-collect-to-map/to-csharp-to-dictionary :rule-app.status/success))
+            (unsupported node
+                         :java.stream-collect-to-map/to-csharp-to-dictionary
+                         {:method source-method-name
+                          :owner owner
+                          :collector "toMap"
+                          :reason :emit.reason/unsupported-stream-collector})))
 
         (and (= "collect" source-method-name)
              (= "java.util.stream.Stream" owner)

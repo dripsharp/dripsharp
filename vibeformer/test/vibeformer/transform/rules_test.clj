@@ -297,6 +297,10 @@
            (:rule/status (first (rules-by-feature :java.feature/native-method)))))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.reflection.class/for-name)))))
+    (doseq [feature [:java.stream.collector/to-map
+                     :java.stream/collect-to-map]]
+      (is (= :rule.status/implemented
+             (:rule/status (first (rules-by-feature feature))))))
     (doseq [feature [:java.reflection.class/get-declared-method
                      :java.reflection.class/get-method
                      :java.reflection.class/get-declared-methods
@@ -310,9 +314,7 @@
                      :java.reflection.wildcard-type/get-lower-bounds
                      :java.reflection.wildcard-type/get-upper-bounds
                      :java.stream/collect
-                     :java.stream.collector/to-map
                      :java.stream.collector/to-collection
-                     :java.stream/collect-to-map
                      :java.stream/collect-to-collection]]
       (is (= :rule.status/unsupported
              (:rule/status (first (rules-by-feature feature))))))
@@ -364,7 +366,9 @@
              :java.record-feature/to-csharp-record
              :java.record-component-feature/to-csharp-parameter
              :java.package-private-member/to-csharp-internal
-             :java.lambda-feature/to-csharp-lambda}
+             :java.lambda-feature/to-csharp-lambda
+             :java.stream-collector-to-map/to-csharp-to-dictionary
+             :java.stream-collect-to-map/to-csharp-to-dictionary}
            (set (map :rule/id
                      (remove #(contains? special-api-rules (:rule/id %))
                              (filter #(= :rule.status/implemented (:rule/status %))

@@ -720,11 +720,11 @@
 (def supported-collector-features
   {"toList" :java.stream.collector/to-list
    "toSet" :java.stream.collector/to-set
-   "joining" :java.stream.collector/joining})
+   "joining" :java.stream.collector/joining
+   "toMap" :java.stream.collector/to-map})
 
 (def unsupported-collector-features
-  {"toMap" :java.stream.collector/to-map
-   "toCollection" :java.stream.collector/to-collection})
+  {"toCollection" :java.stream.collector/to-collection})
 
 (defn- stream-owner? [owner]
   (some-> owner (str/starts-with? "java.util.stream")))

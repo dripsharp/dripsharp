@@ -457,10 +457,11 @@
     :rule/input-feature :java.stream.collector/joining
     :rule/output-feature :csharp.api/string-join
     :rule/status implemented-status}
-   {:rule/id :java.stream-collector-to-map/unsupported
+   {:rule/id :java.stream-collector-to-map/to-csharp-to-dictionary
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream.collector/to-map
-    :rule/status unsupported-status}
+    :rule/output-feature :csharp.api/linq-to-dictionary
+    :rule/status implemented-status}
    {:rule/id :java.stream-collector-to-collection/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream.collector/to-collection
@@ -480,10 +481,11 @@
     :rule/input-feature :java.stream/collect-joining
     :rule/output-feature :csharp.api/string-join
     :rule/status implemented-status}
-   {:rule/id :java.stream-collect-to-map/unsupported
+   {:rule/id :java.stream-collect-to-map/to-csharp-to-dictionary
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect-to-map
-    :rule/status unsupported-status}
+    :rule/output-feature :csharp.api/linq-to-dictionary
+    :rule/status implemented-status}
    {:rule/id :java.stream-collect-to-collection/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect-to-collection
