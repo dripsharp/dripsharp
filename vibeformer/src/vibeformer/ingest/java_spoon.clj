@@ -88,11 +88,38 @@
         value))
     value))
 
+(def ^:dynamic *import-aliases* {})
+
+(defn- simple-source-type-ref? [^CtTypeReference type-ref]
+  (let [simple-name (.getSimpleName type-ref)
+        source-name (str type-ref)]
+    (boolean
+     (and simple-name
+          (or (= source-name simple-name)
+              (str/starts-with? source-name (str simple-name "<"))
+              (str/starts-with? source-name (str simple-name "[")))))))
+
+(defn- import-shadowed-qname [^CtTypeReference type-ref qname]
+  (let [simple-name (.getSimpleName type-ref)
+        alias (get *import-aliases* simple-name)]
+    (if (and alias
+             qname
+             (simple-source-type-ref? type-ref)
+             (= qname (str "java.lang." simple-name))
+             (not= alias qname))
+      alias
+      qname)))
+
+(defn- import-shadowed-type-ref? [^CtTypeReference type-ref]
+  (let [raw-qname (normalize-qname (.getQualifiedName type-ref))]
+    (not= raw-qname (import-shadowed-qname type-ref raw-qname))))
+
 (defn- qname [value]
   (cond
     (nil? value) nil
     (instance? CtType value) (normalize-qname (.getQualifiedName ^CtType value))
-    (instance? CtTypeReference value) (normalize-qname (.getQualifiedName ^CtTypeReference value))
+    (instance? CtTypeReference value)
+    (import-shadowed-qname value (normalize-qname (.getQualifiedName ^CtTypeReference value)))
     :else (str value)))
 
 (defn- type-base-name [^CtTypeReference type-ref]
@@ -151,8 +178,9 @@
 
 (defn- type-reference-resolved? [^CtTypeReference type-ref]
   (let [id (type-id type-ref false)]
-    (boolean (or (contains? built-in-types id)
-                 (type-declaration type-ref)))))
+    (boolean (and (not (import-shadowed-type-ref? type-ref))
+                  (or (contains? built-in-types id)
+                      (type-declaration type-ref))))))
 
 (defn- type-fact
   ([^CtTypeReference type-ref]
@@ -1300,6 +1328,31 @@
     (.getConstructors ^CtClass type)
     []))
 
+(defn- import-qname [import]
+  (when-let [[_ qname] (re-matches #"\s*import\s+(?!static\s+)([\w.$]+)\s*;\s*" (str import))]
+    (when-not (str/ends-with? qname ".*")
+      qname)))
+
+(defn- compilation-unit [^CtType type]
+  (try
+    (some-> type .getPosition .getCompilationUnit)
+    (catch Throwable _
+      nil)))
+
+(defn- compilation-unit-import-aliases [types]
+  (->> types
+       (keep compilation-unit)
+       distinct
+       (mapcat (fn [compilation-unit]
+                 (try
+                   (.getImports compilation-unit)
+                   (catch Throwable _
+                     []))))
+       (keep import-qname)
+       (reduce (fn [aliases qname]
+                 (assoc aliases (last (str/split qname #"\.")) qname))
+               {})))
+
 (defn- record-components [type]
   (if (instance? CtRecord type)
     (vec (.getRecordComponents ^CtRecord type))
@@ -1313,38 +1366,41 @@
   (let [file-id (:file/id file-record)
         project-root (get-in file-record [:file/project :project/root])
         source-path (.resolve (path project-root) (:file/path file-record))
-        types (vec (parse-file source-path))]
-    (mapcat
-     (fn [type-ordinal type]
-       (let [type-node-id (type-node-id file-id type)
-             record? (instance? CtRecord type)
-             components (sort-by #(source-order-key % (.getSimpleName %)) (record-components type))
-             component-names (set (map #(.getSimpleName %) components))
-             fields (cond->> (.getFields type)
-                      record? (remove #(contains? component-names (.getSimpleName %)))
-                      true (sort-by #(source-order-key % (.getSimpleName %))))
-             constructors (sort-by #(.getSignature %) (constructors type))
-             methods (cond->> (.getMethods type)
-                       record? (remove #(record-accessor-method? component-names %))
-                       true (sort-by #(.getSignature %)))
-             executables (concat constructors methods)]
-         (concat
-          (type-facts file-id type-ordinal type)
-          (mapcat (fn [ordinal component]
-                    (record-component-facts file-id type-node-id ordinal type component))
-                  (range)
-                  components)
-          (mapcat (fn [ordinal field] (field-facts file-id type-node-id ordinal field))
-                  (range)
-                  fields)
-          (mapcat (fn [ordinal executable]
-                    (executable-facts file-id type-node-id ordinal executable))
-                  (range)
-                  executables)
-          (mapcat #(executable-body-facts file-id %) executables)
-          (mapcat #(expression-feature-facts file-id %) executables))))
-     (range)
-     types)))
+        types (vec (parse-file source-path))
+        import-aliases (compilation-unit-import-aliases types)]
+    (binding [*import-aliases* import-aliases]
+      (doall
+       (mapcat
+        (fn [type-ordinal type]
+          (let [type-node-id (type-node-id file-id type)
+                record? (instance? CtRecord type)
+                components (sort-by #(source-order-key % (.getSimpleName %)) (record-components type))
+                component-names (set (map #(.getSimpleName %) components))
+                fields (cond->> (.getFields type)
+                         record? (remove #(contains? component-names (.getSimpleName %)))
+                         true (sort-by #(source-order-key % (.getSimpleName %))))
+                constructors (sort-by #(.getSignature %) (constructors type))
+                methods (cond->> (.getMethods type)
+                          record? (remove #(record-accessor-method? component-names %))
+                          true (sort-by #(.getSignature %)))
+                executables (concat constructors methods)]
+            (concat
+             (type-facts file-id type-ordinal type)
+             (mapcat (fn [ordinal component]
+                       (record-component-facts file-id type-node-id ordinal type component))
+                     (range)
+                     components)
+             (mapcat (fn [ordinal field] (field-facts file-id type-node-id ordinal field))
+                     (range)
+                     fields)
+             (mapcat (fn [ordinal executable]
+                       (executable-facts file-id type-node-id ordinal executable))
+                     (range)
+                     executables)
+             (mapcat #(executable-body-facts file-id %) executables)
+             (mapcat #(expression-feature-facts file-id %) executables))))
+        (range)
+        types)))))
 
 (defn- unique-key [fact]
   (some (fn [attr] (when-let [value (get fact attr)] [attr value]))

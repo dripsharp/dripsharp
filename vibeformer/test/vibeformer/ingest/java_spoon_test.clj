@@ -352,6 +352,22 @@ public final class ReflectionUnsupportedApi {
 }
 ")
 
+(def parser-syntax-class-fixture
+  "package com.acme.parser;
+
+import org.pkl.parser.syntax.Class;
+
+public final class ParserVisitor {
+  public Object visitClass(Class clazz) {
+    Object header = clazz.getHeaderSpan();
+    Object typeParameters = clazz.getTypeParameterList();
+    Object modifiers = clazz.getModifiers();
+    Object name = clazz.getName();
+    return clazz.getAnnotations();
+  }
+}
+")
+
 (def synchronized-fixture
   "package com.acme.sync;
 
@@ -2241,6 +2257,56 @@ public final class Demo {
                    [:java.reflection.wildcard-type/get-lower-bounds "getLowerBounds" :feature.status/unsupported]
                    [:java.reflection.wildcard-type/get-upper-bounds "getUpperBounds" :feature.status/unsupported]}
                  reflection-features)))))))
+
+(deftest keeps-imported-parser-class-calls-out-of-reflection-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/parser/ParserVisitor.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path parser-syntax-class-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              parser-class-call-names #{"getHeaderSpan"
+                                        "getTypeParameterList"
+                                        "getAnnotations"
+                                        "getModifiers"
+                                        "getName"}
+              call-refs
+              (set (d/q '[:find ?name ?owner-name ?resolved ?reason
+                          :in $ ?names
+                          :where
+                          [?node :node/kind :java.node/method-call]
+                          [?node :node/name ?name]
+                          [(contains? ?names ?name)]
+                          [?ref :ref/from-node ?node]
+                          [?ref :ref/owner-type ?owner]
+                          [?owner :type/name ?owner-name]
+                          [?ref :ref/resolved? ?resolved]
+                          [?ref :ref/reason ?reason]]
+                        db parser-class-call-names))
+              call-features
+              (set (d/q '[:find ?name ?kind ?status
+                          :in $ ?names
+                          :where
+                          [?node :node/kind :java.node/method-call]
+                          [?node :node/name ?name]
+                          [(contains? ?names ?name)]
+                          [?feature :feature/node ?node]
+                          [?feature :feature/kind ?kind]
+                          [?feature :feature/status ?status]]
+                        db parser-class-call-names))]
+          (is (= #{["getHeaderSpan" "org.pkl.parser.syntax.Class" false :resolve.reason/missing-classpath]
+                   ["getTypeParameterList" "org.pkl.parser.syntax.Class" false :resolve.reason/missing-classpath]
+                   ["getAnnotations" "org.pkl.parser.syntax.Class" false :resolve.reason/missing-classpath]
+                   ["getModifiers" "org.pkl.parser.syntax.Class" false :resolve.reason/missing-classpath]
+                   ["getName" "org.pkl.parser.syntax.Class" false :resolve.reason/missing-classpath]}
+                 call-refs))
+          (is (empty? call-features)))))))
 
 (deftest classifies-supported-synchronized-facts
   (with-empty-db
