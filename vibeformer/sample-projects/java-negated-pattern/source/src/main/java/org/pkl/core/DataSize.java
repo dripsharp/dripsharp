@@ -2,6 +2,8 @@ package org.pkl.core;
 
 import static org.pkl.core.DataSizeUnit.*;
 
+import java.util.Objects;
+
 public final class DataSize {
   private final double value;
   private final DataSizeUnit unit;
@@ -13,7 +15,7 @@ public final class DataSize {
 
   public DataSize(double value, DataSizeUnit unit) {
     this.value = value;
-    this.unit = unit;
+    this.unit = Objects.requireNonNull(unit, "unit");
   }
 
   public static DataSize ofBytes(double value) {

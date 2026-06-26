@@ -114,7 +114,8 @@
                             :java.system-exit/to-csharp-environment-exit
                             :java.path-of/to-csharp-string-path
                             :java.files-read-string/to-csharp-file-read-all-text
-                            :java.integer-to-string/to-csharp-convert-to-string}]
+                            :java.integer-to-string/to-csharp-convert-to-string
+                            :java.objects-require-non-null/to-csharp-null-check}]
 	    (is (= #{:java.node/class
              :java.node/assignment
 	             :java.node/array-read
@@ -166,7 +167,8 @@
              :java.api/system-exit
              :java.api/path-of
              :java.api/files-read-string
-             :java.api/integer-to-string}
+             :java.api/integer-to-string
+             :java.api/objects-require-non-null}
            (set (remove nil? (keys rules-by-feature)))))
     (is (every? #(= 1 (count %)) (vals rules-by-kind)))
     (is (every? #(= 1 (count %)) (vals rules-by-feature)))

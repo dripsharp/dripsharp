@@ -606,7 +606,12 @@
        [(unsupported-feature (str node-id ":feature:stream-api")
                              :java.feature/stream-api
                              node-id
-                             :feature.severity/medium)]))))
+                             :feature.severity/medium)])
+     (when (and (= "java.util.Objects" owner)
+                (= "requireNonNull" name))
+       [(supported-feature (str node-id ":feature:objects-require-non-null")
+                           :java.api/objects-require-non-null
+                           node-id)]))))
 
 (defn- invocation-reference-facts [node-id ^CtInvocation invocation]
   (let [executable-ref (.getExecutable invocation)

@@ -176,6 +176,11 @@
     :rule/input-feature :java.api/integer-to-string
     :rule/output-feature :csharp.api/convert-to-string
     :rule/status implemented-status}
+   {:rule/id :java.objects-require-non-null/to-csharp-null-check
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/objects-require-non-null
+    :rule/output-feature :csharp.api/null-coalescing-throw
+    :rule/status implemented-status}
    {:rule/id :java.statement-node/to-csharp-stub
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/statement

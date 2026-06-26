@@ -426,6 +426,18 @@
 
       nil)))
 
+(defn- enum-source-type? [db source-type]
+  (boolean
+   (ffirst
+    (d/q '[:find ?decl
+           :in $ ?type-id
+           :where
+           [?type :type/id ?type-id]
+           [?decl :decl/type ?type]
+           [?decl :decl/kind :decl.kind/enum]]
+         db
+         (:type/id source-type)))))
+
 (defn- array-type? [source-type]
   (str/ends-with? (or (:type/name source-type) "") "[]"))
 
@@ -762,6 +774,13 @@
   (merge-emits ", " (mapv #(emit-expression ctx %)
                           (child-nodes (:db ctx) (:db/id node) :argument))))
 
+(defn- emit-argument [ctx node index]
+  (when-let [arg (nth (child-nodes (:db ctx) (:db/id node) :argument) index nil)]
+    (emit-expression ctx arg)))
+
+(defn- require-non-null-argument-name [message-result]
+  (or (:text message-result) "\"value\""))
+
 (defn- locale-root? [ctx node]
   (let [target (child-node (:db ctx) (:db/id node) :target)]
     (and (= :java.node/field-read (:node/kind node))
@@ -841,6 +860,22 @@
       (-> args-result
           (with-text (str "System.Convert.ToString(" args ")"))
           (apply-rule node :java.integer-to-string/to-csharp-convert-to-string :rule-app.status/success))
+
+      (and (= "java.util.Objects" owner)
+           (= "requireNonNull" source-method-name)
+           (<= 1 (count (child-nodes db (:db/id node) :argument)) 2))
+      (let [value-node (first (child-nodes db (:db/id node) :argument))
+            value-type (when value-node (expression-type ctx value-node))
+            value-result (emit-argument ctx node 0)
+            message-result (emit-argument ctx node 1)]
+        (-> (merge-emits [value-result message-result])
+            (with-text (if (enum-source-type? db value-type)
+                         (:text value-result)
+                         (str "(" (:text value-result)
+                              " ?? throw new System.ArgumentNullException("
+                              (require-non-null-argument-name message-result)
+                              "))")))
+            (apply-rule node :java.objects-require-non-null/to-csharp-null-check :rule-app.status/success)))
 
       (and (= "java.lang.Integer" owner) (= "toString" source-method-name))
       (unsupported node
