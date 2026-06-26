@@ -233,11 +233,13 @@ public final class UnsupportedExpressionCase {
   (let [root (sample-checkout)
         fake-dotnet (.resolve root "fake-dotnet")
         diagnostic-file (.resolve root "sample-projects/hello/target/diagnostics/dotnet-build.edn")
+        diagnostic-facts-file (.resolve root "sample-projects/hello/target/diagnostics/dotnet-diagnostic-facts.edn")
         stdout-file (.resolve root "sample-projects/hello/target/diagnostics/dotnet-build.stdout.log")
         stderr-file (.resolve root "sample-projects/hello/target/diagnostics/dotnet-build.stderr.log")
         script (str "#!/bin/sh\n"
                     "echo \"Determining projects to restore...\"\n"
                     "echo \"$PWD/com/example/Hello.cs(7,13): error CS1002: ; expected [$PWD/hello.csproj]\"\n"
+                    "echo \"$PWD/com/example/Missing.cs(1,1): warning CS0168: unused variable [$PWD/hello.csproj]\"\n"
                     "echo \"fake stderr\" >&2\n"
                     "exit 1\n")]
     (write-file! root "fake-dotnet" script)
@@ -246,13 +248,28 @@ public final class UnsupportedExpressionCase {
                                             :name "hello"
                                             :dotnet/command (str fake-dotnet)})
           build-stage (some #(when (= :dotnet/build (:stage %)) %) (:stages result))
+          ingest-stage (some #(when (= :diagnostics/ingest (:stage %)) %) (:stages result))
           diagnostic-report (read-edn diagnostic-file)
-          diagnostic (first (:diagnostics diagnostic-report))]
+          diagnostic-facts-report (read-edn diagnostic-facts-file)
+          diagnostic (first (:diagnostics diagnostic-report))
+          mapped-fact (some #(when (= :diagnostic.mapping/mapped
+                                      (:diagnostic/mapping-status %))
+                               %)
+                            (:diagnostics diagnostic-facts-report))
+          unmapped-fact (some #(when (= :diagnostic.mapping/unmapped
+                                        (:diagnostic/mapping-status %))
+                                 %)
+                              (:diagnostics diagnostic-facts-report))]
       (is (false? (:ok? result)))
       (is (= :failed (:status build-stage)))
       (is (= 1 (:dotnet/exit build-stage)))
+      (is (= :ok (:status ingest-stage)))
+      (is (= 2 (:diagnostic/facts-count ingest-stage)))
+      (is (= 1 (:diagnostic/mapped-count ingest-stage)))
+      (is (= 1 (:diagnostic/unmapped-count ingest-stage)))
       (is (Files/isRegularFile stdout-file (make-array java.nio.file.LinkOption 0)))
       (is (Files/isRegularFile stderr-file (make-array java.nio.file.LinkOption 0)))
+      (is (Files/isRegularFile diagnostic-facts-file (make-array java.nio.file.LinkOption 0)))
       (is (= "fake stderr\n" (slurp (str stderr-file))))
       (is (str/ends-with? (:file diagnostic) "/sample-projects/hello/target/csharp/com/example/Hello.cs"))
       (is (= {:line 7
@@ -261,5 +278,18 @@ public final class UnsupportedExpressionCase {
               :code "CS1002"
               :message "; expected"}
              (dissoc diagnostic :file)))
+      (is (= :diagnostic.mapping/provenance-span (:diagnostic/mapping-reason mapped-fact)))
+      (is (some? (:diagnostic/source-node mapped-fact)))
+      (is (some? (:diagnostic/rule mapped-fact)))
+      (is (= :diagnostic.mapping/no-provenance-span (:diagnostic/mapping-reason unmapped-fact)))
+      (is (= #{{:diagnostic/code "CS1002"
+                :diagnostic/mapping-status :diagnostic.mapping/mapped
+                :diagnostic/rule :java.class-node/to-csharp-class
+                :diagnostic/source-node (second (:diagnostic/source-node mapped-fact))}
+               {:diagnostic/code "CS0168"
+                :diagnostic/mapping-status :diagnostic.mapping/unmapped
+                :diagnostic/rule nil
+                :diagnostic/source-node nil}}
+             (set (:query-summary diagnostic-facts-report))))
       (is (= (:command diagnostic-report) (:command build-stage)))
       (is (= (:target/project diagnostic-report) (:target/project build-stage))))))

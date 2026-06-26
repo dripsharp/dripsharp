@@ -229,8 +229,74 @@
     :db/valueType :db.type/long
     :db/cardinality :db.cardinality/one}])
 
+(def pass
+  [{:db/ident :pass/id
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :pass/kind
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :pass/compiler
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :pass/status
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :pass/project
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :pass/target-project
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}])
+
+(def diagnostic
+  [{:db/ident :diagnostic/id
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :diagnostic/pass
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/code
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/message
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/file
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/start-line
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/start-column
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/severity
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/status
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/mapping-status
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/mapping-reason
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/source-node
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/rule
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :diagnostic/source-features
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many}])
+
 (def all
-  (vec (concat project file node declaration source-type reference feature transform-rule)))
+  (vec (concat project file node declaration source-type reference feature transform-rule pass diagnostic)))
 
 (def schema all)
 

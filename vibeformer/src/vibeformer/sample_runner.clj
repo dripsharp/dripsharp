@@ -161,6 +161,141 @@
        (keep parse-dotnet-diagnostic-line)
        vec))
 
+(defn- normalized-file [value]
+  (let [file (normalize-path value)]
+    (slash-path
+     (try
+       (.toRealPath file (make-array java.nio.file.LinkOption 0))
+       (catch java.nio.file.NoSuchFileException _
+         file)))))
+
+(defn- point-within-span? [line column span]
+  (let [start-line (:start-line span)
+        start-column (or (:start-column span) 1)
+        end-line (:end-line span)
+        end-column (or (:end-column span) Long/MAX_VALUE)]
+    (and start-line
+         end-line
+         (<= start-line line end-line)
+         (or (not= line start-line)
+             (<= start-column column))
+         (or (not= line end-line)
+             (<= column end-column)))))
+
+(defn- provenance-span-size [provenance]
+  (let [span (:emit/dest-span provenance)]
+    [(- (or (:end-line span) Long/MAX_VALUE)
+        (or (:start-line span) 0))
+     (- (or (:end-column span) Long/MAX_VALUE)
+        (or (:start-column span) 0))]))
+
+(defn- matching-provenance [provenance diagnostic]
+  (let [file (normalized-file (:file diagnostic))
+        line (:line diagnostic)
+        column (:column diagnostic)]
+    (->> provenance
+         (filter #(and (= file (some-> % :emit/dest-file normalized-file))
+                       (point-within-span? line column (:emit/dest-span %))))
+         (sort-by provenance-span-size)
+         first)))
+
+(defn- source-feature-refs [provenance]
+  (->> (:source/features provenance)
+       (keep :feature/id)
+       (mapv (fn [id] [:feature/id id]))))
+
+(defn- diagnostic-id [pass-id diagnostic]
+  (str pass-id
+       ":"
+       (normalized-file (:file diagnostic))
+       ":"
+       (:line diagnostic)
+       ":"
+       (:column diagnostic)
+       ":"
+       (:code diagnostic)))
+
+(defn- diagnostic-fact [pass-id provenance diagnostic]
+  (let [source-features (source-feature-refs provenance)
+        rule-id (or (get-in provenance [:rule :rule/id])
+                    (second (:emit/rule provenance)))
+        source-node-id (:source/node-id provenance)]
+    (cond-> {:db/id (diagnostic-id pass-id diagnostic)
+             :diagnostic/id (diagnostic-id pass-id diagnostic)
+             :diagnostic/pass pass-id
+             :diagnostic/code (:code diagnostic)
+             :diagnostic/message (:message diagnostic)
+             :diagnostic/file (normalized-file (:file diagnostic))
+             :diagnostic/start-line (:line diagnostic)
+             :diagnostic/start-column (:column diagnostic)
+             :diagnostic/severity (:severity diagnostic)
+             :diagnostic/status :diagnostic.status/open
+             :diagnostic/mapping-status (if provenance
+                                          :diagnostic.mapping/mapped
+                                          :diagnostic.mapping/unmapped)
+             :diagnostic/mapping-reason (if provenance
+                                          :diagnostic.mapping/provenance-span
+                                          :diagnostic.mapping/no-provenance-span)}
+      source-node-id
+      (assoc :diagnostic/source-node [:node/id source-node-id])
+      rule-id
+      (assoc :diagnostic/rule [:rule/id rule-id])
+      (seq source-features)
+      (assoc :diagnostic/source-features source-features))))
+
+(defn- diagnostic-facts [sample paths emit-stage build-stage]
+  (let [pass-id (str (:sample/name sample) ":dotnet-build")
+        diagnostics (:dotnet/diagnostics build-stage)
+        provenance (:csharp/provenance emit-stage)]
+    (into
+     [(cond-> {:db/id pass-id
+               :pass/id pass-id
+               :pass/kind :pass.kind/csharp-compile
+               :pass/compiler "dotnet build"
+               :pass/status (keyword "pass.status" (name (:status build-stage)))
+               :pass/project [:project/id (:sample/name sample)]}
+        (:target/project build-stage)
+        (assoc :pass/target-project (:target/project build-stage)))]
+     (map (fn [diagnostic]
+            (diagnostic-fact pass-id
+                             (matching-provenance provenance diagnostic)
+                             diagnostic)))
+     diagnostics)))
+
+(defn- diagnostic-query-summary [db]
+  (let [rows (d/q '[:find (pull ?diagnostic [:diagnostic/code
+                                             :diagnostic/mapping-status
+                                             {:diagnostic/rule [:rule/id]}
+                                             {:diagnostic/source-node [:node/id]}])
+                    :where
+                    [?diagnostic :diagnostic/id]]
+                  db)]
+    (mapv (fn [[diagnostic]]
+            {:diagnostic/code (:diagnostic/code diagnostic)
+             :diagnostic/mapping-status (:diagnostic/mapping-status diagnostic)
+             :diagnostic/rule (get-in diagnostic [:diagnostic/rule :rule/id])
+             :diagnostic/source-node (get-in diagnostic [:diagnostic/source-node :node/id])})
+          rows)))
+
+(defn- ingest-dotnet-diagnostics! [conn sample paths emit-stage build-stage]
+  (let [facts (diagnostic-facts sample paths emit-stage build-stage)
+        diagnostic-facts (filter :diagnostic/id facts)]
+    (d/transact conn {:tx-data facts})
+    (let [summary (diagnostic-query-summary (d/db conn))
+          mapped-count (count (filter #(= :diagnostic.mapping/mapped
+                                          (:diagnostic/mapping-status %))
+                                      diagnostic-facts))
+          unmapped-count (- (count diagnostic-facts) mapped-count)]
+      (write-edn! (.resolve (:target/diagnostics paths) "dotnet-diagnostic-facts.edn")
+                 {:pass (first facts)
+                  :diagnostics (vec diagnostic-facts)
+                  :query-summary summary})
+      {:diagnostic/pass-id (:pass/id (first facts))
+       :diagnostic/facts-count (count diagnostic-facts)
+       :diagnostic/mapped-count mapped-count
+       :diagnostic/unmapped-count unmapped-count
+       :diagnostic/query-summary summary})))
+
 (declare skipped-stage throwable-data)
 
 (defn- dotnet-build! [sample paths opts]
@@ -354,7 +489,16 @@
             stages (cond-> stages
                      (not (stop-after-failure? stages))
                      (run-stage sample :dotnet/build
-                                #(dotnet-build! sample paths opts)))]
+                                #(dotnet-build! sample paths opts)))
+            emit-stage (some #(when (= :csharp/emit (:stage %)) %) stages)
+            build-stage (some #(when (= :dotnet/build (:stage %)) %) stages)
+            stages (if (and emit-stage
+                            build-stage
+                            (not= :skipped (:status build-stage)))
+                     (conj stages
+                           (stage sample :diagnostics/ingest
+                                  #(ingest-dotnet-diagnostics! conn sample paths emit-stage build-stage)))
+                     stages)]
         stages))))
 
 (defn run-sample
