@@ -884,6 +884,13 @@
           (with-text (str "object.Equals(" args ")"))
           (apply-rule node :java.objects-equals/to-csharp-object-equals :rule-app.status/success))
 
+      (and (= "java.lang.Math" owner)
+           (= "round" source-method-name)
+           (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (-> args-result
+          (with-text (str "(long)System.Math.Floor(" args " + 0.5)"))
+          (apply-rule node :java.math-round/to-csharp-java-round :rule-app.status/success))
+
       (and (= "java.lang.Integer" owner) (= "toString" source-method-name))
       (unsupported node
                    :java.integer-to-string/to-csharp-convert-to-string

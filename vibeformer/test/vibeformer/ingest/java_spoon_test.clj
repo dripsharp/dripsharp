@@ -174,6 +174,22 @@ public final class Version {
 }
 ")
 
+(def math-round-fixture
+  "package com.acme.values;
+
+public final class DataSize {
+  private final double value;
+
+  public DataSize(double value) {
+    this.value = value;
+  }
+
+  public long inWholeBytes() {
+    return Math.round(value);
+  }
+}
+")
+
 (def pattern-fixture
   "package com.acme.patterns;
 
@@ -749,6 +765,37 @@ public final class Demo {
                              :where
                              [?node :node/kind :java.node/method-call]
                              [?node :node/name "equals"]
+                             [?node :node/name ?method-name]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/kind :ref.kind/method-call]
+                             [?ref :ref/owner-type ?owner]
+                             [?owner :type/name ?owner-name]
+                             [?feature :feature/node ?node]
+                             [?feature :feature/kind ?feature-kind]
+                             [?feature :feature/status ?feature-status]]
+                           db)))))))))
+
+(deftest extracts-math-round-feature-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/values/DataSize.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path math-round-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["round"
+                    "java.lang.Math"
+                    :java.api/math-round
+                    :feature.status/supported]}
+                 (set (d/q '[:find ?method-name ?owner-name ?feature-kind ?feature-status
+                             :where
+                             [?node :node/kind :java.node/method-call]
+                             [?node :node/name "round"]
                              [?node :node/name ?method-name]
                              [?ref :ref/from-node ?node]
                              [?ref :ref/kind :ref.kind/method-call]

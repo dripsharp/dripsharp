@@ -11,6 +11,7 @@ public final class DataSizeDemo {
     first.equals(second);
     first.equals("bytes");
     first.label();
+    first.inWholeBytes();
     bytes.label();
   }
 }

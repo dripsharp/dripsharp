@@ -186,6 +186,11 @@
     :rule/input-feature :java.api/objects-equals
     :rule/output-feature :csharp.api/object-equals
     :rule/status implemented-status}
+   {:rule/id :java.math-round/to-csharp-java-round
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/math-round
+    :rule/output-feature :csharp.api/math-floor-cast
+    :rule/status implemented-status}
    {:rule/id :java.statement-node/to-csharp-stub
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/statement

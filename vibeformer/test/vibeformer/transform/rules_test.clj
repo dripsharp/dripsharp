@@ -116,7 +116,8 @@
                             :java.files-read-string/to-csharp-file-read-all-text
                             :java.integer-to-string/to-csharp-convert-to-string
                             :java.objects-require-non-null/to-csharp-null-check
-                            :java.objects-equals/to-csharp-object-equals}]
+                            :java.objects-equals/to-csharp-object-equals
+                            :java.math-round/to-csharp-java-round}]
 	    (is (= #{:java.node/class
              :java.node/assignment
 	             :java.node/array-read
@@ -170,7 +171,8 @@
              :java.api/files-read-string
              :java.api/integer-to-string
              :java.api/objects-require-non-null
-             :java.api/objects-equals}
+             :java.api/objects-equals
+             :java.api/math-round}
            (set (remove nil? (keys rules-by-feature)))))
     (is (every? #(= 1 (count %)) (vals rules-by-kind)))
     (is (every? #(= 1 (count %)) (vals rules-by-feature)))

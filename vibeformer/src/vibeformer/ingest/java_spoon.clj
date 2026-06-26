@@ -616,6 +616,11 @@
                 (= "equals" name))
        [(supported-feature (str node-id ":feature:objects-equals")
                            :java.api/objects-equals
+                           node-id)])
+     (when (and (= "java.lang.Math" owner)
+                (= "round" name))
+       [(supported-feature (str node-id ":feature:math-round")
+                           :java.api/math-round
                            node-id)]))))
 
 (defn- invocation-reference-facts [node-id ^CtInvocation invocation]
