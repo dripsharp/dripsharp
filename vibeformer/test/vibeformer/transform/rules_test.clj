@@ -136,6 +136,7 @@
                             :java.class-get-component-type/to-csharp-element-type
                             :java.class-is-enum/to-csharp-is-enum
                             :java.class-get-class-loader/to-csharp-assembly
+                            :java.class-cast/to-csharp-cast
                             :java.type-get-type-name/to-csharp-full-name
                             :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                             :java.parameterized-type-get-raw-type/to-csharp-type
@@ -231,6 +232,7 @@
              :java.reflection.class/get-type-parameters
              :java.reflection.class/get-component-type
              :java.reflection.class/is-enum
+             :java.reflection.class/cast
              :java.reflection.type/get-type-name
              :java.reflection.parameterized-type/get-actual-type-arguments
              :java.reflection.parameterized-type/get-raw-type

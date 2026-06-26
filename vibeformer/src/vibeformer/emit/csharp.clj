@@ -1168,6 +1168,27 @@
           (with-text (str target-text ".Assembly"))
           (apply-rule node :java.class-get-class-loader/to-csharp-assembly :rule-app.status/success))
 
+      (and (= "java.lang.Class" owner)
+           (= "cast" source-method-name)
+           target
+           (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (let [cast-type (expression-type ctx node)
+            mapped-type (map-type cast-type)
+            value-result (emit-argument ctx node 0)]
+        (if (and value-result
+                 (:csharp/type mapped-type)
+                 (not= "object" (:csharp/type mapped-type)))
+          (-> (merge-emits [target-result value-result])
+              (update :usings into (:csharp/usings mapped-type))
+              (with-text (str "((" (:csharp/type mapped-type) ")" (:text value-result) ")"))
+              (apply-rule node :java.class-cast/to-csharp-cast :rule-app.status/success))
+          (unsupported node
+                       :java.class-cast/to-csharp-cast
+                       {:method source-method-name
+                        :owner owner
+                        :target-type (:type/name cast-type)
+                        :reason :emit.reason/unsupported-class-cast-type})))
+
       (and (= "java.lang.reflect.Type" owner)
            (= "getTypeName" source-method-name)
            target

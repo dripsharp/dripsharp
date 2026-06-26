@@ -49,6 +49,10 @@ public final class ReflectionApi {
     return same(type.getClassLoader(), ReflectionApi.class.getClassLoader());
   }
 
+  public static String castString(Class<String> type, Object value) {
+    return type.cast(value);
+  }
+
   private static boolean same(ClassLoader left, ClassLoader right) {
     return left == right;
   }

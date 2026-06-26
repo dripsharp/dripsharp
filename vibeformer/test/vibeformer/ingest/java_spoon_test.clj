@@ -249,6 +249,10 @@ public final class ReflectionApi {
     return ReflectionApi.class.getClassLoader();
   }
 
+  public String castString(Class<String> type, Object value) {
+    return type.cast(value);
+  }
+
   public String reflectedTypeName(Type type) {
     return type.getTypeName();
   }
@@ -2139,6 +2143,7 @@ public final class Demo {
                                         :java.reflection.class/get-component-type
                                         :java.reflection.class/is-enum
                                         :java.reflection.class/get-class-loader
+                                        :java.reflection.class/cast
                                         :java.reflection.type/get-type-name
                                         :java.reflection.parameterized-type/get-actual-type-arguments
                                         :java.reflection.parameterized-type/get-raw-type
@@ -2166,6 +2171,7 @@ public final class Demo {
                    [:java.reflection.class/get-component-type "getComponentType" :feature.status/supported]
                    [:java.reflection.class/is-enum "isEnum" :feature.status/supported]
                    [:java.reflection.class/get-class-loader "getClassLoader" :feature.status/supported]
+                   [:java.reflection.class/cast "cast" :feature.status/supported]
                    [:java.reflection.type/get-type-name "getTypeName" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-actual-type-arguments "getActualTypeArguments" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-raw-type "getRawType" :feature.status/supported]

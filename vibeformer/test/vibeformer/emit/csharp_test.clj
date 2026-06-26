@@ -259,6 +259,10 @@ public final class ReflectionApi {
     return same(type.getClassLoader(), ReflectionApi.class.getClassLoader());
   }
 
+  public static String castString(Class<String> type, Object value) {
+    return type.cast(value);
+  }
+
   private static boolean same(ClassLoader left, ClassLoader right) {
     return left == right;
   }
@@ -2651,6 +2655,8 @@ public final class Chain {
                            "return typeof(ReflectionApi).Assembly;"
                            "public static bool sameLoader(Type type)"
                            "return ReflectionApi.same(type.Assembly, typeof(ReflectionApi).Assembly);"
+                           "public static string castString(Type type, object value)"
+                           "return ((string)value);"
                            "private static bool same(Assembly left, Assembly right)"
                            "public static string reflectedTypeName(Type type)"
                            "return (type.FullName ?? type.Name);"
@@ -2677,6 +2683,7 @@ public final class Chain {
                         :java.class-get-component-type/to-csharp-element-type
                         :java.class-is-enum/to-csharp-is-enum
                         :java.class-get-class-loader/to-csharp-assembly
+                        :java.class-cast/to-csharp-cast
                         :java.type-get-type-name/to-csharp-full-name
                         :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                         :java.parameterized-type-get-raw-type/to-csharp-type

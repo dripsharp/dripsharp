@@ -294,6 +294,11 @@
     :rule/input-feature :java.reflection.class/get-class-loader
     :rule/output-feature :csharp.api/type-assembly
     :rule/status implemented-status}
+   {:rule/id :java.class-cast/to-csharp-cast
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/cast
+    :rule/output-feature :csharp.feature/cast
+    :rule/status implemented-status}
    {:rule/id :java.type-get-type-name/to-csharp-full-name
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.type/get-type-name
