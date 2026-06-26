@@ -66,6 +66,33 @@ object BasicDeclarations {
 }
 ")
 
+(def kotlin-object-overrides-fixture
+  "package com.example.kotlin
+
+import java.net.URI
+
+interface ModuleReader {
+  val isLocal: Boolean
+  val scheme: String
+
+  fun read(uri: URI): String
+
+  fun listElements(uri: URI): List<String>
+}
+
+object FixtureModuleReader : ModuleReader {
+  override val isLocal: Boolean = true
+
+  override val scheme: String = \"foo\"
+
+  override fun read(uri: URI): String = \"hello\"
+
+  override fun listElements(uri: URI): List<String> {
+    throw NotImplementedError()
+  }
+}
+")
+
 (defn- temp-root []
   (Files/createTempDirectory "vibeformer-sample-runner-test-" (make-array java.nio.file.attribute.FileAttribute 0)))
 
@@ -112,6 +139,12 @@ object BasicDeclarations {
   (let [root (temp-root)]
     (write-file! root "sample-projects/kotlin-basic-declarations/source/src/main/kotlin/com/example/kotlin/BasicDeclarations.kt"
                  kotlin-basic-fixture)
+    root))
+
+(defn- kotlin-object-overrides-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/kotlin-object-overrides/source/src/main/kotlin/com/example/kotlin/ObjectOverrides.kt"
+                 kotlin-object-overrides-fixture)
     root))
 
 (deftest discovers-samples-with-source-roots
@@ -380,6 +413,45 @@ object BasicDeclarations {
     (is (str/includes? content "return name is not null ? raw + name : raw;"))
     (is (str/includes? content "public static List<Uri> values(string root)"))
     (is (str/includes? content "new Uri(System.IO.Path.Combine(root, \"child\"), UriKind.RelativeOrAbsolute)"))))
+
+(deftest runs-kotlin-object-overrides-sample-through-emission-pipeline
+  (let [root (kotlin-object-overrides-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "kotlin-object-overrides"
+                                          :kotlin/emit? true
+                                          :dotnet/enabled? false})
+        target (.resolve root "sample-projects/kotlin-object-overrides/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        interface-file (.resolve target "csharp/com/example/kotlin/ModuleReader.cs")
+        object-file (.resolve target "csharp/com/example/kotlin/FixtureModuleReader.cs")
+        interface-content (slurp (str interface-file))
+        object-content (slurp (str object-file))
+        stage-by-name (into {} (map (juxt :stage identity) stages))]
+    (is (:ok? result))
+    (is (= :ok (get-in stage-by-name [:coverage/check :status])))
+    (is (nil? (get-in stage-by-name [:coverage/check :coverage/allow-mode])))
+    (is (= :ok (get-in stage-by-name [:csharp/emit :status])))
+    (is (= :skipped (get-in stage-by-name [:dotnet/build :status])))
+    (is (true? (:ok? coverage)))
+    (is (nil? (:coverage/allow-mode coverage)))
+    (is (= :generated (:status provenance)))
+    (is (= 2 (:csharp/files-written provenance)))
+    (is (some #(= :kotlin.object-node/to-csharp-stub
+                  (get-in % [:rule :rule/id]))
+              (:csharp/provenance provenance)))
+    (is (some #(= :kotlin.throw-node/to-csharp-throw
+                  (get-in % [:rule :rule/id]))
+              (:csharp/provenance provenance)))
+    (is (str/includes? interface-content "public interface ModuleReader"))
+    (is (str/includes? interface-content "List<string> listElements(Uri uri);"))
+    (is (str/includes? object-content "public sealed class FixtureModuleReader : ModuleReader"))
+    (is (str/includes? object-content "public static readonly FixtureModuleReader Instance = new FixtureModuleReader();"))
+    (is (str/includes? object-content "public bool isLocal { get; } = true;"))
+    (is (str/includes? object-content "public string scheme { get; } = \"foo\";"))
+    (is (str/includes? object-content "return \"hello\";"))
+    (is (str/includes? object-content "throw new NotImplementedException();"))))
 
 (deftest sample-runner-cli-parses-edn-options
   (is (= {:coverage/allow-unsupported? true}

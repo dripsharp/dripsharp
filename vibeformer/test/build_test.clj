@@ -25,7 +25,9 @@
 
 (deftest kotlin-emission-sample-enables-runner-emission-by-default
   (testing "string sample names"
-    (doseq [sample-name ["kotlin-basic-declarations" "kotlin-api-calls"]]
+    (doseq [sample-name ["kotlin-basic-declarations"
+                         "kotlin-api-calls"
+                         "kotlin-object-overrides"]]
       (let [args (build/sample-runner-main-args sample-name {})]
         (is (= ["-m" "vibeformer.sample-runner" sample-name]
                (take 3 args)))

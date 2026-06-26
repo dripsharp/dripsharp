@@ -79,6 +79,33 @@ fun values(root: Path): List<URI> {
 }
 ")
 
+(def kotlin-object-overrides-fixture
+  "package com.acme.overrides
+
+import java.net.URI
+
+interface ModuleReader {
+  val isLocal: Boolean
+  val scheme: String
+
+  fun read(uri: URI): String
+
+  fun listElements(uri: URI): List<String>
+}
+
+object FixtureModuleReader : ModuleReader {
+  override val isLocal: Boolean = true
+
+  override val scheme: String = \"foo\"
+
+  override fun read(uri: URI): String = \"hello\"
+
+  override fun listElements(uri: URI): List<String> {
+    throw NotImplementedError()
+  }
+}
+")
+
 (defn- with-empty-db [f]
   (let [system (str "vibeformer-kotlin-psi-test-" (UUID/randomUUID))
         db-name (str "facts-" (UUID/randomUUID))
@@ -450,3 +477,68 @@ fun values(root: Path): List<URI> {
                  resolved-calls))
           (is (empty? unresolved-targets))
           (is (empty? ranked-targets)))))))
+
+(deftest extracts-kotlin-object-interface-override-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/kotlin/com/acme/overrides/ObjectOverrides.kt"
+            opts {:source/root root
+                  :project/id "object-overrides"
+                  :project/name "Object Overrides"}]
+        (write-file! root file-path kotlin-object-overrides-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "object-overrides"})
+        (kotlin-psi/enrich! conn {:project/id "object-overrides"})
+        (let [db (d/db conn)]
+          (testing "Kotlin interfaces and object implementation refs are normalized"
+            (is (= #{[:decl.kind/interface "com.acme.overrides.ModuleReader"]
+                     [:decl.kind/object "com.acme.overrides.FixtureModuleReader"]}
+                   (set (d/q '[:find ?kind ?qname
+                               :where
+                               [?decl :decl/lang :lang/kotlin]
+                               [?decl :decl/kind ?kind]
+                               [?decl :decl/qualified-name ?qname]
+                               [(contains? #{"com.acme.overrides.ModuleReader"
+                                             "com.acme.overrides.FixtureModuleReader"}
+                                            ?qname)]]
+                             db))))
+            (is (= #{["FixtureModuleReader" "kotlin:com.acme.overrides.ModuleReader" "ModuleReader"]}
+                   (set (d/q '[:find ?node-name ?type-id ?ref-name
+                               :where
+                               [?node :node/name ?node-name]
+                               [?ref :ref/from-node ?node]
+                               [?ref :ref/kind :ref.kind/implements]
+                               [?ref :ref/name ?ref-name]
+                               [?ref :ref/to-type ?type]
+                               [?type :type/id ?type-id]]
+                             db)))))
+
+          (testing "override modifiers and expression values are queryable"
+            (is (= #{"isLocal" "scheme" "read" "listElements"}
+                   (set (map first
+                             (d/q '[:find ?name
+                                    :where
+                                    [?decl :decl/modifiers :override]
+                                    [?decl :decl/name ?name]]
+                                  db)))))
+            (is (= #{["isLocal" "true"]
+                     ["scheme" "\"foo\""]
+                     ["read" "\"hello\""]}
+                   (set (d/q '[:find ?name ?value
+                               :where
+                               [?decl :decl/name ?name]
+                               [?decl :decl/source-node ?node]
+                               [?node :node/value ?value]
+                               [(contains? #{"isLocal" "scheme" "read"} ?name)]]
+                             db)))))
+
+          (testing "throw bodies are explicit source nodes for rule coverage"
+            (is (= #{["throw" "NotImplementedError()"]}
+                   (set (d/q '[:find ?name ?value
+                               :where
+                               [?node :node/kind :kotlin.node/throw]
+                               [?node :node/name ?name]
+                               [?node :node/value ?value]]
+                             db))))))))))

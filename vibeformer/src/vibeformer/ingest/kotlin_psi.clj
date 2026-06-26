@@ -7,10 +7,10 @@
            (org.jetbrains.kotlin.com.intellij.openapi.util Disposer)
            (org.jetbrains.kotlin.cli.jvm.compiler EnvironmentConfigFiles KotlinCoreEnvironment)
            (org.jetbrains.kotlin.config CompilerConfiguration)
-           (org.jetbrains.kotlin.psi KtBinaryExpression KtCallExpression KtClass KtFile
+           (org.jetbrains.kotlin.psi KtBinaryExpression KtCallExpression KtClass KtClassOrObject KtFile
                                      KtNamedFunction KtNullableType KtObjectDeclaration
                                      KtProperty KtPsiFactory KtQualifiedExpression
-                                     KtReturnExpression KtSafeQualifiedExpression
+                                     KtReturnExpression KtSafeQualifiedExpression KtThrowExpression
                                      KtTypeReference)))
 
 (def ^:private lang :lang/kotlin)
@@ -280,7 +280,9 @@
     (instance? KtObjectDeclaration declaration) (if (.isCompanion ^KtObjectDeclaration declaration)
                                                   :decl.kind/companion-object
                                                   :decl.kind/object)
-    (instance? KtClass declaration) :decl.kind/class
+    (instance? KtClass declaration) (if (.isInterface ^KtClass declaration)
+                                      :decl.kind/interface
+                                      :decl.kind/class)
     (instance? KtNamedFunction declaration) :decl.kind/function
     (instance? KtProperty declaration) :decl.kind/property
     :else :decl.kind/declaration))
@@ -331,6 +333,36 @@
               (value-parameter-type-refs node-id value-parameters)
               (nullable-type-feature-facts node-id return-type :return-type)
               (value-parameter-nullable-features node-id value-parameters)))))
+
+(defn- supertype-ref-facts [node-id declaration]
+  (when (instance? KtClassOrObject declaration)
+    (mapcat
+     (fn [ordinal entry]
+       (when-let [type-reference (.getTypeReference entry)]
+         (when-let [type-fact (type-fact type-reference)]
+           (concat
+            (type-facts type-reference)
+            [{:db/id (str node-id ":supertype:" ordinal ":" (:type/id type-fact))
+              :ref/id (str node-id ":supertype:" ordinal ":" (:type/id type-fact))
+              :ref/kind :ref.kind/implements
+              :ref/from-node node-id
+              :ref/to-type (:type/id type-fact)
+              :ref/name (:type/name type-fact)
+              :ref/role :supertype
+              :ref/resolved? false
+              :ref/reason :resolve.reason/syntax-only}]))))
+     (range)
+     (.getSuperTypeListEntries ^KtClassOrObject declaration))))
+
+(defn- declaration-node-value [declaration]
+  (cond
+    (instance? KtProperty declaration)
+    (some-> ^KtProperty declaration .getInitializer .getText str/trim)
+
+    (instance? KtNamedFunction declaration)
+    (let [function ^KtNamedFunction declaration]
+      (when-not (.hasBlockBody function)
+        (some-> function .getBodyExpression .getText str/trim)))))
 
 (defn- declaration-fact [decl-id decl-kind name qualified-name node-id declaration]
   (let [function-return-type (when (instance? KtNamedFunction declaration)
@@ -463,12 +495,26 @@
                 :role :return
                 :value (some-> expression .getReturnedExpression .getText str/trim))]))
 
+(defn- throw-facts [source file-id parent-node-id ordinal ^KtThrowExpression expression]
+  (let [node-id (str file-id ":throw:" parent-node-id ":" ordinal)]
+    [(node-fact source
+                node-id
+                :kotlin.node/throw
+                "throw"
+                file-id
+                ordinal
+                expression
+                :parent parent-node-id
+                :role :throw
+                :value (some-> expression .getThrownExpression .getText str/trim))]))
+
 (defn- expression-facts [source file-id parent-node-id declaration]
   (let [calls (collect-elements declaration KtCallExpression)
         safe-calls (collect-elements declaration KtSafeQualifiedExpression)
         elvises (filter elvis-expression? (collect-elements declaration KtBinaryExpression))
+        throws (collect-elements declaration KtThrowExpression)
         body-shape? (and (instance? KtNamedFunction declaration)
-                         (or (seq calls) (seq safe-calls) (seq elvises)))]
+                         (or (seq calls) (seq safe-calls) (seq elvises) (seq throws)))]
     (concat
      (mapcat (fn [ordinal call]
                (call-facts source file-id parent-node-id ordinal call))
@@ -491,7 +537,11 @@
         (mapcat (fn [ordinal expression]
                   (return-facts source file-id parent-node-id ordinal expression))
                 (range)
-                (collect-elements declaration KtReturnExpression)))))))
+                (collect-elements declaration KtReturnExpression))
+        (mapcat (fn [ordinal expression]
+                  (throw-facts source file-id parent-node-id ordinal expression))
+                (range)
+                throws))))))
 
 (defn- child-declarations [declaration]
   (cond
@@ -535,7 +585,8 @@
                (instance? KtObjectDeclaration declaration))
        [(source-type-fact (str "kotlin:" qualified-name) qualified-name)])
      [(node-fact source node-id node-kind name file-id ordinal declaration
-                 :parent parent-node-id)
+                 :parent parent-node-id
+                 :value (declaration-node-value declaration))
       (declaration-fact decl-id decl-kind name qualified-name node-id declaration)
       (supported-feature (str node-id ":feature:" (clojure.core/name (declaration-feature-kind declaration)))
                          (declaration-feature-kind declaration)
@@ -543,6 +594,7 @@
      (when-not parent-node-id
        [(top-level-feature node-id)])
      (declaration-type-facts node-id declaration)
+     (supertype-ref-facts node-id declaration)
      (when (or (instance? KtNamedFunction declaration)
                (instance? KtProperty declaration))
        (expression-facts source file-id node-id declaration))
@@ -735,6 +787,7 @@
   (let [decl-types (keep :decl/type decls)
         source-decl-types (keep (fn [{:decl/keys [kind qualified-name]}]
                                   (when (contains? #{:decl.kind/class
+                                                     :decl.kind/interface
                                                      :decl.kind/object
                                                      :decl.kind/companion-object}
                                                    kind)
@@ -885,6 +938,9 @@
      (mapcat (fn [ref]
                (case (:ref/kind ref)
                  :ref.kind/type-use
+                 (type-resolution-tx db type-index ref)
+
+                 :ref.kind/implements
                  (type-resolution-tx db type-index ref)
 
                  :ref.kind/function-call

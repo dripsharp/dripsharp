@@ -640,6 +640,11 @@
     :rule/input-kind :kotlin.node/return
     :rule/output-feature :csharp.feature/return
     :rule/status implemented-status}
+   {:rule/id :kotlin.throw-node/to-csharp-throw
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/throw
+    :rule/output-feature :csharp.feature/throw
+    :rule/status implemented-status}
    {:rule/id :kotlin.package-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/package

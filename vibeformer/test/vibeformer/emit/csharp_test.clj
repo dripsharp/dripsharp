@@ -528,6 +528,33 @@ object KotlinApiCalls {
 }
 ")
 
+(def kotlin-object-overrides-fixture
+  "package com.example.kotlin
+
+import java.net.URI
+
+interface ModuleReader {
+  val isLocal: Boolean
+  val scheme: String
+
+  fun read(uri: URI): String
+
+  fun listElements(uri: URI): List<String>
+}
+
+object FixtureModuleReader : ModuleReader {
+  override val isLocal: Boolean = true
+
+  override val scheme: String = \"foo\"
+
+  override fun read(uri: URI): String = \"hello\"
+
+  override fun listElements(uri: URI): List<String> {
+    throw NotImplementedError()
+  }
+}
+")
+
 (def assignment-fixture
   "package com.example.tools;
 
@@ -1193,6 +1220,61 @@ public final class Chain {
                         :kotlin.function-node/to-csharp-stub
                         :kotlin.local-property-node/to-csharp-local
                         :kotlin.return-node/to-csharp-return]]
+            (is (contains? applied-rules rule))))))))
+
+(deftest emits-kotlin-object-interface-overrides
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/kotlin/com/example/kotlin/ObjectOverrides.kt"
+            opts {:source/root source-root
+                  :project/id "kotlin-overrides"
+                  :project/name "Kotlin Overrides"}]
+        (write-file! source-root file-path kotlin-object-overrides-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "kotlin-overrides"})
+        (kotlin-psi/enrich! conn {:project/id "kotlin-overrides"})
+        (rules/register! conn rules/initial-kotlin-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              interface-file (.resolve target "com/example/kotlin/ModuleReader.cs")
+              object-file (.resolve target "com/example/kotlin/FixtureModuleReader.cs")
+              interface-content (slurp (str interface-file))
+              object-content (slurp (str object-file))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile interface-file (make-array java.nio.file.LinkOption 0)))
+          (is (Files/isRegularFile object-file (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? interface-content "using System;"))
+          (is (str/includes? interface-content "using System.Collections.Generic;"))
+          (is (str/includes? interface-content "public interface ModuleReader"))
+          (is (str/includes? interface-content "bool isLocal { get; }"))
+          (is (str/includes? interface-content "string scheme { get; }"))
+          (is (str/includes? interface-content "string read(Uri uri);"))
+          (is (str/includes? interface-content "List<string> listElements(Uri uri);"))
+          (is (str/includes? object-content "using System;"))
+          (is (str/includes? object-content "using System.Collections.Generic;"))
+          (is (str/includes? object-content "public sealed class FixtureModuleReader : ModuleReader"))
+          (is (str/includes? object-content "public static readonly FixtureModuleReader Instance = new FixtureModuleReader();"))
+          (is (str/includes? object-content "private FixtureModuleReader()"))
+          (is (str/includes? object-content "public bool isLocal { get; } = true;"))
+          (is (str/includes? object-content "public string scheme { get; } = \"foo\";"))
+          (is (str/includes? object-content "public string read(Uri uri)"))
+          (is (str/includes? object-content "return \"hello\";"))
+          (is (str/includes? object-content "public List<string> listElements(Uri uri)"))
+          (is (str/includes? object-content "throw new NotImplementedException();"))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:kotlin.class-node/to-csharp-stub
+                        :kotlin.object-node/to-csharp-stub
+                        :kotlin.property-node/to-csharp-stub
+                        :kotlin.function-node/to-csharp-stub
+                        :kotlin.return-node/to-csharp-return
+                        :kotlin.throw-node/to-csharp-throw]]
             (is (contains? applied-rules rule))))))))
 
 (deftest emits-simple-java-enums

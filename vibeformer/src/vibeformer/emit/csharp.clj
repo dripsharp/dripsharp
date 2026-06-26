@@ -173,7 +173,7 @@
               :where
               [?decl :decl/lang :lang/kotlin]
               [?decl :decl/kind ?kind]
-              [(contains? #{:decl.kind/class :decl.kind/object} ?kind)]]
+              [(contains? #{:decl.kind/class :decl.kind/interface :decl.kind/object} ?kind)]]
             db)
        (map first)
        (sort-by :decl/qualified-name)
@@ -212,6 +212,7 @@
                        :node/id
                        :node/kind
                        :node/name
+                       :node/value
                        :node/ordinal
                        :node/start-line
                        :node/start-column
@@ -2442,8 +2443,16 @@
          (sort-by (juxt :decl/kind :decl/name :decl/id))
          vec)))
 
-(defn- kotlin-static? [type-decl]
-  (= :decl.kind/object (:decl/kind type-decl)))
+(defn- kotlin-interface? [type-decl]
+  (= :decl.kind/interface (:decl/kind type-decl)))
+
+(defn- kotlin-singleton-object? [db type-decl]
+  (and (= :decl.kind/object (:decl/kind type-decl))
+       (seq (inherited-types db type-decl))))
+
+(defn- kotlin-static? [db type-decl]
+  (and (= :decl.kind/object (:decl/kind type-decl))
+       (not (kotlin-singleton-object? db type-decl))))
 
 (defn- kotlin-default-return [return-type]
   (when-not (= "void" (type-name return-type))
@@ -2511,32 +2520,62 @@
            node
            :kotlin.return-node/to-csharp-return))
 
+(defn- kotlin-throw-text [value]
+  (cond
+    (= "NotImplementedError()" value) "throw new NotImplementedException();"
+    :else "throw new NotImplementedException();"))
+
+(defn- kotlin-throw-content [node]
+  (emitted (str "            " (kotlin-throw-text (:node/value node)) "\n")
+           node
+           :kotlin.throw-node/to-csharp-throw
+           {:usings #{"System"}}))
+
+(defn- kotlin-expression-text [value]
+  (cond
+    (nil? value) "default!"
+    (re-matches #"(?s)\".*\"" value) value
+    (#{"true" "false"} value) value
+    (re-matches #"-?\d+(\.\d+)?" value) value
+    :else "default!"))
+
 (defn- kotlin-function-body-content [db function-decl return-type]
   (let [locals (kotlin-body-nodes db function-decl :kotlin.node/local-property)
-        returns (kotlin-body-nodes db function-decl :kotlin.node/return)]
-    (if (or (seq locals) (seq returns))
+        returns (kotlin-body-nodes db function-decl :kotlin.node/return)
+        throws (kotlin-body-nodes db function-decl :kotlin.node/throw)
+        expression-body (get-in function-decl [:decl/source-node :node/value])]
+    (if (or (seq locals) (seq returns) (seq throws))
       (merge-emits "\n"
                    (concat (map kotlin-local-property-content locals)
-                           (map kotlin-return-content returns)))
-      (emitted (when-let [body-line (kotlin-default-return (or return-type {:type/name "void"}))]
-                 (str "            " body-line "\n"))
-               (:decl/source-node function-decl)
-               :kotlin.function-node/to-csharp-stub))))
+                           (map kotlin-return-content returns)
+                           (map kotlin-throw-content throws)))
+      (if expression-body
+        (emitted (str "            return " (kotlin-expression-text expression-body) ";\n")
+                 (:decl/source-node function-decl)
+                 :kotlin.return-node/to-csharp-return)
+        (emitted (when-let [body-line (kotlin-default-return (or return-type {:type/name "void"}))]
+                   (str "            " body-line "\n"))
+                 (:decl/source-node function-decl)
+                 :kotlin.function-node/to-csharp-stub)))))
 
 (defn- kotlin-function-content [db type-decl function-decl]
-  (let [static? (kotlin-static? type-decl)
+  (let [interface? (kotlin-interface? type-decl)
+        static? (kotlin-static? db type-decl)
         return-type (:decl/return-type function-decl)
         return-text (if return-type (type-name return-type) "void")
         body-content (kotlin-function-body-content db function-decl return-type)
         param-types (map (comp map-type :source-type)
                          (type-ref-params db function-decl))
         mapped-return (when return-type (map-type return-type))
-        text (str "        public " (when static? "static ")
-                  return-text " " (:decl/name function-decl)
-                  "(" (param-list db function-decl) ")\n"
-                  "        {\n"
-                  (:text body-content)
-                  "        }\n")]
+        text (if interface?
+               (str "        " return-text " " (:decl/name function-decl)
+                    "(" (param-list db function-decl) ");\n")
+               (str "        public " (when static? "static ")
+                    return-text " " (:decl/name function-decl)
+                    "(" (param-list db function-decl) ")\n"
+                    "        {\n"
+                    (:text body-content)
+                    "        }\n"))]
     (-> body-content
         (update :usings into (mapcat :csharp/usings (cond-> param-types
                                                       mapped-return (conj mapped-return))))
@@ -2545,14 +2584,22 @@
                     :kotlin.function-node/to-csharp-stub
                     :rule-app.status/success))))
 
-(defn- kotlin-property-content [type-decl property-decl]
-  (let [static? (kotlin-static? type-decl)
+(defn- kotlin-property-content [db type-decl property-decl]
+  (let [interface? (kotlin-interface? type-decl)
+        static? (kotlin-static? db type-decl)
         property-type (:decl/type property-decl)
         mapped (when property-type (map-type property-type))
-        text (str "        public " (when static? "static ")
-                  (or (:csharp/type mapped) "object") " "
-                  (:decl/name property-decl)
-                  " { get; } = default!;\n")]
+        initializer (if (contains? (modifiers property-decl) :override)
+                      (kotlin-expression-text (get-in property-decl [:decl/source-node :node/value]))
+                      "default!")
+        text (if interface?
+               (str "        " (or (:csharp/type mapped) "object") " "
+                    (:decl/name property-decl)
+                    " { get; }\n")
+               (str "        public " (when static? "static ")
+                    (or (:csharp/type mapped) "object") " "
+                    (:decl/name property-decl)
+                    " { get; } = " initializer ";\n"))]
     (emitted text
              (:decl/source-node property-decl)
              :kotlin.property-node/to-csharp-stub
@@ -2561,7 +2608,7 @@
 (defn- kotlin-member-content [db type-decl member]
   (case (:decl/kind member)
     :decl.kind/function (kotlin-function-content db type-decl member)
-    :decl.kind/property (kotlin-property-content type-decl member)
+    :decl.kind/property (kotlin-property-content db type-decl member)
     nil))
 
 (defn- kotlin-declaration-usings [db members]
@@ -2581,24 +2628,43 @@
         members (kotlin-member-decls db type-decl)
         member-content (merge-emits "\n" (keep #(kotlin-member-content db type-decl %) members))
         usings (kotlin-declaration-usings db members)
-        type-keyword (if (kotlin-static? type-decl) "static class" "sealed class")
+        singleton? (kotlin-singleton-object? db type-decl)
+        interface? (kotlin-interface? type-decl)
+        type-keyword (cond
+                       interface? "interface"
+                       (kotlin-static? db type-decl) "static class"
+                       :else "sealed class")
+        singleton-content (when singleton?
+                            (str "        public static readonly " (:decl/name type-decl) " Instance = new " (:decl/name type-decl) "();\n\n"
+                                 "        private " (:decl/name type-decl) "()\n"
+                                 "        {\n"
+                                 "        }\n\n"))
+        all-usings (->> (concat usings
+                                (mapcat :csharp/usings (map map-type (inherited-types db type-decl)))
+                                (:usings member-content))
+                        (map csharp-qualified-name)
+                        (remove #(= namespace %))
+                        set
+                        sort
+                        vec)
         text (str generated-file-header
-                  (when (seq usings)
-                    (str (str/join "\n" (map #(str "using " % ";") usings)) "\n\n"))
+                  (when (seq all-usings)
+                    (str (str/join "\n" (map #(str "using " % ";") all-usings)) "\n\n"))
                   (when-not (str/blank? namespace)
                     (str "namespace " namespace "\n{\n"))
-                  "    public " type-keyword " " (:decl/name type-decl) "\n"
+                  "    public " type-keyword " " (:decl/name type-decl) (base-list db type-decl) "\n"
                   "    {\n"
+                  singleton-content
                   (:text member-content)
                   (when (seq (:text member-content)) "\n")
                   "    }\n"
                   (when-not (str/blank? namespace)
                     "}\n"))
-        rule-id (if (kotlin-static? type-decl)
+        rule-id (if (= :decl.kind/object (:decl/kind type-decl))
                   :kotlin.object-node/to-csharp-stub
                   :kotlin.class-node/to-csharp-stub)]
     (-> member-content
-        (update :usings into usings)
+        (update :usings into all-usings)
         (with-text text)
         (apply-rule (:decl/source-node type-decl)
                     rule-id

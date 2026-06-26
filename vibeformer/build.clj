@@ -13,7 +13,8 @@
 
 (def default-sample-runner-opts
   {"kotlin-basic-declarations" {:kotlin/emit? true}
-   "kotlin-api-calls" {:kotlin/emit? true}})
+   "kotlin-api-calls" {:kotlin/emit? true}
+   "kotlin-object-overrides" {:kotlin/emit? true}})
 
 (def sample-runner-option-keys
   [:coverage/allow-stubs?
