@@ -15,6 +15,8 @@
 
 (def ^:private lang :lang/kotlin)
 
+(def ^:private max-node-value-length 1024)
+
 (defn- hex-bytes [bytes]
   (apply str (map #(format "%02x" (bit-and % 0xff)) bytes)))
 
@@ -22,6 +24,15 @@
   (let [bytes (.getBytes (str value) StandardCharsets/UTF_8)]
     (str "sha256:" (hex-bytes (.digest (doto (MessageDigest/getInstance "SHA-256")
                                          (.update bytes)))))))
+
+(defn- bounded-node-value [value]
+  (when (some? value)
+    (let [value (str value)]
+      (if (<= (count value) max-node-value-length)
+        value
+        (let [suffix (str "\n... [truncated " (sha256 value) "]")
+              prefix-length (max 0 (- max-node-value-length (count suffix)))]
+          (str (subs value 0 prefix-length) suffix))))))
 
 (defn- path [value]
   (if (instance? java.nio.file.Path value)
@@ -86,7 +97,7 @@
            :node/source-hash (sha256 (.getText element))}
     parent (assoc :node/parent parent)
     role (assoc :node/role role)
-    (some? value) (assoc :node/value value)
+    (some? value) (assoc :node/value (bounded-node-value value))
     true (merge (source-span source element))))
 
 (defn- feature-fact [id kind node-id status severity]

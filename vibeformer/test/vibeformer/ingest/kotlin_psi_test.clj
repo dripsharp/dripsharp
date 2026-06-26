@@ -149,6 +149,38 @@ object FixtureModuleReader : ModuleReader {
                             :where [?feature :feature/id]]
                           db))})
 
+(deftest bounds-large-kotlin-node-values-for-datomic-storage
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/kotlin/com/acme/large/LargeValue.kt"
+            large-text (apply str (repeat 5000 "x"))
+            source-text (str "package com.acme.large\n\n"
+                             "val huge: String = \"" large-text "\"\n")
+            opts {:source/root root
+                  :project/id "large-value"
+                  :project/name "Large Value"}]
+        (write-file! root file-path source-text)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "large-value"})
+        (let [db (d/db conn)
+              [[value source-hash start-line end-line]]
+              (d/q '[:find ?value ?hash ?start-line ?end-line
+                     :where
+                     [?node :node/kind :kotlin.node/property]
+                     [?node :node/name "huge"]
+                     [?node :node/value ?value]
+                     [?node :node/source-hash ?hash]
+                     [?node :node/start-line ?start-line]
+                     [?node :node/end-line ?end-line]]
+                   db)]
+          (is (<= (count value) 1024))
+          (is (str/starts-with? value "\"xxxxxxxx"))
+          (is (str/includes? value "... [truncated sha256:"))
+          (is (re-find #"^sha256:" source-hash))
+          (is (= [3 3] [start-line end-line])))))))
+
 (deftest extracts-normalized-kotlin-facts-with-psi
   (with-empty-db
     (fn [conn]
