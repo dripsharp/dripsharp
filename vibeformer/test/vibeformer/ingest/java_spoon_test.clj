@@ -225,6 +225,10 @@ public final class ReflectionApi {
     return String.class.getTypeName() + \":\" + String.class.getSimpleName();
   }
 
+  public String className(Class<?> type) {
+    return type.getName();
+  }
+
   public Type parentType(Class<?> type) {
     return type.getGenericSuperclass();
   }
@@ -2133,6 +2137,7 @@ public final class Demo {
                           [?feature :feature/kind ?kind]
                           [(contains? #{:java.reflection.class/type-literal
                                         :java.reflection.class/get-type-name
+                                        :java.reflection.class/get-name
                                         :java.reflection.class/get-simple-name
                                         :java.reflection.class/get-modifiers
                                         :java.reflection.class/is-assignable-from
@@ -2161,6 +2166,7 @@ public final class Demo {
                         db))]
           (is (= #{[:java.reflection.class/type-literal "class" :feature.status/supported]
                    [:java.reflection.class/get-type-name "getTypeName" :feature.status/supported]
+                   [:java.reflection.class/get-name "getName" :feature.status/supported]
                    [:java.reflection.class/get-simple-name "getSimpleName" :feature.status/supported]
                    [:java.reflection.class/get-modifiers "getModifiers" :feature.status/supported]
                    [:java.reflection.class/is-assignable-from "isAssignableFrom" :feature.status/supported]

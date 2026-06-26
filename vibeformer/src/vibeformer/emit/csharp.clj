@@ -1088,6 +1088,14 @@
           (apply-rule node :java.class-get-type-name/to-csharp-full-name :rule-app.status/success))
 
       (and (= "java.lang.Class" owner)
+           (= "getName" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str "(" target-text ".FullName ?? " target-text ".Name)"))
+          (apply-rule node :java.class-get-name/to-csharp-full-name :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
            (= "getSimpleName" source-method-name)
            target
            (zero? (count (child-nodes db (:db/id node) :argument))))

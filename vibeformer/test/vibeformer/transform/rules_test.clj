@@ -126,6 +126,7 @@
                             :java.double-hash-code/to-csharp-get-hash-code
                             :java.class-type-literal/to-csharp-typeof
                             :java.class-get-type-name/to-csharp-full-name
+                            :java.class-get-name/to-csharp-full-name
                             :java.class-get-simple-name/to-csharp-name
                             :java.class-get-modifiers/to-csharp-attributes
                             :java.class-is-assignable-from/to-csharp-is-assignable-from
@@ -223,6 +224,7 @@
              :java.feature/synchronized-method
              :java.reflection.class/type-literal
              :java.reflection.class/get-type-name
+             :java.reflection.class/get-name
              :java.reflection.class/get-simple-name
              :java.reflection.class/get-modifiers
              :java.reflection.class/is-assignable-from

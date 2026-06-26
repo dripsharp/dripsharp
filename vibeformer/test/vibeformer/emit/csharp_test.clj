@@ -231,6 +231,10 @@ public final class ReflectionApi {
     return String.class.getTypeName() + \":\" + String.class.getSimpleName();
   }
 
+  public static String className(Class<?> type) {
+    return type.getName();
+  }
+
   public static Type parentType(Class<?> type) {
     return type.getGenericSuperclass();
   }
@@ -2641,6 +2645,8 @@ public final class Chain {
                            "!(implementationType.IsArray)"
                            "!(implementationType.IsPrimitive)"
                            "return (typeof(string).FullName ?? typeof(string).Name) + \":\" + typeof(string).Name;"
+                           "public static string className(Type type)"
+                           "return (type.FullName ?? type.Name);"
                            "public static Type? parentType(Type type)"
                            "return type.BaseType;"
                            "public static Type[] typeParameters(Type type)"
@@ -2673,6 +2679,7 @@ public final class Chain {
           (is (empty? (:csharp/diagnostics result)))
           (doseq [rule [:java.class-type-literal/to-csharp-typeof
                         :java.class-get-type-name/to-csharp-full-name
+                        :java.class-get-name/to-csharp-full-name
                         :java.class-get-simple-name/to-csharp-name
                         :java.class-get-modifiers/to-csharp-attributes
                         :java.class-is-assignable-from/to-csharp-is-assignable-from

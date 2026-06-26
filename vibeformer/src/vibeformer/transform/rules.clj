@@ -244,6 +244,11 @@
     :rule/input-feature :java.reflection.class/get-type-name
     :rule/output-feature :csharp.api/type-full-name
     :rule/status implemented-status}
+   {:rule/id :java.class-get-name/to-csharp-full-name
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-name
+    :rule/output-feature :csharp.api/type-full-name
+    :rule/status implemented-status}
    {:rule/id :java.class-get-simple-name/to-csharp-name
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/get-simple-name

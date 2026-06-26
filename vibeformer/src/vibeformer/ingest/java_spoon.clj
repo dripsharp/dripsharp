@@ -668,6 +668,7 @@
 
 (def supported-reflection-features
   {["java.lang.Class" "getTypeName"] :java.reflection.class/get-type-name
+   ["java.lang.Class" "getName"] :java.reflection.class/get-name
    ["java.lang.Class" "getSimpleName"] :java.reflection.class/get-simple-name
    ["java.lang.Class" "getModifiers"] :java.reflection.class/get-modifiers
    ["java.lang.Class" "isAssignableFrom"] :java.reflection.class/is-assignable-from

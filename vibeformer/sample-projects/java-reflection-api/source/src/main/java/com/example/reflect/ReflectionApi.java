@@ -21,6 +21,10 @@ public final class ReflectionApi {
     return String.class.getTypeName() + ":" + String.class.getSimpleName();
   }
 
+  public static String className(Class<?> type) {
+    return type.getName();
+  }
+
   public static Type parentType(Class<?> type) {
     return type.getGenericSuperclass();
   }
