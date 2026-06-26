@@ -1933,8 +1933,32 @@
     (cond-> [(visibility mods)]
       (contains? mods :static) (conj "static"))))
 
+(def nullable-reflection-return-calls
+  #{["java.lang.Class" "getGenericSuperclass"]
+    ["java.lang.Class" "getComponentType"]
+    ["java.lang.reflect.ParameterizedType" "getOwnerType"]})
+
+(defn- direct-return-expression [db method-decl]
+  (when-let [return-node (some #(when (= :java.node/return-statement (:node/kind %)) %)
+                               (child-nodes db
+                                            (get-in method-decl [:decl/source-node :db/id])
+                                            :body))]
+    (child-node db (:db/id return-node) :return-expression)))
+
+(defn- nullable-reflection-return? [db method-decl]
+  (when-let [expr (direct-return-expression db method-decl)]
+    (when (= :java.node/method-call (:node/kind expr))
+      (when-let [ref (method-call-ref db expr)]
+        (contains? nullable-reflection-return-calls
+                   [(get-in ref [:ref/owner-type :type/id]) (:ref/name ref)])))))
+
+(defn- method-return-type [db method-decl]
+  (cond-> (:decl/return-type method-decl)
+    (nullable-reflection-return? db method-decl)
+    (assoc :type/nullable? true)))
+
 (defn- method-signature [db method-decl interface?]
-  (let [return-type (type-name (:decl/return-type method-decl))
+  (let [return-type (type-name (method-return-type db method-decl))
         prefix (if interface?
                  []
                  (signature-modifiers method-decl))]
