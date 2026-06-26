@@ -428,6 +428,22 @@ public final class Version {
 }
 ")
 
+(def math-max-fixture
+  "package com.example.values;
+
+public final class Version {
+  private final int major;
+
+  public Version(int major) {
+    this.major = major;
+  }
+
+  public int largerMajor(Version other) {
+    return Math.max(major, other.major);
+  }
+}
+")
+
 (def double-hash-code-fixture
   "package com.example.values;
 
@@ -1464,6 +1480,43 @@ public final class Chain {
           (is (contains? rule-ids :java.math-min/to-csharp-math-min))
           (testing "Math.min provenance has registered rule metadata"
             (let [entry (some #(when (= :java.math-min/to-csharp-math-min
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/method-call (:source/kind entry))))))))))
+
+(deftest emits-math-max-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/values/Version.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path math-max-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/values/Version.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return System.Math.Max(this.major, other.major);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.math-max/to-csharp-math-max))
+          (testing "Math.max provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.math-max/to-csharp-math-max
                                         (get-in % [:rule :rule/id]))
                                  %)
                               (:csharp/provenance result))]

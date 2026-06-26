@@ -120,6 +120,7 @@
                             :java.objects-hash/to-csharp-hash-code-combine
                             :java.math-round/to-csharp-java-round
                             :java.math-min/to-csharp-math-min
+                            :java.math-max/to-csharp-math-max
                             :java.double-hash-code/to-csharp-get-hash-code}]
 	    (is (= #{:java.node/class
              :java.node/assignment
@@ -178,6 +179,7 @@
              :java.api/objects-hash
              :java.api/math-round
              :java.api/math-min
+             :java.api/math-max
              :java.api/double-hash-code}
            (set (remove nil? (keys rules-by-feature)))))
     (is (every? #(= 1 (count %)) (vals rules-by-kind)))

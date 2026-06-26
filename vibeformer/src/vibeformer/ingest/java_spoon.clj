@@ -638,6 +638,11 @@
        [(supported-feature (str node-id ":feature:math-min")
                            :java.api/math-min
                            node-id)])
+     (when (and (= "java.lang.Math" owner)
+                (= "max" name))
+       [(supported-feature (str node-id ":feature:math-max")
+                           :java.api/math-max
+                           node-id)])
      (when (and (= "java.lang.Double" owner)
                 (= "hashCode" name))
        [(supported-feature (str node-id ":feature:double-hash-code")

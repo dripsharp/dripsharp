@@ -17,5 +17,6 @@ public final class DataSizeDemo {
     bytes.label();
     version.hashCode();
     version.smallerMajor(new Version(2, 0, 0, null));
+    version.largerMajor(new Version(2, 0, 0, null));
   }
 }

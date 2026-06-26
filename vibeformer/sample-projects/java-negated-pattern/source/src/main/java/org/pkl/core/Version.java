@@ -22,4 +22,8 @@ public final class Version {
   public int smallerMajor(Version other) {
     return Math.min(major, other.major);
   }
+
+  public int largerMajor(Version other) {
+    return Math.max(major, other.major);
+  }
 }

@@ -905,6 +905,13 @@
           (with-text (str "System.Math.Min(" args ")"))
           (apply-rule node :java.math-min/to-csharp-math-min :rule-app.status/success))
 
+      (and (= "java.lang.Math" owner)
+           (= "max" source-method-name)
+           (= 2 (count (child-nodes db (:db/id node) :argument))))
+      (-> args-result
+          (with-text (str "System.Math.Max(" args ")"))
+          (apply-rule node :java.math-max/to-csharp-math-max :rule-app.status/success))
+
       (and (= "java.lang.Double" owner)
            (= "hashCode" source-method-name)
            (= 1 (count (child-nodes db (:db/id node) :argument))))
