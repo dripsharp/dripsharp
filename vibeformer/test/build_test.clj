@@ -9,11 +9,13 @@
               {:name "ignored-by-helper"
                :coverage/allow-unsupported? true
                :allow-stubs? true
+               :kotlin/classpath-types #{"Locale"}
                :unrelated true})]
     (is (= ["-m" "vibeformer.sample-runner" "checked"]
            (take 3 args)))
     (is (= {:coverage/allow-unsupported? true
-            :allow-stubs? true}
+            :allow-stubs? true
+            :kotlin/classpath-types #{"Locale"}}
            (edn/read-string (last args))))))
 
 (deftest sample-task-keeps-non-default-samples-strict-by-default

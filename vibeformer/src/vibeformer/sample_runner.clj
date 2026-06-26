@@ -7,6 +7,7 @@
             [vibeformer.datomic.schema :as schema]
             [vibeformer.emit.csharp :as csharp]
             [vibeformer.ingest.java-spoon :as java-spoon]
+            [vibeformer.ingest.kotlin-psi :as kotlin-psi]
             [vibeformer.ingest.source :as source]
             [vibeformer.inventory :as inventory]
             [vibeformer.transform.rules :as rules])
@@ -369,6 +370,23 @@
    :status :skipped
    :reason reason})
 
+(defn- source-langs [source-files]
+  (set (keep :file/lang source-files)))
+
+(defn- has-lang? [source-files lang]
+  (contains? (source-langs source-files) lang))
+
+(defn- kotlin-sample? [source-files]
+  (has-lang? source-files :lang/kotlin))
+
+(defn- registered-rules [source-files]
+  (cond-> []
+    (has-lang? source-files :lang/java)
+    (into rules/initial-java-rules)
+
+    (has-lang? source-files :lang/kotlin)
+    (into rules/initial-kotlin-rules)))
+
 (defn- display-keyword [value]
   (subs (str value) 1))
 
@@ -404,8 +422,14 @@
     (or (:coverage/allow-unsupported? opts) (:allow-unsupported? opts))
     (assoc :allow-unsupported? true)))
 
+(defn- effective-coverage-opts [opts source-files]
+  (cond-> (coverage-opts opts)
+    (kotlin-sample? source-files)
+    (assoc :allow-stubs? true
+           :strategy :coverage.strategy/kotlin-facts-only)))
+
 (defn- coverage-stage [coverage-report coverage-opts]
-  (let [allow-mode (select-keys coverage-opts [:allow-stubs? :allow-unsupported?])]
+  (let [allow-mode (select-keys coverage-opts [:allow-stubs? :allow-unsupported? :strategy])]
     (cond-> {:stage :coverage/check
              :status (if (:ok? coverage-report) :ok :failed)
              :coverage/ok? (:ok? coverage-report)
@@ -413,7 +437,7 @@
       (seq allow-mode) (assoc :coverage/allow-mode allow-mode))))
 
 (defn- coverage-artifact [coverage-report coverage-opts]
-  (let [allow-mode (select-keys coverage-opts [:allow-stubs? :allow-unsupported?])]
+  (let [allow-mode (select-keys coverage-opts [:allow-stubs? :allow-unsupported? :strategy])]
     (cond-> coverage-report
       (seq allow-mode) (assoc :coverage/allow-mode allow-mode))))
 
@@ -443,6 +467,15 @@
       (assoc :status :failed
              :reason :csharp/emit-diagnostics))))
 
+(defn- kotlin-csharp-emission-skipped-stage []
+  (assoc (skipped-stage :csharp/emit :pipeline.kotlin/csharp-emission-not-implemented)
+         :csharp/strategy :csharp.strategy/kotlin-facts-only))
+
+(defn- dotnet-skipped-after-csharp-stage [emit-stage]
+  (assoc (skipped-stage :dotnet/build :dotnet/no-csharp-output)
+         :csharp/emit-status (:status emit-stage)
+         :csharp/emit-reason (:reason emit-stage)))
+
 (defn- run-analysis-stages [sample paths opts]
   (with-empty-db
     (fn [conn]
@@ -451,27 +484,43 @@
             source-opts {:source/root source-root
                          :project/id project-id
                          :project/name project-id}
+            source-files (source/source-file-facts source-opts)
             stages []
             stages (run-stage stages sample :schema/install
                               #(do (schema/install! conn)
                                    {:installed? true}))
             stages (run-stage stages sample :source/discover
-                              #(let [source-files (source/source-file-facts source-opts)]
-                                 (write-edn! (.resolve (:target/facts paths) "source-files.edn")
-                                            source-files)
-                                 {:source/files (count source-files)}))
+                              #(do (write-edn! (.resolve (:target/facts paths) "source-files.edn")
+                                               source-files)
+                                   {:source/files (count source-files)
+                                    :source/langs (sort-by str (source-langs source-files))}))
             stages (run-stage stages sample :source/ingest
                               #(source/ingest! conn source-opts))
-            stages (run-stage stages sample :java/ingest
-                              #(java-spoon/ingest! conn {:project/id project-id}))
+            stages (if (has-lang? source-files :lang/java)
+                     (run-stage stages sample :java/ingest
+                                #(java-spoon/ingest! conn {:project/id project-id}))
+                     (conj stages (skipped-stage :java/ingest :java/no-source-files)))
+            stages (if (has-lang? source-files :lang/kotlin)
+                     (run-stage stages sample :kotlin/ingest
+                                #(kotlin-psi/ingest! conn {:project/id project-id}))
+                     stages)
+            stages (if (and (has-lang? source-files :lang/kotlin)
+                             (not (stop-after-failure? stages)))
+                     (run-stage stages sample :kotlin/enrich
+                                #(kotlin-psi/enrich! conn
+                                                     (merge {:project/id project-id}
+                                                            (select-keys opts [:kotlin/classpath-types]))))
+                     stages)
             stages (run-stage stages sample :transform/rules
-                              #(do (rules/register! conn rules/initial-java-rules)
-                                   {:rules/registered (count rules/initial-java-rules)}))
+                              #(let [rule-catalog (registered-rules source-files)]
+                                 (rules/register! conn rule-catalog)
+                                 {:rules/registered (count rule-catalog)
+                                  :rules/langs (sort-by str (source-langs source-files))}))
             stages (if (stop-after-failure? stages)
                      stages
                      (let [db (d/db conn)
                            inventory-report (inventory/summary db)
-                           coverage-opts (coverage-opts opts)
+                           coverage-opts (effective-coverage-opts opts source-files)
                            coverage-report (rules/coverage-report db coverage-opts)]
                        (write-edn! (.resolve (:target/diagnostics paths) "inventory.edn")
                                   inventory-report)
@@ -483,16 +532,28 @@
                               :unsupported/features (count (:unsupported-rankings inventory-report))}
                              (coverage-stage coverage-report coverage-opts))))
             stages (cond-> stages
-                     (not (stop-after-failure? stages))
+                     (and (not (stop-after-failure? stages))
+                          (not (kotlin-sample? source-files)))
                      (run-stage sample :csharp/emit
                                 #(csharp-emit-stage conn paths (assoc opts :sample sample))))
             stages (cond-> stages
-                     (not (stop-after-failure? stages))
+                     (and (not (stop-after-failure? stages))
+                          (kotlin-sample? source-files))
+                     (conj (kotlin-csharp-emission-skipped-stage)))
+            emit-stage (some #(when (= :csharp/emit (:stage %)) %) stages)
+            stages (cond-> stages
+                     (and (not (stop-after-failure? stages))
+                          (= :ok (:status emit-stage)))
                      (run-stage sample :dotnet/build
                                 #(dotnet-build! sample paths opts)))
-            emit-stage (some #(when (= :csharp/emit (:stage %)) %) stages)
+            stages (cond-> stages
+                     (and (not (stop-after-failure? stages))
+                          emit-stage
+                          (not= :ok (:status emit-stage))
+                          (not (some #(= :dotnet/build (:stage %)) stages)))
+                     (conj (dotnet-skipped-after-csharp-stage emit-stage)))
             build-stage (some #(when (= :dotnet/build (:stage %)) %) stages)
-            stages (if (and emit-stage
+            stages (if (and (= :ok (:status emit-stage))
                             build-stage
                             (not= :skipped (:status build-stage)))
                      (conj stages
@@ -531,8 +592,30 @@
                     (seq coverage-allow-mode)
                     (assoc :coverage/allow-mode coverage-allow-mode)
 
-                    emit-stage
+                    (and emit-stage (= :ok (:status emit-stage)))
                     (assoc :status (if (= :ok (:status emit-stage)) :generated :failed)
+                           :reason (:reason emit-stage)
+                           :csharp/files (:csharp/files emit-stage)
+                           :csharp/files-written (:csharp/files-written emit-stage)
+                           :csharp/rule-applications (:csharp/rule-applications emit-stage)
+                           :csharp/provenance (:csharp/provenance emit-stage)
+                           :csharp/diagnostics (:csharp/diagnostics emit-stage)
+                           :csharp/error-diagnostics (:csharp/error-diagnostics emit-stage)
+                           :csharp/error-diagnostics-count (:csharp/error-diagnostics-count emit-stage)
+                           :csharp/allow-mode (:csharp/allow-mode emit-stage)
+                           :csharp/helpers (:csharp/helpers emit-stage)
+                           :csharp/usings (:csharp/usings emit-stage)
+                           :csharp/project (:csharp/project emit-stage)
+                           :csharp/project-target-framework (:csharp/project-target-framework emit-stage)
+                           :csharp/project-files (:csharp/project-files emit-stage))
+
+                    (and emit-stage (= :skipped (:status emit-stage)))
+                    (assoc :status :skipped
+                           :reason (:reason emit-stage)
+                           :csharp/strategy (:csharp/strategy emit-stage))
+
+                    (and emit-stage (= :failed (:status emit-stage)))
+                    (assoc :status :failed
                            :reason (:reason emit-stage)
                            :csharp/files (:csharp/files emit-stage)
                            :csharp/files-written (:csharp/files-written emit-stage)

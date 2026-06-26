@@ -20,7 +20,8 @@
    :allow-stubs?
    :allow-unsupported?
    :csharp/allow-diagnostics?
-   :allow-csharp-diagnostics?])
+   :allow-csharp-diagnostics?
+   :kotlin/classpath-types])
 
 (defn sample-runner-opts
   "Return the options forwarded from the build sample task to sample-runner."

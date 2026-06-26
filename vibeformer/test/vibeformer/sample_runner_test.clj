@@ -34,6 +34,26 @@ public final class UnsupportedExpressionCase {
 }
 ")
 
+(def kotlin-fixture
+  "package com.example.kotlin
+
+import java.net.URI
+import java.nio.file.Path
+
+object KotlinApiCalls {
+  fun message(name: String?): String {
+    val raw = \"\"\"
+      hello
+    \"\"\".trimIndent()
+    return name?.let { raw + it } ?: raw
+  }
+
+  fun values(root: Path): List<URI> {
+    return listOf(root.resolve(\"child\").toUri(), URI(\"https://example.com\"))
+  }
+}
+")
+
 (defn- temp-root []
   (Files/createTempDirectory "vibeformer-sample-runner-test-" (make-array java.nio.file.attribute.FileAttribute 0)))
 
@@ -68,6 +88,12 @@ public final class UnsupportedExpressionCase {
   (let [root (temp-root)]
     (write-file! root "sample-projects/unsupported-expression/source/src/main/java/com/example/UnsupportedExpressionCase.java"
                  unsupported-expression-fixture)
+    root))
+
+(defn- kotlin-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/kotlin-api-calls/source/src/main/kotlin/com/example/kotlin/ApiCalls.kt"
+                 kotlin-fixture)
     root))
 
 (deftest discovers-samples-with-source-roots
@@ -209,6 +235,63 @@ public final class UnsupportedExpressionCase {
     (is (= 1 (:csharp/error-diagnostics-count csharp-stage)))
     (is (= :skipped (:status dotnet-stage)))
     (is (= {:allow-diagnostics? true} (:csharp/allow-mode provenance)))))
+
+(deftest runs-kotlin-sample-through-facts-only-pipeline
+  (let [root (kotlin-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "kotlin-api-calls"})
+        target (.resolve root "sample-projects/kotlin-api-calls/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+        inventory (read-edn (.resolve target "diagnostics/inventory.edn"))
+        source-files (read-edn (.resolve target "facts/source-files.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        stage-by-name (into {} (map (juxt :stage identity) stages))]
+    (is (:ok? result))
+    (is (= [:schema/install
+            :source/discover
+            :source/ingest
+            :java/ingest
+            :kotlin/ingest
+            :kotlin/enrich
+            :transform/rules
+            :diagnostics/inventory
+            :coverage/check
+            :csharp/emit
+            :dotnet/build]
+           (mapv :stage stages)))
+    (is (= :skipped (get-in stage-by-name [:java/ingest :status])))
+    (is (= :java/no-source-files (get-in stage-by-name [:java/ingest :reason])))
+    (is (= :ok (get-in stage-by-name [:kotlin/ingest :status])))
+    (is (= 1 (get-in stage-by-name [:kotlin/ingest :kotlin-files])))
+    (is (pos? (get-in stage-by-name [:kotlin/enrich :semantic-refs])))
+    (is (= :ok (get-in stage-by-name [:coverage/check :status])))
+    (is (= {:allow-stubs? true
+            :strategy :coverage.strategy/kotlin-facts-only}
+           (get-in stage-by-name [:coverage/check :coverage/allow-mode])))
+    (is (= :skipped (get-in stage-by-name [:csharp/emit :status])))
+    (is (= :pipeline.kotlin/csharp-emission-not-implemented
+           (get-in stage-by-name [:csharp/emit :reason])))
+    (is (= :csharp.strategy/kotlin-facts-only
+           (get-in stage-by-name [:csharp/emit :csharp/strategy])))
+    (is (= :skipped (get-in stage-by-name [:dotnet/build :status])))
+    (is (= :dotnet/no-csharp-output
+           (get-in stage-by-name [:dotnet/build :reason])))
+    (is (true? (:ok? coverage)))
+    (is (= {:allow-stubs? true
+            :strategy :coverage.strategy/kotlin-facts-only}
+           (:coverage/allow-mode coverage)))
+    (is (= ["src/main/kotlin/com/example/kotlin/ApiCalls.kt"]
+           (mapv :file/path source-files)))
+    (is (= [:lang/kotlin] (mapv :file/lang source-files)))
+    (is (some #(= :lang/kotlin (:lang %))
+              (:feature-counts inventory)))
+    (is (= :skipped (:status provenance)))
+    (is (= :pipeline.kotlin/csharp-emission-not-implemented (:reason provenance)))
+    (is (= :csharp.strategy/kotlin-facts-only (:csharp/strategy provenance)))
+    (is (= {:allow-stubs? true
+            :strategy :coverage.strategy/kotlin-facts-only}
+           (:coverage/allow-mode provenance)))))
 
 (deftest sample-runner-cli-parses-edn-options
   (is (= {:coverage/allow-unsupported? true}

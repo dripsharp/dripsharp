@@ -565,6 +565,102 @@
     :rule/output-feature :csharp.feature/lock
     :rule/status implemented-status}])
 
+(def initial-kotlin-rules
+  "Initial Kotlin rule catalog for sample coverage checks.
+
+  Kotlin source is ingested into normalized facts before Kotlin C# emission is
+  implemented. These rules are intentionally stubbed so Kotlin samples can
+  exercise source discovery, PSI ingest, semantic enrichment, inventory, and
+  coverage artifacts without pretending C# output is available."
+  [{:rule/id :kotlin.package-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/package
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.object-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/object
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.class-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/class
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.companion-object-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/companion-object
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.property-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/property
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.function-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/function
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.declaration-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/declaration
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.call-expression-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/call-expression
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.safe-call-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/safe-call
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.elvis-expression-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/elvis-expression
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.package-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/package
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.object-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/object
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.class-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/class
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.companion-object-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/companion-object
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.property-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/property
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.function-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/function
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.declaration-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/declaration
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.top-level-declaration-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/top-level-declaration
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.nullable-type-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/nullable-type
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.call-expression-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/call-expression
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.safe-call-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/safe-call
+    :rule/status stubbed-status}
+   {:rule/id :kotlin.elvis-expression-feature/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-feature :kotlin.feature/elvis-expression
+    :rule/status stubbed-status}])
+
 (defn- require-key [rule k]
   (when-not (contains? rule k)
     (throw (ex-info (str "Transform rule is missing " k ".")
