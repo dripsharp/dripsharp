@@ -60,7 +60,7 @@ object KotlinApiCalls {
 object BasicDeclarations {
   val count: Int = 1
 
-  fun describe(name: String): String {
+  fun describe(name: String?): String {
     return \"\"
   }
 }
@@ -343,7 +343,7 @@ object BasicDeclarations {
               (:csharp/provenance provenance)))
     (is (str/includes? content "public static class BasicDeclarations"))
     (is (str/includes? content "public static int count { get; } = default!;"))
-    (is (str/includes? content "public static string describe(string name)"))
+    (is (str/includes? content "public static string describe(string? name)"))
     (is (str/includes? content "return default!;"))))
 
 (deftest sample-runner-cli-parses-edn-options

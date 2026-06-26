@@ -301,6 +301,19 @@ fun apiCalls(path: Path): URI {
                                [(contains? #{"LocalValue" "Locale" "String"} ?type-name)]]
                              db)))))
 
+          (testing "nullable type-use refs keep nullability after semantic resolution"
+            (is (contains?
+                 (set (d/q '[:find ?source-name ?type-id ?nullable?
+                             :where
+                             [?ref :ref/kind :ref.kind/type-use]
+                             [?ref :ref/source-name ?source-name]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]
+                             [?type :type/nullable? ?nullable?]
+                             [(= ?source-name "value")]]
+                           db))
+                 ["value" "kotlin:String?" true])))
+
           (testing "unresolved refs keep explicit reasons"
             (is (= #{["MissingType" :resolve.reason/missing-classpath]
                      ["format" :resolve.reason/missing-classpath]

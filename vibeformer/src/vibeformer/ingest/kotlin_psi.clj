@@ -611,15 +611,25 @@
     :lang/kotlin
     :lang/java))
 
+(defn- nullable-type-id? [type-id]
+  (str/ends-with? type-id "?"))
+
+(defn- nullable-type-id [type-id]
+  (if (nullable-type-id? type-id)
+    type-id
+    (str type-id "?")))
+
 (defn- type-name-from-id [type-id]
-  (str/replace type-id #"^kotlin:" ""))
+  (-> type-id
+      (str/replace #"^kotlin:" "")
+      (str/replace #"\?$" "")))
 
 (defn- type-stub [type-id]
   {:db/id type-id
    :type/id type-id
    :type/lang (type-lang type-id)
    :type/name (type-name-from-id type-id)
-   :type/nullable? false})
+   :type/nullable? (nullable-type-id? type-id)})
 
 (defn- referenced-type-ids [facts]
   (->> facts
@@ -677,9 +687,12 @@
     :ref/reason reason}])
 
 (defn- type-resolution-tx [db type-index {:ref/keys [id name to-type]}]
-  (let [resolved-type-id (or (get type-index name)
-                             (get type-index (simple-type-name name))
-                             to-type)]
+  (let [matched-type-id (or (get type-index name)
+                            (get type-index (simple-type-name name)))
+        resolved-type-id (cond-> (or matched-type-id to-type)
+                           (and matched-type-id
+                                (nullable-type-id? to-type))
+                           nullable-type-id)]
     (if (or (get type-index name)
             (get type-index (simple-type-name name)))
       (resolved-ref-tx db id {:ref/to-type [:type/id resolved-type-id]})

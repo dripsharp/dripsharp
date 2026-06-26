@@ -502,7 +502,7 @@ public final class NestedGenerics {
 object BasicDeclarations {
   val count: Int = 1
 
-  fun describe(name: String): String {
+  fun describe(name: String?): String {
     return \"\"
   }
 }
@@ -1127,7 +1127,7 @@ public final class Chain {
           (is (str/includes? content "namespace com.example.kotlin"))
           (is (str/includes? content "public static class BasicDeclarations"))
           (is (str/includes? content "public static int count { get; } = default!;"))
-          (is (str/includes? content "public static string describe(string name)"))
+          (is (str/includes? content "public static string describe(string? name)"))
           (is (str/includes? content "return default!;"))
           (is (empty? (:csharp/diagnostics result)))
           (doseq [rule [:kotlin.object-node/to-csharp-stub
