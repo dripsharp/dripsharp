@@ -208,6 +208,7 @@ public final class CodePointIterator {
   "package com.acme.reflect;
 
 import java.lang.reflect.Constructor;
+import java.io.InputStream;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
@@ -255,6 +256,10 @@ public final class ReflectionApi {
 
   public String castString(Class<String> type, Object value) {
     return type.cast(value);
+  }
+
+  public InputStream resourceStream(Class<?> type, String path) {
+    return type.getResourceAsStream(path);
   }
 
   public String reflectedTypeName(Type type) {
@@ -2149,6 +2154,7 @@ public final class Demo {
                                         :java.reflection.class/is-enum
                                         :java.reflection.class/get-class-loader
                                         :java.reflection.class/cast
+                                        :java.reflection.class/get-resource-as-stream
                                         :java.reflection.type/get-type-name
                                         :java.reflection.parameterized-type/get-actual-type-arguments
                                         :java.reflection.parameterized-type/get-raw-type
@@ -2178,6 +2184,7 @@ public final class Demo {
                    [:java.reflection.class/is-enum "isEnum" :feature.status/supported]
                    [:java.reflection.class/get-class-loader "getClassLoader" :feature.status/supported]
                    [:java.reflection.class/cast "cast" :feature.status/supported]
+                   [:java.reflection.class/get-resource-as-stream "getResourceAsStream" :feature.status/supported]
                    [:java.reflection.type/get-type-name "getTypeName" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-actual-type-arguments "getActualTypeArguments" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-raw-type "getRawType" :feature.status/supported]

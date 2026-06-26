@@ -62,6 +62,7 @@
     (maps-to (type-fact :lang/java "java.lang.reflect.Constructor") "ConstructorInfo" ["System.Reflection"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.Parameter") "ParameterInfo" ["System.Reflection"] [])
     (maps-to (type-fact :lang/java "java.lang.annotation.Annotation") "Attribute" ["System"] [])
+    (maps-to (type-fact :lang/java "java.io.InputStream") "Stream" ["System.IO"] [])
     (maps-to (type-fact :lang/java "java.net.URI") "Uri" ["System"] [])
     (maps-to (type-fact :lang/java "java.nio.file.Path") "string" [] [])
     (maps-to (type-fact :lang/java "java.util.PrimitiveIterator$OfInt")

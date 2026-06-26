@@ -1,5 +1,6 @@
 package com.example.reflect;
 
+import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
@@ -55,6 +56,10 @@ public final class ReflectionApi {
 
   public static String castString(Class<String> type, Object value) {
     return type.cast(value);
+  }
+
+  public static InputStream resourceStream(Class<?> type, String path) {
+    return type.getResourceAsStream(path);
   }
 
   private static boolean same(ClassLoader left, ClassLoader right) {

@@ -304,6 +304,11 @@
     :rule/input-feature :java.reflection.class/cast
     :rule/output-feature :csharp.feature/cast
     :rule/status implemented-status}
+   {:rule/id :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-resource-as-stream
+    :rule/output-feature :csharp.api/manifest-resource-stream
+    :rule/status implemented-status}
    {:rule/id :java.type-get-type-name/to-csharp-full-name
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.type/get-type-name

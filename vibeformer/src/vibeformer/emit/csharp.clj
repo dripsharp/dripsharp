@@ -1197,6 +1197,16 @@
                         :target-type (:type/name cast-type)
                         :reason :emit.reason/unsupported-class-cast-type})))
 
+      (and (= "java.lang.Class" owner)
+           (= "getResourceAsStream" source-method-name)
+           target
+           (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (let [path-result (emit-argument ctx node 0)]
+        (-> (merge-emits [target-result path-result])
+            (update :usings conj "System.IO")
+            (with-text (str target-text ".Assembly.GetManifestResourceStream(" (:text path-result) ")!"))
+            (apply-rule node :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream :rule-app.status/success)))
+
       (and (= "java.lang.reflect.Type" owner)
            (= "getTypeName" source-method-name)
            target

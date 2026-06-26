@@ -211,6 +211,7 @@ public final class CodePointIterator {
   "package com.example.reflect;
 
 import java.lang.reflect.Constructor;
+import java.io.InputStream;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
@@ -265,6 +266,10 @@ public final class ReflectionApi {
 
   public static String castString(Class<String> type, Object value) {
     return type.cast(value);
+  }
+
+  public static InputStream resourceStream(Class<?> type, String path) {
+    return type.getResourceAsStream(path);
   }
 
   private static boolean same(ClassLoader left, ClassLoader right) {
@@ -2638,6 +2643,7 @@ public final class Chain {
                                       (:csharp/rule-applications result)))]
           (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
           (doseq [snippet ["using System;"
+                           "using System.IO;"
                            "using System.Reflection;"
                            "public static bool canInstantiate(Type requestedType, Type implementationType)"
                            "requestedType.IsAssignableFrom(implementationType)"
@@ -2663,6 +2669,8 @@ public final class Chain {
                            "return ReflectionApi.same(type.Assembly, typeof(ReflectionApi).Assembly);"
                            "public static string castString(Type type, object value)"
                            "return ((string)value);"
+                           "public static Stream resourceStream(Type type, string path)"
+                           "return type.Assembly.GetManifestResourceStream(path)!;"
                            "private static bool same(Assembly left, Assembly right)"
                            "public static string reflectedTypeName(Type type)"
                            "return (type.FullName ?? type.Name);"
@@ -2691,6 +2699,7 @@ public final class Chain {
                         :java.class-is-enum/to-csharp-is-enum
                         :java.class-get-class-loader/to-csharp-assembly
                         :java.class-cast/to-csharp-cast
+                        :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream
                         :java.type-get-type-name/to-csharp-full-name
                         :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                         :java.parameterized-type-get-raw-type/to-csharp-type

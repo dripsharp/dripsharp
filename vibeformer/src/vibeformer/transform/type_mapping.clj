@@ -94,6 +94,8 @@
                                   :csharp/usings #{"System.Reflection"}}
    "java.lang.annotation.Annotation" {:csharp/type "Attribute"
                                       :csharp/usings #{system-using}}
+   "java.io.InputStream" {:csharp/type "Stream"
+                          :csharp/usings #{io-using}}
    "java.net.URI" {:csharp/type "Uri"
                    :csharp/usings #{system-using}}
    "URI" {:csharp/type "Uri"
