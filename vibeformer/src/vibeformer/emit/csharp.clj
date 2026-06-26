@@ -898,6 +898,13 @@
           (with-text (str "(long)System.Math.Floor(" args " + 0.5)"))
           (apply-rule node :java.math-round/to-csharp-java-round :rule-app.status/success))
 
+      (and (= "java.lang.Math" owner)
+           (= "min" source-method-name)
+           (= 2 (count (child-nodes db (:db/id node) :argument))))
+      (-> args-result
+          (with-text (str "System.Math.Min(" args ")"))
+          (apply-rule node :java.math-min/to-csharp-math-min :rule-app.status/success))
+
       (and (= "java.lang.Double" owner)
            (= "hashCode" source-method-name)
            (= 1 (count (child-nodes db (:db/id node) :argument))))

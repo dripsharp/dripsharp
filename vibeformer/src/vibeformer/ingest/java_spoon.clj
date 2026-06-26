@@ -627,6 +627,11 @@
        [(supported-feature (str node-id ":feature:math-round")
                            :java.api/math-round
                            node-id)])
+     (when (and (= "java.lang.Math" owner)
+                (= "min" name))
+       [(supported-feature (str node-id ":feature:math-min")
+                           :java.api/math-min
+                           node-id)])
      (when (and (= "java.lang.Double" owner)
                 (= "hashCode" name))
        [(supported-feature (str node-id ":feature:double-hash-code")

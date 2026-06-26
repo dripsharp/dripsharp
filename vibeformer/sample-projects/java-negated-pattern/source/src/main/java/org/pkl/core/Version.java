@@ -18,4 +18,8 @@ public final class Version {
   public int hashCode() {
     return Objects.hash(major, minor, patch, preRelease);
   }
+
+  public int smallerMajor(Version other) {
+    return Math.min(major, other.major);
+  }
 }

@@ -214,6 +214,22 @@ public final class DataSize {
 }
 ")
 
+(def math-min-fixture
+  "package com.acme.values;
+
+public final class Version {
+  private final int major;
+
+  public Version(int major) {
+    this.major = major;
+  }
+
+  public int smallerMajor(Version other) {
+    return Math.min(major, other.major);
+  }
+}
+")
+
 (def double-hash-code-fixture
   "package com.acme.values;
 
@@ -867,6 +883,37 @@ public final class Demo {
                              :where
                              [?node :node/kind :java.node/method-call]
                              [?node :node/name "round"]
+                             [?node :node/name ?method-name]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/kind :ref.kind/method-call]
+                             [?ref :ref/owner-type ?owner]
+                             [?owner :type/name ?owner-name]
+                             [?feature :feature/node ?node]
+                             [?feature :feature/kind ?feature-kind]
+                             [?feature :feature/status ?feature-status]]
+                           db)))))))))
+
+(deftest extracts-math-min-feature-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/values/Version.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path math-min-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["min"
+                    "java.lang.Math"
+                    :java.api/math-min
+                    :feature.status/supported]}
+                 (set (d/q '[:find ?method-name ?owner-name ?feature-kind ?feature-status
+                             :where
+                             [?node :node/kind :java.node/method-call]
+                             [?node :node/name "min"]
                              [?node :node/name ?method-name]
                              [?ref :ref/from-node ?node]
                              [?ref :ref/kind :ref.kind/method-call]
