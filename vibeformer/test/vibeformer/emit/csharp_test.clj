@@ -249,6 +249,8 @@ import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.WildcardType;
+import java.util.Arrays;
+import java.util.Comparator;
 
 public final class ReflectionApi {
   public static void main(String[] args) {
@@ -335,6 +337,15 @@ public final class ReflectionApi {
 
   public static Parameter[] parameters(Constructor<?> constructor) {
     return constructor.getParameters();
+  }
+
+  public static int parameterCount(Constructor<?> constructor) {
+    return constructor.getParameterCount();
+  }
+
+  public static Object widestConstructor(Class<?> type) {
+    return Arrays.stream(type.getDeclaredConstructors())
+        .max(Comparator.comparingInt(Constructor::getParameterCount));
   }
 
   public static String parameterName(Parameter parameter) {
@@ -2774,6 +2785,10 @@ public final class Chain {
                            "return type.DeclaringType;"
                            "public static ParameterInfo[] parameters(ConstructorInfo constructor)"
                            "return constructor.GetParameters();"
+                           "public static int parameterCount(ConstructorInfo constructor)"
+                           "return constructor.GetParameters().Length;"
+                           "public static object widestConstructor(Type type)"
+                           "return type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).MaxBy(it => it.GetParameters().Length);"
                            "public static string parameterName(ParameterInfo parameter)"
                            "return !string.IsNullOrEmpty(parameter.Name) ? parameter.Name : \"\";"
                            "public static Type[] lowerBounds(Type wildcardType)"
@@ -2805,6 +2820,7 @@ public final class Chain {
                         :java.wildcard-type-get-lower-bounds/to-csharp-generic-parameter-constraints
                         :java.wildcard-type-get-upper-bounds/to-csharp-generic-parameter-constraints
                         :java.reflection-executable-get-parameters/to-csharp-get-parameters
+                        :java.reflection-constructor-get-parameter-count/to-csharp-parameter-count
                         :java.reflection-parameter-is-name-present/to-csharp-name-check
                         :java.reflection-parameter-get-name/to-csharp-name
                         :java.modifier-is-abstract/to-csharp-type-attributes]]

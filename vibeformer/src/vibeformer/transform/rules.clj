@@ -348,6 +348,11 @@
     :rule/input-feature :java.reflection.executable/get-parameters
     :rule/output-feature :csharp.api/constructor-parameters
     :rule/status implemented-status}
+   {:rule/id :java.reflection-constructor-get-parameter-count/to-csharp-parameter-count
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.constructor/get-parameter-count
+    :rule/output-feature :csharp.api/constructor-parameters
+    :rule/status implemented-status}
    {:rule/id :java.reflection-parameter-is-name-present/to-csharp-name-check
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.parameter/is-name-present

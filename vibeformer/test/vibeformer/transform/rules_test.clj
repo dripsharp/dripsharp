@@ -146,6 +146,7 @@
                             :java.parameterized-type-get-raw-type/to-csharp-type
                             :java.parameterized-type-get-owner-type/to-csharp-declaring-type
                             :java.reflection-executable-get-parameters/to-csharp-get-parameters
+                            :java.reflection-constructor-get-parameter-count/to-csharp-parameter-count
                             :java.reflection-parameter-is-name-present/to-csharp-name-check
                             :java.reflection-parameter-get-name/to-csharp-name
                             :java.modifier-is-abstract/to-csharp-type-attributes
@@ -266,6 +267,7 @@
              :java.reflection.parameter/get-annotation
              :java.reflection.wildcard-type/get-lower-bounds
              :java.reflection.wildcard-type/get-upper-bounds
+             :java.reflection.constructor/get-parameter-count
              :java.stream/source-to-enumerable
              :java.stream/map
              :java.stream/filter
@@ -343,6 +345,7 @@
                      :java.optional/or-else
                      :java.reflection.wildcard-type/get-lower-bounds
                      :java.reflection.wildcard-type/get-upper-bounds
+                     :java.reflection.constructor/get-parameter-count
                      :java.stream/collect-to-map
                      :java.stream/collect-to-collection]]
       (is (= :rule.status/implemented

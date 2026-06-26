@@ -239,6 +239,8 @@ import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.WildcardType;
+import java.util.Arrays;
+import java.util.Comparator;
 
 public final class ReflectionApi {
   public boolean canInstantiate(Class<?> requestedType, Class<?> implementationType) {
@@ -314,6 +316,15 @@ public final class ReflectionApi {
 
   public Parameter[] parameters(Constructor<?> constructor) {
     return constructor.getParameters();
+  }
+
+  public int parameterCount(Constructor<?> constructor) {
+    return constructor.getParameterCount();
+  }
+
+  public Object widestConstructor(Class<?> type) {
+    return Arrays.stream(type.getDeclaredConstructors())
+        .max(Comparator.comparingInt(Constructor::getParameterCount));
   }
 
   public String parameterName(Parameter parameter) {
@@ -2216,6 +2227,7 @@ public final class Demo {
                                         :java.reflection.parameterized-type/get-owner-type
                                         :java.reflection.wildcard-type/get-lower-bounds
                                         :java.reflection.wildcard-type/get-upper-bounds
+                                        :java.reflection.constructor/get-parameter-count
                                         :java.reflection.executable/get-parameters
                                         :java.reflection.parameter/is-name-present
                                         :java.reflection.parameter/get-name
@@ -2250,6 +2262,7 @@ public final class Demo {
                    [:java.reflection.parameterized-type/get-owner-type "getOwnerType" :feature.status/supported]
                    [:java.reflection.wildcard-type/get-lower-bounds "getLowerBounds" :feature.status/supported]
                    [:java.reflection.wildcard-type/get-upper-bounds "getUpperBounds" :feature.status/supported]
+                   [:java.reflection.constructor/get-parameter-count "getParameterCount" :feature.status/supported]
                    [:java.reflection.executable/get-parameters "getParameters" :feature.status/supported]
                    [:java.reflection.parameter/is-name-present "isNamePresent" :feature.status/supported]
                    [:java.reflection.parameter/get-name "getName" :feature.status/supported]

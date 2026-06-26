@@ -922,8 +922,9 @@
 (defn- emit-method-reference-selector [node]
   (when (= :java.node/method-reference (:node/kind node))
     (let [member (:node/name node)
-          selector (if (= "length" member)
-                     "it.Length"
+          selector (case member
+                     "length" "it.Length"
+                     "getParameterCount" "it.GetParameters().Length"
                      (str "it." member "()"))]
       (emitted (str "it => " selector)
                node
@@ -935,7 +936,7 @@
         name (or (:ref/name call-ref) (:node/name node))]
     (when (and (= :java.node/method-call (:node/kind node))
                (= "java.util.Comparator" owner)
-               (= "comparing" name))
+               (contains? #{"comparing" "comparingInt"} name))
       (some->> (first (child-nodes (:db ctx) (:db/id node) :argument))
                emit-method-reference-selector))))
 
@@ -1298,6 +1299,14 @@
           (with-text (str target-text ".GetParameters()"))
           (apply-rule node :java.reflection-executable-get-parameters/to-csharp-get-parameters :rule-app.status/success))
 
+      (and (= "java.lang.reflect.Constructor" owner)
+           (= "getParameterCount" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".GetParameters().Length"))
+          (apply-rule node :java.reflection-constructor-get-parameter-count/to-csharp-parameter-count :rule-app.status/success))
+
       (and (= "java.lang.reflect.Parameter" owner)
            (= "isNamePresent" source-method-name)
            target
@@ -1527,6 +1536,17 @@
               linq-result
               (with-text (str target-text ".MinBy(" (:text selector) ")"))
               (apply-rule node :java.stream-min/to-csharp-min :rule-app.status/success)))
+
+        (and (= "max" source-method-name)
+             (stream-owner? owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument)))
+             (comparator-comparing-selector ctx (first (child-nodes db (:db/id node) :argument))))
+        (let [selector (comparator-comparing-selector ctx (first (child-nodes db (:db/id node) :argument)))]
+          (-> (merge-emits [target-result selector])
+              linq-result
+              (with-text (str target-text ".MaxBy(" (:text selector) ")"))
+              (apply-rule node :java.stream-max/to-csharp-max :rule-app.status/success)))
 
         (and (= "max" source-method-name)
              (stream-owner? owner)

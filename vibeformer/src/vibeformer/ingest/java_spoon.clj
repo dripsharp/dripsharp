@@ -717,6 +717,7 @@
    ["java.lang.reflect.ParameterizedType" "getOwnerType"] :java.reflection.parameterized-type/get-owner-type
    ["java.lang.reflect.WildcardType" "getLowerBounds"] :java.reflection.wildcard-type/get-lower-bounds
    ["java.lang.reflect.WildcardType" "getUpperBounds"] :java.reflection.wildcard-type/get-upper-bounds
+   ["java.lang.reflect.Constructor" "getParameterCount"] :java.reflection.constructor/get-parameter-count
    ["java.lang.reflect.Constructor" "getParameters"] :java.reflection.executable/get-parameters
    ["java.lang.reflect.Executable" "getParameters"] :java.reflection.executable/get-parameters
    ["java.lang.reflect.Parameter" "isNamePresent"] :java.reflection.parameter/is-name-present
