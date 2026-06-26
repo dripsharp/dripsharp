@@ -362,6 +362,30 @@ public final class Version {
 }
 ")
 
+(def objects-hash-fixture
+  "package com.example.values;
+
+import java.util.Objects;
+
+public final class Version {
+  private final int major;
+  private final int minor;
+  private final int patch;
+  private final String preRelease;
+
+  public Version(int major, int minor, int patch, String preRelease) {
+    this.major = major;
+    this.minor = minor;
+    this.patch = patch;
+    this.preRelease = preRelease;
+  }
+
+  public int hashCode() {
+    return Objects.hash(major, minor, patch, preRelease);
+  }
+}
+")
+
 (def math-round-fixture
   "package com.example.values;
 
@@ -1268,6 +1292,43 @@ public final class Chain {
           (is (contains? rule-ids :java.objects-equals/to-csharp-object-equals))
           (testing "Objects.equals provenance has registered rule metadata"
             (let [entry (some #(when (= :java.objects-equals/to-csharp-object-equals
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/method-call (:source/kind entry))))))))))
+
+(deftest emits-objects-hash-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/values/Version.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path objects-hash-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/values/Version.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return System.HashCode.Combine(this.major, this.minor, this.patch, this.preRelease);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.objects-hash/to-csharp-hash-code-combine))
+          (testing "Objects.hash provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.objects-hash/to-csharp-hash-code-combine
                                         (get-in % [:rule :rule/id]))
                                  %)
                               (:csharp/provenance result))]

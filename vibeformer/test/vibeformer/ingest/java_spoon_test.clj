@@ -174,6 +174,30 @@ public final class Version {
 }
 ")
 
+(def objects-hash-fixture
+  "package com.acme.values;
+
+import java.util.Objects;
+
+public final class Version {
+  private final int major;
+  private final int minor;
+  private final int patch;
+  private final String preRelease;
+
+  public Version(int major, int minor, int patch, String preRelease) {
+    this.major = major;
+    this.minor = minor;
+    this.patch = patch;
+    this.preRelease = preRelease;
+  }
+
+  public int hashCode() {
+    return Objects.hash(major, minor, patch, preRelease);
+  }
+}
+")
+
 (def math-round-fixture
   "package com.acme.values;
 
@@ -781,6 +805,37 @@ public final class Demo {
                              :where
                              [?node :node/kind :java.node/method-call]
                              [?node :node/name "equals"]
+                             [?node :node/name ?method-name]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/kind :ref.kind/method-call]
+                             [?ref :ref/owner-type ?owner]
+                             [?owner :type/name ?owner-name]
+                             [?feature :feature/node ?node]
+                             [?feature :feature/kind ?feature-kind]
+                             [?feature :feature/status ?feature-status]]
+                           db)))))))))
+
+(deftest extracts-objects-hash-feature-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/values/Version.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path objects-hash-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["hash"
+                    "java.util.Objects"
+                    :java.api/objects-hash
+                    :feature.status/supported]}
+                 (set (d/q '[:find ?method-name ?owner-name ?feature-kind ?feature-status
+                             :where
+                             [?node :node/kind :java.node/method-call]
+                             [?node :node/name "hash"]
                              [?node :node/name ?method-name]
                              [?ref :ref/from-node ?node]
                              [?ref :ref/kind :ref.kind/method-call]

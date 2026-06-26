@@ -617,6 +617,11 @@
        [(supported-feature (str node-id ":feature:objects-equals")
                            :java.api/objects-equals
                            node-id)])
+     (when (and (= "java.util.Objects" owner)
+                (= "hash" name))
+       [(supported-feature (str node-id ":feature:objects-hash")
+                           :java.api/objects-hash
+                           node-id)])
      (when (and (= "java.lang.Math" owner)
                 (= "round" name))
        [(supported-feature (str node-id ":feature:math-round")

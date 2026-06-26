@@ -8,11 +8,13 @@ public final class DataSizeDemo {
     DataSize first = new DataSize(12);
     DataSize second = new DataSize(12);
     DataSize bytes = DataSize.ofBytes(1);
+    Version version = new Version(1, 2, 3, "beta");
     first.equals(second);
     first.equals("bytes");
     first.label();
     first.inWholeBytes();
     first.hashCode();
     bytes.label();
+    version.hashCode();
   }
 }

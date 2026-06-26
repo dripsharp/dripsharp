@@ -884,6 +884,13 @@
           (with-text (str "object.Equals(" args ")"))
           (apply-rule node :java.objects-equals/to-csharp-object-equals :rule-app.status/success))
 
+      (and (= "java.util.Objects" owner)
+           (= "hash" source-method-name)
+           (<= 1 (count (child-nodes db (:db/id node) :argument)) 8))
+      (-> args-result
+          (with-text (str "System.HashCode.Combine(" args ")"))
+          (apply-rule node :java.objects-hash/to-csharp-hash-code-combine :rule-app.status/success))
+
       (and (= "java.lang.Math" owner)
            (= "round" source-method-name)
            (= 1 (count (child-nodes db (:db/id node) :argument))))

@@ -117,6 +117,7 @@
                             :java.integer-to-string/to-csharp-convert-to-string
                             :java.objects-require-non-null/to-csharp-null-check
                             :java.objects-equals/to-csharp-object-equals
+                            :java.objects-hash/to-csharp-hash-code-combine
                             :java.math-round/to-csharp-java-round
                             :java.double-hash-code/to-csharp-get-hash-code}]
 	    (is (= #{:java.node/class
@@ -173,6 +174,7 @@
              :java.api/integer-to-string
              :java.api/objects-require-non-null
              :java.api/objects-equals
+             :java.api/objects-hash
              :java.api/math-round
              :java.api/double-hash-code}
            (set (remove nil? (keys rules-by-feature)))))
