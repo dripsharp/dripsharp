@@ -6,7 +6,7 @@
            (spoon Launcher)
            (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConditional CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
            (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtRecord CtRecordComponent CtType)
-           (spoon.reflect.reference CtExecutableReference CtTypeReference)
+           (spoon.reflect.reference CtExecutableReference CtFieldReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
 
 (def ^:private lang :lang/java)
@@ -80,11 +80,19 @@
     (.buildModel launcher)
     (.getAllTypes (.getModel launcher))))
 
+(defn- normalize-qname [value]
+  (if-let [[_ owner nested] (re-matches #"(.+)\$([^.$]+)$" (or value ""))]
+    (let [owner-simple (last (str/split owner #"\."))]
+      (if (= owner-simple nested)
+        owner
+        value))
+    value))
+
 (defn- qname [value]
   (cond
     (nil? value) nil
-    (instance? CtType value) (.getQualifiedName ^CtType value)
-    (instance? CtTypeReference value) (.getQualifiedName ^CtTypeReference value)
+    (instance? CtType value) (normalize-qname (.getQualifiedName ^CtType value))
+    (instance? CtTypeReference value) (normalize-qname (.getQualifiedName ^CtTypeReference value))
     :else (str value)))
 
 (defn- type-base-name [^CtTypeReference type-ref]
@@ -238,6 +246,10 @@
     (str "java:" owner "("
          (str/join "," (map qname (.getParameters executable-ref)))
          ")")))
+
+(defn- field-ref-decl-id [^CtFieldReference field-ref]
+  (when-let [owner (some-> field-ref .getDeclaringType qname)]
+    (str "java:" owner "#field:" (.getSimpleName field-ref))))
 
 (defn- node-fact [id kind name file-id ordinal element & {:keys [parent role value]}]
   (cond-> {:db/id id
@@ -653,6 +665,36 @@
                            :ref/owner-type (type-id object-type))
         (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))
 
+(defn- field-reference-facts [node-id field-access]
+  (let [field-ref (.getVariable field-access)
+        target-decl-id (field-ref-decl-id field-ref)
+        field-type (.getType field-ref)
+        owner-type (.getDeclaringType field-ref)
+        resolved? (boolean (and target-decl-id
+                                owner-type
+                                (type-reference-resolved? owner-type)))]
+    (concat
+     (when field-type (type-reference-facts field-type))
+     (when owner-type (type-reference-facts owner-type))
+     (when resolved?
+       [(cond-> {:db/id target-decl-id
+                 :decl/id target-decl-id
+                 :decl/lang lang
+                 :decl/kind :decl.kind/field
+                 :decl/name (.getSimpleName field-ref)
+                 :decl/qualified-name (str (qname owner-type) "." (.getSimpleName field-ref))}
+          field-type (assoc :decl/type (type-id field-type)))])
+     [(cond-> {:db/id (str node-id ":ref")
+               :ref/id (str node-id ":ref")
+               :ref/kind :ref.kind/field-access
+               :ref/from-node node-id
+               :ref/name (.getSimpleName field-ref)
+               :ref/resolved? resolved?}
+        resolved? (assoc :ref/to-decl target-decl-id)
+        field-type (assoc :ref/to-type (type-id field-type))
+        owner-type (assoc :ref/owner-type (type-id owner-type))
+        (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))
+
 (defn- targeted-expression-target [expression]
   (when (instance? CtTargetedExpression expression)
     (.getTarget ^CtTargetedExpression expression)))
@@ -745,6 +787,9 @@
          (invocation-reference-facts node-id expression))
        (when (instance? CtConstructorCall expression)
          (constructor-call-reference-facts node-id expression))
+       (when (or (instance? CtFieldRead expression)
+                 (instance? CtFieldWrite expression))
+         (field-reference-facts node-id expression))
        (when (instance? CtTypePattern expression)
          (let [variable (.getVariable ^CtTypePattern expression)]
            (type-ref-facts node-id :pattern-type (.getType variable) (.getSimpleName variable))))
@@ -970,6 +1015,10 @@
   (when-let [[_ owner] (re-matches #"java:(.+)\(.*\)$" (or decl-id ""))]
     owner))
 
+(defn- owner-from-field-decl-id [decl-id]
+  (when-let [[_ owner] (re-matches #"java:(.+)#field:.+$" (or decl-id ""))]
+    owner))
+
 (defn- method-decl-index [facts]
   (->> facts
        (filter #(and (= :decl.kind/method (:decl/kind %))
@@ -1120,6 +1169,18 @@
     (let [arity (get argument-counts (:ref/from-node ref) 0)]
       (unambiguous (get constructor-index [owner arity])))))
 
+(defn- local-field-target [field-index type-names ref]
+  (let [owner (type-owner type-names (:ref/owner-type ref))
+        field-name (:ref/name ref)]
+    (or (when (and owner field-name)
+          (->> (get field-index field-name)
+               (filter #(= owner (strip-type-args (owner-from-field-decl-id (:decl/id %)))))
+               unambiguous))
+        (when (and (nil? owner) field-name)
+          (->> (get field-index field-name)
+               (filter #(= (:decl/type %) (strip-type-args (owner-from-field-decl-id (:decl/id %)))))
+               unambiguous)))))
+
 (defn- resolve-local-refs [facts]
   (let [deduped (dedupe-facts facts)
         method-index (method-decl-index deduped)
@@ -1161,6 +1222,18 @@
                     (assoc :ref/to-decl (:decl/id target)
                            :ref/resolved? true)
                     (dissoc :ref/reason))
+                fact)
+
+              (and (= :ref.kind/field-access (:ref/kind fact))
+                   (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
+              (if-let [target (local-field-target field-index type-names fact)]
+                (let [owner (owner-from-field-decl-id (:decl/id target))]
+                  (-> fact
+                      (assoc :ref/to-decl (:decl/id target)
+                             :ref/resolved? true)
+                      (cond-> owner (assoc :ref/owner-type owner))
+                      (cond-> (:decl/type target) (assoc :ref/to-type (:decl/type target)))
+                      (dissoc :ref/reason)))
                 fact)
 
               :else fact))

@@ -115,6 +115,30 @@ final class DataSize {
 }
 ")
 
+(def static-import-enum-constant-fixture
+  "package com.acme.units;
+
+import static com.acme.units.DataSizeUnit.*;
+
+public final class DataSize {
+  private final double value;
+  private final DataSizeUnit unit;
+
+  public DataSize(double value, DataSizeUnit unit) {
+    this.value = value;
+    this.unit = unit;
+  }
+
+  public static DataSize ofBytes(double value) {
+    return new DataSize(value, BYTES);
+  }
+}
+
+enum DataSizeUnit {
+  BYTES
+}
+")
+
 (def pattern-fixture
   "package com.acme.patterns;
 
@@ -585,6 +609,41 @@ public final class Demo {
                              [?decl :decl/id ?decl-id]
                              [?decl :decl/source-node]
                              [?ref :ref/resolved? ?resolved?]]
+                           db)))))))))
+
+(deftest resolves-static-imported-enum-constant-field-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/units/DataSize.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path static-import-enum-constant-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["BYTES"
+                    "java:com.acme.units.DataSizeUnit#field:BYTES"
+                    "com.acme.units.DataSizeUnit"
+                    "com.acme.units.DataSizeUnit"
+                    true]}
+                 (set (d/q '[:find ?name ?decl-id ?owner-name ?type-name ?resolved?
+                             :where
+                             [?node :node/kind :java.node/field-read]
+                             [?node :node/name "BYTES"]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/kind :ref.kind/field-access]
+                             [?ref :ref/name ?name]
+                             [?ref :ref/resolved? ?resolved?]
+                             [?ref :ref/to-decl ?decl]
+                             [?decl :decl/id ?decl-id]
+                             [?decl :decl/source-node]
+                             [?ref :ref/owner-type ?owner]
+                             [?owner :type/name ?owner-name]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/name ?type-name]]
                            db)))))))))
 
 (deftest extracts-instanceof-type-pattern-facts

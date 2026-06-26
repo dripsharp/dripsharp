@@ -303,6 +303,30 @@ final class DataSize {
 }
 ")
 
+(def static-import-enum-constant-fixture
+  "package com.example.units;
+
+import static com.example.units.DataSizeUnit.*;
+
+public final class DataSize {
+  private final double value;
+  private final DataSizeUnit unit;
+
+  public DataSize(double value, DataSizeUnit unit) {
+    this.value = value;
+    this.unit = unit;
+  }
+
+  public static DataSize ofBytes(double value) {
+    return new DataSize(value, BYTES);
+  }
+}
+
+enum DataSizeUnit {
+  BYTES
+}
+")
+
 (def pattern-fixture
   "package com.example.patterns;
 
@@ -1052,6 +1076,48 @@ public final class Chain {
               (is (= :rule.status/implemented
                      (get-in entry [:rule :rule/status])))
               (is (= :java.node/object-creation (:source/kind entry))))))))))
+
+(deftest emits-static-imported-enum-constants
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/units/DataSize.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path static-import-enum-constant-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/units/DataSize.cs")
+              enum-generated (.resolve target "com/example/units/DataSizeUnit.cs")
+              content (slurp (str generated))
+              enum-content (slurp (str enum-generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (Files/isRegularFile enum-generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? enum-content "internal enum DataSizeUnit"))
+          (is (str/includes? content "return new DataSize(value, DataSizeUnit.BYTES);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.field-read-node/to-csharp-member))
+          (testing "field-read provenance has registered rule metadata"
+            (let [entry (some #(when (and (= :java.field-read-node/to-csharp-member
+                                            (get-in % [:rule :rule/id]))
+                                         (= "BYTES" (:source/name %)))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/field-read (:source/kind entry))))))))))
 
 (deftest emits-instanceof-type-patterns
   (with-empty-db

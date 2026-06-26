@@ -372,6 +372,27 @@
         db
         (:db/id node))))
 
+(defn- field-access-ref [db node]
+  (ffirst
+   (d/q '[:find (pull ?ref [:ref/id
+                            :ref/name
+                            :ref/resolved?
+                            :ref/reason
+                            {:ref/to-type [:type/id :type/lang :type/name :type/nullable?]}
+                            {:ref/owner-type [:type/id :type/lang :type/name :type/nullable?]}
+                            {:ref/to-decl [:decl/id
+                                           :decl/name
+                                           :decl/qualified-name
+                                           :decl/type
+                                           :decl/modifiers
+                                           {:decl/source-node [:db/id :node/id :node/kind :node/name]}]}])
+          :in $ ?node
+          :where
+          [?ref :ref/from-node ?node]
+          [?ref :ref/kind :ref.kind/field-access]]
+        db
+        (:db/id node))))
+
 (defn- variable-read-type [db node]
   (when-let [name (:node/name node)]
     (when-let [executable (enclosing-executable-node db node)]
@@ -886,6 +907,9 @@
         target-result (when target (emit-expression ctx target))
         target-text (:text target-result)
         field-name (:node/name node)
+        field-ref (field-access-ref (:db ctx) node)
+        owner-type (get-in field-ref [:ref/owner-type :type/name])
+        field-type (get-in field-ref [:ref/to-type :type/name])
         system-target? (and (= :java.node/type-access (:node/kind target))
                             (= "java.lang.System" (:node/value target)))
         target-type (when target (expression-type ctx target))
@@ -897,6 +921,11 @@
                     (= "length" field-name)
                     (nil? target-type)
                     (not= :java.node/this (:node/kind target))) nil
+               (and (not target)
+                    (:ref/resolved? field-ref)
+                    owner-type
+                    (= owner-type field-type))
+               (str (csharp-type-access owner-type) "." field-name)
                target (str target-text "." field-name)
                :else field-name)]
     (if text
