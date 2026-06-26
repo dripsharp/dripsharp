@@ -434,6 +434,28 @@
 
       nil)))
 
+(defn- first-type-arg [source-type]
+  (some->> (:type/args source-type)
+           (sort-by #(or (:type.arg/ordinal %) 0))
+           first
+           :type.arg/type))
+
+(defn- stream-source-node [db node]
+  (loop [current node]
+    (when current
+      (if (and (= :java.node/method-call (:node/kind current))
+               (= "stream" (:node/name current)))
+        (child-node db (:db/id current) :target)
+        (recur (child-node db (:db/id current) :target))))))
+
+(defn- stream-element-type [ctx node]
+  (or (some->> (stream-source-node (:db ctx) node)
+               (expression-type ctx)
+               first-type-arg)
+      {:type/lang :lang/java
+       :type/name "java.lang.Object"
+       :type/nullable? false}))
+
 (defn- enum-source-type? [db source-type]
   (boolean
    (ffirst
@@ -846,6 +868,22 @@
     (when (= 2 (count args))
       [(emit-argument ctx node 0)
        (emit-argument ctx node 1)])))
+
+(defn- collection-constructor [ctx collector-node element-type]
+  (when-let [supplier-node (first (child-nodes (:db ctx) (:db/id collector-node) :argument))]
+    (when (and (= :java.node/method-reference (:node/kind supplier-node))
+               (= "new" (:node/name supplier-node)))
+      (let [target-type (node-type-ref (:db ctx) supplier-node :method-reference-target-type)
+            element (map-type element-type)
+            mapped (when target-type
+                     (map-type (assoc target-type
+                                      :type/args [{:type.arg/ordinal 0
+                                                   :type.arg/type element-type}])))]
+        (when (:csharp/type mapped)
+          {:node supplier-node
+           :type (:csharp/type mapped)
+           :usings (set (concat (:csharp/usings mapped)
+                                (:csharp/usings element)))})))))
 
 (defn- emit-method-call [ctx node]
   (let [db (:db ctx)
@@ -1401,6 +1439,14 @@
             (with-text "System.Linq.Enumerable.ToDictionary")
             (apply-rule node :java.stream-collector-to-map/to-csharp-to-dictionary :rule-app.status/success))
 
+        (and (= "toCollection" source-method-name)
+             (= "java.util.stream.Collectors" owner)
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text "System.Linq.Enumerable.ToList")
+            (apply-rule node :java.stream-collector-to-collection/to-csharp-collection-constructor :rule-app.status/success))
+
         (and (= "collect" source-method-name)
              (= "java.util.stream.Stream" owner)
              target
@@ -1456,12 +1502,21 @@
              (= "java.util.stream.Stream" owner)
              (= 1 (count (child-nodes db (:db/id node) :argument)))
              (collector-node? ctx (first (child-nodes db (:db/id node) :argument)) "toCollection"))
-        (unsupported node
-                     :java.stream-collect-to-collection/unsupported
-                     {:method source-method-name
-                      :owner owner
-                      :collector "toCollection"
-                      :reason :emit.reason/unsupported-stream-collector})
+        (let [collector-node (first (child-nodes db (:db/id node) :argument))
+              collector-result (emit-expression ctx collector-node)
+              constructor (collection-constructor ctx collector-node (stream-element-type ctx node))]
+          (if (and target constructor)
+            (-> (merge-emits [target-result collector-result])
+                linq-result
+                (update :usings into (:usings constructor))
+                (with-text (str "new " (:type constructor) "(" target-text ")"))
+                (apply-rule node :java.stream-collect-to-collection/to-csharp-collection-constructor :rule-app.status/success))
+            (unsupported node
+                         :java.stream-collect-to-collection/to-csharp-collection-constructor
+                         {:method source-method-name
+                          :owner owner
+                          :collector "toCollection"
+                          :reason :emit.reason/unsupported-stream-collector})))
 
         (and (= "collect" source-method-name)
              (= "java.util.stream.Stream" owner))
@@ -1763,6 +1818,17 @@
 
     :java.node/lambda
     (emit-lambda ctx node)
+
+    :java.node/method-reference
+    (if (and (= "new" (:node/name node))
+             (node-type-ref (:db ctx) node :method-reference-target-type))
+      (let [target-type (node-type-ref (:db ctx) node :method-reference-target-type)
+            mapped (map-type target-type)]
+        (-> (emitted (:csharp/type mapped) node :java.stream-collector-to-collection/to-csharp-collection-constructor)
+            (update :usings into (:csharp/usings mapped))))
+      (unsupported node
+                   :java.stream-collector-to-collection/to-csharp-collection-constructor
+                   {:reason :emit.reason/unsupported-method-reference}))
 
     :java.node/switch-expression
     (emit-switch-expression ctx node)

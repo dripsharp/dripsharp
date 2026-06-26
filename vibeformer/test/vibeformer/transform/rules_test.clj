@@ -180,6 +180,7 @@
              :java.node/local-variable
              :java.node/method
              :java.node/method-call
+             :java.node/method-reference
              :java.node/object-creation
              :java.node/record
              :java.node/record-component
@@ -298,7 +299,9 @@
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.reflection.class/for-name)))))
     (doseq [feature [:java.stream.collector/to-map
-                     :java.stream/collect-to-map]]
+                     :java.stream.collector/to-collection
+                     :java.stream/collect-to-map
+                     :java.stream/collect-to-collection]]
       (is (= :rule.status/implemented
              (:rule/status (first (rules-by-feature feature))))))
     (doseq [feature [:java.reflection.class/get-declared-method
@@ -313,9 +316,7 @@
                      :java.reflection.parameter/get-annotation
                      :java.reflection.wildcard-type/get-lower-bounds
                      :java.reflection.wildcard-type/get-upper-bounds
-                     :java.stream/collect
-                     :java.stream.collector/to-collection
-                     :java.stream/collect-to-collection]]
+                     :java.stream/collect]]
       (is (= :rule.status/unsupported
              (:rule/status (first (rules-by-feature feature))))))
     (is (= #{:java.statement-node/to-csharp-stub
@@ -341,6 +342,7 @@
              :java.local-variable-node/to-csharp-local
              :java.method-node/to-csharp-method
              :java.method-call-node/to-csharp-invocation
+             :java.method-reference-node/to-csharp-method-reference
              :java.object-creation-node/to-csharp-new
              :java.record-node/to-csharp-record
              :java.record-component-node/to-csharp-parameter
@@ -368,7 +370,9 @@
              :java.package-private-member/to-csharp-internal
              :java.lambda-feature/to-csharp-lambda
              :java.stream-collector-to-map/to-csharp-to-dictionary
-             :java.stream-collect-to-map/to-csharp-to-dictionary}
+             :java.stream-collector-to-collection/to-csharp-collection-constructor
+             :java.stream-collect-to-map/to-csharp-to-dictionary
+             :java.stream-collect-to-collection/to-csharp-collection-constructor}
            (set (map :rule/id
                      (remove #(contains? special-api-rules (:rule/id %))
                              (filter #(= :rule.status/implemented (:rule/status %))

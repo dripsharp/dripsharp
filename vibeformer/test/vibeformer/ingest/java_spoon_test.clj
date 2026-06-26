@@ -163,6 +163,7 @@ public final class StreamOperations {
   "package com.acme.stream;
 
 import java.util.LinkedList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -174,6 +175,10 @@ public final class StreamUnsupportedCollectors {
 
   public LinkedList<String> linked(List<String> names) {
     return names.stream().collect(Collectors.toCollection(LinkedList::new));
+  }
+
+  public LinkedHashSet<String> orderedSet(List<String> names) {
+    return names.stream().collect(Collectors.toCollection(LinkedHashSet::new));
   }
 }
 ")
@@ -1973,9 +1978,11 @@ public final class Demo {
                                                    :java.stream/collect-to-set
                                                    :java.stream/collect-joining
                                                    :java.stream/collect-to-map
+                                                   :java.stream/collect-to-collection
                                                    :java.stream.collector/to-set
                                                    :java.stream.collector/joining
-                                                   :java.stream.collector/to-map}
+                                                   :java.stream.collector/to-map
+                                                   :java.stream.collector/to-collection}
                                                   ?kind)]
                                      [?feature :feature/status ?status]
                                      [?feature :feature/node ?node]
@@ -1984,23 +1991,35 @@ public final class Demo {
               unsupported (set (d/q '[:find ?kind ?node-name ?status
                                        :where
                                        [?feature :feature/kind ?kind]
-                                       [(contains? #{:java.stream/collect-to-collection
-                                                     :java.stream.collector/to-collection
-                                                     :java.feature/stream-api
+                                       [(contains? #{:java.feature/stream-api
                                                      :java.stream/collect}
                                                     ?kind)]
                                        [?feature :feature/status ?status]
                                        [?feature :feature/node ?node]
                                        [?node :node/name ?node-name]]
-                                     db))]
+                                     db))
+              constructor-refs (set (d/q '[:find ?name ?value ?role ?target-type
+                                           :where
+                                           [?node :node/kind :java.node/method-reference]
+                                           [?node :node/name ?name]
+                                           [?node :node/value ?value]
+                                           [?node :node/role ?role]
+                                           [?ref :ref/from-node ?node]
+                                           [?ref :ref/kind :ref.kind/type-use]
+                                           [?ref :ref/role :method-reference-target-type]
+                                           [?ref :ref/to-type ?type]
+                                           [?type :type/id ?target-type]]
+                                         db))]
           (is (= #{[:java.stream/distinct "distinct" :feature.status/supported]
                    [:java.stream/sorted "sorted" :feature.status/supported]
                    [:java.stream/collect-to-set "collect" :feature.status/supported]
                    [:java.stream/collect-joining "collect" :feature.status/supported]
                    [:java.stream/collect-to-map "collect" :feature.status/supported]
+                   [:java.stream/collect-to-collection "collect" :feature.status/supported]
                    [:java.stream.collector/to-set "toSet" :feature.status/supported]
                    [:java.stream.collector/joining "joining" :feature.status/supported]
                    [:java.stream.collector/to-map "toMap" :feature.status/supported]
+                   [:java.stream.collector/to-collection "toCollection" :feature.status/supported]
                    [:java.stream/any-match "anyMatch" :feature.status/supported]
                    [:java.stream/all-match "allMatch" :feature.status/supported]
                    [:java.stream/none-match "noneMatch" :feature.status/supported]
@@ -2009,9 +2028,11 @@ public final class Demo {
                    [:java.stream/sum "sum" :feature.status/supported]
                    [:java.stream/to-array "toArray" :feature.status/supported]}
                  supported))
-          (is (= #{[:java.stream/collect-to-collection "collect" :feature.status/unsupported]
-                   [:java.stream.collector/to-collection "toCollection" :feature.status/unsupported]}
-                 unsupported)))))))
+          (is (empty? unsupported))
+          (is (set/subset?
+               #{["new" "java.util.LinkedList" :argument "java.util.LinkedList"]
+                 ["new" "java.util.LinkedHashSet" :argument "java.util.LinkedHashSet"]}
+               constructor-refs)))))))
 
 (deftest classifies-supported-reflection-api-facts
   (with-empty-db

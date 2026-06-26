@@ -106,6 +106,7 @@
    "java.util.LinkedList" ["LinkedList" #{collection-using}]
    "java.util.Set" ["HashSet" #{collection-using}]
    "java.util.HashSet" ["HashSet" #{collection-using}]
+   "java.util.LinkedHashSet" ["HashSet" #{collection-using}]
    "java.util.Map" ["Dictionary" #{collection-using}]
    "java.util.HashMap" ["Dictionary" #{collection-using}]
    "java.lang.Iterable" ["IEnumerable" #{collection-using}]

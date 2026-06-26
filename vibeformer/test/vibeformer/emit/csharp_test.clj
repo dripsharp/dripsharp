@@ -104,6 +104,8 @@ public final class StreamPipeline {
   "package com.example.stream;
 
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -130,6 +132,18 @@ public final class StreamOperations {
     return names.stream()
         .filter(it -> it != null)
         .collect(Collectors.toMap(it -> it, it -> it.trim()));
+  }
+
+  public LinkedList<String> linked(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .collect(Collectors.toCollection(LinkedList::new));
+  }
+
+  public LinkedHashSet<String> orderedSet(List<String> names) {
+    return names.stream()
+        .filter(it -> it != null)
+        .collect(Collectors.toCollection(LinkedHashSet::new));
   }
 
   public String joined(List<String> names) {
@@ -2482,6 +2496,8 @@ public final class Chain {
                            "return names.Where(it => it != null).Distinct().OrderBy(it => it).ToList();"
                            "return names.Where(it => it != null).ToHashSet();"
                            "return names.Where(it => it != null).ToDictionary(it => it, it => it.Trim());"
+                           "return new LinkedList<string>(names.Where(it => it != null));"
+                           "return new HashSet<string>(names.Where(it => it != null));"
                            "return string.Join(\",\", names.Where(it => it != null).Select(it => it.Trim()));"
                            "return names.Any(it => string.IsNullOrEmpty(it));"
                            "return names.All(it => !(string.IsNullOrEmpty(it)));"
@@ -2498,6 +2514,8 @@ public final class Chain {
                         :java.stream-collect-to-set/to-csharp-to-hash-set
                         :java.stream-collect-to-map/to-csharp-to-dictionary
                         :java.stream-collector-to-map/to-csharp-to-dictionary
+                        :java.stream-collect-to-collection/to-csharp-collection-constructor
+                        :java.stream-collector-to-collection/to-csharp-collection-constructor
                         :java.stream-collect-joining/to-csharp-string-join
                         :java.stream-any-match/to-csharp-any
                         :java.stream-all-match/to-csharp-all

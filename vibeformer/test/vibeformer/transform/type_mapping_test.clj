@@ -82,6 +82,13 @@
              ["System.Collections.Generic"]
              [])
     (maps-to (type-fact :lang/java
+                        "java.util.LinkedHashSet"
+                        false
+                        [(type-fact :lang/java "java.lang.String")])
+             "HashSet<string>"
+             ["System.Collections.Generic"]
+             [])
+    (maps-to (type-fact :lang/java
                         "java.util.Optional"
                         false
                         [(type-fact :lang/java "java.lang.String")])

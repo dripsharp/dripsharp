@@ -51,6 +51,10 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/method-call
     :rule/status implemented-status}
+   {:rule/id :java.method-reference-node/to-csharp-method-reference
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/method-reference
+    :rule/status implemented-status}
    {:rule/id :java.object-creation-node/to-csharp-new
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/object-creation
@@ -462,10 +466,11 @@
     :rule/input-feature :java.stream.collector/to-map
     :rule/output-feature :csharp.api/linq-to-dictionary
     :rule/status implemented-status}
-   {:rule/id :java.stream-collector-to-collection/unsupported
+   {:rule/id :java.stream-collector-to-collection/to-csharp-collection-constructor
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream.collector/to-collection
-    :rule/status unsupported-status}
+    :rule/output-feature :csharp.api/collection-constructor
+    :rule/status implemented-status}
    {:rule/id :java.stream-collect-to-list/to-csharp-to-list
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect-to-list
@@ -486,10 +491,11 @@
     :rule/input-feature :java.stream/collect-to-map
     :rule/output-feature :csharp.api/linq-to-dictionary
     :rule/status implemented-status}
-   {:rule/id :java.stream-collect-to-collection/unsupported
+   {:rule/id :java.stream-collect-to-collection/to-csharp-collection-constructor
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect-to-collection
-    :rule/status unsupported-status}
+    :rule/output-feature :csharp.api/collection-constructor
+    :rule/status implemented-status}
    {:rule/id :java.stream-collect/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect

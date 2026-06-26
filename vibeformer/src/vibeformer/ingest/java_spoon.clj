@@ -4,7 +4,7 @@
   (:import (java.nio.file Paths)
            (java.security MessageDigest)
            (spoon Launcher)
-           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConditional CtConstructorCall CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
+           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConditional CtConstructorCall CtExecutableReferenceExpression CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
            (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtParameter CtRecord CtRecordComponent CtType)
            (spoon.reflect.reference CtExecutableReference CtFieldReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
@@ -400,6 +400,7 @@
     (instance? CtSwitchExpression expression) :java.node/switch-expression
     (instance? CtConditional expression) :java.node/conditional-expression
     (instance? CtLambda expression) :java.node/lambda
+    (instance? CtExecutableReferenceExpression expression) :java.node/method-reference
     (instance? CtConstructorCall expression) :java.node/object-creation
     (instance? CtInvocation expression) :java.node/method-call
     (instance? CtAssignment expression) :java.node/assignment
@@ -426,6 +427,12 @@
 
     (instance? CtLambda expression)
     "lambda"
+
+    (instance? CtExecutableReferenceExpression expression)
+    (let [executable (.getExecutable ^CtExecutableReferenceExpression expression)]
+      (if (.isConstructor executable)
+        "new"
+        (.getSimpleName executable)))
 
     (instance? CtInvocation expression)
     (.getSimpleName (.getExecutable ^CtInvocation expression))
@@ -476,6 +483,8 @@
     (instance? CtLambda expression) (->> (.getParameters ^CtLambda expression)
                                          (map #(.getSimpleName ^CtParameter %))
                                          (str/join ","))
+    (instance? CtExecutableReferenceExpression expression)
+    (some-> ^CtExecutableReferenceExpression expression .getExecutable .getDeclaringType type-id)
     (instance? CtConstructorCall expression) (some-> expression .getType type-id)
     (instance? CtAssignment expression) "="
     (instance? CtUnaryOperator expression) (unary-operator-name expression)
@@ -721,10 +730,11 @@
   {"toList" :java.stream.collector/to-list
    "toSet" :java.stream.collector/to-set
    "joining" :java.stream.collector/joining
-   "toMap" :java.stream.collector/to-map})
+   "toMap" :java.stream.collector/to-map
+   "toCollection" :java.stream.collector/to-collection})
 
 (def unsupported-collector-features
-  {"toCollection" :java.stream.collector/to-collection})
+  {})
 
 (defn- stream-owner? [owner]
   (some-> owner (str/starts-with? "java.util.stream")))
@@ -921,6 +931,14 @@
                            :ref/owner-type (type-id object-type))
         (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))
 
+(defn- method-reference-facts [node-id ^CtExecutableReferenceExpression expression]
+  (let [executable-ref (.getExecutable expression)
+        owner-type (.getDeclaringType executable-ref)
+        return-type (.getType executable-ref)]
+    (concat
+     (when owner-type (type-ref-facts node-id :method-reference-target-type owner-type))
+     (when return-type (type-ref-facts node-id :method-reference-return-type return-type)))))
+
 (defn- field-reference-facts [node-id field-access]
   (let [field-ref (.getVariable field-access)
         target-decl-id (field-ref-decl-id field-ref)
@@ -1076,6 +1094,8 @@
             (invocation-reference-facts node-id expression))
           (when (instance? CtConstructorCall expression)
             (constructor-call-reference-facts node-id expression))
+          (when (instance? CtExecutableReferenceExpression expression)
+            (method-reference-facts node-id expression))
           (when (or (instance? CtFieldRead expression)
                     (instance? CtFieldWrite expression))
             (field-reference-facts node-id expression))
