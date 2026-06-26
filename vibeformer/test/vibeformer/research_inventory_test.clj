@@ -1,6 +1,7 @@
 (ns vibeformer.research-inventory-test
   (:require [clojure.test :refer [deftest is]]
-            [vibeformer.research-inventory :as research-inventory]))
+            [vibeformer.research-inventory :as research-inventory]
+            [vibeformer.transform.rules :as rules]))
 
 (deftest coverage-summary-ranks-namespaced-failures
   (let [summary (#'research-inventory/coverage-summary
@@ -34,3 +35,15 @@
               :status :feature.status/unsupported
               :count 1}]}
            summary))))
+
+(deftest registered-rules-follow-discovered-source-languages
+  (let [rule-ids (fn [source-files]
+                   (set (map :rule/id (#'research-inventory/registered-rules source-files))))]
+    (is (= (set (map :rule/id rules/initial-java-rules))
+           (rule-ids [{:file/lang :lang/java}])))
+    (is (= (set (map :rule/id rules/initial-kotlin-rules))
+           (rule-ids [{:file/lang :lang/kotlin}])))
+    (is (= (into (set (map :rule/id rules/initial-java-rules))
+                 (map :rule/id rules/initial-kotlin-rules))
+           (rule-ids [{:file/lang :lang/java}
+                      {:file/lang :lang/kotlin}])))))

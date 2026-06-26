@@ -68,6 +68,18 @@
        (sort-by :lang)
        vec))
 
+(defn- source-langs [source-files]
+  (set (keep :file/lang source-files)))
+
+(defn- registered-rules [source-files]
+  (let [langs (source-langs source-files)]
+    (cond-> []
+      (contains? langs :lang/java)
+      (into rules/initial-java-rules)
+
+      (contains? langs :lang/kotlin)
+      (into rules/initial-kotlin-rules))))
+
 (def lookup-ref-attrs
   {:decl/return-type :type/id
    :decl/source-node :node/id
@@ -312,7 +324,7 @@
                java-result (ingest-java-batched! conn project-id source-files)
                kotlin-result (ingest-kotlin-batched! conn project-id source-files)
                kotlin-enrich-result (ingest-kotlin-enrichment-batched! conn project-id {})
-               _ (rules/register! conn rules/initial-java-rules)
+               _ (rules/register! conn (registered-rules source-files))
                db (d/db conn)
                coverage-report (rules/coverage-report db {:allow-stubs? true
                                                            :allow-unsupported? true})
