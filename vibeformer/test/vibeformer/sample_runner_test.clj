@@ -93,6 +93,55 @@ object FixtureModuleReader : ModuleReader {
 }
 ")
 
+(def negated-pattern-version-fixture
+  "package org.pkl.core;
+
+import java.util.Objects;
+import org.jspecify.annotations.Nullable;
+
+public final class Version {
+  private final int major;
+  private final int minor;
+  private final int patch;
+  private final @Nullable String preRelease;
+
+  public Version(int major, int minor, int patch, @Nullable String preRelease) {
+    this.major = major;
+    this.minor = minor;
+    this.patch = patch;
+    this.preRelease = preRelease;
+  }
+
+  public int hashCode() {
+    return Objects.hash(major, minor, patch, preRelease);
+  }
+
+  public int smallerMajor(Version other) {
+    return Math.min(major, other.major);
+  }
+
+  public int largerMajor(Version other) {
+    return Math.max(major, other.major);
+  }
+}
+")
+
+(def negated-pattern-demo-fixture
+  "package org.pkl.core;
+
+public final class DataSizeDemo {
+  private DataSizeDemo() {
+  }
+
+  public static void main(String[] args) {
+    Version version = new Version(1, 2, 3, \"beta\");
+    version.hashCode();
+    version.smallerMajor(new Version(2, 0, 0, null));
+    version.largerMajor(new Version(2, 0, 0, null));
+  }
+}
+")
+
 (defn- temp-root []
   (Files/createTempDirectory "vibeformer-sample-runner-test-" (make-array java.nio.file.attribute.FileAttribute 0)))
 
@@ -145,6 +194,14 @@ object FixtureModuleReader : ModuleReader {
   (let [root (temp-root)]
     (write-file! root "sample-projects/kotlin-object-overrides/source/src/main/kotlin/com/example/kotlin/ObjectOverrides.kt"
                  kotlin-object-overrides-fixture)
+    root))
+
+(defn- negated-pattern-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/java-negated-pattern/source/src/main/java/org/pkl/core/Version.java"
+                 negated-pattern-version-fixture)
+    (write-file! root "sample-projects/java-negated-pattern/source/src/main/java/org/pkl/core/DataSizeDemo.java"
+                 negated-pattern-demo-fixture)
     root))
 
 (deftest discovers-samples-with-source-roots
@@ -213,6 +270,31 @@ object FixtureModuleReader : ModuleReader {
       (is (str/includes? @project-content "<Nullable>enable</Nullable>"))
       (is (str/includes? @project-content "<EnableDefaultCompileItems>false</EnableDefaultCompileItems>"))
       (is (str/includes? @project-content "<Compile Include=\"com/example/Hello.cs\" />")))))
+
+(deftest runs-negated-pattern-sample-with-nullable-version
+  (let [root (negated-pattern-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "java-negated-pattern"
+                                          :dotnet/enabled? false})
+        target (.resolve root "sample-projects/java-negated-pattern/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        version-file (.resolve target "csharp/org/pkl/core/Version.cs")
+        demo-file (.resolve target "csharp/org/pkl/core/DataSizeDemo.cs")
+        version-content (slurp (str version-file))
+        demo-content (slurp (str demo-file))
+        stage-by-name (into {} (map (juxt :stage identity) stages))]
+    (is (:ok? result))
+    (is (= :ok (get-in stage-by-name [:coverage/check :status])))
+    (is (= :ok (get-in stage-by-name [:csharp/emit :status])))
+    (is (= :skipped (get-in stage-by-name [:dotnet/build :status])))
+    (is (true? (:ok? coverage)))
+    (is (= :generated (:status provenance)))
+    (is (empty? (:csharp/diagnostics provenance)))
+    (is (str/includes? version-content "private readonly string? preRelease;"))
+    (is (str/includes? version-content "public Version(int major, int minor, int patch, string? preRelease)"))
+    (is (str/includes? demo-content "new Version(2, 0, 0, null)"))))
 
 (deftest coverage-failure-stops-before-emission
   (let [root (coverage-failure-checkout)
