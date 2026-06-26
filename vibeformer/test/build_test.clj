@@ -25,11 +25,12 @@
 
 (deftest kotlin-emission-sample-enables-runner-emission-by-default
   (testing "string sample names"
-    (let [args (build/sample-runner-main-args "kotlin-basic-declarations" {})]
-      (is (= ["-m" "vibeformer.sample-runner" "kotlin-basic-declarations"]
-             (take 3 args)))
-      (is (= {:kotlin/emit? true}
-             (edn/read-string (last args))))))
+    (doseq [sample-name ["kotlin-basic-declarations" "kotlin-api-calls"]]
+      (let [args (build/sample-runner-main-args sample-name {})]
+        (is (= ["-m" "vibeformer.sample-runner" sample-name]
+               (take 3 args)))
+        (is (= {:kotlin/emit? true}
+               (edn/read-string (last args)))))))
   (testing "tool invocation symbol sample names"
     (let [args (build/sample-runner-main-args 'kotlin-basic-declarations {})]
       (is (= ["-m" "vibeformer.sample-runner" "kotlin-basic-declarations"]

@@ -12,7 +12,8 @@
 (def default-sample "java-word-count")
 
 (def default-sample-runner-opts
-  {"kotlin-basic-declarations" {:kotlin/emit? true}})
+  {"kotlin-basic-declarations" {:kotlin/emit? true}
+   "kotlin-api-calls" {:kotlin/emit? true}})
 
 (def sample-runner-option-keys
   [:coverage/allow-stubs?

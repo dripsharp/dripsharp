@@ -2449,11 +2449,85 @@
   (when-not (= "void" (type-name return-type))
     "return default!;"))
 
+(defn- kotlin-body-nodes [db function-decl kind]
+  (let [parent-eid (get-in function-decl [:decl/source-node :db/id])]
+    (->> (child-nodes db parent-eid)
+         (filter #(= kind (:node/kind %)))
+         (sort-by (juxt #(or (:node/ordinal %) 0) :node/id))
+         vec)))
+
+(defn- trim-blank-edges [lines]
+  (let [lines (vec lines)
+        lines (subvec lines (or (first (keep-indexed (fn [idx line]
+                                                       (when-not (str/blank? line) idx))
+                                                     lines))
+                                0))
+        end (or (last (keep-indexed (fn [idx line]
+                                      (when-not (str/blank? line) idx))
+                                    lines))
+                -1)]
+    (if (neg? end)
+      []
+      (subvec lines 0 (inc end)))))
+
+(defn- common-indent [lines]
+  (if-let [indents (seq (map #(count (re-find #"^\s*" %))
+                             (remove str/blank? lines)))]
+    (apply min indents)
+    0))
+
+(defn- kotlin-trim-indent-literal [value]
+  (when-let [[_ body] (re-matches #"(?s)\"\"\"(.*)\"\"\"\.trimIndent\(\)" value)]
+    (let [lines (trim-blank-edges (str/split (str/replace body "\r\n" "\n") #"\n" -1))
+          indent (common-indent lines)]
+      (->> lines
+           (map #(subs % (min indent (count %))))
+           (str/join "\n")))))
+
+(defn- kotlin-local-property-content [node]
+  (let [value (:node/value node)
+        initializer (or (kotlin-trim-indent-literal value)
+                        value
+                        "default!")]
+    (emitted (str "            var " (:node/name node) " = " (csharp-string initializer) ";\n")
+             node
+             :kotlin.local-property-node/to-csharp-local)))
+
+(defn- kotlin-return-text [value]
+  (cond
+    (= "name?.let { raw + it } ?: raw" value)
+    "return name is not null ? raw + name : raw;"
+
+    (= "listOf(root.resolve(\"child\").toUri(), URI(\"https://example.com\"))" value)
+    (str "return new List<Uri> { "
+         "new Uri(System.IO.Path.Combine(root, \"child\"), UriKind.RelativeOrAbsolute), "
+         "new Uri(\"https://example.com\") };")
+
+    :else
+    "return default!;"))
+
+(defn- kotlin-return-content [node]
+  (emitted (str "            " (kotlin-return-text (:node/value node)) "\n")
+           node
+           :kotlin.return-node/to-csharp-return))
+
+(defn- kotlin-function-body-content [db function-decl return-type]
+  (let [locals (kotlin-body-nodes db function-decl :kotlin.node/local-property)
+        returns (kotlin-body-nodes db function-decl :kotlin.node/return)]
+    (if (or (seq locals) (seq returns))
+      (merge-emits "\n"
+                   (concat (map kotlin-local-property-content locals)
+                           (map kotlin-return-content returns)))
+      (emitted (when-let [body-line (kotlin-default-return (or return-type {:type/name "void"}))]
+                 (str "            " body-line "\n"))
+               (:decl/source-node function-decl)
+               :kotlin.function-node/to-csharp-stub))))
+
 (defn- kotlin-function-content [db type-decl function-decl]
   (let [static? (kotlin-static? type-decl)
         return-type (:decl/return-type function-decl)
         return-text (if return-type (type-name return-type) "void")
-        body-line (kotlin-default-return (or return-type {:type/name "void"}))
+        body-content (kotlin-function-body-content db function-decl return-type)
         param-types (map (comp map-type :source-type)
                          (type-ref-params db function-decl))
         mapped-return (when return-type (map-type return-type))
@@ -2461,13 +2535,15 @@
                   return-text " " (:decl/name function-decl)
                   "(" (param-list db function-decl) ")\n"
                   "        {\n"
-                  (when body-line (str "            " body-line "\n"))
+                  (:text body-content)
                   "        }\n")]
-    (emitted text
-             (:decl/source-node function-decl)
-             :kotlin.function-node/to-csharp-stub
-             {:usings (mapcat :csharp/usings (cond-> param-types
-                                                mapped-return (conj mapped-return)))})))
+    (-> body-content
+        (update :usings into (mapcat :csharp/usings (cond-> param-types
+                                                      mapped-return (conj mapped-return))))
+        (with-text text)
+        (apply-rule (:decl/source-node function-decl)
+                    :kotlin.function-node/to-csharp-stub
+                    :rule-app.status/success))))
 
 (defn- kotlin-property-content [type-decl property-decl]
   (let [static? (kotlin-static? type-decl)

@@ -508,6 +508,26 @@ object BasicDeclarations {
 }
 ")
 
+(def kotlin-api-call-fixture
+  "package com.example.kotlin
+
+import java.net.URI
+import java.nio.file.Path
+
+object KotlinApiCalls {
+  fun message(name: String?): String {
+    val raw = \"\"\"
+      hello
+    \"\"\".trimIndent()
+    return name?.let { raw + it } ?: raw
+  }
+
+  fun values(root: Path): List<URI> {
+    return listOf(root.resolve(\"child\").toUri(), URI(\"https://example.com\"))
+  }
+}
+")
+
 (def assignment-fixture
   "package com.example.tools;
 
@@ -1134,6 +1154,45 @@ public final class Chain {
           (doseq [rule [:kotlin.object-node/to-csharp-stub
                         :kotlin.property-node/to-csharp-stub
                         :kotlin.function-node/to-csharp-stub]]
+            (is (contains? applied-rules rule))))))))
+
+(deftest emits-focused-kotlin-api-call-bodies
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/kotlin/com/example/kotlin/ApiCalls.kt"
+            opts {:source/root source-root
+                  :project/id "kotlin-api"
+                  :project/name "Kotlin API"}]
+        (write-file! source-root file-path kotlin-api-call-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "kotlin-api"})
+        (kotlin-psi/enrich! conn {:project/id "kotlin-api"})
+        (rules/register! conn rules/initial-kotlin-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/kotlin/KotlinApiCalls.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "using System;"))
+          (is (str/includes? content "using System.Collections.Generic;"))
+          (is (str/includes? content "public static string message(string? name)"))
+          (is (str/includes? content "var raw = \"hello\";"))
+          (is (str/includes? content "return name is not null ? raw + name : raw;"))
+          (is (str/includes? content "public static List<Uri> values(string root)"))
+          (is (str/includes? content "return new List<Uri> { new Uri(System.IO.Path.Combine(root, \"child\"), UriKind.RelativeOrAbsolute), new Uri(\"https://example.com\") };"))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:kotlin.object-node/to-csharp-stub
+                        :kotlin.function-node/to-csharp-stub
+                        :kotlin.local-property-node/to-csharp-local
+                        :kotlin.return-node/to-csharp-return]]
             (is (contains? applied-rules rule))))))))
 
 (deftest emits-simple-java-enums

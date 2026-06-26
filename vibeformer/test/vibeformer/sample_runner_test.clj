@@ -347,6 +347,40 @@ object BasicDeclarations {
     (is (str/includes? content "public static string describe(string? name)"))
     (is (str/includes? content "return default!;"))))
 
+(deftest runs-kotlin-api-call-sample-through-emission-pipeline
+  (let [root (kotlin-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "kotlin-api-calls"
+                                          :kotlin/emit? true
+                                          :dotnet/enabled? false})
+        target (.resolve root "sample-projects/kotlin-api-calls/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        csharp-file (.resolve target "csharp/com/example/kotlin/KotlinApiCalls.cs")
+        content (slurp (str csharp-file))
+        stage-by-name (into {} (map (juxt :stage identity) stages))]
+    (is (:ok? result))
+    (is (= :ok (get-in stage-by-name [:coverage/check :status])))
+    (is (nil? (get-in stage-by-name [:coverage/check :coverage/allow-mode])))
+    (is (= :ok (get-in stage-by-name [:csharp/emit :status])))
+    (is (= :skipped (get-in stage-by-name [:dotnet/build :status])))
+    (is (true? (:ok? coverage)))
+    (is (nil? (:coverage/allow-mode coverage)))
+    (is (= :generated (:status provenance)))
+    (is (= 1 (:csharp/files-written provenance)))
+    (is (some #(= :kotlin.local-property-node/to-csharp-local
+                  (get-in % [:rule :rule/id]))
+              (:csharp/provenance provenance)))
+    (is (some #(= :kotlin.return-node/to-csharp-return
+                  (get-in % [:rule :rule/id]))
+              (:csharp/provenance provenance)))
+    (is (str/includes? content "public static string message(string? name)"))
+    (is (str/includes? content "var raw = \"hello\";"))
+    (is (str/includes? content "return name is not null ? raw + name : raw;"))
+    (is (str/includes? content "public static List<Uri> values(string root)"))
+    (is (str/includes? content "new Uri(System.IO.Path.Combine(root, \"child\"), UriKind.RelativeOrAbsolute)"))))
+
 (deftest sample-runner-cli-parses-edn-options
   (is (= {:coverage/allow-unsupported? true}
          (#'sample-runner/parse-cli-opts "{:coverage/allow-unsupported? true}")))

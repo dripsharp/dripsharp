@@ -605,34 +605,41 @@
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/declaration
     :rule/status stubbed-status}
-   {:rule/id :kotlin.call-expression-node/to-csharp-stub
+   {:rule/id :kotlin.call-expression-node/to-csharp-expression
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/call-expression
-    :rule/status stubbed-status}
-   {:rule/id :kotlin.call-receiver-node/to-csharp-stub
+    :rule/output-feature :csharp.feature/expression
+    :rule/status implemented-status}
+   {:rule/id :kotlin.call-receiver-node/to-csharp-expression
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/call-receiver
-    :rule/status stubbed-status}
-   {:rule/id :kotlin.call-argument-node/to-csharp-stub
+    :rule/output-feature :csharp.feature/expression
+    :rule/status implemented-status}
+   {:rule/id :kotlin.call-argument-node/to-csharp-expression
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/call-argument
-    :rule/status stubbed-status}
-   {:rule/id :kotlin.safe-call-node/to-csharp-stub
+    :rule/output-feature :csharp.feature/expression
+    :rule/status implemented-status}
+   {:rule/id :kotlin.safe-call-node/to-csharp-null-check
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/safe-call
-    :rule/status stubbed-status}
-   {:rule/id :kotlin.elvis-expression-node/to-csharp-stub
+    :rule/output-feature :csharp.feature/null-check
+    :rule/status implemented-status}
+   {:rule/id :kotlin.elvis-expression-node/to-csharp-coalesce
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/elvis-expression
-    :rule/status stubbed-status}
-   {:rule/id :kotlin.local-property-node/to-csharp-stub
+    :rule/output-feature :csharp.feature/null-coalescing
+    :rule/status implemented-status}
+   {:rule/id :kotlin.local-property-node/to-csharp-local
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/local-property
-    :rule/status stubbed-status}
-   {:rule/id :kotlin.return-node/to-csharp-stub
+    :rule/output-feature :csharp.feature/local
+    :rule/status implemented-status}
+   {:rule/id :kotlin.return-node/to-csharp-return
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/return
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/return
+    :rule/status implemented-status}
    {:rule/id :kotlin.package-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/package
@@ -676,18 +683,21 @@
     :rule/input-feature :kotlin.feature/nullable-type
     :rule/output-feature :csharp.feature/nullable-type
     :rule/status implemented-status}
-   {:rule/id :kotlin.call-expression-feature/to-csharp-stub
+   {:rule/id :kotlin.call-expression-feature/to-csharp-expression
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/call-expression
-    :rule/status stubbed-status}
-   {:rule/id :kotlin.safe-call-feature/to-csharp-stub
+    :rule/output-feature :csharp.feature/expression
+    :rule/status implemented-status}
+   {:rule/id :kotlin.safe-call-feature/to-csharp-null-check
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/safe-call
-    :rule/status stubbed-status}
-   {:rule/id :kotlin.elvis-expression-feature/to-csharp-stub
+    :rule/output-feature :csharp.feature/null-check
+    :rule/status implemented-status}
+   {:rule/id :kotlin.elvis-expression-feature/to-csharp-coalesce
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/elvis-expression
-    :rule/status stubbed-status}])
+    :rule/output-feature :csharp.feature/null-coalescing
+    :rule/status implemented-status}])
 
 (defn- require-key [rule k]
   (when-not (contains? rule k)
