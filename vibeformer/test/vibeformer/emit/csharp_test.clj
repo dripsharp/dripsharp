@@ -288,6 +288,21 @@ public final class Holder {
 }
 ")
 
+(def numeric-constructor-fixture
+  "package com.example.tools;
+
+public final class NumericFactory {
+  public DataSize make() {
+    return new DataSize(12);
+  }
+}
+
+final class DataSize {
+  DataSize(double value) {
+  }
+}
+")
+
 (def pattern-fixture
   "package com.example.patterns;
 
@@ -976,6 +991,43 @@ public final class Chain {
           (is (empty? (:csharp/diagnostics result)))
           (is (contains? rule-ids :java.object-creation-node/to-csharp-new))
           (testing "object creation provenance has registered rule metadata"
+            (let [entry (some #(when (= :java.object-creation-node/to-csharp-new
+                                        (get-in % [:rule :rule/id]))
+                                 %)
+                              (:csharp/provenance result))]
+              (is (some? entry))
+              (is (= :rule.status/implemented
+                     (get-in entry [:rule :rule/status])))
+              (is (= :java.node/object-creation (:source/kind entry))))))))))
+
+(deftest emits-project-local-object-creation-with-coerced-literal-signature
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/tools/NumericFactory.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path numeric-constructor-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/tools/NumericFactory.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return new DataSize(12);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.object-creation-node/to-csharp-new))
+          (testing "object creation provenance remains tied to the registered rule"
             (let [entry (some #(when (= :java.object-creation-node/to-csharp-new
                                         (get-in % [:rule :rule/id]))
                                  %)

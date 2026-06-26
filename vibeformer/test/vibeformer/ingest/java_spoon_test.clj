@@ -100,6 +100,21 @@ public final class Holder {
 }
 ")
 
+(def numeric-constructor-fixture
+  "package com.acme.objects;
+
+public final class NumericFactory {
+  public DataSize make() {
+    return new DataSize(12);
+  }
+}
+
+final class DataSize {
+  DataSize(double value) {
+  }
+}
+")
+
 (def pattern-fixture
   "package com.acme.patterns;
 
@@ -522,6 +537,37 @@ public final class Demo {
                              [?ref :ref/name ?name]
                              [?ref :ref/to-type ?type]
                              [?type :type/id ?type-id]
+                             [?ref :ref/resolved? ?resolved?]]
+                           db)))))))))
+
+(deftest resolves-project-local-constructor-calls-by-owner-and-arity
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/objects/NumericFactory.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path numeric-constructor-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["com.acme.objects.DataSize"
+                    "com.acme.objects.DataSize"
+                    "java:com.acme.objects.DataSize(double)"
+                    true]}
+                 (set (d/q '[:find ?name ?type-id ?decl-id ?resolved?
+                             :where
+                             [?node :node/kind :java.node/object-creation]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/kind :ref.kind/constructor-call]
+                             [?ref :ref/name ?name]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]
+                             [?ref :ref/to-decl ?decl]
+                             [?decl :decl/id ?decl-id]
+                             [?decl :decl/source-node]
                              [?ref :ref/resolved? ?resolved?]]
                            db)))))))))
 

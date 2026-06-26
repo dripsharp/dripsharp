@@ -956,6 +956,10 @@
   (when-let [[_ owner] (re-matches #"java:(.+)#.+\(.*\)$" (or decl-id ""))]
     owner))
 
+(defn- owner-from-constructor-decl-id [decl-id]
+  (when-let [[_ owner] (re-matches #"java:(.+)\(.*\)$" (or decl-id ""))]
+    owner))
+
 (defn- method-decl-index [facts]
   (->> facts
        (filter #(and (= :decl.kind/method (:decl/kind %))
@@ -965,6 +969,20 @@
                    (update index
                            [(strip-type-args owner)
                             (:decl/name decl)
+                            (param-count-from-decl-id (:decl/id decl))]
+                           (fnil conj [])
+                           decl)
+                   index))
+               {})))
+
+(defn- constructor-decl-index [facts]
+  (->> facts
+       (filter #(and (= :decl.kind/constructor (:decl/kind %))
+                     (:decl/source-node %)))
+       (reduce (fn [index decl]
+                 (if-let [owner (owner-from-constructor-decl-id (:decl/id decl))]
+                   (update index
+                           [(strip-type-args owner)
                             (param-count-from-decl-id (:decl/id decl))]
                            (fnil conj [])
                            decl)
@@ -1087,9 +1105,15 @@
           (when chained-target-owner
             (unambiguous (get method-index [chained-target-owner (:ref/name ref) arity])))))))
 
-(defn- resolve-local-method-refs [facts]
+(defn- local-constructor-target [constructor-index type-names argument-counts ref]
+  (when-let [owner (type-owner type-names (:ref/to-type ref))]
+    (let [arity (get argument-counts (:ref/from-node ref) 0)]
+      (unambiguous (get constructor-index [owner arity])))))
+
+(defn- resolve-local-refs [facts]
   (let [deduped (dedupe-facts facts)
         method-index (method-decl-index deduped)
+        constructor-index (constructor-decl-index deduped)
         type-names (type-name-index deduped)
         argument-counts (argument-counts deduped)
         child-index (child-node-index deduped)
@@ -1097,8 +1121,9 @@
         decl-return-types (decl-return-type-index deduped)
         field-index (field-decl-index deduped)]
     (mapv (fn [fact]
-            (if (and (= :ref.kind/method-call (:ref/kind fact))
-                     (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
+            (cond
+              (and (= :ref.kind/method-call (:ref/kind fact))
+                   (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
               (if-let [target (local-method-target method-index
                                                    type-names
                                                    argument-counts
@@ -1115,7 +1140,20 @@
                       (cond-> (:decl/return-type target) (assoc :ref/to-type (:decl/return-type target)))
                       (dissoc :ref/reason)))
                 fact)
-              fact))
+
+              (and (= :ref.kind/constructor-call (:ref/kind fact))
+                   (not (some-> fact :ref/to-type (str/starts-with? "java."))))
+              (if-let [target (local-constructor-target constructor-index
+                                                        type-names
+                                                        argument-counts
+                                                        fact)]
+                (-> fact
+                    (assoc :ref/to-decl (:decl/id target)
+                           :ref/resolved? true)
+                    (dissoc :ref/reason))
+                fact)
+
+              :else fact))
           deduped)))
 
 (defn extract-project-facts
@@ -1123,14 +1161,14 @@
 
   Java file records must already exist, usually from vibeformer.ingest.source."
   [db project-id]
-  (resolve-local-method-refs (mapcat file-facts (file-records db project-id))))
+  (resolve-local-refs (mapcat file-facts (file-records db project-id))))
 
 (defn ingest!
   "Extract normalized Java facts from ingested Java files and transact them."
   [conn {:project/keys [id]}]
   (let [db (d/db conn)
         files (file-records db id)
-        facts (resolve-local-method-refs (mapcat file-facts files))]
+        facts (resolve-local-refs (mapcat file-facts files))]
     (when (seq facts)
       (d/transact conn {:tx-data facts}))
     {:project/id id
