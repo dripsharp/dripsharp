@@ -213,6 +213,7 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.WildcardType;
 
 public final class ReflectionApi {
   public boolean canInstantiate(Class<?> requestedType, Class<?> implementationType) {
@@ -286,6 +287,14 @@ public final class ReflectionApi {
     return parameter.isNamePresent() ? parameter.getName() : \"\";
   }
 
+  public Type[] lowerBounds(WildcardType wildcardType) {
+    return wildcardType.getLowerBounds();
+  }
+
+  public Type[] upperBounds(WildcardType wildcardType) {
+    return wildcardType.getUpperBounds();
+  }
+
   public Class<?> load(String name) throws Exception {
     return Class.forName(name);
   }
@@ -299,7 +308,6 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.lang.reflect.WildcardType;
 
 public final class ReflectionUnsupportedApi {
   public Method method(Class<?> type) throws Exception {
@@ -340,14 +348,6 @@ public final class ReflectionUnsupportedApi {
 
   public Annotation parameterAnnotation(Parameter parameter, Class<? extends Annotation> annotationType) {
     return parameter.getAnnotation(annotationType);
-  }
-
-  public java.lang.reflect.Type[] lowerBounds(WildcardType wildcardType) {
-    return wildcardType.getLowerBounds();
-  }
-
-  public java.lang.reflect.Type[] upperBounds(WildcardType wildcardType) {
-    return wildcardType.getUpperBounds();
   }
 }
 ")
@@ -2175,6 +2175,8 @@ public final class Demo {
                                         :java.reflection.parameterized-type/get-actual-type-arguments
                                         :java.reflection.parameterized-type/get-raw-type
                                         :java.reflection.parameterized-type/get-owner-type
+                                        :java.reflection.wildcard-type/get-lower-bounds
+                                        :java.reflection.wildcard-type/get-upper-bounds
                                         :java.reflection.executable/get-parameters
                                         :java.reflection.parameter/is-name-present
                                         :java.reflection.parameter/get-name
@@ -2205,6 +2207,8 @@ public final class Demo {
                    [:java.reflection.parameterized-type/get-actual-type-arguments "getActualTypeArguments" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-raw-type "getRawType" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-owner-type "getOwnerType" :feature.status/supported]
+                   [:java.reflection.wildcard-type/get-lower-bounds "getLowerBounds" :feature.status/supported]
+                   [:java.reflection.wildcard-type/get-upper-bounds "getUpperBounds" :feature.status/supported]
                    [:java.reflection.executable/get-parameters "getParameters" :feature.status/supported]
                    [:java.reflection.parameter/is-name-present "isNamePresent" :feature.status/supported]
                    [:java.reflection.parameter/get-name "getName" :feature.status/supported]
@@ -2237,9 +2241,7 @@ public final class Demo {
                                         :java.reflection.method/invoke
                                         :java.reflection.constructor/new-instance
                                         :java.reflection.constructor/get-annotation
-                                        :java.reflection.parameter/get-annotation
-                                        :java.reflection.wildcard-type/get-lower-bounds
-                                        :java.reflection.wildcard-type/get-upper-bounds}
+                                        :java.reflection.parameter/get-annotation}
                                        ?kind)]
                           [?feature :feature/status ?status]
                           [?feature :feature/node ?node]
@@ -2253,9 +2255,7 @@ public final class Demo {
                    [:java.reflection.method/invoke "invoke" :feature.status/unsupported]
                    [:java.reflection.constructor/new-instance "newInstance" :feature.status/unsupported]
                    [:java.reflection.constructor/get-annotation "getAnnotation" :feature.status/unsupported]
-                   [:java.reflection.parameter/get-annotation "getAnnotation" :feature.status/unsupported]
-                   [:java.reflection.wildcard-type/get-lower-bounds "getLowerBounds" :feature.status/unsupported]
-                   [:java.reflection.wildcard-type/get-upper-bounds "getUpperBounds" :feature.status/unsupported]}
+                   [:java.reflection.parameter/get-annotation "getAnnotation" :feature.status/unsupported]}
                  reflection-features)))))))
 
 (deftest keeps-imported-parser-class-calls-out-of-reflection-facts

@@ -331,6 +331,8 @@
                      :java.stream/map-to-int
                      :java.stream/max
                      :java.optional/or-else
+                     :java.reflection.wildcard-type/get-lower-bounds
+                     :java.reflection.wildcard-type/get-upper-bounds
                      :java.stream/collect-to-map
                      :java.stream/collect-to-collection]]
       (is (= :rule.status/implemented
@@ -344,8 +346,6 @@
                      :java.reflection.constructor/new-instance
                      :java.reflection.constructor/get-annotation
                      :java.reflection.parameter/get-annotation
-                     :java.reflection.wildcard-type/get-lower-bounds
-                     :java.reflection.wildcard-type/get-upper-bounds
                      :java.feature/reflection
                      :java.feature/stream-api
                      :java.stream/collect]]
@@ -403,6 +403,8 @@
              :java.record-component-feature/to-csharp-parameter
              :java.package-private-member/to-csharp-internal
              :java.lambda-feature/to-csharp-lambda
+             :java.wildcard-type-get-lower-bounds/to-csharp-generic-parameter-constraints
+             :java.wildcard-type-get-upper-bounds/to-csharp-generic-parameter-constraints
              :java.stream-collector-to-map/to-csharp-to-dictionary
              :java.stream-collector-to-collection/to-csharp-collection-constructor
              :java.stream-collect-to-map/to-csharp-to-dictionary

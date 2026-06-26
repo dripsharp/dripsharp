@@ -224,6 +224,7 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.WildcardType;
 
 public final class ReflectionApi {
   public static void main(String[] args) {
@@ -307,6 +308,14 @@ public final class ReflectionApi {
   public static String parameterName(Parameter parameter) {
     return parameter.isNamePresent() ? parameter.getName() : \"\";
   }
+
+  public static Type[] lowerBounds(WildcardType wildcardType) {
+    return wildcardType.getLowerBounds();
+  }
+
+  public static Type[] upperBounds(WildcardType wildcardType) {
+    return wildcardType.getUpperBounds();
+  }
 }
 ")
 
@@ -317,7 +326,6 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.lang.reflect.WildcardType;
 
 public final class ReflectionUnsupportedApi {
   public static Method method(Class<?> type) throws Exception {
@@ -358,14 +366,6 @@ public final class ReflectionUnsupportedApi {
 
   public static Annotation parameterAnnotation(Parameter parameter, Class<? extends Annotation> annotationType) {
     return parameter.getAnnotation(annotationType);
-  }
-
-  public static java.lang.reflect.Type[] lowerBounds(WildcardType wildcardType) {
-    return wildcardType.getLowerBounds();
-  }
-
-  public static java.lang.reflect.Type[] upperBounds(WildcardType wildcardType) {
-    return wildcardType.getUpperBounds();
   }
 }
 ")
@@ -2735,7 +2735,10 @@ public final class Chain {
                            "public static ParameterInfo[] parameters(ConstructorInfo constructor)"
                            "return constructor.GetParameters();"
                            "public static string parameterName(ParameterInfo parameter)"
-                           "return !string.IsNullOrEmpty(parameter.Name) ? parameter.Name : \"\";"]]
+                           "return !string.IsNullOrEmpty(parameter.Name) ? parameter.Name : \"\";"
+                           "public static Type[] lowerBounds(Type wildcardType)"
+                           "return wildcardType.GetGenericParameterConstraints();"
+                           "public static Type[] upperBounds(Type wildcardType)"]]
             (is (str/includes? content snippet)))
           (is (empty? (:csharp/diagnostics result)))
           (doseq [rule [:java.class-type-literal/to-csharp-typeof
@@ -2757,6 +2760,8 @@ public final class Chain {
                         :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                         :java.parameterized-type-get-raw-type/to-csharp-type
                         :java.parameterized-type-get-owner-type/to-csharp-declaring-type
+                        :java.wildcard-type-get-lower-bounds/to-csharp-generic-parameter-constraints
+                        :java.wildcard-type-get-upper-bounds/to-csharp-generic-parameter-constraints
                         :java.reflection-executable-get-parameters/to-csharp-get-parameters
                         :java.reflection-parameter-is-name-present/to-csharp-name-check
                         :java.reflection-parameter-get-name/to-csharp-name
@@ -2792,9 +2797,7 @@ public final class Chain {
                    :java.reflection-method-invoke/unsupported
                    :java.reflection-constructor-new-instance/unsupported
                    :java.reflection-constructor-get-annotation/unsupported
-                   :java.reflection-parameter-get-annotation/unsupported
-                   :java.reflection-wildcard-type-get-lower-bounds/unsupported
-                   :java.reflection-wildcard-type-get-upper-bounds/unsupported}
+                   :java.reflection-parameter-get-annotation/unsupported}
                  diagnostic-rules)))))))
 
 (deftest emits-supported-synchronized-constructs-as-locks

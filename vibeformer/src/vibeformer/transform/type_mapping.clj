@@ -86,6 +86,8 @@
                              :csharp/usings #{system-using}}
    "java.lang.reflect.ParameterizedType" {:csharp/type "Type"
                                           :csharp/usings #{system-using}}
+   "java.lang.reflect.WildcardType" {:csharp/type "Type"
+                                     :csharp/usings #{system-using}}
    "java.lang.reflect.Method" {:csharp/type "MethodInfo"
                                :csharp/usings #{"System.Reflection"}}
    "java.lang.reflect.Constructor" {:csharp/type "ConstructorInfo"

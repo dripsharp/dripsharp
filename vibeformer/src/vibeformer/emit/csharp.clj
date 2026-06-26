@@ -1358,19 +1358,19 @@
 
       (and (= "java.lang.reflect.WildcardType" owner)
            (= "getLowerBounds" source-method-name))
-      (unsupported node
-                   :java.reflection-wildcard-type-get-lower-bounds/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-wildcard-bounds})
+      (-> target-result
+          (with-text (str target-text ".GetGenericParameterConstraints()"))
+          (apply-rule node
+                      :java.wildcard-type-get-lower-bounds/to-csharp-generic-parameter-constraints
+                      :rule-app.status/success))
 
       (and (= "java.lang.reflect.WildcardType" owner)
            (= "getUpperBounds" source-method-name))
-      (unsupported node
-                   :java.reflection-wildcard-type-get-upper-bounds/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-wildcard-bounds})
+      (-> target-result
+          (with-text (str target-text ".GetGenericParameterConstraints()"))
+          (apply-rule node
+                      :java.wildcard-type-get-upper-bounds/to-csharp-generic-parameter-constraints
+                      :rule-app.status/success))
 
       (and (= "stream" source-method-name)
            target

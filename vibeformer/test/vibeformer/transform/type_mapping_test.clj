@@ -58,6 +58,7 @@
     (maps-to (type-fact :lang/java "java.lang.ClassLoader") "Assembly" ["System.Reflection"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.Type") "Type" ["System"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.ParameterizedType") "Type" ["System"] [])
+    (maps-to (type-fact :lang/java "java.lang.reflect.WildcardType") "Type" ["System"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.Method") "MethodInfo" ["System.Reflection"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.Constructor") "ConstructorInfo" ["System.Reflection"] [])
     (maps-to (type-fact :lang/java "java.lang.reflect.Parameter") "ParameterInfo" ["System.Reflection"] [])

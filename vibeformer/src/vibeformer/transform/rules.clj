@@ -397,14 +397,16 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.parameter/get-annotation
     :rule/status unsupported-status}
-   {:rule/id :java.reflection-wildcard-type-get-lower-bounds/unsupported
+   {:rule/id :java.wildcard-type-get-lower-bounds/to-csharp-generic-parameter-constraints
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.wildcard-type/get-lower-bounds
-    :rule/status unsupported-status}
-   {:rule/id :java.reflection-wildcard-type-get-upper-bounds/unsupported
+    :rule/output-feature :csharp.api/type-generic-parameter-constraints
+    :rule/status implemented-status}
+   {:rule/id :java.wildcard-type-get-upper-bounds/to-csharp-generic-parameter-constraints
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.wildcard-type/get-upper-bounds
-    :rule/status unsupported-status}
+    :rule/output-feature :csharp.api/type-generic-parameter-constraints
+    :rule/status implemented-status}
    {:rule/id :java.stream-source/to-csharp-enumerable
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/source-to-enumerable
