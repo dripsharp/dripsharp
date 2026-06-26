@@ -357,6 +357,24 @@ public final class Demo {
 }
 ")
 
+(def chained-call-fixture
+  "package com.example.chain;
+
+public final class Chain {
+  public Chain move(int amount) {
+    return this;
+  }
+
+  public Chain grow(int amount) {
+    return this;
+  }
+
+  public static Chain run(Chain chain) {
+    return chain.move(1).grow(2);
+  }
+}
+")
+
 (defn- sample-word-counter-source []
   (slurp (str (Paths/get "sample-projects/java-word-count/source/src/main/java/com/example/wordcount/WordCounter.java"
                          (make-array String 0)))))
@@ -1063,6 +1081,39 @@ public final class Demo {
           (is (str/includes? demo-content "return formatter.convert(name);"))
           (is (empty? (:csharp/diagnostics result)))
           (is (seq call-provenance))
+          (is (every? #(= :rule.status/implemented
+                          (get-in % [:rule :rule/status]))
+                      call-provenance)))))))
+
+(deftest emits-chained-project-local-method-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/chain/Chain.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path chained-call-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/chain/Chain.cs")
+              content (slurp (str generated))
+              call-provenance (filter #(= :java.method-call-node/to-csharp-invocation
+                                          (get-in % [:rule :rule/id]))
+                                      (:csharp/provenance result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return chain.move(1).grow(2);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (= #{"move" "grow"}
+                 (set (map :source/name call-provenance))))
           (is (every? #(= :rule.status/implemented
                           (get-in % [:rule :rule/status]))
                       call-provenance)))))))

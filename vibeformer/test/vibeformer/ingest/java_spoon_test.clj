@@ -168,6 +168,24 @@ public final class Demo {
 }
 ")
 
+(def chained-call-fixture
+  "package com.acme.chain;
+
+public final class Chain {
+  public Chain move(int amount) {
+    return this;
+  }
+
+  public Chain grow(int amount) {
+    return this;
+  }
+
+  public static Chain run(Chain chain) {
+    return chain.move(1).grow(2);
+  }
+}
+")
+
 (def switch-expression-fixture
   "package com.acme.tokens;
 
@@ -574,6 +592,37 @@ public final class Demo {
                              [?ref :ref/to-decl ?decl]
                              [?decl :decl/id ?decl-id]
                              [?decl :decl/source-node]]
+                           db)))))))))
+
+(deftest resolves-chained-project-local-method-call-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/chain/Chain.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path chained-call-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["move" "java:com.acme.chain.Chain#move(int)" "com.acme.chain.Chain" true]
+                   ["grow" "java:com.acme.chain.Chain#grow(int)" "com.acme.chain.Chain" true]}
+                 (set (d/q '[:find ?name ?decl-id ?owner-name ?resolved?
+                             :where
+                             [?call :node/kind :java.node/method-call]
+                             [?call :node/name ?name]
+                             [(contains? #{"move" "grow"} ?name)]
+                             [?ref :ref/from-node ?call]
+                             [?ref :ref/kind :ref.kind/method-call]
+                             [?ref :ref/name ?name]
+                             [?ref :ref/resolved? ?resolved?]
+                             [?ref :ref/to-decl ?decl]
+                             [?decl :decl/id ?decl-id]
+                             [?decl :decl/source-node]
+                             [?ref :ref/owner-type ?owner]
+                             [?owner :type/name ?owner-name]]
                            db)))))))))
 
 (deftest resolves-enum-constant-method-call-refs

@@ -6,8 +6,7 @@ public final class SpanDemo {
 
   public static void main(String[] args) {
     Span start = new Span(1, 3);
-    Span moved = start.move(4);
-    Span end = moved.grow(2);
+    Span end = start.move(4).grow(2);
     start.endWith(end);
     start.adjacent(end);
     start.stopIndex();

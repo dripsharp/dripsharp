@@ -983,6 +983,20 @@
               [k (vec (sort-by (juxt #(or (:node/ordinal %) 0) :node/id) nodes))]))
        (into {})))
 
+(defn- method-ref-index [facts]
+  (->> facts
+       (filter #(= :ref.kind/method-call (:ref/kind %)))
+       (map (juxt :ref/from-node identity))
+       (into {})))
+
+(defn- decl-return-type-index [facts]
+  (->> facts
+       (filter #(and (= :decl.kind/method (:decl/kind %))
+                     (:decl/id %)
+                     (:decl/return-type %)))
+       (map (juxt :decl/id :decl/return-type))
+       (into {})))
+
 (defn- field-decl-index [facts]
   (->> facts
        (filter #(and (= :decl.kind/field (:decl/kind %))
@@ -1027,18 +1041,40 @@
         (some-> (enum-constant-field-decl field-index target-type-name field-name)
                 :decl/type)))))
 
-(defn- local-method-target [method-index type-names argument-counts child-index field-index ref]
+(defn- type-owner [type-names type-id]
+  (strip-type-args (or (get type-names type-id)
+                       type-id)))
+
+(defn- method-ref-return-type [method-index type-names argument-counts decl-return-types ref]
+  (or (:ref/to-type ref)
+      (get decl-return-types (:ref/to-decl ref))
+      (when-let [owner (type-owner type-names (:ref/owner-type ref))]
+        (let [arity (get argument-counts (:ref/from-node ref) 0)]
+          (:decl/return-type
+           (unambiguous (get method-index [owner (:ref/name ref) arity])))))))
+
+(defn- chained-method-target-owner [method-index type-names argument-counts child-index ref-index decl-return-types ref]
+  (when-let [target (child-node child-index (:ref/from-node ref) :target)]
+    (when (= :java.node/method-call (:node/kind target))
+      (some->> (:node/id target)
+               (get ref-index)
+               (method-ref-return-type method-index type-names argument-counts decl-return-types)
+               (type-owner type-names)))))
+
+(defn- local-method-target [method-index type-names argument-counts child-index field-index ref-index decl-return-types ref]
   (let [owner-type-id (:ref/owner-type ref)
-        owner (strip-type-args (or (get type-names owner-type-id)
-                                   owner-type-id))
-        enum-target-owner (some-> (enum-constant-target-type child-index field-index ref)
-                                  strip-type-args)
+        owner (type-owner type-names owner-type-id)
+        enum-target-owner (some->> (enum-constant-target-type child-index field-index ref)
+                                   (type-owner type-names))
+        chained-target-owner (chained-method-target-owner method-index type-names argument-counts child-index ref-index decl-return-types ref)
         arity (get argument-counts (:ref/from-node ref) 0)]
     (when (:ref/name ref)
       (or (when owner
             (unambiguous (get method-index [owner (:ref/name ref) arity])))
           (when enum-target-owner
-            (unambiguous (get method-index [enum-target-owner (:ref/name ref) arity])))))))
+            (unambiguous (get method-index [enum-target-owner (:ref/name ref) arity])))
+          (when chained-target-owner
+            (unambiguous (get method-index [chained-target-owner (:ref/name ref) arity])))))))
 
 (defn- resolve-local-method-refs [facts]
   (let [deduped (dedupe-facts facts)
@@ -1046,6 +1082,8 @@
         type-names (type-name-index deduped)
         argument-counts (argument-counts deduped)
         child-index (child-node-index deduped)
+        ref-index (method-ref-index deduped)
+        decl-return-types (decl-return-type-index deduped)
         field-index (field-decl-index deduped)]
     (mapv (fn [fact]
             (if (and (= :ref.kind/method-call (:ref/kind fact))
@@ -1055,12 +1093,15 @@
                                                    argument-counts
                                                    child-index
                                                    field-index
+                                                   ref-index
+                                                   decl-return-types
                                                    fact)]
                 (let [owner (owner-from-method-decl-id (:decl/id target))]
                   (-> fact
                       (assoc :ref/to-decl (:decl/id target)
                              :ref/resolved? true)
                       (cond-> owner (assoc :ref/owner-type owner))
+                      (cond-> (:decl/return-type target) (assoc :ref/to-type (:decl/return-type target)))
                       (dissoc :ref/reason)))
                 fact)
               fact))
