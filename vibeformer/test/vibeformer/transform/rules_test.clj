@@ -223,6 +223,8 @@
              :java.feature/checked-exception
              :java.feature/lambda
              :java.feature/native-method
+             :java.feature/reflection
+             :java.feature/stream-api
              :java.feature/synchronized-block
              :java.feature/synchronized-method
              :java.reflection.class/type-literal
@@ -344,6 +346,8 @@
                      :java.reflection.parameter/get-annotation
                      :java.reflection.wildcard-type/get-lower-bounds
                      :java.reflection.wildcard-type/get-upper-bounds
+                     :java.feature/reflection
+                     :java.feature/stream-api
                      :java.stream/collect]]
       (is (= :rule.status/unsupported
              (:rule/status (first (rules-by-feature feature))))))

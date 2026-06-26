@@ -353,6 +353,10 @@
     :rule/input-feature :java.reflection.modifier/is-abstract
     :rule/output-feature :csharp.api/type-attributes
     :rule/status implemented-status}
+   {:rule/id :java.reflection/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/reflection
+    :rule/status unsupported-status}
    {:rule/id :java.class-for-name/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/for-name
@@ -559,6 +563,10 @@
    {:rule/id :java.stream-collect/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect
+    :rule/status unsupported-status}
+   {:rule/id :java.stream-api/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/stream-api
     :rule/status unsupported-status}
    {:rule/id :java.lambda-feature/to-csharp-lambda
     :rule/source-lang :lang/java
