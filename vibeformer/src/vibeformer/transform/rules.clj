@@ -457,10 +457,20 @@
     :rule/input-feature :java.stream/sum
     :rule/output-feature :csharp.api/linq-sum
     :rule/status implemented-status}
+   {:rule/id :java.stream-min/to-csharp-min
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/min
+    :rule/output-feature :csharp.api/linq-min
+    :rule/status implemented-status}
    {:rule/id :java.stream-max/to-csharp-max
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/max
     :rule/output-feature :csharp.api/linq-max
+    :rule/status implemented-status}
+   {:rule/id :java.stream-skip/to-csharp-skip
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/skip
+    :rule/output-feature :csharp.api/linq-skip
     :rule/status implemented-status}
    {:rule/id :java.stream-any-match/to-csharp-any
     :rule/source-lang :lang/java

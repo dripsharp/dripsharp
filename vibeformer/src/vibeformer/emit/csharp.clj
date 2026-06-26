@@ -910,6 +910,35 @@
                       "java.util.stream.DoubleStream"}
                     owner))))
 
+(def stream-owner-names
+  #{"java.util.stream.Stream"
+    "java.util.stream.IntStream"
+    "java.util.stream.LongStream"
+    "java.util.stream.DoubleStream"})
+
+(defn- stream-owner? [owner]
+  (contains? stream-owner-names owner))
+
+(defn- emit-method-reference-selector [node]
+  (when (= :java.node/method-reference (:node/kind node))
+    (let [member (:node/name node)
+          selector (if (= "length" member)
+                     "it.Length"
+                     (str "it." member "()"))]
+      (emitted (str "it => " selector)
+               node
+               :java.method-reference-node/to-csharp-method-reference))))
+
+(defn- comparator-comparing-selector [ctx node]
+  (let [call-ref (method-call-ref (:db ctx) node)
+        owner (get-in call-ref [:ref/owner-type :type/name])
+        name (or (:ref/name call-ref) (:node/name node))]
+    (when (and (= :java.node/method-call (:node/kind node))
+               (= "java.util.Comparator" owner)
+               (= "comparing" name))
+      (some->> (first (child-nodes (:db ctx) (:db/id node) :argument))
+               emit-method-reference-selector))))
+
 (defn- emit-method-call [ctx node]
   (let [db (:db ctx)
         call-ref (method-call-ref db node)
@@ -1477,12 +1506,28 @@
             (with-text (str target-text ".Sum()"))
             (apply-rule node :java.stream-sum/to-csharp-sum :rule-app.status/success))
 
+        (and (= "min" source-method-name)
+             (stream-owner? owner)
+             target
+             (zero? (count (child-nodes db (:db/id node) :argument))))
+        (-> target-result
+            linq-result
+            (with-text (str target-text ".Min()"))
+            (apply-rule node :java.stream-min/to-csharp-min :rule-app.status/success))
+
+        (and (= "min" source-method-name)
+             (stream-owner? owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument)))
+             (comparator-comparing-selector ctx (first (child-nodes db (:db/id node) :argument))))
+        (let [selector (comparator-comparing-selector ctx (first (child-nodes db (:db/id node) :argument)))]
+          (-> (merge-emits [target-result selector])
+              linq-result
+              (with-text (str target-text ".MinBy(" (:text selector) ")"))
+              (apply-rule node :java.stream-min/to-csharp-min :rule-app.status/success)))
+
         (and (= "max" source-method-name)
-             (contains? #{"java.util.stream.Stream"
-                          "java.util.stream.IntStream"
-                          "java.util.stream.LongStream"
-                          "java.util.stream.DoubleStream"}
-                        owner)
+             (stream-owner? owner)
              target
              (<= (count (child-nodes db (:db/id node) :argument)) 1))
         (-> target-result
@@ -1490,8 +1535,17 @@
             (with-text (str target-text ".Max()"))
             (apply-rule node :java.stream-max/to-csharp-max :rule-app.status/success))
 
+        (and (= "skip" source-method-name)
+             (stream-owner? owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text (str target-text ".Skip(" args ")"))
+            (apply-rule node :java.stream-skip/to-csharp-skip :rule-app.status/success))
+
         (and (= "anyMatch" source-method-name)
-             (= "java.util.stream.Stream" owner)
+             (stream-owner? owner)
              target
              (= 1 (count (child-nodes db (:db/id node) :argument))))
         (-> combined
@@ -1500,7 +1554,7 @@
             (apply-rule node :java.stream-any-match/to-csharp-any :rule-app.status/success))
 
         (and (= "allMatch" source-method-name)
-             (= "java.util.stream.Stream" owner)
+             (stream-owner? owner)
              target
              (= 1 (count (child-nodes db (:db/id node) :argument))))
         (-> combined
@@ -1509,7 +1563,7 @@
             (apply-rule node :java.stream-all-match/to-csharp-all :rule-app.status/success))
 
         (and (= "noneMatch" source-method-name)
-             (= "java.util.stream.Stream" owner)
+             (stream-owner? owner)
              target
              (= 1 (count (child-nodes db (:db/id node) :argument))))
         (-> combined

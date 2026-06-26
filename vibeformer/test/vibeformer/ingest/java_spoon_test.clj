@@ -105,6 +105,8 @@ public final class StreamPipeline {
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Comparator;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 public final class StreamOperations {
@@ -160,8 +162,30 @@ public final class StreamOperations {
         .orElse(0);
   }
 
+  public Optional<Version> compatible(List<Version> versions, Version requested) {
+    return versions.stream()
+        .filter(it -> it.compareTo(requested) >= 0)
+        .min(Comparator.comparing(Version::getVersion));
+  }
+
+  public boolean identifierTail(String identifier) {
+    return identifier.codePoints()
+        .skip(1)
+        .allMatch(cp -> cp == '$' || Character.isUnicodeIdentifierPart(cp));
+  }
+
   public Object[] asArray(List<String> names) {
     return names.stream().toArray();
+  }
+}
+
+final class Version {
+  int compareTo(Version other) {
+    return 0;
+  }
+
+  int getVersion() {
+    return 0;
   }
 }
 ")
@@ -2029,7 +2053,9 @@ public final class Demo {
                                                    :java.stream/map-to-long
                                                    :java.stream/to-array
                                                    :java.stream/sum
+                                                   :java.stream/min
                                                    :java.stream/max
+                                                   :java.stream/skip
                                                    :java.stream/any-match
                                                    :java.stream/all-match
                                                    :java.stream/none-match
@@ -2088,7 +2114,9 @@ public final class Demo {
                    [:java.stream/map-to-int "mapToInt" :feature.status/supported]
                    [:java.stream/map-to-long "mapToLong" :feature.status/supported]
                    [:java.stream/sum "sum" :feature.status/supported]
+                   [:java.stream/min "min" :feature.status/supported]
                    [:java.stream/max "max" :feature.status/supported]
+                   [:java.stream/skip "skip" :feature.status/supported]
                    [:java.optional/or-else "orElse" :feature.status/supported]
                    [:java.stream/to-array "toArray" :feature.status/supported]}
                  supported))

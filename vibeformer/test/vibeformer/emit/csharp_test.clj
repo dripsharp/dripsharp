@@ -116,6 +116,7 @@ import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Comparator;
 import java.util.stream.Collectors;
 
 public final class StreamOperations {
@@ -192,8 +193,30 @@ public final class StreamOperations {
         .orElse(0);
   }
 
+  public Object compatible(List<Version> versions, Version requested) {
+    return versions.stream()
+        .filter(it -> it.compareTo(requested) >= 0)
+        .min(Comparator.comparing(Version::getVersion));
+  }
+
+  public boolean positiveCodePoints(String value) {
+    return value.codePoints()
+        .skip(1)
+        .allMatch(cp -> cp > 0);
+  }
+
   public Object[] asArray(List<String> names) {
     return names.stream().toArray();
+  }
+}
+
+final class Version {
+  public int compareTo(Version other) {
+    return 0;
+  }
+
+  public int getVersion() {
+    return 0;
   }
 }
 ")
@@ -2611,6 +2634,8 @@ public final class Chain {
                            "return names.SelectMany(it => names).ToArray();"
                            "return names.Select(it => 1).Sum();"
                            "return names.Select(it => it.Length).DefaultIfEmpty(0).Max();"
+                           "return versions.Where(it => it.compareTo(requested) >= 0).MinBy(it => it.getVersion());"
+                           "return value.EnumerateRunes().Select(rune => rune.Value).Skip(1).All(cp => cp > 0);"
                            "return names.ToArray();"]]
             (is (str/includes? content snippet)))
           (is (= {:ok? true :failures []} coverage))
@@ -2631,7 +2656,9 @@ public final class Chain {
                         :java.stream-map-to-int/to-csharp-select
                         :java.stream-map-to-long/to-csharp-select
                         :java.stream-sum/to-csharp-sum
+                        :java.stream-min/to-csharp-min
                         :java.stream-max/to-csharp-max
+                        :java.stream-skip/to-csharp-skip
                         :java.optional-or-else/to-csharp-default-if-empty-max
                         :java.stream-to-array/to-csharp-to-array]]
             (is (contains? applied-rules rule))))))))

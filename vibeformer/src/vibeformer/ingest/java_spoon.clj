@@ -748,7 +748,9 @@
    "toArray" :java.stream/to-array
    "count" :java.stream/count
    "sum" :java.stream/sum
+   "min" :java.stream/min
    "max" :java.stream/max
+   "skip" :java.stream/skip
    "anyMatch" :java.stream/any-match
    "allMatch" :java.stream/all-match
    "noneMatch" :java.stream/none-match

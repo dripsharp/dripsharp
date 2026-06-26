@@ -157,7 +157,9 @@
                             :java.stream-to-array/to-csharp-to-array
                             :java.stream-count/to-csharp-count
                             :java.stream-sum/to-csharp-sum
+                            :java.stream-min/to-csharp-min
                             :java.stream-max/to-csharp-max
+                            :java.stream-skip/to-csharp-skip
                             :java.stream-any-match/to-csharp-any
                             :java.stream-all-match/to-csharp-all
                             :java.stream-none-match/to-csharp-not-any
@@ -272,7 +274,9 @@
              :java.stream/to-array
              :java.stream/count
              :java.stream/sum
+             :java.stream/min
              :java.stream/max
+             :java.stream/skip
              :java.stream/any-match
              :java.stream/all-match
              :java.stream/none-match
@@ -329,7 +333,9 @@
                      :java.stream.collector/to-collection
                      :java.reflection.class/get-class-loader
                      :java.stream/map-to-int
+                     :java.stream/min
                      :java.stream/max
+                     :java.stream/skip
                      :java.optional/or-else
                      :java.reflection.wildcard-type/get-lower-bounds
                      :java.reflection.wildcard-type/get-upper-bounds
