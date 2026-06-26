@@ -77,6 +77,28 @@ public final class StreamPipeline {
 }
 ")
 
+(def reflection-api-fixture
+  "package com.example.reflect;
+
+import java.lang.reflect.Modifier;
+
+public final class ReflectionApi {
+  public static void main(String[] args) {
+  }
+
+  public static boolean canInstantiate(Class<?> requestedType, Class<?> implementationType) {
+    return requestedType.isAssignableFrom(implementationType)
+        && !Modifier.isAbstract(implementationType.getModifiers())
+        && !implementationType.isArray()
+        && !implementationType.isPrimitive();
+  }
+
+  public static String typeLabel() {
+    return String.class.getTypeName() + \":\" + String.class.getSimpleName();
+  }
+}
+")
+
 (def enum-fixture
   "package com.example.lookup;
 
@@ -1950,6 +1972,46 @@ public final class Chain {
                         :java.stream-map/to-csharp-select
                         :java.stream-collect-to-list/to-csharp-to-list
                         :java.stream-collector-to-list/to-csharp-to-list]]
+            (is (contains? applied-rules rule))))))))
+
+(deftest emits-supported-reflection-api-as-type-operations
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/reflect/ReflectionApi.java"
+            opts {:source/root source-root
+                  :project/id "reflection-api"
+                  :project/name "Reflection API"}]
+        (write-file! source-root file-path reflection-api-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "reflection-api"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [result (csharp/emit! (d/db conn) target)
+              generated (.resolve target "com/example/reflect/ReflectionApi.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["using System;"
+                           "public static bool canInstantiate(Type requestedType, Type implementationType)"
+                           "requestedType.IsAssignableFrom(implementationType)"
+                           "(System.Reflection.TypeAttributes.Abstract & (System.Reflection.TypeAttributes)((int)implementationType.Attributes)) != 0"
+                           "!(implementationType.IsArray)"
+                           "!(implementationType.IsPrimitive)"
+                           "return (typeof(string).FullName ?? typeof(string).Name) + \":\" + typeof(string).Name;"]]
+            (is (str/includes? content snippet)))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:java.class-type-literal/to-csharp-typeof
+                        :java.class-get-type-name/to-csharp-full-name
+                        :java.class-get-simple-name/to-csharp-name
+                        :java.class-get-modifiers/to-csharp-attributes
+                        :java.class-is-assignable-from/to-csharp-is-assignable-from
+                        :java.class-is-array/to-csharp-is-array
+                        :java.class-is-primitive/to-csharp-is-primitive
+                        :java.modifier-is-abstract/to-csharp-type-attributes]]
             (is (contains? applied-rules rule))))))))
 
 (deftest emits-word-counter-statement-and-expression-subset

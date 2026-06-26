@@ -78,6 +78,8 @@
 (def java-known-types
   {"java.util.regex.Pattern" {:csharp/type "Regex"
                               :csharp/usings #{"System.Text.RegularExpressions"}}
+   "java.lang.Class" {:csharp/type "Type"
+                      :csharp/usings #{system-using}}
    "java.nio.file.Path" {:csharp/type "string"
                          :csharp/usings #{}}})
 

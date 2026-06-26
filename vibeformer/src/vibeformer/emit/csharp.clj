@@ -791,6 +791,26 @@
          (= :java.node/type-access (:node/kind target))
          (= "java.util.Locale" (:node/value target)))))
 
+(def raw-generic-type-literals
+  {"java.lang.Class" ["Type" #{"System"}]
+   "java.util.Collection" ["ICollection<>" #{"System.Collections.Generic"}]
+   "java.util.List" ["List<>" #{"System.Collections.Generic"}]
+   "java.util.ArrayList" ["List<>" #{"System.Collections.Generic"}]
+   "java.util.Set" ["HashSet<>" #{"System.Collections.Generic"}]
+   "java.util.HashSet" ["HashSet<>" #{"System.Collections.Generic"}]
+   "java.util.Map" ["Dictionary<,>" #{"System.Collections.Generic"}]
+   "java.util.HashMap" ["Dictionary<,>" #{"System.Collections.Generic"}]})
+
+(defn- type-literal-result [source-name]
+  (if-let [[target-type usings] (get raw-generic-type-literals source-name)]
+    {:text (str "typeof(" target-type ")")
+     :usings usings}
+    (let [mapped (map-type {:type/lang :lang/java
+                            :type/name source-name
+                            :type/nullable? false})]
+      {:text (str "typeof(" (:csharp/type mapped) ")")
+       :usings (set (:csharp/usings mapped))})))
+
 (defn- collector-to-list-node? [ctx node]
   (let [call-ref (method-call-ref (:db ctx) node)]
     (and (= :java.node/method-call (:node/kind node))
@@ -927,6 +947,71 @@
       (-> args-result
           (with-text (str "(" args ").GetHashCode()"))
           (apply-rule node :java.double-hash-code/to-csharp-get-hash-code :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "getTypeName" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str "(" target-text ".FullName ?? " target-text ".Name)"))
+          (apply-rule node :java.class-get-type-name/to-csharp-full-name :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "getSimpleName" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".Name"))
+          (apply-rule node :java.class-get-simple-name/to-csharp-name :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "getModifiers" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str "(int)" target-text ".Attributes"))
+          (apply-rule node :java.class-get-modifiers/to-csharp-attributes :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "isAssignableFrom" source-method-name)
+           target
+           (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (-> combined
+          (with-text (str target-text ".IsAssignableFrom(" args ")"))
+          (apply-rule node :java.class-is-assignable-from/to-csharp-is-assignable-from :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "isArray" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".IsArray"))
+          (apply-rule node :java.class-is-array/to-csharp-is-array :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "isPrimitive" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (with-text (str target-text ".IsPrimitive"))
+          (apply-rule node :java.class-is-primitive/to-csharp-is-primitive :rule-app.status/success))
+
+      (and (= "java.lang.reflect.Modifier" owner)
+           (= "isAbstract" source-method-name)
+           (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (-> args-result
+          (with-text (str "(System.Reflection.TypeAttributes.Abstract & (System.Reflection.TypeAttributes)("
+                          args
+                          ")) != 0"))
+          (apply-rule node :java.modifier-is-abstract/to-csharp-type-attributes :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "forName" source-method-name))
+      (unsupported node
+                   :java.class-for-name/unsupported
+                   {:method source-method-name
+                    :owner owner
+                    :reason :emit.reason/unsupported-class-for-name})
 
       (and (= "stream" source-method-name)
            target
@@ -1076,8 +1161,13 @@
         field-type (get-in field-ref [:ref/to-type :type/name])
         system-target? (and (= :java.node/type-access (:node/kind target))
                             (= "java.lang.System" (:node/value target)))
+        class-literal (when (and (= "class" field-name)
+                                 (= "java.lang.Class" field-type)
+                                 (= :java.node/type-access (:node/kind target)))
+                        (type-literal-result (:node/value target)))
         target-type (when target (expression-type ctx target))
         text (cond
+               class-literal (:text class-literal)
                (and system-target? (= "err" field-name)) "System.Console.Error"
                (and system-target? (= "out" field-name)) "System.Console"
                (and target (= "length" field-name) (array-type? target-type)) (str target-text ".Length")
@@ -1094,8 +1184,13 @@
                :else field-name)]
     (if text
       (-> (or target-result (merge-emits []))
+          (update :usings into (:usings class-literal))
           (with-text text)
-          (apply-rule node :java.field-read-node/to-csharp-member :rule-app.status/success))
+          (apply-rule node
+                      (if class-literal
+                        :java.class-type-literal/to-csharp-typeof
+                        :java.field-read-node/to-csharp-member)
+                      :rule-app.status/success))
       (unsupported node
                    :java.field-read-node/to-csharp-member
                    {:field field-name

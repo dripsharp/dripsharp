@@ -78,6 +78,29 @@ public final class StreamPipeline {
 }
 ")
 
+(def reflection-api-fixture
+  "package com.acme.reflect;
+
+import java.lang.reflect.Modifier;
+
+public final class ReflectionApi {
+  public boolean canInstantiate(Class<?> requestedType, Class<?> implementationType) {
+    return requestedType.isAssignableFrom(implementationType)
+        && !Modifier.isAbstract(implementationType.getModifiers())
+        && !implementationType.isArray()
+        && !implementationType.isPrimitive();
+  }
+
+  public String typeLabel() {
+    return String.class.getTypeName() + \":\" + String.class.getSimpleName();
+  }
+
+  public Class<?> load(String name) throws Exception {
+    return Class.forName(name);
+  }
+}
+")
+
 (def generic-interface-fixture
   "package com.acme.generic;
 
@@ -1503,12 +1526,12 @@ public final class Demo {
 
           (testing "invocation feature facts attach to canonical method-call nodes"
             (is (set/subset?
-                 #{[:java.feature/reflection "forName" :java.node/method-call]
+                 #{[:java.reflection.class/for-name "forName" :java.node/method-call]
                    [:java.stream/source-to-enumerable "stream" :java.node/method-call]}
                                    (set (d/q '[:find ?kind ?node-name ?node-kind
                              :where
                              [?feature :feature/kind ?kind]
-                             [(contains? #{:java.feature/reflection
+                             [(contains? #{:java.reflection.class/for-name
                                            :java.stream/source-to-enumerable}
                                           ?kind)]
                              [?feature :feature/node ?node]
@@ -1588,5 +1611,48 @@ public final class Demo {
                        [:java.stream/map "map" :feature.status/supported]
                        [:java.stream/collect-to-list "collect" :feature.status/supported]
                        [:java.stream.collector/to-list "toList" :feature.status/supported]}
-                     stream-features))
+                      stream-features))
               (is (empty? broad-unsupported)))))))))
+
+(deftest classifies-supported-reflection-api-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/reflect/ReflectionApi.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path reflection-api-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              reflection-features
+              (set (d/q '[:find ?kind ?node-name ?status
+                          :where
+                          [?feature :feature/kind ?kind]
+                          [(contains? #{:java.reflection.class/type-literal
+                                        :java.reflection.class/get-type-name
+                                        :java.reflection.class/get-simple-name
+                                        :java.reflection.class/get-modifiers
+                                        :java.reflection.class/is-assignable-from
+                                        :java.reflection.class/is-array
+                                        :java.reflection.class/is-primitive
+                                        :java.reflection.modifier/is-abstract
+                                        :java.reflection.class/for-name
+                                        :java.feature/reflection}
+                                       ?kind)]
+                          [?feature :feature/status ?status]
+                          [?feature :feature/node ?node]
+                          [?node :node/name ?node-name]]
+                        db))]
+          (is (= #{[:java.reflection.class/type-literal "class" :feature.status/supported]
+                   [:java.reflection.class/get-type-name "getTypeName" :feature.status/supported]
+                   [:java.reflection.class/get-simple-name "getSimpleName" :feature.status/supported]
+                   [:java.reflection.class/get-modifiers "getModifiers" :feature.status/supported]
+                   [:java.reflection.class/is-assignable-from "isAssignableFrom" :feature.status/supported]
+                   [:java.reflection.class/is-array "isArray" :feature.status/supported]
+                   [:java.reflection.class/is-primitive "isPrimitive" :feature.status/supported]
+                   [:java.reflection.modifier/is-abstract "isAbstract" :feature.status/supported]
+                   [:java.reflection.class/for-name "forName" :feature.status/unsupported]}
+                 reflection-features)))))))

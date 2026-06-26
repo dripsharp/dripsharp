@@ -617,6 +617,22 @@
 (defn- constructor-invocation? [^CtInvocation invocation]
   (= "<init>" (.getSimpleName (.getExecutable invocation))))
 
+(def supported-reflection-features
+  {["java.lang.Class" "getTypeName"] :java.reflection.class/get-type-name
+   ["java.lang.Class" "getSimpleName"] :java.reflection.class/get-simple-name
+   ["java.lang.Class" "getModifiers"] :java.reflection.class/get-modifiers
+   ["java.lang.Class" "isAssignableFrom"] :java.reflection.class/is-assignable-from
+   ["java.lang.Class" "isArray"] :java.reflection.class/is-array
+   ["java.lang.Class" "isPrimitive"] :java.reflection.class/is-primitive
+   ["java.lang.reflect.Modifier" "isAbstract"] :java.reflection.modifier/is-abstract})
+
+(def unsupported-reflection-features
+  {["java.lang.Class" "forName"] :java.reflection.class/for-name})
+
+(defn- reflection-owner? [owner]
+  (or (= "java.lang.Class" owner)
+      (some-> owner (str/starts-with? "java.lang.reflect"))))
+
 (def supported-stream-features
   {"stream" :java.stream/source-to-enumerable
    "map" :java.stream/map
@@ -653,10 +669,23 @@
      (when (or (= "java.lang.Class" owner)
                (some-> owner (str/starts-with? "java.lang.reflect"))
                (= "forName" name))
-       [(unsupported-feature (str node-id ":feature:reflection")
-                             :java.feature/reflection
-                             node-id
-                             :feature.severity/hard)])
+       (cond
+         (contains? supported-reflection-features [owner name])
+         [(supported-feature (str node-id ":feature:" (clojure.core/name (get supported-reflection-features [owner name])))
+                             (get supported-reflection-features [owner name])
+                             node-id)]
+
+         (contains? unsupported-reflection-features [owner name])
+         [(unsupported-feature (str node-id ":feature:" (clojure.core/name (get unsupported-reflection-features [owner name])))
+                               (get unsupported-reflection-features [owner name])
+                               node-id
+                               :feature.severity/hard)]
+
+         (or (reflection-owner? owner) (= "forName" name))
+         [(unsupported-feature (str node-id ":feature:reflection")
+                               :java.feature/reflection
+                               node-id
+                               :feature.severity/hard)]))
      (when-let [feature-kind (and (or (stream-owner? owner)
                                       (= "stream" name))
                                   (get supported-stream-features name))]
@@ -788,7 +817,11 @@
         owner-type (.getDeclaringType field-ref)
         resolved? (boolean (and target-decl-id
                                 owner-type
-                                (type-reference-resolved? owner-type)))]
+                                (type-reference-resolved? owner-type)))
+        field-name (.getSimpleName field-ref)
+        class-literal? (and (= "class" field-name)
+                            field-type
+                            (= "java.lang.Class" (type-base-name field-type)))]
     (concat
      (when field-type (type-reference-facts field-type))
      (when owner-type (type-reference-facts owner-type))
@@ -804,12 +837,16 @@
                :ref/id (str node-id ":ref")
                :ref/kind :ref.kind/field-access
                :ref/from-node node-id
-               :ref/name (.getSimpleName field-ref)
+               :ref/name field-name
                :ref/resolved? resolved?}
         resolved? (assoc :ref/to-decl target-decl-id)
         field-type (assoc :ref/to-type (type-id field-type))
         owner-type (assoc :ref/owner-type (type-id owner-type))
-        (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))])))
+        (not resolved?) (assoc :ref/reason :resolve.reason/missing-classpath))]
+     (when class-literal?
+       [(supported-feature (str node-id ":feature:class-type-literal")
+                           :java.reflection.class/type-literal
+                           node-id)]))))
 
 (defn- targeted-expression-target [expression]
   (when (instance? CtTargetedExpression expression)

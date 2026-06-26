@@ -122,6 +122,14 @@
                             :java.math-min/to-csharp-math-min
                             :java.math-max/to-csharp-math-max
                             :java.double-hash-code/to-csharp-get-hash-code
+                            :java.class-type-literal/to-csharp-typeof
+                            :java.class-get-type-name/to-csharp-full-name
+                            :java.class-get-simple-name/to-csharp-name
+                            :java.class-get-modifiers/to-csharp-attributes
+                            :java.class-is-assignable-from/to-csharp-is-assignable-from
+                            :java.class-is-array/to-csharp-is-array
+                            :java.class-is-primitive/to-csharp-is-primitive
+                            :java.modifier-is-abstract/to-csharp-type-attributes
                             :java.stream-source/to-csharp-enumerable
                             :java.stream-map/to-csharp-select
                             :java.stream-filter/to-csharp-where
@@ -174,6 +182,15 @@
              :java.feature/checked-exception
              :java.feature/lambda
              :java.feature/synchronized-method
+             :java.reflection.class/type-literal
+             :java.reflection.class/get-type-name
+             :java.reflection.class/get-simple-name
+             :java.reflection.class/get-modifiers
+             :java.reflection.class/is-assignable-from
+             :java.reflection.class/is-array
+             :java.reflection.class/is-primitive
+             :java.reflection.modifier/is-abstract
+             :java.reflection.class/for-name
              :java.stream/source-to-enumerable
              :java.stream/map
              :java.stream/filter
@@ -205,6 +222,8 @@
            (:rule/status (first (rules-by-feature :java.feature/checked-exception)))))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.feature/synchronized-method)))))
+    (is (= :rule.status/unsupported
+           (:rule/status (first (rules-by-feature :java.reflection.class/for-name)))))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.stream/collect)))))
     (is (= #{:java.statement-node/to-csharp-stub

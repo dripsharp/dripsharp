@@ -215,6 +215,50 @@
     :rule/input-feature :java.api/double-hash-code
     :rule/output-feature :csharp.api/get-hash-code
     :rule/status implemented-status}
+   {:rule/id :java.class-type-literal/to-csharp-typeof
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/type-literal
+    :rule/output-feature :csharp.api/typeof
+    :rule/status implemented-status}
+   {:rule/id :java.class-get-type-name/to-csharp-full-name
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-type-name
+    :rule/output-feature :csharp.api/type-full-name
+    :rule/status implemented-status}
+   {:rule/id :java.class-get-simple-name/to-csharp-name
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-simple-name
+    :rule/output-feature :csharp.api/type-name
+    :rule/status implemented-status}
+   {:rule/id :java.class-get-modifiers/to-csharp-attributes
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-modifiers
+    :rule/output-feature :csharp.api/type-attributes
+    :rule/status implemented-status}
+   {:rule/id :java.class-is-assignable-from/to-csharp-is-assignable-from
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/is-assignable-from
+    :rule/output-feature :csharp.api/type-is-assignable-from
+    :rule/status implemented-status}
+   {:rule/id :java.class-is-array/to-csharp-is-array
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/is-array
+    :rule/output-feature :csharp.api/type-is-array
+    :rule/status implemented-status}
+   {:rule/id :java.class-is-primitive/to-csharp-is-primitive
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/is-primitive
+    :rule/output-feature :csharp.api/type-is-primitive
+    :rule/status implemented-status}
+   {:rule/id :java.modifier-is-abstract/to-csharp-type-attributes
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.modifier/is-abstract
+    :rule/output-feature :csharp.api/type-attributes
+    :rule/status implemented-status}
+   {:rule/id :java.class-for-name/unsupported
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/for-name
+    :rule/status unsupported-status}
    {:rule/id :java.stream-source/to-csharp-enumerable
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/source-to-enumerable
