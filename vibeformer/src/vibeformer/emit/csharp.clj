@@ -148,7 +148,11 @@
               :where
               [?decl :decl/lang :lang/java]
               [?decl :decl/kind ?kind]
-              [(contains? #{:decl.kind/class :decl.kind/interface :decl.kind/enum :decl.kind/record} ?kind)]]
+              [(contains? #{:decl.kind/annotation
+                            :decl.kind/class
+                            :decl.kind/interface
+                            :decl.kind/enum
+                            :decl.kind/record} ?kind)]]
             db)
        (map first)
        (sort-by :decl/qualified-name)
@@ -2635,6 +2639,41 @@
                     :java.record-node/to-csharp-record
                     :rule-app.status/success))))
 
+(defn- annotation-property-line [method-decl]
+  (emitted (str "        public "
+                (type-name (:decl/return-type method-decl))
+                " "
+                (:decl/name method-decl)
+                " { get; init; } = default!;\n")
+           (:decl/source-node method-decl)
+           :java.method-node/to-csharp-method))
+
+(defn- annotation-content [db annotation-decl]
+  (let [namespace (csharp-namespace annotation-decl)
+        members (member-groups db annotation-decl)
+        properties (->> (get members :decl.kind/method)
+                        (sort-by (juxt #(get-in % [:decl/source-node :node/ordinal]) :decl/name))
+                        (mapv annotation-property-line))
+        body-metadata (merge-emits properties)
+        text (str generated-file-header
+                  "using System;\n\n"
+                  (when-not (str/blank? namespace)
+                    (str "namespace " namespace "\n{\n"))
+                  "    [AttributeUsage(AttributeTargets.All)]\n"
+                  "    " (visibility (modifiers annotation-decl)) " sealed class "
+                  (:decl/name annotation-decl) "Attribute : Attribute\n"
+                  "    {\n"
+                  (:text body-metadata)
+                  "    }\n"
+                  (when-not (str/blank? namespace)
+                    "}\n"))]
+    (-> body-metadata
+        (update :usings conj "System")
+        (with-text text)
+        (apply-rule (:decl/source-node annotation-decl)
+                    :java.annotation-node/to-csharp-attribute
+                    :rule-app.status/success))))
+
 (defn- declaration-usings [db namespace type-decl members]
   (let [field-types (keep :decl/type (get members :decl.kind/field))
         record-component-types (keep :decl/type (get members :decl.kind/record-component))
@@ -2937,6 +2976,7 @@
   (case (:decl/lang type-decl)
     :lang/kotlin (kotlin-type-content db type-decl)
     (case (:decl/kind type-decl)
+      :decl.kind/annotation (annotation-content db type-decl)
       :decl.kind/enum (enum-content db type-decl)
       :decl.kind/record (record-content db type-decl)
       (class-content db type-decl))))

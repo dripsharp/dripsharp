@@ -175,6 +175,7 @@
                             :java.stream-collect-joining/to-csharp-string-join
                             :java.optional-or-else/to-csharp-default-if-empty-max}]
     (is (= #{:java.node/class
+             :java.node/annotation
              :java.node/assignment
              :java.node/array-read
              :java.node/binary-operator
@@ -211,6 +212,7 @@
              :java.node/variable-write}
            (set (remove nil? (keys rules-by-kind)))))
     (is (= #{:java.feature/class
+             :java.feature/annotation
              :java.feature/field
              :java.feature/generic-method
              :java.feature/interface
@@ -351,6 +353,7 @@
                      (filter #(= :rule.status/stubbed (:rule/status %))
                              rules/initial-java-rules)))))
     (is (= #{:java.class-node/to-csharp-class
+             :java.annotation-node/to-csharp-attribute
              :java.assignment-node/to-csharp-assignment
              :java.array-read-node/to-csharp-indexer
              :java.binary-operator-node/to-csharp-binary
@@ -387,6 +390,7 @@
              :java.variable-read-node/to-csharp-variable
              :java.variable-write-node/to-csharp-variable
              :java.class-feature/to-csharp-class
+             :java.annotation-feature/to-csharp-attribute
              :java.field-feature/to-csharp-field
              :java.checked-exception/to-csharp-unchecked-signature
              :java.enum-feature/to-csharp-enum

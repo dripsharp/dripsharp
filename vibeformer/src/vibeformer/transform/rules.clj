@@ -23,6 +23,10 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/enum
     :rule/status implemented-status}
+   {:rule/id :java.annotation-node/to-csharp-attribute
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/annotation
+    :rule/status implemented-status}
    {:rule/id :java.record-node/to-csharp-record
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/record
@@ -583,6 +587,11 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/enum
     :rule/output-feature :csharp.feature/enum
+    :rule/status implemented-status}
+   {:rule/id :java.annotation-feature/to-csharp-attribute
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/annotation
+    :rule/output-feature :csharp.feature/attribute
     :rule/status implemented-status}
    {:rule/id :java.record-feature/to-csharp-record
     :rule/source-lang :lang/java

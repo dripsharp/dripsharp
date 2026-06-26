@@ -84,6 +84,14 @@ public final class NullableApi {
 }
 ")
 
+(def annotation-fixture
+  "package com.example.annotations;
+
+public @interface PklName {
+  String value();
+}
+")
+
 (def stream-pipeline-fixture
   "package com.example.stream;
 
@@ -1401,6 +1409,51 @@ public final class Chain {
                         :kotlin.return-node/to-csharp-return
                         :kotlin.throw-node/to-csharp-throw]]
             (is (contains? applied-rules rule))))))))
+
+(deftest emits-java-annotations-as-csharp-attributes
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/annotations/PklName.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path annotation-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/annotations/PklName.cs")
+              content (slurp (str generated))
+              rule-ids (set (map (comp second :rule-app/rule)
+                                 (:csharp/rule-applications result)))
+              annotation-entry (some #(when (= :java.annotation-node/to-csharp-attribute
+                                               (get-in % [:rule :rule/id]))
+                                        %)
+                                     (:csharp/provenance result))
+              property-entry (some #(when (and (= :java.method-node/to-csharp-method
+                                                (get-in % [:rule :rule/id]))
+                                             (= "value" (:source/name %)))
+                                      %)
+                                    (:csharp/provenance result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["using System;"
+                           "namespace com.example.annotations"
+                           "[AttributeUsage(AttributeTargets.All)]"
+                           "public sealed class PklNameAttribute : Attribute"
+                           "public string value { get; init; } = default!;"]]
+            (is (str/includes? content snippet)))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (contains? rule-ids :java.annotation-node/to-csharp-attribute))
+          (is (contains? rule-ids :java.method-node/to-csharp-method))
+          (is (= :java.node/annotation (:source/kind annotation-entry)))
+          (is (= :java.node/method (:source/kind property-entry))))))))
 
 (deftest emits-simple-java-enums
   (with-empty-db
