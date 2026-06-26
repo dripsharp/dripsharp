@@ -122,6 +122,7 @@
 
 (defn- type-decls [db]
   (->> (d/q '[:find (pull ?decl [:db/id
+                                  :decl/lang
                                   :decl/id
                                   :decl/kind
                                   :decl/name
@@ -147,6 +148,36 @@
        (sort-by :decl/qualified-name)
        vec))
 
+(defn- kotlin-type-decls [db]
+  (->> (d/q '[:find (pull ?decl [:db/id
+                                  :decl/lang
+                                  :decl/id
+                                  :decl/kind
+                                  :decl/name
+                                  :decl/qualified-name
+                                  :decl/modifiers
+                                  {:decl/source-node [:db/id
+                                                      :node/id
+                                                      :node/kind
+                                                      :node/name
+                                                      :node/ordinal
+                                                      {:node/file [:file/id
+                                                                   :file/path
+                                                                   :file/package]}]}])
+              :where
+              [?decl :decl/lang :lang/kotlin]
+              [?decl :decl/kind ?kind]
+              [(contains? #{:decl.kind/class :decl.kind/object} ?kind)]]
+            db)
+       (map first)
+       (sort-by :decl/qualified-name)
+       vec))
+
+(defn- source-type-decls [db]
+  (vec (sort-by (juxt :decl/lang :decl/qualified-name)
+                (concat (type-decls db)
+                        (kotlin-type-decls db)))))
+
 (defn- type-pull-pattern
   ([] (type-pull-pattern 6))
   ([depth]
@@ -161,6 +192,7 @@
 (defn- member-decl-pull-pattern []
   [:db/id
    :decl/id
+   :decl/lang
    :decl/kind
    :decl/name
    :decl/qualified-name
@@ -2397,17 +2429,122 @@
                       :java.class-node/to-csharp-class)
                     :rule-app.status/success))))
 
+(defn- kotlin-member-decls [db type-decl]
+  (let [parent-eid (get-in type-decl [:decl/source-node :db/id])]
+    (->> (d/q '[:find (pull ?decl pattern)
+                :in $ ?parent pattern
+                :where
+                [?node :node/parent ?parent]
+                [?decl :decl/source-node ?node]
+                [?decl :decl/lang :lang/kotlin]]
+              db
+              parent-eid
+              (member-decl-pull-pattern))
+         (map first)
+         (sort-by (juxt :decl/kind :decl/name :decl/id))
+         vec)))
+
+(defn- kotlin-static? [type-decl]
+  (= :decl.kind/object (:decl/kind type-decl)))
+
+(defn- kotlin-default-return [return-type]
+  (when-not (= "void" (type-name return-type))
+    "return default!;"))
+
+(defn- kotlin-function-content [db type-decl function-decl]
+  (let [static? (kotlin-static? type-decl)
+        return-type (:decl/return-type function-decl)
+        return-text (if return-type (type-name return-type) "void")
+        body-line (kotlin-default-return (or return-type {:type/name "void"}))
+        param-types (map (comp map-type :source-type)
+                         (type-ref-params db function-decl))
+        mapped-return (when return-type (map-type return-type))
+        text (str "        public " (when static? "static ")
+                  return-text " " (:decl/name function-decl)
+                  "(" (param-list db function-decl) ")\n"
+                  "        {\n"
+                  (when body-line (str "            " body-line "\n"))
+                  "        }\n")]
+    (emitted text
+             (:decl/source-node function-decl)
+             :kotlin.function-node/to-csharp-stub
+             {:usings (mapcat :csharp/usings (cond-> param-types
+                                                mapped-return (conj mapped-return)))})))
+
+(defn- kotlin-property-content [type-decl property-decl]
+  (let [static? (kotlin-static? type-decl)
+        property-type (:decl/type property-decl)
+        mapped (when property-type (map-type property-type))
+        text (str "        public " (when static? "static ")
+                  (or (:csharp/type mapped) "object") " "
+                  (:decl/name property-decl)
+                  " { get; } = default!;\n")]
+    (emitted text
+             (:decl/source-node property-decl)
+             :kotlin.property-node/to-csharp-stub
+             {:usings (:csharp/usings mapped)})))
+
+(defn- kotlin-member-content [db type-decl member]
+  (case (:decl/kind member)
+    :decl.kind/function (kotlin-function-content db type-decl member)
+    :decl.kind/property (kotlin-property-content type-decl member)
+    nil))
+
+(defn- kotlin-declaration-usings [db members]
+  (->> members
+       (mapcat (fn [member]
+                 (concat
+                  (keep identity [(:decl/type member) (:decl/return-type member)])
+                  (map :source-type (type-ref-params db member)))))
+       (mapcat (comp :csharp/usings map-type))
+       (map csharp-qualified-name)
+       set
+       sort
+       vec))
+
+(defn- kotlin-type-content [db type-decl]
+  (let [namespace (csharp-namespace type-decl)
+        members (kotlin-member-decls db type-decl)
+        member-content (merge-emits "\n" (keep #(kotlin-member-content db type-decl %) members))
+        usings (kotlin-declaration-usings db members)
+        type-keyword (if (kotlin-static? type-decl) "static class" "sealed class")
+        text (str "// <auto-generated>\n"
+                  "// Generated by Vibeformer. Changes under target/csharp are disposable.\n"
+                  "// </auto-generated>\n\n"
+                  (when (seq usings)
+                    (str (str/join "\n" (map #(str "using " % ";") usings)) "\n\n"))
+                  (when-not (str/blank? namespace)
+                    (str "namespace " namespace "\n{\n"))
+                  "    public " type-keyword " " (:decl/name type-decl) "\n"
+                  "    {\n"
+                  (:text member-content)
+                  (when (seq (:text member-content)) "\n")
+                  "    }\n"
+                  (when-not (str/blank? namespace)
+                    "}\n"))
+        rule-id (if (kotlin-static? type-decl)
+                  :kotlin.object-node/to-csharp-stub
+                  :kotlin.class-node/to-csharp-stub)]
+    (-> member-content
+        (update :usings into usings)
+        (with-text text)
+        (apply-rule (:decl/source-node type-decl)
+                    rule-id
+                    :rule-app.status/success))))
+
 (defn- type-content [db type-decl]
-  (case (:decl/kind type-decl)
-    :decl.kind/enum (enum-content db type-decl)
-    :decl.kind/record (record-content db type-decl)
-    (class-content db type-decl)))
+  (case (:decl/lang type-decl)
+    :lang/kotlin (kotlin-type-content db type-decl)
+    (case (:decl/kind type-decl)
+      :decl.kind/enum (enum-content db type-decl)
+      :decl.kind/record (record-content db type-decl)
+      (class-content db type-decl))))
 
 (defn emit!
-  "Regenerate disposable C# declaration skeletons for Java class facts."
+  "Regenerate disposable C# declaration skeletons for source declaration facts."
   [db target-dir]
   (let [target-dir (path target-dir)
-        classes (type-decls db)
+        classes (source-type-decls db)
         indexes (provenance-indexes db)]
     (clear-directory! target-dir)
     (let [emitted-classes (mapv (fn [class-decl]

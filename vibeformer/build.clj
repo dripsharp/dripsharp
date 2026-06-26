@@ -12,7 +12,7 @@
 (def default-sample "java-word-count")
 
 (def default-sample-runner-opts
-  {})
+  {"kotlin-basic-declarations" {:kotlin/emit? true}})
 
 (def sample-runner-option-keys
   [:coverage/allow-stubs?
@@ -21,12 +21,13 @@
    :allow-unsupported?
    :csharp/allow-diagnostics?
    :allow-csharp-diagnostics?
-   :kotlin/classpath-types])
+   :kotlin/classpath-types
+   :kotlin/emit?])
 
 (defn sample-runner-opts
   "Return the options forwarded from the build sample task to sample-runner."
   [sample-name opts]
-  (merge (get default-sample-runner-opts sample-name)
+  (merge (get default-sample-runner-opts (str sample-name))
          (select-keys opts sample-runner-option-keys)))
 
 (defn sample-runner-main-args

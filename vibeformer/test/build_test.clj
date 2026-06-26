@@ -22,3 +22,17 @@
   (testing "no runner EDN map is passed unless the sample has a default or the caller opts in"
     (is (= ["-m" "vibeformer.sample-runner" "checked"]
            (build/sample-runner-main-args "checked" {})))))
+
+(deftest kotlin-emission-sample-enables-runner-emission-by-default
+  (testing "string sample names"
+    (let [args (build/sample-runner-main-args "kotlin-basic-declarations" {})]
+      (is (= ["-m" "vibeformer.sample-runner" "kotlin-basic-declarations"]
+             (take 3 args)))
+      (is (= {:kotlin/emit? true}
+             (edn/read-string (last args))))))
+  (testing "tool invocation symbol sample names"
+    (let [args (build/sample-runner-main-args 'kotlin-basic-declarations {})]
+      (is (= ["-m" "vibeformer.sample-runner" "kotlin-basic-declarations"]
+             (take 3 args)))
+      (is (= {:kotlin/emit? true}
+             (edn/read-string (last args)))))))

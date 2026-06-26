@@ -54,6 +54,18 @@ object KotlinApiCalls {
 }
 ")
 
+(def kotlin-basic-fixture
+  "package com.example.kotlin
+
+object BasicDeclarations {
+  val count: Int = 1
+
+  fun describe(name: String): String {
+    return \"\"
+  }
+}
+")
+
 (defn- temp-root []
   (Files/createTempDirectory "vibeformer-sample-runner-test-" (make-array java.nio.file.attribute.FileAttribute 0)))
 
@@ -94,6 +106,12 @@ object KotlinApiCalls {
   (let [root (temp-root)]
     (write-file! root "sample-projects/kotlin-api-calls/source/src/main/kotlin/com/example/kotlin/ApiCalls.kt"
                  kotlin-fixture)
+    root))
+
+(defn- kotlin-basic-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/kotlin-basic-declarations/source/src/main/kotlin/com/example/kotlin/BasicDeclarations.kt"
+                 kotlin-basic-fixture)
     root))
 
 (deftest discovers-samples-with-source-roots
@@ -157,6 +175,7 @@ object KotlinApiCalls {
       (is (str/includes? (slurp (str csharp-file))
                          "public static void Main(string[] args)"))
       (is (str/includes? @project-content "<TargetFramework>net8.0</TargetFramework>"))
+      (is (str/includes? @project-content "<OutputType>Library</OutputType>"))
       (is (str/includes? @project-content "<ImplicitUsings>disable</ImplicitUsings>"))
       (is (str/includes? @project-content "<Nullable>enable</Nullable>"))
       (is (str/includes? @project-content "<EnableDefaultCompileItems>false</EnableDefaultCompileItems>"))
@@ -292,6 +311,40 @@ object KotlinApiCalls {
     (is (= {:allow-stubs? true
             :strategy :coverage.strategy/kotlin-facts-only}
            (:coverage/allow-mode provenance)))))
+
+(deftest runs-kotlin-sample-through-emission-pipeline
+  (let [root (kotlin-basic-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "kotlin-basic-declarations"
+                                          :kotlin/emit? true
+                                          :dotnet/enabled? false})
+        target (.resolve root "sample-projects/kotlin-basic-declarations/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        csharp-file (.resolve target "csharp/com/example/kotlin/BasicDeclarations.cs")
+        content (slurp (str csharp-file))
+        stage-by-name (into {} (map (juxt :stage identity) stages))]
+    (is (:ok? result))
+    (is (= :ok (get-in stage-by-name [:kotlin/ingest :status])))
+    (is (= :ok (get-in stage-by-name [:kotlin/enrich :status])))
+    (is (= :ok (get-in stage-by-name [:coverage/check :status])))
+    (is (nil? (get-in stage-by-name [:coverage/check :coverage/allow-mode])))
+    (is (= :ok (get-in stage-by-name [:csharp/emit :status])))
+    (is (= :skipped (get-in stage-by-name [:dotnet/build :status])))
+    (is (= :dotnet/build-disabled (get-in stage-by-name [:dotnet/build :reason])))
+    (is (true? (:ok? coverage)))
+    (is (nil? (:coverage/allow-mode coverage)))
+    (is (= :generated (:status provenance)))
+    (is (= 1 (:csharp/files-written provenance)))
+    (is (seq (:csharp/provenance provenance)))
+    (is (some #(= :kotlin.object-node/to-csharp-stub
+                  (get-in % [:rule :rule/id]))
+              (:csharp/provenance provenance)))
+    (is (str/includes? content "public static class BasicDeclarations"))
+    (is (str/includes? content "public static int count { get; } = default!;"))
+    (is (str/includes? content "public static string describe(string name)"))
+    (is (str/includes? content "return default!;"))))
 
 (deftest sample-runner-cli-parses-edn-options
   (is (= {:coverage/allow-unsupported? true}

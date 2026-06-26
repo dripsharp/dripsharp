@@ -6,6 +6,7 @@
             [vibeformer.datomic.schema :as schema]
             [vibeformer.emit.csharp :as csharp]
             [vibeformer.ingest.java-spoon :as java-spoon]
+            [vibeformer.ingest.kotlin-psi :as kotlin-psi]
             [vibeformer.ingest.source :as source]
             [vibeformer.transform.rules :as rules])
   (:import (java.nio.charset StandardCharsets)
@@ -491,6 +492,18 @@ import java.util.List;
 public final class NestedGenerics {
   public List<List<String>> echo(List<List<String>> groups) {
     return groups;
+  }
+}
+")
+
+(def kotlin-basic-fixture
+  "package com.example.kotlin
+
+object BasicDeclarations {
+  val count: Int = 1
+
+  fun describe(name: String): String {
+    return \"\"
   }
 }
 ")
@@ -1085,6 +1098,42 @@ public final class Chain {
           (is (str/includes? content "public List<List<string>> echo(List<List<string>> groups)"))
           (is (str/includes? content "return groups;"))
           (is (empty? (:csharp/diagnostics result))))))))
+
+(deftest emits-kotlin-object-declarations-with-default-bodies
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/kotlin/com/example/kotlin/BasicDeclarations.kt"
+            opts {:source/root source-root
+                  :project/id "kotlin-basic"
+                  :project/name "Kotlin Basic"}]
+        (write-file! source-root file-path kotlin-basic-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "kotlin-basic"})
+        (kotlin-psi/enrich! conn {:project/id "kotlin-basic"})
+        (rules/register! conn rules/initial-kotlin-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/kotlin/BasicDeclarations.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "namespace com.example.kotlin"))
+          (is (str/includes? content "public static class BasicDeclarations"))
+          (is (str/includes? content "public static int count { get; } = default!;"))
+          (is (str/includes? content "public static string describe(string name)"))
+          (is (str/includes? content "return default!;"))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:kotlin.object-node/to-csharp-stub
+                        :kotlin.property-node/to-csharp-stub
+                        :kotlin.function-node/to-csharp-stub]]
+            (is (contains? applied-rules rule))))))))
 
 (deftest emits-simple-java-enums
   (with-empty-db

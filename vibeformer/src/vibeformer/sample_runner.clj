@@ -122,7 +122,7 @@
                            (apply str))]
     (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
          "  <PropertyGroup>\n"
-         "    <OutputType>Exe</OutputType>\n"
+         "    <OutputType>Library</OutputType>\n"
          "    <TargetFramework>" csharp-target-framework "</TargetFramework>\n"
          "    <ImplicitUsings>disable</ImplicitUsings>\n"
          "    <Nullable>enable</Nullable>\n"
@@ -379,6 +379,10 @@
 (defn- kotlin-sample? [source-files]
   (has-lang? source-files :lang/kotlin))
 
+(defn- kotlin-emit? [opts source-files]
+  (and (kotlin-sample? source-files)
+       (true? (:kotlin/emit? opts))))
+
 (defn- registered-rules [source-files]
   (cond-> []
     (has-lang? source-files :lang/java)
@@ -424,7 +428,8 @@
 
 (defn- effective-coverage-opts [opts source-files]
   (cond-> (coverage-opts opts)
-    (kotlin-sample? source-files)
+    (and (kotlin-sample? source-files)
+         (not (kotlin-emit? opts source-files)))
     (assoc :allow-stubs? true
            :strategy :coverage.strategy/kotlin-facts-only)))
 
@@ -533,12 +538,14 @@
                              (coverage-stage coverage-report coverage-opts))))
             stages (cond-> stages
                      (and (not (stop-after-failure? stages))
-                          (not (kotlin-sample? source-files)))
+                          (or (not (kotlin-sample? source-files))
+                              (kotlin-emit? opts source-files)))
                      (run-stage sample :csharp/emit
                                 #(csharp-emit-stage conn paths (assoc opts :sample sample))))
             stages (cond-> stages
                      (and (not (stop-after-failure? stages))
-                          (kotlin-sample? source-files))
+                          (kotlin-sample? source-files)
+                          (not (kotlin-emit? opts source-files)))
                      (conj (kotlin-csharp-emission-skipped-stage)))
             emit-stage (some #(when (= :csharp/emit (:stage %)) %) stages)
             stages (cond-> stages

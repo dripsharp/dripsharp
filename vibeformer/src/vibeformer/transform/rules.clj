@@ -568,22 +568,25 @@
 (def initial-kotlin-rules
   "Initial Kotlin rule catalog for sample coverage checks.
 
-  Kotlin source is ingested into normalized facts before Kotlin C# emission is
-  implemented. These rules are intentionally stubbed so Kotlin samples can
-  exercise source discovery, PSI ingest, semantic enrichment, inventory, and
-  coverage artifacts without pretending C# output is available."
+  Kotlin source is ingested into normalized facts before full Kotlin C# emission
+  is implemented. Declaration-level constructs are emitted deterministically;
+  expression/body constructs remain intentionally stubbed so coverage can
+  distinguish facts-only samples from emitted samples."
   [{:rule/id :kotlin.package-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/package
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/namespace
+    :rule/status implemented-status}
    {:rule/id :kotlin.object-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/object
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/static-class
+    :rule/status implemented-status}
    {:rule/id :kotlin.class-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/class
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/class
+    :rule/status implemented-status}
    {:rule/id :kotlin.companion-object-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/companion-object
@@ -591,11 +594,13 @@
    {:rule/id :kotlin.property-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/property
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/property
+    :rule/status implemented-status}
    {:rule/id :kotlin.function-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/function
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/method
+    :rule/status implemented-status}
    {:rule/id :kotlin.declaration-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/declaration
@@ -615,15 +620,18 @@
    {:rule/id :kotlin.package-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/package
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/namespace
+    :rule/status implemented-status}
    {:rule/id :kotlin.object-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/object
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/static-class
+    :rule/status implemented-status}
    {:rule/id :kotlin.class-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/class
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/class
+    :rule/status implemented-status}
    {:rule/id :kotlin.companion-object-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/companion-object
@@ -631,11 +639,13 @@
    {:rule/id :kotlin.property-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/property
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/property
+    :rule/status implemented-status}
    {:rule/id :kotlin.function-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/function
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/method
+    :rule/status implemented-status}
    {:rule/id :kotlin.declaration-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/declaration
@@ -643,11 +653,13 @@
    {:rule/id :kotlin.top-level-declaration-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/top-level-declaration
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/member
+    :rule/status implemented-status}
    {:rule/id :kotlin.nullable-type-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/nullable-type
-    :rule/status stubbed-status}
+    :rule/output-feature :csharp.feature/nullable-type
+    :rule/status implemented-status}
    {:rule/id :kotlin.call-expression-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/call-expression
