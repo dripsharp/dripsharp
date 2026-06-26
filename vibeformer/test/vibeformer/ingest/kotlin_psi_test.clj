@@ -73,6 +73,10 @@ fun apiCalls(path: Path): URI {
   assertThat(values.size).isEqualTo(1)
   return URI(\"file:///tmp\").resolve(path.toUri())
 }
+
+fun values(root: Path): List<URI> {
+  return listOf(root.resolve(\"child\").toUri(), URI(\"https://example.com\"))
+}
 ")
 
 (defn- with-empty-db [f]
@@ -378,6 +382,31 @@ fun apiCalls(path: Path): URI {
               ranked-targets (filter #(contains? target-names (:name %))
                                      (:unresolved-api-call-rankings (inventory/summary db)))]
           (is (pos? (:type-stubs first-run)))
+          (testing "generic Kotlin type-use facts keep ordered type arguments"
+            (is (= #{["kotlin:List<kotlin:URI>" "List" 0 "kotlin:URI" "URI"]}
+                   (set (d/q '[:find ?type-id ?type-name ?ordinal ?arg-id ?arg-name
+                               :where
+                               [?type :type/id ?type-id]
+                               [?type :type/name ?type-name]
+                               [?type :type/args ?arg]
+                               [?arg :type.arg/ordinal ?ordinal]
+                               [?arg :type.arg/type ?arg-type]
+                               [?arg-type :type/id ?arg-id]
+                               [?arg-type :type/name ?arg-name]
+                               [(= ?type-id "kotlin:List<kotlin:URI>")]]
+                             db)))))
+          (testing "generic root collection types resolve through Kotlin stdlib aliases"
+            (is (contains?
+                 (set (d/q '[:find ?name ?type-id ?resolved?
+                             :where
+                             [?ref :ref/kind :ref.kind/type-use]
+                             [?ref :ref/name ?name]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]
+                             [?ref :ref/resolved? ?resolved?]
+                             [(= ?name "List")]]
+                           db))
+                 ["List" "kotlin.collections.List" true])))
           (testing "function body shape is queryable for later deterministic emission"
             (let [body-values (set (d/q '[:find ?kind ?name ?value
                                            :where

@@ -133,7 +133,44 @@
 (defn- type-name [syntax]
   (some-> syntax
           (str/replace #"\s+" "")
-          (str/replace #"\?$" "")))
+          (str/replace #"\?$" "")
+          (str/replace #"<.*$" "")))
+
+(defn- strip-null-suffix [syntax]
+  (let [syntax (some-> syntax (str/replace #"\s+" ""))]
+    (if (str/ends-with? (or syntax "") "?")
+      [(subs syntax 0 (dec (count syntax))) true]
+      [syntax false])))
+
+(defn- split-top-level [s separator]
+  (loop [chars (seq s)
+         depth 0
+         token []
+         out []]
+    (if-let [ch (first chars)]
+      (cond
+        (= ch \<)
+        (recur (next chars) (inc depth) (conj token ch) out)
+
+        (= ch \>)
+        (recur (next chars) (dec depth) (conj token ch) out)
+
+        (and (= ch separator) (zero? depth))
+        (recur (next chars) depth [] (conj out (apply str token)))
+
+        :else
+        (recur (next chars) depth (conj token ch) out))
+      (cond-> out
+        (seq token) (conj (apply str token))))))
+
+(defn- parse-type-syntax [syntax]
+  (when-let [syntax (some-> syntax str/trim not-empty)]
+    (let [[syntax nullable?] (strip-null-suffix syntax)
+          [_ base args] (re-matches #"([^<]+)<(.+)>" syntax)]
+      {:type/name (if base base syntax)
+       :type/nullable? nullable?
+       :type/args (when args
+                    (mapv parse-type-syntax (split-top-level args \,)))})))
 
 (defn- simple-type-name [type-name]
   (some-> type-name
@@ -141,36 +178,64 @@
           (str/split #"\.")
           last))
 
-(defn- type-id [syntax nullable?]
-  (when-let [name (type-name syntax)]
-    (str "kotlin:" name (when nullable? "?"))))
+(declare type-id)
+
+(defn- type-id [parsed]
+  (when-let [name (:type/name parsed)]
+    (str "kotlin:"
+         name
+         (when-let [args (seq (:type/args parsed))]
+           (str "<" (str/join "," (map type-id args)) ">"))
+         (when (:type/nullable? parsed) "?"))))
+
+(defn- type-fact* [parsed]
+  (when-let [id (type-id parsed)]
+    (cond-> {:db/id id
+             :type/id id
+             :type/lang lang
+             :type/name (:type/name parsed)
+             :type/nullable? (:type/nullable? parsed)}
+      (seq (:type/args parsed))
+      (assoc :type/args
+             (->> (:type/args parsed)
+                  (keep-indexed (fn [ordinal arg]
+                                  (when-let [arg-id (type-id arg)]
+                                    {:type.arg/ordinal ordinal
+                                     :type.arg/type arg-id})))
+                  vec)))))
+
+(defn- type-facts* [parsed]
+  (when parsed
+    (cons (type-fact* parsed)
+          (mapcat type-facts* (:type/args parsed)))))
 
 (defn- type-fact [^KtTypeReference type-reference]
   (when-let [syntax (type-syntax type-reference)]
-    (let [nullable? (nullable-type? type-reference)
-          id (type-id syntax nullable?)]
-      {:db/id id
-       :type/id id
-       :type/lang lang
-       :type/name (type-name syntax)
-       :type/nullable? nullable?})))
+    (type-fact* (assoc (parse-type-syntax syntax)
+                       :type/nullable? (nullable-type? type-reference)))))
+
+(defn- type-facts [^KtTypeReference type-reference]
+  (when-let [syntax (type-syntax type-reference)]
+    (type-facts* (assoc (parse-type-syntax syntax)
+                        :type/nullable? (nullable-type? type-reference)))))
 
 (defn- type-ref-facts
   ([node-id role ^KtTypeReference type-reference]
    (type-ref-facts node-id role type-reference nil))
   ([node-id role ^KtTypeReference type-reference source-name]
    (when-let [type-fact (type-fact type-reference)]
-     [type-fact
-      (cond-> {:db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
-               :ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
-               :ref/kind :ref.kind/type-use
-               :ref/from-node node-id
-               :ref/to-type (:type/id type-fact)
-               :ref/name (:type/name type-fact)
-               :ref/role role
-               :ref/resolved? false
-               :ref/reason :resolve.reason/syntax-only}
-        source-name (assoc :ref/source-name source-name))])))
+     (concat
+      (type-facts type-reference)
+      [(cond-> {:db/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
+                :ref/id (str node-id ":type-ref:" (name role) ":" (:type/id type-fact))
+                :ref/kind :ref.kind/type-use
+                :ref/from-node node-id
+                :ref/to-type (:type/id type-fact)
+                :ref/name (:type/name type-fact)
+                :ref/role role
+                :ref/resolved? false
+                :ref/reason :resolve.reason/syntax-only}
+         source-name (assoc :ref/source-name source-name))]))))
 
 (defn- nullable-type-feature-facts [node-id type-reference role]
   (when (nullable-type? type-reference)
@@ -546,9 +611,15 @@
    "Float" "kotlin:Float"
    "Int" "kotlin:Int"
    "Long" "kotlin:Long"
+   "List" "kotlin.collections.List"
    "Nothing" "kotlin:Nothing"
    "Short" "kotlin:Short"
    "String" "kotlin:String"
+   "Map" "kotlin.collections.Map"
+   "MutableList" "kotlin.collections.MutableList"
+   "MutableMap" "kotlin.collections.MutableMap"
+   "MutableSet" "kotlin.collections.MutableSet"
+   "Set" "kotlin.collections.Set"
    "Unit" "kotlin:Unit"})
 
 (def ^:private known-function-calls
