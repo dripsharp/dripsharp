@@ -1240,6 +1240,24 @@
             (with-text (str target-text ".Assembly.GetManifestResourceStream(" (:text path-result) ")!"))
             (apply-rule node :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream :rule-app.status/success)))
 
+      (and (= "java.lang.Class" owner)
+           (= "getDeclaredMethods" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (update :usings conj "System.Reflection")
+          (with-text (str target-text ".GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)"))
+          (apply-rule node :java.class-get-declared-methods/to-csharp-get-methods :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "getDeclaredConstructors" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          (update :usings conj "System.Reflection")
+          (with-text (str target-text ".GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)"))
+          (apply-rule node :java.class-get-declared-constructors/to-csharp-get-constructors :rule-app.status/success))
+
       (and (= "java.lang.reflect.Type" owner)
            (= "getTypeName" source-method-name)
            target
@@ -1325,22 +1343,6 @@
            (= "getDeclaredMethod" source-method-name))
       (unsupported node
                    :java.class-get-declared-method/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-dynamic-reflection})
-
-      (and (= "java.lang.Class" owner)
-           (= "getDeclaredMethods" source-method-name))
-      (unsupported node
-                   :java.class-get-declared-methods/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-dynamic-reflection})
-
-      (and (= "java.lang.Class" owner)
-           (= "getDeclaredConstructors" source-method-name))
-      (unsupported node
-                   :java.class-get-declared-constructors/unsupported
                    {:method source-method-name
                     :owner owner
                     :reason :emit.reason/unsupported-dynamic-reflection})

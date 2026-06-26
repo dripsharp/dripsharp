@@ -233,6 +233,7 @@ public final class CodePointIterator {
 
 import java.lang.reflect.Constructor;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
@@ -285,6 +286,14 @@ public final class ReflectionApi {
 
   public InputStream resourceStream(Class<?> type, String path) {
     return type.getResourceAsStream(path);
+  }
+
+  public Method[] methods(Class<?> type) {
+    return type.getDeclaredMethods();
+  }
+
+  public Constructor<?>[] constructors(Class<?> type) {
+    return type.getDeclaredConstructors();
   }
 
   public String reflectedTypeName(Type type) {
@@ -2199,6 +2208,8 @@ public final class Demo {
                                         :java.reflection.class/get-class-loader
                                         :java.reflection.class/cast
                                         :java.reflection.class/get-resource-as-stream
+                                        :java.reflection.class/get-declared-methods
+                                        :java.reflection.class/get-declared-constructors
                                         :java.reflection.type/get-type-name
                                         :java.reflection.parameterized-type/get-actual-type-arguments
                                         :java.reflection.parameterized-type/get-raw-type
@@ -2231,6 +2242,8 @@ public final class Demo {
                    [:java.reflection.class/get-class-loader "getClassLoader" :feature.status/supported]
                    [:java.reflection.class/cast "cast" :feature.status/supported]
                    [:java.reflection.class/get-resource-as-stream "getResourceAsStream" :feature.status/supported]
+                   [:java.reflection.class/get-declared-methods "getDeclaredMethods" :feature.status/supported]
+                   [:java.reflection.class/get-declared-constructors "getDeclaredConstructors" :feature.status/supported]
                    [:java.reflection.type/get-type-name "getTypeName" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-actual-type-arguments "getActualTypeArguments" :feature.status/supported]
                    [:java.reflection.parameterized-type/get-raw-type "getRawType" :feature.status/supported]
@@ -2263,8 +2276,6 @@ public final class Demo {
                           [?feature :feature/kind ?kind]
                           [(contains? #{:java.reflection.class/get-declared-method
                                         :java.reflection.class/get-method
-                                        :java.reflection.class/get-declared-methods
-                                        :java.reflection.class/get-declared-constructors
                                         :java.reflection.class/get-annotation
                                         :java.reflection.method/invoke
                                         :java.reflection.constructor/new-instance
@@ -2277,8 +2288,6 @@ public final class Demo {
                         db))]
           (is (= #{[:java.reflection.class/get-declared-method "getDeclaredMethod" :feature.status/unsupported]
                    [:java.reflection.class/get-method "getMethod" :feature.status/unsupported]
-                   [:java.reflection.class/get-declared-methods "getDeclaredMethods" :feature.status/unsupported]
-                   [:java.reflection.class/get-declared-constructors "getDeclaredConstructors" :feature.status/unsupported]
                    [:java.reflection.class/get-annotation "getAnnotation" :feature.status/unsupported]
                    [:java.reflection.method/invoke "invoke" :feature.status/unsupported]
                    [:java.reflection.constructor/new-instance "newInstance" :feature.status/unsupported]

@@ -313,6 +313,16 @@
     :rule/input-feature :java.reflection.class/get-resource-as-stream
     :rule/output-feature :csharp.api/manifest-resource-stream
     :rule/status implemented-status}
+   {:rule/id :java.class-get-declared-methods/to-csharp-get-methods
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-declared-methods
+    :rule/output-feature :csharp.api/type-methods
+    :rule/status implemented-status}
+   {:rule/id :java.class-get-declared-constructors/to-csharp-get-constructors
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-declared-constructors
+    :rule/output-feature :csharp.api/type-constructors
+    :rule/status implemented-status}
    {:rule/id :java.type-get-type-name/to-csharp-full-name
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.type/get-type-name
@@ -368,14 +378,6 @@
    {:rule/id :java.class-get-declared-method/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/get-declared-method
-    :rule/status unsupported-status}
-   {:rule/id :java.class-get-declared-methods/unsupported
-    :rule/source-lang :lang/java
-    :rule/input-feature :java.reflection.class/get-declared-methods
-    :rule/status unsupported-status}
-   {:rule/id :java.class-get-declared-constructors/unsupported
-    :rule/source-lang :lang/java
-    :rule/input-feature :java.reflection.class/get-declared-constructors
     :rule/status unsupported-status}
    {:rule/id :java.class-get-annotation/unsupported
     :rule/source-lang :lang/java

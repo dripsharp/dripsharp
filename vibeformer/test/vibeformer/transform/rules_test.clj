@@ -139,6 +139,8 @@
                             :java.class-get-class-loader/to-csharp-assembly
                             :java.class-cast/to-csharp-cast
                             :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream
+                            :java.class-get-declared-methods/to-csharp-get-methods
+                            :java.class-get-declared-constructors/to-csharp-get-constructors
                             :java.type-get-type-name/to-csharp-full-name
                             :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                             :java.parameterized-type-get-raw-type/to-csharp-type
@@ -332,6 +334,8 @@
     (doseq [feature [:java.stream.collector/to-map
                      :java.stream.collector/to-collection
                      :java.reflection.class/get-class-loader
+                     :java.reflection.class/get-declared-methods
+                     :java.reflection.class/get-declared-constructors
                      :java.stream/map-to-int
                      :java.stream/min
                      :java.stream/max
@@ -345,8 +349,6 @@
              (:rule/status (first (rules-by-feature feature))))))
     (doseq [feature [:java.reflection.class/get-declared-method
                      :java.reflection.class/get-method
-                     :java.reflection.class/get-declared-methods
-                     :java.reflection.class/get-declared-constructors
                      :java.reflection.class/get-annotation
                      :java.reflection.method/invoke
                      :java.reflection.constructor/new-instance

@@ -243,6 +243,7 @@ public final class CodePointIterator {
 
 import java.lang.reflect.Constructor;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
@@ -302,6 +303,14 @@ public final class ReflectionApi {
 
   public static InputStream resourceStream(Class<?> type, String path) {
     return type.getResourceAsStream(path);
+  }
+
+  public static Method[] methods(Class<?> type) {
+    return type.getDeclaredMethods();
+  }
+
+  public static Constructor<?>[] constructors(Class<?> type) {
+    return type.getDeclaredConstructors();
   }
 
   private static boolean same(ClassLoader left, ClassLoader right) {
@@ -2751,6 +2760,10 @@ public final class Chain {
                            "return ((string)value);"
                            "public static Stream resourceStream(Type type, string path)"
                            "return type.Assembly.GetManifestResourceStream(path)!;"
+                           "public static MethodInfo[] methods(Type type)"
+                           "return type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);"
+                           "public static ConstructorInfo[] constructors(Type type)"
+                           "return type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);"
                            "private static bool same(Assembly left, Assembly right)"
                            "public static string reflectedTypeName(Type type)"
                            "return (type.FullName ?? type.Name);"
@@ -2783,6 +2796,8 @@ public final class Chain {
                         :java.class-get-class-loader/to-csharp-assembly
                         :java.class-cast/to-csharp-cast
                         :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream
+                        :java.class-get-declared-methods/to-csharp-get-methods
+                        :java.class-get-declared-constructors/to-csharp-get-constructors
                         :java.type-get-type-name/to-csharp-full-name
                         :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                         :java.parameterized-type-get-raw-type/to-csharp-type
@@ -2818,8 +2833,6 @@ public final class Chain {
           (is (str/includes? content "Unsupported Java node method-call"))
           (is (= #{:java.class-get-declared-method/unsupported
                    :java.class-get-method/unsupported
-                   :java.class-get-declared-methods/unsupported
-                   :java.class-get-declared-constructors/unsupported
                    :java.class-get-annotation/unsupported
                    :java.reflection-method-invoke/unsupported
                    :java.reflection-constructor-new-instance/unsupported
