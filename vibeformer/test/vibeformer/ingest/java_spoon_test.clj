@@ -325,6 +325,23 @@ final class StringBox implements Box<String> {
 }
 ")
 
+(def nested-generics-fixture
+  "package com.acme.generics;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public final class NestedGenerics {
+  public List<List<String>> emptyGroups() {
+    return new ArrayList<List<String>>();
+  }
+
+  public List<List<String>> echo(List<List<String>> groups) {
+    return groups;
+  }
+}
+")
+
 (def object-creation-fixture
   "package com.acme.objects;
 
@@ -1304,7 +1321,37 @@ public final class Demo {
                              [?ref :ref/from-node ?node]
                              [?ref :ref/role :pattern-type]
                              [?ref :ref/to-type ?type]
-                             [?type :type/id ?type-id]]
+                               [?type :type/id ?type-id]]
+                             db)))))))))
+
+(deftest extracts-nested-generic-type-arguments
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/generics/NestedGenerics.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path nested-generics-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["java.util.List<java.util.List<java.lang.String>>" "java.util.List" 0 "java.util.List<java.lang.String>"]
+                   ["java.util.List<java.lang.String>" "java.util.List" 0 "java.lang.String"]
+                   ["java.util.ArrayList<java.util.List<java.lang.String>>" "java.util.ArrayList" 0 "java.util.List<java.lang.String>"]}
+                 (set (d/q '[:find ?type-id ?type-name ?ordinal ?arg-id
+                             :where
+                             [?type :type/args ?arg]
+                             [?type :type/id ?type-id]
+                             [?type :type/name ?type-name]
+                             [?arg :type.arg/ordinal ?ordinal]
+                             [?arg :type.arg/type ?arg-type]
+                             [?arg-type :type/id ?arg-id]
+                             [(contains? #{"java.util.List<java.util.List<java.lang.String>>"
+                                           "java.util.List<java.lang.String>"
+                                           "java.util.ArrayList<java.util.List<java.lang.String>>"}
+                                          ?type-id)]]
                            db)))))))))
 
 (deftest extracts-logical-not-unary-expression-facts

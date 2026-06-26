@@ -147,54 +147,53 @@
        (sort-by :decl/qualified-name)
        vec))
 
+(defn- type-pull-pattern
+  ([] (type-pull-pattern 6))
+  ([depth]
+   (cond-> [:type/id
+            :type/lang
+            :type/name
+            :type/nullable?]
+     (pos? depth)
+     (conj {:type/args [:type.arg/ordinal
+                        {:type.arg/type (type-pull-pattern (dec depth))}]}))))
+
+(defn- member-decl-pull-pattern []
+  [:db/id
+   :decl/id
+   :decl/kind
+   :decl/name
+   :decl/qualified-name
+   :decl/modifiers
+   {:decl/type (type-pull-pattern)}
+   {:decl/return-type (type-pull-pattern)}
+   {:decl/type-params [:type-param/id
+                       :type-param/ordinal
+                       :type-param/name]}
+   {:decl/source-node [:db/id
+                       :node/id
+                       :node/kind
+                       :node/name
+                       :node/ordinal
+                       :node/start-line
+                       :node/start-column
+                       :node/end-line
+                       :node/end-column
+                       {:node/file [:file/id
+                                    :file/path
+                                    :file/package]}]}])
+
 (defn- member-decls [db class-decl]
   (let [parent-eid (get-in class-decl [:decl/source-node :db/id])]
-    (->> (d/q '[:find (pull ?decl [:db/id
-                                    :decl/id
-                                    :decl/kind
-                                    :decl/name
-                                    :decl/qualified-name
-                                    :decl/modifiers
-                                    {:decl/type [:type/id
-                                                 :type/lang
-                                                 :type/name
-                                                 :type/nullable?
-                                                 {:type/args [:type.arg/ordinal
-                                                              {:type.arg/type [:type/id
-                                                                               :type/lang
-                                                                               :type/name
-                                                                               :type/nullable?]}]}]}
-                                    {:decl/return-type [:type/id
-                                                        :type/lang
-                                                        :type/name
-                                                        :type/nullable?
-                                                        {:type/args [:type.arg/ordinal
-                                                                     {:type.arg/type [:type/id
-                                                                                      :type/lang
-                                                                                      :type/name
-                                                                                      :type/nullable?]}]}]}
-                                    {:decl/type-params [:type-param/id
-                                                        :type-param/ordinal
-                                                        :type-param/name]}
-                                    {:decl/source-node [:db/id
-                                                        :node/id
-                                                        :node/kind
-                                                        :node/name
-                                                        :node/ordinal
-                                                        :node/start-line
-                                                        :node/start-column
-                                                        :node/end-line
-                                                        :node/end-column
-                                                        {:node/file [:file/id
-                                                                     :file/path
-                                                                     :file/package]}]}])
-                :in $ ?parent
+    (->> (d/q '[:find (pull ?decl pattern)
+                :in $ ?parent pattern
                 :where
                 [?node :node/parent ?parent]
                 [?decl :decl/source-node ?node]
                 [?decl :decl/lang :lang/java]]
               db
-              parent-eid)
+              parent-eid
+              (member-decl-pull-pattern))
          (map first)
          vec)))
 
@@ -202,25 +201,19 @@
   (group-by :decl/kind (member-decls db class-decl)))
 
 (defn- type-ref-params [db executable-decl]
-  (let [node-eid (get-in executable-decl [:decl/source-node :db/id])]
-    (->> (d/q '[:find (pull ?ref [:ref/role
-                                   :ref/source-name
-                                   {:ref/to-type [:type/id
-                                                  :type/lang
-                                                  :type/name
-                                                  :type/nullable?
-                                                  {:type/args [:type.arg/ordinal
-                                                               {:type.arg/type [:type/id
-                                                                                :type/lang
-                                                                                :type/name
-                                                                                :type/nullable?]}]}]}])
-                :in $ ?node
+  (let [node-eid (get-in executable-decl [:decl/source-node :db/id])
+        ref-pattern [:ref/role
+                     :ref/source-name
+                     {:ref/to-type (type-pull-pattern)}]]
+    (->> (d/q '[:find (pull ?ref pattern)
+                :in $ ?node pattern
                 :where
                 [?ref :ref/from-node ?node]
                 [?ref :ref/kind :ref.kind/type-use]
                 [?ref :ref/role]]
               db
-              node-eid)
+              node-eid
+              ref-pattern)
          (map first)
          (keep (fn [{:ref/keys [role source-name to-type]}]
                  (when (str/starts-with? (name role) "param-")
@@ -280,16 +273,8 @@
 
 (defn- node-type-ref [db node role]
   (ffirst
-   (d/q '[:find (pull ?type [:type/id
-                             :type/lang
-                             :type/name
-                             :type/nullable?
-                             {:type/args [:type.arg/ordinal
-                                          {:type.arg/type [:type/id
-                                                           :type/lang
-                                                           :type/name
-                                                           :type/nullable?]}]}])
-          :in $ ?node ?role
+   (d/q '[:find (pull ?type pattern)
+          :in $ ?node ?role pattern
           :where
           [?ref :ref/from-node ?node]
           [?ref :ref/kind :ref.kind/type-use]
@@ -297,18 +282,8 @@
           [?ref :ref/to-type ?type]]
         db
         (:db/id node)
-        role)))
-
-(defn- type-pull-pattern []
-  [:type/id
-   :type/lang
-   :type/name
-   :type/nullable?
-   {:type/args [:type.arg/ordinal
-                {:type.arg/type [:type/id
-                                 :type/lang
-                                 :type/name
-                                 :type/nullable?]}]}])
+        role
+        (type-pull-pattern))))
 
 (defn- parent-node [db node]
   (ffirst
@@ -348,29 +323,23 @@
 
 (defn- constructor-call-ref [db node]
   (ffirst
-   (d/q '[:find (pull ?ref [:ref/id
-                            :ref/name
-                            :ref/resolved?
-                            :ref/reason
-                            {:ref/to-type [:type/id
-                                           :type/lang
-                                           :type/name
-                                           :type/nullable?
-                                           {:type/args [:type.arg/ordinal
-                                                        {:type.arg/type [:type/id
-                                                                         :type/lang
-                                                                         :type/name
-                                                                         :type/nullable?]}]}]}
-                            {:ref/to-decl [:decl/id
-                                           :decl/name
-                                           :decl/qualified-name
-                                           {:decl/source-node [:db/id :node/id :node/kind :node/name]}]}])
-          :in $ ?node
-          :where
-          [?ref :ref/from-node ?node]
-          [?ref :ref/kind :ref.kind/constructor-call]]
-        db
-        (:db/id node))))
+   (let [pattern [:ref/id
+                  :ref/name
+                  :ref/resolved?
+                  :ref/reason
+                  {:ref/to-type (type-pull-pattern)}
+                  {:ref/to-decl [:decl/id
+                                 :decl/name
+                                 :decl/qualified-name
+                                 {:decl/source-node [:db/id :node/id :node/kind :node/name]}]}]]
+     (d/q '[:find (pull ?ref pattern)
+            :in $ ?node pattern
+            :where
+            [?ref :ref/from-node ?node]
+            [?ref :ref/kind :ref.kind/constructor-call]]
+          db
+          (:db/id node)
+          pattern))))
 
 (defn- field-access-ref [db node]
   (ffirst

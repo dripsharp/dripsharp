@@ -483,6 +483,18 @@ public final class DisplayValueConverter implements ValueConverter<String> {
 }
 ")
 
+(def nested-generics-fixture
+  "package com.example.generics;
+
+import java.util.List;
+
+public final class NestedGenerics {
+  public List<List<String>> echo(List<List<String>> groups) {
+    return groups;
+  }
+}
+")
+
 (def assignment-fixture
   "package com.example.tools;
 
@@ -1046,6 +1058,33 @@ public final class Chain {
               (is (= :rule.status/implemented
                      (get-in interface-entry [:rule :rule/status])))
               (is (= :java.node/interface (:source/kind interface-entry))))))))))
+
+(deftest emits-nested-java-generic-type-arguments
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/generics/NestedGenerics.java"
+            opts {:source/root source-root
+                  :project/id "nested-generics"
+                  :project/name "Nested Generics"}]
+        (write-file! source-root file-path nested-generics-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "nested-generics"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/generics/NestedGenerics.cs")
+              content (slurp (str generated))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "using System.Collections.Generic;"))
+          (is (str/includes? content "public List<List<string>> echo(List<List<string>> groups)"))
+          (is (str/includes? content "return groups;"))
+          (is (empty? (:csharp/diagnostics result))))))))
 
 (deftest emits-simple-java-enums
   (with-empty-db
