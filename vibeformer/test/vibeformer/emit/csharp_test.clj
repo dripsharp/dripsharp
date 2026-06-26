@@ -303,6 +303,16 @@ final class DataSize {
 }
 ")
 
+(def null-literal-fixture
+  "package com.example.tools;
+
+public final class NullFactory {
+  public Holder make() {
+    return new Holder(null);
+  }
+}
+")
+
 (def static-import-enum-constant-fixture
   "package com.example.units;
 
@@ -1199,6 +1209,41 @@ public final class Chain {
               (is (= :rule.status/implemented
                      (get-in entry [:rule :rule/status])))
               (is (= :java.node/object-creation (:source/kind entry))))))))))
+
+(deftest emits-null-literals
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/tools/NullFactory.java"
+            holder-path "src/main/java/com/example/tools/Holder.java"
+            opts {:source/root source-root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! source-root file-path null-literal-fixture)
+        (write-file! source-root holder-path object-holder-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/tools/NullFactory.cs")
+              content (slurp (str generated))
+              entry (some #(when (= :java.literal-node/to-csharp-literal
+                                    (get-in % [:rule :rule/id]))
+                             %)
+                          (:csharp/provenance result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "return new Holder(null);"))
+          (is (empty? (:csharp/diagnostics result)))
+          (is (some? entry))
+          (is (= :rule.status/implemented
+                 (get-in entry [:rule :rule/status])))
+          (is (= :java.node/literal (:source/kind entry))))))))
 
 (deftest emits-static-imported-enum-constants
   (with-empty-db

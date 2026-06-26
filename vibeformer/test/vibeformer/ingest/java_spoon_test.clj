@@ -115,6 +115,16 @@ final class DataSize {
 }
 ")
 
+(def null-literal-fixture
+  "package com.acme.objects;
+
+public final class NullFactory {
+  public Holder make() {
+    return new Holder(null);
+  }
+}
+")
+
 (def static-import-enum-constant-fixture
   "package com.acme.units;
 
@@ -732,6 +742,30 @@ public final class Demo {
                              [?decl :decl/id ?decl-id]
                              [?decl :decl/source-node]
                              [?ref :ref/resolved? ?resolved?]]
+                           db)))))))))
+
+(deftest extracts-null-literal-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/objects/NullFactory.java"
+            holder-path "src/main/java/com/acme/objects/Holder.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path null-literal-fixture)
+        (write-file! root holder-path object-holder-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{["null" "nil" :argument]}
+                 (set (d/q '[:find ?name ?value ?role
+                             :where
+                             [?node :node/kind :java.node/literal]
+                             [?node :node/name ?name]
+                             [?node :node/value ?value]
+                             [?node :node/role ?role]]
                            db)))))))))
 
 (deftest resolves-static-imported-enum-constant-field-refs

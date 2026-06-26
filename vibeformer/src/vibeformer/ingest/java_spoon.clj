@@ -331,6 +331,12 @@
       "nil"
       (pr-str value))))
 
+(defn- literal-name [^CtLiteral literal]
+  (let [value (.getValue literal)]
+    (if (nil? value)
+      "null"
+      (-> value class .getSimpleName))))
+
 (defn- type-access-name [^CtTypeAccess type-access]
   (or (some-> type-access .getAccessedType qname)
       (some-> type-access .getAccessedType str)))
@@ -406,7 +412,7 @@
     (type-access-name expression)
 
     (instance? CtLiteral expression)
-    (some-> (.getValue ^CtLiteral expression) class .getSimpleName)
+    (literal-name expression)
 
     :else
     (some-> expression class .getSimpleName)))
