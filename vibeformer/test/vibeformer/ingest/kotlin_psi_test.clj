@@ -5,7 +5,8 @@
             [datomic.local :as dl]
             [vibeformer.datomic.schema :as schema]
             [vibeformer.ingest.kotlin-psi :as kotlin-psi]
-            [vibeformer.ingest.source :as source])
+            [vibeformer.ingest.source :as source]
+            [vibeformer.inventory :as inventory])
   (:import (java.nio.charset StandardCharsets)
            (java.nio.file Files Path)
            (java.util UUID)))
@@ -53,6 +54,23 @@ fun usesHelper(value: String, local: LocalValue, locale: Locale, missing: Missin
   val helped: String = helper(value)
   val unclear: String = choose(value)
   return MissingApi.format(helped)
+}
+")
+
+(def kotlin-api-call-fixture
+  "package com.acme.api
+
+import java.net.URI
+import java.nio.file.Path
+import org.assertj.core.api.Assertions.assertThat
+
+fun apiCalls(path: Path): URI {
+  val text = \"\"\"
+    value
+  \"\"\".trimIndent()
+  val values = listOf(text)
+  assertThat(values.size).isEqualTo(1)
+  return URI(\"file:///tmp\").resolve(path.toUri())
 }
 ")
 
@@ -299,3 +317,60 @@ fun usesHelper(value: String, local: LocalValue, locale: Locale, missing: Missin
             (kotlin-psi/enrich! conn {:project/id "semantic"
                                       :kotlin/classpath-types #{"Locale"}})
             (is (= before-counts (entity-counts (d/db conn))))))))))
+
+(deftest resolves-known-kotlin-api-call-seeds
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/kotlin/com/acme/api/ApiCalls.kt"
+            opts {:source/root root
+                  :project/id "api-calls"
+                  :project/name "API Calls"}]
+        (write-file! root file-path kotlin-api-call-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "api-calls"})
+        (let [first-run (kotlin-psi/enrich! conn {:project/id "api-calls"})
+              db (d/db conn)
+              target-names #{"trimIndent"
+                             "listOf"
+                             "assertThat"
+                             "isEqualTo"
+                             "URI"
+                             "resolve"
+                             "toUri"}
+              resolved-calls (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
+                                          :in $ ?target-names
+                                          :where
+                                          [?ref :ref/kind :ref.kind/function-call]
+                                          [?ref :ref/name ?name]
+                                          [(contains? ?target-names ?name)]
+                                          [?ref :ref/resolved? ?resolved?]
+                                          [?ref :ref/to-type ?type]
+                                          [?type :type/id ?type-id]
+                                          [?ref :ref/owner-type ?owner]
+                                          [?owner :type/id ?owner-id]]
+                                        db
+                                        target-names))
+              unresolved-targets (d/q '[:find ?name ?reason
+                                        :in $ ?target-names
+                                        :where
+                                        [?ref :ref/resolved? false]
+                                        [?ref :ref/name ?name]
+                                        [(contains? ?target-names ?name)]
+                                        [?ref :ref/reason ?reason]]
+                                      db
+                                      target-names)
+              ranked-targets (filter #(contains? target-names (:name %))
+                                     (:unresolved-api-call-rankings (inventory/summary db)))]
+          (is (pos? (:type-stubs first-run)))
+          (is (= #{["trimIndent" "kotlin:String" "kotlin.text.StringsKt" true]
+                   ["listOf" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
+                   ["assertThat" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]
+                   ["isEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["URI" "java.net.URI" "java.net.URI" true]
+                   ["resolve" "java.nio.file.Path" "java.nio.file.Path" true]
+                   ["toUri" "java.net.URI" "java.nio.file.Path" true]}
+                 resolved-calls))
+          (is (empty? unresolved-targets))
+          (is (empty? ranked-targets)))))))

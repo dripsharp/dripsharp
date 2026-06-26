@@ -477,6 +477,40 @@
    "String" "kotlin:String"
    "Unit" "kotlin:Unit"})
 
+(def ^:private known-function-calls
+  {"arrayOf" {:ref/to-type "kotlin:Array"}
+   "assertThat" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                 :ref/owner-type "org.assertj.core.api.Assertions"}
+   "assertThrows" {:ref/to-type "org.junit.jupiter.api.function.Executable"
+                   :ref/owner-type "org.junit.jupiter.api.Assertions"}
+   "isEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "lazy" {:ref/to-type "kotlin:Lazy"
+           :ref/owner-type "kotlin:LazyKt"}
+   "let" {:ref/to-type "kotlin:Any"
+          :ref/owner-type "kotlin:Any"}
+   "listOf" {:ref/to-type "kotlin.collections.List"
+             :ref/owner-type "kotlin.collections.CollectionsKt"}
+   "mapOf" {:ref/to-type "kotlin.collections.Map"
+            :ref/owner-type "kotlin.collections.MapsKt"}
+   "resolve" {:ref/to-type "java.nio.file.Path"
+              :ref/owner-type "java.nio.file.Path"}
+   "setOf" {:ref/to-type "kotlin.collections.Set"
+            :ref/owner-type "kotlin.collections.SetsKt"}
+   "toUri" {:ref/to-type "java.net.URI"
+            :ref/owner-type "java.nio.file.Path"}
+   "trimIndent" {:ref/to-type "kotlin:String"
+                 :ref/owner-type "kotlin.text.StringsKt"}
+   "URI" {:ref/to-type "java.net.URI"
+          :ref/owner-type "java.net.URI"}})
+
+(def ^:private known-classpath-types
+  {"AbstractAssert" "org.assertj.core.api.AbstractAssert"
+   "Assertions" "org.assertj.core.api.Assertions"
+   "Executable" "org.junit.jupiter.api.function.Executable"
+   "Path" "java.nio.file.Path"
+   "URI" "java.net.URI"})
+
 (def ^:private absent :vibeformer.query/absent)
 
 (defn- nil-if-absent [value]
@@ -572,6 +606,49 @@
        (filter #(= :decl.kind/function (:decl/kind %)))
        (group-by :decl/name)))
 
+(defn- type-lang [type-id]
+  (if (str/starts-with? type-id "kotlin:")
+    :lang/kotlin
+    :lang/java))
+
+(defn- type-name-from-id [type-id]
+  (str/replace type-id #"^kotlin:" ""))
+
+(defn- type-stub [type-id]
+  {:db/id type-id
+   :type/id type-id
+   :type/lang (type-lang type-id)
+   :type/name (type-name-from-id type-id)
+   :type/nullable? false})
+
+(defn- referenced-type-ids [facts]
+  (->> facts
+       (filter map?)
+       (mapcat (fn [fact]
+                 (keep (fn [attr]
+                         (when-let [[_ type-id] (get fact attr)]
+                           type-id))
+                       [:ref/to-type :ref/owner-type])))
+       set))
+
+(defn- existing-type-ids [db type-ids]
+  (set
+   (map first
+        (d/q '[:find ?type-id
+               :in $ [?type-id ...]
+               :where
+               [_ :type/id ?type-id]]
+             db
+             (vec type-ids)))))
+
+(defn- missing-type-stubs [db facts]
+  (let [referenced (referenced-type-ids facts)
+        existing (existing-type-ids db referenced)]
+    (->> referenced
+         (remove existing)
+         sort
+         (mapv type-stub))))
+
 (defn- owner-type-id [source-types {:decl/keys [qualified-name]}]
   (some (fn [[_ type-id]]
           (let [qname (str/replace type-id #"^kotlin:" "")]
@@ -609,19 +686,27 @@
       (unresolved-ref-tx id :resolve.reason/missing-classpath))))
 
 (defn- function-resolution-tx [db functions source-types {:ref/keys [id name]}]
-  (let [candidates (get functions name)]
-    (case (count candidates)
-      0 (unresolved-ref-tx id :resolve.reason/missing-classpath)
-      1 (let [decl (first candidates)
-              owner-type (owner-type-id source-types decl)]
-          (resolved-ref-tx db id
-                           (cond-> {:ref/to-decl [:decl/id (:decl/id decl)]}
-                             (:decl/return-type decl)
-                             (assoc :ref/to-type [:type/id (:decl/return-type decl)])
+  (if-let [known-call (get known-function-calls name)]
+    (resolved-ref-tx db id
+                     (cond-> {}
+                       (:ref/to-type known-call)
+                       (assoc :ref/to-type [:type/id (:ref/to-type known-call)])
 
-                             owner-type
-                             (assoc :ref/owner-type [:type/id owner-type]))))
-      (unresolved-ref-tx id :resolve.reason/analysis-api-limitation))))
+                       (:ref/owner-type known-call)
+                       (assoc :ref/owner-type [:type/id (:ref/owner-type known-call)])))
+    (let [candidates (get functions name)]
+      (case (count candidates)
+        0 (unresolved-ref-tx id :resolve.reason/missing-classpath)
+        1 (let [decl (first candidates)
+                owner-type (owner-type-id source-types decl)]
+            (resolved-ref-tx db id
+                             (cond-> {:ref/to-decl [:decl/id (:decl/id decl)]}
+                               (:decl/return-type decl)
+                               (assoc :ref/to-type [:type/id (:decl/return-type decl)])
+
+                               owner-type
+                               (assoc :ref/owner-type [:type/id owner-type]))))
+        (unresolved-ref-tx id :resolve.reason/analysis-api-limitation)))))
 
 (defn semantic-resolution-facts
   "Return idempotent tx-data that enriches Kotlin refs with semantic links.
@@ -634,6 +719,7 @@
   (let [decls (project-declarations db project-id)
         source-types (source-type-index decls)
         type-index (merge kotlin-stdlib-types
+                          known-classpath-types
                           (normalize-classpath-types (:kotlin/classpath-types opts))
                           source-types)
         functions (function-index decls)]
@@ -659,12 +745,16 @@
     facts such as kotlin:Locale; map values may provide explicit type ids."
   [conn {:project/keys [id] :as opts}]
   (let [db (d/db conn)
-        tx-data (semantic-resolution-facts db id opts)]
+        tx-data (semantic-resolution-facts db id opts)
+        type-stubs (missing-type-stubs db tx-data)]
+    (when (seq type-stubs)
+      (d/transact conn {:tx-data type-stubs}))
     (when (seq tx-data)
       (d/transact conn {:tx-data tx-data}))
     {:project/id id
      :semantic-refs (count (filter map? tx-data))
-     :semantic-tx (count tx-data)}))
+     :semantic-tx (count tx-data)
+     :type-stubs (count type-stubs)}))
 
 (defn ingest!
   "Extract normalized Kotlin facts from ingested Kotlin files and transact them."
