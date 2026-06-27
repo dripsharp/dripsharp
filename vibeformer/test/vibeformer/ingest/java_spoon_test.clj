@@ -165,6 +165,47 @@ public final class Child extends Parent {
 }
 ")
 
+(def inherited-overloaded-method-fixture
+  "package com.acme.inheritedoverload;
+
+class Source {}
+
+class Node extends Span {}
+
+class Module extends Node {}
+
+class Span {}
+
+class Section {}
+
+class Parent {
+  protected Section createSourceSection(Node node) {
+    return new Section();
+  }
+
+  protected Section createSourceSection(Span span) {
+    return new Section();
+  }
+
+  protected static Section createSourceSection(Source source, Node node) {
+    return new Section();
+  }
+
+  protected static Section createSourceSection(Source source, Span span) {
+    return new Section();
+  }
+}
+
+public final class Child extends Parent {
+  public Section read(Source source, Module module, Span span) {
+    Section first = createSourceSection(module);
+    Section second = createSourceSection(source, module);
+    Section third = createSourceSection(span);
+    return second;
+  }
+}
+")
+
 (def control-flow-fixture
   "package com.acme.statements;
 
@@ -1433,6 +1474,54 @@ public final class Demo {
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
                       [(contains? #{"exceptionBuilder" "evalError"} ?name)]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-inherited-overloaded-java-method-calls-by-argument-type
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/inheritedoverload/Child.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path inherited-overloaded-method-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              method-refs (set (d/q '[:find ?decl-id ?owner-id ?type-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/method-call]
+                                       [?ref :ref/name "createSourceSection"]
+                                       [?ref :ref/to-decl ?decl]
+                                       [?decl :decl/id ?decl-id]
+                                       [?decl :decl/source-node]
+                                       [?ref :ref/owner-type ?owner]
+                                       [?owner :type/id ?owner-id]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]]
+                                     db))]
+          (is (= #{["java:com.acme.inheritedoverload.Parent#createSourceSection(com.acme.inheritedoverload.Node)"
+                    "com.acme.inheritedoverload.Parent"
+                    "com.acme.inheritedoverload.Section"
+                    true]
+                   ["java:com.acme.inheritedoverload.Parent#createSourceSection(com.acme.inheritedoverload.Source,com.acme.inheritedoverload.Node)"
+                    "com.acme.inheritedoverload.Parent"
+                    "com.acme.inheritedoverload.Section"
+                    true]
+                   ["java:com.acme.inheritedoverload.Parent#createSourceSection(com.acme.inheritedoverload.Span)"
+                    "com.acme.inheritedoverload.Parent"
+                    "com.acme.inheritedoverload.Section"
+                    true]}
+                 method-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(= ?name "createSourceSection")]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 

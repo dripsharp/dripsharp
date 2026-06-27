@@ -1714,6 +1714,12 @@
        (map (juxt :ref/from-node identity))
        (into {})))
 
+(defn- field-ref-index [facts]
+  (->> facts
+       (filter #(= :ref.kind/field-access (:ref/kind %)))
+       (map (juxt :ref/from-node identity))
+       (into {})))
+
 (defn- constructor-ref-index [facts]
   (->> facts
        (filter #(= :ref.kind/constructor-call (:ref/kind %)))
@@ -1790,6 +1796,12 @@
        (map (juxt :node/id :node/parent))
        (into {})))
 
+(defn- node-index [facts]
+  (->> facts
+       (filter :node/id)
+       (map (juxt :node/id identity))
+       (into {})))
+
 (defn- direct-supertype-index [facts source-node-types]
   (->> facts
        (filter #(and (= :ref.kind/extends (:ref/kind %))
@@ -1836,6 +1848,36 @@
   (strip-type-args (or (get type-names type-id)
                        type-id)))
 
+(defn- executable-node-kind? [kind]
+  (contains? #{:java.node/method :java.node/constructor} kind))
+
+(defn- enclosing-executable [nodes-by-id parent-by-node node-id]
+  (loop [current node-id
+         seen #{}]
+    (when (and current (not (contains? seen current)))
+      (let [node (get nodes-by-id current)]
+        (if (executable-node-kind? (:node/kind node))
+          current
+          (recur (get parent-by-node current) (conj seen current)))))))
+
+(defn- binding-type-index [facts nodes-by-id parent-by-node]
+  (->> facts
+       (filter #(and (= :ref.kind/type-use (:ref/kind %))
+                     (:ref/source-name %)
+                     (:ref/to-type %)
+                     (or (some-> % :ref/role name (str/starts-with? "param-"))
+                         (contains? #{:local-type :catch-type :element-type :pattern-type}
+                                    (:ref/role %)))))
+       (reduce (fn [index ref]
+                 (let [binding-node (:ref/from-node ref)
+                       scope-node (if (some-> ref :ref/role name (str/starts-with? "param-"))
+                                    binding-node
+                                    (enclosing-executable nodes-by-id parent-by-node binding-node))]
+                   (if scope-node
+                     (assoc-in index [scope-node (:ref/source-name ref)] (:ref/to-type ref))
+                     index)))
+               {})))
+
 (defn- method-ref-return-type [method-index type-names argument-counts decl-return-types ref]
   (or (:ref/to-type ref)
       (get decl-return-types (:ref/to-decl ref))
@@ -1843,6 +1885,95 @@
         (let [arity (get argument-counts (:ref/from-node ref) 0)]
           (:decl/return-type
            (unambiguous (get method-index [owner (:ref/name ref) arity])))))))
+
+(defn- type-ref-for-role [facts node-id role]
+  (some (fn [fact]
+          (when (and (= :ref.kind/type-use (:ref/kind fact))
+                     (= node-id (:ref/from-node fact))
+                     (= role (:ref/role fact)))
+            (:ref/to-type fact)))
+        facts))
+
+(defn- expression-node-type
+  [facts
+   method-index
+   type-names
+   argument-counts
+   child-index
+   method-refs
+   field-refs
+   constructor-refs
+   decl-return-types
+   nodes-by-id
+   parent-by-node
+   binding-types
+   node]
+  (case (:node/kind node)
+    :java.node/method-call
+    (some->> (:node/id node)
+             (get method-refs)
+             (method-ref-return-type method-index type-names argument-counts decl-return-types))
+
+    :java.node/constructor-call
+    (some->> (:node/id node)
+             (get constructor-refs)
+             :ref/to-type)
+
+    :java.node/field-read
+    (some->> (:node/id node)
+             (get field-refs)
+             :ref/to-type)
+
+    :java.node/field-write
+    (some->> (:node/id node)
+             (get field-refs)
+             :ref/to-type)
+
+    :java.node/variable-read
+    (some->> (:node/id node)
+             (enclosing-executable nodes-by-id parent-by-node)
+             (get binding-types)
+             (#(get % (:node/name node))))
+
+    :java.node/variable-write
+    (some->> (:node/id node)
+             (enclosing-executable nodes-by-id parent-by-node)
+             (get binding-types)
+             (#(get % (:node/name node))))
+
+    :java.node/type-cast
+    (type-ref-for-role facts (:node/id node) :cast-type)
+
+    nil))
+
+(defn- argument-type-ids
+  [facts
+   method-index
+   type-names
+   argument-counts
+   child-index
+   method-refs
+   field-refs
+   constructor-refs
+   decl-return-types
+   nodes-by-id
+   parent-by-node
+   binding-types
+   call-node-id]
+  (mapv #(expression-node-type facts
+                               method-index
+                               type-names
+                               argument-counts
+                               child-index
+                               method-refs
+                               field-refs
+                               constructor-refs
+                               decl-return-types
+                               nodes-by-id
+                               parent-by-node
+                               binding-types
+                               %)
+        (get child-index [call-node-id :argument])))
 
 (defn- chained-method-target-owner [method-index type-names argument-counts child-index ref-index decl-return-types ref]
   (when-let [target (child-node child-index (:ref/from-node ref) :target)]
@@ -1860,21 +1991,69 @@
                :ref/to-type
                (type-owner type-names)))))
 
-(defn- varargs-method-target [varargs-method-index owner method-name arity]
+(declare enclosing-type type-lineage)
+
+(defn- comparable-type-id [type-id]
+  (some-> type-id
+          (str/replace #"\?$" "")
+          strip-type-args))
+
+(defn- type-compatible? [direct-supertypes param-type arg-type]
+  (let [param-type (comparable-type-id param-type)
+        arg-type (comparable-type-id arg-type)]
+    (boolean
+     (and param-type
+          arg-type
+          (or (= param-type arg-type)
+              (= "java.lang.Object" param-type)
+              (contains? (set (type-lineage direct-supertypes arg-type)) param-type))))))
+
+(defn- fixed-arity-arg-types-match? [direct-supertypes param-types arg-types]
+  (and (= (count param-types) (count arg-types))
+       (every? true? (map #(type-compatible? direct-supertypes %1 %2)
+                          param-types
+                          arg-types))))
+
+(defn- varargs-param-types [param-types arity]
+  (let [fixed-params (butlast param-types)
+        vararg-type (last param-types)
+        element-type (some-> vararg-type (str/replace #"\[\]$" ""))]
+    (when (and element-type (>= arity (count fixed-params)))
+      (vec (concat fixed-params
+                   (repeat (- arity (count fixed-params)) element-type))))))
+
+(defn- arg-types-match? [direct-supertypes decl arg-types]
+  (let [param-types (param-types-from-decl-id (:decl/id decl))
+        arity (count arg-types)]
+    (or (fixed-arity-arg-types-match? direct-supertypes param-types arg-types)
+        (when-let [expanded (varargs-param-types param-types arity)]
+          (fixed-arity-arg-types-match? direct-supertypes expanded arg-types)))))
+
+(defn- method-target-by-arg-types [direct-supertypes candidates arg-types]
+  (when (every? some? arg-types)
+    (->> candidates
+         (filter #(arg-types-match? direct-supertypes % arg-types))
+         unambiguous)))
+
+(defn- varargs-method-candidates [varargs-method-index owner method-name arity]
   (->> (get varargs-method-index [owner method-name])
        (filter (fn [decl]
                  (let [param-count (param-count-from-decl-id (:decl/id decl))]
-                   (and param-count (>= arity (dec param-count))))))
-       unambiguous))
+                   (and param-count (>= arity (dec param-count))))))))
 
-(defn- method-target-for-owner [method-index varargs-method-index owner method-name arity]
-  (or (unambiguous (get method-index [owner method-name arity]))
-      (varargs-method-target varargs-method-index owner method-name arity)))
-
-(declare enclosing-type type-lineage)
+(defn- method-target-for-owner
+  ([method-index varargs-method-index owner method-name arity]
+   (method-target-for-owner method-index varargs-method-index nil owner method-name arity []))
+  ([method-index varargs-method-index direct-supertypes owner method-name arity arg-types]
+   (let [exact-candidates (get method-index [owner method-name arity])
+         varargs-candidates (varargs-method-candidates varargs-method-index owner method-name arity)]
+     (or (unambiguous exact-candidates)
+         (method-target-by-arg-types direct-supertypes exact-candidates arg-types)
+         (unambiguous varargs-candidates)
+         (method-target-by-arg-types direct-supertypes varargs-candidates arg-types)))))
 
 (defn- inherited-local-method-target
-  [method-index varargs-method-index argument-counts parent-by-node source-node-types direct-supertypes ref]
+  [method-index varargs-method-index argument-counts parent-by-node source-node-types direct-supertypes arg-types ref]
   (when (and (nil? (:ref/owner-type ref)) (:ref/name ref))
     (let [arity (get argument-counts (:ref/from-node ref) 0)]
       (some->> (:ref/from-node ref)
@@ -1882,35 +2061,51 @@
                (type-lineage direct-supertypes)
                (keep #(method-target-for-owner method-index
                                                varargs-method-index
+                                               direct-supertypes
                                                %
                                                (:ref/name ref)
-                                               arity))
+                                               arity
+                                               arg-types))
                first))))
 
 (defn- local-method-target
-  [method-index varargs-method-index type-names argument-counts child-index field-index ref-index constructor-refs decl-return-types parent-by-node source-node-types direct-supertypes ref]
+  [facts method-index varargs-method-index type-names argument-counts child-index field-index ref-index field-refs constructor-refs decl-return-types nodes-by-id parent-by-node source-node-types direct-supertypes binding-types ref]
   (let [owner-type-id (:ref/owner-type ref)
         owner (type-owner type-names owner-type-id)
         enum-target-owner (some->> (enum-constant-target-type child-index field-index ref)
                                    (type-owner type-names))
         chained-target-owner (chained-method-target-owner method-index type-names argument-counts child-index ref-index decl-return-types ref)
         constructor-target-owner (constructor-call-target-owner type-names child-index constructor-refs ref)
-        arity (get argument-counts (:ref/from-node ref) 0)]
+        arity (get argument-counts (:ref/from-node ref) 0)
+        arg-types (argument-type-ids facts
+                                     method-index
+                                     type-names
+                                     argument-counts
+                                     child-index
+                                     ref-index
+                                     field-refs
+                                     constructor-refs
+                                     decl-return-types
+                                     nodes-by-id
+                                     parent-by-node
+                                     binding-types
+                                     (:ref/from-node ref))]
     (when (:ref/name ref)
       (or (when owner
-            (method-target-for-owner method-index varargs-method-index owner (:ref/name ref) arity))
+            (method-target-for-owner method-index varargs-method-index direct-supertypes owner (:ref/name ref) arity arg-types))
           (when enum-target-owner
-            (method-target-for-owner method-index varargs-method-index enum-target-owner (:ref/name ref) arity))
+            (method-target-for-owner method-index varargs-method-index direct-supertypes enum-target-owner (:ref/name ref) arity arg-types))
           (when constructor-target-owner
-            (method-target-for-owner method-index varargs-method-index constructor-target-owner (:ref/name ref) arity))
+            (method-target-for-owner method-index varargs-method-index direct-supertypes constructor-target-owner (:ref/name ref) arity arg-types))
           (when chained-target-owner
-            (method-target-for-owner method-index varargs-method-index chained-target-owner (:ref/name ref) arity))
+            (method-target-for-owner method-index varargs-method-index direct-supertypes chained-target-owner (:ref/name ref) arity arg-types))
           (inherited-local-method-target method-index
                                          varargs-method-index
                                          argument-counts
                                          parent-by-node
                                          source-node-types
                                          direct-supertypes
+                                         arg-types
                                          ref)))))
 
 (defn- local-constructor-target [constructor-index type-names argument-counts ref]
@@ -1986,6 +2181,7 @@
         argument-counts (argument-counts deduped)
         child-index (child-node-index deduped)
         ref-index (method-ref-index deduped)
+        field-refs (field-ref-index deduped)
         constructor-refs (constructor-ref-index deduped)
         decl-return-types (decl-return-type-index deduped)
         field-index (field-decl-index deduped)
@@ -1993,6 +2189,8 @@
         type-decls (type-decl-index deduped)
         source-node-types (type-decl-source-node-index deduped)
         parent-by-node (parent-node-index deduped)
+        nodes-by-id (node-index deduped)
+        binding-types (binding-type-index deduped nodes-by-id parent-by-node)
         direct-supertypes (direct-supertype-index deduped source-node-types)]
     (mapv (fn [fact]
             (cond
@@ -2005,18 +2203,22 @@
 
               (and (= :ref.kind/method-call (:ref/kind fact))
                    (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
-              (if-let [target (local-method-target method-index
+              (if-let [target (local-method-target deduped
+                                                   method-index
                                                    varargs-method-index
                                                    type-names
                                                    argument-counts
                                                    child-index
                                                    field-index
                                                    ref-index
+                                                   field-refs
                                                    constructor-refs
                                                    decl-return-types
+                                                   nodes-by-id
                                                    parent-by-node
                                                    source-node-types
                                                    direct-supertypes
+                                                   binding-types
                                                    fact)]
                 (let [owner (owner-from-method-decl-id (:decl/id target))]
                   (-> fact
