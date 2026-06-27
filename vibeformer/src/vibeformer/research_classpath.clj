@@ -13,7 +13,11 @@
    "PublishArtifact" "org.gradle.api.artifacts.PublishArtifact"})
 
 (def java-package-root-aliases
-  {"org.graalvm.truffle" ["com.oracle.truffle.api"]})
+  {"org.graalvm.truffle" ["com.oracle.truffle.api"
+                          "org.graalvm.collections"]})
+
+(def implicit-java-package-roots
+  #{"org.gradle.api"})
 
 (def dependency-configurations
   #{"api"
@@ -340,7 +344,7 @@
                                (keep (comp coordinate-group :dependency/coordinate)))
         groups (concat catalog-groups dependency-groups)
         aliases (mapcat #(get java-package-root-aliases % []) groups)]
-    (->> (concat groups aliases)
+    (->> (concat groups aliases implicit-java-package-roots)
          (remove str/blank?)
          set
          sort

@@ -78,12 +78,14 @@ dependencies {
     (is (= 3 (:source-roots/count report)))
     (is (= 6 (:dependencies/count report)))
     (is (= ["com.oracle.truffle.api"
+            "org.graalvm.collections"
             "org.graalvm.truffle"
+            "org.gradle.api"
             "org.jetbrains.kotlin"
             "org.junit.jupiter"
             "org.msgpack"]
            (:java/classpath-package-roots report)))
-    (is (= 5 (:java/classpath-package-roots/count report)))
+    (is (= 7 (:java/classpath-package-roots/count report)))
     (is (= {"Action" "org.gradle.api.Action"
             "DependencyConstraint" "org.gradle.api.artifacts.DependencyConstraint"
             "ExternalModuleDependency" "org.gradle.api.artifacts.ExternalModuleDependency"
