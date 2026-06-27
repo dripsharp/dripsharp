@@ -265,11 +265,20 @@ import kotlin.io.path.readText
 import kotlin.io.path.walk
 
 data class ApiDoc(val moduleName: String, val dependencies: List<String>, val outputBytes: ByteArray)
+data class PObject(val classInfo: String)
 
 class JavaVersionRange {
   companion object {
     fun inclusive(floor: Int, ceiling: Int): JavaVersionRange = JavaVersionRange()
   }
+}
+
+val List<PObject>.isUnlisted: Boolean
+  get() = any { it.classInfo == \"Unlisted\" }
+
+interface CommandLine {
+  fun word(): String
+  fun wordCursor(): Int
 }
 
 fun apiCalls(path: Path): URI {
@@ -378,7 +387,8 @@ fun interopReceiverFacts(root: Path, jvmArgs: ListProperty<String>): Boolean {
   val streamBytes = ByteArrayOutputStream().apply { write(1) }.toByteArray()
   val packerThread: ThreadLocal<MessageBufferPacker> =
     ThreadLocal.withInitial { MessagePack.newDefaultBufferPacker() }
-  val threadBytes = packerThread.get().toByteArray()
+  val packer = packerThread.get()
+  val threadBytes = packer.toByteArray()
   val range = JavaVersionRange.inclusive(8, 21).toList()
   val argsText = jvmArgs.get().joinToString(\" \")
   val options = loadOptions()
@@ -386,6 +396,11 @@ fun interopReceiverFacts(root: Path, jvmArgs: ListProperty<String>): Boolean {
   val packageDatas = loadPackageDatas()
   val walked = root.walk().map { it.toString() }.toList()
   val generated = generateSequence(\"first\") { null }.mapNotNull { it }.toList()
+  val lines = \"a\\nb\".lineSequence().joinToString(\"|\")
+  val combined = (listOf(\"a\") + listOf(\"b\")).joinToString(\"\")
+  val maybePath = \"linux/x64\".substring(0, 5).takeIf { it.isNotEmpty() }
+  val noProxy = listOf(\"localhost\")
+  noProxy.let { System.setProperty(\"http.nonProxyHosts\", it.joinToString(\"|\")) }
   return listed.isNotEmpty() &&
     props.isNotEmpty() &&
     msgBytes.isNotEmpty() &&
@@ -397,7 +412,14 @@ fun interopReceiverFacts(root: Path, jvmArgs: ListProperty<String>): Boolean {
     deltas.joinToString(\"\\n\").isNotEmpty() &&
     packageDatas.distinctBy { it.toString() }.toList().isNotEmpty() &&
     walked.isNotEmpty() &&
-    generated.isNotEmpty()
+    generated.isNotEmpty() &&
+    lines.isNotEmpty() &&
+    combined.isNotEmpty() &&
+    maybePath.isNotEmpty()
+}
+
+fun commandLineFacts(commandLine: CommandLine): Boolean {
+  return commandLine.word().substring(0, commandLine.wordCursor()).isNotEmpty()
 }
 
 fun assertions() {
@@ -1498,6 +1520,7 @@ public final class JavaPseudoTypes {
                    ["byteArrayOf" "kotlin:ByteArray" "kotlin.collections.ArraysKt" true]
                    ["buildList" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
                    ["any" "kotlin:Boolean" "kotlin.collections.List" true]
+                   ["any" "kotlin:Boolean" "kotlin:List<kotlin:PObject>" true]
                    ["containsExactly" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["containsOnly" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["createDirectories" "java.nio.file.Path" "java.nio.file.Path" true]
@@ -1536,6 +1559,7 @@ public final class JavaPseudoTypes {
                    ["filter" "java.util.stream.Stream" "java.util.stream.Stream" true]
                    ["joinToString" "kotlin:String" "kotlin.collections.List" true]
                    ["joinToString" "kotlin:String" "kotlin:List<kotlin:String>" true]
+                   ["joinToString" "kotlin:String" "kotlin.sequences.Sequence" true]
                    ["mutableMapOf" "kotlin.collections.MutableMap" "kotlin.collections.MapsKt" true]
                    ["mutableSetOf" "kotlin.collections.MutableSet" "kotlin.collections.SetsKt" true]
                    ["readText" "kotlin:String" "java.nio.file.Path" true]

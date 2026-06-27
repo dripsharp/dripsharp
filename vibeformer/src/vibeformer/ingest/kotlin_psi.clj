@@ -334,9 +334,13 @@
 (defn- declaration-type-facts [node-id declaration]
   (cond
     (instance? KtProperty declaration)
-    (let [type-reference (.getTypeReference ^KtProperty declaration)]
+    (let [property ^KtProperty declaration
+          type-reference (.getTypeReference property)
+          receiver-type (.getReceiverTypeReference property)]
       (concat (type-ref-facts node-id :property-type type-reference)
-              (nullable-type-feature-facts node-id type-reference :property-type)))
+              (type-facts receiver-type)
+              (nullable-type-feature-facts node-id type-reference :property-type)
+              (nullable-type-feature-facts node-id receiver-type :receiver-type)))
 
     (instance? KtNamedFunction declaration)
     (let [function ^KtNamedFunction declaration
@@ -385,6 +389,8 @@
                                (some-> ^KtNamedFunction declaration .getTypeReference type-fact :type/id))
         function-receiver-type (when (instance? KtNamedFunction declaration)
                                  (some-> ^KtNamedFunction declaration .getReceiverTypeReference type-fact :type/id))
+        property-receiver-type (when (instance? KtProperty declaration)
+                                 (some-> ^KtProperty declaration .getReceiverTypeReference type-fact :type/id))
         property-type (when (instance? KtProperty declaration)
                         (some-> ^KtProperty declaration .getTypeReference type-fact :type/id))]
     (cond-> {:db/id decl-id
@@ -402,6 +408,9 @@
 
       function-receiver-type
       (assoc :decl/receiver-type function-receiver-type)
+
+      property-receiver-type
+      (assoc :decl/receiver-type property-receiver-type)
 
       property-type
       (assoc :decl/type property-type))))
@@ -1014,6 +1023,7 @@
           "substring" "kotlin:String"
           "toByteArray" "kotlin:ByteArray"
           "walk" "kotlin.sequences.Sequence"
+          "word" "kotlin:String"
           "toList" "kotlin.collections.List"}))
 
 (def ^:private kotlin-collection-roots
@@ -1156,13 +1166,16 @@
 
 (def ^:private known-string-property-names
   #{"commandName"
+    "current"
     "defaultContents"
     "error"
+    "examples"
     "message"
     "moduleName"
     "name"
     "output"
     "pathEncoded"
+    "pathStr"
     "pathString"
     "report"
     "sourceText"
@@ -1183,25 +1196,34 @@
     "badResponses"
     "candidates"
     "cases"
+    "children"
+    "classpath"
     "classSelectors"
     "dependencies"
     "deltas"
     "docModules"
     "entries"
     "errors"
-    "examples"
+    "exceptions"
+    "extraMemberInfo"
     "expectedFiles"
     "jpmsExports"
     "jvmArgs"
+    "javaReservedWords"
     "keys"
+    "kotlinKeywords"
     "mapping"
     "missingFiles"
     "modules"
+    "noProxy"
     "packages"
     "packagesData"
     "packageDatas"
     "packageSelectors"
+    "docsiteInfoModuleUris"
     "paths"
+    "qualifiedNames"
+    "regexExceptions"
     "responses"
     "sections"
     "sourceFileExts"
@@ -1212,7 +1234,7 @@
     "values"})
 
 (def ^:private known-byte-output-stream-property-names
-  #{"out"})
+  #{"out" "packer"})
 
 (defn- qualified-property-name [value]
   (when-let [value (some-> value
@@ -1239,7 +1261,7 @@
       "kotlin:String"
 
       (or (contains? known-collection-property-names property-name)
-          (re-find #"(?i)(args|candidates|cases|classes|datas|deltas|dependencies|entries|errors|exports|files|keys|mapping|methods|modules|options|packages|paths|properties|responses|sections|selectors|values)$" property-name))
+          (re-find #"(?i)(args|candidates|cases|children|classes|datas|deltas|dependencies|entries|errors|exceptions|exports|files|info|keys|keywords|mapping|methods|modules|options|packages|paths|properties|readers|responses|sections|selectors|values)$" property-name))
       "kotlin.collections.List"
 
       (contains? known-byte-output-stream-property-names property-name)
@@ -1307,6 +1329,16 @@
                  (re-find #"\"(?:\\.|[^\"])*\"" inner-value))
         "kotlin:String"))))
 
+(defn- collection-concat-type-id [value]
+  (when-let [value (some-> value str/trim)]
+    (let [inner-value (if (and (str/starts-with? value "(")
+                               (str/ends-with? value ")"))
+                        (subs value 1 (dec (count value)))
+                        value)]
+      (when (and (top-level-plus? inner-value)
+                 (re-find #"\blistOf\s*\(" inner-value))
+        "kotlin.collections.List"))))
+
 (defn- property-expression-type-id [value]
   (some-> value qualified-property-name inferred-name-type-id))
 
@@ -1317,7 +1349,7 @@
   (and (< idx (dec (count value)))
        (= \. (.charAt value idx))
        (when-let [suffix (subs value (inc idx))]
-         (boolean (re-matches #"[A-Za-z_][A-Za-z0-9_]*\s*(?:<[^>{}()]*>)?\s*(?:\(|\{).*" suffix)))))
+         (boolean (re-matches #"(?s)[A-Za-z_][A-Za-z0-9_]*\s*(?:<[^>{}()]*>)?\s*(?:\(|\{).*" suffix)))))
 
 (defn- top-level-qualified-call-parts [value]
   (when-let [value (some-> value str/trim not-empty)]
@@ -1332,7 +1364,7 @@
         (when separator
           (let [receiver (subs value 0 separator)
                 suffix (subs value (inc separator))]
-            (when-let [[_ method] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>{}()]*>)?\s*(?:\(|\{).*" suffix)]
+            (when-let [[_ method] (re-matches #"(?s)([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>{}()]*>)?\s*(?:\(|\{).*" suffix)]
               {:receiver (str/trim receiver)
                :method method})))
         (let [ch (.charAt value idx)]
@@ -1393,6 +1425,10 @@
         "kotlin.sequences.Sequence"
         "kotlin.collections.List")
 
+      (and (= "lineSequence" call-name)
+           (= "String" owner-root))
+      "kotlin.sequences.Sequence"
+
       (and (= "dropLast" call-name)
            (contains? kotlin-collection-roots owner-root))
       "kotlin.collections.List"
@@ -1404,6 +1440,10 @@
       (and (= "dropLast" call-name)
            (= "String" owner-root))
       "kotlin:String"
+
+      (and (= "takeIf" call-name)
+           receiver-type)
+      receiver-type
 
       (and (contains? #{"filter" "map"} call-name)
            (= "Stream" owner-root))
@@ -1561,6 +1601,7 @@
    (or (literal-type-id value)
        (some->> value simple-identifier (get binding-types))
        (property-expression-type-id value)
+       (collection-concat-type-id value)
        (string-concat-type-id value)
        (qualified-known-call-type-id type-index binding-types value)
        (constructor-expression-type-id type-index value)
@@ -1718,7 +1759,7 @@
      (- (:node/end-column span) (:node/start-column span))))
 
 (def ^:private implicit-it-lambda-calls
-  #{"any" "filter" "joinToString" "map" "toList"})
+  #{"any" "filter" "find" "joinToString" "let" "map" "takeIf" "toList"})
 
 (defn- implicit-it-receiver-type-id [type-index binding-types receiver-values-by-call call-spans node-id receiver-value]
   (when (= "it" (some-> receiver-value str/trim))
@@ -1728,7 +1769,9 @@
                 (when-let [outer-receiver-type (expression-type-id type-index
                                                                    binding-types
                                                                    outer-receiver-value)]
-                  (collection-element-type-id outer-receiver-type))))
+                  (if (contains? #{"let" "takeIf"} (:node/name (get call-spans outer-node-id)))
+                    outer-receiver-type
+                    (collection-element-type-id outer-receiver-type)))))
             (->> (vals call-spans)
                  (filter #(contains? implicit-it-lambda-calls (:node/name %)))
                  (filter #(span-contains? % inner-span))
@@ -2363,7 +2406,7 @@
                                                           member-candidates)]
     (or (when (and (= "hashCode" name) receiver-candidates)
           (resolve-function-candidates-tx db source-types id arg-types receiver-candidates))
-        (when-let [known-call (or (known-call-resolution ref)
+        (when-let [known-call (or (known-call-resolution extension-ref)
                                   (kotlin-constructor-call type-index ref))]
           (known-call-resolution-tx db id known-call))
         (when (and (= "matches" name) receiver-candidates)
