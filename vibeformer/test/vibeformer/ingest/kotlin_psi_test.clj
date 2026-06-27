@@ -247,6 +247,7 @@ fun matchCalls(value: Any): Boolean {
 import java.net.URI
 import java.nio.file.Path
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatCode
 
 fun apiCalls(path: Path): URI {
   val text = \"\"\"
@@ -267,6 +268,16 @@ fun values(root: Path): List<URI> {
 fun hasText(values: List<String>, text: String): Boolean {
   assertThat(values).contains(text)
   return values.contains(text) && text.contains(\"value\")
+}
+
+fun assertions() {
+  assertThat(\"left\").isNotEqualTo(\"right\").isInstanceOf(String::class.java)
+  assertThat(false).isFalse()
+  assertThatCode { throw IllegalArgumentException(\"bad\") }
+    .hasMessage(\"bad\")
+    .hasMessageContaining(\"ba\")
+    .hasMessageStartingWith(\"b\")
+  assertThatCode { println(\"ok\") }.doesNotThrowAnyException()
 }
 ")
 
@@ -1178,7 +1189,15 @@ public final class JavaPseudoTypes {
                              "trimMargin"
                              "listOf"
                              "assertThat"
+                             "assertThatCode"
+                             "doesNotThrowAnyException"
+                             "hasMessage"
+                             "hasMessageContaining"
+                             "hasMessageStartingWith"
                              "isEqualTo"
+                             "isFalse"
+                             "isInstanceOf"
+                             "isNotEqualTo"
                              "URI"
                              "resolve"
                              "toUri"
@@ -1295,7 +1314,15 @@ public final class JavaPseudoTypes {
                    ["trimMargin" "kotlin:String" "kotlin.text.StringsKt" true]
                    ["listOf" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
                    ["assertThat" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]
+                   ["assertThatCode" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]
+                   ["doesNotThrowAnyException" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["hasMessage" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["hasMessageContaining" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["hasMessageStartingWith" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isFalse" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isInstanceOf" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isNotEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["URI" "java.net.URI" "java.net.URI" true]
                    ["resolve" "java.nio.file.Path" "java.nio.file.Path" true]
                    ["toUri" "java.net.URI" "java.nio.file.Path" true]

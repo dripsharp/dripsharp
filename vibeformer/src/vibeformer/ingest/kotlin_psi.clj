@@ -848,6 +848,8 @@
    "arrayOf" {:ref/to-type "kotlin:Array"}
    "assertThat" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                  :ref/owner-type "org.assertj.core.api.Assertions"}
+   "assertThatCode" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                     :ref/owner-type "org.assertj.core.api.Assertions"}
    "assertThrows" {:ref/to-type "org.junit.jupiter.api.function.Executable"
                    :ref/owner-type "org.junit.jupiter.api.Assertions"}
    "configure" {:ref/to-type "kotlin:Unit"
@@ -858,8 +860,22 @@
                :ref/owner-type "kotlin:Any"}
    "id" {:ref/to-type "org.gradle.plugin.use.PluginDependencySpec"
          :ref/owner-type "org.gradle.plugin.use.PluginDependenciesSpec"}
+   "doesNotThrowAnyException" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                               :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "hasMessage" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "hasMessageContaining" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                           :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "hasMessageStartingWith" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                             :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "isEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isFalse" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+              :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isInstanceOf" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                   :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isNotEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                   :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "lazy" {:ref/to-type "kotlin:Lazy"
            :ref/owner-type "kotlin:LazyKt"}
    "let" {:ref/to-type "kotlin:Any"
