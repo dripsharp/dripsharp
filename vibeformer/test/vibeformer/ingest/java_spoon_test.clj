@@ -225,6 +225,24 @@ public final class Formatter {
 }
 ")
 
+(def inherited-collection-field-fixture
+  "package com.acme.inheritedcollection;
+
+import java.util.List;
+
+final class Node {}
+
+abstract class BaseNode {
+  protected final List<Node> children = List.of();
+}
+
+public final class UsesInheritedChildren extends BaseNode {
+  public List<Node> tail() {
+    return children.subList(0, children.size());
+  }
+}
+")
+
 (def inherited-method-fixture
   "package com.acme.inheritedmethod;
 
@@ -1825,6 +1843,75 @@ public final class Demo {
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
                       [(= ?name "children")]
+                      [?ref :ref/reason ?reason]]
+                    db)))
+          (let [collection-refs (frequencies
+                                 (map (fn [[_ name owner-name type-name resolved?]]
+                                        [name owner-name type-name resolved?])
+                                      (d/q '[:find ?ref-id ?name ?owner-name ?type-name ?resolved?
+                                             :where
+                                             [?ref :ref/id ?ref-id]
+                                             [?ref :ref/kind :ref.kind/method-call]
+                                             [?ref :ref/name ?name]
+                                             [(contains? #{"get" "size" "isEmpty" "subList"} ?name)]
+                                             [?ref :ref/owner-type ?owner]
+                                             [?owner :type/name ?owner-name]
+                                             [?ref :ref/to-type ?type]
+                                             [?type :type/name ?type-name]
+                                             [?ref :ref/resolved? ?resolved?]]
+                                           db)))]
+            (is (= {["get" "java.util.List" "com.acme.qualifiedfield.Node" true] 3
+                    ["size" "java.util.List" "int" true] 3
+                    ["isEmpty" "java.util.List" "boolean" true] 1
+                    ["subList" "java.util.List" "java.util.List" true] 2}
+                   collection-refs))
+            (is (empty?
+                 (d/q '[:find ?name ?owner-name ?reason
+                        :where
+                        [?ref :ref/resolved? false]
+                        [?ref :ref/name ?name]
+                        [(contains? #{"get" "size" "isEmpty" "subList"} ?name)]
+                        [(get-else $ ?ref :ref/owner-type :missing) ?owner]
+                        [(get-else $ ?owner :type/name "") ?owner-name]
+                        [?ref :ref/reason ?reason]]
+                      db)))))))))
+
+(deftest resolves-collection-calls-on-inherited-java-field-receivers
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/inheritedcollection/UsesInheritedChildren.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path inherited-collection-field-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              collection-refs (set
+                               (d/q '[:find ?name ?owner-name ?type-name ?resolved?
+                                      :where
+                                      [?ref :ref/kind :ref.kind/method-call]
+                                      [?ref :ref/name ?name]
+                                      [(contains? #{"subList" "size"} ?name)]
+                                      [?ref :ref/owner-type ?owner]
+                                      [?owner :type/name ?owner-name]
+                                      [?ref :ref/to-type ?type]
+                                      [?type :type/name ?type-name]
+                                      [?ref :ref/resolved? ?resolved?]]
+                                    db))]
+          (is (= #{["subList" "java.util.List" "java.util.List" true]
+                   ["size" "java.util.List" "int" true]}
+                 collection-refs))
+          (is (empty?
+               (d/q '[:find ?name ?owner-name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(contains? #{"subList" "size"} ?name)]
+                      [(get-else $ ?ref :ref/owner-type :missing) ?owner]
+                      [(get-else $ ?owner :type/name "") ?owner-name]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 

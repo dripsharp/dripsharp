@@ -21,7 +21,10 @@
 
 (def ^:private known-java-api-types
   #{"java.lang.StringBuilder"
-    "java.lang.StringBuffer"})
+    "java.lang.StringBuffer"
+    "java.lang.Object"
+    "boolean"
+    "int"})
 
 (defn- hex-bytes [bytes]
   (apply str (map #(format "%02x" (bit-and % 0xff)) bytes)))
@@ -2453,6 +2456,20 @@
              (keep #(unambiguous (get field-owner-index [% (:ref/name ref)])))
              first)))
 
+(defn- target-variable-field-type
+  [field-owner-index parent-by-node source-node-types direct-supertypes target-node]
+  (when (and (contains? #{:java.node/variable-read
+                          :java.node/variable-write}
+                        (:node/kind target-node))
+             (:node/name target-node))
+    (some-> (inherited-local-field-target field-owner-index
+                                          parent-by-node
+                                          source-node-types
+                                          direct-supertypes
+                                          {:ref/from-node (:node/id target-node)
+                                           :ref/name (:node/name target-node)})
+            :decl/type)))
+
 (def ^:private string-builder-aliases
   #{"b" "builder" "out" "sb" "stringBuilder"})
 
@@ -2475,25 +2492,76 @@
       (string-builder-alias-owner? owner)
       "java.lang.StringBuilder")))
 
+(defn- collection-call-return-type [type-args target-type owner name]
+  (cond
+    (and (java-collection-owner? owner)
+         (#{"size"} name))
+    "int"
+
+    (and (java-collection-owner? owner)
+         (#{"isEmpty"} name))
+    "boolean"
+
+    (and (or (java-list-owner? owner)
+             (java-set-owner? owner)
+             (= "java.util.Collection" owner))
+         (#{"contains" "add"} name))
+    "boolean"
+
+    (and (java-list-owner? owner)
+         (= "get" name))
+    (get-in type-args [target-type 0] "java.lang.Object")
+
+    (and (java-list-owner? owner)
+         (= "subList" name))
+    target-type
+
+    (and (java-map-owner? owner)
+         (#{"get" "getOrDefault" "put"} name))
+    (get-in type-args [target-type 1] "java.lang.Object")
+
+    (and (java-map-owner? owner)
+         (#{"containsKey" "containsValue"} name))
+    "boolean"))
+
+(defn- resolve-known-collection-call [type-args fact target-type target-owner]
+  (let [owner (or target-owner
+                  (some-> (:ref/owner-type fact) strip-type-args))
+        return-type (collection-call-return-type type-args
+                                                 target-type
+                                                 owner
+                                                 (:ref/name fact))]
+    (when (and owner
+               (or (collection-feature-kind owner (:ref/name fact))
+                   return-type))
+      (cond-> (assoc fact
+                     :ref/resolved? true
+                     :ref/owner-type (or target-type owner))
+        true (dissoc :ref/reason)
+        return-type (assoc :ref/to-type return-type)))))
+
 (defn- resolve-known-java-api-call
   ([fact]
-   (resolve-known-java-api-call fact nil))
+   (resolve-known-java-api-call fact nil nil nil))
   ([fact target-owner]
+   (resolve-known-java-api-call fact nil target-owner nil))
+  ([fact type-args target-owner target-type]
   (when (and (= :ref.kind/method-call (:ref/kind fact))
              (not (:ref/resolved? fact)))
-    (if (= "append" (:ref/name fact))
-      (when-let [owner (fluent-append-owner (or (:ref/owner-type fact) target-owner))]
-        (-> fact
-            (assoc :ref/resolved? true
-                   :ref/to-type owner
-                   :ref/owner-type owner)
-            (dissoc :ref/reason)))
-      (when-let [known (get known-java-api-calls (:ref/name fact))]
-        (-> fact
-            (assoc :ref/resolved? true
-                   :ref/to-type (:ref/to-type known)
-                   :ref/owner-type (:ref/owner-type known))
-            (dissoc :ref/reason)))))))
+    (or (resolve-known-collection-call type-args fact target-type target-owner)
+        (if (= "append" (:ref/name fact))
+          (when-let [owner (fluent-append-owner (or (:ref/owner-type fact) target-owner))]
+            (-> fact
+                (assoc :ref/resolved? true
+                       :ref/to-type owner
+                       :ref/owner-type owner)
+                (dissoc :ref/reason)))
+          (when-let [known (get known-java-api-calls (:ref/name fact))]
+            (-> fact
+                (assoc :ref/resolved? true
+                       :ref/to-type (:ref/to-type known)
+                       :ref/owner-type (:ref/owner-type known))
+                (dissoc :ref/reason))))))))
 
 (defn- resolve-local-type-ref [type-decls type-aliases fact]
   (when (and (contains? #{:ref.kind/type-use
@@ -2557,51 +2625,60 @@
               (or (resolve-local-type-ref type-decls type-aliases fact)
                   fact)
 
-              (and (= :ref.kind/method-call (:ref/kind fact))
-                   (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
-              (if-let [target (local-method-target deduped
-                                                   method-index
-                                                   varargs-method-index
-                                                   type-names
-                                                   type-args
-                                                   type-aliases
-                                                   argument-counts
-                                                   child-index
-                                                   field-index
-                                                   ref-index
-                                                   field-refs
-                                                   constructor-refs
-                                                   decl-return-types
-                                                   nodes-by-id
-                                                   parent-by-node
-                                                   source-node-types
-                                                   direct-supertypes
-                                                   binding-types
-                                                   fact)]
-                (let [owner (owner-from-method-decl-id (:decl/id target))]
-                  (-> fact
-                      (assoc :ref/to-decl (:decl/id target)
-                             :ref/resolved? true)
-                      (cond-> owner (assoc :ref/owner-type owner))
-                      (cond-> (:decl/return-type target) (assoc :ref/to-type (:decl/return-type target)))
-                      (dissoc :ref/reason)))
-                (or (resolve-known-java-api-call
-                     fact
-                     (expression-target-owner deduped
-                                              method-index
-                                              type-names
-                                              type-args
-                                              argument-counts
-                                              child-index
-                                              ref-index
-                                              field-refs
-                                              constructor-refs
-                                              decl-return-types
-                                              nodes-by-id
-                                              parent-by-node
-                                              binding-types
-                                              fact))
-                    fact))
+              (= :ref.kind/method-call (:ref/kind fact))
+              (let [target-node (child-node child-index (:ref/from-node fact) :target)
+                    target-type (when target-node
+                                  (or (expression-node-type deduped
+                                                            method-index
+                                                            type-names
+                                                            type-args
+                                                            argument-counts
+                                                            child-index
+                                                            ref-index
+                                                            field-refs
+                                                            constructor-refs
+                                                            decl-return-types
+                                                            nodes-by-id
+                                                            parent-by-node
+                                                            binding-types
+                                                            target-node)
+                                      (target-variable-field-type field-owner-index
+                                                                  parent-by-node
+                                                                  source-node-types
+                                                                  direct-supertypes
+                                                                  target-node)))
+                    target-owner (some->> target-type (type-owner type-names))]
+                (if (not (some-> fact :ref/owner-type (str/starts-with? "java.")))
+                  (if-let [target (local-method-target deduped
+                                                       method-index
+                                                       varargs-method-index
+                                                       type-names
+                                                       type-args
+                                                       type-aliases
+                                                       argument-counts
+                                                       child-index
+                                                       field-index
+                                                       ref-index
+                                                       field-refs
+                                                       constructor-refs
+                                                       decl-return-types
+                                                       nodes-by-id
+                                                       parent-by-node
+                                                       source-node-types
+                                                       direct-supertypes
+                                                       binding-types
+                                                       fact)]
+                    (let [owner (owner-from-method-decl-id (:decl/id target))]
+                      (-> fact
+                          (assoc :ref/to-decl (:decl/id target)
+                                 :ref/resolved? true)
+                          (cond-> owner (assoc :ref/owner-type owner))
+                          (cond-> (:decl/return-type target) (assoc :ref/to-type (:decl/return-type target)))
+                          (dissoc :ref/reason)))
+                    (or (resolve-known-java-api-call fact type-args target-owner target-type)
+                        fact))
+                  (or (resolve-known-java-api-call fact type-args target-owner target-type)
+                      fact)))
 
               (and (= :ref.kind/constructor-call (:ref/kind fact))
                    (not (some-> fact :ref/to-type (str/starts-with? "java."))))
