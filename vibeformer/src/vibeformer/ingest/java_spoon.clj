@@ -1691,6 +1691,19 @@
        (map (juxt :type/id :type/name))
        (into {})))
 
+(defn- type-arg-index [facts]
+  (reduce (fn [index fact]
+            (if (and (:type/id fact) (seq (:type/args fact)))
+              (reduce (fn [index arg]
+                        (assoc-in index
+                                  [(:type/id fact) (:type.arg/ordinal arg)]
+                                  (:type.arg/type arg)))
+                      index
+                      (:type/args fact))
+              index))
+          {}
+          facts))
+
 (defn- argument-counts [facts]
   (->> facts
        (filter #(= :argument (:node/role %)))
@@ -1881,6 +1894,13 @@
                      index)))
                {})))
 
+(defn- weak-binding-type? [type-id]
+  (or (nil? type-id)
+      (= "var" type-id)
+      (= "java.lang.Object" type-id)))
+
+(declare expression-node-type)
+
 (defn- method-ref-return-type [method-index type-names argument-counts decl-return-types ref]
   (or (:ref/to-type ref)
       (get decl-return-types (:ref/to-decl ref))
@@ -1888,6 +1908,51 @@
         (let [arity (get argument-counts (:ref/from-node ref) 0)]
           (:decl/return-type
            (unambiguous (get method-index [owner (:ref/name ref) arity])))))))
+
+(defn- collection-method-call-return-type
+  [facts
+   method-index
+   type-names
+   type-args
+   argument-counts
+   child-index
+   method-refs
+   field-refs
+   constructor-refs
+   decl-return-types
+   nodes-by-id
+   parent-by-node
+   binding-types
+   node
+   ref]
+  (when-let [target (child-node child-index (:node/id node) :target)]
+    (let [target-type (expression-node-type facts
+                                            method-index
+                                            type-names
+                                            type-args
+                                            argument-counts
+                                            child-index
+                                            method-refs
+                                            field-refs
+                                            constructor-refs
+                                            decl-return-types
+                                            nodes-by-id
+                                            parent-by-node
+                                            binding-types
+                                            target)
+          owner (type-owner type-names target-type)]
+      (cond
+        (and (= "get" (:ref/name ref))
+             (java-list-owner? owner))
+        (get-in type-args [target-type 0])
+
+        (and (= "subList" (:ref/name ref))
+             (java-list-owner? owner))
+        target-type
+
+        (and (= "get" (:ref/name ref))
+             (java-map-owner? owner))
+        (get-in type-args [target-type 1])))))
 
 (defn- type-ref-for-role [facts node-id role]
   (some (fn [fact]
@@ -1901,6 +1966,7 @@
   [facts
    method-index
    type-names
+   type-args
    argument-counts
    child-index
    method-refs
@@ -1913,9 +1979,23 @@
    node]
   (case (:node/kind node)
     :java.node/method-call
-    (some->> (:node/id node)
-             (get method-refs)
-             (method-ref-return-type method-index type-names argument-counts decl-return-types))
+    (when-let [ref (get method-refs (:node/id node))]
+      (or (collection-method-call-return-type facts
+                                              method-index
+                                              type-names
+                                              type-args
+                                              argument-counts
+                                              child-index
+                                              method-refs
+                                              field-refs
+                                              constructor-refs
+                                              decl-return-types
+                                              nodes-by-id
+                                              parent-by-node
+                                              binding-types
+                                              node
+                                              ref)
+          (method-ref-return-type method-index type-names argument-counts decl-return-types ref)))
 
     :java.node/constructor-call
     (some->> (:node/id node)
@@ -1953,6 +2033,7 @@
   [facts
    method-index
    type-names
+   type-args
    argument-counts
    child-index
    method-refs
@@ -1966,6 +2047,7 @@
   (mapv #(expression-node-type facts
                                method-index
                                type-names
+                               type-args
                                argument-counts
                                child-index
                                method-refs
@@ -1977,6 +2059,50 @@
                                binding-types
                                %)
         (get child-index [call-node-id :argument])))
+
+(defn- initializer-binding-type-index
+  [facts
+   method-index
+   type-names
+   type-args
+   argument-counts
+   child-index
+   method-refs
+   field-refs
+   constructor-refs
+   decl-return-types
+   nodes-by-id
+   parent-by-node
+   binding-types]
+  (reduce (fn [index node]
+            (if (and (= :java.node/local-variable (:node/kind node))
+                     (:node/name node))
+              (let [scope-node (enclosing-executable nodes-by-id parent-by-node (:node/id node))
+                    current-type (get-in index [scope-node (:node/name node)])
+                    initializer (child-node child-index (:node/id node) :initializer)
+                    inferred-type (when initializer
+                                    (expression-node-type facts
+                                                          method-index
+                                                          type-names
+                                                          type-args
+                                                          argument-counts
+                                                          child-index
+                                                          method-refs
+                                                          field-refs
+                                                          constructor-refs
+                                                          decl-return-types
+                                                          nodes-by-id
+                                                          parent-by-node
+                                                          index
+                                                          initializer))]
+                (if (and scope-node
+                         inferred-type
+                         (weak-binding-type? current-type))
+                  (assoc-in index [scope-node (:node/name node)] inferred-type)
+                  index))
+              index))
+          binding-types
+          (filter :node/id facts)))
 
 (defn- chained-method-target-owner [method-index type-names argument-counts child-index ref-index decl-return-types ref]
   (when-let [target (child-node child-index (:ref/from-node ref) :target)]
@@ -1998,6 +2124,7 @@
   [facts
    method-index
    type-names
+   type-args
    argument-counts
    child-index
    method-refs
@@ -2013,6 +2140,7 @@
              (expression-node-type facts
                                    method-index
                                    type-names
+                                   type-args
                                    argument-counts
                                    child-index
                                    method-refs
@@ -2102,7 +2230,7 @@
                first))))
 
 (defn- local-method-target
-  [facts method-index varargs-method-index type-names argument-counts child-index field-index ref-index field-refs constructor-refs decl-return-types nodes-by-id parent-by-node source-node-types direct-supertypes binding-types ref]
+  [facts method-index varargs-method-index type-names type-args argument-counts child-index field-index ref-index field-refs constructor-refs decl-return-types nodes-by-id parent-by-node source-node-types direct-supertypes binding-types ref]
   (let [owner-type-id (:ref/owner-type ref)
         owner (type-owner type-names owner-type-id)
         enum-target-owner (some->> (enum-constant-target-type child-index field-index ref)
@@ -2113,6 +2241,7 @@
         arg-types (argument-type-ids facts
                                      method-index
                                      type-names
+                                     type-args
                                      argument-counts
                                      child-index
                                      ref-index
@@ -2150,6 +2279,7 @@
   [facts
    method-index
    type-names
+   type-args
    argument-counts
    child-index
    method-refs
@@ -2165,6 +2295,7 @@
         target-owner (expression-target-owner facts
                                               method-index
                                               type-names
+                                              type-args
                                               argument-counts
                                               child-index
                                               method-refs
@@ -2243,6 +2374,7 @@
         varargs-method-index (varargs-method-decl-index deduped)
         constructor-index (constructor-decl-index deduped)
         type-names (type-name-index deduped)
+        type-args (type-arg-index deduped)
         argument-counts (argument-counts deduped)
         child-index (child-node-index deduped)
         ref-index (method-ref-index deduped)
@@ -2255,7 +2387,20 @@
         source-node-types (type-decl-source-node-index deduped)
         parent-by-node (parent-node-index deduped)
         nodes-by-id (node-index deduped)
-        binding-types (binding-type-index deduped nodes-by-id parent-by-node)
+        basic-binding-types (binding-type-index deduped nodes-by-id parent-by-node)
+        binding-types (initializer-binding-type-index deduped
+                                                       method-index
+                                                       type-names
+                                                       type-args
+                                                       argument-counts
+                                                       child-index
+                                                       ref-index
+                                                       field-refs
+                                                       constructor-refs
+                                                       decl-return-types
+                                                       nodes-by-id
+                                                       parent-by-node
+                                                       basic-binding-types)
         direct-supertypes (direct-supertype-index deduped source-node-types)]
     (mapv (fn [fact]
             (cond
@@ -2272,6 +2417,7 @@
                                                    method-index
                                                    varargs-method-index
                                                    type-names
+                                                   type-args
                                                    argument-counts
                                                    child-index
                                                    field-index
@@ -2312,6 +2458,7 @@
               (if-let [target (or (local-field-target deduped
                                                        method-index
                                                        type-names
+                                                       type-args
                                                        argument-counts
                                                        child-index
                                                        ref-index

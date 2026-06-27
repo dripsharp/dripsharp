@@ -156,6 +156,17 @@ public final class Formatter {
   public Node first(Node node) {
     return node.children.get(0);
   }
+
+  public Node fromSubList(Node node) {
+    List<Node> methodNodes;
+    if (node.children.isEmpty()) {
+      methodNodes = node.children;
+    } else {
+      methodNodes = node.children.subList(0, node.children.size());
+    }
+    var bodyNodes = methodNodes.subList(0, methodNodes.size());
+    return bodyNodes.get(bodyNodes.size() - 1).children.get(0);
+  }
 }
 ")
 
@@ -1519,8 +1530,9 @@ public final class Demo {
         (source/ingest! conn opts)
         (java-spoon/ingest! conn {:project/id "fixture"})
         (let [db (d/db conn)
-              field-refs (set (d/q '[:find ?name ?decl-id ?owner-id ?resolved?
+              field-refs (set (d/q '[:find ?ref-id ?name ?decl-id ?owner-id ?resolved?
                                       :where
+                                      [?ref :ref/id ?ref-id]
                                       [?ref :ref/kind :ref.kind/field-access]
                                       [?ref :ref/name ?name]
                                       [(= ?name "children")]
@@ -1531,11 +1543,14 @@ public final class Demo {
                                       [?owner :type/id ?owner-id]
                                       [?ref :ref/resolved? ?resolved?]]
                                     db))]
-          (is (= #{["children"
-                    "java:com.acme.qualifiedfield.Node#field:children"
-                    "com.acme.qualifiedfield.Node"
-                    true]}
-                 field-refs))
+          (is (= 6 (count field-refs)))
+          (is (every? (fn [[_ name decl-id owner-id resolved?]]
+                        (= ["children"
+                            "java:com.acme.qualifiedfield.Node#field:children"
+                            "com.acme.qualifiedfield.Node"
+                            true]
+                           [name decl-id owner-id resolved?]))
+                      field-refs))
           (is (empty?
                (d/q '[:find ?name ?reason
                       :where
