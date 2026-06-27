@@ -229,6 +229,10 @@ fun externalBuilderFacts(cert: java.io.File, format: String, reader: Any, bytes:
   val evaluator = evaluatorBuilder.build()
   val directModule = Evaluator.preconfigured().evaluateSchema(ModuleSource.text(\"foo = 1\"))
   val configuredModule = evaluator.evaluate(ModuleSource.text(\"bar = 2\"))
+  val importedText = evaluator.evaluate(text(\"baz = 3\"))
+  val modulePathSource = evaluator.evaluate(modulePath(\"org/pkl/core/Fixture.pkl\"))
+  val pathSource = evaluator.evaluate(path(java.nio.file.Path.of(\"fixture.pkl\")))
+  val uriSource = evaluator.evaluate(uri(java.net.URI(\"pkl:base\")))
   val httpClient = HttpClient.builder().addCertificates(cert).addHeaders(\"**\", mapOf(\"X-Foo\" to listOf(\"v1\"))).setTestPort(1).buildLazily()
   val config = ConfigEvaluatorBuilder.preconfigured().forKotlin().build().evaluate(ModuleSource.text(\"name = \\\"pkl\\\"\"))
   val decoded = ConfigDecoder.preconfigured().forKotlin().decode(bytes)
@@ -1327,11 +1331,15 @@ public final class JavaPseudoTypes {
                              "forKotlin"
                              "indent"
                              "initializer"
+                             "modulePath"
+                             "path"
                              "preconfigured"
                              "returns"
                              "setOutputFormat"
                              "setTestPort"
-                             "unconfigured"}
+                             "text"
+                             "unconfigured"
+                             "uri"}
               resolved (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
                                     :in $ ?target-names
                                     :where
@@ -1383,6 +1391,8 @@ public final class JavaPseudoTypes {
                    ["forKotlin" "org.pkl.config.java.mapper.ValueMapperBuilder" "org.pkl.config.java.mapper.ValueMapperBuilder" true]
                    ["indent" "com.squareup.javapoet.JavaFile.Builder" "com.squareup.javapoet.JavaFile.Builder" true]
                    ["initializer" "com.squareup.javapoet.FieldSpec.Builder" "com.squareup.javapoet.FieldSpec.Builder" true]
+                   ["modulePath" "org.pkl.core.ModuleSource" "org.pkl.core.ModuleSource" true]
+                   ["path" "org.pkl.core.ModuleSource" "org.pkl.core.ModuleSource" true]
                    ["preconfigured" "org.pkl.config.java.ConfigDecoder" "org.pkl.config.java.ConfigDecoder" true]
                    ["preconfigured" "org.pkl.config.java.ConfigEvaluatorBuilder" "org.pkl.config.java.ConfigEvaluatorBuilder" true]
                    ["preconfigured" "org.pkl.core.Evaluator" "org.pkl.core.Evaluator" true]
@@ -1390,7 +1400,9 @@ public final class JavaPseudoTypes {
                    ["returns" "com.squareup.kotlinpoet.FunSpec.Builder" "com.squareup.kotlinpoet.FunSpec.Builder" true]
                    ["setOutputFormat" "org.pkl.core.EvaluatorBuilder" "org.pkl.core.EvaluatorBuilder" true]
                    ["setTestPort" "org.pkl.core.http.HttpClientBuilder" "org.pkl.core.http.HttpClientBuilder" true]
-                   ["unconfigured" "org.pkl.config.java.mapper.ValueMapperBuilder" "org.pkl.config.java.mapper.ValueMapperBuilder" true]}
+                   ["text" "org.pkl.core.ModuleSource" "org.pkl.core.ModuleSource" true]
+                   ["unconfigured" "org.pkl.config.java.mapper.ValueMapperBuilder" "org.pkl.config.java.mapper.ValueMapperBuilder" true]
+                   ["uri" "org.pkl.core.ModuleSource" "org.pkl.core.ModuleSource" true]}
                  resolved))
           (is (empty? unresolved)))))))
 

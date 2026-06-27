@@ -939,8 +939,12 @@
                    :ref/owner-type "kotlin.collections.MapsKt"}
    "mutableSetOf" {:ref/to-type "kotlin.collections.MutableSet"
                    :ref/owner-type "kotlin.collections.SetsKt"}
+   "modulePath" {:ref/to-type "org.pkl.core.ModuleSource"
+                 :ref/owner-type "org.pkl.core.ModuleSource"}
    "named" {:ref/to-type "org.gradle.api.NamedDomainObjectProvider"
             :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
+   "path" {:ref/to-type "org.pkl.core.ModuleSource"
+           :ref/owner-type "org.pkl.core.ModuleSource"}
    "readText" {:ref/to-type "kotlin:String"
                :ref/owner-type "java.nio.file.Path"}
    "replace" {:ref/to-type "kotlin:String"
@@ -955,6 +959,8 @@
                :ref/owner-type "kotlin:Any"}
    "toByte" {:ref/to-type "kotlin:Byte"
              :ref/owner-type "kotlin:Number"}
+   "text" {:ref/to-type "org.pkl.core.ModuleSource"
+           :ref/owner-type "org.pkl.core.ModuleSource"}
    "toUri" {:ref/to-type "java.net.URI"
             :ref/owner-type "java.nio.file.Path"}
    "trimIndent" {:ref/to-type "kotlin:String"
@@ -963,6 +969,8 @@
                  :ref/owner-type "kotlin.text.StringsKt"}
    "trim" {:ref/to-type "kotlin:String"
            :ref/owner-type "kotlin:String"}
+   "uri" {:ref/to-type "org.pkl.core.ModuleSource"
+          :ref/owner-type "org.pkl.core.ModuleSource"}
    "URI" {:ref/to-type "java.net.URI"
           :ref/owner-type "java.net.URI"}})
 
@@ -991,6 +999,7 @@
    "JavaFile" "com.squareup.javapoet.JavaFile"
    "MessagePack" "org.msgpack.core.MessagePack"
    "MethodSpec" "com.squareup.javapoet.MethodSpec"
+   "ModuleSource" "org.pkl.core.ModuleSource"
    "ParameterizedTypeName" "com.squareup.javapoet.ParameterizedTypeName"
    "PClassInfo" "org.pkl.core.PClassInfo"
    "PModule" "org.pkl.core.PModule"
