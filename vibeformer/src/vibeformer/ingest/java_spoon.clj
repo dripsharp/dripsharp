@@ -1741,6 +1741,20 @@
               [field-name (vec (sort-by :decl/qualified-name decls))]))
        (into {})))
 
+(defn- type-decl-index [facts]
+  (->> facts
+       (filter #(and (contains? #{:decl.kind/annotation
+                                  :decl.kind/class
+                                  :decl.kind/enum
+                                  :decl.kind/interface
+                                  :decl.kind/record
+                                  :decl.kind/type}
+                                (:decl/kind %))
+                     (:decl/type %)
+                     (:decl/source-node %)))
+       (map (juxt :decl/type identity))
+       (into {})))
+
 (defn- unambiguous [xs]
   (when (= 1 (count xs))
     (first xs)))
@@ -1856,6 +1870,18 @@
                  :ref/owner-type (:ref/owner-type known))
           (dissoc :ref/reason)))))
 
+(defn- resolve-local-type-ref [type-decls fact]
+  (when (and (contains? #{:ref.kind/type-use
+                          :ref.kind/extends
+                          :ref.kind/implements}
+                        (:ref/kind fact))
+             (not (:ref/resolved? fact)))
+    (when-let [decl (get type-decls (:ref/to-type fact))]
+      (-> fact
+          (assoc :ref/to-decl (:decl/id decl)
+                 :ref/resolved? true)
+          (dissoc :ref/reason)))))
+
 (defn- resolve-local-refs-once [facts]
   (let [deduped (dedupe-facts (concat facts (known-java-api-type-facts)))
         method-index (method-decl-index deduped)
@@ -1867,9 +1893,17 @@
         ref-index (method-ref-index deduped)
         constructor-refs (constructor-ref-index deduped)
         decl-return-types (decl-return-type-index deduped)
-        field-index (field-decl-index deduped)]
+        field-index (field-decl-index deduped)
+        type-decls (type-decl-index deduped)]
     (mapv (fn [fact]
             (cond
+              (contains? #{:ref.kind/type-use
+                           :ref.kind/extends
+                           :ref.kind/implements}
+                         (:ref/kind fact))
+              (or (resolve-local-type-ref type-decls fact)
+                  fact)
+
               (and (= :ref.kind/method-call (:ref/kind fact))
                    (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
               (if-let [target (local-method-target method-index

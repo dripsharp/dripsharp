@@ -109,6 +109,26 @@ public final class UsesAssertJ {
 }
 ")
 
+(def local-type-widget-fixture
+  "package com.acme.model;
+
+public final class Widget {
+}
+")
+
+(def local-type-use-fixture
+  "package com.acme.uses;
+
+public final class UsesWidget {
+  private com.acme.model.Widget widget;
+  private com.acme.missing.MissingWidget missing;
+
+  public com.acme.model.Widget widget() {
+    return widget;
+  }
+}
+")
+
 (def control-flow-fixture
   "package com.acme.statements;
 
@@ -1248,6 +1268,46 @@ public final class Demo {
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
                       [(contains? #{"assertThat" "isEqualTo"} ?name)]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-project-local-java-type-use-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/model/Widget.java" local-type-widget-fixture)
+        (write-file! root "src/main/java/com/acme/uses/UsesWidget.java" local-type-use-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              type-refs (set (d/q '[:find ?role ?name ?type-id ?decl-id ?resolved?
+                                     :where
+                                     [?ref :ref/kind :ref.kind/type-use]
+                                     [?ref :ref/role ?role]
+                                     [(contains? #{:field-type :return-type} ?role)]
+                                     [?ref :ref/name ?name]
+                                     [(contains? #{"com.acme.model.Widget"
+                                                   "com.acme.missing.MissingWidget"}
+                                                 ?name)]
+                                     [?ref :ref/to-type ?type]
+                                     [?type :type/id ?type-id]
+                                     [?ref :ref/resolved? ?resolved?]
+                                     [(get-else $ ?ref :ref/to-decl :missing) ?decl]
+                                     [(get-else $ ?decl :decl/id "") ?decl-id]]
+                                   db))]
+          (is (contains? type-refs [:field-type "com.acme.model.Widget" "com.acme.model.Widget" "java:com.acme.model.Widget" true]))
+          (is (contains? type-refs [:return-type "com.acme.model.Widget" "com.acme.model.Widget" "java:com.acme.model.Widget" true]))
+          (is (contains? type-refs [:field-type "com.acme.missing.MissingWidget" "com.acme.missing.MissingWidget" "" false]))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(= ?name "com.acme.model.Widget")]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 
