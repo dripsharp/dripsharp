@@ -984,10 +984,24 @@
           "filter" "kotlin.collections.List"
           "isNotEmpty" "kotlin:Boolean"
           "joinToString" "kotlin:String"
+          "map" "kotlin.collections.List"
           "readText" "kotlin:String"
           "substring" "kotlin:String"
           "toByteArray" "kotlin:ByteArray"
           "toList" "kotlin.collections.List"}))
+
+(def ^:private kotlin-collection-roots
+  #{"Array"
+    "ByteArray"
+    "Collection"
+    "Iterable"
+    "List"
+    "Map"
+    "MutableList"
+    "MutableMap"
+    "MutableSet"
+    "Sequence"
+    "Set"})
 
 (def ^:private known-product-builder-types
   {"java.net.http.HttpRequest" "java.net.http.HttpRequest.Builder"
@@ -1094,15 +1108,128 @@
 
 (declare expression-type-id)
 
-(defn- receiver-known-call-type-id [value]
+(defn- type-id-root [type-id]
+  (some-> type-id
+          (str/replace #"^kotlin:" "")
+          (str/replace #"\?$" "")
+          (str/replace #"<.*$" "")
+          simple-type-name))
+
+(defn- generic-arg-type-ids [type-id]
+  (when-let [[_ args] (re-matches #"[^<]+<(.+)>" (or type-id ""))]
+    (mapv str/trim (split-top-level args \,))))
+
+(defn- collection-element-type-id [type-id]
+  (let [root (type-id-root type-id)
+        args (generic-arg-type-ids type-id)]
+    (cond
+      (= "Map" root) (second args)
+      (seq args) (first args)
+      (= "String" root) "kotlin:Char"
+      (= "ByteArray" root) "kotlin:Byte")))
+
+(defn- top-level-call-separator? [value idx]
+  (and (< idx (dec (count value)))
+       (= \. (.charAt value idx))
+       (when-let [suffix (subs value (inc idx))]
+         (boolean (re-matches #"[A-Za-z_][A-Za-z0-9_]*\s*(?:<[^>{}()]*>)?\s*(?:\(|\{).*" suffix)))))
+
+(defn- top-level-qualified-call-parts [value]
+  (when-let [value (some-> value str/trim not-empty)]
+    (loop [idx 0
+           paren-depth 0
+           brace-depth 0
+           bracket-depth 0
+           string-delim nil
+           escaped? false
+           separator nil]
+      (if (= idx (count value))
+        (when separator
+          (let [receiver (subs value 0 separator)
+                suffix (subs value (inc separator))]
+            (when-let [[_ method] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>{}()]*>)?\s*(?:\(|\{).*" suffix)]
+              {:receiver (str/trim receiver)
+               :method method})))
+        (let [ch (.charAt value idx)]
+          (cond
+            string-delim
+            (recur (inc idx)
+                   paren-depth
+                   brace-depth
+                   bracket-depth
+                   (when-not (and (= ch string-delim) (not escaped?))
+                     string-delim)
+                   (and (= ch \\) (not escaped?))
+                   separator)
+
+            (contains? #{\" \'} ch)
+            (recur (inc idx) paren-depth brace-depth bracket-depth ch false separator)
+
+            (= ch \()
+            (recur (inc idx) (inc paren-depth) brace-depth bracket-depth nil false separator)
+
+            (= ch \))
+            (recur (inc idx) (max 0 (dec paren-depth)) brace-depth bracket-depth nil false separator)
+
+            (= ch \{)
+            (recur (inc idx) paren-depth (inc brace-depth) bracket-depth nil false separator)
+
+            (= ch \})
+            (recur (inc idx) paren-depth (max 0 (dec brace-depth)) bracket-depth nil false separator)
+
+            (= ch \[)
+            (recur (inc idx) paren-depth brace-depth (inc bracket-depth) nil false separator)
+
+            (= ch \])
+            (recur (inc idx) paren-depth brace-depth (max 0 (dec bracket-depth)) nil false separator)
+
+            (and (zero? paren-depth)
+                 (zero? brace-depth)
+                 (zero? bracket-depth)
+                 (top-level-call-separator? value idx))
+            (recur (inc idx) paren-depth brace-depth bracket-depth nil false idx)
+
+            :else
+            (recur (inc idx) paren-depth brace-depth bracket-depth nil false separator)))))))
+
+(defn- known-call-return-type-id [receiver-type call-name]
+  (let [owner-root (type-id-root receiver-type)]
+    (cond
+      (and (contains? #{"filter" "map" "toList"} call-name)
+           (contains? kotlin-collection-roots owner-root))
+      "kotlin.collections.List"
+
+      (and (= "joinToString" call-name)
+           (contains? kotlin-collection-roots owner-root))
+      "kotlin:String"
+
+      (and (contains? #{"any" "isNotEmpty"} call-name)
+           (contains? (conj kotlin-collection-roots "String") owner-root))
+      "kotlin:Boolean"
+
+      (and (= "substring" call-name)
+           (= "String" owner-root))
+      "kotlin:String"
+
+      (and (= "toByteArray" call-name)
+           (= "String" owner-root))
+      "kotlin:ByteArray"
+
+      (and (= "first" call-name)
+           (contains? (conj kotlin-collection-roots "String") owner-root))
+      (or (collection-element-type-id receiver-type)
+          "kotlin:Any"))))
+
+(defn- receiver-known-call-type-id [binding-types value]
   (when-let [value (some-> value str/trim)]
     (when-let [[_ call-name] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*\(.*" value)]
       (get known-expression-call-types call-name))))
 
-(defn- qualified-known-call-type-id [value]
-  (when-let [value (some-> value str/trim)]
-    (when-let [[_ call-name] (re-find #"\.([A-Za-z_][A-Za-z0-9_]*)\s*\(" value)]
-      (get known-expression-call-types call-name))))
+(defn- qualified-known-call-type-id [type-index binding-types value]
+  (when-let [{:keys [receiver method]} (top-level-qualified-call-parts value)]
+    (let [receiver-type (expression-type-id type-index binding-types receiver)]
+      (or (known-call-return-type-id receiver-type method)
+          (get known-expression-call-types method)))))
 
 (defn- receiver-known-static-type-id [value]
   (some-> value str/trim known-classpath-types))
@@ -1146,21 +1273,28 @@
           (contains? builder-self-factory-methods method)
           owner-type-id)))))
 
-(defn- expression-type-id [type-index value]
-  (or (literal-type-id value)
-      (constructor-expression-type-id type-index value)
-      (builder-factory-expression-type-id type-index value)
-      (receiver-known-call-type-id value)
-      (qualified-known-call-type-id value)
-      (receiver-known-static-type-id value)))
+(defn- expression-type-id
+  ([type-index value]
+   (expression-type-id type-index nil value))
+  ([type-index binding-types value]
+   (or (literal-type-id value)
+       (some->> value simple-identifier (get binding-types))
+       (constructor-expression-type-id type-index value)
+       (builder-factory-expression-type-id type-index value)
+       (receiver-known-call-type-id binding-types value)
+       (qualified-known-call-type-id type-index binding-types value)
+       (receiver-known-static-type-id value))))
 
-(defn- project-inferred-binding-type-index [db project-id type-index]
-  (reduce (fn [acc [function-node-id name value]]
-            (if-let [type-id (expression-type-id type-index value)]
+(defn- project-inferred-binding-type-index [db project-id type-index seed-binding-types]
+  (reduce (fn [acc [function-node-id _ordinal name value]]
+            (if-let [type-id (expression-type-id type-index
+                                                 (get acc function-node-id)
+                                                 value)]
               (assoc-in acc [function-node-id name] type-id)
               acc))
-          {}
-          (d/q '[:find ?function-node-id ?name ?value
+          seed-binding-types
+          (sort-by (juxt first second)
+                   (d/q '[:find ?function-node-id ?ordinal ?name ?value
                  :in $ ?project-id
                  :where
                  [?project :project/id ?project-id]
@@ -1169,19 +1303,20 @@
                  [?function :node/id ?function-node-id]
                  [?binding :node/parent ?function]
                  [?binding :node/name ?name]
+                 [?binding :node/ordinal ?ordinal]
                  [?binding :node/kind :kotlin.node/local-property]
                  [?binding :node/value ?value]]
                db
-               project-id)))
+                        project-id))))
 
 (defn- merge-binding-type-indexes [& indexes]
   (apply merge-with merge indexes))
 
 (defn- project-binding-type-index [db project-id type-index member-binding-types]
-  (merge-binding-type-indexes
-   member-binding-types
-   (project-explicit-binding-type-index db project-id)
-   (project-inferred-binding-type-index db project-id type-index)))
+  (let [seed-binding-types (merge-binding-type-indexes
+                            member-binding-types
+                            (project-explicit-binding-type-index db project-id))]
+    (project-inferred-binding-type-index db project-id type-index seed-binding-types)))
 
 (defn- project-call-argument-values [db project-id]
   (->> (d/q '[:find ?call-node-id ?ordinal ?value
@@ -1232,6 +1367,32 @@
              db
              project-id)))
 
+(defn- project-call-span-index [db project-id]
+  (into {}
+        (map (fn [[node-id file-id name start-line start-column end-line end-column]]
+               [node-id {:node/id node-id
+                         :file/id file-id
+                         :node/name name
+                         :node/start-line start-line
+                         :node/start-column start-column
+                         :node/end-line end-line
+                         :node/end-column end-column}]))
+        (d/q '[:find ?node-id ?file-id ?name ?start-line ?start-column ?end-line ?end-column
+               :in $ ?project-id
+               :where
+               [?project :project/id ?project-id]
+               [?file :file/project ?project]
+               [?file :file/id ?file-id]
+               [?node :node/file ?file]
+               [?node :node/kind :kotlin.node/call-expression]
+               [?node :node/id ?node-id]
+               [?node :node/name ?name]
+               [?node :node/start-line ?start-line]
+               [?node :node/start-column ?start-column]
+               [?node :node/end-line ?end-line]
+               [?node :node/end-column ?end-column]]
+             db project-id)))
+
 (defn- project-parent-node-index [db project-id]
   (into {}
         (d/q '[:find ?node-id ?parent-node-id
@@ -1251,6 +1412,44 @@
       (or (get binding-types-by-parent node-id)
           (recur (get parent-by-node node-id))))))
 
+(defn- span-start<= [left right]
+  (or (< (:node/start-line left) (:node/start-line right))
+      (and (= (:node/start-line left) (:node/start-line right))
+           (<= (:node/start-column left) (:node/start-column right)))))
+
+(defn- span-end>= [left right]
+  (or (> (:node/end-line left) (:node/end-line right))
+      (and (= (:node/end-line left) (:node/end-line right))
+           (>= (:node/end-column left) (:node/end-column right)))))
+
+(defn- span-contains? [outer inner]
+  (and (= (:file/id outer) (:file/id inner))
+       (not= (:node/id outer) (:node/id inner))
+       (span-start<= outer inner)
+       (span-end>= outer inner)))
+
+(defn- span-size [span]
+  (+ (* 10000 (- (:node/end-line span) (:node/start-line span)))
+     (- (:node/end-column span) (:node/start-column span))))
+
+(def ^:private implicit-it-lambda-calls
+  #{"any" "filter" "joinToString" "map" "toList"})
+
+(defn- implicit-it-receiver-type-id [type-index binding-types receiver-values-by-call call-spans node-id receiver-value]
+  (when (= "it" (some-> receiver-value str/trim))
+    (when-let [inner-span (get call-spans node-id)]
+      (some (fn [{outer-node-id :node/id}]
+              (when-let [outer-receiver-value (get receiver-values-by-call outer-node-id)]
+                (when-let [outer-receiver-type (expression-type-id type-index
+                                                                   binding-types
+                                                                   outer-receiver-value)]
+                  (collection-element-type-id outer-receiver-type))))
+            (->> (vals call-spans)
+                 (filter #(contains? implicit-it-lambda-calls (:node/name %)))
+                 (filter #(span-contains? % inner-span))
+                 (filter #(contains? receiver-values-by-call (:node/id %)))
+                 (sort-by span-size))))))
+
 (defn- call-argument-type-ids [binding-types-by-parent arg-values-by-call parent-by-call parent-by-node node-id]
   (let [parent-node-id (get parent-by-call node-id)
         binding-types (nearest-binding-types binding-types-by-parent parent-by-node parent-node-id)]
@@ -1259,19 +1458,26 @@
                 (literal-type-id value)))
           (get arg-values-by-call node-id []))))
 
-(defn- call-receiver-type-id [type-index binding-types-by-parent receiver-values-by-call parent-by-call parent-by-node node-id]
+(defn- call-receiver-type-id [type-index binding-types-by-parent receiver-values-by-call parent-by-call parent-by-node call-spans node-id]
   (let [parent-node-id (get parent-by-call node-id)
         binding-types (nearest-binding-types binding-types-by-parent parent-by-node parent-node-id)
         value (get receiver-values-by-call node-id)]
     (or (some->> value simple-identifier (get binding-types))
-        (expression-type-id type-index value))))
+        (implicit-it-receiver-type-id type-index
+                                      binding-types
+                                      receiver-values-by-call
+                                      call-spans
+                                      node-id
+                                      value)
+        (expression-type-id type-index binding-types value))))
 
 (defn- project-refs [db project-id type-index member-binding-types]
   (let [binding-types-by-parent (project-binding-type-index db project-id type-index member-binding-types)
         arg-values-by-call (project-call-argument-values db project-id)
         receiver-values-by-call (project-call-receiver-values db project-id)
         parent-by-call (project-call-parent-index db project-id)
-        parent-by-node (project-parent-node-index db project-id)]
+        parent-by-node (project-parent-node-index db project-id)
+        call-spans (project-call-span-index db project-id)]
     (mapv (fn [[ref-id kind name to-type node-id file-id]]
             (let [arg-types (when (= :ref.kind/function-call kind)
                               (call-argument-type-ids binding-types-by-parent
@@ -1285,6 +1491,7 @@
                                                          receiver-values-by-call
                                                          parent-by-call
                                                          parent-by-node
+                                                         call-spans
                                                          node-id))]
               {:ref/id ref-id
                :ref/kind kind
@@ -1541,19 +1748,6 @@
       (when (contains? #{"String" "Regex"} owner-root)
         {:ref/to-type "kotlin:Boolean"
          :ref/owner-type receiver-type}))))
-
-(def ^:private kotlin-collection-roots
-  #{"Array"
-    "ByteArray"
-    "Collection"
-    "Iterable"
-    "List"
-    "Map"
-    "MutableList"
-    "MutableMap"
-    "MutableSet"
-    "Sequence"
-    "Set"})
 
 (defn- kotlin-is-not-empty-call [{:call/keys [receiver-type]}]
   (when receiver-type

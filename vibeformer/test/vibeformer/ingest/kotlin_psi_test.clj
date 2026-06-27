@@ -278,7 +278,10 @@ fun hasText(values: List<String>, text: String): Boolean {
   val copied = values.toList()
   val filtered = values.filter { it.length > 0 }
   val joined = values.joinToString(\",\")
+  val lambdaFiltered = values.filter { it.isNotEmpty() }
+  val lambdaJoined = values.joinToString(\",\") { it.substring(0, 1) }
   val prefix = text.substring(0, 1)
+  val chainedBytes = text.substring(0, 1).toByteArray()
   assertThat(values).contains(text)
   return values.contains(text) &&
     text.contains(\"value\") &&
@@ -287,7 +290,10 @@ fun hasText(values: List<String>, text: String): Boolean {
     normalized.startsWith(\"other\") &&
     copied.any { it.length > 0 } &&
     joined.isNotEmpty() &&
+    lambdaFiltered.isNotEmpty() &&
+    lambdaJoined.isNotEmpty() &&
     prefix.isNotEmpty() &&
+    chainedBytes.isNotEmpty() &&
     !values.isEmpty()
 }
 
@@ -1432,6 +1438,7 @@ public final class JavaPseudoTypes {
                    ["isInstanceOf" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isLessThan" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isNotEmpty" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isNotEmpty" "kotlin:Boolean" "kotlin.collections.List" true]
                    ["isNotEmpty" "kotlin:Boolean" "kotlin:List<kotlin:String>" true]
                    ["isNotEmpty" "kotlin:Boolean" "kotlin.collections.MutableMap" true]
                    ["isNotEmpty" "kotlin:Boolean" "kotlin.collections.MutableSet" true]
