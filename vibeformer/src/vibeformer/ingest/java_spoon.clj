@@ -2263,9 +2263,12 @@
           deduped)))
 
 (defn- resolve-local-refs [facts]
-  (-> facts
-      resolve-local-refs-once
-      resolve-local-refs-once))
+  (loop [current facts
+         remaining 8]
+    (let [next (resolve-local-refs-once current)]
+      (if (or (zero? remaining) (= next current))
+        next
+        (recur next (dec remaining))))))
 
 (defn- normalize-classpath-strings [values]
   (cond

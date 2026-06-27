@@ -156,11 +156,22 @@ final class Helper {
   Helper evalError(String code) {
     return this;
   }
+
+  Helper withSourceSection(String section) {
+    return this;
+  }
+
+  Problem build() {
+    return new Problem();
+  }
+}
+
+final class Problem {
 }
 
 public final class Child extends Parent {
-  public Helper read() {
-    return exceptionBuilder().evalError(\"invalid\");
+  public Problem read() {
+    return exceptionBuilder().evalError(\"invalid\").withSourceSection(\"section\").build();
   }
 }
 ")
@@ -1447,7 +1458,7 @@ public final class Demo {
                                        :where
                                        [?ref :ref/kind :ref.kind/method-call]
                                        [?ref :ref/name ?name]
-                                       [(contains? #{"exceptionBuilder" "evalError"} ?name)]
+                                       [(contains? #{"exceptionBuilder" "evalError" "withSourceSection" "build"} ?name)]
                                        [?ref :ref/to-decl ?decl]
                                        [?decl :decl/id ?decl-id]
                                        [?decl :decl/source-node]
@@ -1466,6 +1477,16 @@ public final class Demo {
                     "java:com.acme.inheritedmethod.Helper#evalError(java.lang.String)"
                     "com.acme.inheritedmethod.Helper"
                     "com.acme.inheritedmethod.Helper"
+                    true]
+                   ["withSourceSection"
+                    "java:com.acme.inheritedmethod.Helper#withSourceSection(java.lang.String)"
+                    "com.acme.inheritedmethod.Helper"
+                    "com.acme.inheritedmethod.Helper"
+                    true]
+                   ["build"
+                    "java:com.acme.inheritedmethod.Helper#build()"
+                    "com.acme.inheritedmethod.Helper"
+                    "com.acme.inheritedmethod.Problem"
                     true]}
                  method-refs))
           (is (empty?
@@ -1473,7 +1494,7 @@ public final class Demo {
                       :where
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
-                      [(contains? #{"exceptionBuilder" "evalError"} ?name)]
+                      [(contains? #{"exceptionBuilder" "evalError" "withSourceSection" "build"} ?name)]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 
