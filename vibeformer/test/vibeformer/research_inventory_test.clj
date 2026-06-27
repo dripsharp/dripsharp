@@ -47,3 +47,11 @@
                  (map :rule/id rules/initial-kotlin-rules))
            (rule-ids [{:file/lang :lang/java}
                       {:file/lang :lang/kotlin}])))))
+
+(deftest rule-summary-counts-all-discovered-language-rules
+  (is (= (+ (count rules/initial-java-rules)
+            (count rules/initial-kotlin-rules))
+         (:rules/registered
+          (#'research-inventory/rule-summary
+           [{:file/lang :lang/java}
+            {:file/lang :lang/kotlin}])))))

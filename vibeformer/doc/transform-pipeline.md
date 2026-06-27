@@ -86,6 +86,50 @@ C# text
 + diagnostics/warnings
 ```
 
+Compatibility helpers are generated from helper metadata, not patched into
+disposable C# output. Type mapping and rules may request helper ids such as
+`:helper/java-optional`; the C# emitter resolves those ids through its helper
+catalog, writes helper source files under the generated project, records helper
+inventory in provenance and destination artifacts, and includes helper files in
+the generated `.csproj`.
+
+Unknown type mappings may still emit a simple fallback type name so downstream
+output remains inspectable, but the fallback must produce structured C#
+diagnostics with the source type, language, mapping reason, and fallback reason.
+Silent type fallback is a pipeline bug.
+
+## Current Implementation Status
+
+The committed sample pipeline implements the core data flow for a supported
+subset:
+
+```text
+source discovery
+  -> Datomic source facts
+  -> Java/Kotlin extraction and enrichment
+  -> transform rule registration and coverage checks
+  -> C# emission with provenance/rule applications/helper metadata
+  -> destination project facts and generated .csproj
+  -> optional dotnet build
+  -> compiler diagnostic ingestion and mapping-quality summaries
+```
+
+The C# emitter currently covers the committed Java samples and selected Kotlin
+samples, not arbitrary Pkl source. Java coverage includes classes, interfaces,
+records, enums, annotations, methods, constructors, fields, locals, assignment,
+return/if/throw/foreach/try/catch/finally/synchronized statements, switch
+expressions, common literals/operators, selected stream APIs, reflection
+inspection APIs, nullable annotations, `Optional` helpers, collection/map APIs,
+and known Java runtime mappings. Kotlin coverage includes basic declarations,
+objects/interfaces, top-level file facades, simple returns/throws/properties,
+safe calls, Elvis expressions, and selected Java API calls.
+
+The full-Pkl research path is deliberately facts-first. `research-dry-run`
+discovers classpath and destination mappings, ingests source facts, registers
+rules, writes inventory and unresolved-reference diagnostics, and skips C#
+emission in `:facts-only` mode. Emission-capable modes are blocked by the
+unresolved-reference gate and by missing full-project emission.
+
 ## Source-to-Destination Provenance
 
 Every emitted C# span should map back to source facts.
@@ -174,11 +218,21 @@ Example:
  :diagnostic/severity :diagnostic.severity/error
  :diagnostic/source-node [:node/id "..."]
  :diagnostic/rule [:rule/id :java.collection/call]
+ :diagnostic/source-features [[:feature/id "..."]]
+ :diagnostic/mapping-status :diagnostic.mapping/mapped
+ :diagnostic/mapping-reason :diagnostic.mapping/provenance-span
  :diagnostic/status :diagnostic.status/open}
 ```
 
 Diagnostics are not patch instructions. They are failing test cases for the
 transpiler.
+
+Current sample diagnostic ingestion parses `dotnet build` output, transacts a
+compile pass plus diagnostic facts, and writes
+`target/diagnostics/dotnet-diagnostic-facts.edn`. Mapped diagnostics carry the
+source node, transform rule, and source feature refs from provenance. Unmapped
+diagnostics are grouped separately under `:unmapped-rankings` so missing
+provenance spans are visible instead of being mixed into rule failures.
 
 ## Pre-Emit Gates
 
@@ -217,3 +271,9 @@ Unsupported constructs may be allowed only under an explicit mode, for example:
 
 In stub mode, the generated output may contain clear TODOs or throwing
 placeholders. But this should be deliberate.
+
+Implemented gates today include transform rule coverage for sample runs and an
+unresolved-reference gate for `research-dry-run`. In facts-only research mode,
+unresolved references are reported as warnings in
+`target/research-pkl/diagnostics/unresolved-refs.edn`; emission-capable modes
+fail while unresolved semantic refs remain above the allowed threshold.

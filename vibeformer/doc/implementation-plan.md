@@ -1,8 +1,59 @@
 # Implementation Plan
 
-## Implementation Order
+## Implementation Status
 
-Suggested implementation order:
+This file is a living plan. Items marked implemented are present for the
+committed samples and/or facts-only research dry-run; they do not imply Pkl is
+portable yet.
+
+Implemented:
+
+1. Project/file discovery for samples and `../research/pkl`.
+2. Java source extraction with Spoon for declarations, refs, source nodes,
+   features, common statements, selected APIs, and unsupported constructs.
+3. Kotlin source extraction with PSI for syntax facts, top-level file facades,
+   source spans, and conservative enrichment.
+4. Datomic schema for files, nodes, declarations, types, refs, features,
+   transform rules, rule applications, diagnostics, destination projects, and
+   provenance-oriented facts.
+5. Feature inventory and unresolved-reference reports.
+6. Java C# emission for the committed sample subset.
+7. Kotlin C# emission for selected committed samples.
+8. Type mapping for primitives, strings, collections/maps, nullable types,
+   arrays, optionals, exceptions, function types, and project-local types.
+9. Sample-level destination project generation from destination facts.
+10. Sample-level `dotnet build`, diagnostic parsing, diagnostic fact ingestion,
+    and mapped/unmapped diagnostic quality summaries.
+11. Research classpath, destination, inventory, provenance, and unresolved-ref
+    dry-run artifacts under `target/research-pkl/`.
+
+Partial or intentionally blocked:
+
+1. Kotlin Analysis API integration records setup/availability facts, but full
+   symbol/type resolution is not active in the current dependency set.
+2. Java dependency resolution uses Gradle-derived package-root seeds, not a
+   resolved jar classpath.
+3. `research-dry-run` defaults to facts-only mode; full-project C# emission and
+   `dotnet build` over `../research/pkl` are explicit future stages.
+4. Emission-capable research modes are blocked by unresolved semantic refs and
+   missing full-project emission.
+
+Still to implement for the first full-Pkl dry-run milestone:
+
+1. Reduce unresolved Java/Kotlin refs with stronger semantic resolution and
+   project/dependency classpath facts.
+2. Expand Java/Kotlin source extraction and transform rules according to
+   research inventory frequency.
+3. Generate full C# project trees for the research checkout from destination
+   mapping facts.
+4. Run `dotnet build` where feasible, ingest diagnostics, and turn ranked
+   diagnostics into focused analyzer/model/rule/helper work.
+5. Keep provenance strong enough that compiler diagnostics map back to source
+   nodes, source features, and transform rules.
+
+## Original Build Order
+
+The original build order remains useful for sequencing new work:
 
 1. Project/file discovery.
 2. Java source extraction with Spoon.

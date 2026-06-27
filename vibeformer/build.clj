@@ -14,7 +14,8 @@
 (def default-sample-runner-opts
   {"kotlin-basic-declarations" {:kotlin/emit? true}
    "kotlin-api-calls" {:kotlin/emit? true}
-   "kotlin-object-overrides" {:kotlin/emit? true}})
+   "kotlin-object-overrides" {:kotlin/emit? true}
+   "kotlin-top-level" {:kotlin/emit? true}})
 
 (def sample-runner-option-keys
   [:coverage/allow-stubs?
@@ -23,7 +24,11 @@
    :allow-unsupported?
    :csharp/allow-diagnostics?
    :allow-csharp-diagnostics?
+   :java/classpath-types
+   :java/classpath-package-roots
    :kotlin/classpath-types
+   :kotlin/classpath-roots
+   :kotlin/analysis-api?
    :kotlin/emit?])
 
 (defn sample-runner-opts
@@ -107,6 +112,103 @@
         {:keys [exit]} (b/process cmds)]
     (when-not (zero? exit)
       (throw (ex-info "Research inventory failed." {:exit exit})))
+    opts))
+
+(def research-dry-run-option-keys
+  [:research/root
+   :research-root
+   :project/id
+   :dry-run/mode
+   :mode
+   :dry-run/out
+   :out-dir])
+
+(defn research-dry-run-main-args [opts]
+  (let [runner-opts (select-keys opts research-dry-run-option-keys)]
+    (cond-> ["-m" "vibeformer.research-dry-run"]
+      (seq runner-opts) (conj (pr-str runner-opts)))))
+
+(defn research-dry-run
+  "Run a read-only staged dry-run over ../research/pkl under target/research-pkl.
+
+  Defaults to facts-only mode:
+    clojure -T:build research-dry-run
+
+  Make the intended boundary explicit with:
+    clojure -T:build research-dry-run ':dry-run/mode' :facts-only
+    clojure -T:build research-dry-run ':dry-run/mode' :emit-only
+    clojure -T:build research-dry-run ':dry-run/mode' :compile-capable"
+  [opts]
+  (let [basis (b/create-basis {:aliases [:sample-runner]})
+        cmds (b/java-command
+              {:basis basis
+               :java-opts (test-java-opts)
+               :main 'clojure.main
+               :main-args (research-dry-run-main-args opts)})
+        {:keys [exit]} (b/process cmds)]
+    (when-not (zero? exit)
+      (throw (ex-info "Research dry-run failed." {:exit exit})))
+    opts))
+
+(def research-classpath-option-keys
+  [:research/root
+   :research-root
+   :project/id
+   :classpath/out
+   :out])
+
+(defn research-classpath-main-args [opts]
+  (let [runner-opts (select-keys opts research-classpath-option-keys)]
+    (cond-> ["-m" "vibeformer.research-classpath"]
+      (seq runner-opts) (conj (pr-str runner-opts)))))
+
+(defn research-classpath
+  "Discover read-only Gradle/Kotlin classpath inputs for ../research/pkl.
+
+  Writes target/research-pkl/classpath.edn by default."
+  [opts]
+  (let [basis (b/create-basis {:aliases [:sample-runner]})
+        cmds (b/java-command
+              {:basis basis
+               :java-opts (test-java-opts)
+               :main 'clojure.main
+               :main-args (research-classpath-main-args opts)})
+        {:keys [exit]} (b/process cmds)]
+    (when-not (zero? exit)
+      (throw (ex-info "Research classpath inventory failed." {:exit exit})))
+    opts))
+
+(def research-sample-report-option-keys
+  [:project/id
+   :inventory
+   :inventory/file
+   :dry-run
+   :dry-run/file
+   :samples/root
+   :samples-root
+   :sample-report/out
+   :out
+   :top])
+
+(defn research-sample-report-main-args [opts]
+  (let [runner-opts (select-keys opts research-sample-report-option-keys)]
+    (cond-> ["-m" "vibeformer.research-sample-report"]
+      (seq runner-opts) (conj (pr-str runner-opts)))))
+
+(defn research-sample-report
+  "Generate sample/task candidates from research inventory, sample diagnostics, and provenance.
+
+  Writes target/research-pkl/sample-selection.edn by default."
+  [opts]
+  (let [basis (b/create-basis {:aliases [:sample-runner]})
+        cmds (b/java-command
+              {:basis basis
+               :java-opts (test-java-opts)
+               :main 'clojure.main
+               :main-args (research-sample-report-main-args opts)})
+        {:keys [exit]} (b/process cmds)]
+    (when-not (zero? exit)
+      (throw (ex-info "Research sample selection report failed." {:exit exit})))
     opts))
 
 (defn- pom-template [version]

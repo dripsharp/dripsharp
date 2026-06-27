@@ -5,6 +5,7 @@
             [datomic.client.api :as d]
             [datomic.local :as dl]
             [vibeformer.datomic.schema :as schema]
+            [vibeformer.destination :as destination]
             [vibeformer.emit.csharp :as csharp]
             [vibeformer.ingest.java-spoon :as java-spoon]
             [vibeformer.ingest.kotlin-psi :as kotlin-psi]
@@ -15,7 +16,6 @@
            (java.util UUID)))
 
 (def default-sample "java-word-count")
-(def csharp-target-framework "net8.0")
 (def default-dotnet-command "dotnet")
 
 (defn- path
@@ -100,49 +100,36 @@
   (spit (str file) value)
   (slash-path (normalize-path file)))
 
-(defn- relative-slash-path [^Path root value]
-  (slash-path (.relativize (.normalize root) (.normalize (path value)))))
-
-(defn- xml-escape [value]
-  (-> (str value)
-      (str/replace "&" "&amp;")
-      (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;")
-      (str/replace "\"" "&quot;")
-      (str/replace "'" "&apos;")))
-
-(defn- csharp-project-file [sample paths]
-  (.resolve (:target/csharp paths) (str (:sample/name sample) ".csproj")))
-
-(defn- csharp-project-content [target-dir csharp-files]
-  (let [compile-items (->> csharp-files
-                           (map #(relative-slash-path target-dir %))
-                           (sort)
-                           (map #(str "    <Compile Include=\"" (xml-escape %) "\" />\n"))
-                           (apply str))]
-    (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
-         "  <PropertyGroup>\n"
-         "    <OutputType>Library</OutputType>\n"
-         "    <TargetFramework>" csharp-target-framework "</TargetFramework>\n"
-         "    <ImplicitUsings>disable</ImplicitUsings>\n"
-         "    <Nullable>enable</Nullable>\n"
-         "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
-         "  </PropertyGroup>\n"
-         "\n"
-         "  <ItemGroup>\n"
-         compile-items
-         "  </ItemGroup>\n"
-         "</Project>\n")))
-
-(defn- write-csharp-project! [sample paths emit-result]
+(defn- write-csharp-project! [conn project-id sample paths emit-result]
   (let [target-dir (:target/csharp paths)
         csharp-files (:csharp/files emit-result)
-        project-file (csharp-project-file sample paths)
-        content (csharp-project-content target-dir csharp-files)]
-    (spit (str project-file) content)
-    {:csharp/project (slash-path (normalize-path project-file))
-     :csharp/project-target-framework csharp-target-framework
-     :csharp/project-files (mapv #(relative-slash-path target-dir %) csharp-files)}))
+        project-file (destination/csharp-project-file sample target-dir)
+        project-map (destination/sample-project-map {:sample sample
+                                                     :target-csharp-dir target-dir
+                                                     :project-file project-file
+                                                     :csharp-files csharp-files
+                                                     :helper-files (:csharp/helper-files emit-result)})
+        destination-artifact {:report/type :vibeformer.report/destination-mapping
+                              :sample/name (:sample/name sample)
+                              :project/id project-id
+                              :projects [(destination/project->artifact project-map)]
+                              :projects/count 1
+                              :project-references/count 0
+                              :packages/count 0
+                              :resources/count 0
+                              :helpers/count (count (:csharp/helper-files emit-result))
+                              :helpers (:csharp/helper-files emit-result)}
+        destination-file (write-edn! (.resolve (:target/facts paths) "destination.edn")
+                                     destination-artifact)]
+    (d/transact conn {:tx-data (destination/sample-project-facts project-id project-map)})
+    (spit (str project-file) (destination/csharp-project-content project-map))
+    {:csharp/project (:dest.project/path project-map)
+     :csharp/project-target-framework (:dest.project/target-framework project-map)
+     :csharp/project-files (mapv :dest.item/path (:dest.project/items project-map))
+     :csharp/helper-files (:csharp/helper-files emit-result)
+     :destination/file destination-file
+     :destination/project (:dest.project/id project-map)
+     :destination/projects (:projects destination-artifact)}))
 
 (def dotnet-diagnostic-pattern
   #"^(.+)\((\d+),(\d+)\):\s+(warning|error)\s+([A-Za-z]+\d+):\s+(.+?)(?:\s+\[.+\])?$")
@@ -267,7 +254,8 @@
   (let [rows (d/q '[:find (pull ?diagnostic [:diagnostic/code
                                              :diagnostic/mapping-status
                                              {:diagnostic/rule [:rule/id]}
-                                             {:diagnostic/source-node [:node/id]}])
+                                             {:diagnostic/source-node [:node/id]}
+                                             {:diagnostic/source-features [:feature/kind]}])
                     :where
                     [?diagnostic :diagnostic/id]]
                   db)]
@@ -275,8 +263,35 @@
             {:diagnostic/code (:diagnostic/code diagnostic)
              :diagnostic/mapping-status (:diagnostic/mapping-status diagnostic)
              :diagnostic/rule (get-in diagnostic [:diagnostic/rule :rule/id])
-             :diagnostic/source-node (get-in diagnostic [:diagnostic/source-node :node/id])})
+             :diagnostic/source-node (get-in diagnostic [:diagnostic/source-node :node/id])
+             :diagnostic/source-features (->> (:diagnostic/source-features diagnostic)
+                                              (map :feature/kind)
+                                              sort
+                                              vec)})
           rows)))
+
+(defn- diagnostic-unmapped-rankings [diagnostic-facts]
+  (->> diagnostic-facts
+       (filter #(= :diagnostic.mapping/unmapped (:diagnostic/mapping-status %)))
+       (group-by #(select-keys % [:diagnostic/code
+                                  :diagnostic/severity
+                                  :diagnostic/message
+                                  :diagnostic/mapping-reason]))
+       (map (fn [[k diagnostics]]
+              (assoc k
+                     :count (count diagnostics)
+                     :file-count (count (set (map :diagnostic/file diagnostics))))))
+       (sort-by (juxt (comp - :count) :diagnostic/code :diagnostic/message))
+       vec))
+
+(defn- diagnostic-mapping-quality [diagnostic-facts]
+  (let [mapped (filter #(= :diagnostic.mapping/mapped (:diagnostic/mapping-status %))
+                       diagnostic-facts)]
+    {:mapped-count (count mapped)
+     :mapped-with-source-node-count (count (filter :diagnostic/source-node mapped))
+     :mapped-with-rule-count (count (filter :diagnostic/rule mapped))
+     :mapped-with-feature-count (count (filter #(seq (:diagnostic/source-features %)) mapped))
+     :unmapped-rankings (diagnostic-unmapped-rankings diagnostic-facts)}))
 
 (defn- ingest-dotnet-diagnostics! [conn sample paths emit-stage build-stage]
   (let [facts (diagnostic-facts sample paths emit-stage build-stage)
@@ -286,21 +301,26 @@
           mapped-count (count (filter #(= :diagnostic.mapping/mapped
                                           (:diagnostic/mapping-status %))
                                       diagnostic-facts))
-          unmapped-count (- (count diagnostic-facts) mapped-count)]
+          unmapped-count (- (count diagnostic-facts) mapped-count)
+          mapping-quality (diagnostic-mapping-quality diagnostic-facts)]
       (write-edn! (.resolve (:target/diagnostics paths) "dotnet-diagnostic-facts.edn")
                  {:pass (first facts)
                   :diagnostics (vec diagnostic-facts)
-                  :query-summary summary})
+                  :query-summary summary
+                  :mapping-quality mapping-quality
+                  :unmapped-rankings (:unmapped-rankings mapping-quality)})
       {:diagnostic/pass-id (:pass/id (first facts))
        :diagnostic/facts-count (count diagnostic-facts)
        :diagnostic/mapped-count mapped-count
        :diagnostic/unmapped-count unmapped-count
+       :diagnostic/mapping-quality mapping-quality
+       :diagnostic/unmapped-rankings (:unmapped-rankings mapping-quality)
        :diagnostic/query-summary summary})))
 
 (declare skipped-stage throwable-data)
 
 (defn- dotnet-build! [sample paths opts]
-  (let [project-file (csharp-project-file sample paths)
+  (let [project-file (destination/csharp-project-file sample (:target/csharp paths))
         diagnostics-dir (:target/diagnostics paths)
         command (str (or (:dotnet/command opts) default-dotnet-command))
         command-args [command "build" (str project-file) "--nologo"]
@@ -457,7 +477,11 @@
 
 (defn- csharp-emit-stage [conn paths opts]
   (let [emit-result (csharp/emit! (d/db conn) (:target/csharp paths))
-        project-result (write-csharp-project! (:sample opts) paths emit-result)
+        project-result (write-csharp-project! conn
+                                              (or (:project/id opts) (get-in opts [:sample :sample/name]))
+                                              (:sample opts)
+                                              paths
+                                              emit-result)
         errors (error-diagnostics (:csharp/diagnostics emit-result))
         allow? (csharp-allow-diagnostics? opts)]
     (cond-> (merge emit-result project-result)
@@ -503,7 +527,10 @@
                               #(source/ingest! conn source-opts))
             stages (if (has-lang? source-files :lang/java)
                      (run-stage stages sample :java/ingest
-                                #(java-spoon/ingest! conn {:project/id project-id}))
+                                #(java-spoon/ingest! conn
+                                                     (merge {:project/id project-id}
+                                                            (select-keys opts [:java/classpath-types
+                                                                               :java/classpath-package-roots]))))
                      (conj stages (skipped-stage :java/ingest :java/no-source-files)))
             stages (if (has-lang? source-files :lang/kotlin)
                      (run-stage stages sample :kotlin/ingest
@@ -514,7 +541,9 @@
                      (run-stage stages sample :kotlin/enrich
                                 #(kotlin-psi/enrich! conn
                                                      (merge {:project/id project-id}
-                                                            (select-keys opts [:kotlin/classpath-types]))))
+                                                            (select-keys opts [:kotlin/classpath-types
+                                                                               :kotlin/classpath-roots
+                                                                               :kotlin/analysis-api?]))))
                      stages)
             stages (run-stage stages sample :transform/rules
                               #(let [rule-catalog (registered-rules source-files)]
@@ -611,10 +640,14 @@
                            :csharp/error-diagnostics-count (:csharp/error-diagnostics-count emit-stage)
                            :csharp/allow-mode (:csharp/allow-mode emit-stage)
                            :csharp/helpers (:csharp/helpers emit-stage)
-                           :csharp/usings (:csharp/usings emit-stage)
-                           :csharp/project (:csharp/project emit-stage)
-                           :csharp/project-target-framework (:csharp/project-target-framework emit-stage)
-                           :csharp/project-files (:csharp/project-files emit-stage))
+                           :csharp/helper-files (:csharp/helper-files emit-stage)
+	                           :csharp/usings (:csharp/usings emit-stage)
+	                           :csharp/project (:csharp/project emit-stage)
+	                           :csharp/project-target-framework (:csharp/project-target-framework emit-stage)
+	                           :csharp/project-files (:csharp/project-files emit-stage)
+	                           :destination/file (:destination/file emit-stage)
+	                           :destination/project (:destination/project emit-stage)
+	                           :destination/projects (:destination/projects emit-stage))
 
                     (and emit-stage (= :skipped (:status emit-stage)))
                     (assoc :status :skipped
@@ -633,10 +666,14 @@
                            :csharp/error-diagnostics-count (:csharp/error-diagnostics-count emit-stage)
                            :csharp/allow-mode (:csharp/allow-mode emit-stage)
                            :csharp/helpers (:csharp/helpers emit-stage)
-                           :csharp/usings (:csharp/usings emit-stage)
-                           :csharp/project (:csharp/project emit-stage)
-                           :csharp/project-target-framework (:csharp/project-target-framework emit-stage)
-                           :csharp/project-files (:csharp/project-files emit-stage))
+                           :csharp/helper-files (:csharp/helper-files emit-stage)
+	                           :csharp/usings (:csharp/usings emit-stage)
+	                           :csharp/project (:csharp/project emit-stage)
+	                           :csharp/project-target-framework (:csharp/project-target-framework emit-stage)
+	                           :csharp/project-files (:csharp/project-files emit-stage)
+	                           :destination/file (:destination/file emit-stage)
+	                           :destination/project (:destination/project emit-stage)
+	                           :destination/projects (:destination/projects emit-stage))
 
                     (nil? emit-stage)
                     (assoc :status :skipped

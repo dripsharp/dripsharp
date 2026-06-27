@@ -191,8 +191,10 @@
              :java.node/field
              :java.node/field-read
              :java.node/field-write
+             :java.node/foreach-statement
              :java.node/if-statement
              :java.node/interface
+             :java.node/catch-clause
              :java.node/lambda
              :java.node/literal
              :java.node/local-variable
@@ -209,6 +211,7 @@
              :java.node/switch-expression
              :java.node/this
              :java.node/throw-statement
+             :java.node/try-statement
              :java.node/type-pattern
              :java.node/type-access
              :java.node/type-cast
@@ -302,6 +305,21 @@
              :java.stream/collect-to-collection
              :java.stream/collect
              :java.optional/or-else
+             :java.collection/size
+             :java.collection/is-empty
+             :java.collection/contains
+             :java.collection/add
+             :java.list/get
+             :java.map/get
+             :java.map/put
+             :java.map/get-or-default
+             :java.map/contains-key
+             :java.map/contains-value
+             :java.map/entry-set
+             :java.map/key-set
+             :java.map/values
+             :java.map-entry/get-key
+             :java.map-entry/get-value
              :java.api/pattern-compile
              :java.api/string-trim
              :java.api/string-is-empty
@@ -378,9 +396,11 @@
              :java.field-node/to-csharp-field
              :java.field-read-node/to-csharp-member
              :java.field-write-node/to-csharp-member
+             :java.foreach-statement-node/to-csharp-foreach
              :java.generic-method-feature/to-csharp-generic-method
              :java.if-statement-node/to-csharp-if
              :java.interface-node/to-csharp-interface
+             :java.catch-clause-node/to-csharp-catch
              :java.lambda-node/to-csharp-lambda
              :java.literal-node/to-csharp-literal
              :java.local-variable-node/to-csharp-local
@@ -398,6 +418,7 @@
              :java.synchronized-method/to-csharp-lock
              :java.this-node/to-csharp-this
              :java.throw-statement-node/to-csharp-throw
+             :java.try-statement-node/to-csharp-try
              :java.type-pattern-node/to-csharp-pattern
              :java.type-access-node/to-csharp-type
              :java.type-cast-node/to-csharp-cast
@@ -416,6 +437,21 @@
              :java.lambda-feature/to-csharp-lambda
              :java.wildcard-type-get-lower-bounds/to-csharp-generic-parameter-constraints
              :java.wildcard-type-get-upper-bounds/to-csharp-generic-parameter-constraints
+             :java.collection-size/to-csharp-count
+             :java.collection-is-empty/to-csharp-count-check
+             :java.collection-contains/to-csharp-contains
+             :java.collection-add/to-csharp-add
+             :java.list-get/to-csharp-indexer
+             :java.map-get/to-csharp-indexer
+             :java.map-put/to-csharp-indexer-assignment
+             :java.map-get-or-default/to-csharp-get-value-or-default
+             :java.map-contains-key/to-csharp-contains-key
+             :java.map-contains-value/to-csharp-contains-value
+             :java.map-entry-set/to-csharp-dictionary-enumeration
+             :java.map-key-set/to-csharp-keys
+             :java.map-values/to-csharp-values
+             :java.map-entry-get-key/to-csharp-key
+             :java.map-entry-get-value/to-csharp-value
              :java.stream-collector-to-map/to-csharp-to-dictionary
              :java.stream-collector-to-collection/to-csharp-collection-constructor
              :java.stream-collect-to-map/to-csharp-to-dictionary

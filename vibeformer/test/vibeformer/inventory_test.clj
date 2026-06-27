@@ -252,6 +252,28 @@
                  (inventory/unresolved-ref-rankings db)))
           (is (= [{:lang :lang/java
                    :kind :ref.kind/method-call
+                   :reason :resolve.reason/missing-classpath
+                   :owner ""
+                   :name "invoke"
+                   :count 1
+                   :file-count 1}
+                  {:lang :lang/java
+                   :kind :ref.kind/method-call
+                   :reason :resolve.reason/missing-classpath
+                   :owner "java.util.List"
+                   :name "stream"
+                   :count 1
+                   :file-count 1}
+                  {:lang :lang/kotlin
+                   :kind :ref.kind/function-call
+                   :reason :resolve.reason/analysis-api-limitation
+                   :owner ""
+                   :name "apply"
+                   :count 1
+                   :file-count 1}]
+                 (inventory/unresolved-ref-detail-rankings db)))
+          (is (= [{:lang :lang/java
+                   :kind :ref.kind/method-call
                    :name "invoke"
                    :owner ""
                    :reason :resolve.reason/missing-classpath
@@ -278,6 +300,8 @@
                  (:feature-counts (inventory/summary db))))
           (is (= (inventory/unresolved-ref-rankings db)
                  (:unresolved-ref-rankings (inventory/summary db))))
+          (is (= (inventory/unresolved-ref-detail-rankings db)
+                 (:unresolved-ref-detail-rankings (inventory/summary db))))
           (is (= (inventory/files-without-unsupported db {:langs #{:lang/kotlin}})
                  (:files-without-unsupported
                   (inventory/summary db {:langs #{:lang/kotlin}})))))))))

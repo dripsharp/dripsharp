@@ -62,6 +62,73 @@ public final class IntegerDisplay {
 }
 ")
 
+(def control-flow-fixture
+  "package com.example.statements;
+
+import java.util.List;
+
+public final class ControlFlow {
+  public int sum(List<Integer> values) {
+    int total = 0;
+    try {
+      for (Integer value : values) {
+        total = total + value;
+      }
+    } catch (IllegalArgumentException ex) {
+      total = 0;
+    } finally {
+      total = total;
+    }
+    return total;
+  }
+}
+")
+
+(def collection-map-fixture
+  "package com.example.collections;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public final class CollectionMapApi {
+  public int summarize(List<String> names) {
+    Map<String, Integer> counts = new HashMap<String, Integer>();
+    counts.put(\"fallback\", 1);
+    for (String name : names) {
+      if (counts.containsKey(name)) {
+        counts.put(name, counts.get(name) + 1);
+      } else {
+        counts.put(name, counts.getOrDefault(name, 0) + 1);
+      }
+    }
+
+    List<Integer> values = new ArrayList<Integer>();
+    for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+      values.add(entry.getValue());
+      if (entry.getKey().isEmpty()) {
+        values.add(0);
+      }
+    }
+    for (String key : counts.keySet()) {
+      values.add(counts.get(key));
+    }
+    for (Integer value : counts.values()) {
+      values.add(value);
+    }
+
+    if (values.isEmpty()) {
+      return counts.size();
+    }
+    if (values.contains(0)) {
+      return values.get(0);
+    }
+    return values.size() + counts.get(\"fallback\");
+  }
+}
+")
+
 (def nullable-types-fixture
   "package com.example.nullable;
 
@@ -80,6 +147,24 @@ public final class NullableApi {
 
   public static void demo() {
     new NullableApi(null).getLabel();
+  }
+}
+")
+
+(def unknown-java-type-fixture
+  "package com.example.unknown;
+
+import javax.persistence.EntityManager;
+
+public final class UnknownJavaType {
+  private final EntityManager manager;
+
+  public UnknownJavaType(EntityManager manager) {
+    this.manager = manager;
+  }
+
+  public EntityManager manager() {
+    return manager;
   }
 }
 ")
@@ -643,6 +728,18 @@ public final class NestedGenerics {
 }
 ")
 
+(def optional-helper-fixture
+  "package com.example.helpers;
+
+import java.util.Optional;
+
+public final class OptionalHelper {
+  public Optional<String> maybe(String value) {
+    return null;
+  }
+}
+")
+
 (def kotlin-basic-fixture
   "package com.example.kotlin
 
@@ -697,6 +794,41 @@ object FixtureModuleReader : ModuleReader {
   override fun read(uri: URI): String = \"hello\"
 
   override fun listElements(uri: URI): List<String> {
+    throw NotImplementedError()
+  }
+}
+")
+
+(def kotlin-top-level-fixture
+  "package com.example.kotlin
+
+val answer: Int = 42
+val greeting: String = \"hello\"
+
+fun render(name: String): String {
+  return greeting
+}
+
+fun constant(): Int = answer
+")
+
+(def kotlin-top-level-collision-left-fixture
+  "package com.example.collision
+
+fun left(): String = \"left\"
+")
+
+(def kotlin-top-level-collision-right-fixture
+  "package com.example.collision
+
+fun right(): String = \"right\"
+")
+
+(def kotlin-unknown-type-fixture
+  "package com.example.kotlin
+
+object UnknownKotlinType {
+  fun delay(value: kotlin.time.Duration): kotlin.time.Duration {
     throw NotImplementedError()
   }
 }
@@ -1323,11 +1455,13 @@ public final class Chain {
           (is (str/includes? content "public static class BasicDeclarations"))
           (is (str/includes? content "public static int count { get; } = default!;"))
           (is (str/includes? content "public static string describe(string? name)"))
-          (is (str/includes? content "return default!;"))
+          (is (str/includes? content "return \"\";"))
           (is (empty? (:csharp/diagnostics result)))
           (doseq [rule [:kotlin.object-node/to-csharp-stub
                         :kotlin.property-node/to-csharp-stub
-                        :kotlin.function-node/to-csharp-stub]]
+                        :kotlin.function-node/to-csharp-stub
+                        :kotlin.string-literal-node/to-csharp-literal
+                        :kotlin.return-node/to-csharp-return]]
             (is (contains? applied-rules rule))))))))
 
 (deftest emits-focused-kotlin-api-call-bodies
@@ -1366,8 +1500,134 @@ public final class Chain {
           (doseq [rule [:kotlin.object-node/to-csharp-stub
                         :kotlin.function-node/to-csharp-stub
                         :kotlin.local-property-node/to-csharp-local
+                        :kotlin.qualified-expression-node/to-csharp-call
+                        :kotlin.string-literal-node/to-csharp-literal
+                        :kotlin.name-reference-node/to-csharp-variable
+                        :kotlin.binary-expression-node/to-csharp-binary
+                        :kotlin.elvis-expression-node/to-csharp-coalesce
+                        :kotlin.call-expression-node/to-csharp-expression
                         :kotlin.return-node/to-csharp-return]]
             (is (contains? applied-rules rule))))))))
+
+(deftest emits-kotlin-top-level-declarations-as-file-facade
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/kotlin/com/example/kotlin/Utilities.kt"
+            opts {:source/root source-root
+                  :project/id "kotlin-top-level"
+                  :project/name "Kotlin Top Level"}]
+        (write-file! source-root file-path kotlin-top-level-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "kotlin-top-level"})
+        (kotlin-psi/enrich! conn {:project/id "kotlin-top-level"})
+        (rules/register! conn rules/initial-kotlin-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/kotlin/UtilitiesKt.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "namespace com.example.kotlin"))
+          (is (str/includes? content "public static class UtilitiesKt"))
+          (is (str/includes? content "public static int answer { get; } = 42;"))
+          (is (str/includes? content "public static string greeting { get; } = \"hello\";"))
+          (is (str/includes? content "public static string render(string name)"))
+          (is (str/includes? content "return greeting;"))
+          (is (str/includes? content "public static int constant()"))
+          (is (str/includes? content "return answer;"))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:kotlin.file-facade/to-csharp-static-class
+                        :kotlin.property-node/to-csharp-stub
+                        :kotlin.function-node/to-csharp-stub
+                        :kotlin.name-reference-node/to-csharp-variable
+                        :kotlin.return-node/to-csharp-return]]
+            (is (contains? applied-rules rule))))))))
+
+(deftest reports-unknown-kotlin-type-mappings-with-fallback-output
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/kotlin/com/example/kotlin/UnknownKotlinType.kt"
+            opts {:source/root source-root
+                  :project/id "unknown-kotlin-type"
+                  :project/name "Unknown Kotlin Type"}]
+        (write-file! source-root file-path kotlin-unknown-type-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "unknown-kotlin-type"})
+        (kotlin-psi/enrich! conn {:project/id "unknown-kotlin-type"})
+        (rules/register! conn rules/initial-kotlin-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/kotlin/UnknownKotlinType.cs")
+              content (slurp (str generated))
+              mapping-diagnostics (filter #(= :mapping.reason/unknown-type
+                                              (:mapping/reason %))
+                                          (:csharp/diagnostics result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "public static Duration delay(Duration value)"))
+          (is (str/includes? content "throw new NotImplementedException();"))
+          (is (seq mapping-diagnostics))
+          (is (every? #(= :diagnostic.severity/warn (:diagnostic/severity %))
+                      mapping-diagnostics))
+          (is (= #{"kotlin.time.Duration"}
+                 (set (map :type/name mapping-diagnostics))))
+          (is (= #{:lang/kotlin}
+                 (set (map :type/lang mapping-diagnostics))))
+          (is (every? #(= :emit.reason/type-mapping-fallback
+                          (get-in % [:rule/context :reason]))
+                      mapping-diagnostics)))))))
+
+(deftest suffixes-kotlin-file-facades-for-same-namespace-collisions
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            opts {:source/root source-root
+                  :project/id "kotlin-facade-collision"
+                  :project/name "Kotlin Facade Collision"}]
+        (write-file! source-root
+                     "src/main/kotlin/com/example/collision/Util.kt"
+                     kotlin-top-level-collision-left-fixture)
+        (write-file! source-root
+                     "src/generated/kotlin/com/example/collision/Util.kt"
+                     kotlin-top-level-collision-right-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "kotlin-facade-collision"})
+        (kotlin-psi/enrich! conn {:project/id "kotlin-facade-collision"})
+        (rules/register! conn rules/initial-kotlin-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated-dir (.resolve target "com/example/collision")
+              files (with-open [stream (Files/list generated-dir)]
+                      (->> (iterator-seq (.iterator stream))
+                           (map #(.getFileName %))
+                           (map str)
+                           sort
+                           vec))
+              contents (mapv #(slurp (str (.resolve generated-dir %))) files)]
+          (is (= {:ok? true :failures []} coverage))
+          (is (= 2 (count files)))
+          (is (every? #(re-matches #"UtilKt_[0-9a-f]{8}\.cs" %) files))
+          (is (= 2 (count (set files))))
+          (is (some #(str/includes? % "public static class UtilKt_") contents))
+          (is (some #(str/includes? % "return \"left\";") contents))
+          (is (some #(str/includes? % "return \"right\";") contents))
+          (is (empty? (:csharp/diagnostics result))))))))
 
 (deftest emits-java-nullable-type-use-as-csharp-nullable
   (with-empty-db
@@ -1396,6 +1656,87 @@ public final class Chain {
           (is (str/includes? content "public NullableApi(string? label)"))
           (is (str/includes? content "public string? getLabel()"))
           (is (str/includes? content "new NullableApi(null).getLabel();"))
+          (is (empty? (:csharp/diagnostics result))))))))
+
+(deftest reports-unknown-java-type-mappings-with-fallback-output
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/unknown/UnknownJavaType.java"
+            opts {:source/root source-root
+                  :project/id "unknown-java-type"
+                  :project/name "Unknown Java Type"}]
+        (write-file! source-root file-path unknown-java-type-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "unknown-java-type"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/unknown/UnknownJavaType.cs")
+              content (slurp (str generated))
+              mapping-diagnostics (filter #(= :mapping.reason/unknown-type
+                                              (:mapping/reason %))
+                                          (:csharp/diagnostics result))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "private readonly EntityManager manager;"))
+          (is (str/includes? content "public UnknownJavaType(EntityManager manager)"))
+          (is (str/includes? content "public EntityManager manager()"))
+          (is (seq mapping-diagnostics))
+          (is (every? #(= :diagnostic.severity/warn (:diagnostic/severity %))
+                      mapping-diagnostics))
+          (is (= #{"javax.persistence.EntityManager"}
+                 (set (map :type/name mapping-diagnostics))))
+          (is (= #{:lang/java}
+                 (set (map :type/lang mapping-diagnostics))))
+          (is (every? #(= :emit.reason/type-mapping-fallback
+                          (get-in % [:rule/context :reason]))
+                      mapping-diagnostics)))))))
+
+(deftest emits-runtime-helper-source-from-helper-metadata
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/helpers/OptionalHelper.java"
+            opts {:source/root source-root
+                  :project/id "optional-helper"
+                  :project/name "Optional Helper"}]
+        (write-file! source-root file-path optional-helper-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "optional-helper"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/helpers/OptionalHelper.cs")
+              helper-file (.resolve target "Vibeformer/Runtime/JavaOptional.cs")
+              content (slurp (str generated))
+              helper-content (slurp (str helper-file))]
+          (is (= {:ok? true :failures []} coverage))
+          (is (= [:helper/java-optional] (:csharp/helpers result)))
+          (is (= 2 (:csharp/files-written result)))
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (is (Files/isRegularFile helper-file (make-array java.nio.file.LinkOption 0)))
+          (is (str/includes? content "public string? maybe(string value)"))
+          (is (str/includes? content "return null;"))
+          (is (= [{:helper/id :helper/java-optional
+                   :helper/name "JavaOptional"
+                   :helper/path "Vibeformer/Runtime/JavaOptional.cs"
+                   :helper/source :helper.source/type-mapping
+                   :helper/status :helper.status/generated
+                   :helper/file (str helper-file)
+                   :helper/project-path "Vibeformer/Runtime/JavaOptional.cs"}]
+                 (:csharp/helper-files result)))
+          (is (str/includes? helper-content "namespace Vibeformer.Runtime"))
+          (is (str/includes? helper-content "internal static class JavaOptional"))
+          (is (str/includes? helper-content "public static object? OrElse(object? value, object? fallback)"))
           (is (empty? (:csharp/diagnostics result))))))))
 
 (deftest emits-kotlin-object-interface-overrides
@@ -2890,6 +3231,103 @@ public final class Chain {
           (is (empty? (:csharp/diagnostics result)))
           (doseq [rule [:java.synchronized-block-node/to-csharp-lock
                         :java.synchronized-method/to-csharp-lock]]
+            (is (contains? applied-rules rule))))))))
+
+(deftest emits-foreach-and-try-statements
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/statements/ControlFlow.java"
+            opts {:source/root source-root
+                  :project/id "control-flow"
+                  :project/name "Control Flow"}]
+        (write-file! source-root file-path control-flow-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "control-flow"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/statements/ControlFlow.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["using System;"
+                           "using System.Collections.Generic;"
+                           "public int sum(List<int> values)"
+                           "foreach (int value in values)"
+                           "total = total + value;"
+                           "catch (ArgumentException ex)"
+                           "finally"
+                           "return total;"]]
+            (is (str/includes? content snippet)))
+          (is (= {:ok? true :failures []} coverage))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:java.foreach-statement-node/to-csharp-foreach
+                        :java.try-statement-node/to-csharp-try
+                        :java.catch-clause-node/to-csharp-catch]]
+            (is (contains? applied-rules rule))))))))
+
+(deftest emits-collection-and-map-api-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            target (.resolve root "target/csharp")
+            source-root (.resolve root "source")
+            file-path "src/main/java/com/example/collections/CollectionMapApi.java"
+            opts {:source/root source-root
+                  :project/id "collection-map"
+                  :project/name "Collection Map"}]
+        (write-file! source-root file-path collection-map-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "collection-map"})
+        (rules/register! conn rules/initial-java-rules)
+        (let [db (d/db conn)
+              coverage (rules/coverage-report db)
+              result (csharp/emit! db target)
+              generated (.resolve target "com/example/collections/CollectionMapApi.cs")
+              content (slurp (str generated))
+              applied-rules (set (map (comp second :rule-app/rule)
+                                      (:csharp/rule-applications result)))]
+          (is (Files/isRegularFile generated (make-array java.nio.file.LinkOption 0)))
+          (doseq [snippet ["Dictionary<string, int> counts = new Dictionary<string, int>();"
+                           "counts[\"fallback\"] = 1;"
+                           "counts.ContainsKey(name)"
+                           "counts[name] = counts[name] + 1;"
+                           "counts.GetValueOrDefault(name, 0)"
+                           "List<int> values = new List<int>();"
+                           "foreach (KeyValuePair<string, int> entry in counts)"
+                           "values.Add(entry.Value);"
+                           "string.IsNullOrEmpty(entry.Key)"
+                           "foreach (string key in counts.Keys)"
+                           "foreach (int value in counts.Values)"
+                           "values.Count == 0"
+                           "counts.Count"
+                           "values.Contains(0)"
+                           "values[0]"
+                           "values.Count + counts[\"fallback\"]"]]
+            (is (str/includes? content snippet)))
+          (is (= {:ok? true :failures []} coverage))
+          (is (empty? (:csharp/diagnostics result)))
+          (doseq [rule [:java.collection-size/to-csharp-count
+                        :java.collection-is-empty/to-csharp-count-check
+                        :java.collection-contains/to-csharp-contains
+                        :java.collection-add/to-csharp-add
+                        :java.list-get/to-csharp-indexer
+                        :java.map-get/to-csharp-indexer
+                        :java.map-put/to-csharp-indexer-assignment
+                        :java.map-get-or-default/to-csharp-get-value-or-default
+                        :java.map-contains-key/to-csharp-contains-key
+                        :java.map-entry-set/to-csharp-dictionary-enumeration
+                        :java.map-key-set/to-csharp-keys
+                        :java.map-values/to-csharp-values
+                        :java.map-entry-get-key/to-csharp-key
+                        :java.map-entry-get-value/to-csharp-value]]
             (is (contains? applied-rules rule))))))))
 
 (deftest emits-word-counter-statement-and-expression-subset

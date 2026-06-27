@@ -5,7 +5,8 @@
             [datomic.local :as dl]
             [vibeformer.datomic.schema :as schema]
             [vibeformer.ingest.java-spoon :as java-spoon]
-            [vibeformer.ingest.source :as source])
+            [vibeformer.ingest.source :as source]
+            [vibeformer.inventory :as inventory])
   (:import (java.nio.charset StandardCharsets)
            (java.nio.file Files Path)
            (java.util UUID)))
@@ -80,6 +81,85 @@ public final class Calls {
 
   public Class<?> reflected() throws Exception {
     return Class.forName(name);
+  }
+}
+")
+
+(def dependency-backed-call-fixture
+  "package com.acme.deps;
+
+import org.example.Dependency;
+
+public final class UsesDependency {
+  public void run(Dependency dependency) {
+    dependency.doWork();
+  }
+}
+")
+
+(def control-flow-fixture
+  "package com.acme.statements;
+
+import java.util.List;
+
+public final class ControlFlow {
+  public int sum(List<Integer> values) {
+    int total = 0;
+    try {
+      for (Integer value : values) {
+        total = total + value;
+      }
+    } catch (IllegalArgumentException ex) {
+      total = 0;
+    } finally {
+      total = total;
+    }
+    return total;
+  }
+}
+")
+
+(def collection-map-fixture
+  "package com.acme.collections;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public final class CollectionMapApi {
+  public int summarize(List<String> names) {
+    Map<String, Integer> counts = new HashMap<String, Integer>();
+    counts.put(\"fallback\", 1);
+    for (String name : names) {
+      if (counts.containsKey(name)) {
+        counts.put(name, counts.get(name) + 1);
+      } else {
+        counts.put(name, counts.getOrDefault(name, 0) + 1);
+      }
+    }
+
+    List<Integer> values = new ArrayList<Integer>();
+    for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+      values.add(entry.getValue());
+      if (entry.getKey().isEmpty()) {
+        values.add(0);
+      }
+    }
+    for (String key : counts.keySet()) {
+      values.add(counts.get(key));
+    }
+    for (Integer value : counts.values()) {
+      values.add(value);
+    }
+
+    if (values.isEmpty()) {
+      return counts.size();
+    }
+    if (values.contains(0)) {
+      return values.get(0);
+    }
+    return values.size() + counts.get(\"fallback\");
   }
 }
 ")
@@ -224,6 +304,16 @@ public final class CodePointIterator {
       return iterator.nextInt();
     }
     return 0;
+  }
+}
+")
+
+(def pseudo-type-fixture
+  "package com.acme.pseudo;
+
+public final class PseudoTypes {
+  public void log(MissingDependency missing) {
+    var value = missing.make();
   }
 }
 ")
@@ -1032,6 +1122,54 @@ public final class Demo {
             (java-spoon/ingest! conn {:project/id "fixture"})
             (is (= counts (entity-counts (d/db conn))))))))))
 
+(deftest java-classpath-package-roots-resolve-dependency-backed-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/deps/UsesDependency.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path dependency-backed-call-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"
+                                  :java/classpath-package-roots #{"org.example"}})
+        (let [db (d/db conn)
+              reason (fn [ref-eid]
+                       (:ref/reason (d/pull db [:ref/reason] ref-eid)))
+              type-refs (->> (d/q '[:find ?ref ?type-name ?resolved
+                                    :where
+                                    [?ref :ref/kind :ref.kind/type-use]
+                                    [?ref :ref/source-name "dependency"]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/name ?type-name]
+                                    [?ref :ref/resolved? ?resolved]]
+                                  db)
+                               (map (fn [[ref-eid type-name resolved]]
+                                      [type-name resolved (reason ref-eid)]))
+                               set)
+              method-refs (->> (d/q '[:find ?ref ?name ?owner-name ?resolved
+                                      :where
+                                      [?ref :ref/kind :ref.kind/method-call]
+                                      [?ref :ref/name ?name]
+                                      [?ref :ref/owner-type ?owner]
+                                      [?owner :type/name ?owner-name]
+                                      [?ref :ref/resolved? ?resolved]]
+                                    db)
+                                (map (fn [[ref-eid name owner-name resolved]]
+                                       [name owner-name resolved (reason ref-eid)]))
+                                set)
+              method-decls (set (d/q '[:find ?decl-id ?name
+                                       :where
+                                       [?decl :decl/id ?decl-id]
+                                       [?decl :decl/name ?name]
+                                       [(= ?name "doWork")]]
+                                     db))]
+          (is (= #{["org.example.Dependency" true nil]} type-refs))
+          (is (= #{["doWork" "org.example.Dependency" true nil]} method-refs))
+          (is (= #{["java:org.example.Dependency#doWork()" "doWork"]} method-decls)))))))
+
 (deftest extracts-java-nullable-type-use-facts
   (with-empty-db
     (fn [conn]
@@ -1687,6 +1825,106 @@ public final class Demo {
                              [?type :type/id ?type-id]]
                            db)))))))))
 
+(deftest extracts-foreach-and-try-statement-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/statements/ControlFlow.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path control-flow-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)]
+          (is (= #{[:java.node/try-statement "try" :body]
+                   [:java.node/foreach-statement "value" :body]
+                   [:java.node/catch-clause "ex" :catch]}
+                 (set (d/q '[:find ?kind ?name ?role
+                             :where
+                             [?node :node/kind ?kind]
+                             [?node :node/name ?name]
+                             [?node :node/role ?role]
+                             [(contains? #{:java.node/try-statement
+                                           :java.node/foreach-statement
+                                           :java.node/catch-clause}
+                                         ?kind)]]
+                           db))))
+          (is (= #{["value" "java.lang.Integer"]}
+                 (set (d/q '[:find ?source-name ?type-name
+                             :where
+                             [?node :node/kind :java.node/foreach-statement]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/role :element-type]
+                             [?ref :ref/source-name ?source-name]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/name ?type-name]]
+                           db))))
+          (is (= #{["ex" "java.lang.IllegalArgumentException"]}
+                 (set (d/q '[:find ?source-name ?type-name
+                             :where
+                             [?node :node/kind :java.node/catch-clause]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/role :catch-type]
+                             [?ref :ref/source-name ?source-name]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/name ?type-name]]
+                           db))))
+          (is (= #{[:java.node/variable-read :iterable]
+                   [:java.node/assignment :body]
+                   [:java.node/assignment :finally]}
+                 (set (d/q '[:find ?kind ?role
+                             :where
+                             [?node :node/kind ?kind]
+                             [?node :node/role ?role]
+                             [(contains? #{:iterable :body :finally} ?role)]
+                             [(contains? #{:java.node/variable-read
+                                           :java.node/assignment}
+                                         ?kind)]]
+                           db)))))))))
+
+(deftest extracts-collection-and-map-api-feature-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/collections/CollectionMapApi.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path collection-map-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              feature-kinds (set (map first
+                                      (d/q '[:find ?kind
+                                             :where
+                                             [?feature :feature/kind ?kind]]
+                                           db)))
+              entry-types (set (d/q '[:find ?type-name
+                                      :where
+                                      [?ref :ref/role :element-type]
+                                      [?ref :ref/to-type ?type]
+                                      [?type :type/name ?type-name]]
+                                    db))]
+          (is (every? feature-kinds
+                      [:java.collection/size
+                       :java.collection/is-empty
+                       :java.collection/contains
+                       :java.collection/add
+                       :java.list/get
+                       :java.map/get
+                       :java.map/put
+                       :java.map/get-or-default
+                       :java.map/contains-key
+                       :java.map/entry-set
+                       :java.map/key-set
+                       :java.map/values
+                       :java.map-entry/get-key
+                       :java.map-entry/get-value]))
+          (is (contains? entry-types ["java.util.Map$Entry"])))))))
+
 (deftest resolves-project-local-method-call-refs
   (with-empty-db
     (fn [conn]
@@ -2186,6 +2424,51 @@ public final class Demo {
                    [:java.primitive-iterator/next-int "nextInt" :feature.status/supported]}
                  supported))
           (is (empty? unsupported)))))))
+
+(deftest java-pseudo-types-do-not-block-unresolved-reference-gate
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/pseudo/PseudoTypes.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path pseudo-type-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              type-refs (set (d/q '[:find ?role ?name ?type-id ?resolved?
+                                    :where
+                                    [?ref :ref/kind :ref.kind/type-use]
+                                    [?ref :ref/role ?role]
+                                    [?ref :ref/name ?name]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/resolved? ?resolved?]]
+                                  db))
+              unresolved-details (:unresolved-ref-detail-rankings (inventory/summary db))]
+          (testing "Spoon var fallback and void return types are modeled as resolved pseudo/built-in refs"
+            (is (contains? type-refs [:local-type "var" "var" true]))
+            (is (contains? type-refs [:return-type "void" "void" true])))
+          (testing "missing classpath refs still surface without pseudo-type noise"
+            (is (= [{:lang :lang/java
+                     :kind :ref.kind/method-call
+                     :name "make"
+                     :owner "com.acme.pseudo.MissingDependency"
+                     :reason :resolve.reason/missing-classpath
+                     :count 1
+                     :file-count 1}
+                    {:lang :lang/java
+                     :kind :ref.kind/type-use
+                     :name "com.acme.pseudo.MissingDependency"
+                     :owner ""
+                     :reason :resolve.reason/missing-classpath
+                     :count 1
+                     :file-count 1}]
+                   unresolved-details))
+            (is (not-any? #(contains? #{"var" "void"} (:name %))
+                          unresolved-details))))))))
 
 (deftest classifies-supported-reflection-api-facts
   (with-empty-db

@@ -1,17 +1,19 @@
 (ns vibeformer.ingest.kotlin-psi
   (:require [clojure.string :as str]
-            [datomic.client.api :as d])
+            [datomic.client.api :as d]
+            [vibeformer.ingest.kotlin-analysis-api :as kotlin-analysis-api])
   (:import (java.nio.charset StandardCharsets)
            (java.nio.file Files Paths)
            (java.security MessageDigest)
            (org.jetbrains.kotlin.com.intellij.openapi.util Disposer)
            (org.jetbrains.kotlin.cli.jvm.compiler EnvironmentConfigFiles KotlinCoreEnvironment)
            (org.jetbrains.kotlin.config CompilerConfiguration)
-           (org.jetbrains.kotlin.psi KtBinaryExpression KtCallExpression KtClass KtClassOrObject KtFile
-                                     KtNamedFunction KtNullableType KtObjectDeclaration
-                                     KtProperty KtPsiFactory KtQualifiedExpression
-                                     KtReturnExpression KtSafeQualifiedExpression KtThrowExpression
-                                     KtTypeReference)))
+           (org.jetbrains.kotlin.psi KtBinaryExpression KtCallExpression KtClass KtClassOrObject
+                                     KtConstantExpression KtExpression KtFile KtLambdaExpression
+                                     KtNamedFunction KtNameReferenceExpression KtNullableType
+                                     KtObjectDeclaration KtParameter KtProperty KtPsiFactory
+                                     KtQualifiedExpression KtReturnExpression KtSafeQualifiedExpression
+                                     KtStringTemplateExpression KtThrowExpression KtTypeReference)))
 
 (def ^:private lang :lang/kotlin)
 
@@ -401,7 +403,7 @@
                      :kotlin.feature/top-level-declaration
                      node-id))
 
-(declare declaration-facts)
+(declare declaration-facts elvis-expression? kotlin-expression-facts)
 
 (defn- call-name [^KtCallExpression call]
   (some-> call .getCalleeExpression .getText))
@@ -409,19 +411,107 @@
 (defn- call-node-id [file-id parent-node-id ordinal name]
   (str file-id ":call:" parent-node-id ":" ordinal ":" name))
 
+(defn- kotlin-expression-node-kind [expression]
+  (cond
+    (instance? KtSafeQualifiedExpression expression) :kotlin.node/safe-call
+    (and (instance? KtBinaryExpression expression)
+         (elvis-expression? expression)) :kotlin.node/elvis-expression
+    (instance? KtQualifiedExpression expression) :kotlin.node/qualified-expression
+    (instance? KtCallExpression expression) :kotlin.node/call-expression
+    (instance? KtLambdaExpression expression) :kotlin.node/lambda-expression
+    (instance? KtBinaryExpression expression) :kotlin.node/binary-expression
+    (instance? KtStringTemplateExpression expression) :kotlin.node/string-literal
+    (instance? KtConstantExpression expression) :kotlin.node/literal
+    (instance? KtNameReferenceExpression expression) :kotlin.node/name-reference
+    :else :kotlin.node/expression))
+
+(defn- kotlin-expression-name [expression]
+  (cond
+    (instance? KtCallExpression expression) (or (call-name expression) "<call>")
+    (instance? KtSafeQualifiedExpression expression) "?."
+    (and (instance? KtBinaryExpression expression)
+         (elvis-expression? expression)) "?:"
+    (instance? KtQualifiedExpression expression) "."
+    (instance? KtLambdaExpression expression) "lambda"
+    (instance? KtBinaryExpression expression) (some-> ^KtBinaryExpression expression .getOperationReference .getText)
+    (instance? KtStringTemplateExpression expression) "string"
+    (instance? KtConstantExpression expression) "literal"
+    (instance? KtNameReferenceExpression expression) (str/trim (.getText expression))
+    :else "<expression>"))
+
+(defn- kotlin-expression-value [expression]
+  (cond
+    (instance? KtBinaryExpression expression) (some-> ^KtBinaryExpression expression .getOperationReference .getText)
+    :else (str/trim (.getText expression))))
+
+(defn- kotlin-expression-node-id [parent-node-id role ordinal expression]
+  (str "kotlin:expr:"
+       (sha256 (str parent-node-id
+                    "|" (name role)
+                    "|" ordinal
+                    "|" (name (kotlin-expression-node-kind expression))
+                    "|" (.getText expression)))))
+
+(defn- kotlin-call-ref-fact [node-id name]
+  {:db/id (str node-id ":ref")
+   :ref/id (str node-id ":ref")
+   :ref/kind :ref.kind/function-call
+   :ref/from-node node-id
+   :ref/name name
+   :ref/resolved? false
+   :ref/reason :resolve.reason/syntax-only})
+
+(defn- kotlin-expression-children [expression]
+  (cond
+    (and (instance? KtBinaryExpression expression)
+         (elvis-expression? expression))
+    [[:left 0 (.getLeft ^KtBinaryExpression expression)]
+     [:right 1 (.getRight ^KtBinaryExpression expression)]]
+
+    (instance? KtBinaryExpression expression)
+    [[:left 0 (.getLeft ^KtBinaryExpression expression)]
+     [:right 1 (.getRight ^KtBinaryExpression expression)]]
+
+    (instance? KtQualifiedExpression expression)
+    [[:receiver 0 (.getReceiverExpression ^KtQualifiedExpression expression)]
+     [:selector 1 (.getSelectorExpression ^KtQualifiedExpression expression)]]
+
+    (instance? KtCallExpression expression)
+    (concat
+     (map-indexed (fn [ordinal argument]
+                    [:argument ordinal (.getArgumentExpression argument)])
+                  (.getValueArguments ^KtCallExpression expression))
+     (map-indexed (fn [ordinal lambda-argument]
+                    [:lambda (+ 100 ordinal) (.getLambdaExpression lambda-argument)])
+                  (.getLambdaArguments ^KtCallExpression expression)))
+
+    (instance? KtLambdaExpression expression)
+    (when-let [body (.getBodyExpression ^KtLambdaExpression expression)]
+      (map-indexed (fn [ordinal child]
+                     [:body-expression ordinal child])
+                   (.getStatements body)))))
+
+(defn- kotlin-expression-facts [source file-id parent-node-id role ordinal ^KtExpression expression]
+  (when expression
+    (let [kind (kotlin-expression-node-kind expression)
+          name (or (kotlin-expression-name expression) "<expression>")
+          node-id (kotlin-expression-node-id parent-node-id role ordinal expression)]
+      (concat
+       [(node-fact source node-id kind name file-id ordinal expression
+                   :parent parent-node-id
+                   :role role
+                   :value (kotlin-expression-value expression))]
+       (mapcat (fn [[child-role child-ordinal child-expression]]
+                 (kotlin-expression-facts source file-id node-id child-role child-ordinal child-expression))
+               (kotlin-expression-children expression))))))
+
 (defn- call-facts [source file-id parent-node-id ordinal ^KtCallExpression call]
   (let [name (or (call-name call) "<call>")
         node-id (call-node-id file-id parent-node-id ordinal name)]
     (concat
      [(node-fact source node-id :kotlin.node/call-expression name file-id ordinal call
                  :parent parent-node-id)
-      {:db/id (str node-id ":ref")
-       :ref/id (str node-id ":ref")
-       :ref/kind :ref.kind/function-call
-       :ref/from-node node-id
-       :ref/name name
-       :ref/resolved? false
-       :ref/reason :resolve.reason/syntax-only}
+      (kotlin-call-ref-fact node-id name)
       (supported-feature (str node-id ":feature:call-expression")
                          :kotlin.feature/call-expression
                          node-id)]
@@ -454,6 +544,22 @@
              (range)
              (.getValueArguments call)))))
 
+(defn- parameter-facts [source file-id parent-node-id ordinal ^KtParameter parameter]
+  (let [name (or (.getName parameter) (str "<parameter-" ordinal ">"))
+        node-id (str file-id ":parameter:" parent-node-id ":" ordinal ":" name)]
+    (concat
+     [(node-fact source
+                 node-id
+                 :kotlin.node/value-parameter
+                 name
+                 file-id
+                 ordinal
+                 parameter
+                 :parent parent-node-id
+                 :role :parameter
+                 :value (type-syntax (.getTypeReference parameter)))]
+     (type-ref-facts node-id :parameter (.getTypeReference parameter) name))))
+
 (defn- safe-call-node-id [file-id parent-node-id ordinal]
   (str file-id ":safe-call:" parent-node-id ":" ordinal))
 
@@ -481,51 +587,78 @@
 
 (defn- local-property-facts [source file-id parent-node-id ordinal ^KtProperty property]
   (let [name (or (.getName property) "<local>")
-        node-id (str file-id ":local-property:" parent-node-id ":" ordinal ":" name)]
-    [(node-fact source
-                node-id
-                :kotlin.node/local-property
-                name
-                file-id
-                ordinal
-                property
-                :parent parent-node-id
-                :role :local-binding
-                :value (some-> property .getInitializer .getText str/trim))]))
+        node-id (str file-id ":local-property:" parent-node-id ":" ordinal ":" name)
+        initializer (.getInitializer property)]
+    (concat
+     [(node-fact source
+                 node-id
+                 :kotlin.node/local-property
+                 name
+                 file-id
+                 ordinal
+                 property
+                 :parent parent-node-id
+                 :role :local-binding
+                 :value (some-> initializer .getText str/trim))]
+     (type-ref-facts node-id :local-binding (.getTypeReference property) name)
+     (kotlin-expression-facts source file-id node-id :initializer 0 initializer))))
 
 (defn- return-facts [source file-id parent-node-id ordinal ^KtReturnExpression expression]
-  (let [node-id (str file-id ":return:" parent-node-id ":" ordinal)]
-    [(node-fact source
-                node-id
-                :kotlin.node/return
-                "return"
-                file-id
-                ordinal
-                expression
-                :parent parent-node-id
-                :role :return
-                :value (some-> expression .getReturnedExpression .getText str/trim))]))
+  (let [node-id (str file-id ":return:" parent-node-id ":" ordinal)
+        returned-expression (.getReturnedExpression expression)]
+    (concat
+     [(node-fact source
+                 node-id
+                 :kotlin.node/return
+                 "return"
+                 file-id
+                 ordinal
+                 expression
+                 :parent parent-node-id
+                 :role :return
+                 :value (some-> returned-expression .getText str/trim))]
+     (kotlin-expression-facts source file-id node-id :return-expression 0 returned-expression))))
 
 (defn- throw-facts [source file-id parent-node-id ordinal ^KtThrowExpression expression]
-  (let [node-id (str file-id ":throw:" parent-node-id ":" ordinal)]
-    [(node-fact source
-                node-id
-                :kotlin.node/throw
-                "throw"
-                file-id
-                ordinal
-                expression
-                :parent parent-node-id
-                :role :throw
-                :value (some-> expression .getThrownExpression .getText str/trim))]))
+  (let [node-id (str file-id ":throw:" parent-node-id ":" ordinal)
+        thrown-expression (.getThrownExpression expression)]
+    (concat
+     [(node-fact source
+                 node-id
+                 :kotlin.node/throw
+                 "throw"
+                 file-id
+                 ordinal
+                 expression
+                 :parent parent-node-id
+                 :role :throw
+                 :value (some-> thrown-expression .getText str/trim))]
+     (kotlin-expression-facts source file-id node-id :thrown-expression 0 thrown-expression))))
 
-(defn- expression-facts [source file-id parent-node-id declaration]
+(defn- expression-body-facts [source file-id parent-node-id ^KtNamedFunction function]
+  (when (and (not (.hasBlockBody function))
+             (.getBodyExpression function))
+    (kotlin-expression-facts source
+                             file-id
+                             parent-node-id
+                             :expression-body
+                             0
+                             (.getBodyExpression function))))
+
+(defn- declaration-expression-facts [source file-id parent-node-id declaration]
   (let [calls (collect-elements declaration KtCallExpression)
         safe-calls (collect-elements declaration KtSafeQualifiedExpression)
         elvises (filter elvis-expression? (collect-elements declaration KtBinaryExpression))
+        local-properties (collect-elements declaration KtProperty)
+        returns (collect-elements declaration KtReturnExpression)
         throws (collect-elements declaration KtThrowExpression)
         body-shape? (and (instance? KtNamedFunction declaration)
-                         (or (seq calls) (seq safe-calls) (seq elvises) (seq throws)))]
+                         (or (seq calls)
+                             (seq safe-calls)
+                             (seq elvises)
+                             (seq local-properties)
+                             (seq returns)
+                             (seq throws)))]
     (concat
      (mapcat (fn [ordinal call]
                (call-facts source file-id parent-node-id ordinal call))
@@ -544,15 +677,17 @@
         (mapcat (fn [ordinal property]
                   (local-property-facts source file-id parent-node-id ordinal property))
                 (range)
-                (collect-elements declaration KtProperty))
+                local-properties)
         (mapcat (fn [ordinal expression]
                   (return-facts source file-id parent-node-id ordinal expression))
                 (range)
-                (collect-elements declaration KtReturnExpression))
+                returns)
         (mapcat (fn [ordinal expression]
                   (throw-facts source file-id parent-node-id ordinal expression))
                 (range)
-                throws))))))
+                throws)))
+     (when (instance? KtNamedFunction declaration)
+       (expression-body-facts source file-id parent-node-id declaration)))))
 
 (defn- child-declarations [declaration]
   (cond
@@ -604,11 +739,16 @@
                          node-id)]
      (when-not parent-node-id
        [(top-level-feature node-id)])
+     (when (instance? KtNamedFunction declaration)
+       (mapcat (fn [parameter-ordinal parameter]
+                 (parameter-facts source file-id node-id parameter-ordinal parameter))
+               (range)
+               (.getValueParameters ^KtNamedFunction declaration)))
      (declaration-type-facts node-id declaration)
      (supertype-ref-facts node-id declaration)
      (when (or (instance? KtNamedFunction declaration)
                (instance? KtProperty declaration))
-       (expression-facts source file-id node-id declaration))
+       (declaration-expression-facts source file-id node-id declaration))
      (mapcat (fn [child-ordinal child]
                (declaration-facts source file-id package nested-owner-qname node-id child-ordinal child))
              (range)
@@ -686,11 +826,23 @@
    "Unit" "kotlin:Unit"})
 
 (def ^:private known-function-calls
-  {"arrayOf" {:ref/to-type "kotlin:Array"}
+  {"addConfiguredDependencyTo" {:ref/to-type "org.gradle.api.artifacts.ExternalModuleDependency"
+                                :ref/owner-type "org.gradle.kotlin.dsl.DependencyHandlerScope"}
+   "addDependencyTo" {:ref/to-type "org.gradle.api.artifacts.Dependency"
+                      :ref/owner-type "org.gradle.kotlin.dsl.DependencyHandlerScope"}
+   "addExternalModuleDependencyTo" {:ref/to-type "org.gradle.api.artifacts.ExternalModuleDependency"
+                                    :ref/owner-type "org.gradle.kotlin.dsl.DependencyHandlerScope"}
+   "append" {:ref/to-type "java.lang.Appendable"
+             :ref/owner-type "java.lang.Appendable"}
+   "arrayOf" {:ref/to-type "kotlin:Array"}
    "assertThat" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                  :ref/owner-type "org.assertj.core.api.Assertions"}
    "assertThrows" {:ref/to-type "org.junit.jupiter.api.function.Executable"
                    :ref/owner-type "org.junit.jupiter.api.Assertions"}
+   "configure" {:ref/to-type "kotlin:Unit"
+                :ref/owner-type "org.gradle.api.plugins.ExtensionContainer"}
+   "getByName" {:ref/to-type "kotlin:Any"
+                :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
    "isEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "lazy" {:ref/to-type "kotlin:Lazy"
@@ -701,10 +853,14 @@
              :ref/owner-type "kotlin.collections.CollectionsKt"}
    "mapOf" {:ref/to-type "kotlin.collections.Map"
             :ref/owner-type "kotlin.collections.MapsKt"}
+   "named" {:ref/to-type "org.gradle.api.NamedDomainObjectProvider"
+            :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
    "resolve" {:ref/to-type "java.nio.file.Path"
               :ref/owner-type "java.nio.file.Path"}
    "setOf" {:ref/to-type "kotlin.collections.Set"
             :ref/owner-type "kotlin.collections.SetsKt"}
+   "toString" {:ref/to-type "kotlin:String"
+               :ref/owner-type "kotlin:Any"}
    "toUri" {:ref/to-type "java.net.URI"
             :ref/owner-type "java.nio.file.Path"}
    "trimIndent" {:ref/to-type "kotlin:String"
@@ -754,26 +910,118 @@
                [(get-else $ ?decl :decl/return-type :vibeformer.query/absent) ?return-type]]
              db project-id)))
 
-(defn- project-refs [db project-id]
-  (mapv (fn [[ref-id kind name to-type node-id]]
-          {:ref/id ref-id
-           :ref/kind kind
-           :ref/name name
-           :ref/to-type (type-identity db to-type)
-           :node/id node-id})
-        (d/q '[:find ?ref-id ?kind ?name ?to-type ?node-id
+(defn- project-binding-type-index [db project-id]
+  (reduce (fn [acc [function-node-id name type-id]]
+            (assoc-in acc [function-node-id name] type-id))
+          {}
+          (d/q '[:find ?function-node-id ?name ?type-id
+              :in $ ?project-id
+              :where
+              [?project :project/id ?project-id]
+              [?file :file/project ?project]
+              [?function :node/file ?file]
+              [?function :node/id ?function-node-id]
+              [?binding :node/parent ?function]
+              [?binding :node/name ?name]
+              [?binding :node/kind ?kind]
+              [(contains? #{:kotlin.node/value-parameter
+                            :kotlin.node/local-property}
+                           ?kind)]
+              [?ref :ref/from-node ?binding]
+              [?ref :ref/kind :ref.kind/type-use]
+              [?ref :ref/to-type ?type]
+              [?type :type/id ?type-id]]
+            db
+            project-id)))
+
+(defn- literal-type-id [value]
+  (let [value (some-> value str/trim)]
+    (cond
+      (nil? value) nil
+      (re-matches #"\"(?:\\.|[^\"])*\"" value) "kotlin:String"
+      (re-matches #"-?\d+" value) "kotlin:Int"
+      (contains? #{"true" "false"} value) "kotlin:Boolean"
+      (= "null" value) "kotlin:Nothing?"
+      :else nil)))
+
+(defn- simple-identifier [value]
+  (when-let [value (some-> value str/trim)]
+    (when (re-matches #"[A-Za-z_][A-Za-z0-9_]*" value)
+      value)))
+
+(defn- project-call-argument-values [db project-id]
+  (->> (d/q '[:find ?call-node-id ?ordinal ?value
+              :in $ ?project-id
+              :where
+              [?project :project/id ?project-id]
+              [?file :file/project ?project]
+              [?call :node/file ?file]
+              [?call :node/id ?call-node-id]
+              [?arg :node/parent ?call]
+              [?arg :node/kind :kotlin.node/call-argument]
+              [?arg :node/ordinal ?ordinal]
+              [?arg :node/value ?value]]
+            db
+            project-id)
+       (group-by first)
+       (map (fn [[call-node-id rows]]
+              [call-node-id (mapv #(nth % 2) (sort-by second rows))]))
+       (into {})))
+
+(defn- project-call-parent-index [db project-id]
+  (into {}
+        (d/q '[:find ?call-node-id ?parent-node-id
                :in $ ?project-id
                :where
                [?project :project/id ?project-id]
                [?file :file/project ?project]
-               [?node :node/file ?file]
-               [?node :node/id ?node-id]
-               [?ref :ref/from-node ?node]
-               [?ref :ref/id ?ref-id]
-               [?ref :ref/kind ?kind]
-               [?ref :ref/name ?name]
-               [(get-else $ ?ref :ref/to-type :vibeformer.query/absent) ?to-type]]
-             db project-id)))
+               [?call :node/file ?file]
+               [?call :node/kind :kotlin.node/call-expression]
+               [?call :node/id ?call-node-id]
+               [?call :node/parent ?parent]
+               [?parent :node/id ?parent-node-id]]
+             db
+             project-id)))
+
+(defn- call-argument-type-ids [binding-types-by-parent arg-values-by-call parent-by-call node-id]
+  (let [parent-node-id (get parent-by-call node-id)
+        binding-types (get binding-types-by-parent parent-node-id)]
+    (mapv (fn [value]
+            (or (some->> value simple-identifier (get binding-types))
+                (literal-type-id value)))
+          (get arg-values-by-call node-id []))))
+
+(defn- project-refs [db project-id]
+  (let [binding-types-by-parent (project-binding-type-index db project-id)
+        arg-values-by-call (project-call-argument-values db project-id)
+        parent-by-call (project-call-parent-index db project-id)]
+    (mapv (fn [[ref-id kind name to-type node-id]]
+            (let [arg-types (when (= :ref.kind/function-call kind)
+                              (call-argument-type-ids binding-types-by-parent
+                                                      arg-values-by-call
+                                                      parent-by-call
+                                                      node-id))]
+              {:ref/id ref-id
+               :ref/kind kind
+               :ref/name name
+               :ref/to-type (type-identity db to-type)
+               :node/id node-id
+               :call/arg-count (count arg-types)
+               :call/arg-types arg-types}))
+          (d/q '[:find ?ref-id ?kind ?name ?to-type ?node-id
+                 :in $ ?project-id
+                 :where
+                 [?project :project/id ?project-id]
+                 [?file :file/project ?project]
+                 [?file :file/lang :lang/kotlin]
+                 [?node :node/file ?file]
+                 [?node :node/id ?node-id]
+                 [?ref :ref/from-node ?node]
+                 [?ref :ref/id ?ref-id]
+                 [?ref :ref/kind ?kind]
+                 [?ref :ref/name ?name]
+                 [(get-else $ ?ref :ref/to-type :vibeformer.query/absent) ?to-type]]
+               db project-id))))
 
 (defn- normalize-classpath-types [classpath-types]
   (cond
@@ -810,9 +1058,20 @@
                   [(simple-type-name type-name) type-id])))
          (into {}))))
 
+(defn- function-param-type-ids [{:decl/keys [qualified-name]}]
+  (when-let [[_ params] (re-find #"\((.*)\)$" qualified-name)]
+    (if (str/blank? params)
+      []
+      (mapv (comp type-id parse-type-syntax str/trim)
+            (split-top-level params \,)))))
+
+(defn- with-function-param-types [decl]
+  (assoc decl :decl/param-types (function-param-type-ids decl)))
+
 (defn- function-index [decls]
   (->> decls
        (filter #(= :decl.kind/function (:decl/kind %)))
+       (map with-function-param-types)
        (group-by :decl/name)))
 
 (defn- type-lang [type-id]
@@ -907,7 +1166,63 @@
       (resolved-ref-tx db id {:ref/to-type [:type/id resolved-type-id]})
       (unresolved-ref-tx id :resolve.reason/missing-classpath))))
 
-(defn- function-resolution-tx [db functions source-types {:ref/keys [id name]}]
+(defn- unqualified-type-id [type-id]
+  (some-> type-id
+          (str/replace #"^kotlin:" "")
+          (str/replace #"\?$" "")
+          simple-type-name))
+
+(defn- nullable-type-compatible? [arg-type param-type]
+  (let [arg-base (unqualified-type-id arg-type)
+        param-base (unqualified-type-id param-type)]
+    (and (= arg-base param-base)
+         (not (and (nullable-type-id? arg-type)
+                   (not (nullable-type-id? param-type)))))))
+
+(defn- type-match-score [arg-type param-type]
+  (cond
+    (or (nil? arg-type) (nil? param-type)) 0
+    (= arg-type param-type) 3
+    (and (not (nullable-type-id? arg-type))
+         (nullable-type-id? param-type)
+         (= (unqualified-type-id arg-type) (unqualified-type-id param-type))) 1
+    (nullable-type-compatible? arg-type param-type) 2
+    :else nil))
+
+(defn- overload-score [arg-types {:decl/keys [param-types]}]
+  (when (= (count arg-types) (count param-types))
+    (let [scores (mapv type-match-score arg-types param-types)]
+      (when (every? some? scores)
+        (reduce + scores)))))
+
+(defn- best-overload [arg-types candidates]
+  (let [arity-matches (filter #(= (count arg-types) (count (:decl/param-types %)))
+                              candidates)
+        scored (->> arity-matches
+                    (keep (fn [candidate]
+                            (when-let [score (overload-score arg-types candidate)]
+                              (assoc candidate :resolution/score score))))
+                    (sort-by :resolution/score >)
+                    vec)]
+    (cond
+      (= 1 (count arity-matches)) (first arity-matches)
+      (and (seq scored)
+           (or (= 1 (count scored))
+               (> (:resolution/score (first scored))
+                  (:resolution/score (second scored)))))
+      (first scored))))
+
+(defn- resolve-decl-tx [db source-types ref-id decl]
+  (let [owner-type (owner-type-id source-types decl)]
+    (resolved-ref-tx db ref-id
+                     (cond-> {:ref/to-decl [:decl/id (:decl/id decl)]}
+                       (:decl/return-type decl)
+                       (assoc :ref/to-type [:type/id (:decl/return-type decl)])
+
+                       owner-type
+                       (assoc :ref/owner-type [:type/id owner-type])))))
+
+(defn- function-resolution-tx [db functions source-types {:ref/keys [id name] :call/keys [arg-types]}]
   (if-let [known-call (get known-function-calls name)]
     (resolved-ref-tx db id
                      (cond-> {}
@@ -919,16 +1234,10 @@
     (let [candidates (get functions name)]
       (case (count candidates)
         0 (unresolved-ref-tx id :resolve.reason/missing-classpath)
-        1 (let [decl (first candidates)
-                owner-type (owner-type-id source-types decl)]
-            (resolved-ref-tx db id
-                             (cond-> {:ref/to-decl [:decl/id (:decl/id decl)]}
-                               (:decl/return-type decl)
-                               (assoc :ref/to-type [:type/id (:decl/return-type decl)])
-
-                               owner-type
-                               (assoc :ref/owner-type [:type/id owner-type]))))
-        (unresolved-ref-tx id :resolve.reason/analysis-api-limitation)))))
+        1 (resolve-decl-tx db source-types id (first candidates))
+        (if-let [decl (best-overload arg-types candidates)]
+          (resolve-decl-tx db source-types id decl)
+          (unresolved-ref-tx id :resolve.reason/analysis-api-limitation))))))
 
 (defn semantic-resolution-facts
   "Return idempotent tx-data that enriches Kotlin refs with semantic links.
@@ -944,21 +1253,25 @@
                           known-classpath-types
                           (normalize-classpath-types (:kotlin/classpath-types opts))
                           source-types)
-        functions (function-index decls)]
+        functions (function-index decls)
+        analysis-api-tx (when (:kotlin/analysis-api? opts)
+                          (:tx-data (kotlin-analysis-api/setup-facts db project-id opts)))]
     (vec
-     (mapcat (fn [ref]
-               (case (:ref/kind ref)
-                 :ref.kind/type-use
-                 (type-resolution-tx db type-index ref)
+     (concat
+      analysis-api-tx
+      (mapcat (fn [ref]
+                (case (:ref/kind ref)
+                  :ref.kind/type-use
+                  (type-resolution-tx db type-index ref)
 
-                 :ref.kind/implements
-                 (type-resolution-tx db type-index ref)
+                  :ref.kind/implements
+                  (type-resolution-tx db type-index ref)
 
-                 :ref.kind/function-call
-                 (function-resolution-tx db functions source-types ref)
+                  :ref.kind/function-call
+                  (function-resolution-tx db functions source-types ref)
 
-                 []))
-             (project-refs db project-id)))))
+                  []))
+              (project-refs db project-id))))))
 
 (defn enrich!
   "Enrich existing Kotlin PSI facts with conservative semantic resolution.
@@ -967,9 +1280,14 @@
   - :project/id project identity to enrich
   - :kotlin/classpath-types collection or map of known type names available on
     the analysis classpath. Collection entries resolve to existing syntax type
-    facts such as kotlin:Locale; map values may provide explicit type ids."
+    facts such as kotlin:Locale; map values may provide explicit type ids.
+  - :kotlin/analysis-api? when true, records the Analysis API module/session
+    setup attempt as stable pass/diagnostic facts and uses conservative
+    fallback resolution when Analysis API classes are unavailable."
   [conn {:project/keys [id] :as opts}]
   (let [db (d/db conn)
+        analysis-api-result (when (:kotlin/analysis-api? opts)
+                              (kotlin-analysis-api/setup-facts db id opts))
         tx-data (semantic-resolution-facts db id opts)
         type-stubs (missing-type-stubs db tx-data)]
     (when (seq type-stubs)
@@ -977,9 +1295,12 @@
     (when (seq tx-data)
       (d/transact conn {:tx-data tx-data}))
     {:project/id id
-     :semantic-refs (count (filter map? tx-data))
+     :semantic-refs (count (filter #(contains? % :ref/resolved?) tx-data))
      :semantic-tx (count tx-data)
-     :type-stubs (count type-stubs)}))
+     :type-stubs (count type-stubs)
+     :analysis-api/setup (:setup analysis-api-result)
+     :analysis-api/status (:status analysis-api-result)
+     :analysis-api/reason (:reason analysis-api-result)}))
 
 (defn ingest!
   "Extract normalized Kotlin facts from ingested Kotlin files and transact them."

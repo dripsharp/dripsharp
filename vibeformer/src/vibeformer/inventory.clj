@@ -151,6 +151,44 @@
                          :reason))
           vec))))
 
+(defn unresolved-ref-detail-rankings
+  "Ranks unresolved references by language, ref kind, reason, owner, and name."
+  ([db]
+   (unresolved-ref-detail-rankings db {}))
+  ([db opts]
+   (let [{:keys [langs]} (normalize-opts opts)]
+     (->> (d/q '[:find (pull ?ref [:ref/kind
+                                   :ref/name
+                                   :ref/reason
+                                   {:ref/owner-type [:type/name]}
+                                   {:ref/from-node [{:node/file [:file/id :file/lang]}]}])
+                 :where
+                 [?ref :ref/resolved? false]]
+               db)
+          (map first)
+          (keep (fn [{:ref/keys [kind name reason owner-type from-node]}]
+                  (let [lang (get-in from-node [:node/file :file/lang])]
+                    (when (lang-matches? langs lang)
+                      {:lang lang
+                       :kind kind
+                       :reason reason
+                       :owner (or (:type/name owner-type) "")
+                       :name (or name "")
+                       :file/id (get-in from-node [:node/file :file/id])}))))
+          (group-by #(select-keys % [:lang :kind :reason :owner :name]))
+          (map (fn [[k rows]]
+                 (assoc k
+                        :count (count rows)
+                        :file-count (count (set (map :file/id rows))))))
+          (sort-by (juxt (comp - :count)
+                         (comp - :file-count)
+                         :lang
+                         :kind
+                         :reason
+                         :owner
+                         :name))
+          vec))))
+
 (def api-ref-kinds
   #{:ref.kind/constructor-call
     :ref.kind/field-access
@@ -206,4 +244,5 @@
     :unsupported-by-file (unsupported-by-file db opts)
     :files-without-unsupported (files-without-unsupported db opts)
     :unresolved-ref-rankings (unresolved-ref-rankings db opts)
+    :unresolved-ref-detail-rankings (unresolved-ref-detail-rankings db opts)
     :unresolved-api-call-rankings (unresolved-api-call-rankings db opts)}))

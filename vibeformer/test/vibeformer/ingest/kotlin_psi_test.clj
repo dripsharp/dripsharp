@@ -5,11 +5,12 @@
             [datomic.client.api :as d]
             [datomic.local :as dl]
             [vibeformer.datomic.schema :as schema]
+            [vibeformer.ingest.java-spoon :as java-spoon]
             [vibeformer.ingest.kotlin-psi :as kotlin-psi]
             [vibeformer.ingest.source :as source]
             [vibeformer.inventory :as inventory])
   (:import (java.nio.charset StandardCharsets)
-           (java.nio.file Files Path)
+           (java.nio.file Files Path Paths)
            (java.util UUID)))
 
 (def kotlin-fixture
@@ -49,6 +50,21 @@ fun helper(value: String): String = value
 
 fun choose(value: String): String = value
 fun choose(value: String?): String = value ?: \"\"
+
+fun usesAction(action: Action): Action = action
+
+fun gradleDslCalls(): Any {
+  named(\"publish\")
+  addConfiguredDependencyTo(\"implementation\", \"org.example:lib:1\")
+  addDependencyTo(\"implementation\", \"org.example:lib:1\")
+  addExternalModuleDependencyTo(\"api\", \"org.example:lib:1\")
+  configure<Action> { }
+  getByName(\"main\")
+  append(\"suffix\")
+  return getByName(\"main\")
+}
+
+fun stringify(value: Any): String = value.toString()
 
 fun usesHelper(value: String, local: LocalValue, locale: Locale, missing: MissingType): String {
   val localAgain: LocalValue = local
@@ -102,6 +118,16 @@ object FixtureModuleReader : ModuleReader {
 
   override fun listElements(uri: URI): List<String> {
     throw NotImplementedError()
+  }
+}
+")
+
+(def java-pseudo-type-fixture
+  "package com.acme.semantic;
+
+public final class JavaPseudoTypes {
+  public void log(MissingDependency missing) {
+    var value = missing.make();
   }
 }
 ")
@@ -333,25 +359,42 @@ object FixtureModuleReader : ModuleReader {
         (write-file! root file-path kotlin-semantic-fixture)
         (source/ingest! conn opts)
         (kotlin-psi/ingest! conn {:project/id "semantic"})
-        (let [before-counts (entity-counts (d/db conn))
-              first-run (kotlin-psi/enrich! conn {:project/id "semantic"
-                                                  :kotlin/classpath-types #{"Locale"}})
+        (let [first-run (kotlin-psi/enrich! conn {:project/id "semantic"
+                                                  :kotlin/classpath-types {"Locale" "java.util.Locale"
+                                                                          "Action" "org.gradle.api.Action"}})
               db (d/db conn)]
           (is (= {:project/id "semantic"}
                  (select-keys first-run [:project/id])))
           (is (pos? (:semantic-refs first-run)))
 
           (testing "project-local function calls resolve to declaration facts"
-            (is (= #{["helper" "helper" true]}
-                   (set (d/q '[:find ?ref-name ?decl-name ?resolved?
+            (is (= #{["helper" "helper" "com.acme.semantic.helper(String)" true]
+                     ["choose" "choose" "com.acme.semantic.choose(String)" true]}
+                   (set (d/q '[:find ?ref-name ?decl-name ?qualified-name
+                                      ?resolved?
                                :where
                                [?ref :ref/kind :ref.kind/function-call]
                                [?ref :ref/name ?ref-name]
                                [?ref :ref/resolved? ?resolved?]
                                [?ref :ref/to-decl ?decl]
                                [?decl :decl/name ?decl-name]
-                               [(= ?ref-name "helper")]]
+                               [?decl :decl/qualified-name ?qualified-name]
+                               [(contains? #{"helper" "choose"} ?ref-name)]]
                              db)))))
+
+          (testing "value parameter type facts are queryable for overload resolution"
+            (is (contains?
+                 (set (d/q '[:find ?parameter-name ?type-id
+                             :where
+                             [?node :node/kind :kotlin.node/value-parameter]
+                             [?node :node/name ?parameter-name]
+                             [?ref :ref/from-node ?node]
+                             [?ref :ref/kind :ref.kind/type-use]
+                             [?ref :ref/to-type ?type]
+                             [?type :type/id ?type-id]
+                             [(= ?parameter-name "value")]]
+                           db))
+                 ["value" "kotlin:String"])))
 
           (testing "source and declared classpath types resolve deliberately"
             (is (= #{["LocalValue" true]
@@ -363,7 +406,99 @@ object FixtureModuleReader : ModuleReader {
                                [?ref :ref/name ?type-name]
                                [?ref :ref/resolved? ?resolved?]
                                [(contains? #{"LocalValue" "Locale" "String"} ?type-name)]]
+                             db))))
+            (is (= #{["Action" "org.gradle.api.Action" true]}
+                   (set (d/q '[:find ?type-name ?type-id ?resolved?
+                               :where
+                               [?ref :ref/kind :ref.kind/type-use]
+                               [?ref :ref/name ?type-name]
+                               [?ref :ref/to-type ?type]
+                               [?type :type/id ?type-id]
+                               [?ref :ref/resolved? ?resolved?]
+                               [(= ?type-name "Action")]]
                              db)))))
+
+          (testing "Gradle DSL fallback calls resolve to stable owner and return type facts"
+            (let [target-names #{"named"
+                                 "addConfiguredDependencyTo"
+                                 "addDependencyTo"
+                                 "addExternalModuleDependencyTo"
+                                 "configure"
+                                 "getByName"
+                                 "append"}
+                  resolved (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
+                                        :in $ ?target-names
+                                        :where
+                                        [?ref :ref/kind :ref.kind/function-call]
+                                        [?ref :ref/name ?name]
+                                        [(contains? ?target-names ?name)]
+                                        [?ref :ref/resolved? ?resolved?]
+                                        [?ref :ref/to-type ?type]
+                                        [?type :type/id ?type-id]
+                                        [?ref :ref/owner-type ?owner]
+                                        [?owner :type/id ?owner-id]]
+                                      db
+                                      target-names))
+                  unresolved (set (d/q '[:find ?name ?reason
+                                          :in $ ?target-names
+                                          :where
+                                          [?ref :ref/resolved? false]
+                                          [?ref :ref/name ?name]
+                                          [(contains? ?target-names ?name)]
+                                          [?ref :ref/reason ?reason]]
+                                        db
+                                        target-names))]
+              (is (= #{["named"
+                        "org.gradle.api.NamedDomainObjectProvider"
+                        "org.gradle.api.NamedDomainObjectCollection"
+                        true]
+                       ["addConfiguredDependencyTo"
+                        "org.gradle.api.artifacts.ExternalModuleDependency"
+                        "org.gradle.kotlin.dsl.DependencyHandlerScope"
+                        true]
+                       ["addDependencyTo"
+                        "org.gradle.api.artifacts.Dependency"
+                        "org.gradle.kotlin.dsl.DependencyHandlerScope"
+                        true]
+                       ["addExternalModuleDependencyTo"
+                        "org.gradle.api.artifacts.ExternalModuleDependency"
+                        "org.gradle.kotlin.dsl.DependencyHandlerScope"
+                        true]
+                       ["configure"
+                        "kotlin:Unit"
+                        "org.gradle.api.plugins.ExtensionContainer"
+                        true]
+                       ["getByName"
+                        "kotlin:Any"
+                        "org.gradle.api.NamedDomainObjectCollection"
+                        true]
+                       ["append"
+                        "java.lang.Appendable"
+                        "java.lang.Appendable"
+                        true]}
+                     resolved))
+              (is (empty? unresolved))))
+
+          (testing "universal toString calls resolve to Kotlin String"
+            (let [resolved (set (d/q '[:find ?type-id ?owner-id ?resolved?
+                                        :where
+                                        [?ref :ref/kind :ref.kind/function-call]
+                                        [?ref :ref/name "toString"]
+                                        [?ref :ref/resolved? ?resolved?]
+                                        [?ref :ref/to-type ?type]
+                                        [?type :type/id ?type-id]
+                                        [?ref :ref/owner-type ?owner]
+                                        [?owner :type/id ?owner-id]]
+                                      db))
+                  unresolved (set (d/q '[:find ?reason
+                                          :where
+                                          [?ref :ref/resolved? false]
+                                          [?ref :ref/name "toString"]
+                                          [?ref :ref/reason ?reason]]
+                                        db))]
+              (is (= #{["kotlin:String" "kotlin:Any" true]}
+                     resolved))
+              (is (empty? unresolved))))
 
           (testing "nullable type-use refs keep nullability after semantic resolution"
             (is (contains?
@@ -380,8 +515,7 @@ object FixtureModuleReader : ModuleReader {
 
           (testing "unresolved refs keep explicit reasons"
             (is (= #{["MissingType" :resolve.reason/missing-classpath]
-                     ["format" :resolve.reason/missing-classpath]
-                     ["choose" :resolve.reason/analysis-api-limitation]}
+                     ["format" :resolve.reason/missing-classpath]}
                    (set (d/q '[:find ?name ?reason
                                :where
                                [?ref :ref/resolved? false]
@@ -391,9 +525,70 @@ object FixtureModuleReader : ModuleReader {
                              db)))))
 
           (testing "semantic reruns keep logical fact counts stable"
+            (let [after-counts (entity-counts (d/db conn))]
             (kotlin-psi/enrich! conn {:project/id "semantic"
-                                      :kotlin/classpath-types #{"Locale"}})
-            (is (= before-counts (entity-counts (d/db conn))))))))))
+                                      :kotlin/classpath-types {"Locale" "java.util.Locale"
+                                                              "Action" "org.gradle.api.Action"}})
+              (is (= after-counts (entity-counts (d/db conn)))))))))))
+
+(deftest kotlin-enrichment-does-not-rewrite-java-reference-facts
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            java-path "src/main/java/com/acme/semantic/JavaPseudoTypes.java"
+            kotlin-path "src/main/kotlin/com/acme/semantic/KotlinMissing.kt"
+            kotlin-source "package com.acme.semantic\n\nfun unresolved(missing: MissingType): MissingType = missing\n"
+            opts {:source/root root
+                  :project/id "mixed"
+                  :project/name "Mixed Fixture"}]
+        (write-file! root java-path java-pseudo-type-fixture)
+        (write-file! root kotlin-path kotlin-source)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "mixed"})
+        (kotlin-psi/ingest! conn {:project/id "mixed"})
+        (kotlin-psi/enrich! conn {:project/id "mixed"})
+        (let [db (d/db conn)
+              java-type-refs (set (d/q '[:find ?role ?name ?resolved?
+                                          :where
+                                          [?file :file/lang :lang/java]
+                                          [?node :node/file ?file]
+                                          [?ref :ref/from-node ?node]
+                                          [?ref :ref/kind :ref.kind/type-use]
+                                          [?ref :ref/role ?role]
+                                          [?ref :ref/name ?name]
+                                          [?ref :ref/resolved? ?resolved?]
+                                          [(contains? #{"var" "void"} ?name)]]
+                                        db))
+              unresolved-details (:unresolved-ref-detail-rankings (inventory/summary db))]
+          (is (= #{[:local-type "var" true]
+                   [:return-type "void" true]}
+                 java-type-refs))
+          (is (= [{:lang :lang/kotlin
+                   :kind :ref.kind/type-use
+                   :name "MissingType"
+                   :owner ""
+                   :reason :resolve.reason/missing-classpath
+                   :count 3
+                   :file-count 1}
+                  {:lang :lang/java
+                   :kind :ref.kind/method-call
+                   :name "make"
+                   :owner "com.acme.semantic.MissingDependency"
+                   :reason :resolve.reason/missing-classpath
+                   :count 1
+                   :file-count 1}
+                  {:lang :lang/java
+                   :kind :ref.kind/type-use
+                   :name "com.acme.semantic.MissingDependency"
+                   :owner ""
+                   :reason :resolve.reason/missing-classpath
+                   :count 1
+                   :file-count 1}]
+                 unresolved-details))
+          (is (not-any? #(and (= :lang/java (:lang %))
+                              (contains? #{"var" "void"} (:name %)))
+                        unresolved-details)))))))
 
 (deftest resolves-known-kotlin-api-call-seeds
   (with-empty-db
@@ -475,30 +670,51 @@ object FixtureModuleReader : ModuleReader {
                                            [(contains? #{:kotlin.node/local-property
                                                          :kotlin.node/return}
                                                         ?kind)]]
-                                         db))]
+                                         db))
+                  expression-edges (set (d/q '[:find ?parent-kind ?role ?child-kind ?child-value
+                                                :where
+                                                [?child :node/parent ?parent]
+                                                [?parent :node/kind ?parent-kind]
+                                                [?child :node/role ?role]
+                                                [?child :node/kind ?child-kind]
+                                                [?child :node/value ?child-value]
+                                                [(contains? #{:kotlin.node/local-property
+                                                              :kotlin.node/return
+                                                              :kotlin.node/elvis-expression
+                                                              :kotlin.node/call-expression}
+                                                             ?parent-kind)]]
+                                              db))
+                  legacy-call-children (set (d/q '[:find ?call-name ?child-kind ?child-value
+                                                    :where
+                                                    [?call :node/kind :kotlin.node/call-expression]
+                                                    [?call :node/name ?call-name]
+                                                    [?child :node/parent ?call]
+                                                    [?child :node/kind ?child-kind]
+                                                    [?child :node/value ?child-value]
+                                                    [(contains? #{"resolve" "URI"} ?call-name)]
+                                                    [(contains? #{:kotlin.node/call-receiver
+                                                                  :kotlin.node/call-argument}
+                                                                 ?child-kind)]]
+                                                  db))]
               (is (contains? (set (map (juxt first second) body-values))
                              [:kotlin.node/local-property "text"]))
               (is (contains? body-values
                              [:kotlin.node/return "return" "URI(\"file:///tmp\").resolve(path.toUri())"]))
               (is (some #(and (= :kotlin.node/local-property (first %))
                               (str/includes? (nth % 2) ".trimIndent()"))
-                        body-values)))
-            (is (set/subset?
-                 #{["resolve" :kotlin.node/call-receiver "URI(\"file:///tmp\")"]
-                   ["resolve" :kotlin.node/call-argument "path.toUri()"]
-                   ["URI" :kotlin.node/call-argument "\"file:///tmp\""]}
-                 (set (d/q '[:find ?call-name ?child-kind ?child-value
-                             :where
-                             [?call :node/kind :kotlin.node/call-expression]
-                             [?call :node/name ?call-name]
-                             [?child :node/parent ?call]
-                             [?child :node/kind ?child-kind]
-                             [?child :node/value ?child-value]
-                             [(contains? #{"resolve" "URI"} ?call-name)]
-                             [(contains? #{:kotlin.node/call-receiver
-                                           :kotlin.node/call-argument}
-                                          ?child-kind)]]
-                           db)))))
+                        body-values))
+              (is (set/subset?
+                   #{[:kotlin.node/local-property :initializer :kotlin.node/qualified-expression "\"\"\"\n    value\n  \"\"\".trimIndent()"]
+                     [:kotlin.node/local-property :initializer :kotlin.node/call-expression "listOf(text)"]
+                     [:kotlin.node/return :return-expression :kotlin.node/qualified-expression "URI(\"file:///tmp\").resolve(path.toUri())"]
+                     [:kotlin.node/return :return-expression :kotlin.node/call-expression "listOf(root.resolve(\"child\").toUri(), URI(\"https://example.com\"))"]
+                     [:kotlin.node/call-expression :argument :kotlin.node/qualified-expression "root.resolve(\"child\").toUri()"]}
+                   expression-edges))
+              (is (set/subset?
+                   #{["resolve" :kotlin.node/call-receiver "URI(\"file:///tmp\")"]
+                     ["resolve" :kotlin.node/call-argument "path.toUri()"]
+                     ["URI" :kotlin.node/call-argument "\"file:///tmp\""]}
+                   legacy-call-children))))
           (is (= #{["trimIndent" "kotlin:String" "kotlin.text.StringsKt" true]
                    ["listOf" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
                    ["assertThat" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]
@@ -509,6 +725,76 @@ object FixtureModuleReader : ModuleReader {
                  resolved-calls))
           (is (empty? unresolved-targets))
           (is (empty? ranked-targets)))))))
+
+(deftest records-analysis-api-prototype-setup-for-committed-kotlin-sample
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [sample-source (.normalize (.toAbsolutePath (Paths/get "sample-projects/kotlin-api-calls/source"
+                                                                   (make-array String 0))))
+            project-id "kotlin-api-calls-analysis-api"]
+        (is (Files/isDirectory sample-source (make-array java.nio.file.LinkOption 0)))
+        (source/ingest! conn {:source/root sample-source
+                              :project/id project-id
+                              :project/name "Kotlin API Calls Analysis API Prototype"})
+        (kotlin-psi/ingest! conn {:project/id project-id})
+        (let [first-run (kotlin-psi/enrich! conn {:project/id project-id
+                                                  :kotlin/analysis-api? true})
+              db (d/db conn)]
+          (testing "the prototype stores only stable setup/pass/diagnostic data"
+            (is (= :analysis-api.prototype/unavailable
+                   (:analysis-api/status first-run)))
+            (is (= {:project/id project-id
+                    :analysis-api/session-class "org.jetbrains.kotlin.analysis.api.KaSession"
+                    :analysis-api/available? false
+                    :analysis-api/status :analysis-api.status/unavailable
+                    :analysis-api/reason :analysis-api.reason/classes-not-on-classpath
+                    :analysis-api/source-files 1}
+                   (-> (:analysis-api/setup first-run)
+                       (select-keys [:project/id
+                                     :analysis-api/session-class
+                                     :analysis-api/available?
+                                     :analysis-api/status
+                                     :analysis-api/reason])
+                       (assoc :analysis-api/source-files
+                              (get-in first-run [:analysis-api/setup
+                                                 :analysis-api/module
+                                                 :source/files])))))
+            (is (= #{["KOTLIN_ANALYSIS_API_UNAVAILABLE"
+                      :diagnostic.severity/warning
+                      :diagnostic.mapping/unmapped]}
+                   (set (d/q '[:find ?code ?severity ?mapping
+                               :where
+                               [?diagnostic :diagnostic/code ?code]
+                               [?diagnostic :diagnostic/severity ?severity]
+                               [?diagnostic :diagnostic/mapping-status ?mapping]
+                               [(= ?code "KOTLIN_ANALYSIS_API_UNAVAILABLE")]]
+                             db))))
+            (is (= #{[:pass.kind/kotlin-analysis-api-prototype
+                      :pass.status/skipped
+                      "Kotlin Analysis API"]}
+                   (set (d/q '[:find ?kind ?status ?compiler
+                               :where
+                               [?pass :pass/kind ?kind]
+                               [?pass :pass/status ?status]
+                               [?pass :pass/compiler ?compiler]
+                               [(= ?kind :pass.kind/kotlin-analysis-api-prototype)]]
+                             db)))))
+
+          (testing "conservative fallback still resolves stable sample refs"
+            (is (= #{["trimIndent" "kotlin:String" true]
+                     ["listOf" "kotlin.collections.List" true]
+                     ["resolve" "java.nio.file.Path" true]
+                     ["toUri" "java.net.URI" true]}
+                   (set (d/q '[:find ?name ?type-id ?resolved?
+                               :where
+                               [?ref :ref/kind :ref.kind/function-call]
+                               [?ref :ref/name ?name]
+                               [(contains? #{"trimIndent" "listOf" "resolve" "toUri"} ?name)]
+                               [?ref :ref/resolved? ?resolved?]
+                               [?ref :ref/to-type ?type]
+                               [?type :type/id ?type-id]]
+                             db))))))))))
 
 (deftest extracts-kotlin-object-interface-override-facts
   (with-empty-db

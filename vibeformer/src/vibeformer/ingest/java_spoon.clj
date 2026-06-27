@@ -4,12 +4,14 @@
   (:import (java.nio.file Paths)
            (java.security MessageDigest)
            (spoon Launcher)
-           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtConditional CtConstructorCall CtExecutableReferenceExpression CtExpression CtFieldRead CtFieldWrite CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
+           (spoon.reflect.code CtArrayRead CtAssignment CtBinaryOperator CtBlock CtCase CtCatch CtConditional CtConstructorCall CtExecutableReferenceExpression CtExpression CtFieldRead CtFieldWrite CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtSwitchExpression CtSynchronized CtTargetedExpression CtThisAccess CtThrow CtTry CtTypeAccess CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtYieldStatement)
            (spoon.reflect.declaration CtAnnotationType CtClass CtConstructor CtEnum CtExecutable CtField CtInterface CtMethod CtParameter CtRecord CtRecordComponent CtType)
            (spoon.reflect.reference CtExecutableReference CtFieldReference CtTypeReference)
            (spoon.reflect.visitor.filter TypeFilter)))
 
 (def ^:private lang :lang/java)
+(def ^:dynamic *classpath-types* #{})
+(def ^:dynamic *classpath-package-roots* #{})
 
 (defn- hex-bytes [bytes]
   (apply str (map #(format "%02x" (bit-and % 0xff)) bytes)))
@@ -146,10 +148,12 @@
        false))))
 
 (defn- nullable-type-ref? [^CtTypeReference type-ref]
-  (nullable-annotated? type-ref))
+  (boolean (and type-ref (nullable-annotated? type-ref))))
 
 (defn- actual-type-arguments [^CtTypeReference type-ref]
-  (vec (.getActualTypeArguments type-ref)))
+  (if type-ref
+    (vec (.getActualTypeArguments type-ref))
+    []))
 
 (defn- type-display-name [^CtTypeReference type-ref nullable?]
   (let [base-name (type-base-name type-ref)
@@ -169,6 +173,9 @@
 (def ^:private built-in-types
   #{"boolean" "byte" "char" "double" "float" "int" "long" "short" "void"})
 
+(def ^:private pseudo-types
+  #{"var"})
+
 (defn- type-declaration [^CtTypeReference type-ref]
   (when type-ref
     (try
@@ -176,11 +183,30 @@
       (catch Throwable _
         nil))))
 
+(defn- strip-generic-suffix [type-name]
+  (some-> type-name
+          (str/replace #"<.*$" "")
+          (str/replace #"\[\]$" "")))
+
+(defn- package-root-match? [type-name package-root]
+  (or (= type-name package-root)
+      (str/starts-with? type-name (str package-root "."))))
+
+(defn- classpath-type? [type-name]
+  (let [type-name (strip-generic-suffix type-name)]
+    (boolean
+     (and (not (str/blank? (or type-name "")))
+          (or (contains? *classpath-types* type-name)
+              (some #(package-root-match? type-name %) *classpath-package-roots*))))))
+
 (defn- type-reference-resolved? [^CtTypeReference type-ref]
   (let [id (type-id type-ref false)]
-    (boolean (and (not (import-shadowed-type-ref? type-ref))
+    (boolean (and type-ref
                   (or (contains? built-in-types id)
-                      (type-declaration type-ref))))))
+                      (contains? pseudo-types id)
+                      (and (not (import-shadowed-type-ref? type-ref))
+                           (or (type-declaration type-ref)
+                               (classpath-type? id))))))))
 
 (defn- type-fact
   ([^CtTypeReference type-ref]
@@ -779,6 +805,64 @@
    ["java.util.OptionalLong" "orElse"] :java.optional/or-else
    ["java.util.OptionalDouble" "orElse"] :java.optional/or-else})
 
+(def java-list-owners
+  #{"java.util.List"
+    "java.util.ArrayList"
+    "java.util.LinkedList"})
+
+(def java-set-owners
+  #{"java.util.Set"
+    "java.util.HashSet"
+    "java.util.LinkedHashSet"})
+
+(def java-map-owners
+  #{"java.util.Map"
+    "java.util.HashMap"
+    "java.util.LinkedHashMap"
+    "java.util.TreeMap"})
+
+(def java-map-entry-owners
+  #{"java.util.Map$Entry"
+    "java.util.Map.Entry"})
+
+(defn- java-list-owner? [owner]
+  (contains? java-list-owners owner))
+
+(defn- java-set-owner? [owner]
+  (contains? java-set-owners owner))
+
+(defn- java-map-owner? [owner]
+  (contains? java-map-owners owner))
+
+(defn- java-collection-owner? [owner]
+  (or (java-list-owner? owner)
+      (java-set-owner? owner)
+      (java-map-owner? owner)
+      (= "java.util.Collection" owner)))
+
+(defn- java-map-entry-owner? [owner]
+  (contains? java-map-entry-owners owner))
+
+(defn- collection-feature-kind [owner name]
+  (cond
+    (and (java-collection-owner? owner) (= "size" name)) :java.collection/size
+    (and (java-collection-owner? owner) (= "isEmpty" name)) :java.collection/is-empty
+    (and (or (java-list-owner? owner) (java-set-owner? owner) (= "java.util.Collection" owner))
+         (= "contains" name)) :java.collection/contains
+    (and (or (java-list-owner? owner) (java-set-owner? owner) (= "java.util.Collection" owner))
+         (= "add" name)) :java.collection/add
+    (and (java-list-owner? owner) (= "get" name)) :java.list/get
+    (and (java-map-owner? owner) (= "get" name)) :java.map/get
+    (and (java-map-owner? owner) (= "put" name)) :java.map/put
+    (and (java-map-owner? owner) (= "getOrDefault" name)) :java.map/get-or-default
+    (and (java-map-owner? owner) (= "containsKey" name)) :java.map/contains-key
+    (and (java-map-owner? owner) (= "containsValue" name)) :java.map/contains-value
+    (and (java-map-owner? owner) (= "entrySet" name)) :java.map/entry-set
+    (and (java-map-owner? owner) (= "keySet" name)) :java.map/key-set
+    (and (java-map-owner? owner) (= "values" name)) :java.map/values
+    (and (java-map-entry-owner? owner) (= "getKey" name)) :java.map-entry/get-key
+    (and (java-map-entry-owner? owner) (= "getValue" name)) :java.map-entry/get-value))
+
 (defn- stream-owner? [owner]
   (some-> owner (str/starts-with? "java.util.stream")))
 
@@ -853,6 +937,10 @@
                            feature-kind
                            node-id)])
      (when-let [feature-kind (get supported-optional-features [owner name])]
+       [(supported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
+                           feature-kind
+                           node-id)])
+     (when-let [feature-kind (collection-feature-kind owner name)]
        [(supported-feature (str node-id ":feature:" (clojure.core/name feature-kind))
                            feature-kind
                            node-id)])
@@ -1193,6 +1281,25 @@
     (instance? CtBlock statement) (.getStatements ^CtBlock statement)
     :else [statement]))
 
+(defn- catch-clause-facts [file-id parent-node-id ordinal ^CtCatch catch-clause]
+  (let [parameter (.getParameter catch-clause)
+        node-id (child-node-id parent-node-id :catch ordinal catch-clause)
+        body (.getBody catch-clause)]
+    (concat
+     [(node-fact node-id
+                 :java.node/catch-clause
+                 (or (some-> parameter .getSimpleName) "catch")
+                 file-id
+                 ordinal
+                 catch-clause
+                 :parent parent-node-id
+                 :role :catch)]
+     (type-ref-facts node-id :catch-type (some-> parameter .getType) (some-> parameter .getSimpleName))
+     (mapcat (fn [index body-statement]
+               (statement-facts file-id node-id :body index body-statement))
+             (range)
+             (if body (.getStatements body) [])))))
+
 (defn- statement-facts [file-id parent-node-id role ordinal ^CtStatement statement]
   (when statement
     (let [node-id (child-node-id parent-node-id role ordinal statement)]
@@ -1247,6 +1354,52 @@
                      (statement-facts file-id node-id :body index body-statement))
                    (range)
                    (if block (.getStatements block) []))))
+
+        (instance? CtForEach statement)
+        (let [foreach-statement ^CtForEach statement
+              variable (.getVariable foreach-statement)]
+          (concat
+           [(node-fact node-id
+                       :java.node/foreach-statement
+                       (or (some-> variable .getSimpleName) "foreach")
+                       file-id
+                       ordinal
+                       statement
+                       :parent parent-node-id
+                       :role role
+                       :value "foreach")]
+           (type-ref-facts node-id :element-type (some-> variable .getType) (some-> variable .getSimpleName))
+           (expression-facts file-id node-id :iterable 0 (.getExpression foreach-statement))
+           (mapcat (fn [index body-statement]
+                     (statement-facts file-id node-id :body index body-statement))
+                   (range)
+                   (branch-statements (.getBody foreach-statement)))))
+
+        (instance? CtTry statement)
+        (let [try-statement ^CtTry statement
+              body (.getBody try-statement)
+              finalizer (.getFinalizer try-statement)]
+          (concat
+           [(node-fact node-id
+                       :java.node/try-statement
+                       "try"
+                       file-id
+                       ordinal
+                       statement
+                       :parent parent-node-id
+                       :role role)]
+           (mapcat (fn [index body-statement]
+                     (statement-facts file-id node-id :body index body-statement))
+                   (range)
+                   (if body (.getStatements body) []))
+           (mapcat (fn [index catch-clause]
+                     (catch-clause-facts file-id node-id index catch-clause))
+                   (range)
+                   (.getCatchers try-statement))
+           (mapcat (fn [index finalizer-statement]
+                     (statement-facts file-id node-id :finally index finalizer-statement))
+                   (range)
+                   (if finalizer (.getStatements finalizer) []))))
 
         (instance? CtReturn statement)
         (concat
@@ -1674,21 +1827,35 @@
               :else fact))
           deduped)))
 
+(defn- normalize-classpath-strings [values]
+  (cond
+    (nil? values) #{}
+    (string? values) #{values}
+    (set? values) (set (remove str/blank? (map str values)))
+    (sequential? values) (set (remove str/blank? (map str values)))
+    :else #{(str values)}))
+
 (defn extract-project-facts
   "Read Java file records for project-id from db and return normalized Java facts.
 
   Java file records must already exist, usually from vibeformer.ingest.source."
-  [db project-id]
-  (resolve-local-refs (mapcat file-facts (file-records db project-id))))
+  ([db project-id]
+   (extract-project-facts db project-id {}))
+  ([db project-id opts]
+   (binding [*classpath-types* (normalize-classpath-strings (:java/classpath-types opts))
+             *classpath-package-roots* (normalize-classpath-strings (:java/classpath-package-roots opts))]
+     (resolve-local-refs (mapcat file-facts (file-records db project-id))))))
 
 (defn ingest!
   "Extract normalized Java facts from ingested Java files and transact them."
-  [conn {:project/keys [id]}]
+  [conn {:project/keys [id] :as opts}]
   (let [db (d/db conn)
         files (file-records db id)
-        facts (resolve-local-refs (mapcat file-facts files))]
+        facts (extract-project-facts db id opts)]
     (when (seq facts)
       (d/transact conn {:tx-data facts}))
     {:project/id id
      :java-files (count files)
+     :classpath/types (count (normalize-classpath-strings (:java/classpath-types opts)))
+     :classpath/package-roots (count (normalize-classpath-strings (:java/classpath-package-roots opts)))
      :transacted-facts (count facts)}))

@@ -96,6 +96,28 @@ Then regenerate the entire C# project from source facts.
    Delete generated output and rerun the pipeline.
 ```
 
+## Current Milestone Boundary
+
+The committed implementation has not completed this whole pipeline for
+`../research/pkl`. The current milestone is intentionally staged:
+
+```text
+samples:
+  analyze -> Datomic -> transform -> emit C# -> optional dotnet build
+          -> ingest diagnostics when build output exists
+
+research/pkl:
+  discover -> classpath/destination mapping -> source facts -> inventory
+           -> unresolved-reference diagnostics -> provenance
+           -> skip C# emission in facts-only mode
+```
+
+That distinction matters. Green samples and a green facts-only research dry-run
+mean the durable pipeline is improving; they do not mean Pkl is portable yet.
+The next milestone is to reduce unresolved references, generate full research
+C# projects from destination facts, run `dotnet build` where feasible, and feed
+diagnostics back into analyzer/model/rule/helper work.
+
 ## Important Non-Goal: Patching Generated C#
 
 Do not use this workflow:

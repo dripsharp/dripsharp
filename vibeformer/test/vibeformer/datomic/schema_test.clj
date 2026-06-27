@@ -88,25 +88,31 @@
                                           :where
                                           [_ :db/ident ?ident]]
                                         (d/db conn)
-                                        [:project/id
-                                         :file/id
-                                         :node/id
-                                         :decl/id
-                                         :type-param/id
-                                         :type/id
-                                         :ref/id
-                                         :feature/id
-                                         :rule/id])))]
-        (is (= #{:project/id
-                 :file/id
-                 :node/id
-                 :decl/id
-                 :type-param/id
-                 :type/id
-                 :ref/id
-                 :feature/id
-                 :rule/id}
-               idents))))))
+	                                        [:project/id
+	                                         :file/id
+	                                         :node/id
+	                                         :decl/id
+	                                         :type-param/id
+	                                         :type/id
+	                                         :ref/id
+	                                         :feature/id
+	                                         :rule/id
+	                                         :dest.project/id
+	                                         :dest.item/id
+	                                         :dest.dependency/id])))]
+	        (is (= #{:project/id
+	                 :file/id
+	                 :node/id
+	                 :decl/id
+	                 :type-param/id
+	                 :type/id
+	                 :ref/id
+	                 :feature/id
+	                 :rule/id
+	                 :dest.project/id
+	                 :dest.item/id
+	                 :dest.dependency/id}
+	               idents))))))
 
 (deftest unique-identity-attrs-support-lookup-refs
   (with-empty-db

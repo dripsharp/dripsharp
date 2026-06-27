@@ -80,6 +80,11 @@
       (contains? langs :lang/kotlin)
       (into rules/initial-kotlin-rules))))
 
+(defn- rule-summary [source-files]
+  (let [rule-catalog (registered-rules source-files)]
+    {:rules/registered (count rule-catalog)
+     :rules/langs (sort-by str (source-langs source-files))}))
+
 (def lookup-ref-attrs
   {:decl/return-type :type/id
    :decl/source-node :node/id
@@ -224,11 +229,13 @@
      {}
      java-fact-group-order)))
 
-(defn- ingest-java-batched! [conn project-id source-files]
-  (let [facts (java-spoon/extract-project-facts (d/db conn) project-id)
+(defn- ingest-java-batched! [conn project-id source-files opts]
+  (let [facts (java-spoon/extract-project-facts (d/db conn) project-id opts)
         stats (transact-fact-batches! conn facts)]
     {:project/id project-id
      :java-files (count (filter #(= :lang/java (:file/lang %)) source-files))
+     :classpath/types (count (:java/classpath-types opts))
+     :classpath/package-roots (count (:java/classpath-package-roots opts))
      :transacted-facts (count facts)
      :batches stats}))
 
@@ -321,26 +328,28 @@
          (schema/install! conn)
          (let [source-files (source/source-file-facts source-opts)
                source-result (source/ingest! conn source-opts)
-               java-result (ingest-java-batched! conn project-id source-files)
+               java-result (ingest-java-batched! conn project-id source-files opts)
                kotlin-result (ingest-kotlin-batched! conn project-id source-files)
-               kotlin-enrich-result (ingest-kotlin-enrichment-batched! conn project-id {})
+               kotlin-enrich-result (ingest-kotlin-enrichment-batched! conn project-id opts)
+               rule-summary (rule-summary source-files)
                _ (rules/register! conn (registered-rules source-files))
                db (d/db conn)
                coverage-report (rules/coverage-report db {:allow-stubs? true
                                                            :allow-unsupported? true})
-               report {:report/type :vibeformer.report/research-inventory
-                       :project/id project-id
-                       :project/root (slash-path project-root)
-                       :research/root (slash-path research-root)
-                       :source/counts (source-counts source-files)
-                       :source/files (count source-files)
-                       :ingest/source source-result
-                       :ingest/java java-result
-                       :ingest/kotlin kotlin-result
-                       :ingest/kotlin-enrich kotlin-enrich-result
-                       :rules/registered (count rules/initial-java-rules)
-                       :coverage (coverage-summary coverage-report)
-                       :inventory (inventory/summary db)}
+               report (merge
+                       {:report/type :vibeformer.report/research-inventory
+                        :project/id project-id
+                        :project/root (slash-path project-root)
+                        :research/root (slash-path research-root)
+                        :source/counts (source-counts source-files)
+                        :source/files (count source-files)
+                        :ingest/source source-result
+                        :ingest/java java-result
+                        :ingest/kotlin kotlin-result
+                        :ingest/kotlin-enrich kotlin-enrich-result
+                        :coverage (coverage-summary coverage-report)
+                        :inventory (inventory/summary db)}
+                       rule-summary)
                output (write-edn! output-file report)]
            (assoc report :report/file output)))))))
 

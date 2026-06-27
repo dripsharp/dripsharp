@@ -283,3 +283,34 @@ Find which source features are associated with compiler errors:
        [?f :feature/kind ?feature]]
      db)
 ```
+
+Diagnostics also track mapping quality:
+
+```clojure
+{:diagnostic/id "java-word-count:dotnet-build:...:CS1002"
+ :diagnostic/mapping-status :diagnostic.mapping/mapped
+ :diagnostic/mapping-reason :diagnostic.mapping/provenance-span
+ :diagnostic/source-node [:node/id "..."]
+ :diagnostic/rule [:rule/id :java.class-node/to-csharp-class]
+ :diagnostic/source-features [[:feature/id "..."]]}
+```
+
+Unmapped diagnostics use:
+
+```clojure
+{:diagnostic/mapping-status :diagnostic.mapping/unmapped
+ :diagnostic/mapping-reason :diagnostic.mapping/no-provenance-span}
+```
+
+Rank unmapped diagnostics separately from rule failures:
+
+```clojure
+(d/q '[:find ?code ?severity ?message (count ?d) (count-distinct ?file)
+       :where
+       [?d :diagnostic/mapping-status :diagnostic.mapping/unmapped]
+       [?d :diagnostic/code ?code]
+       [?d :diagnostic/severity ?severity]
+       [?d :diagnostic/message ?message]
+       [?d :diagnostic/file ?file]]
+     db)
+```

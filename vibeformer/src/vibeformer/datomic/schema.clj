@@ -291,12 +291,94 @@
    {:db/ident :diagnostic/rule
     :db/valueType :db.type/ref
     :db/cardinality :db.cardinality/one}
-   {:db/ident :diagnostic/source-features
+	   {:db/ident :diagnostic/source-features
+	    :db/valueType :db.type/ref
+	    :db/cardinality :db.cardinality/many}])
+
+(def destination
+  [{:db/ident :dest.project/id
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :dest.project/source-project
     :db/valueType :db.type/ref
-    :db/cardinality :db.cardinality/many}])
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/source-module
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/name
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/path
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/sdk
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/output-type
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/target-framework
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/implicit-usings
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/nullable
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/default-compile-items?
+    :db/valueType :db.type/boolean
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/items
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/isComponent true}
+   {:db/ident :dest.item/id
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :dest.item/kind
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.item/path
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.item/source-file
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.project/dependencies
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/isComponent true}
+   {:db/ident :dest.dependency/id
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+   {:db/ident :dest.dependency/kind
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.dependency/include
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.dependency/version
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.dependency/path
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.dependency/target-project
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.dependency/source-configuration
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :dest.dependency/source-expression
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}])
 
 (def all
-  (vec (concat project file node declaration source-type reference feature transform-rule pass diagnostic)))
+  (vec (concat project file node declaration source-type reference feature transform-rule pass diagnostic destination)))
 
 (def schema all)
 

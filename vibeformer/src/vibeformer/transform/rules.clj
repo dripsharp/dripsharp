@@ -75,6 +75,18 @@
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/if-statement
     :rule/status implemented-status}
+   {:rule/id :java.foreach-statement-node/to-csharp-foreach
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/foreach-statement
+    :rule/status implemented-status}
+   {:rule/id :java.try-statement-node/to-csharp-try
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/try-statement
+    :rule/status implemented-status}
+   {:rule/id :java.catch-clause-node/to-csharp-catch
+    :rule/source-lang :lang/java
+    :rule/input-kind :java.node/catch-clause
+    :rule/status implemented-status}
    {:rule/id :java.literal-node/to-csharp-literal
     :rule/source-lang :lang/java
     :rule/input-kind :java.node/literal
@@ -579,6 +591,66 @@
     :rule/input-feature :java.optional/or-else
     :rule/output-feature :csharp.api/linq-default-if-empty-max
     :rule/status implemented-status}
+   {:rule/id :java.collection-size/to-csharp-count
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.collection/size
+    :rule/status implemented-status}
+   {:rule/id :java.collection-is-empty/to-csharp-count-check
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.collection/is-empty
+    :rule/status implemented-status}
+   {:rule/id :java.collection-contains/to-csharp-contains
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.collection/contains
+    :rule/status implemented-status}
+   {:rule/id :java.collection-add/to-csharp-add
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.collection/add
+    :rule/status implemented-status}
+   {:rule/id :java.list-get/to-csharp-indexer
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.list/get
+    :rule/status implemented-status}
+   {:rule/id :java.map-get/to-csharp-indexer
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map/get
+    :rule/status implemented-status}
+   {:rule/id :java.map-put/to-csharp-indexer-assignment
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map/put
+    :rule/status implemented-status}
+   {:rule/id :java.map-get-or-default/to-csharp-get-value-or-default
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map/get-or-default
+    :rule/status implemented-status}
+   {:rule/id :java.map-contains-key/to-csharp-contains-key
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map/contains-key
+    :rule/status implemented-status}
+   {:rule/id :java.map-contains-value/to-csharp-contains-value
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map/contains-value
+    :rule/status implemented-status}
+   {:rule/id :java.map-entry-set/to-csharp-dictionary-enumeration
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map/entry-set
+    :rule/status implemented-status}
+   {:rule/id :java.map-key-set/to-csharp-keys
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map/key-set
+    :rule/status implemented-status}
+   {:rule/id :java.map-values/to-csharp-values
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map/values
+    :rule/status implemented-status}
+   {:rule/id :java.map-entry-get-key/to-csharp-key
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map-entry/get-key
+    :rule/status implemented-status}
+   {:rule/id :java.map-entry-get-value/to-csharp-value
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.map-entry/get-value
+    :rule/status implemented-status}
    {:rule/id :java.stream-collect/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/collect
@@ -701,6 +773,11 @@
     :rule/input-kind :kotlin.node/function
     :rule/output-feature :csharp.feature/method
     :rule/status implemented-status}
+   {:rule/id :kotlin.value-parameter-node/to-csharp-signature
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/value-parameter
+    :rule/output-feature :csharp.feature/parameter
+    :rule/status implemented-status}
    {:rule/id :kotlin.declaration-node/to-csharp-stub
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/declaration
@@ -720,6 +797,40 @@
     :rule/input-kind :kotlin.node/call-argument
     :rule/output-feature :csharp.feature/expression
     :rule/status implemented-status}
+   {:rule/id :kotlin.qualified-expression-node/to-csharp-call
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/qualified-expression
+    :rule/output-feature :csharp.feature/expression
+    :rule/status implemented-status}
+   {:rule/id :kotlin.binary-expression-node/to-csharp-binary
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/binary-expression
+    :rule/output-feature :csharp.feature/expression
+    :rule/status implemented-status}
+   {:rule/id :kotlin.lambda-expression-node/to-csharp-lambda
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/lambda-expression
+    :rule/output-feature :csharp.feature/lambda
+    :rule/status implemented-status}
+   {:rule/id :kotlin.string-literal-node/to-csharp-literal
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/string-literal
+    :rule/output-feature :csharp.feature/literal
+    :rule/status implemented-status}
+   {:rule/id :kotlin.literal-node/to-csharp-literal
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/literal
+    :rule/output-feature :csharp.feature/literal
+    :rule/status implemented-status}
+   {:rule/id :kotlin.name-reference-node/to-csharp-variable
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/name-reference
+    :rule/output-feature :csharp.feature/expression
+    :rule/status implemented-status}
+   {:rule/id :kotlin.expression-node/to-csharp-stub
+    :rule/source-lang :lang/kotlin
+    :rule/input-kind :kotlin.node/expression
+    :rule/status stubbed-status}
    {:rule/id :kotlin.safe-call-node/to-csharp-null-check
     :rule/source-lang :lang/kotlin
     :rule/input-kind :kotlin.node/safe-call
@@ -778,10 +889,10 @@
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/declaration
     :rule/status stubbed-status}
-   {:rule/id :kotlin.top-level-declaration-feature/to-csharp-stub
+   {:rule/id :kotlin.file-facade/to-csharp-static-class
     :rule/source-lang :lang/kotlin
     :rule/input-feature :kotlin.feature/top-level-declaration
-    :rule/output-feature :csharp.feature/member
+    :rule/output-feature :csharp.feature/static-class
     :rule/status implemented-status}
    {:rule/id :kotlin.nullable-type-feature/to-csharp-stub
     :rule/source-lang :lang/kotlin

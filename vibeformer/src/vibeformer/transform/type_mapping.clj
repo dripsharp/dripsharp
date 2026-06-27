@@ -119,6 +119,10 @@
    "java.util.LinkedHashSet" ["HashSet" #{collection-using}]
    "java.util.Map" ["Dictionary" #{collection-using}]
    "java.util.HashMap" ["Dictionary" #{collection-using}]
+   "java.util.LinkedHashMap" ["Dictionary" #{collection-using}]
+   "java.util.TreeMap" ["SortedDictionary" #{collection-using}]
+   "java.util.Map$Entry" ["KeyValuePair" #{collection-using}]
+   "java.util.Map.Entry" ["KeyValuePair" #{collection-using}]
    "java.lang.Iterable" ["IEnumerable" #{collection-using}]
    "java.util.Iterator" ["IEnumerator" #{collection-using}]
    "java.util.Optional" ["Optional" #{}]
@@ -368,10 +372,6 @@
         (let [{:csharp/keys [type usings]} (get java-exceptions type-name)]
           (result type usings #{}))
 
-        (contains? java-known-types type-name)
-        (let [{:csharp/keys [type usings]} (get java-known-types type-name)]
-          (result type usings #{}))
-
         (= "java.util.Optional" type-name)
         (java-optional-result source-type)
 
@@ -383,6 +383,10 @@
 
         (= "java.util.OptionalDouble" type-name)
         (java-primitive-optional-result source-type "double")
+
+        (contains? java-known-types type-name)
+        (let [{:csharp/keys [type usings]} (get java-known-types type-name)]
+          (result type usings #{}))
 
         (contains? collection-mappings type-name)
         (let [[target usings] (get collection-mappings type-name)]

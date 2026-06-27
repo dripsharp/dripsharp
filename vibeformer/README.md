@@ -50,13 +50,35 @@ Vibeformer currently uses:
 * Kotlin compiler embeddable PSI APIs for initial Kotlin parsing.
 * `dotnet build` or `csc` as the intended C# validation oracle.
 
-The existing tests smoke-check:
+Implemented behavior currently includes:
 
-* Datomic Local setup and simple fact graph transactions.
-* Spoon extraction of package, class, method, field, type, call, modifier, and
-  source-position facts.
-* Kotlin PSI extraction of package, object, class, function, property,
-  nullability, call, safe-call, and text-offset source-position facts.
+* Datomic Local setup, normalized source facts, transform rules, destination
+  project facts, diagnostic facts, and focused inventory summaries.
+* Spoon extraction for Java declarations, type refs, method/field/constructor
+  refs, modifiers, source spans, common statements, stream/collection/map APIs,
+  reflection signals, synchronized constructs, nullable types, and unsupported
+  feature markers.
+* Kotlin PSI extraction for packages, objects/classes, file facades,
+  functions, properties, nullability, calls, safe calls, source spans, and a
+  conservative enrichment pass for stable local refs.
+* C# emission for the committed Java samples and selected Kotlin samples,
+  including source-to-destination provenance, rule applications, helper source
+  generation, `.csproj` generation from destination facts, `dotnet build`
+  validation where enabled, and compiler diagnostic ingestion.
+
+Important current limitations:
+
+* Full-project C# emission for `../research/pkl` is not implemented yet.
+  `research-dry-run` is facts/inventory first and skips C# emission in its
+  default `:facts-only` mode.
+* Kotlin semantic resolution still uses PSI plus conservative fallback data.
+  The Analysis API integration records setup/availability facts but does not
+  yet provide full symbol/type resolution.
+* Java Spoon still runs with a staged classpath seed strategy rather than a
+  resolved jar classpath. Gradle dependency roots reduce some false unresolved
+  refs, but unresolved refs remain a deliberate gate.
+* Passing samples prove only the modeled subset. Generated C# under
+  `sample-projects/*/target/` and `target/research-pkl/` is disposable.
 
 ## Quick Start
 
@@ -92,12 +114,47 @@ The sample runner writes disposable output under
 and provenance. When an allow mode is used, `stages.edn`, `coverage.edn`, and
 `provenance.edn` record it under `:coverage/allow-mode`.
 
+Run the current full-Pkl dry-run milestone from facts and inventory upward:
+
+```bash
+clojure -T:build research-dry-run
+```
+
+The dry-run is read-only against `../research/pkl` and writes staged artifacts
+under `target/research-pkl/`. It defaults to `:facts-only`; `:emit-only` and
+`:compile-capable` modes are accepted so the report can name the current
+non-goals and blockers explicitly. It writes `destination.edn` with destination
+C# project, project-reference, package, resource, helper, and target-framework
+mapping facts derived from the classpath manifest. The unresolved-reference gate
+writes `target/research-pkl/diagnostics/unresolved-refs.edn`; it warns in
+facts-only mode and fails emission-capable modes while semantic references
+remain unresolved.
+
+As of the current milestone, the facts-only dry-run discovers 21 Gradle
+projects, 118 dependency entries, 2,120 source files, 778 Java files, and 1,342
+Kotlin files in `../research/pkl`. The unresolved-reference gate is expected to
+warn until Kotlin Analysis API/module setup, resolved dependency classpaths,
+and additional Java/Kotlin semantic mappings reduce the remaining unresolved
+references.
+
+Inspect the Gradle/Kotlin classpath inputs for the research checkout:
+
+```bash
+clojure -T:build research-classpath
+```
+
+This writes `target/research-pkl/classpath.edn` with Gradle projects, Kotlin/
+Java/resource source roots, version-catalog aliases, project dependencies,
+direct coordinates, dependency expressions, and derived Java package roots used
+as the current staged classpath seed.
+
 Important project files:
 
 * `deps.edn` contains runtime and test dependencies.
 * `build.clj` contains test, CI, install, and deploy tasks.
 * `src/` contains Vibeformer source.
-* `test/` contains parser and Datomic smoke tests.
+* `test/` contains extraction, inventory, rule coverage, emitter, sample-runner,
+  dry-run, destination, diagnostics, and type-mapping regression tests.
 * `doc/` contains the architecture details that used to live in this README.
 
 ## Development Notes

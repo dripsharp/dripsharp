@@ -34,6 +34,18 @@ public final class UnsupportedExpressionCase {
 }
 ")
 
+(def optional-helper-fixture
+  "package com.example.helpers;
+
+import java.util.Optional;
+
+public final class OptionalHelper {
+  public Optional<String> maybe(String value) {
+    return null;
+  }
+}
+")
+
 (def kotlin-fixture
   "package com.example.kotlin
 
@@ -91,6 +103,19 @@ object FixtureModuleReader : ModuleReader {
     throw NotImplementedError()
   }
 }
+")
+
+(def kotlin-top-level-fixture
+  "package com.example.kotlin
+
+val answer: Int = 42
+val greeting: String = \"hello\"
+
+fun render(name: String): String {
+  return greeting
+}
+
+fun constant(): Int = answer
 ")
 
 (def negated-pattern-version-fixture
@@ -178,6 +203,12 @@ public final class DataSizeDemo {
                  unsupported-expression-fixture)
     root))
 
+(defn- optional-helper-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/java-optional-helper/source/src/main/java/com/example/helpers/OptionalHelper.java"
+                 optional-helper-fixture)
+    root))
+
 (defn- kotlin-checkout []
   (let [root (temp-root)]
     (write-file! root "sample-projects/kotlin-api-calls/source/src/main/kotlin/com/example/kotlin/ApiCalls.kt"
@@ -194,6 +225,12 @@ public final class DataSizeDemo {
   (let [root (temp-root)]
     (write-file! root "sample-projects/kotlin-object-overrides/source/src/main/kotlin/com/example/kotlin/ObjectOverrides.kt"
                  kotlin-object-overrides-fixture)
+    root))
+
+(defn- kotlin-top-level-checkout []
+  (let [root (temp-root)]
+    (write-file! root "sample-projects/kotlin-top-level/source/src/main/kotlin/com/example/kotlin/Utilities.kt"
+                 kotlin-top-level-fixture)
     root))
 
 (defn- negated-pattern-checkout []
@@ -216,9 +253,10 @@ public final class DataSizeDemo {
                                           :dotnet/enabled? false})
         target (.resolve root "sample-projects/hello/target")
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
-        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
-        source-files (read-edn (.resolve target "facts/source-files.edn"))
-        provenance (read-edn (.resolve target "provenance.edn"))
+	        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+	        source-files (read-edn (.resolve target "facts/source-files.edn"))
+	        destination (read-edn (.resolve target "facts/destination.edn"))
+	        provenance (read-edn (.resolve target "provenance.edn"))
         csharp-file (.resolve target "csharp/com/example/Hello.cs")
         project-file (.resolve target "csharp/hello.csproj")
         project-content (delay (slurp (str project-file)))]
@@ -247,10 +285,31 @@ public final class DataSizeDemo {
     (testing "facts and provenance point at disposable output"
       (is (= ["src/main/java/com/example/Hello.java"]
              (mapv :file/path source-files)))
-      (is (= :generated (:status provenance)))
-      (is (= 1 (:csharp/files-written provenance)))
-      (is (= ["com/example/Hello.cs"] (:csharp/project-files provenance)))
-      (is (seq (:csharp/rule-applications provenance)))
+	      (is (= :generated (:status provenance)))
+	      (is (= 1 (:csharp/files-written provenance)))
+	      (is (= ["com/example/Hello.cs"] (:csharp/project-files provenance)))
+	      (is (= "hello:csharp" (:destination/project provenance)))
+	      (is (= {:report/type :vibeformer.report/destination-mapping
+	              :projects/count 1
+	              :project-references/count 0
+	              :packages/count 0
+	              :resources/count 0
+	              :helpers/count 0}
+	             (select-keys destination [:report/type
+	                                       :projects/count
+	                                       :project-references/count
+	                                       :packages/count
+	                                       :resources/count
+	                                       :helpers/count])))
+	      (is (= [{:dest.project/id "hello:csharp"
+	               :dest.project/target-framework "net8.0"
+	               :dest.project/items [{:dest.item/kind :dest.item.kind/compile
+	                                     :dest.item/path "com/example/Hello.cs"}]}]
+	             (mapv #(select-keys % [:dest.project/id
+	                                     :dest.project/target-framework
+	                                     :dest.project/items])
+	                   (:projects destination))))
+	      (is (seq (:csharp/rule-applications provenance)))
       (is (seq (:csharp/provenance provenance)))
       (is (some #(and (= :java.class-node/to-csharp-class
                          (get-in % [:rule :rule/id]))
@@ -270,6 +329,49 @@ public final class DataSizeDemo {
       (is (str/includes? @project-content "<Nullable>enable</Nullable>"))
       (is (str/includes? @project-content "<EnableDefaultCompileItems>false</EnableDefaultCompileItems>"))
       (is (str/includes? @project-content "<Compile Include=\"com/example/Hello.cs\" />")))))
+
+(deftest writes-runtime-helper-sources-and-project-items
+  (let [root (optional-helper-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "java-optional-helper"
+                                          :dotnet/enabled? false})
+        target (.resolve root "sample-projects/java-optional-helper/target")
+        destination (read-edn (.resolve target "facts/destination.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        project-file (.resolve target "csharp/java-optional-helper.csproj")
+        source-file (.resolve target "csharp/com/example/helpers/OptionalHelper.cs")
+        helper-file (.resolve target "csharp/Vibeformer/Runtime/JavaOptional.cs")
+        project-content (slurp (str project-file))
+        helper-content (slurp (str helper-file))]
+    (is (:ok? result))
+    (is (= :generated (:status provenance)))
+    (is (= [:helper/java-optional] (:csharp/helpers provenance)))
+    (is (= 1 (:helpers/count destination)))
+    (is (= ["Vibeformer/Runtime/JavaOptional.cs"
+            "com/example/helpers/OptionalHelper.cs"]
+           (sort (:csharp/project-files provenance))))
+    (is (= [{:helper/id :helper/java-optional
+             :helper/name "JavaOptional"
+             :helper/path "Vibeformer/Runtime/JavaOptional.cs"
+             :helper/source :helper.source/type-mapping
+             :helper/status :helper.status/generated
+             :helper/project-path "Vibeformer/Runtime/JavaOptional.cs"}]
+           (mapv #(dissoc % :helper/file) (:csharp/helper-files provenance))))
+    (is (= #{{:dest.item/kind :dest.item.kind/compile
+              :dest.item/path "com/example/helpers/OptionalHelper.cs"}
+             {:dest.item/kind :dest.item.kind/helper
+              :dest.item/path "Vibeformer/Runtime/JavaOptional.cs"}}
+           (->> destination
+                :projects
+                first
+                :dest.project/items
+                (map #(select-keys % [:dest.item/kind :dest.item/path]))
+                set)))
+    (is (Files/isRegularFile source-file (make-array java.nio.file.LinkOption 0)))
+    (is (Files/isRegularFile helper-file (make-array java.nio.file.LinkOption 0)))
+    (is (str/includes? project-content "<Compile Include=\"com/example/helpers/OptionalHelper.cs\" />"))
+    (is (str/includes? project-content "<Compile Include=\"Vibeformer/Runtime/JavaOptional.cs\" />"))
+    (is (str/includes? helper-content "public static object? OfNullable(object? value)"))))
 
 (deftest runs-negated-pattern-sample-with-nullable-version
   (let [root (negated-pattern-checkout)
@@ -373,7 +475,8 @@ public final class DataSizeDemo {
 (deftest runs-kotlin-sample-through-facts-only-pipeline
   (let [root (kotlin-checkout)
         result (sample-runner/run-sample {:project-root root
-                                          :name "kotlin-api-calls"})
+                                          :name "kotlin-api-calls"
+                                          :kotlin/analysis-api? true})
         target (.resolve root "sample-projects/kotlin-api-calls/target")
         stages (read-edn (.resolve target "diagnostics/stages.edn"))
         coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
@@ -399,6 +502,10 @@ public final class DataSizeDemo {
     (is (= :ok (get-in stage-by-name [:kotlin/ingest :status])))
     (is (= 1 (get-in stage-by-name [:kotlin/ingest :kotlin-files])))
     (is (pos? (get-in stage-by-name [:kotlin/enrich :semantic-refs])))
+    (is (= :analysis-api.prototype/unavailable
+           (get-in stage-by-name [:kotlin/enrich :analysis-api/status])))
+    (is (= :analysis-api.reason/classes-not-on-classpath
+           (get-in stage-by-name [:kotlin/enrich :analysis-api/reason])))
     (is (= :ok (get-in stage-by-name [:coverage/check :status])))
     (is (= {:allow-stubs? true
             :strategy :coverage.strategy/kotlin-facts-only}
@@ -460,7 +567,7 @@ public final class DataSizeDemo {
     (is (str/includes? content "public static class BasicDeclarations"))
     (is (str/includes? content "public static int count { get; } = default!;"))
     (is (str/includes? content "public static string describe(string? name)"))
-    (is (str/includes? content "return default!;"))))
+    (is (str/includes? content "return \"\";"))))
 
 (deftest runs-kotlin-api-call-sample-through-emission-pipeline
   (let [root (kotlin-checkout)
@@ -495,6 +602,39 @@ public final class DataSizeDemo {
     (is (str/includes? content "return name is not null ? raw + name : raw;"))
     (is (str/includes? content "public static List<Uri> values(string root)"))
     (is (str/includes? content "new Uri(System.IO.Path.Combine(root, \"child\"), UriKind.RelativeOrAbsolute)"))))
+
+(deftest runs-kotlin-top-level-sample-through-emission-pipeline
+  (let [root (kotlin-top-level-checkout)
+        result (sample-runner/run-sample {:project-root root
+                                          :name "kotlin-top-level"
+                                          :kotlin/emit? true
+                                          :dotnet/enabled? false})
+        target (.resolve root "sample-projects/kotlin-top-level/target")
+        stages (read-edn (.resolve target "diagnostics/stages.edn"))
+        coverage (read-edn (.resolve target "diagnostics/coverage.edn"))
+        provenance (read-edn (.resolve target "provenance.edn"))
+        csharp-file (.resolve target "csharp/com/example/kotlin/UtilitiesKt.cs")
+        content (slurp (str csharp-file))
+        stage-by-name (into {} (map (juxt :stage identity) stages))]
+    (is (:ok? result))
+    (is (= :ok (get-in stage-by-name [:coverage/check :status])))
+    (is (nil? (get-in stage-by-name [:coverage/check :coverage/allow-mode])))
+    (is (= :ok (get-in stage-by-name [:csharp/emit :status])))
+    (is (= :skipped (get-in stage-by-name [:dotnet/build :status])))
+    (is (true? (:ok? coverage)))
+    (is (nil? (:coverage/allow-mode coverage)))
+    (is (= :generated (:status provenance)))
+    (is (= 1 (:csharp/files-written provenance)))
+    (is (some #(= :kotlin.file-facade/to-csharp-static-class
+                  (get-in % [:rule :rule/id]))
+              (:csharp/provenance provenance)))
+    (is (str/includes? content "public static class UtilitiesKt"))
+    (is (str/includes? content "public static int answer { get; } = 42;"))
+    (is (str/includes? content "public static string greeting { get; } = \"hello\";"))
+    (is (str/includes? content "public static string render(string name)"))
+    (is (str/includes? content "return greeting;"))
+    (is (str/includes? content "public static int constant()"))
+    (is (str/includes? content "return answer;"))))
 
 (deftest runs-kotlin-object-overrides-sample-through-emission-pipeline
   (let [root (kotlin-object-overrides-checkout)
@@ -580,6 +720,17 @@ public final class DataSizeDemo {
       (is (= 2 (:diagnostic/facts-count ingest-stage)))
       (is (= 1 (:diagnostic/mapped-count ingest-stage)))
       (is (= 1 (:diagnostic/unmapped-count ingest-stage)))
+      (is (= {:mapped-count 1
+              :mapped-with-source-node-count 1
+              :mapped-with-rule-count 1
+              :mapped-with-feature-count 1
+              :unmapped-rankings [{:diagnostic/code "CS0168"
+                                   :diagnostic/severity :diagnostic.severity/warning
+                                   :diagnostic/message "unused variable"
+                                   :diagnostic/mapping-reason :diagnostic.mapping/no-provenance-span
+                                   :count 1
+                                   :file-count 1}]}
+             (:diagnostic/mapping-quality ingest-stage)))
       (is (Files/isRegularFile stdout-file (make-array java.nio.file.LinkOption 0)))
       (is (Files/isRegularFile stderr-file (make-array java.nio.file.LinkOption 0)))
       (is (Files/isRegularFile diagnostic-facts-file (make-array java.nio.file.LinkOption 0)))
@@ -594,15 +745,22 @@ public final class DataSizeDemo {
       (is (= :diagnostic.mapping/provenance-span (:diagnostic/mapping-reason mapped-fact)))
       (is (some? (:diagnostic/source-node mapped-fact)))
       (is (some? (:diagnostic/rule mapped-fact)))
+      (is (seq (:diagnostic/source-features mapped-fact)))
       (is (= :diagnostic.mapping/no-provenance-span (:diagnostic/mapping-reason unmapped-fact)))
+      (is (= (:diagnostic/mapping-quality ingest-stage)
+             (:mapping-quality diagnostic-facts-report)))
+      (is (= (get-in diagnostic-facts-report [:mapping-quality :unmapped-rankings])
+             (:unmapped-rankings diagnostic-facts-report)))
       (is (= #{{:diagnostic/code "CS1002"
                 :diagnostic/mapping-status :diagnostic.mapping/mapped
                 :diagnostic/rule :java.class-node/to-csharp-class
-                :diagnostic/source-node (second (:diagnostic/source-node mapped-fact))}
+                :diagnostic/source-node (second (:diagnostic/source-node mapped-fact))
+                :diagnostic/source-features [:java.feature/class]}
                {:diagnostic/code "CS0168"
                 :diagnostic/mapping-status :diagnostic.mapping/unmapped
                 :diagnostic/rule nil
-                :diagnostic/source-node nil}}
+                :diagnostic/source-node nil
+                :diagnostic/source-features []}}
              (set (:query-summary diagnostic-facts-report))))
       (is (= (:command diagnostic-report) (:command build-stage)))
       (is (= (:target/project diagnostic-report) (:target/project build-stage))))))
