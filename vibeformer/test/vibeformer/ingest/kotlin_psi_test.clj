@@ -326,7 +326,11 @@ fun propertyAndPlatformFacts(doc: ApiDoc, root: Path): Boolean {
   val module = doc.moduleName.substring(0, 1)
   val deps = doc.dependencies.filter { it.toString().isNotEmpty() }.toList()
   val dependencyText = doc.dependencies.joinToString(\",\")
+  val dotted = doc.moduleName.split(\".\").map { it.toString() }.joinToString(\".\")
+  val nonBlankLines = doc.moduleName.lines().filterNot { it.toString().isEmpty() }.joinToString(\"\\n\")
   val streamList = Files.walk(root).filter { it.toString().isNotEmpty() }.toList()
+  val regexMatches = Regex(\"[a-z]+\").findAll(doc.moduleName).toList()
+  val walkedFiles = root.toFile().walk().map { it.toString() }.toList()
   val output = ByteArrayOutputStream()
   val outputBytes = output.toByteArray()
   return doc.dependencies.any { it.toString().isNotEmpty() } &&
@@ -334,8 +338,25 @@ fun propertyAndPlatformFacts(doc: ApiDoc, root: Path): Boolean {
     module.isNotEmpty() &&
     deps.isNotEmpty() &&
     dependencyText.isNotEmpty() &&
+    dotted.isNotEmpty() &&
+    nonBlankLines.isNotEmpty() &&
     streamList.isNotEmpty() &&
+    regexMatches.isNotEmpty() &&
+    walkedFiles.dropLast(1).any { it.toString().isNotEmpty() } &&
     outputBytes.isNotEmpty()
+}
+
+fun inferredNameReceivers(): Boolean {
+  val responses = loadResponses()
+  val packageSelectors = loadSelectors()
+  val normalizedPath = loadPath()
+  val output = loadOutput()
+  val payloadBytes = loadPayloadBytes()
+  return responses.joinToString(\",\").isNotEmpty() &&
+    packageSelectors.any { it.toString().isNotEmpty() } &&
+    normalizedPath.substring(0, 1).isNotEmpty() &&
+    output.toByteArray().isNotEmpty() &&
+    payloadBytes.isNotEmpty()
 }
 
 fun assertions() {
@@ -1484,6 +1505,7 @@ public final class JavaPseudoTypes {
                    ["toByte" "kotlin:Byte" "kotlin:Number" true]
                    ["toByteArray" "kotlin:ByteArray" "java.io.ByteArrayOutputStream" true]
                    ["toByteArray" "kotlin:ByteArray" "kotlin:String" true]
+                   ["toList" "kotlin.collections.List" "kotlin.sequences.Sequence" true]
                    ["toList" "kotlin.collections.List" "java.util.stream.Stream" true]
                    ["toList" "kotlin.collections.List" "kotlin.collections.List" true]
                    ["toList" "kotlin.collections.List" "kotlin:List<kotlin:String>" true]

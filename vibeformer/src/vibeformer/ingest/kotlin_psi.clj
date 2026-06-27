@@ -985,13 +985,24 @@
 (def ^:private known-expression-call-types
   (merge (update-vals known-function-calls :ref/to-type)
          {"any" "kotlin:Boolean"
+          "asSequence" "kotlin.sequences.Sequence"
+          "dropLast" "kotlin.collections.List"
           "filter" "kotlin.collections.List"
+          "filterNot" "kotlin.collections.List"
+          "filterNotNull" "kotlin.collections.List"
+          "findAll" "kotlin.sequences.Sequence"
+          "flatten" "kotlin.collections.List"
           "isNotEmpty" "kotlin:Boolean"
           "joinToString" "kotlin:String"
+          "lines" "kotlin.collections.List"
           "map" "kotlin.collections.List"
           "readText" "kotlin:String"
+          "sortedBy" "kotlin.collections.List"
+          "sortedWith" "kotlin.collections.List"
+          "split" "kotlin.collections.List"
           "substring" "kotlin:String"
           "toByteArray" "kotlin:ByteArray"
+          "walk" "kotlin.sequences.Sequence"
           "toList" "kotlin.collections.List"}))
 
 (def ^:private kotlin-collection-roots
@@ -1156,6 +1167,7 @@
     "annotations"
     "authors"
     "badResponses"
+    "classSelectors"
     "dependencies"
     "entries"
     "examples"
@@ -1165,6 +1177,7 @@
     "modules"
     "packages"
     "packagesData"
+    "packageSelectors"
     "responses"
     "sections"
     "sourceModules"
@@ -1181,19 +1194,33 @@
                (re-matches #"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+" value))
       (last (str/split value #"\.")))))
 
-(defn- property-expression-type-id [value]
-  (when-let [property-name (qualified-property-name value)]
+(defn- simple-identifier-name [value]
+  (when-let [value (some-> value
+                           str/trim
+                           (str/replace #"!!" "")
+                           (str/replace #"\?" ""))]
+    (when (re-matches #"[A-Za-z_][A-Za-z0-9_]*" value)
+      value)))
+
+(defn- inferred-name-type-id [property-name]
+  (when property-name
     (cond
       (or (contains? known-string-property-names property-name)
           (re-find #"(Name|Text|Message|Path|Uri|Url|Version|Output|Report|Error)$" property-name))
       "kotlin:String"
 
       (or (contains? known-collection-property-names property-name)
-          (re-find #"(?i)(classes|dependencies|entries|files|keys|modules|packages|properties|responses|sections|values)$" property-name))
+          (re-find #"(?i)(classes|dependencies|entries|files|keys|modules|packages|properties|responses|sections|selectors|values)$" property-name))
       "kotlin.collections.List"
 
       (re-find #"(?i)(bytes|byteArray)$" property-name)
       "kotlin:ByteArray")))
+
+(defn- property-expression-type-id [value]
+  (some-> value qualified-property-name inferred-name-type-id))
+
+(defn- simple-name-expression-type-id [value]
+  (some-> value simple-identifier-name inferred-name-type-id))
 
 (defn- top-level-call-separator? [value idx]
   (and (< idx (dec (count value)))
@@ -1266,6 +1293,24 @@
            (contains? kotlin-collection-roots owner-root))
       "kotlin.collections.List"
 
+      (and (contains? #{"asSequence" "filterNot" "filterNotNull" "flatten" "sortedBy" "sortedWith"} call-name)
+           (contains? kotlin-collection-roots owner-root))
+      (if (= "asSequence" call-name)
+        "kotlin.sequences.Sequence"
+        "kotlin.collections.List")
+
+      (and (= "dropLast" call-name)
+           (contains? kotlin-collection-roots owner-root))
+      "kotlin.collections.List"
+
+      (and (contains? #{"lines" "split"} call-name)
+           (= "String" owner-root))
+      "kotlin.collections.List"
+
+      (and (= "dropLast" call-name)
+           (= "String" owner-root))
+      "kotlin:String"
+
       (and (contains? #{"filter" "map"} call-name)
            (= "Stream" owner-root))
       "java.util.stream.Stream"
@@ -1273,6 +1318,12 @@
       (and (= "toList" call-name)
            (= "Stream" owner-root))
       "kotlin.collections.List"
+
+      (and (contains? #{"filter" "filterNot" "map" "toList"} call-name)
+           (= "Sequence" owner-root))
+      (if (= "toList" call-name)
+        "kotlin.collections.List"
+        "kotlin.sequences.Sequence")
 
       (and (= "joinToString" call-name)
            (contains? kotlin-collection-roots owner-root))
@@ -1305,6 +1356,14 @@
       (and (= "walk" call-name)
            (= "Files" owner-root))
       "java.util.stream.Stream"
+
+      (and (= "walk" call-name)
+           (= "File" owner-root))
+      "kotlin.sequences.Sequence"
+
+      (and (= "findAll" call-name)
+           (= "Regex" owner-root))
+      "kotlin.sequences.Sequence"
 
       (and (= "first" call-name)
            (contains? (conj kotlin-collection-roots "String") owner-root))
@@ -1371,11 +1430,12 @@
    (or (literal-type-id value)
        (some->> value simple-identifier (get binding-types))
        (property-expression-type-id value)
+       (qualified-known-call-type-id type-index binding-types value)
        (constructor-expression-type-id type-index value)
        (builder-factory-expression-type-id type-index value)
        (receiver-known-call-type-id binding-types value)
-       (qualified-known-call-type-id type-index binding-types value)
-       (receiver-known-static-type-id value))))
+       (receiver-known-static-type-id value)
+       (simple-name-expression-type-id value))))
 
 (defn- project-inferred-binding-type-index [db project-id type-index seed-binding-types]
   (reduce (fn [acc [function-node-id _ordinal name value]]
