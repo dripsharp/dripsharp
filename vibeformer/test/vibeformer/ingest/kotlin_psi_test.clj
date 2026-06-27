@@ -93,6 +93,10 @@ fun apiCalls(path: Path): URI {
 fun values(root: Path): List<URI> {
   return listOf(root.resolve(\"child\").toUri(), URI(\"https://example.com\"))
 }
+
+fun hasText(values: List<String>, text: String): Boolean {
+  return values.contains(text) && text.contains(\"value\")
+}
 ")
 
 (def kotlin-object-overrides-fixture
@@ -610,7 +614,8 @@ public final class JavaPseudoTypes {
                              "isEqualTo"
                              "URI"
                              "resolve"
-                             "toUri"}
+                             "toUri"
+                             "contains"}
               resolved-calls (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
                                           :in $ ?target-names
                                           :where
@@ -721,7 +726,9 @@ public final class JavaPseudoTypes {
                    ["isEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["URI" "java.net.URI" "java.net.URI" true]
                    ["resolve" "java.nio.file.Path" "java.nio.file.Path" true]
-                   ["toUri" "java.net.URI" "java.nio.file.Path" true]}
+                   ["toUri" "java.net.URI" "java.nio.file.Path" true]
+                   ["contains" "kotlin:Boolean" "kotlin:List<kotlin:String>" true]
+                   ["contains" "kotlin:Boolean" "kotlin:String" true]}
                  resolved-calls))
           (is (empty? unresolved-targets))
           (is (empty? ranked-targets)))))))
@@ -785,12 +792,13 @@ public final class JavaPseudoTypes {
             (is (= #{["trimIndent" "kotlin:String" true]
                      ["listOf" "kotlin.collections.List" true]
                      ["resolve" "java.nio.file.Path" true]
-                     ["toUri" "java.net.URI" true]}
+                     ["toUri" "java.net.URI" true]
+                     ["contains" "kotlin:Boolean" true]}
                    (set (d/q '[:find ?name ?type-id ?resolved?
                                :where
                                [?ref :ref/kind :ref.kind/function-call]
                                [?ref :ref/name ?name]
-                               [(contains? #{"trimIndent" "listOf" "resolve" "toUri"} ?name)]
+                               [(contains? #{"trimIndent" "listOf" "resolve" "toUri" "contains"} ?name)]
                                [?ref :ref/resolved? ?resolved?]
                                [?ref :ref/to-type ?type]
                                [?type :type/id ?type-id]]

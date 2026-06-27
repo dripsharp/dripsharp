@@ -794,6 +794,10 @@ object KotlinApiCalls {
   fun values(root: Path): List<URI> {
     return listOf(root.resolve(\"child\").toUri(), URI(\"https://example.com\"))
   }
+
+  fun hasText(text: String): Boolean {
+    return text.contains(\"value\")
+  }
 }
 ")
 
@@ -1521,6 +1525,8 @@ public final class Chain {
           (is (str/includes? content "return name is not null ? raw + name : raw;"))
           (is (str/includes? content "public static List<Uri> values(string root)"))
           (is (str/includes? content "return new List<Uri> { new Uri(System.IO.Path.Combine(root, \"child\"), UriKind.RelativeOrAbsolute), new Uri(\"https://example.com\") };"))
+          (is (str/includes? content "public static bool hasText(string text)"))
+          (is (str/includes? content "return text.Contains(\"value\");"))
           (is (empty? (:csharp/diagnostics result)))
           (doseq [rule [:kotlin.object-node/to-csharp-stub
                         :kotlin.function-node/to-csharp-stub

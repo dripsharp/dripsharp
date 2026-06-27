@@ -3455,6 +3455,14 @@
             (with-text (str "new Uri(" (:text path) ", UriKind.RelativeOrAbsolute)"))
             (apply-rule node :kotlin.qualified-expression-node/to-csharp-call :rule-app.status/success)))
 
+      (and (= :kotlin.node/call-expression (:node/kind selector-node))
+           (= "contains" (:node/name selector-node)))
+      (let [receiver (emit-kotlin-expression ctx receiver-node)
+            args (emit-kotlin-arguments ctx selector-node)]
+        (-> (merge-emits [receiver args])
+            (with-text (str (:text receiver) ".Contains(" (:text args) ")"))
+            (apply-rule node :kotlin.qualified-expression-node/to-csharp-call :rule-app.status/success)))
+
       :else
       (let [receiver (emit-kotlin-expression ctx receiver-node)
             selector (emit-kotlin-expression ctx selector-node)]

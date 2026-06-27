@@ -968,6 +968,21 @@
               [call-node-id (mapv #(nth % 2) (sort-by second rows))]))
        (into {})))
 
+(defn- project-call-receiver-values [db project-id]
+  (into {}
+        (d/q '[:find ?call-node-id ?value
+               :in $ ?project-id
+               :where
+               [?project :project/id ?project-id]
+               [?file :file/project ?project]
+               [?call :node/file ?file]
+               [?call :node/id ?call-node-id]
+               [?receiver :node/parent ?call]
+               [?receiver :node/kind :kotlin.node/call-receiver]
+               [?receiver :node/value ?value]]
+             db
+             project-id)))
+
 (defn- project-call-parent-index [db project-id]
   (into {}
         (d/q '[:find ?call-node-id ?parent-node-id
@@ -991,23 +1006,37 @@
                 (literal-type-id value)))
           (get arg-values-by-call node-id []))))
 
+(defn- call-receiver-type-id [binding-types-by-parent receiver-values-by-call parent-by-call node-id]
+  (let [parent-node-id (get parent-by-call node-id)
+        binding-types (get binding-types-by-parent parent-node-id)
+        value (get receiver-values-by-call node-id)]
+    (or (some->> value simple-identifier (get binding-types))
+        (literal-type-id value))))
+
 (defn- project-refs [db project-id]
   (let [binding-types-by-parent (project-binding-type-index db project-id)
         arg-values-by-call (project-call-argument-values db project-id)
+        receiver-values-by-call (project-call-receiver-values db project-id)
         parent-by-call (project-call-parent-index db project-id)]
     (mapv (fn [[ref-id kind name to-type node-id]]
             (let [arg-types (when (= :ref.kind/function-call kind)
                               (call-argument-type-ids binding-types-by-parent
                                                       arg-values-by-call
                                                       parent-by-call
-                                                      node-id))]
+                                                      node-id))
+                  receiver-type (when (= :ref.kind/function-call kind)
+                                  (call-receiver-type-id binding-types-by-parent
+                                                         receiver-values-by-call
+                                                         parent-by-call
+                                                         node-id))]
               {:ref/id ref-id
                :ref/kind kind
                :ref/name name
                :ref/to-type (type-identity db to-type)
                :node/id node-id
                :call/arg-count (count arg-types)
-               :call/arg-types arg-types}))
+               :call/arg-types arg-types
+               :call/receiver-type receiver-type}))
           (d/q '[:find ?ref-id ?kind ?name ?to-type ?node-id
                  :in $ ?project-id
                  :where
@@ -1222,8 +1251,20 @@
                        owner-type
                        (assoc :ref/owner-type [:type/id owner-type])))))
 
-(defn- function-resolution-tx [db functions source-types {:ref/keys [id name] :call/keys [arg-types]}]
-  (if-let [known-call (get known-function-calls name)]
+(defn- kotlin-contains-call [{:call/keys [receiver-type]}]
+  (when receiver-type
+    (let [owner-root (unqualified-type-id receiver-type)]
+      (when (contains? #{"String" "Collection" "List" "MutableList" "Set" "MutableSet"} owner-root)
+        {:ref/to-type "kotlin:Boolean"
+         :ref/owner-type receiver-type}))))
+
+(defn- known-call-resolution [{:ref/keys [name] :as ref}]
+  (or (when (= "contains" name)
+        (kotlin-contains-call ref))
+      (get known-function-calls name)))
+
+(defn- function-resolution-tx [db functions source-types {:ref/keys [id name] :call/keys [arg-types] :as ref}]
+  (if-let [known-call (known-call-resolution ref)]
     (resolved-ref-tx db id
                      (cond-> {}
                        (:ref/to-type known-call)
