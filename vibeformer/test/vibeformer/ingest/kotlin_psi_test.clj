@@ -275,6 +275,12 @@ fun hasText(values: List<String>, text: String): Boolean {
   return values.contains(text) && text.contains(\"value\") && normalized.startsWith(\"other\") && !values.isEmpty()
 }
 
+fun stdlibValues(values: List<String>): Boolean {
+  val empty = emptyList<String>()
+  val bytes = byteArrayOf(1.toByte(), 2.toByte())
+  return values.first().endsWith(\"e\") && empty.isEmpty() && !bytes.isEmpty()
+}
+
 fun assertions() {
   assertThat(\"left\").isNotEqualTo(\"right\").isInstanceOf(String::class.java)
   assertThat(false).isFalse()
@@ -1202,8 +1208,12 @@ public final class JavaPseudoTypes {
                              "assertDoesNotThrow"
                              "assertFalse"
                              "assertTrue"
+                             "byteArrayOf"
                              "doesNotThrowAnyException"
+                             "emptyList"
+                             "endsWith"
                              "fail"
+                             "first"
                              "hasMessage"
                              "hasMessageContaining"
                              "hasMessageStartingWith"
@@ -1216,6 +1226,7 @@ public final class JavaPseudoTypes {
                              "URI"
                              "resolve"
                              "startsWith"
+                             "toByte"
                              "toUri"
                              "trim"
                              "contains"}
@@ -1335,8 +1346,12 @@ public final class JavaPseudoTypes {
                    ["assertDoesNotThrow" "kotlin:Any" "org.junit.jupiter.api.Assertions" true]
                    ["assertFalse" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
                    ["assertTrue" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
+                   ["byteArrayOf" "kotlin:ByteArray" "kotlin.collections.ArraysKt" true]
                    ["doesNotThrowAnyException" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["emptyList" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
+                   ["endsWith" "kotlin:Boolean" "kotlin:String" true]
                    ["fail" "kotlin:Nothing" "org.junit.jupiter.api.Assertions" true]
+                   ["first" "kotlin:Any" "kotlin.collections.Iterable" true]
                    ["hasMessage" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["hasMessageContaining" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["hasMessageStartingWith" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
@@ -1349,6 +1364,7 @@ public final class JavaPseudoTypes {
                    ["URI" "java.net.URI" "java.net.URI" true]
                    ["resolve" "java.nio.file.Path" "java.nio.file.Path" true]
                    ["startsWith" "kotlin:Boolean" "kotlin:String" true]
+                   ["toByte" "kotlin:Byte" "kotlin:Number" true]
                    ["toUri" "java.net.URI" "java.nio.file.Path" true]
                    ["trim" "kotlin:String" "kotlin:String" true]
                    ["contains" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]

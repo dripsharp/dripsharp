@@ -858,10 +858,18 @@
                    :ref/owner-type "org.junit.jupiter.api.Assertions"}
    "assertTrue" {:ref/to-type "kotlin:Unit"
                  :ref/owner-type "org.junit.jupiter.api.Assertions"}
+   "byteArrayOf" {:ref/to-type "kotlin:ByteArray"
+                  :ref/owner-type "kotlin.collections.ArraysKt"}
    "configure" {:ref/to-type "kotlin:Unit"
                 :ref/owner-type "org.gradle.api.plugins.ExtensionContainer"}
+   "emptyList" {:ref/to-type "kotlin.collections.List"
+                :ref/owner-type "kotlin.collections.CollectionsKt"}
+   "endsWith" {:ref/to-type "kotlin:Boolean"
+               :ref/owner-type "kotlin:String"}
    "fail" {:ref/to-type "kotlin:Nothing"
            :ref/owner-type "org.junit.jupiter.api.Assertions"}
+   "first" {:ref/to-type "kotlin:Any"
+            :ref/owner-type "kotlin.collections.Iterable"}
    "getByName" {:ref/to-type "kotlin:Any"
                 :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
    "hashCode" {:ref/to-type "kotlin:Int"
@@ -906,6 +914,8 @@
                  :ref/owner-type "kotlin:String"}
    "toString" {:ref/to-type "kotlin:String"
                :ref/owner-type "kotlin:Any"}
+   "toByte" {:ref/to-type "kotlin:Byte"
+             :ref/owner-type "kotlin:Number"}
    "toUri" {:ref/to-type "java.net.URI"
             :ref/owner-type "java.nio.file.Path"}
    "trimIndent" {:ref/to-type "kotlin:String"
