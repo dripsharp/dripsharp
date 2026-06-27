@@ -888,18 +888,20 @@
       (:type/id (d/pull db [:type/id] value)))))
 
 (defn- project-declarations [db project-id]
-  (mapv (fn [[decl-id kind name qualified-name decl-type return-type]]
+  (mapv (fn [[decl-id kind name qualified-name decl-type return-type file-id]]
           {:decl/id decl-id
            :decl/kind kind
            :decl/name name
            :decl/qualified-name qualified-name
            :decl/type (type-identity db decl-type)
-           :decl/return-type (type-identity db return-type)})
-        (d/q '[:find ?decl-id ?kind ?name ?qualified-name ?decl-type ?return-type
+           :decl/return-type (type-identity db return-type)
+           :decl/file-id file-id})
+        (d/q '[:find ?decl-id ?kind ?name ?qualified-name ?decl-type ?return-type ?file-id
                :in $ ?project-id
                :where
                [?project :project/id ?project-id]
                [?file :file/project ?project]
+               [?file :file/id ?file-id]
                [?node :node/file ?file]
                [?decl :decl/source-node ?node]
                [?decl :decl/id ?decl-id]
@@ -1024,7 +1026,7 @@
         arg-values-by-call (project-call-argument-values db project-id)
         receiver-values-by-call (project-call-receiver-values db project-id)
         parent-by-call (project-call-parent-index db project-id)]
-    (mapv (fn [[ref-id kind name to-type node-id]]
+    (mapv (fn [[ref-id kind name to-type node-id file-id]]
             (let [arg-types (when (= :ref.kind/function-call kind)
                               (call-argument-type-ids binding-types-by-parent
                                                       arg-values-by-call
@@ -1040,14 +1042,16 @@
                :ref/name name
                :ref/to-type (type-identity db to-type)
                :node/id node-id
+               :ref/file-id file-id
                :call/arg-count (count arg-types)
                :call/arg-types arg-types
                :call/receiver-type receiver-type}))
-          (d/q '[:find ?ref-id ?kind ?name ?to-type ?node-id
+          (d/q '[:find ?ref-id ?kind ?name ?to-type ?node-id ?file-id
                  :in $ ?project-id
                  :where
                  [?project :project/id ?project-id]
                  [?file :file/project ?project]
+                 [?file :file/id ?file-id]
                  [?file :file/lang :lang/kotlin]
                  [?node :node/file ?file]
                  [?node :node/id ?node-id]
@@ -1274,6 +1278,12 @@
         (kotlin-contains-call ref))
       (get known-function-calls name)))
 
+(defn- same-file-candidates [candidates file-id]
+  (let [matches (filter #(= file-id (:decl/file-id %)) candidates)]
+    (if (seq matches)
+      matches
+      candidates)))
+
 (defn- function-resolution-tx [db functions source-types {:ref/keys [id name] :call/keys [arg-types] :as ref}]
   (if-let [known-call (known-call-resolution ref)]
     (resolved-ref-tx db id
@@ -1283,7 +1293,7 @@
 
                        (:ref/owner-type known-call)
                        (assoc :ref/owner-type [:type/id (:ref/owner-type known-call)])))
-    (let [candidates (get functions name)]
+    (let [candidates (same-file-candidates (get functions name) (:ref/file-id ref))]
       (case (count candidates)
         0 (unresolved-ref-tx id :resolve.reason/missing-classpath)
         1 (resolve-decl-tx db source-types id (first candidates))

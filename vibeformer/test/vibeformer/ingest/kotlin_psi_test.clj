@@ -74,6 +74,26 @@ fun usesHelper(value: String, local: LocalValue, locale: Locale, missing: Missin
 }
 ")
 
+(def kotlin-same-file-helper-a-fixture
+  "package com.acme.alpha
+
+class AlphaResult
+
+private fun writePklFile(value: String): AlphaResult = AlphaResult()
+
+fun useAlpha(): AlphaResult = writePklFile(\"alpha\")
+")
+
+(def kotlin-same-file-helper-b-fixture
+  "package com.acme.beta
+
+class BetaResult
+
+private fun writePklFile(value: String): BetaResult = BetaResult()
+
+fun useBeta(): BetaResult = writePklFile(\"beta\")
+")
+
 (def kotlin-api-call-fixture
   "package com.acme.api
 
@@ -535,6 +555,58 @@ public final class JavaPseudoTypes {
                                       :kotlin/classpath-types {"Locale" "java.util.Locale"
                                                               "Action" "org.gradle.api.Action"}})
               (is (= after-counts (entity-counts (d/db conn)))))))))))
+
+(deftest resolves-same-file-kotlin-helper-function-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "same-file"
+                  :project/name "Same File Helpers"}]
+        (write-file! root
+                     "src/test/kotlin/com/acme/alpha/Helpers.kt"
+                     kotlin-same-file-helper-a-fixture)
+        (write-file! root
+                     "src/test/kotlin/com/acme/beta/Helpers.kt"
+                     kotlin-same-file-helper-b-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "same-file"})
+        (kotlin-psi/enrich! conn {:project/id "same-file"})
+        (let [db (d/db conn)
+              resolved (set (d/q '[:find ?file-id ?decl-id ?type-id ?resolved?
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name "writePklFile"]
+                                    [?ref :ref/from-node ?node]
+                                    [?node :node/file ?file]
+                                    [?file :file/id ?file-id]
+                                    [?ref :ref/to-decl ?decl]
+                                    [?decl :decl/id ?decl-id]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/resolved? ?resolved?]]
+                                  db))
+              unresolved (set (d/q '[:find ?file-id ?reason
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name "writePklFile"]
+                                      [?ref :ref/from-node ?node]
+                                      [?node :node/file ?file]
+                                      [?file :file/id ?file-id]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]]
+                                    db))]
+          (is (= #{["same-file:src/test/kotlin/com/acme/alpha/Helpers.kt"
+                    "kotlin:function:com.acme.alpha.writePklFile(String)"
+                    "kotlin:AlphaResult"
+                    true]
+                   ["same-file:src/test/kotlin/com/acme/beta/Helpers.kt"
+                    "kotlin:function:com.acme.beta.writePklFile(String)"
+                    "kotlin:BetaResult"
+                    true]}
+                 resolved))
+          (is (empty? unresolved)))))))
 
 (deftest kotlin-enrichment-does-not-rewrite-java-reference-facts
   (with-empty-db
