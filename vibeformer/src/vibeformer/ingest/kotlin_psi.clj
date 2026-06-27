@@ -880,6 +880,8 @@
             :ref/owner-type "java.nio.file.Path"}
    "trimIndent" {:ref/to-type "kotlin:String"
                  :ref/owner-type "kotlin.text.StringsKt"}
+   "trimMargin" {:ref/to-type "kotlin:String"
+                 :ref/owner-type "kotlin.text.StringsKt"}
    "URI" {:ref/to-type "java.net.URI"
           :ref/owner-type "java.net.URI"}})
 

@@ -252,7 +252,10 @@ fun apiCalls(path: Path): URI {
   val text = \"\"\"
     value
   \"\"\".trimIndent()
-  val values = listOf(text)
+  val marginText = \"\"\"
+    |value
+  \"\"\".trimMargin()
+  val values = listOf(text, marginText)
   assertThat(values.size).isEqualTo(1)
   return URI(\"file:///tmp\").resolve(path.toUri())
 }
@@ -1172,6 +1175,7 @@ public final class JavaPseudoTypes {
         (let [first-run (kotlin-psi/enrich! conn {:project/id "api-calls"})
               db (d/db conn)
               target-names #{"trimIndent"
+                             "trimMargin"
                              "listOf"
                              "assertThat"
                              "isEqualTo"
@@ -1271,9 +1275,13 @@ public final class JavaPseudoTypes {
               (is (some #(and (= :kotlin.node/local-property (first %))
                               (str/includes? (nth % 2) ".trimIndent()"))
                         body-values))
+              (is (some #(and (= :kotlin.node/local-property (first %))
+                              (str/includes? (nth % 2) ".trimMargin()"))
+                        body-values))
               (is (set/subset?
                    #{[:kotlin.node/local-property :initializer :kotlin.node/qualified-expression "\"\"\"\n    value\n  \"\"\".trimIndent()"]
-                     [:kotlin.node/local-property :initializer :kotlin.node/call-expression "listOf(text)"]
+                     [:kotlin.node/local-property :initializer :kotlin.node/qualified-expression "\"\"\"\n    |value\n  \"\"\".trimMargin()"]
+                     [:kotlin.node/local-property :initializer :kotlin.node/call-expression "listOf(text, marginText)"]
                      [:kotlin.node/return :return-expression :kotlin.node/qualified-expression "URI(\"file:///tmp\").resolve(path.toUri())"]
                      [:kotlin.node/return :return-expression :kotlin.node/call-expression "listOf(root.resolve(\"child\").toUri(), URI(\"https://example.com\"))"]
                      [:kotlin.node/call-expression :argument :kotlin.node/qualified-expression "root.resolve(\"child\").toUri()"]}
@@ -1284,6 +1292,7 @@ public final class JavaPseudoTypes {
                      ["URI" :kotlin.node/call-argument "\"file:///tmp\""]}
                    legacy-call-children))))
           (is (= #{["trimIndent" "kotlin:String" "kotlin.text.StringsKt" true]
+                   ["trimMargin" "kotlin:String" "kotlin.text.StringsKt" true]
                    ["listOf" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
                    ["assertThat" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]
                    ["isEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
