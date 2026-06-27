@@ -87,6 +87,7 @@
 
 (def lookup-ref-attrs
   {:decl/return-type :type/id
+   :decl/receiver-type :type/id
    :decl/source-node :node/id
    :decl/type :type/id
    :decl/type-params :type-param/id
@@ -158,6 +159,7 @@
 
 (def type-ref-attrs
   [:decl/return-type
+   :decl/receiver-type
    :decl/type
    :ref/owner-type
    :ref/to-type])

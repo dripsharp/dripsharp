@@ -118,6 +118,29 @@ class GradleTest : AbstractTest() {
 }
 ")
 
+(def kotlin-extension-helper-fixture
+  "package com.acme.extensions
+
+import java.nio.file.Path
+
+class Box
+
+fun Path.writeFile(fileName: String, contents: String): Path = this
+
+fun Path.writeEmptyFile(fileName: String): Path = writeFile(fileName, \"\")
+
+fun Box.writeFile(fileName: String, contents: String): Box = this
+
+fun writes(tempDir: Path, box: Box): Path {
+  val certs = tempDir.writeFile(\"random.pem\", \"RANDOM\")
+  val projectDir = tempDir.resolve(\"project\")
+  val project = projectDir.writeFile(\"PklProject\", \"name = \\\"project\\\"\")
+  val empty = tempDir.writeEmptyFile(\"empty.pem\")
+  val boxed = box.writeFile(\"box.txt\", \"BOX\")
+  return project
+}
+")
+
 (def kotlin-static-get-fixture
   "package com.acme.staticget
 
@@ -794,13 +817,69 @@ public final class JavaPseudoTypes {
               unresolved (set (d/q '[:find ?reason
                                       :where
                                       [?ref :ref/kind :ref.kind/function-call]
-                                      [?ref :ref/name "writeFile"]
+                                      [?ref :ref/name ?name]
+                                      [(contains? #{"writeFile" "writeEmptyFile"} ?name)]
                                       [?ref :ref/resolved? false]
                                       [?ref :ref/reason ?reason]]
                                     db))]
           (is (= #{["kotlin:function:com.acme.inherited.AbstractTest.writeFile(String,String)"
                     "kotlin:PklFile"
                     "kotlin:com.acme.inherited.AbstractTest"
+                    true]}
+                 resolved))
+          (is (empty? unresolved)))))))
+
+(deftest resolves-kotlin-extension-helper-function-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "extension-helper"
+                  :project/name "Extension Helper"}]
+        (write-file! root
+                     "src/test/kotlin/com/acme/extensions/Extensions.kt"
+                     kotlin-extension-helper-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "extension-helper"})
+        (kotlin-psi/enrich! conn {:project/id "extension-helper"})
+        (let [db (d/db conn)
+              extension-decls (set (d/q '[:find ?decl-id ?receiver-type-id
+                                           :where
+                                           [?decl :decl/name "writeFile"]
+                                           [?decl :decl/id ?decl-id]
+                                           [?decl :decl/receiver-type ?receiver-type]
+                                           [?receiver-type :type/id ?receiver-type-id]]
+                                         db))
+              resolved (set (d/q '[:find ?decl-id ?type-id ?owner-id ?resolved?
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name "writeFile"]
+                                    [?ref :ref/to-decl ?decl]
+                                    [?decl :decl/id ?decl-id]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/owner-type ?owner]
+                                    [?owner :type/id ?owner-id]
+                                    [?ref :ref/resolved? ?resolved?]]
+                                  db))
+              unresolved (set (d/q '[:find ?reason
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name "writeFile"]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]]
+                                    db))]
+          (is (= #{["kotlin:function:com.acme.extensions.Path.writeFile(String,String)" "kotlin:Path"]
+                   ["kotlin:function:com.acme.extensions.Box.writeFile(String,String)" "kotlin:Box"]}
+                 extension-decls))
+          (is (= #{["kotlin:function:com.acme.extensions.Path.writeFile(String,String)"
+                    "kotlin:Path"
+                    "kotlin:Path"
+                    true]
+                   ["kotlin:function:com.acme.extensions.Box.writeFile(String,String)"
+                    "kotlin:Box"
+                    "kotlin:com.acme.extensions.Box"
                     true]}
                  resolved))
           (is (empty? unresolved)))))))

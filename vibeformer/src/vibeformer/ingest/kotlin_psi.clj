@@ -341,10 +341,13 @@
     (instance? KtNamedFunction declaration)
     (let [function ^KtNamedFunction declaration
           return-type (.getTypeReference function)
+          receiver-type (.getReceiverTypeReference function)
           value-parameters (.getValueParameters function)]
       (concat (type-ref-facts node-id :return-type return-type)
+              (type-facts receiver-type)
               (value-parameter-type-refs node-id value-parameters)
               (nullable-type-feature-facts node-id return-type :return-type)
+              (nullable-type-feature-facts node-id receiver-type :receiver-type)
               (value-parameter-nullable-features node-id value-parameters)))))
 
 (defn- supertype-ref-facts [node-id declaration]
@@ -380,6 +383,8 @@
 (defn- declaration-fact [decl-id decl-kind name qualified-name node-id declaration]
   (let [function-return-type (when (instance? KtNamedFunction declaration)
                                (some-> ^KtNamedFunction declaration .getTypeReference type-fact :type/id))
+        function-receiver-type (when (instance? KtNamedFunction declaration)
+                                 (some-> ^KtNamedFunction declaration .getReceiverTypeReference type-fact :type/id))
         property-type (when (instance? KtProperty declaration)
                         (some-> ^KtProperty declaration .getTypeReference type-fact :type/id))]
     (cond-> {:db/id decl-id
@@ -394,6 +399,9 @@
 
       function-return-type
       (assoc :decl/return-type function-return-type)
+
+      function-receiver-type
+      (assoc :decl/receiver-type function-receiver-type)
 
       property-type
       (assoc :decl/type property-type))))
@@ -697,7 +705,9 @@
     :else []))
 
 (defn- function-signature [^KtNamedFunction function]
-  (str (.getName function) "("
+  (str (when-let [receiver-type (some-> function .getReceiverTypeReference type-syntax)]
+         (str receiver-type "."))
+       (.getName function) "("
        (str/join "," (map #(or (type-syntax (.getTypeReference %)) "_")
                           (.getValueParameters function)))
        ")"))
@@ -928,16 +938,17 @@
       (:type/id (d/pull db [:type/id] value)))))
 
 (defn- project-declarations [db project-id]
-  (mapv (fn [[decl-id kind name qualified-name decl-type return-type file-id node-id]]
+  (mapv (fn [[decl-id kind name qualified-name decl-type return-type receiver-type file-id node-id]]
           {:decl/id decl-id
            :decl/kind kind
            :decl/name name
            :decl/qualified-name qualified-name
            :decl/type (type-identity db decl-type)
            :decl/return-type (type-identity db return-type)
+           :decl/receiver-type (type-identity db receiver-type)
            :decl/file-id file-id
            :node/id node-id})
-        (d/q '[:find ?decl-id ?kind ?name ?qualified-name ?decl-type ?return-type ?file-id ?node-id
+        (d/q '[:find ?decl-id ?kind ?name ?qualified-name ?decl-type ?return-type ?receiver-type ?file-id ?node-id
                :in $ ?project-id
                :where
                [?project :project/id ?project-id]
@@ -951,7 +962,8 @@
                [?decl :decl/name ?name]
                [?decl :decl/qualified-name ?qualified-name]
                [(get-else $ ?decl :decl/type :vibeformer.query/absent) ?decl-type]
-               [(get-else $ ?decl :decl/return-type :vibeformer.query/absent) ?return-type]]
+               [(get-else $ ?decl :decl/return-type :vibeformer.query/absent) ?return-type]
+               [(get-else $ ?decl :decl/receiver-type :vibeformer.query/absent) ?receiver-type]]
              db project-id)))
 
 (defn- project-explicit-binding-type-index [db project-id]
@@ -998,6 +1010,11 @@
 (defn- receiver-known-call-type-id [value]
   (when-let [value (some-> value str/trim)]
     (when-let [[_ call-name] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*\(.*" value)]
+      (:ref/to-type (get known-function-calls call-name)))))
+
+(defn- qualified-known-call-type-id [value]
+  (when-let [value (some-> value str/trim)]
+    (when-let [[_ call-name] (re-find #"\.([A-Za-z_][A-Za-z0-9_]*)\s*\(" value)]
       (:ref/to-type (get known-function-calls call-name)))))
 
 (defn- receiver-known-static-type-id [value]
@@ -1047,6 +1064,7 @@
       (constructor-expression-type-id type-index value)
       (builder-factory-expression-type-id type-index value)
       (receiver-known-call-type-id value)
+      (qualified-known-call-type-id value)
       (receiver-known-static-type-id value)))
 
 (defn- project-inferred-binding-type-index [db project-id type-index]
@@ -1266,14 +1284,19 @@
    :type/name (type-name-from-id type-id)
    :type/nullable? (nullable-type-id? type-id)})
 
+(defn- referenced-type-id [value]
+  (cond
+    (nil? value) nil
+    (and (vector? value) (= 2 (count value))) (second value)
+    (string? value) value))
+
 (defn- referenced-type-ids [facts]
   (->> facts
        (filter map?)
        (mapcat (fn [fact]
                  (keep (fn [attr]
-                         (when-let [[_ type-id] (get fact attr)]
-                           type-id))
-                       [:ref/to-type :ref/owner-type])))
+                         (referenced-type-id (get fact attr)))
+                       [:decl/receiver-type :ref/to-type :ref/owner-type])))
        set))
 
 (defn- existing-type-ids [db type-ids]
@@ -1380,7 +1403,8 @@
       (first scored))))
 
 (defn- resolve-decl-tx [db source-types ref-id decl]
-  (let [owner-type (owner-type-id source-types decl)]
+  (let [owner-type (or (owner-type-id source-types decl)
+                       (:decl/receiver-type decl))]
     (resolved-ref-tx db ref-id
                      (cond-> {:ref/to-decl [:decl/id (:decl/id decl)]}
                        (:decl/return-type decl)
@@ -1535,6 +1559,13 @@
                      (same-type-id? receiver-type owner-type)))
                  candidates))))
 
+(defn- receiver-extension-candidates [{call-receiver-type :call/receiver-type} candidates]
+  (when call-receiver-type
+    (seq (filter (fn [{decl-receiver-type :decl/receiver-type}]
+                   (and decl-receiver-type
+                        (same-type-id? call-receiver-type decl-receiver-type)))
+                 candidates))))
+
 (defn- inherited-member-candidates [source-types parent-by-node source-node-types direct-supertypes {:call/keys [receiver-type] :node/keys [id]} candidates]
   (when-not receiver-type
     (when-let [current-type (enclosing-type-id parent-by-node source-node-types id)]
@@ -1544,6 +1575,19 @@
                        (when-let [owner-type (owner-type-id source-types candidate)]
                          (contains? lineage owner-type)))
                      candidates))))))
+
+(defn- extension-receiver-type-index [decls]
+  (into {}
+        (keep (fn [{:node/keys [id] :decl/keys [receiver-type]}]
+                (when receiver-type
+                  [id receiver-type])))
+        decls))
+
+(defn- enclosing-extension-receiver-type [parent-by-node extension-receiver-types node-id]
+  (loop [current node-id]
+    (when current
+      (or (get extension-receiver-types current)
+          (recur (get parent-by-node current))))))
 
 (defn- resolve-function-candidates-tx [db source-types id arg-types candidates]
   (case (count candidates)
@@ -1561,11 +1605,18 @@
                      (:ref/owner-type known-call)
                      (assoc :ref/owner-type [:type/id (:ref/owner-type known-call)]))))
 
-(defn- function-resolution-tx [db functions methods source-types type-index parent-by-node source-node-types direct-supertypes {:ref/keys [id name] :call/keys [arg-types] :as ref}]
+(defn- function-resolution-tx [db functions methods source-types type-index parent-by-node source-node-types direct-supertypes extension-receiver-types {:ref/keys [id name] :call/keys [arg-types receiver-type] :as ref}]
   (let [candidates (same-file-candidates (get functions name) (:ref/file-id ref))
         member-candidates (concat (get functions name) (get methods name))
         receiver-candidates (or (receiver-member-candidates source-types ref candidates)
                                 (receiver-member-candidates source-types ref member-candidates))
+        extension-ref (cond-> ref
+                        (nil? receiver-type)
+                        (assoc :call/receiver-type
+                               (enclosing-extension-receiver-type parent-by-node
+                                                                  extension-receiver-types
+                                                                  (:node/id ref))))
+        extension-candidates (receiver-extension-candidates extension-ref candidates)
         inherited-candidates (inherited-member-candidates source-types
                                                           parent-by-node
                                                           source-node-types
@@ -1579,6 +1630,7 @@
           (known-call-resolution-tx db id known-call))
         (when (and (= "matches" name) receiver-candidates)
           (resolve-function-candidates-tx db source-types id arg-types receiver-candidates))
+        (resolve-function-candidates-tx db source-types id arg-types extension-candidates)
         (when-not (and (= "matches" name)
                        (:call/receiver-type ref))
           (resolve-function-candidates-tx db source-types id arg-types candidates))
@@ -1606,6 +1658,7 @@
         parent-by-node (project-parent-node-index db project-id)
         source-node-types (source-node-type-index decls)
         direct-supertypes (project-direct-supertype-index db project-id source-types type-index)
+        extension-receiver-types (extension-receiver-type-index decls)
         analysis-api-tx (when (:kotlin/analysis-api? opts)
                           (:tx-data (kotlin-analysis-api/setup-facts db project-id opts)))]
     (vec
@@ -1628,6 +1681,7 @@
                                           parent-by-node
                                           source-node-types
                                           direct-supertypes
+                                          extension-receiver-types
                                           ref)
 
                   []))

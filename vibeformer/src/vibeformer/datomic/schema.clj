@@ -105,6 +105,9 @@
    {:db/ident :decl/type
     :db/valueType :db.type/ref
     :db/cardinality :db.cardinality/one}
+   {:db/ident :decl/receiver-type
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
    {:db/ident :decl/modifiers
     :db/valueType :db.type/keyword
     :db/cardinality :db.cardinality/many}
