@@ -129,6 +129,61 @@ public final class UsesWidget {
 }
 ")
 
+(def imported-local-type-use-fixture
+  "package com.acme.uses;
+
+import com.acme.model.Widget;
+import java.util.List;
+
+public final class UsesImportedWidget {
+  private Widget widget;
+  private List<Widget> widgets;
+
+  public Widget widget() {
+    return widget;
+  }
+
+  public List<Widget> widgets() {
+    return widgets;
+  }
+}
+")
+
+(def wildcard-imported-local-type-use-fixture
+  "package com.acme.uses;
+
+import com.acme.model.*;
+import java.util.*;
+
+public final class UsesWildcardImportedWidget {
+  private Widget widget;
+  private List<Widget> widgets;
+
+  public Widget widget() {
+    return widget;
+  }
+}
+")
+
+(def same-package-helper-fixture
+  "package com.acme.samepackage;
+
+public final class Helper {
+}
+")
+
+(def same-package-type-use-fixture
+  "package com.acme.samepackage;
+
+public final class UsesSamePackageHelper {
+  private Helper helper;
+
+  public Helper helper() {
+    return helper;
+  }
+}
+")
+
 (def inherited-field-fixture
   "package com.acme.inherited;
 
@@ -1522,6 +1577,140 @@ public final class Demo {
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
                       [(= ?name "com.acme.model.Widget")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-imported-project-local-java-type-use-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/model/Widget.java" local-type-widget-fixture)
+        (write-file! root "src/main/java/com/acme/uses/UsesImportedWidget.java" imported-local-type-use-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              widget-refs (set (d/q '[:find ?role ?name ?type-id ?decl-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/type-use]
+                                       [?ref :ref/role ?role]
+                                       [(contains? #{:field-type :return-type} ?role)]
+                                       [?ref :ref/name ?name]
+                                       [(= ?name "com.acme.model.Widget")]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]
+                                       [(get-else $ ?ref :ref/to-decl :missing) ?decl]
+                                       [(get-else $ ?decl :decl/id "") ?decl-id]]
+                                     db))
+              list-args (set (d/q '[:find ?type-id ?arg-id
+                                    :where
+                                    [?type :type/id ?type-id]
+                                    [(= ?type-id "java.util.List<com.acme.model.Widget>")]
+                                    [?type :type/args ?arg]
+                                    [?arg :type.arg/type ?arg-type]
+                                    [?arg-type :type/id ?arg-id]]
+                                  db))]
+          (is (= #{[:field-type "com.acme.model.Widget" "com.acme.model.Widget" "java:com.acme.model.Widget" true]
+                   [:return-type "com.acme.model.Widget" "com.acme.model.Widget" "java:com.acme.model.Widget" true]}
+                 widget-refs))
+          (is (= #{["java.util.List<com.acme.model.Widget>" "com.acme.model.Widget"]}
+                 list-args))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(contains? #{"Widget" "com.acme.model.Widget"} ?name)]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-wildcard-imported-project-local-java-type-use-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/model/Widget.java" local-type-widget-fixture)
+        (write-file! root "src/main/java/com/acme/uses/UsesWildcardImportedWidget.java" wildcard-imported-local-type-use-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              widget-refs (set (d/q '[:find ?role ?name ?type-id ?decl-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/type-use]
+                                       [?ref :ref/role ?role]
+                                       [(contains? #{:field-type :return-type} ?role)]
+                                       [?ref :ref/name ?name]
+                                       [(= ?name "com.acme.model.Widget")]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]
+                                       [(get-else $ ?ref :ref/to-decl :missing) ?decl]
+                                       [(get-else $ ?decl :decl/id "") ?decl-id]]
+                                     db))
+              list-args (set (d/q '[:find ?type-id ?arg-id
+                                    :where
+                                    [?type :type/id ?type-id]
+                                    [(= ?type-id "java.util.List<com.acme.model.Widget>")]
+                                    [?type :type/args ?arg]
+                                    [?arg :type.arg/type ?arg-type]
+                                    [?arg-type :type/id ?arg-id]]
+                                  db))]
+          (is (= #{[:field-type "com.acme.model.Widget" "com.acme.model.Widget" "java:com.acme.model.Widget" true]
+                   [:return-type "com.acme.model.Widget" "com.acme.model.Widget" "java:com.acme.model.Widget" true]}
+                 widget-refs))
+          (is (= #{["java.util.List<com.acme.model.Widget>" "com.acme.model.Widget"]}
+                 list-args))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(contains? #{"Widget" "com.acme.model.Widget"} ?name)]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-same-package-project-local-java-type-use-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/samepackage/Helper.java" same-package-helper-fixture)
+        (write-file! root "src/main/java/com/acme/samepackage/UsesSamePackageHelper.java" same-package-type-use-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              helper-refs (set (d/q '[:find ?role ?name ?type-id ?decl-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/type-use]
+                                       [?ref :ref/role ?role]
+                                       [(contains? #{:field-type :return-type} ?role)]
+                                       [?ref :ref/name ?name]
+                                       [(= ?name "com.acme.samepackage.Helper")]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]
+                                       [(get-else $ ?ref :ref/to-decl :missing) ?decl]
+                                       [(get-else $ ?decl :decl/id "") ?decl-id]]
+                                     db))]
+          (is (= #{[:field-type "com.acme.samepackage.Helper" "com.acme.samepackage.Helper" "java:com.acme.samepackage.Helper" true]
+                   [:return-type "com.acme.samepackage.Helper" "com.acme.samepackage.Helper" "java:com.acme.samepackage.Helper" true]}
+                 helper-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(contains? #{"Helper" "com.acme.samepackage.Helper"} ?name)]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 

@@ -97,6 +97,9 @@
     value))
 
 (def ^:dynamic *import-aliases* {})
+(def ^:dynamic *import-wildcard-packages* [])
+(def ^:dynamic *source-type-qnames* #{})
+(def ^:dynamic *current-package* nil)
 
 (defn- simple-source-type-ref? [^CtTypeReference type-ref]
   (let [simple-name (.getSimpleName type-ref)
@@ -109,13 +112,34 @@
 
 (defn- import-shadowed-qname [^CtTypeReference type-ref qname]
   (let [simple-name (.getSimpleName type-ref)
-        alias (get *import-aliases* simple-name)]
-    (if (and alias
-             qname
-             (simple-source-type-ref? type-ref)
-             (= qname (str "java.lang." simple-name))
-             (not= alias qname))
+        alias (get *import-aliases* simple-name)
+        same-package-alias (when (seq *current-package*)
+                             (let [candidate (str *current-package* "." simple-name)]
+                               (when (contains? *source-type-qnames* candidate)
+                                 candidate)))
+        wildcard-alias (->> *import-wildcard-packages*
+                            (map #(str % "." simple-name))
+                            (filter *source-type-qnames*)
+                            distinct
+                            (#(when (= 1 (count %)) (first %))))
+        simple-ref? (simple-source-type-ref? type-ref)
+        replaceable? (and qname
+                          simple-ref?
+                          (not (contains? *source-type-qnames* qname))
+                          (or (= qname simple-name)
+                              (= qname (str "java.lang." simple-name))
+                              (str/ends-with? qname (str "." simple-name))))]
+    (cond
+      (and alias replaceable? (not= alias qname))
       alias
+
+      (and same-package-alias replaceable? (not= same-package-alias qname))
+      same-package-alias
+
+      (and wildcard-alias replaceable? (not= wildcard-alias qname))
+      wildcard-alias
+
+      :else
       qname)))
 
 (defn- import-shadowed-type-ref? [^CtTypeReference type-ref]
@@ -1509,13 +1533,17 @@
     (when-not (str/ends-with? qname ".*")
       qname)))
 
+(defn- import-wildcard-package [import]
+  (when-let [[_ package-name] (re-matches #"\s*import\s+(?!static\s+)([\w.$]+)\.\*;\s*" (str import))]
+    package-name))
+
 (defn- compilation-unit [^CtType type]
   (try
     (some-> type .getPosition .getCompilationUnit)
     (catch Throwable _
       nil)))
 
-(defn- compilation-unit-import-aliases [types]
+(defn- compilation-unit-imports [types]
   (->> types
        (keep compilation-unit)
        distinct
@@ -1523,11 +1551,21 @@
                  (try
                    (.getImports compilation-unit)
                    (catch Throwable _
-                     []))))
+                     []))))))
+
+(defn- compilation-unit-import-aliases [types]
+  (->> (compilation-unit-imports types)
        (keep import-qname)
        (reduce (fn [aliases qname]
                  (assoc aliases (last (str/split qname #"\.")) qname))
                {})))
+
+(defn- compilation-unit-wildcard-imports [types]
+  (->> (compilation-unit-imports types)
+       (keep import-wildcard-package)
+       distinct
+       sort
+       vec))
 
 (defn- record-components [type]
   (if (instance? CtRecord type)
@@ -1562,14 +1600,30 @@
                  {:seen #{} :types []})
          :types)))
 
+(defn- source-file-type-qname [file-record]
+  (let [file-path (:file/path file-record)
+        file-name (last (str/split file-path #"/"))
+        type-name (str/replace file-name #"\.java$" "")
+        package-name (:file/package file-record)]
+    (when (and (seq type-name) (not= file-name type-name))
+      (if (str/blank? (or package-name ""))
+        type-name
+        (str package-name "." type-name)))))
+
+(defn- source-file-type-qnames [file-records]
+  (set (keep source-file-type-qname file-records)))
+
 (defn- file-facts [file-record]
   (let [file-id (:file/id file-record)
         project-root (get-in file-record [:file/project :project/root])
         source-path (.resolve (path project-root) (:file/path file-record))
         top-level-types (vec (parse-file source-path))
         types (source-types top-level-types)
-        import-aliases (compilation-unit-import-aliases top-level-types)]
-    (binding [*import-aliases* import-aliases]
+        import-aliases (compilation-unit-import-aliases top-level-types)
+        wildcard-imports (compilation-unit-wildcard-imports top-level-types)]
+    (binding [*import-aliases* import-aliases
+              *import-wildcard-packages* wildcard-imports
+              *current-package* (:file/package file-record)]
       (doall
        (mapcat
         (fn [type-ordinal type]
@@ -2411,12 +2465,17 @@
                           :ref.kind/implements}
                         (:ref/kind fact))
              (not (:ref/resolved? fact)))
-    (when-let [decl (get type-decls (canonical-type-id type-aliases (:ref/to-type fact)))]
-      (-> fact
-          (assoc :ref/to-decl (:decl/id decl)
-                 :ref/to-type (:decl/type decl)
-                 :ref/resolved? true)
-          (dissoc :ref/reason)))))
+    (let [type-id (canonical-type-id type-aliases (:ref/to-type fact))
+          decl-type-id (str/replace type-id #"\?$" "")]
+      (when-let [decl (or (get type-decls type-id)
+                          (get type-decls decl-type-id))]
+        (-> fact
+            (assoc :ref/to-decl (:decl/id decl)
+                   :ref/to-type (if (str/ends-with? type-id "?")
+                                  type-id
+                                  (:decl/type decl))
+                   :ref/resolved? true)
+            (dissoc :ref/reason))))))
 
 (defn- resolve-local-refs-once [facts]
   (let [deduped (dedupe-facts (concat facts (known-java-api-type-facts)))
@@ -2562,9 +2621,11 @@
   ([db project-id]
    (extract-project-facts db project-id {}))
   ([db project-id opts]
-   (binding [*classpath-types* (normalize-classpath-strings (:java/classpath-types opts))
-             *classpath-package-roots* (normalize-classpath-strings (:java/classpath-package-roots opts))]
-     (resolve-local-refs (mapcat file-facts (file-records db project-id))))))
+   (let [files (file-records db project-id)]
+     (binding [*classpath-types* (normalize-classpath-strings (:java/classpath-types opts))
+               *classpath-package-roots* (normalize-classpath-strings (:java/classpath-package-roots opts))
+               *source-type-qnames* (source-file-type-qnames files)]
+       (resolve-local-refs (mapcat file-facts files))))))
 
 (defn ingest!
   "Extract normalized Java facts from ingested Java files and transact them."
