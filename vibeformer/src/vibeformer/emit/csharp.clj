@@ -1684,11 +1684,19 @@
 
       (and (= "java.lang.Class" owner)
            (= "getAnnotation" source-method-name))
-      (unsupported node
-                   :java.class-get-annotation/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-reflection-annotation})
+      (if (and target
+               (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (let [annotation-result (emit-argument ctx node 0)]
+          (-> (merge-emits [target-result annotation-result])
+              (update :usings conj "System.Reflection")
+              (with-text (str target-text ".GetCustomAttribute(" (:text annotation-result) ")!"))
+              (apply-rule node :java.class-get-annotation/to-csharp-custom-attribute :rule-app.status/success)))
+        (unsupported node
+                     :java.class-get-annotation/to-csharp-custom-attribute
+                     {:method source-method-name
+                      :owner owner
+                      :argument-count (count (child-nodes db (:db/id node) :argument))
+                      :reason :emit.reason/unsupported-reflection-annotation-overload}))
 
       (and (= "java.lang.reflect.Method" owner)
            (= "invoke" source-method-name))
@@ -1708,19 +1716,39 @@
 
       (and (= "java.lang.reflect.Constructor" owner)
            (= "getAnnotation" source-method-name))
-      (unsupported node
-                   :java.reflection-constructor-get-annotation/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-reflection-annotation})
+      (if (and target
+               (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (let [annotation-result (emit-argument ctx node 0)]
+          (-> (merge-emits [target-result annotation-result])
+              (update :usings conj "System.Reflection")
+              (with-text (str target-text ".GetCustomAttribute(" (:text annotation-result) ")!"))
+              (apply-rule node
+                          :java.reflection-constructor-get-annotation/to-csharp-custom-attribute
+                          :rule-app.status/success)))
+        (unsupported node
+                     :java.reflection-constructor-get-annotation/to-csharp-custom-attribute
+                     {:method source-method-name
+                      :owner owner
+                      :argument-count (count (child-nodes db (:db/id node) :argument))
+                      :reason :emit.reason/unsupported-reflection-annotation-overload}))
 
       (and (= "java.lang.reflect.Parameter" owner)
            (= "getAnnotation" source-method-name))
-      (unsupported node
-                   :java.reflection-parameter-get-annotation/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-reflection-annotation})
+      (if (and target
+               (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (let [annotation-result (emit-argument ctx node 0)]
+          (-> (merge-emits [target-result annotation-result])
+              (update :usings conj "System.Reflection")
+              (with-text (str target-text ".GetCustomAttribute(" (:text annotation-result) ")!"))
+              (apply-rule node
+                          :java.reflection-parameter-get-annotation/to-csharp-custom-attribute
+                          :rule-app.status/success)))
+        (unsupported node
+                     :java.reflection-parameter-get-annotation/to-csharp-custom-attribute
+                     {:method source-method-name
+                      :owner owner
+                      :argument-count (count (child-nodes db (:db/id node) :argument))
+                      :reason :emit.reason/unsupported-reflection-annotation-overload}))
 
       (and (= "java.lang.reflect.WildcardType" owner)
            (= "getLowerBounds" source-method-name))

@@ -738,6 +738,7 @@
    ["java.lang.Class" "getDeclaredMethods"] :java.reflection.class/get-declared-methods
    ["java.lang.Class" "getDeclaredConstructors"] :java.reflection.class/get-declared-constructors
    ["java.lang.Class" "forName"] :java.reflection.class/for-name
+   ["java.lang.Class" "getAnnotation"] :java.reflection.class/get-annotation
    ["java.lang.reflect.Type" "getTypeName"] :java.reflection.type/get-type-name
    ["java.lang.reflect.ParameterizedType" "getActualTypeArguments"] :java.reflection.parameterized-type/get-actual-type-arguments
    ["java.lang.reflect.ParameterizedType" "getRawType"] :java.reflection.parameterized-type/get-raw-type
@@ -749,16 +750,15 @@
    ["java.lang.reflect.Executable" "getParameters"] :java.reflection.executable/get-parameters
    ["java.lang.reflect.Parameter" "isNamePresent"] :java.reflection.parameter/is-name-present
    ["java.lang.reflect.Parameter" "getName"] :java.reflection.parameter/get-name
-   ["java.lang.reflect.Modifier" "isAbstract"] :java.reflection.modifier/is-abstract})
+   ["java.lang.reflect.Modifier" "isAbstract"] :java.reflection.modifier/is-abstract
+   ["java.lang.reflect.Constructor" "getAnnotation"] :java.reflection.constructor/get-annotation
+   ["java.lang.reflect.Parameter" "getAnnotation"] :java.reflection.parameter/get-annotation})
 
 (def unsupported-reflection-features
   {["java.lang.Class" "getMethod"] :java.reflection.class/get-method
    ["java.lang.Class" "getDeclaredMethod"] :java.reflection.class/get-declared-method
-   ["java.lang.Class" "getAnnotation"] :java.reflection.class/get-annotation
    ["java.lang.reflect.Method" "invoke"] :java.reflection.method/invoke
-   ["java.lang.reflect.Constructor" "newInstance"] :java.reflection.constructor/new-instance
-   ["java.lang.reflect.Constructor" "getAnnotation"] :java.reflection.constructor/get-annotation
-   ["java.lang.reflect.Parameter" "getAnnotation"] :java.reflection.parameter/get-annotation})
+   ["java.lang.reflect.Constructor" "newInstance"] :java.reflection.constructor/new-instance})
 
 (defn- reflection-owner? [owner]
   (or (= "java.lang.Class" owner)

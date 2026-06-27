@@ -142,6 +142,7 @@
                             :java.class-get-declared-methods/to-csharp-get-methods
                             :java.class-get-declared-constructors/to-csharp-get-constructors
                             :java.class-for-name/to-csharp-get-type
+                            :java.class-get-annotation/to-csharp-custom-attribute
                             :java.type-get-type-name/to-csharp-full-name
                             :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                             :java.parameterized-type-get-raw-type/to-csharp-type
@@ -150,6 +151,8 @@
                             :java.reflection-constructor-get-parameter-count/to-csharp-parameter-count
                             :java.reflection-parameter-is-name-present/to-csharp-name-check
                             :java.reflection-parameter-get-name/to-csharp-name
+                            :java.reflection-constructor-get-annotation/to-csharp-custom-attribute
+                            :java.reflection-parameter-get-annotation/to-csharp-custom-attribute
                             :java.modifier-is-abstract/to-csharp-type-attributes
                             :java.stream-source/to-csharp-enumerable
                             :java.stream-map/to-csharp-select
@@ -358,6 +361,9 @@
                      :java.reflection.class/get-declared-methods
                      :java.reflection.class/get-declared-constructors
                      :java.reflection.class/for-name
+                     :java.reflection.class/get-annotation
+                     :java.reflection.constructor/get-annotation
+                     :java.reflection.parameter/get-annotation
                      :java.stream/map-to-int
                      :java.stream/min
                      :java.stream/max
@@ -372,11 +378,8 @@
              (:rule/status (first (rules-by-feature feature))))))
     (doseq [feature [:java.reflection.class/get-declared-method
                      :java.reflection.class/get-method
-                     :java.reflection.class/get-annotation
                      :java.reflection.method/invoke
                      :java.reflection.constructor/new-instance
-                     :java.reflection.constructor/get-annotation
-                     :java.reflection.parameter/get-annotation
                      :java.feature/reflection
                      :java.feature/stream-api
                      :java.stream/collect]]

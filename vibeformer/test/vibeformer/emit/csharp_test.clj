@@ -326,6 +326,7 @@ public final class CodePointIterator {
 (def reflection-api-fixture
   "package com.example.reflect;
 
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.io.InputStream;
 import java.lang.reflect.Method;
@@ -439,6 +440,18 @@ public final class ReflectionApi {
 
   public static String parameterName(Parameter parameter) {
     return parameter.isNamePresent() ? parameter.getName() : \"\";
+  }
+
+  public static Annotation classAnnotation(Class<?> type, Class<? extends Annotation> annotationType) {
+    return type.getAnnotation(annotationType);
+  }
+
+  public static Annotation constructorAnnotation(Constructor<?> constructor, Class<? extends Annotation> annotationType) {
+    return constructor.getAnnotation(annotationType);
+  }
+
+  public static Annotation parameterAnnotation(Parameter parameter, Class<? extends Annotation> annotationType) {
+    return parameter.getAnnotation(annotationType);
   }
 
   public static Type[] lowerBounds(WildcardType wildcardType) {
@@ -3138,6 +3151,12 @@ public final class Chain {
                            "return type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).MaxBy(it => it.GetParameters().Length);"
                            "public static string parameterName(ParameterInfo parameter)"
                            "return !string.IsNullOrEmpty(parameter.Name) ? parameter.Name : \"\";"
+                           "public static Attribute classAnnotation(Type type, Type annotationType)"
+                           "return type.GetCustomAttribute(annotationType)!;"
+                           "public static Attribute constructorAnnotation(ConstructorInfo constructor, Type annotationType)"
+                           "return constructor.GetCustomAttribute(annotationType)!;"
+                           "public static Attribute parameterAnnotation(ParameterInfo parameter, Type annotationType)"
+                           "return parameter.GetCustomAttribute(annotationType)!;"
                            "public static Type[] lowerBounds(Type wildcardType)"
                            "return wildcardType.GetGenericParameterConstraints();"
                            "public static Type[] upperBounds(Type wildcardType)"]]
@@ -3171,6 +3190,9 @@ public final class Chain {
                         :java.reflection-constructor-get-parameter-count/to-csharp-parameter-count
                         :java.reflection-parameter-is-name-present/to-csharp-name-check
                         :java.reflection-parameter-get-name/to-csharp-name
+                        :java.class-get-annotation/to-csharp-custom-attribute
+                        :java.reflection-constructor-get-annotation/to-csharp-custom-attribute
+                        :java.reflection-parameter-get-annotation/to-csharp-custom-attribute
                         :java.modifier-is-abstract/to-csharp-type-attributes]]
             (is (contains? applied-rules rule))))))))
 
@@ -3197,11 +3219,8 @@ public final class Chain {
           (is (str/includes? content "Unsupported Java node method-call"))
           (is (= #{:java.class-get-declared-method/unsupported
                    :java.class-get-method/unsupported
-                   :java.class-get-annotation/unsupported
                    :java.reflection-method-invoke/unsupported
-                   :java.reflection-constructor-new-instance/unsupported
-                   :java.reflection-constructor-get-annotation/unsupported
-                   :java.reflection-parameter-get-annotation/unsupported}
+                   :java.reflection-constructor-new-instance/unsupported}
                  diagnostic-rules)))))))
 
 (deftest emits-supported-synchronized-constructs-as-locks

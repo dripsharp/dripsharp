@@ -340,6 +340,11 @@
     :rule/input-feature :java.reflection.class/for-name
     :rule/output-feature :csharp.api/type-get-type
     :rule/status implemented-status}
+   {:rule/id :java.class-get-annotation/to-csharp-custom-attribute
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-annotation
+    :rule/output-feature :csharp.api/custom-attribute
+    :rule/status implemented-status}
    {:rule/id :java.type-get-type-name/to-csharp-full-name
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.type/get-type-name
@@ -380,6 +385,16 @@
     :rule/input-feature :java.reflection.parameter/get-name
     :rule/output-feature :csharp.api/parameter-name
     :rule/status implemented-status}
+   {:rule/id :java.reflection-constructor-get-annotation/to-csharp-custom-attribute
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.constructor/get-annotation
+    :rule/output-feature :csharp.api/custom-attribute
+    :rule/status implemented-status}
+   {:rule/id :java.reflection-parameter-get-annotation/to-csharp-custom-attribute
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.parameter/get-annotation
+    :rule/output-feature :csharp.api/custom-attribute
+    :rule/status implemented-status}
    {:rule/id :java.modifier-is-abstract/to-csharp-type-attributes
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.modifier/is-abstract
@@ -397,10 +412,6 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/get-declared-method
     :rule/status unsupported-status}
-   {:rule/id :java.class-get-annotation/unsupported
-    :rule/source-lang :lang/java
-    :rule/input-feature :java.reflection.class/get-annotation
-    :rule/status unsupported-status}
    {:rule/id :java.reflection-method-invoke/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.method/invoke
@@ -408,14 +419,6 @@
    {:rule/id :java.reflection-constructor-new-instance/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.constructor/new-instance
-    :rule/status unsupported-status}
-   {:rule/id :java.reflection-constructor-get-annotation/unsupported
-    :rule/source-lang :lang/java
-    :rule/input-feature :java.reflection.constructor/get-annotation
-    :rule/status unsupported-status}
-   {:rule/id :java.reflection-parameter-get-annotation/unsupported
-    :rule/source-lang :lang/java
-    :rule/input-feature :java.reflection.parameter/get-annotation
     :rule/status unsupported-status}
    {:rule/id :java.wildcard-type-get-lower-bounds/to-csharp-generic-parameter-constraints
     :rule/source-lang :lang/java
