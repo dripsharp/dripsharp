@@ -270,8 +270,9 @@ fun values(root: Path): List<URI> {
 }
 
 fun hasText(values: List<String>, text: String): Boolean {
+  val normalized = text.replace(\"value\", \"other\").trim()
   assertThat(values).contains(text)
-  return values.contains(text) && text.contains(\"value\")
+  return values.contains(text) && text.contains(\"value\") && normalized.startsWith(\"other\") && !values.isEmpty()
 }
 
 fun assertions() {
@@ -1208,11 +1209,15 @@ public final class JavaPseudoTypes {
                              "hasMessageStartingWith"
                              "isEqualTo"
                              "isFalse"
+                             "isEmpty"
                              "isInstanceOf"
                              "isNotEqualTo"
+                             "replace"
                              "URI"
                              "resolve"
+                             "startsWith"
                              "toUri"
+                             "trim"
                              "contains"}
               resolved-calls (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
                                           :in $ ?target-names
@@ -1337,11 +1342,15 @@ public final class JavaPseudoTypes {
                    ["hasMessageStartingWith" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isFalse" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isEmpty" "kotlin:Boolean" "kotlin.collections.Collection" true]
                    ["isInstanceOf" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isNotEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["replace" "kotlin:String" "kotlin:String" true]
                    ["URI" "java.net.URI" "java.net.URI" true]
                    ["resolve" "java.nio.file.Path" "java.nio.file.Path" true]
+                   ["startsWith" "kotlin:Boolean" "kotlin:String" true]
                    ["toUri" "java.net.URI" "java.nio.file.Path" true]
+                   ["trim" "kotlin:String" "kotlin:String" true]
                    ["contains" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["contains" "kotlin:Boolean" "kotlin:List<kotlin:String>" true]
                    ["contains" "kotlin:Boolean" "kotlin:String" true]}

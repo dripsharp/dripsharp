@@ -880,6 +880,8 @@
                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "isFalse" {:ref/to-type "org.assertj.core.api.AbstractAssert"
               :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isEmpty" {:ref/to-type "kotlin:Boolean"
+              :ref/owner-type "kotlin.collections.Collection"}
    "isInstanceOf" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                    :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "isNotEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
@@ -894,10 +896,14 @@
             :ref/owner-type "kotlin.collections.MapsKt"}
    "named" {:ref/to-type "org.gradle.api.NamedDomainObjectProvider"
             :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
+   "replace" {:ref/to-type "kotlin:String"
+              :ref/owner-type "kotlin:String"}
    "resolve" {:ref/to-type "java.nio.file.Path"
               :ref/owner-type "java.nio.file.Path"}
    "setOf" {:ref/to-type "kotlin.collections.Set"
             :ref/owner-type "kotlin.collections.SetsKt"}
+   "startsWith" {:ref/to-type "kotlin:Boolean"
+                 :ref/owner-type "kotlin:String"}
    "toString" {:ref/to-type "kotlin:String"
                :ref/owner-type "kotlin:Any"}
    "toUri" {:ref/to-type "java.net.URI"
@@ -906,6 +912,8 @@
                  :ref/owner-type "kotlin.text.StringsKt"}
    "trimMargin" {:ref/to-type "kotlin:String"
                  :ref/owner-type "kotlin.text.StringsKt"}
+   "trim" {:ref/to-type "kotlin:String"
+           :ref/owner-type "kotlin:String"}
    "URI" {:ref/to-type "java.net.URI"
           :ref/owner-type "java.net.URI"}})
 
