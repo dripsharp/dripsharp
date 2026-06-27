@@ -281,6 +281,18 @@ interface CommandLine {
   fun wordCursor(): Int
 }
 
+interface ConfigurableFileCollection {
+  fun filter(predicate: (Path) -> Boolean): ConfigurableFileCollection
+}
+
+interface TaskResult {
+  val output: String
+}
+
+fun Path.listFilesRecursively(): List<Path> = listOf(this)
+
+fun String.stripFilesAndLines(): String = this
+
 fun apiCalls(path: Path): URI {
   val text = \"\"\"
     value
@@ -420,6 +432,31 @@ fun interopReceiverFacts(root: Path, jvmArgs: ListProperty<String>): Boolean {
 
 fun commandLineFacts(commandLine: CommandLine): Boolean {
   return commandLine.word().substring(0, commandLine.wordCursor()).isNotEmpty()
+}
+
+fun residualReceiverFacts(
+  root: Path,
+  classpath: ConfigurableFileCollection,
+  packages: Map<String, Collection<String>>,
+  taskResult: TaskResult,
+): Boolean {
+  val files = root.listFilesRecursively().filter { it.toString().isNotEmpty() }
+  val pathInput = classpath.filter { it.exists() }
+  val formats = arrayOf(\"json\", \"yaml\").joinToString()
+  val cleaned = taskResult.output.stripFilesAndLines().lineSequence().joinToString(\"\\n\")
+  val props = convert {
+    val eq = it.indexOf('=')
+    if (eq == -1) it else it.substring(0, eq) + it.substring(eq + 1)
+  }
+  val docPackages = packages.map { it.value.toList() }
+  val current = StringBuilder()
+  return files.isNotEmpty() &&
+    pathInput.toString().isNotEmpty() &&
+    formats.isNotEmpty() &&
+    cleaned.isNotEmpty() &&
+    props.isNotEmpty() &&
+    docPackages.isNotEmpty() &&
+    current.isNotEmpty()
 }
 
 fun assertions() {
@@ -1555,8 +1592,10 @@ public final class JavaPseudoTypes {
                    ["isSameAs" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["filter" "kotlin.collections.List" "kotlin.collections.List" true]
                    ["filter" "kotlin.collections.List" "kotlin:List<kotlin:String>" true]
+                   ["filter" "kotlin.collections.List" "kotlin:ConfigurableFileCollection" true]
                    ["filter" "kotlin.collections.List" "kotlin.collections.Map" true]
                    ["filter" "java.util.stream.Stream" "java.util.stream.Stream" true]
+                   ["joinToString" "kotlin:String" "kotlin:Array" true]
                    ["joinToString" "kotlin:String" "kotlin.collections.List" true]
                    ["joinToString" "kotlin:String" "kotlin:List<kotlin:String>" true]
                    ["joinToString" "kotlin:String" "kotlin.sequences.Sequence" true]
@@ -1574,6 +1613,7 @@ public final class JavaPseudoTypes {
                    ["toByteArray" "kotlin:ByteArray" "org.msgpack.core.MessageBufferPacker" true]
                    ["toByteArray" "kotlin:ByteArray" "kotlin:String" true]
                    ["toList" "java.util.stream.Collector" "java.util.stream.Collectors" true]
+                   ["toList" "kotlin.collections.List" "kotlin:Collection<kotlin:String>" true]
                    ["toList" "kotlin.collections.List" "kotlin:com.acme.api.JavaVersionRange" true]
                    ["toList" "kotlin.collections.List" "kotlin.sequences.Sequence" true]
                    ["toList" "kotlin.collections.List" "java.util.stream.Stream" true]

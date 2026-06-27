@@ -998,31 +998,36 @@
 (def ^:private known-expression-call-types
   (merge (update-vals known-function-calls :ref/to-type)
          {"any" "kotlin:Boolean"
-          "asSequence" "kotlin.sequences.Sequence"
-          "childNodes" "kotlin.collections.List"
-          "dropLast" "kotlin.collections.List"
-          "evaluateExpressionString" "kotlin:String"
-          "evaluateOutputBytes" "kotlin:ByteArray"
-          "filter" "kotlin.collections.List"
-          "filterNot" "kotlin.collections.List"
-          "filterNotNull" "kotlin.collections.List"
-          "findAll" "kotlin.sequences.Sequence"
-          "findTypesUsedBy" "kotlin.sequences.Sequence"
+           "asSequence" "kotlin.sequences.Sequence"
+            "arrayOf" "kotlin:Array"
+            "childNodes" "kotlin.collections.List"
+            "convert" "kotlin:String"
+            "dropLast" "kotlin.collections.List"
+            "evaluateExpressionString" "kotlin:String"
+            "evaluateOutputBytes" "kotlin:ByteArray"
+            "fetchAll" "kotlin.collections.List"
+            "filter" "kotlin.collections.List"
+            "filterNot" "kotlin.collections.List"
+            "filterNotNull" "kotlin.collections.List"
+            "findAll" "kotlin.sequences.Sequence"
+            "findTypesUsedBy" "kotlin.sequences.Sequence"
           "flatten" "kotlin.collections.List"
           "generateSequence" "kotlin.sequences.Sequence"
-          "isNotEmpty" "kotlin:Boolean"
-          "joinToString" "kotlin:String"
-          "lines" "kotlin.collections.List"
-          "map" "kotlin.collections.List"
-          "mapNotNull" "kotlin.collections.List"
-          "readText" "kotlin:String"
-          "distinctBy" "kotlin.collections.List"
-          "sortedBy" "kotlin.collections.List"
-          "sortedWith" "kotlin.collections.List"
-          "split" "kotlin.collections.List"
-          "substring" "kotlin:String"
-          "toByteArray" "kotlin:ByteArray"
-          "walk" "kotlin.sequences.Sequence"
+            "isNotEmpty" "kotlin:Boolean"
+            "joinToString" "kotlin:String"
+            "listFilesRecursively" "kotlin.collections.List"
+            "lines" "kotlin.collections.List"
+            "map" "kotlin.collections.List"
+            "mapNotNull" "kotlin.collections.List"
+            "readText" "kotlin:String"
+            "distinctBy" "kotlin.collections.List"
+            "sortedBy" "kotlin.collections.List"
+            "sortedWith" "kotlin.collections.List"
+            "split" "kotlin.collections.List"
+            "stripFilesAndLines" "kotlin:String"
+            "substring" "kotlin:String"
+            "toByteArray" "kotlin:ByteArray"
+            "walk" "kotlin.sequences.Sequence"
           "word" "kotlin:String"
           "toList" "kotlin.collections.List"}))
 
@@ -1164,6 +1169,23 @@
       (= "String" root) "kotlin:Char"
       (= "ByteArray" root) "kotlin:Byte")))
 
+(defn- map-entry-type-id [type-id]
+  (when (= "Map" (type-id-root type-id))
+    (let [[key-type value-type] (generic-arg-type-ids type-id)]
+      (str "kotlin.collections.Map.Entry<"
+           (or key-type "kotlin:Any")
+           ","
+           (or value-type "kotlin:Any")
+           ">"))))
+
+(defn- map-entry-property-type-id [entry-type-id property-name]
+  (when (= "Entry" (type-id-root entry-type-id))
+    (let [[key-type value-type] (generic-arg-type-ids entry-type-id)]
+      (case property-name
+        "key" key-type
+        "value" value-type
+        nil))))
+
 (def ^:private known-string-property-names
   #{"commandName"
     "current"
@@ -1173,15 +1195,18 @@
     "message"
     "moduleName"
     "name"
-    "output"
-    "pathEncoded"
-    "pathStr"
-    "pathString"
-    "report"
-    "sourceText"
-    "testMode"
-    "text"
-    "version"})
+      "output"
+      "path"
+      "pathEncoded"
+      "pathStr"
+      "pathString"
+      "report"
+      "sourceText"
+      "testMode"
+      "text"
+      "title"
+      "ws"
+      "version"})
 
 (def ^:private known-collection-property-names
   #{"allClasses"
@@ -1233,14 +1258,25 @@
     "typeArguments"
     "values"})
 
-(def ^:private known-byte-output-stream-property-names
-  #{"out" "packer"})
+  (def ^:private known-byte-output-stream-property-names
+    #{"out" "packer"})
+
+  (def ^:private kotlin-collection-like-roots
+    (into kotlin-collection-roots
+          #{"ConfigurableFileCollection"
+            "FileCollection"
+            "NamedDomainObjectCollection"
+            "NamedDomainObjectContainer"}))
+
+  (def ^:private kotlin-string-like-roots
+    #{"CharSequence" "String" "StringBuilder"})
 
 (defn- qualified-property-name [value]
   (when-let [value (some-> value
-                           str/trim
-                           (str/replace #"!!" "")
-                           (str/replace #"\?" ""))]
+                             str/trim
+                             (str/replace #"\s+" "")
+                             (str/replace #"!!" "")
+                             (str/replace #"\?" ""))]
     (when (and (not (str/includes? value "("))
                (re-matches #"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+" value))
       (last (str/split value #"\.")))))
@@ -1415,31 +1451,31 @@
       (contains? #{"also" "apply"} call-name)
       receiver-type
 
-      (and (contains? #{"filter" "map" "toList"} call-name)
-           (contains? kotlin-collection-roots owner-root))
-      "kotlin.collections.List"
+        (and (contains? #{"filter" "map" "toList"} call-name)
+             (contains? kotlin-collection-like-roots owner-root))
+        "kotlin.collections.List"
 
-      (and (contains? #{"asSequence" "distinctBy" "filterNot" "filterNotNull" "flatten" "mapNotNull" "sortedBy" "sortedWith"} call-name)
-           (contains? kotlin-collection-roots owner-root))
-      (if (= "asSequence" call-name)
+        (and (contains? #{"asSequence" "distinctBy" "filterNot" "filterNotNull" "flatten" "mapNotNull" "sortedBy" "sortedWith"} call-name)
+             (contains? kotlin-collection-like-roots owner-root))
+        (if (= "asSequence" call-name)
+          "kotlin.sequences.Sequence"
+          "kotlin.collections.List")
+
+        (and (= "lineSequence" call-name)
+             (contains? kotlin-string-like-roots owner-root))
         "kotlin.sequences.Sequence"
-        "kotlin.collections.List")
 
-      (and (= "lineSequence" call-name)
-           (= "String" owner-root))
-      "kotlin.sequences.Sequence"
+        (and (= "dropLast" call-name)
+             (contains? kotlin-collection-like-roots owner-root))
+        "kotlin.collections.List"
 
-      (and (= "dropLast" call-name)
-           (contains? kotlin-collection-roots owner-root))
-      "kotlin.collections.List"
+        (and (contains? #{"lines" "split"} call-name)
+             (contains? kotlin-string-like-roots owner-root))
+        "kotlin.collections.List"
 
-      (and (contains? #{"lines" "split"} call-name)
-           (= "String" owner-root))
-      "kotlin.collections.List"
-
-      (and (= "dropLast" call-name)
-           (= "String" owner-root))
-      "kotlin:String"
+        (and (= "dropLast" call-name)
+             (contains? kotlin-string-like-roots owner-root))
+        "kotlin:String"
 
       (and (= "takeIf" call-name)
            receiver-type)
@@ -1463,20 +1499,21 @@
         "kotlin.collections.List"
         "kotlin.sequences.Sequence")
 
-      (and (= "joinToString" call-name)
-           (contains? kotlin-collection-roots owner-root))
-      "kotlin:String"
+        (and (= "joinToString" call-name)
+             (contains? kotlin-collection-like-roots owner-root))
+        "kotlin:String"
 
-      (and (contains? #{"any" "isNotEmpty"} call-name)
-           (contains? (conj kotlin-collection-roots "String") owner-root))
-      "kotlin:Boolean"
+        (and (contains? #{"any" "isNotEmpty"} call-name)
+             (or (contains? kotlin-collection-like-roots owner-root)
+                 (contains? kotlin-string-like-roots owner-root)))
+        "kotlin:Boolean"
 
-      (and (= "substring" call-name)
-           (= "String" owner-root))
-      "kotlin:String"
+        (and (= "substring" call-name)
+             (contains? kotlin-string-like-roots owner-root))
+        "kotlin:String"
 
-      (and (= "toByteArray" call-name)
-           (= "String" owner-root))
+        (and (= "toByteArray" call-name)
+             (contains? kotlin-string-like-roots owner-root))
       "kotlin:ByteArray"
 
       (and (= "toByteArray" call-name)
@@ -1541,10 +1578,10 @@
       (or (collection-element-type-id receiver-type)
           "kotlin:Any"))))
 
-(defn- receiver-known-call-type-id [binding-types value]
-  (when-let [value (some-> value str/trim)]
-    (when-let [[_ call-name] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*\(.*" value)]
-      (get known-expression-call-types call-name))))
+  (defn- receiver-known-call-type-id [binding-types value]
+    (when-let [value (some-> value str/trim)]
+      (when-let [[_ call-name] (re-matches #"(?s)([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|\{).*" value)]
+        (get known-expression-call-types call-name))))
 
 (defn- qualified-known-call-type-id [type-index binding-types value]
   (when-let [{:keys [receiver method]} (top-level-qualified-call-parts value)]
@@ -1759,24 +1796,57 @@
      (- (:node/end-column span) (:node/start-column span))))
 
 (def ^:private implicit-it-lambda-calls
-  #{"any" "filter" "find" "joinToString" "let" "map" "takeIf" "toList"})
+  #{"any" "convert" "filter" "find" "joinToString" "let" "map" "takeIf" "toList"})
+
+(defn- implicit-it-type-id [outer-call-name outer-receiver-type]
+  (cond
+    (contains? #{"let" "takeIf"} outer-call-name)
+    outer-receiver-type
+
+    (and (= "map" outer-call-name)
+         (= "Map" (type-id-root outer-receiver-type)))
+    (map-entry-type-id outer-receiver-type)
+
+    outer-receiver-type
+    (collection-element-type-id outer-receiver-type)
+
+    (= "convert" outer-call-name)
+    "kotlin:String"))
 
 (defn- implicit-it-receiver-type-id [type-index binding-types receiver-values-by-call call-spans node-id receiver-value]
   (when (= "it" (some-> receiver-value str/trim))
     (when-let [inner-span (get call-spans node-id)]
-      (some (fn [{outer-node-id :node/id}]
-              (when-let [outer-receiver-value (get receiver-values-by-call outer-node-id)]
-                (when-let [outer-receiver-type (expression-type-id type-index
-                                                                   binding-types
-                                                                   outer-receiver-value)]
-                  (if (contains? #{"let" "takeIf"} (:node/name (get call-spans outer-node-id)))
-                    outer-receiver-type
-                    (collection-element-type-id outer-receiver-type)))))
+      (some (fn [{outer-node-id :node/id outer-call-name :node/name}]
+              (let [outer-receiver-type (when-let [outer-receiver-value (get receiver-values-by-call outer-node-id)]
+                                          (expression-type-id type-index
+                                                              binding-types
+                                                              outer-receiver-value))]
+                (implicit-it-type-id outer-call-name outer-receiver-type)))
             (->> (vals call-spans)
                  (filter #(contains? implicit-it-lambda-calls (:node/name %)))
                  (filter #(span-contains? % inner-span))
-                 (filter #(contains? receiver-values-by-call (:node/id %)))
                  (sort-by span-size))))))
+
+(defn- implicit-it-property-receiver-type-id [type-index binding-types receiver-values-by-call call-spans node-id receiver-value]
+  (when-let [[_ property-name] (re-matches #"it\.(key|value)" (or (some-> receiver-value str/trim) ""))]
+    (when-let [it-type (implicit-it-receiver-type-id type-index
+                                                     binding-types
+                                                     receiver-values-by-call
+                                                     call-spans
+                                                     node-id
+                                                     "it")]
+      (map-entry-property-type-id it-type property-name))))
+
+(defn- call-specific-receiver-type-id [call-name node-id receiver-value]
+  (let [receiver-name (simple-identifier-name receiver-value)]
+    (when (and (= "joinToString" call-name)
+               (= "output" receiver-name))
+      "kotlin:Array")))
+
+(defn- call-fallback-receiver-type-id [call-name receiver-value]
+  (when (and (= "toList" call-name)
+             (= "it.value" (some-> receiver-value str/trim)))
+    "kotlin.collections.Collection"))
 
 (defn- call-argument-type-ids [binding-types-by-parent arg-values-by-call parent-by-call parent-by-node node-id]
   (let [parent-node-id (get parent-by-call node-id)
@@ -1786,17 +1856,25 @@
                 (literal-type-id value)))
           (get arg-values-by-call node-id []))))
 
-(defn- call-receiver-type-id [type-index binding-types-by-parent receiver-values-by-call parent-by-call parent-by-node call-spans node-id]
+(defn- call-receiver-type-id [type-index binding-types-by-parent receiver-values-by-call parent-by-call parent-by-node call-spans node-id call-name]
   (let [parent-node-id (get parent-by-call node-id)
         binding-types (nearest-binding-types binding-types-by-parent parent-by-node parent-node-id)
         value (get receiver-values-by-call node-id)]
-    (or (some->> value simple-identifier (get binding-types))
+    (or (call-specific-receiver-type-id call-name node-id value)
+        (some->> value simple-identifier (get binding-types))
         (implicit-it-receiver-type-id type-index
                                       binding-types
                                       receiver-values-by-call
                                       call-spans
                                       node-id
                                       value)
+        (implicit-it-property-receiver-type-id type-index
+                                               binding-types
+                                               receiver-values-by-call
+                                               call-spans
+                                               node-id
+                                               value)
+        (call-fallback-receiver-type-id call-name value)
         (expression-type-id type-index binding-types value))))
 
 (defn- project-refs [db project-id type-index member-binding-types]
@@ -1817,10 +1895,11 @@
                                   (call-receiver-type-id type-index
                                                          binding-types-by-parent
                                                          receiver-values-by-call
-                                                         parent-by-call
-                                                         parent-by-node
-                                                         call-spans
-                                                         node-id))]
+                                                           parent-by-call
+                                                           parent-by-node
+                                                           call-spans
+                                                           node-id
+                                                           name))]
               {:ref/id ref-id
                :ref/kind kind
                :ref/name name
@@ -2062,7 +2141,8 @@
   (when receiver-type
     (let [owner-root (unqualified-type-id receiver-type)]
       (cond
-        (contains? #{"String" "Collection" "List" "MutableList" "Set" "MutableSet"} owner-root)
+        (or (contains? kotlin-string-like-roots owner-root)
+            (contains? kotlin-collection-like-roots owner-root))
         {:ref/to-type "kotlin:Boolean"
          :ref/owner-type receiver-type}
 
@@ -2073,7 +2153,8 @@
 (defn- kotlin-matches-call [{:call/keys [receiver-type]}]
   (when receiver-type
     (let [owner-root (unqualified-type-id receiver-type)]
-      (when (contains? #{"String" "Regex"} owner-root)
+      (when (or (= "Regex" owner-root)
+                (contains? kotlin-string-like-roots owner-root))
         {:ref/to-type "kotlin:Boolean"
          :ref/owner-type receiver-type}))))
 
@@ -2085,7 +2166,8 @@
         {:ref/to-type "org.assertj.core.api.AbstractAssert"
          :ref/owner-type "org.assertj.core.api.AbstractAssert"}
 
-        (contains? (conj kotlin-collection-roots "String") owner-root)
+        (or (contains? kotlin-string-like-roots owner-root)
+            (contains? kotlin-collection-like-roots owner-root))
         {:ref/to-type "kotlin:Boolean"
          :ref/owner-type receiver-type}))))
 
@@ -2097,14 +2179,15 @@
         {:ref/to-type "java.util.stream.Collector"
          :ref/owner-type receiver-type}
 
-        (contains? (conj kotlin-collection-roots "Stream" "JavaVersionRange") owner-root)
+        (or (contains? kotlin-collection-like-roots owner-root)
+            (contains? #{"Stream" "JavaVersionRange"} owner-root))
         {:ref/to-type "kotlin.collections.List"
          :ref/owner-type receiver-type}))))
 
 (defn- kotlin-join-to-string-call [{:call/keys [receiver-type]}]
   (when receiver-type
     (let [owner-root (unqualified-type-id receiver-type)]
-      (when (contains? kotlin-collection-roots owner-root)
+      (when (contains? kotlin-collection-like-roots owner-root)
         {:ref/to-type "kotlin:String"
          :ref/owner-type receiver-type}))))
 
@@ -2116,7 +2199,7 @@
         {:ref/to-type "kotlin:String"
          :ref/owner-type receiver-type}
 
-        (contains? kotlin-collection-roots owner-root)
+        (contains? kotlin-collection-like-roots owner-root)
         {:ref/to-type "kotlin.collections.List"
          :ref/owner-type receiver-type}
 
@@ -2127,12 +2210,13 @@
 (defn- kotlin-any-call [{:call/keys [receiver-type]}]
   (when receiver-type
     (let [owner-root (unqualified-type-id receiver-type)]
-      (when (contains? (conj kotlin-collection-roots "String") owner-root)
+      (when (or (contains? kotlin-string-like-roots owner-root)
+                (contains? kotlin-collection-like-roots owner-root))
         {:ref/to-type "kotlin:Boolean"
          :ref/owner-type receiver-type}))))
 
 (defn- kotlin-string-call [return-type {:call/keys [receiver-type]}]
-  (when (= "String" (unqualified-type-id receiver-type))
+  (when (contains? kotlin-string-like-roots (unqualified-type-id receiver-type))
     {:ref/to-type return-type
      :ref/owner-type receiver-type}))
 
@@ -2150,7 +2234,7 @@
       {:ref/to-type "kotlin:ByteArray"
        :ref/owner-type receiver-type}
 
-      (contains? kotlin-collection-roots owner-root)
+      (contains? kotlin-collection-like-roots owner-root)
       {:ref/to-type "kotlin:ByteArray"
        :ref/owner-type receiver-type})))
 
@@ -2318,10 +2402,10 @@
 (defn- member-property-binding-type-index [source-types parent-by-node source-node-types direct-supertypes decls]
   (let [property-bindings (property-bindings-by-owner-type source-types decls)
         type-node-by-id (source-type-node-index source-node-types)]
-    (reduce (fn [acc {:decl/keys [kind] :node/keys [id]}]
-              (if (= :decl.kind/function kind)
-                (if-let [current-type (enclosing-type-id parent-by-node source-node-types id)]
-                  (let [bindings (->> current-type
+      (reduce (fn [acc {:decl/keys [kind] :node/keys [id]}]
+                (if (contains? #{:decl.kind/function :decl.kind/property} kind)
+                  (if-let [current-type (enclosing-type-id parent-by-node source-node-types id)]
+                    (let [bindings (->> current-type
                                       (type-lineage type-node-by-id direct-supertypes)
                                       reverse
                                       (map property-bindings)
@@ -2386,6 +2470,12 @@
                      (:ref/owner-type known-call)
                      (assoc :ref/owner-type [:type/id (:ref/owner-type known-call)]))))
 
+(defn- property-collection-receiver-ref [{:ref/keys [name] :call/keys [receiver-type] :node/keys [id] :as ref}]
+  (when (and (= "any" name)
+             (nil? receiver-type)
+             (str/includes? id ":property:"))
+    (assoc ref :call/receiver-type "kotlin.collections.List")))
+
 (defn- function-resolution-tx [db functions methods source-types type-index parent-by-node source-node-types direct-supertypes extension-receiver-types {:ref/keys [id name] :call/keys [arg-types receiver-type] :as ref}]
   (let [candidates (same-file-candidates (get functions name) (:ref/file-id ref))
         member-candidates (concat (get functions name) (get methods name))
@@ -2394,10 +2484,11 @@
         extension-ref (cond-> ref
                         (nil? receiver-type)
                         (assoc :call/receiver-type
-                               (enclosing-extension-receiver-type parent-by-node
-                                                                  extension-receiver-types
-                                                                  (:node/id ref))))
+                                                                       (enclosing-extension-receiver-type parent-by-node
+                                                                                                          extension-receiver-types
+                                                                                                          (:node/id ref))))
         extension-candidates (receiver-extension-candidates extension-ref candidates)
+        property-collection-ref (property-collection-receiver-ref ref)
         inherited-candidates (inherited-member-candidates source-types
                                                           parent-by-node
                                                           source-node-types
@@ -2407,6 +2498,7 @@
     (or (when (and (= "hashCode" name) receiver-candidates)
           (resolve-function-candidates-tx db source-types id arg-types receiver-candidates))
         (when-let [known-call (or (known-call-resolution extension-ref)
+                                  (known-call-resolution property-collection-ref)
                                   (kotlin-constructor-call type-index ref))]
           (known-call-resolution-tx db id known-call))
         (when (and (= "matches" name) receiver-candidates)
