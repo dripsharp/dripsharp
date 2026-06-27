@@ -139,6 +139,12 @@ fun writes(tempDir: Path, box: Box): Path {
   val boxed = box.writeFile(\"box.txt\", \"BOX\")
   return project
 }
+
+class EvaluatorLike {
+  private val tempDir: Path = Path.of(\"tmp\")
+
+  fun writesFromProperty(): Path = tempDir.writeFile(\"random.pem\", \"RANDOM\")
+}
 ")
 
 (def kotlin-static-get-fixture

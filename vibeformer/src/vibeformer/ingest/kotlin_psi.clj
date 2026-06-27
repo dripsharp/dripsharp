@@ -1090,8 +1090,9 @@
 (defn- merge-binding-type-indexes [& indexes]
   (apply merge-with merge indexes))
 
-(defn- project-binding-type-index [db project-id type-index]
+(defn- project-binding-type-index [db project-id type-index member-binding-types]
   (merge-binding-type-indexes
+   member-binding-types
    (project-explicit-binding-type-index db project-id)
    (project-inferred-binding-type-index db project-id type-index)))
 
@@ -1159,8 +1160,8 @@
     (or (some->> value simple-identifier (get binding-types))
         (expression-type-id type-index value))))
 
-(defn- project-refs [db project-id type-index]
-  (let [binding-types-by-parent (project-binding-type-index db project-id type-index)
+(defn- project-refs [db project-id type-index member-binding-types]
+  (let [binding-types-by-parent (project-binding-type-index db project-id type-index member-binding-types)
         arg-values-by-call (project-call-argument-values db project-id)
         receiver-values-by-call (project-call-receiver-values db project-id)
         parent-by-call (project-call-parent-index db project-id)]
@@ -1552,6 +1553,34 @@
                    (conj lineage current)))))
       lineage)))
 
+(defn- property-bindings-by-owner-type [source-types decls]
+  (reduce (fn [acc {:decl/keys [kind name type] :as decl}]
+            (if (and (= :decl.kind/property kind) type)
+              (if-let [owner-type (owner-type-id source-types decl)]
+                (assoc-in acc [owner-type name] type)
+                acc)
+              acc))
+          {}
+          decls))
+
+(defn- member-property-binding-type-index [source-types parent-by-node source-node-types direct-supertypes decls]
+  (let [property-bindings (property-bindings-by-owner-type source-types decls)
+        type-node-by-id (source-type-node-index source-node-types)]
+    (reduce (fn [acc {:decl/keys [kind] :node/keys [id]}]
+              (if (= :decl.kind/function kind)
+                (if-let [current-type (enclosing-type-id parent-by-node source-node-types id)]
+                  (let [bindings (->> current-type
+                                      (type-lineage type-node-by-id direct-supertypes)
+                                      reverse
+                                      (map property-bindings)
+                                      (apply merge))]
+                    (cond-> acc
+                      (seq bindings) (assoc id bindings)))
+                  acc)
+                acc))
+            {}
+            decls)))
+
 (defn- receiver-member-candidates [source-types {:call/keys [receiver-type]} candidates]
   (when receiver-type
     (seq (filter (fn [candidate]
@@ -1658,6 +1687,11 @@
         parent-by-node (project-parent-node-index db project-id)
         source-node-types (source-node-type-index decls)
         direct-supertypes (project-direct-supertype-index db project-id source-types type-index)
+        member-binding-types (member-property-binding-type-index source-types
+                                                                 parent-by-node
+                                                                 source-node-types
+                                                                 direct-supertypes
+                                                                 decls)
         extension-receiver-types (extension-receiver-type-index decls)
         analysis-api-tx (when (:kotlin/analysis-api? opts)
                           (:tx-data (kotlin-analysis-api/setup-facts db project-id opts)))]
@@ -1685,7 +1719,7 @@
                                           ref)
 
                   []))
-              (project-refs db project-id type-index))))))
+              (project-refs db project-id type-index member-binding-types))))))
 
 (defn enrich!
   "Enrich existing Kotlin PSI facts with conservative semantic resolution.
