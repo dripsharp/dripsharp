@@ -1429,6 +1429,14 @@
           (with-text (str "(" args ").GetHashCode()"))
           (apply-rule node :java.double-hash-code/to-csharp-get-hash-code :rule-app.status/success))
 
+      (and (= "java.nio.charset.Charset" owner)
+           (= "forName" source-method-name)
+           (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (-> args-result
+          (update :usings conj "System.Text")
+          (with-text (str "Encoding.GetEncoding(" args ")"))
+          (apply-rule node :java.charset-for-name/to-csharp-encoding-get-encoding :rule-app.status/success))
+
       (and (= "java.lang.Class" owner)
            (= "getTypeName" source-method-name)
            target
@@ -1516,6 +1524,15 @@
       (-> target-result
           (with-text (str target-text ".IsEnum"))
           (apply-rule node :java.class-is-enum/to-csharp-is-enum :rule-app.status/success))
+
+      (and (= "java.lang.Class" owner)
+           (= "getEnumConstants" source-method-name)
+           target
+           (zero? (count (child-nodes db (:db/id node) :argument))))
+      (-> target-result
+          linq-result
+          (with-text (str target-text ".GetEnumValues().Cast<Enum>().ToArray()"))
+          (apply-rule node :java.class-get-enum-constants/to-csharp-enum-get-values :rule-app.status/success))
 
       (and (= "java.lang.Class" owner)
            (= "getClassLoader" source-method-name)
@@ -1681,6 +1698,15 @@
                    {:method source-method-name
                     :owner owner
                     :reason :emit.reason/unsupported-dynamic-reflection})
+
+      (and (= "java.lang.reflect.Array" owner)
+           (= "newInstance" source-method-name)
+           (= 2 (count (child-nodes db (:db/id node) :argument))))
+      (-> args-result
+          (with-text (str "System.Array.CreateInstance(" args ")"))
+          (apply-rule node
+                      :java.reflect-array-new-instance/to-csharp-array-create-instance
+                      :rule-app.status/success))
 
       (and (= "java.lang.Class" owner)
            (= "getAnnotation" source-method-name))

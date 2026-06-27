@@ -250,6 +250,11 @@
     :rule/input-feature :java.api/double-hash-code
     :rule/output-feature :csharp.api/get-hash-code
     :rule/status implemented-status}
+   {:rule/id :java.charset-for-name/to-csharp-encoding-get-encoding
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.api/charset-for-name
+    :rule/output-feature :csharp.api/encoding-get-encoding
+    :rule/status implemented-status}
    {:rule/id :java.class-type-literal/to-csharp-typeof
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/type-literal
@@ -344,6 +349,16 @@
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/get-annotation
     :rule/output-feature :csharp.api/custom-attribute
+    :rule/status implemented-status}
+   {:rule/id :java.class-get-enum-constants/to-csharp-enum-get-values
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/get-enum-constants
+    :rule/output-feature :csharp.api/enum-get-values
+    :rule/status implemented-status}
+   {:rule/id :java.reflect-array-new-instance/to-csharp-array-create-instance
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.array/new-instance
+    :rule/output-feature :csharp.api/array-create-instance
     :rule/status implemented-status}
    {:rule/id :java.type-get-type-name/to-csharp-full-name
     :rule/source-lang :lang/java

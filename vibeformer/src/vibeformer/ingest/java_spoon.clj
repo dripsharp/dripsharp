@@ -790,6 +790,8 @@
    ["java.lang.Class" "getDeclaredConstructors"] :java.reflection.class/get-declared-constructors
    ["java.lang.Class" "forName"] :java.reflection.class/for-name
    ["java.lang.Class" "getAnnotation"] :java.reflection.class/get-annotation
+   ["java.lang.Class" "getEnumConstants"] :java.reflection.class/get-enum-constants
+   ["java.lang.reflect.Array" "newInstance"] :java.reflection.array/new-instance
    ["java.lang.reflect.Type" "getTypeName"] :java.reflection.type/get-type-name
    ["java.lang.reflect.ParameterizedType" "getActualTypeArguments"] :java.reflection.parameterized-type/get-actual-type-arguments
    ["java.lang.reflect.ParameterizedType" "getRawType"] :java.reflection.parameterized-type/get-raw-type
@@ -964,7 +966,8 @@
     (concat
      (when (or (= "java.lang.Class" owner)
                (some-> owner (str/starts-with? "java.lang.reflect"))
-               (= "forName" name))
+               (and (= "java.lang.Class" owner)
+                    (= "forName" name)))
        (cond
          (contains? supported-reflection-features [owner name])
          [(supported-feature (str node-id ":feature:" (clojure.core/name (get supported-reflection-features [owner name])))
@@ -977,7 +980,7 @@
                                node-id
                                :feature.severity/hard)]
 
-         (or (reflection-owner? owner) (= "forName" name))
+         (reflection-owner? owner)
          [(unsupported-feature (str node-id ":feature:reflection")
                                :java.feature/reflection
                                node-id
@@ -1088,6 +1091,11 @@
                 (= "hashCode" name))
        [(supported-feature (str node-id ":feature:double-hash-code")
                            :java.api/double-hash-code
+                           node-id)])
+     (when (and (= "java.nio.charset.Charset" owner)
+                (= "forName" name))
+       [(supported-feature (str node-id ":feature:charset-for-name")
+                           :java.api/charset-for-name
                            node-id)]))))
 
 (defn- invocation-reference-facts [node-id ^CtInvocation invocation]

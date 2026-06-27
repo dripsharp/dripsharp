@@ -702,8 +702,10 @@ public final class PseudoTypes {
   "package com.acme.reflect;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
@@ -743,6 +745,18 @@ public final class ReflectionApi {
 
   public boolean isEnumType(Class<?> type) {
     return type.isEnum();
+  }
+
+  public Object[] enumConstants(Class<?> type) {
+    return type.getEnumConstants();
+  }
+
+  public Object newArray(Class<?> componentType, int size) {
+    return Array.newInstance(componentType, size);
+  }
+
+  public Charset charset(String name) {
+    return Charset.forName(name);
   }
 
   public ClassLoader classLoader(Class<?> type) {
@@ -3704,6 +3718,8 @@ public final class Demo {
                                         :java.reflection.class/get-type-parameters
                                         :java.reflection.class/get-component-type
                                         :java.reflection.class/is-enum
+                                        :java.reflection.class/get-enum-constants
+                                        :java.reflection.array/new-instance
                                         :java.reflection.class/get-class-loader
                                         :java.reflection.class/cast
                                         :java.reflection.class/get-resource-as-stream
@@ -3725,6 +3741,7 @@ public final class Demo {
                                         :java.reflection.constructor/get-annotation
                                         :java.reflection.parameter/get-annotation
                                         :java.reflection.method/invoke
+                                        :java.api/charset-for-name
                                         :java.feature/reflection}
                                        ?kind)]
                           [?feature :feature/status ?status]
@@ -3743,6 +3760,8 @@ public final class Demo {
                    [:java.reflection.class/get-type-parameters "getTypeParameters" :feature.status/supported]
                    [:java.reflection.class/get-component-type "getComponentType" :feature.status/supported]
                    [:java.reflection.class/is-enum "isEnum" :feature.status/supported]
+                   [:java.reflection.class/get-enum-constants "getEnumConstants" :feature.status/supported]
+                   [:java.reflection.array/new-instance "newInstance" :feature.status/supported]
                    [:java.reflection.class/get-class-loader "getClassLoader" :feature.status/supported]
                    [:java.reflection.class/cast "cast" :feature.status/supported]
                    [:java.reflection.class/get-resource-as-stream "getResourceAsStream" :feature.status/supported]
@@ -3763,7 +3782,8 @@ public final class Demo {
                    [:java.reflection.class/get-annotation "getAnnotation" :feature.status/supported]
                    [:java.reflection.constructor/get-annotation "getAnnotation" :feature.status/supported]
                    [:java.reflection.parameter/get-annotation "getAnnotation" :feature.status/supported]
-                   [:java.reflection.method/invoke "invoke" :feature.status/supported]}
+                   [:java.reflection.method/invoke "invoke" :feature.status/supported]
+                   [:java.api/charset-for-name "forName" :feature.status/supported]}
                    reflection-features)))))))
 
 (deftest classifies-unsupported-reflection-api-facts

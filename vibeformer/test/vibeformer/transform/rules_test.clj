@@ -124,6 +124,7 @@
                             :java.math-min/to-csharp-math-min
                             :java.math-max/to-csharp-math-max
                             :java.double-hash-code/to-csharp-get-hash-code
+                            :java.charset-for-name/to-csharp-encoding-get-encoding
                             :java.class-type-literal/to-csharp-typeof
                             :java.class-get-type-name/to-csharp-full-name
                             :java.class-get-name/to-csharp-full-name
@@ -143,6 +144,8 @@
                             :java.class-get-declared-constructors/to-csharp-get-constructors
                             :java.class-for-name/to-csharp-get-type
                             :java.class-get-annotation/to-csharp-custom-attribute
+                            :java.class-get-enum-constants/to-csharp-enum-get-values
+                            :java.reflect-array-new-instance/to-csharp-array-create-instance
                             :java.type-get-type-name/to-csharp-full-name
                             :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                             :java.parameterized-type-get-raw-type/to-csharp-type
@@ -345,7 +348,10 @@
              :java.api/math-round
              :java.api/math-min
              :java.api/math-max
-             :java.api/double-hash-code}
+             :java.api/double-hash-code
+             :java.api/charset-for-name
+             :java.reflection.class/get-enum-constants
+             :java.reflection.array/new-instance}
            (set (remove nil? (keys rules-by-feature)))))
     (is (every? #(= 1 (count %)) (vals rules-by-kind)))
     (is (every? #(= 1 (count %)) (vals rules-by-feature)))
@@ -366,6 +372,9 @@
                      :java.reflection.class/get-declared-constructors
                      :java.reflection.class/for-name
                      :java.reflection.class/get-annotation
+                     :java.reflection.class/get-enum-constants
+                     :java.reflection.array/new-instance
+                     :java.api/charset-for-name
                      :java.reflection.constructor/get-annotation
                      :java.reflection.parameter/get-annotation
                      :java.reflection.method/invoke

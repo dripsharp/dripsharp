@@ -331,8 +331,10 @@ public final class CodePointIterator {
   "package com.example.reflect;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
@@ -375,6 +377,18 @@ public final class ReflectionApi {
 
   public static boolean isEnumType(Class<?> type) {
     return type.isEnum();
+  }
+
+  public static Object[] enumConstants(Class<?> type) {
+    return type.getEnumConstants();
+  }
+
+  public static Object newArray(Class<?> componentType, int size) {
+    return Array.newInstance(componentType, size);
+  }
+
+  public static Object charset(String name) {
+    return Charset.forName(name);
   }
 
   public static ClassLoader classLoader(Class<?> type) {
@@ -3123,6 +3137,7 @@ public final class Chain {
           (doseq [snippet ["using System;"
                            "using System.IO;"
                            "using System.Reflection;"
+                           "using System.Text;"
                            "public static bool canInstantiate(Type requestedType, Type implementationType)"
                            "requestedType.IsAssignableFrom(implementationType)"
                            "(System.Reflection.TypeAttributes.Abstract & (System.Reflection.TypeAttributes)((int)implementationType.Attributes)) != 0"
@@ -3139,6 +3154,12 @@ public final class Chain {
                            "return type.GetElementType();"
                            "public static bool isEnumType(Type type)"
                            "return type.IsEnum;"
+                           "public static object[] enumConstants(Type type)"
+                           "return type.GetEnumValues().Cast<Enum>().ToArray();"
+                           "public static object newArray(Type componentType, int size)"
+                           "return System.Array.CreateInstance(componentType, size);"
+                           "public static object charset(string name)"
+                           "return Encoding.GetEncoding(name);"
                            "public static Assembly classLoader(Type type)"
                            "return type.Assembly;"
                            "public static Assembly localLoader()"
@@ -3198,6 +3219,9 @@ public final class Chain {
                         :java.class-get-type-parameters/to-csharp-generic-arguments
                         :java.class-get-component-type/to-csharp-element-type
                         :java.class-is-enum/to-csharp-is-enum
+                        :java.class-get-enum-constants/to-csharp-enum-get-values
+                        :java.reflect-array-new-instance/to-csharp-array-create-instance
+                        :java.charset-for-name/to-csharp-encoding-get-encoding
                         :java.class-get-class-loader/to-csharp-assembly
                         :java.class-cast/to-csharp-cast
                         :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream
