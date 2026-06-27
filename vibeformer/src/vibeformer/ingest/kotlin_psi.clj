@@ -1067,6 +1067,13 @@
 (def ^:private builder-self-factory-methods
   #{"preconfigured" "unconfigured"})
 
+(def ^:private wiremock-type-ids
+  {:wiremock "com.github.tomakehurst.wiremock.client.WireMock"
+   :mapping-builder "com.github.tomakehurst.wiremock.client.MappingBuilder"
+   :response-builder "com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder"
+   :stub-mapping "com.github.tomakehurst.wiremock.stubbing.StubMapping"
+   :url-pattern "com.github.tomakehurst.wiremock.matching.UrlPattern"})
+
 (def ^:private absent :vibeformer.query/absent)
 
 (defn- nil-if-absent [value]
@@ -1576,12 +1583,31 @@
       (and (= "first" call-name)
            (contains? (conj kotlin-collection-roots "String") owner-root))
       (or (collection-element-type-id receiver-type)
-          "kotlin:Any"))))
+          "kotlin:Any")
+
+      (and (= "willReturn" call-name)
+           (= "MappingBuilder" owner-root))
+      receiver-type
+
+      (and (= "proxiedFrom" call-name)
+           (= "ResponseDefinitionBuilder" owner-root))
+      receiver-type)))
 
   (defn- receiver-known-call-type-id [binding-types value]
     (when-let [value (some-> value str/trim)]
       (when-let [[_ call-name] (re-matches #"(?s)([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|\{).*" value)]
         (get known-expression-call-types call-name))))
+
+(defn- wiremock-expression-call-type-id [value]
+  (when-let [value (some-> value str/trim)]
+    (when-let [[_ call-name] (re-matches #"(?s)([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|\{).*" value)]
+      (case call-name
+        "any" (when (str/includes? value "anyUrl")
+                (:mapping-builder wiremock-type-ids))
+        "anyUrl" (:url-pattern wiremock-type-ids)
+        "aResponse" (:response-builder wiremock-type-ids)
+        "stubFor" (:stub-mapping wiremock-type-ids)
+        nil))))
 
 (defn- qualified-known-call-type-id [type-index binding-types value]
   (when-let [{:keys [receiver method]} (top-level-qualified-call-parts value)]
@@ -1643,6 +1669,7 @@
        (qualified-known-call-type-id type-index binding-types value)
        (constructor-expression-type-id type-index value)
        (builder-factory-expression-type-id type-index value)
+       (wiremock-expression-call-type-id value)
        (receiver-known-call-type-id binding-types value)
        (receiver-known-static-type-id value)
        (some->> value str/trim (get type-index))
@@ -2273,6 +2300,33 @@
     {:ref/to-type product-type-id
      :ref/owner-type receiver-type}))
 
+(defn- kotlin-wiremock-static-call [{:ref/keys [name] :call/keys [receiver-type arg-count]}]
+  (when (nil? receiver-type)
+    (case name
+      "any" (when (= 1 arg-count)
+              {:ref/to-type (:mapping-builder wiremock-type-ids)
+               :ref/owner-type (:wiremock wiremock-type-ids)})
+      "anyUrl" {:ref/to-type (:url-pattern wiremock-type-ids)
+                :ref/owner-type (:wiremock wiremock-type-ids)}
+      "aResponse" {:ref/to-type (:response-builder wiremock-type-ids)
+                   :ref/owner-type (:wiremock wiremock-type-ids)}
+      "stubFor" {:ref/to-type (:stub-mapping wiremock-type-ids)
+                 :ref/owner-type (:wiremock wiremock-type-ids)}
+      nil)))
+
+(defn- kotlin-wiremock-chain-call [{:ref/keys [name] :call/keys [receiver-type]}]
+  (let [owner-root (unqualified-type-id receiver-type)]
+    (cond
+      (and (= "willReturn" name)
+           (= "MappingBuilder" owner-root))
+      {:ref/to-type receiver-type
+       :ref/owner-type receiver-type}
+
+      (and (= "proxiedFrom" name)
+           (= "ResponseDefinitionBuilder" owner-root))
+      {:ref/to-type receiver-type
+       :ref/owner-type receiver-type})))
+
 (defn- constructor-call-name? [name]
   (boolean (re-matches #"[A-Z][A-Za-z0-9_]*" (or name ""))))
 
@@ -2309,6 +2363,8 @@
         (kotlin-path-returning-call ref))
       (when (= "build" name)
         (kotlin-build-call ref))
+      (kotlin-wiremock-static-call ref)
+      (kotlin-wiremock-chain-call ref)
       (when (= "get" name)
         (kotlin-static-get-call ref))
       (get known-function-calls name)))
