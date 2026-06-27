@@ -255,6 +255,7 @@ import org.junit.jupiter.api.Assertions.fail
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createParentDirectories
 import kotlin.io.path.exists
+import kotlin.io.path.readText
 
 fun apiCalls(path: Path): URI {
   val text = \"\"\"
@@ -274,26 +275,48 @@ fun values(root: Path): List<URI> {
 
 fun hasText(values: List<String>, text: String): Boolean {
   val normalized = text.replace(\"value\", \"other\").trim()
+  val copied = values.toList()
+  val filtered = values.filter { it.length > 0 }
+  val joined = values.joinToString(\",\")
+  val prefix = text.substring(0, 1)
   assertThat(values).contains(text)
-  return values.contains(text) && text.contains(\"value\") && normalized.startsWith(\"other\") && !values.isEmpty()
+  return values.contains(text) &&
+    text.contains(\"value\") &&
+    text.isNotEmpty() &&
+    values.isNotEmpty() &&
+    normalized.startsWith(\"other\") &&
+    copied.any { it.length > 0 } &&
+    joined.isNotEmpty() &&
+    prefix.isNotEmpty() &&
+    !values.isEmpty()
 }
 
 fun stdlibValues(values: List<String>): Boolean {
   val empty = emptyList<String>()
+  val built = buildList<String> { add(\"built\") }
+  val names = mutableSetOf(\"name\")
+  val counts = mutableMapOf(\"one\" to 1)
   val bytes = byteArrayOf(1.toByte(), 2.toByte())
-  return values.first().endsWith(\"e\") && empty.isEmpty() && !bytes.isEmpty()
+  val encoded = \"encoded\"
+  return values.first().endsWith(\"e\") &&
+    names.isNotEmpty() &&
+    counts.isNotEmpty() &&
+    empty.isEmpty() &&
+    encoded.toByteArray().isNotEmpty() &&
+    !bytes.isEmpty()
 }
 
 fun pathFacts(path: Path): Boolean {
   assertThat(path).exists()
   val dir = path.createParentDirectories().createDirectories()
-  return path.exists() && dir.exists()
+  return path.readText().isNotEmpty() && path.exists() && dir.exists()
 }
 
 fun assertions() {
   val same = Any()
   assertThat(listOf(1, 2)).hasSize(2).containsExactly(1, 2)
   assertThat(listOf(\"a\")).containsOnly(\"a\")
+  assertThat(listOf(\"a\")).isNotEmpty()
   assertThat(null as String?).isNull()
   assertThat(same).isSameAs(same).isNotNull()
   assertThat(1).isLessThan(2)
@@ -1225,6 +1248,8 @@ public final class JavaPseudoTypes {
                              "assertFalse"
                              "assertTrue"
                              "byteArrayOf"
+                             "buildList"
+                             "any"
                              "containsExactly"
                              "containsOnly"
                              "createDirectories"
@@ -1245,15 +1270,24 @@ public final class JavaPseudoTypes {
                              "isEmpty"
                              "isInstanceOf"
                              "isLessThan"
+                             "isNotEmpty"
                              "isNotEqualTo"
                              "isNotNull"
                              "isNull"
                              "isSameAs"
+                             "filter"
+                             "joinToString"
+                             "mutableMapOf"
+                             "mutableSetOf"
+                             "readText"
                              "replace"
                              "URI"
                              "resolve"
                              "startsWith"
+                             "substring"
                              "toByte"
+                             "toByteArray"
+                             "toList"
                              "toUri"
                              "trim"
                              "contains"}
@@ -1374,6 +1408,8 @@ public final class JavaPseudoTypes {
                    ["assertFalse" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
                    ["assertTrue" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
                    ["byteArrayOf" "kotlin:ByteArray" "kotlin.collections.ArraysKt" true]
+                   ["buildList" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
+                   ["any" "kotlin:Boolean" "kotlin.collections.List" true]
                    ["containsExactly" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["containsOnly" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["createDirectories" "java.nio.file.Path" "java.nio.file.Path" true]
@@ -1395,15 +1431,29 @@ public final class JavaPseudoTypes {
                    ["isEmpty" "kotlin:Boolean" "kotlin.collections.Collection" true]
                    ["isInstanceOf" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isLessThan" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isNotEmpty" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isNotEmpty" "kotlin:Boolean" "kotlin:List<kotlin:String>" true]
+                   ["isNotEmpty" "kotlin:Boolean" "kotlin.collections.MutableMap" true]
+                   ["isNotEmpty" "kotlin:Boolean" "kotlin.collections.MutableSet" true]
+                   ["isNotEmpty" "kotlin:Boolean" "kotlin:ByteArray" true]
+                   ["isNotEmpty" "kotlin:Boolean" "kotlin:String" true]
                    ["isNotEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isNotNull" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isNull" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isSameAs" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["filter" "kotlin.collections.List" "kotlin:List<kotlin:String>" true]
+                   ["joinToString" "kotlin:String" "kotlin:List<kotlin:String>" true]
+                   ["mutableMapOf" "kotlin.collections.MutableMap" "kotlin.collections.MapsKt" true]
+                   ["mutableSetOf" "kotlin.collections.MutableSet" "kotlin.collections.SetsKt" true]
+                   ["readText" "kotlin:String" "java.nio.file.Path" true]
                    ["replace" "kotlin:String" "kotlin:String" true]
                    ["URI" "java.net.URI" "java.net.URI" true]
                    ["resolve" "java.nio.file.Path" "java.nio.file.Path" true]
                    ["startsWith" "kotlin:Boolean" "kotlin:String" true]
+                   ["substring" "kotlin:String" "kotlin:String" true]
                    ["toByte" "kotlin:Byte" "kotlin:Number" true]
+                   ["toByteArray" "kotlin:ByteArray" "kotlin:String" true]
+                   ["toList" "kotlin.collections.List" "kotlin:List<kotlin:String>" true]
                    ["toUri" "java.net.URI" "java.nio.file.Path" true]
                    ["trim" "kotlin:String" "kotlin:String" true]
                    ["contains" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]

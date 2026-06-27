@@ -860,6 +860,8 @@
                  :ref/owner-type "org.junit.jupiter.api.Assertions"}
    "byteArrayOf" {:ref/to-type "kotlin:ByteArray"
                   :ref/owner-type "kotlin.collections.ArraysKt"}
+   "buildList" {:ref/to-type "kotlin.collections.List"
+                :ref/owner-type "kotlin.collections.CollectionsKt"}
    "configure" {:ref/to-type "kotlin:Unit"
                 :ref/owner-type "org.gradle.api.plugins.ExtensionContainer"}
    "createDirectories" {:ref/to-type "java.nio.file.Path"
@@ -924,8 +926,14 @@
              :ref/owner-type "kotlin.collections.CollectionsKt"}
    "mapOf" {:ref/to-type "kotlin.collections.Map"
             :ref/owner-type "kotlin.collections.MapsKt"}
+   "mutableMapOf" {:ref/to-type "kotlin.collections.MutableMap"
+                   :ref/owner-type "kotlin.collections.MapsKt"}
+   "mutableSetOf" {:ref/to-type "kotlin.collections.MutableSet"
+                   :ref/owner-type "kotlin.collections.SetsKt"}
    "named" {:ref/to-type "org.gradle.api.NamedDomainObjectProvider"
             :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
+   "readText" {:ref/to-type "kotlin:String"
+               :ref/owner-type "java.nio.file.Path"}
    "replace" {:ref/to-type "kotlin:String"
               :ref/owner-type "kotlin:String"}
    "resolve" {:ref/to-type "java.nio.file.Path"
@@ -969,6 +977,17 @@
     "com.squareup.javapoet.TypeName"
     "org.pkl.core.PClassInfo"
     "org.pkl.core.runtime.Identifier"})
+
+(def ^:private known-expression-call-types
+  (merge (update-vals known-function-calls :ref/to-type)
+         {"any" "kotlin:Boolean"
+          "filter" "kotlin.collections.List"
+          "isNotEmpty" "kotlin:Boolean"
+          "joinToString" "kotlin:String"
+          "readText" "kotlin:String"
+          "substring" "kotlin:String"
+          "toByteArray" "kotlin:ByteArray"
+          "toList" "kotlin.collections.List"}))
 
 (def ^:private known-product-builder-types
   {"java.net.http.HttpRequest" "java.net.http.HttpRequest.Builder"
@@ -1078,12 +1097,12 @@
 (defn- receiver-known-call-type-id [value]
   (when-let [value (some-> value str/trim)]
     (when-let [[_ call-name] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*\(.*" value)]
-      (:ref/to-type (get known-function-calls call-name)))))
+      (get known-expression-call-types call-name))))
 
 (defn- qualified-known-call-type-id [value]
   (when-let [value (some-> value str/trim)]
     (when-let [[_ call-name] (re-find #"\.([A-Za-z_][A-Za-z0-9_]*)\s*\(" value)]
-      (:ref/to-type (get known-function-calls call-name)))))
+      (get known-expression-call-types call-name))))
 
 (defn- receiver-known-static-type-id [value]
   (some-> value str/trim known-classpath-types))
@@ -1213,17 +1232,36 @@
              db
              project-id)))
 
-(defn- call-argument-type-ids [binding-types-by-parent arg-values-by-call parent-by-call node-id]
+(defn- project-parent-node-index [db project-id]
+  (into {}
+        (d/q '[:find ?node-id ?parent-node-id
+               :in $ ?project-id
+               :where
+               [?project :project/id ?project-id]
+               [?file :file/project ?project]
+               [?node :node/file ?file]
+               [?node :node/id ?node-id]
+               [?node :node/parent ?parent]
+               [?parent :node/id ?parent-node-id]]
+             db project-id)))
+
+(defn- nearest-binding-types [binding-types-by-parent parent-by-node start-node-id]
+  (loop [node-id start-node-id]
+    (when node-id
+      (or (get binding-types-by-parent node-id)
+          (recur (get parent-by-node node-id))))))
+
+(defn- call-argument-type-ids [binding-types-by-parent arg-values-by-call parent-by-call parent-by-node node-id]
   (let [parent-node-id (get parent-by-call node-id)
-        binding-types (get binding-types-by-parent parent-node-id)]
+        binding-types (nearest-binding-types binding-types-by-parent parent-by-node parent-node-id)]
     (mapv (fn [value]
             (or (some->> value simple-identifier (get binding-types))
                 (literal-type-id value)))
           (get arg-values-by-call node-id []))))
 
-(defn- call-receiver-type-id [type-index binding-types-by-parent receiver-values-by-call parent-by-call node-id]
+(defn- call-receiver-type-id [type-index binding-types-by-parent receiver-values-by-call parent-by-call parent-by-node node-id]
   (let [parent-node-id (get parent-by-call node-id)
-        binding-types (get binding-types-by-parent parent-node-id)
+        binding-types (nearest-binding-types binding-types-by-parent parent-by-node parent-node-id)
         value (get receiver-values-by-call node-id)]
     (or (some->> value simple-identifier (get binding-types))
         (expression-type-id type-index value))))
@@ -1232,18 +1270,21 @@
   (let [binding-types-by-parent (project-binding-type-index db project-id type-index member-binding-types)
         arg-values-by-call (project-call-argument-values db project-id)
         receiver-values-by-call (project-call-receiver-values db project-id)
-        parent-by-call (project-call-parent-index db project-id)]
+        parent-by-call (project-call-parent-index db project-id)
+        parent-by-node (project-parent-node-index db project-id)]
     (mapv (fn [[ref-id kind name to-type node-id file-id]]
             (let [arg-types (when (= :ref.kind/function-call kind)
                               (call-argument-type-ids binding-types-by-parent
                                                       arg-values-by-call
                                                       parent-by-call
+                                                      parent-by-node
                                                       node-id))
                   receiver-type (when (= :ref.kind/function-call kind)
                                   (call-receiver-type-id type-index
                                                          binding-types-by-parent
                                                          receiver-values-by-call
                                                          parent-by-call
+                                                         parent-by-node
                                                          node-id))]
               {:ref/id ref-id
                :ref/kind kind
@@ -1501,6 +1542,69 @@
         {:ref/to-type "kotlin:Boolean"
          :ref/owner-type receiver-type}))))
 
+(def ^:private kotlin-collection-roots
+  #{"Array"
+    "ByteArray"
+    "Collection"
+    "Iterable"
+    "List"
+    "Map"
+    "MutableList"
+    "MutableMap"
+    "MutableSet"
+    "Sequence"
+    "Set"})
+
+(defn- kotlin-is-not-empty-call [{:call/keys [receiver-type]}]
+  (when receiver-type
+    (let [owner-root (unqualified-type-id receiver-type)]
+      (cond
+        (= "AbstractAssert" owner-root)
+        {:ref/to-type "org.assertj.core.api.AbstractAssert"
+         :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+
+        (contains? (conj kotlin-collection-roots "String") owner-root)
+        {:ref/to-type "kotlin:Boolean"
+         :ref/owner-type receiver-type}))))
+
+(defn- kotlin-to-list-call [{:call/keys [receiver-type]}]
+  (when receiver-type
+    (let [owner-root (unqualified-type-id receiver-type)]
+      (when (contains? kotlin-collection-roots owner-root)
+        {:ref/to-type "kotlin.collections.List"
+         :ref/owner-type receiver-type}))))
+
+(defn- kotlin-join-to-string-call [{:call/keys [receiver-type]}]
+  (when receiver-type
+    (let [owner-root (unqualified-type-id receiver-type)]
+      (when (contains? kotlin-collection-roots owner-root)
+        {:ref/to-type "kotlin:String"
+         :ref/owner-type receiver-type}))))
+
+(defn- kotlin-filter-call [{:call/keys [receiver-type]}]
+  (when receiver-type
+    (let [owner-root (unqualified-type-id receiver-type)]
+      (cond
+        (= "String" owner-root)
+        {:ref/to-type "kotlin:String"
+         :ref/owner-type receiver-type}
+
+        (contains? kotlin-collection-roots owner-root)
+        {:ref/to-type "kotlin.collections.List"
+         :ref/owner-type receiver-type}))))
+
+(defn- kotlin-any-call [{:call/keys [receiver-type]}]
+  (when receiver-type
+    (let [owner-root (unqualified-type-id receiver-type)]
+      (when (contains? (conj kotlin-collection-roots "String") owner-root)
+        {:ref/to-type "kotlin:Boolean"
+         :ref/owner-type receiver-type}))))
+
+(defn- kotlin-string-call [return-type {:call/keys [receiver-type]}]
+  (when (= "String" (unqualified-type-id receiver-type))
+    {:ref/to-type return-type
+     :ref/owner-type receiver-type}))
+
 (defn- path-like-type? [receiver-type]
   (contains? #{"java.nio.file.Path" "java.io.File"} receiver-type))
 
@@ -1519,6 +1623,11 @@
 (defn- kotlin-path-returning-call [{:call/keys [receiver-type]}]
   (when (path-like-type? receiver-type)
     {:ref/to-type receiver-type
+     :ref/owner-type receiver-type}))
+
+(defn- kotlin-path-text-call [{:call/keys [receiver-type]}]
+  (when (path-like-type? receiver-type)
+    {:ref/to-type "kotlin:String"
      :ref/owner-type receiver-type}))
 
 (defn- kotlin-static-get-call [{:call/keys [receiver-type]}]
@@ -1545,6 +1654,22 @@
         (kotlin-contains-call ref))
       (when (= "matches" name)
         (kotlin-matches-call ref))
+      (when (= "isNotEmpty" name)
+        (kotlin-is-not-empty-call ref))
+      (when (= "toList" name)
+        (kotlin-to-list-call ref))
+      (when (= "joinToString" name)
+        (kotlin-join-to-string-call ref))
+      (when (= "filter" name)
+        (kotlin-filter-call ref))
+      (when (= "any" name)
+        (kotlin-any-call ref))
+      (when (= "substring" name)
+        (kotlin-string-call "kotlin:String" ref))
+      (when (= "toByteArray" name)
+        (kotlin-string-call "kotlin:ByteArray" ref))
+      (when (= "readText" name)
+        (kotlin-path-text-call ref))
       (when (= "exists" name)
         (kotlin-exists-call ref))
       (when (contains? #{"createDirectories" "createParentDirectories"} name)
@@ -1571,20 +1696,6 @@
                 (when-let [type-id (source-declaration-type-id decl)]
                   [id type-id])))
         decls))
-
-(defn- project-parent-node-index [db project-id]
-  (into {}
-        (d/q '[:find ?node-id ?parent-node-id
-               :in $ ?project-id
-               :where
-               [?project :project/id ?project-id]
-               [?file :file/project ?project]
-               [?node :node/file ?file]
-               [?node :node/id ?node-id]
-               [?node :node/parent ?parent]
-               [?parent :node/id ?parent-node-id]]
-             db
-             project-id)))
 
 (defn- normalize-source-type-id [source-types type-index name type-id]
   (or (get type-index name)
