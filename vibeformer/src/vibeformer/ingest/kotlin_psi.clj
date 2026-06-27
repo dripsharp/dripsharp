@@ -890,16 +890,32 @@
                            :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "hasMessageStartingWith" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                              :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "hasSize" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+              :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "containsExactly" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                      :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "containsOnly" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                   :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "isEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "isFalse" {:ref/to-type "org.assertj.core.api.AbstractAssert"
               :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isGreaterThan" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                    :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "isEmpty" {:ref/to-type "kotlin:Boolean"
               :ref/owner-type "kotlin.collections.Collection"}
    "isInstanceOf" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                    :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isLessThan" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "isNotEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                    :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isNotNull" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isNull" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+             :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+   "isSameAs" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+               :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "lazy" {:ref/to-type "kotlin:Lazy"
            :ref/owner-type "kotlin:LazyKt"}
    "let" {:ref/to-type "kotlin:Any"

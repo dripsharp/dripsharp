@@ -291,6 +291,13 @@ fun pathFacts(path: Path): Boolean {
 }
 
 fun assertions() {
+  val same = Any()
+  assertThat(listOf(1, 2)).hasSize(2).containsExactly(1, 2)
+  assertThat(listOf(\"a\")).containsOnly(\"a\")
+  assertThat(null as String?).isNull()
+  assertThat(same).isSameAs(same).isNotNull()
+  assertThat(1).isLessThan(2)
+  assertThat(2).isGreaterThan(1)
   assertThat(\"left\").isNotEqualTo(\"right\").isInstanceOf(String::class.java)
   assertThat(false).isFalse()
   assertThatCode { throw IllegalArgumentException(\"bad\") }
@@ -1218,6 +1225,8 @@ public final class JavaPseudoTypes {
                              "assertFalse"
                              "assertTrue"
                              "byteArrayOf"
+                             "containsExactly"
+                             "containsOnly"
                              "createDirectories"
                              "createParentDirectories"
                              "doesNotThrowAnyException"
@@ -1229,11 +1238,17 @@ public final class JavaPseudoTypes {
                              "hasMessage"
                              "hasMessageContaining"
                              "hasMessageStartingWith"
+                             "hasSize"
                              "isEqualTo"
                              "isFalse"
+                             "isGreaterThan"
                              "isEmpty"
                              "isInstanceOf"
+                             "isLessThan"
                              "isNotEqualTo"
+                             "isNotNull"
+                             "isNull"
+                             "isSameAs"
                              "replace"
                              "URI"
                              "resolve"
@@ -1359,6 +1374,8 @@ public final class JavaPseudoTypes {
                    ["assertFalse" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
                    ["assertTrue" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
                    ["byteArrayOf" "kotlin:ByteArray" "kotlin.collections.ArraysKt" true]
+                   ["containsExactly" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["containsOnly" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["createDirectories" "java.nio.file.Path" "java.nio.file.Path" true]
                    ["createParentDirectories" "java.nio.file.Path" "java.nio.file.Path" true]
                    ["doesNotThrowAnyException" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
@@ -1371,11 +1388,17 @@ public final class JavaPseudoTypes {
                    ["hasMessage" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["hasMessageContaining" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["hasMessageStartingWith" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["hasSize" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isFalse" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isGreaterThan" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isEmpty" "kotlin:Boolean" "kotlin.collections.Collection" true]
                    ["isInstanceOf" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isLessThan" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isNotEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isNotNull" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isNull" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["isSameAs" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["replace" "kotlin:String" "kotlin:String" true]
                    ["URI" "java.net.URI" "java.net.URI" true]
                    ["resolve" "java.nio.file.Path" "java.nio.file.Path" true]
