@@ -961,13 +961,17 @@
   {"AbstractAssert" "org.assertj.core.api.AbstractAssert"
    "Assertions" "org.assertj.core.api.Assertions"
    "ClassName" "com.squareup.javapoet.ClassName"
+   "ByteArrayOutputStream" "java.io.ByteArrayOutputStream"
    "Executable" "org.junit.jupiter.api.function.Executable"
+   "File" "java.io.File"
+   "Files" "java.nio.file.Files"
    "HttpRequest" "java.net.http.HttpRequest"
    "Identifier" "org.pkl.core.runtime.Identifier"
    "ParameterizedTypeName" "com.squareup.javapoet.ParameterizedTypeName"
    "PClassInfo" "org.pkl.core.PClassInfo"
    "Path" "java.nio.file.Path"
    "StringWriter" "java.io.StringWriter"
+   "Stream" "java.util.stream.Stream"
    "TypeName" "com.squareup.javapoet.TypeName"
    "URI" "java.net.URI"})
 
@@ -1128,6 +1132,69 @@
       (= "String" root) "kotlin:Char"
       (= "ByteArray" root) "kotlin:Byte")))
 
+(def ^:private known-string-property-names
+  #{"commandName"
+    "error"
+    "message"
+    "moduleName"
+    "name"
+    "output"
+    "pathEncoded"
+    "pathString"
+    "report"
+    "sourceText"
+    "text"
+    "version"})
+
+(def ^:private known-collection-property-names
+  #{"allClasses"
+    "allMethods"
+    "allProperties"
+    "allTypeAliases"
+    "allowedModules"
+    "allowedResources"
+    "annotations"
+    "authors"
+    "badResponses"
+    "dependencies"
+    "entries"
+    "examples"
+    "expectedFiles"
+    "keys"
+    "missingFiles"
+    "modules"
+    "packages"
+    "packagesData"
+    "responses"
+    "sections"
+    "sourceModules"
+    "subcommands"
+    "typeArguments"
+    "values"})
+
+(defn- qualified-property-name [value]
+  (when-let [value (some-> value
+                           str/trim
+                           (str/replace #"!!" "")
+                           (str/replace #"\?" ""))]
+    (when (and (not (str/includes? value "("))
+               (re-matches #"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+" value))
+      (last (str/split value #"\.")))))
+
+(defn- property-expression-type-id [value]
+  (when-let [property-name (qualified-property-name value)]
+    (cond
+      (or (contains? known-string-property-names property-name)
+          (re-find #"(Name|Text|Message|Path|Uri|Url|Version|Output|Report|Error)$" property-name))
+      "kotlin:String"
+
+      (or (contains? known-collection-property-names property-name)
+          (re-find #"(?i)(classes|dependencies|entries|files|keys|modules|packages|properties|responses|sections|values)$" property-name))
+      "kotlin.collections.List"
+
+      (re-find #"(?i)(bytes|byteArray)$" property-name)
+      "kotlin:ByteArray")))
+
 (defn- top-level-call-separator? [value idx]
   (and (< idx (dec (count value)))
        (= \. (.charAt value idx))
@@ -1199,6 +1266,14 @@
            (contains? kotlin-collection-roots owner-root))
       "kotlin.collections.List"
 
+      (and (contains? #{"filter" "map"} call-name)
+           (= "Stream" owner-root))
+      "java.util.stream.Stream"
+
+      (and (= "toList" call-name)
+           (= "Stream" owner-root))
+      "kotlin.collections.List"
+
       (and (= "joinToString" call-name)
            (contains? kotlin-collection-roots owner-root))
       "kotlin:String"
@@ -1214,6 +1289,22 @@
       (and (= "toByteArray" call-name)
            (= "String" owner-root))
       "kotlin:ByteArray"
+
+      (and (= "toByteArray" call-name)
+           (= "ByteArrayOutputStream" owner-root))
+      "kotlin:ByteArray"
+
+      (and (= "list" call-name)
+           (= "File" owner-root))
+      "kotlin:Array"
+
+      (and (= "toFile" call-name)
+           (= "Path" owner-root))
+      "java.io.File"
+
+      (and (= "walk" call-name)
+           (= "Files" owner-root))
+      "java.util.stream.Stream"
 
       (and (= "first" call-name)
            (contains? (conj kotlin-collection-roots "String") owner-root))
@@ -1279,6 +1370,7 @@
   ([type-index binding-types value]
    (or (literal-type-id value)
        (some->> value simple-identifier (get binding-types))
+       (property-expression-type-id value)
        (constructor-expression-type-id type-index value)
        (builder-factory-expression-type-id type-index value)
        (receiver-known-call-type-id binding-types value)
@@ -1764,7 +1856,7 @@
 (defn- kotlin-to-list-call [{:call/keys [receiver-type]}]
   (when receiver-type
     (let [owner-root (unqualified-type-id receiver-type)]
-      (when (contains? kotlin-collection-roots owner-root)
+      (when (contains? (conj kotlin-collection-roots "Stream") owner-root)
         {:ref/to-type "kotlin.collections.List"
          :ref/owner-type receiver-type}))))
 
@@ -1785,6 +1877,10 @@
 
         (contains? kotlin-collection-roots owner-root)
         {:ref/to-type "kotlin.collections.List"
+         :ref/owner-type receiver-type}
+
+        (= "Stream" owner-root)
+        {:ref/to-type "java.util.stream.Stream"
          :ref/owner-type receiver-type}))))
 
 (defn- kotlin-any-call [{:call/keys [receiver-type]}]
@@ -1798,6 +1894,16 @@
   (when (= "String" (unqualified-type-id receiver-type))
     {:ref/to-type return-type
      :ref/owner-type receiver-type}))
+
+(defn- kotlin-to-byte-array-call [{:call/keys [receiver-type] :as ref}]
+  (let [owner-root (unqualified-type-id receiver-type)]
+    (cond
+      (= "String" owner-root)
+      (kotlin-string-call "kotlin:ByteArray" ref)
+
+      (= "ByteArrayOutputStream" owner-root)
+      {:ref/to-type "kotlin:ByteArray"
+       :ref/owner-type receiver-type})))
 
 (defn- path-like-type? [receiver-type]
   (contains? #{"java.nio.file.Path" "java.io.File"} receiver-type))
@@ -1861,7 +1967,7 @@
       (when (= "substring" name)
         (kotlin-string-call "kotlin:String" ref))
       (when (= "toByteArray" name)
-        (kotlin-string-call "kotlin:ByteArray" ref))
+        (kotlin-to-byte-array-call ref))
       (when (= "readText" name)
         (kotlin-path-text-call ref))
       (when (= "exists" name)

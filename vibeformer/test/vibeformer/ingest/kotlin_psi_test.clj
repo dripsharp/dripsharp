@@ -245,6 +245,8 @@ fun matchCalls(value: Any): Boolean {
   "package com.acme.api
 
 import java.net.URI
+import java.io.ByteArrayOutputStream
+import java.nio.file.Files
 import java.nio.file.Path
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatCode
@@ -256,6 +258,8 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.createParentDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
+
+data class ApiDoc(val moduleName: String, val dependencies: List<String>, val outputBytes: ByteArray)
 
 fun apiCalls(path: Path): URI {
   val text = \"\"\"
@@ -316,6 +320,22 @@ fun pathFacts(path: Path): Boolean {
   assertThat(path).exists()
   val dir = path.createParentDirectories().createDirectories()
   return path.readText().isNotEmpty() && path.exists() && dir.exists()
+}
+
+fun propertyAndPlatformFacts(doc: ApiDoc, root: Path): Boolean {
+  val module = doc.moduleName.substring(0, 1)
+  val deps = doc.dependencies.filter { it.toString().isNotEmpty() }.toList()
+  val dependencyText = doc.dependencies.joinToString(\",\")
+  val streamList = Files.walk(root).filter { it.toString().isNotEmpty() }.toList()
+  val output = ByteArrayOutputStream()
+  val outputBytes = output.toByteArray()
+  return doc.dependencies.any { it.toString().isNotEmpty() } &&
+    doc.outputBytes.isNotEmpty() &&
+    module.isNotEmpty() &&
+    deps.isNotEmpty() &&
+    dependencyText.isNotEmpty() &&
+    streamList.isNotEmpty() &&
+    outputBytes.isNotEmpty()
 }
 
 fun assertions() {
@@ -1448,7 +1468,10 @@ public final class JavaPseudoTypes {
                    ["isNotNull" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isNull" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["isSameAs" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["filter" "kotlin.collections.List" "kotlin.collections.List" true]
                    ["filter" "kotlin.collections.List" "kotlin:List<kotlin:String>" true]
+                   ["filter" "java.util.stream.Stream" "java.util.stream.Stream" true]
+                   ["joinToString" "kotlin:String" "kotlin.collections.List" true]
                    ["joinToString" "kotlin:String" "kotlin:List<kotlin:String>" true]
                    ["mutableMapOf" "kotlin.collections.MutableMap" "kotlin.collections.MapsKt" true]
                    ["mutableSetOf" "kotlin.collections.MutableSet" "kotlin.collections.SetsKt" true]
@@ -1459,7 +1482,10 @@ public final class JavaPseudoTypes {
                    ["startsWith" "kotlin:Boolean" "kotlin:String" true]
                    ["substring" "kotlin:String" "kotlin:String" true]
                    ["toByte" "kotlin:Byte" "kotlin:Number" true]
+                   ["toByteArray" "kotlin:ByteArray" "java.io.ByteArrayOutputStream" true]
                    ["toByteArray" "kotlin:ByteArray" "kotlin:String" true]
+                   ["toList" "kotlin.collections.List" "java.util.stream.Stream" true]
+                   ["toList" "kotlin.collections.List" "kotlin.collections.List" true]
                    ["toList" "kotlin.collections.List" "kotlin:List<kotlin:String>" true]
                    ["toUri" "java.net.URI" "java.nio.file.Path" true]
                    ["trim" "kotlin:String" "kotlin:String" true]
