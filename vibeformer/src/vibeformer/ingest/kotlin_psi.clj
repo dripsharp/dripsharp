@@ -971,21 +971,39 @@
    "Assertions" "org.assertj.core.api.Assertions"
    "ClassName" "com.squareup.javapoet.ClassName"
    "ByteArrayOutputStream" "java.io.ByteArrayOutputStream"
+   "Config" "org.pkl.config.java.Config"
+   "ConfigDecoder" "org.pkl.config.java.ConfigDecoder"
+   "ConfigDecoderBuilder" "org.pkl.config.java.ConfigDecoderBuilder"
+   "ConfigEvaluator" "org.pkl.config.java.ConfigEvaluator"
+   "ConfigEvaluatorBuilder" "org.pkl.config.java.ConfigEvaluatorBuilder"
    "Collectors" "java.util.stream.Collectors"
+   "Evaluator" "org.pkl.core.Evaluator"
+   "EvaluatorBuilder" "org.pkl.core.EvaluatorBuilder"
    "Executable" "org.junit.jupiter.api.function.Executable"
    "File" "java.io.File"
+   "FieldSpec" "com.squareup.javapoet.FieldSpec"
+   "FileSpec" "com.squareup.kotlinpoet.FileSpec"
+   "FunSpec" "com.squareup.kotlinpoet.FunSpec"
+   "HttpClient" "org.pkl.core.http.HttpClient"
    "Files" "java.nio.file.Files"
    "HttpRequest" "java.net.http.HttpRequest"
    "Identifier" "org.pkl.core.runtime.Identifier"
+   "JavaFile" "com.squareup.javapoet.JavaFile"
    "MessagePack" "org.msgpack.core.MessagePack"
+   "MethodSpec" "com.squareup.javapoet.MethodSpec"
    "ParameterizedTypeName" "com.squareup.javapoet.ParameterizedTypeName"
    "PClassInfo" "org.pkl.core.PClassInfo"
+   "PModule" "org.pkl.core.PModule"
    "Path" "java.nio.file.Path"
+   "PropertySpec" "com.squareup.kotlinpoet.PropertySpec"
    "StringWriter" "java.io.StringWriter"
    "Stream" "java.util.stream.Stream"
    "System" "java.lang.System"
    "ThreadLocal" "java.lang.ThreadLocal"
+   "TypeAliasSpec" "com.squareup.kotlinpoet.TypeAliasSpec"
    "TypeName" "com.squareup.javapoet.TypeName"
+   "ValueMapper" "org.pkl.config.java.mapper.ValueMapper"
+   "ValueMapperBuilder" "org.pkl.config.java.mapper.ValueMapperBuilder"
    "URI" "java.net.URI"})
 
 (def ^:private known-static-get-types
@@ -1066,6 +1084,32 @@
 
 (def ^:private builder-self-factory-methods
   #{"preconfigured" "unconfigured"})
+
+(def ^:private builder-mutator-methods
+  #{"addAnnotation"
+    "addCertificates"
+    "addCode"
+    "addFunction"
+    "addHeaders"
+    "addModifiers"
+    "addParameter"
+    "addProperty"
+    "addResourceReader"
+    "addType"
+    "forKotlin"
+    "indent"
+    "initializer"
+    "returns"
+    "setHttpClient"
+    "setOutputFormat"
+    "setTestPort"})
+
+(def ^:private pkl-config-kotlin-receiver-roots
+  #{"ConfigDecoder"
+    "ConfigDecoderBuilder"
+    "ConfigEvaluator"
+    "ConfigEvaluatorBuilder"
+    "ValueMapperBuilder"})
 
 (def ^:private wiremock-type-ids
   {:wiremock "com.github.tomakehurst.wiremock.client.WireMock"
@@ -1454,11 +1498,51 @@
             :else
             (recur (inc idx) paren-depth brace-depth bracket-depth nil false separator)))))))
 
+(declare builder-product-type-id builder-type-from-product builder-like-type?)
+
 (defn- known-call-return-type-id [receiver-type call-name]
   (let [owner-root (type-id-root receiver-type)]
     (cond
       (contains? #{"also" "apply"} call-name)
       receiver-type
+
+      (and receiver-type
+           (contains? product-builder-factory-methods call-name))
+      (builder-type-from-product receiver-type)
+
+      (and receiver-type
+           (contains? builder-self-factory-methods call-name))
+      receiver-type
+
+      (and receiver-type
+           (contains? #{"build" "buildLazily"} call-name)
+           (builder-like-type? receiver-type))
+      (builder-product-type-id receiver-type)
+
+      (and receiver-type
+           (contains? builder-mutator-methods call-name)
+           (builder-like-type? receiver-type))
+      receiver-type
+
+      (and receiver-type
+           (= "forKotlin" call-name)
+           (contains? pkl-config-kotlin-receiver-roots owner-root))
+      receiver-type
+
+      (and receiver-type
+           (contains? #{"evaluate" "evaluateSchema"} call-name)
+           (= "Evaluator" owner-root))
+      "org.pkl.core.PModule"
+
+      (and receiver-type
+           (= "evaluate" call-name)
+           (= "ConfigEvaluator" owner-root))
+      "org.pkl.config.java.Config"
+
+      (and receiver-type
+           (= "decode" call-name)
+           (= "ConfigDecoder" owner-root))
+      "org.pkl.config.java.Config"
 
         (and (contains? #{"filter" "map" "toList"} call-name)
              (contains? kotlin-collection-like-roots owner-root))
@@ -1651,6 +1735,12 @@
                 product-type-id))
             known-product-builder-types)
       (strip-builder-suffix builder-type-id)))
+
+(defn- builder-like-type? [type-id]
+  (boolean
+   (when-let [type-id (some-> type-id str)]
+     (or (str/ends-with? type-id ".Builder")
+         (str/ends-with? type-id "Builder")))))
 
 (defn- builder-type-from-product [product-type-id]
   (or (get known-product-builder-types product-type-id)
@@ -2328,10 +2418,52 @@
                         "kotlin:Any")
        :ref/owner-type receiver-type})))
 
+(defn- kotlin-builder-factory-call [{:ref/keys [name] :call/keys [receiver-type]}]
+  (when (and receiver-type
+             (contains? product-builder-factory-methods name))
+    {:ref/to-type (builder-type-from-product receiver-type)
+     :ref/owner-type receiver-type}))
+
+(defn- kotlin-builder-self-factory-call [{:ref/keys [name] :call/keys [receiver-type]}]
+  (when (and receiver-type
+             (contains? builder-self-factory-methods name))
+    {:ref/to-type receiver-type
+     :ref/owner-type receiver-type}))
+
+(defn- kotlin-builder-mutator-call [{:ref/keys [name] :call/keys [receiver-type]}]
+  (when (and receiver-type
+             (builder-like-type? receiver-type)
+             (contains? builder-mutator-methods name))
+    {:ref/to-type receiver-type
+     :ref/owner-type receiver-type}))
+
 (defn- kotlin-build-call [{:call/keys [receiver-type]}]
   (when-let [product-type-id (some-> receiver-type builder-product-type-id)]
     {:ref/to-type product-type-id
      :ref/owner-type receiver-type}))
+
+(defn- kotlin-pkl-api-call [{:ref/keys [name] :call/keys [receiver-type]}]
+  (let [owner-root (unqualified-type-id receiver-type)]
+    (cond
+      (and (= "forKotlin" name)
+           (contains? pkl-config-kotlin-receiver-roots owner-root))
+      {:ref/to-type receiver-type
+       :ref/owner-type receiver-type}
+
+      (and (contains? #{"evaluate" "evaluateSchema"} name)
+           (= "Evaluator" owner-root))
+      {:ref/to-type "org.pkl.core.PModule"
+       :ref/owner-type receiver-type}
+
+      (and (= "evaluate" name)
+           (= "ConfigEvaluator" owner-root))
+      {:ref/to-type "org.pkl.config.java.Config"
+       :ref/owner-type receiver-type}
+
+      (and (= "decode" name)
+           (= "ConfigDecoder" owner-root))
+      {:ref/to-type "org.pkl.config.java.Config"
+       :ref/owner-type receiver-type})))
 
 (defn- kotlin-wiremock-static-call [{:ref/keys [name] :call/keys [receiver-type arg-count arg-types]}]
   (when (nil? receiver-type)
@@ -2426,8 +2558,12 @@
         (kotlin-exists-call ref))
       (when (contains? #{"createDirectories" "createParentDirectories"} name)
         (kotlin-path-returning-call ref))
-      (when (= "build" name)
+      (kotlin-builder-factory-call ref)
+      (kotlin-builder-self-factory-call ref)
+      (kotlin-builder-mutator-call ref)
+      (when (contains? #{"build" "buildLazily"} name)
         (kotlin-build-call ref))
+      (kotlin-pkl-api-call ref)
       (kotlin-wiremock-static-call ref)
       (kotlin-wiremock-chain-call ref)
       (when (= "get" name)

@@ -221,6 +221,26 @@ fun builderBuilds(runner: Runner): Any {
 }
 ")
 
+(def kotlin-external-builder-fixture
+  "package com.acme.externalbuilder
+
+fun externalBuilderFacts(cert: java.io.File, format: String, reader: Any, bytes: ByteArray): Any {
+  val evaluatorBuilder = EvaluatorBuilder.preconfigured().setOutputFormat(format).addResourceReader(reader)
+  val evaluator = evaluatorBuilder.build()
+  val directModule = Evaluator.preconfigured().evaluateSchema(ModuleSource.text(\"foo = 1\"))
+  val configuredModule = evaluator.evaluate(ModuleSource.text(\"bar = 2\"))
+  val httpClient = HttpClient.builder().addCertificates(cert).addHeaders(\"**\", mapOf(\"X-Foo\" to listOf(\"v1\"))).setTestPort(1).buildLazily()
+  val config = ConfigEvaluatorBuilder.preconfigured().forKotlin().build().evaluate(ModuleSource.text(\"name = \\\"pkl\\\"\"))
+  val decoded = ConfigDecoder.preconfigured().forKotlin().decode(bytes)
+  val mapper = ValueMapperBuilder.unconfigured().forKotlin().build()
+  val javaField = FieldSpec.builder(String::class.java, \"name\").addModifiers(Modifier.PRIVATE).initializer(\"\\$S\", \"pkl\").build()
+  val javaFile = JavaFile.builder(\"com.acme\", javaField).indent(\"  \").build()
+  val kotlinFun = FunSpec.builder(\"name\").returns(String::class).addCode(\"return %S\", \"pkl\").build()
+  val kotlinFile = FileSpec.builder(\"com.acme\", \"Box\").addFunction(kotlinFun).build()
+  return configuredModule
+}
+")
+
 (def kotlin-matches-fixture
   "package com.acme.matches
 
@@ -1276,6 +1296,103 @@ public final class JavaPseudoTypes {
                  resolved))
           (is (= #{[:resolve.reason/analysis-api-limitation]}
                  unresolved)))))))
+
+(deftest resolves-kotlin-external-builder-factory-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "external-builder"
+                  :project/name "External Builder"}]
+        (write-file! root
+                     "src/main/kotlin/com/acme/externalbuilder/ExternalBuilder.kt"
+                     kotlin-external-builder-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "external-builder"})
+        (kotlin-psi/enrich! conn {:project/id "external-builder"})
+        (let [db (d/db conn)
+              target-names #{"addCertificates"
+                             "addCode"
+                             "addFunction"
+                             "addHeaders"
+                             "addModifiers"
+                             "addResourceReader"
+                             "build"
+                             "builder"
+                             "buildLazily"
+                             "decode"
+                             "evaluate"
+                             "evaluateSchema"
+                             "forKotlin"
+                             "indent"
+                             "initializer"
+                             "preconfigured"
+                             "returns"
+                             "setOutputFormat"
+                             "setTestPort"
+                             "unconfigured"}
+              resolved (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
+                                    :in $ ?target-names
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name ?name]
+                                    [(contains? ?target-names ?name)]
+                                    [?ref :ref/resolved? ?resolved?]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/owner-type ?owner]
+                                    [?owner :type/id ?owner-id]]
+                                  db
+                                  target-names))
+              unresolved (set (d/q '[:find ?name ?reason
+                                      :in $ ?target-names
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name ?name]
+                                      [(contains? ?target-names ?name)]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]]
+                                    db
+                                    target-names))]
+          (is (= #{["addCertificates" "org.pkl.core.http.HttpClientBuilder" "org.pkl.core.http.HttpClientBuilder" true]
+                   ["addCode" "com.squareup.kotlinpoet.FunSpec.Builder" "com.squareup.kotlinpoet.FunSpec.Builder" true]
+                   ["addFunction" "com.squareup.kotlinpoet.FileSpec.Builder" "com.squareup.kotlinpoet.FileSpec.Builder" true]
+                   ["addHeaders" "org.pkl.core.http.HttpClientBuilder" "org.pkl.core.http.HttpClientBuilder" true]
+                   ["addModifiers" "com.squareup.javapoet.FieldSpec.Builder" "com.squareup.javapoet.FieldSpec.Builder" true]
+                   ["addResourceReader" "org.pkl.core.EvaluatorBuilder" "org.pkl.core.EvaluatorBuilder" true]
+                   ["build" "com.squareup.javapoet.FieldSpec" "com.squareup.javapoet.FieldSpec.Builder" true]
+                   ["build" "com.squareup.javapoet.JavaFile" "com.squareup.javapoet.JavaFile.Builder" true]
+                   ["build" "com.squareup.kotlinpoet.FileSpec" "com.squareup.kotlinpoet.FileSpec.Builder" true]
+                   ["build" "com.squareup.kotlinpoet.FunSpec" "com.squareup.kotlinpoet.FunSpec.Builder" true]
+                   ["build" "org.pkl.config.java.ConfigEvaluator" "org.pkl.config.java.ConfigEvaluatorBuilder" true]
+                   ["build" "org.pkl.config.java.mapper.ValueMapper" "org.pkl.config.java.mapper.ValueMapperBuilder" true]
+                   ["build" "org.pkl.core.Evaluator" "org.pkl.core.EvaluatorBuilder" true]
+                   ["builder" "com.squareup.javapoet.FieldSpec.Builder" "com.squareup.javapoet.FieldSpec" true]
+                   ["builder" "com.squareup.javapoet.JavaFile.Builder" "com.squareup.javapoet.JavaFile" true]
+                   ["builder" "com.squareup.kotlinpoet.FileSpec.Builder" "com.squareup.kotlinpoet.FileSpec" true]
+                   ["builder" "com.squareup.kotlinpoet.FunSpec.Builder" "com.squareup.kotlinpoet.FunSpec" true]
+                   ["builder" "org.pkl.core.http.HttpClientBuilder" "org.pkl.core.http.HttpClient" true]
+                   ["buildLazily" "org.pkl.core.http.HttpClient" "org.pkl.core.http.HttpClientBuilder" true]
+                   ["decode" "org.pkl.config.java.Config" "org.pkl.config.java.ConfigDecoder" true]
+                   ["evaluate" "org.pkl.config.java.Config" "org.pkl.config.java.ConfigEvaluator" true]
+                   ["evaluate" "org.pkl.core.PModule" "org.pkl.core.Evaluator" true]
+                   ["evaluateSchema" "org.pkl.core.PModule" "org.pkl.core.Evaluator" true]
+                   ["forKotlin" "org.pkl.config.java.ConfigDecoder" "org.pkl.config.java.ConfigDecoder" true]
+                   ["forKotlin" "org.pkl.config.java.ConfigEvaluatorBuilder" "org.pkl.config.java.ConfigEvaluatorBuilder" true]
+                   ["forKotlin" "org.pkl.config.java.mapper.ValueMapperBuilder" "org.pkl.config.java.mapper.ValueMapperBuilder" true]
+                   ["indent" "com.squareup.javapoet.JavaFile.Builder" "com.squareup.javapoet.JavaFile.Builder" true]
+                   ["initializer" "com.squareup.javapoet.FieldSpec.Builder" "com.squareup.javapoet.FieldSpec.Builder" true]
+                   ["preconfigured" "org.pkl.config.java.ConfigDecoder" "org.pkl.config.java.ConfigDecoder" true]
+                   ["preconfigured" "org.pkl.config.java.ConfigEvaluatorBuilder" "org.pkl.config.java.ConfigEvaluatorBuilder" true]
+                   ["preconfigured" "org.pkl.core.Evaluator" "org.pkl.core.Evaluator" true]
+                   ["preconfigured" "org.pkl.core.EvaluatorBuilder" "org.pkl.core.EvaluatorBuilder" true]
+                   ["returns" "com.squareup.kotlinpoet.FunSpec.Builder" "com.squareup.kotlinpoet.FunSpec.Builder" true]
+                   ["setOutputFormat" "org.pkl.core.EvaluatorBuilder" "org.pkl.core.EvaluatorBuilder" true]
+                   ["setTestPort" "org.pkl.core.http.HttpClientBuilder" "org.pkl.core.http.HttpClientBuilder" true]
+                   ["unconfigured" "org.pkl.config.java.mapper.ValueMapperBuilder" "org.pkl.config.java.mapper.ValueMapperBuilder" true]}
+                 resolved))
+          (is (empty? unresolved)))))))
 
 (deftest resolves-kotlin-receiver-matches-calls
   (with-empty-db
