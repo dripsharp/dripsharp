@@ -949,6 +949,11 @@
     (when (re-matches #"[A-Za-z_][A-Za-z0-9_]*" value)
       value)))
 
+(defn- receiver-known-call-type-id [value]
+  (when-let [value (some-> value str/trim)]
+    (when-let [[_ call-name] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*\(.*" value)]
+      (:ref/to-type (get known-function-calls call-name)))))
+
 (defn- project-call-argument-values [db project-id]
   (->> (d/q '[:find ?call-node-id ?ordinal ?value
               :in $ ?project-id
@@ -1011,7 +1016,8 @@
         binding-types (get binding-types-by-parent parent-node-id)
         value (get receiver-values-by-call node-id)]
     (or (some->> value simple-identifier (get binding-types))
-        (literal-type-id value))))
+        (literal-type-id value)
+        (receiver-known-call-type-id value))))
 
 (defn- project-refs [db project-id]
   (let [binding-types-by-parent (project-binding-type-index db project-id)
@@ -1254,9 +1260,14 @@
 (defn- kotlin-contains-call [{:call/keys [receiver-type]}]
   (when receiver-type
     (let [owner-root (unqualified-type-id receiver-type)]
-      (when (contains? #{"String" "Collection" "List" "MutableList" "Set" "MutableSet"} owner-root)
+      (cond
+        (contains? #{"String" "Collection" "List" "MutableList" "Set" "MutableSet"} owner-root)
         {:ref/to-type "kotlin:Boolean"
-         :ref/owner-type receiver-type}))))
+         :ref/owner-type receiver-type}
+
+        (= "AbstractAssert" owner-root)
+        {:ref/to-type "org.assertj.core.api.AbstractAssert"
+         :ref/owner-type "org.assertj.core.api.AbstractAssert"}))))
 
 (defn- known-call-resolution [{:ref/keys [name] :as ref}]
   (or (when (= "contains" name)
