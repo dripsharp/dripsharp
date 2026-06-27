@@ -143,6 +143,22 @@ public final class Child extends Parent {
 }
 ")
 
+(def qualified-field-fixture
+  "package com.acme.qualifiedfield;
+
+import java.util.List;
+
+final class Node {
+  final List<Node> children = List.of();
+}
+
+public final class Formatter {
+  public Node first(Node node) {
+    return node.children.get(0);
+  }
+}
+")
+
 (def inherited-method-fixture
   "package com.acme.inheritedmethod;
 
@@ -1479,6 +1495,45 @@ public final class Demo {
                     "java:com.acme.inherited.Parent#field:children"
                     "com.acme.inherited.Parent"
                     "java.lang.String"
+                    true]}
+                 field-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(= ?name "children")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-qualified-project-local-java-field-accesses
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/qualifiedfield/Formatter.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path qualified-field-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              field-refs (set (d/q '[:find ?name ?decl-id ?owner-id ?resolved?
+                                      :where
+                                      [?ref :ref/kind :ref.kind/field-access]
+                                      [?ref :ref/name ?name]
+                                      [(= ?name "children")]
+                                      [?ref :ref/to-decl ?decl]
+                                      [?decl :decl/id ?decl-id]
+                                      [?decl :decl/source-node]
+                                      [?ref :ref/owner-type ?owner]
+                                      [?owner :type/id ?owner-id]
+                                      [?ref :ref/resolved? ?resolved?]]
+                                    db))]
+          (is (= #{["children"
+                    "java:com.acme.qualifiedfield.Node#field:children"
+                    "com.acme.qualifiedfield.Node"
                     true]}
                  field-refs))
           (is (empty?

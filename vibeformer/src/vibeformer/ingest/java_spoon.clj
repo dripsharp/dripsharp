@@ -1994,6 +1994,36 @@
                :ref/to-type
                (type-owner type-names)))))
 
+(defn- expression-target-owner
+  [facts
+   method-index
+   type-names
+   argument-counts
+   child-index
+   method-refs
+   field-refs
+   constructor-refs
+   decl-return-types
+   nodes-by-id
+   parent-by-node
+   binding-types
+   ref]
+  (when-let [target (child-node child-index (:ref/from-node ref) :target)]
+    (some->> target
+             (expression-node-type facts
+                                   method-index
+                                   type-names
+                                   argument-counts
+                                   child-index
+                                   method-refs
+                                   field-refs
+                                   constructor-refs
+                                   decl-return-types
+                                   nodes-by-id
+                                   parent-by-node
+                                   binding-types)
+             (type-owner type-names))))
+
 (declare enclosing-type type-lineage)
 
 (defn- comparable-type-id [type-id]
@@ -2116,12 +2146,40 @@
     (let [arity (get argument-counts (:ref/from-node ref) 0)]
       (unambiguous (get constructor-index [owner arity])))))
 
-(defn- local-field-target [field-index type-names ref]
+(defn- local-field-target
+  [facts
+   method-index
+   type-names
+   argument-counts
+   child-index
+   method-refs
+   field-refs
+   constructor-refs
+   decl-return-types
+   nodes-by-id
+   parent-by-node
+   binding-types
+   field-index
+   ref]
   (let [owner (type-owner type-names (:ref/owner-type ref))
+        target-owner (expression-target-owner facts
+                                              method-index
+                                              type-names
+                                              argument-counts
+                                              child-index
+                                              method-refs
+                                              field-refs
+                                              constructor-refs
+                                              decl-return-types
+                                              nodes-by-id
+                                              parent-by-node
+                                              binding-types
+                                              ref)
         field-name (:ref/name ref)]
-    (or (when (and owner field-name)
+    (or (when (and (or owner target-owner) field-name)
           (->> (get field-index field-name)
-               (filter #(= owner (strip-type-args (owner-from-field-decl-id (:decl/id %)))))
+               (filter #(= (or owner target-owner)
+                           (strip-type-args (owner-from-field-decl-id (:decl/id %)))))
                unambiguous))
         (when (and (nil? owner) field-name)
           (->> (get field-index field-name)
@@ -2251,7 +2309,20 @@
 
               (and (= :ref.kind/field-access (:ref/kind fact))
                    (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
-              (if-let [target (or (local-field-target field-index type-names fact)
+              (if-let [target (or (local-field-target deduped
+                                                       method-index
+                                                       type-names
+                                                       argument-counts
+                                                       child-index
+                                                       ref-index
+                                                       field-refs
+                                                       constructor-refs
+                                                       decl-return-types
+                                                       nodes-by-id
+                                                       parent-by-node
+                                                       binding-types
+                                                       field-index
+                                                       fact)
                                   (inherited-local-field-target field-owner-index
                                                                 parent-by-node
                                                                 source-node-types
