@@ -907,6 +907,14 @@ public final class Demo {
   "package com.acme.chain;
 
 public final class Chain {
+  public Chain start() {
+    return this;
+  }
+
+  public Chain error(String code, Object... arguments) {
+    return this;
+  }
+
   public Chain move(int amount) {
     return this;
   }
@@ -917,6 +925,10 @@ public final class Chain {
 
   public static Chain run(Chain chain) {
     return chain.move(1).grow(2);
+  }
+
+  public static Chain runNew() {
+    return new Chain().start().error(\"invalid\", 1, 2).grow(3);
   }
 }
 ")
@@ -2035,13 +2047,15 @@ public final class Demo {
         (source/ingest! conn opts)
         (java-spoon/ingest! conn {:project/id "fixture"})
         (let [db (d/db conn)]
-          (is (= #{["move" "java:com.acme.chain.Chain#move(int)" "com.acme.chain.Chain" true]
+          (is (= #{["start" "java:com.acme.chain.Chain#start()" "com.acme.chain.Chain" true]
+                   ["error" "java:com.acme.chain.Chain#error(java.lang.String,java.lang.Object[])" "com.acme.chain.Chain" true]
+                   ["move" "java:com.acme.chain.Chain#move(int)" "com.acme.chain.Chain" true]
                    ["grow" "java:com.acme.chain.Chain#grow(int)" "com.acme.chain.Chain" true]}
                  (set (d/q '[:find ?name ?decl-id ?owner-name ?resolved?
                              :where
                              [?call :node/kind :java.node/method-call]
                              [?call :node/name ?name]
-                             [(contains? #{"move" "grow"} ?name)]
+                             [(contains? #{"start" "error" "move" "grow"} ?name)]
                              [?ref :ref/from-node ?call]
                              [?ref :ref/kind :ref.kind/method-call]
                              [?ref :ref/name ?name]

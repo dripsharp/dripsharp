@@ -1615,6 +1615,18 @@
       0
       (count (str/split params #",")))))
 
+(defn- param-types-from-decl-id [decl-id]
+  (when-let [[_ params] (re-matches #".*\((.*)\)$" (or decl-id ""))]
+    (if (str/blank? params)
+      []
+      (str/split params #","))))
+
+(defn- varargs-method-decl? [decl]
+  (some-> (:decl/id decl)
+          param-types-from-decl-id
+          last
+          (str/ends-with? "[]")))
+
 (defn- owner-from-method-decl-id [decl-id]
   (when-let [[_ owner] (re-matches #"java:(.+)#.+\(.*\)$" (or decl-id ""))]
     owner))
@@ -1641,6 +1653,23 @@
                            decl)
                    index))
                {})))
+
+(defn- varargs-method-decl-index [facts]
+  (->> facts
+       (filter #(and (= :decl.kind/method (:decl/kind %))
+                     (:decl/source-node %)
+                     (varargs-method-decl? %)))
+       (reduce (fn [index decl]
+                 (if-let [owner (owner-from-method-decl-id (:decl/id decl))]
+                   (update index
+                           [(strip-type-args owner) (:decl/name decl)]
+                           (fnil conj [])
+                           decl)
+                   index))
+               {})
+       (map (fn [[k decls]]
+              [k (vec (sort-by :decl/id decls))]))
+       (into {})))
 
 (defn- constructor-decl-index [facts]
   (->> facts
@@ -1682,6 +1711,12 @@
 (defn- method-ref-index [facts]
   (->> facts
        (filter #(= :ref.kind/method-call (:ref/kind %)))
+       (map (juxt :ref/from-node identity))
+       (into {})))
+
+(defn- constructor-ref-index [facts]
+  (->> facts
+       (filter #(= :ref.kind/constructor-call (:ref/kind %)))
        (map (juxt :ref/from-node identity))
        (into {})))
 
@@ -1757,20 +1792,42 @@
                (method-ref-return-type method-index type-names argument-counts decl-return-types)
                (type-owner type-names)))))
 
-(defn- local-method-target [method-index type-names argument-counts child-index field-index ref-index decl-return-types ref]
+(defn- constructor-call-target-owner [type-names child-index constructor-refs ref]
+  (when-let [target (child-node child-index (:ref/from-node ref) :target)]
+    (when (= :java.node/constructor-call (:node/kind target))
+      (some->> (:node/id target)
+               (get constructor-refs)
+               :ref/to-type
+               (type-owner type-names)))))
+
+(defn- varargs-method-target [varargs-method-index owner method-name arity]
+  (->> (get varargs-method-index [owner method-name])
+       (filter (fn [decl]
+                 (let [param-count (param-count-from-decl-id (:decl/id decl))]
+                   (and param-count (>= arity (dec param-count))))))
+       unambiguous))
+
+(defn- method-target-for-owner [method-index varargs-method-index owner method-name arity]
+  (or (unambiguous (get method-index [owner method-name arity]))
+      (varargs-method-target varargs-method-index owner method-name arity)))
+
+(defn- local-method-target [method-index varargs-method-index type-names argument-counts child-index field-index ref-index constructor-refs decl-return-types ref]
   (let [owner-type-id (:ref/owner-type ref)
         owner (type-owner type-names owner-type-id)
         enum-target-owner (some->> (enum-constant-target-type child-index field-index ref)
                                    (type-owner type-names))
         chained-target-owner (chained-method-target-owner method-index type-names argument-counts child-index ref-index decl-return-types ref)
+        constructor-target-owner (constructor-call-target-owner type-names child-index constructor-refs ref)
         arity (get argument-counts (:ref/from-node ref) 0)]
     (when (:ref/name ref)
       (or (when owner
-            (unambiguous (get method-index [owner (:ref/name ref) arity])))
+            (method-target-for-owner method-index varargs-method-index owner (:ref/name ref) arity))
           (when enum-target-owner
-            (unambiguous (get method-index [enum-target-owner (:ref/name ref) arity])))
+            (method-target-for-owner method-index varargs-method-index enum-target-owner (:ref/name ref) arity))
+          (when constructor-target-owner
+            (method-target-for-owner method-index varargs-method-index constructor-target-owner (:ref/name ref) arity))
           (when chained-target-owner
-            (unambiguous (get method-index [chained-target-owner (:ref/name ref) arity])))))))
+            (method-target-for-owner method-index varargs-method-index chained-target-owner (:ref/name ref) arity))))))
 
 (defn- local-constructor-target [constructor-index type-names argument-counts ref]
   (when-let [owner (type-owner type-names (:ref/to-type ref))]
@@ -1799,14 +1856,16 @@
                  :ref/owner-type (:ref/owner-type known))
           (dissoc :ref/reason)))))
 
-(defn- resolve-local-refs [facts]
+(defn- resolve-local-refs-once [facts]
   (let [deduped (dedupe-facts (concat facts (known-java-api-type-facts)))
         method-index (method-decl-index deduped)
+        varargs-method-index (varargs-method-decl-index deduped)
         constructor-index (constructor-decl-index deduped)
         type-names (type-name-index deduped)
         argument-counts (argument-counts deduped)
         child-index (child-node-index deduped)
         ref-index (method-ref-index deduped)
+        constructor-refs (constructor-ref-index deduped)
         decl-return-types (decl-return-type-index deduped)
         field-index (field-decl-index deduped)]
     (mapv (fn [fact]
@@ -1814,11 +1873,13 @@
               (and (= :ref.kind/method-call (:ref/kind fact))
                    (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
               (if-let [target (local-method-target method-index
+                                                   varargs-method-index
                                                    type-names
                                                    argument-counts
                                                    child-index
                                                    field-index
                                                    ref-index
+                                                   constructor-refs
                                                    decl-return-types
                                                    fact)]
                 (let [owner (owner-from-method-decl-id (:decl/id target))]
@@ -1857,6 +1918,11 @@
 
               :else fact))
           deduped)))
+
+(defn- resolve-local-refs [facts]
+  (-> facts
+      resolve-local-refs-once
+      resolve-local-refs-once))
 
 (defn- normalize-classpath-strings [values]
   (cond
