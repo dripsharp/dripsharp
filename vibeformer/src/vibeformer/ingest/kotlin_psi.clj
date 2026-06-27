@@ -850,10 +850,18 @@
                  :ref/owner-type "org.assertj.core.api.Assertions"}
    "assertThatCode" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                      :ref/owner-type "org.assertj.core.api.Assertions"}
+   "assertDoesNotThrow" {:ref/to-type "kotlin:Any"
+                         :ref/owner-type "org.junit.jupiter.api.Assertions"}
+   "assertFalse" {:ref/to-type "kotlin:Unit"
+                  :ref/owner-type "org.junit.jupiter.api.Assertions"}
    "assertThrows" {:ref/to-type "org.junit.jupiter.api.function.Executable"
                    :ref/owner-type "org.junit.jupiter.api.Assertions"}
+   "assertTrue" {:ref/to-type "kotlin:Unit"
+                 :ref/owner-type "org.junit.jupiter.api.Assertions"}
    "configure" {:ref/to-type "kotlin:Unit"
                 :ref/owner-type "org.gradle.api.plugins.ExtensionContainer"}
+   "fail" {:ref/to-type "kotlin:Nothing"
+           :ref/owner-type "org.junit.jupiter.api.Assertions"}
    "getByName" {:ref/to-type "kotlin:Any"
                 :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
    "hashCode" {:ref/to-type "kotlin:Int"

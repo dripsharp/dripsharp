@@ -248,6 +248,10 @@ import java.net.URI
 import java.nio.file.Path
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatCode
+import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.fail
 
 fun apiCalls(path: Path): URI {
   val text = \"\"\"
@@ -278,6 +282,10 @@ fun assertions() {
     .hasMessageContaining(\"ba\")
     .hasMessageStartingWith(\"b\")
   assertThatCode { println(\"ok\") }.doesNotThrowAnyException()
+  assertTrue(true)
+  assertFalse(false)
+  assertDoesNotThrow { \"ok\" }
+  if (false) fail(\"unreachable\")
 }
 ")
 
@@ -1190,7 +1198,11 @@ public final class JavaPseudoTypes {
                              "listOf"
                              "assertThat"
                              "assertThatCode"
+                             "assertDoesNotThrow"
+                             "assertFalse"
+                             "assertTrue"
                              "doesNotThrowAnyException"
+                             "fail"
                              "hasMessage"
                              "hasMessageContaining"
                              "hasMessageStartingWith"
@@ -1315,7 +1327,11 @@ public final class JavaPseudoTypes {
                    ["listOf" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
                    ["assertThat" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]
                    ["assertThatCode" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]
+                   ["assertDoesNotThrow" "kotlin:Any" "org.junit.jupiter.api.Assertions" true]
+                   ["assertFalse" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
+                   ["assertTrue" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
                    ["doesNotThrowAnyException" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
+                   ["fail" "kotlin:Nothing" "org.junit.jupiter.api.Assertions" true]
                    ["hasMessage" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["hasMessageContaining" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["hasMessageStartingWith" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
