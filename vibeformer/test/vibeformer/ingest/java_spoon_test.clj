@@ -1222,6 +1222,35 @@ public final class Chain {
 }
 ")
 
+(def append-builder-chain-fixture
+  "package com.acme.appendchain;
+
+public final class Demo {
+  static final class Builder {
+    Builder append(String value) {
+      return this;
+    }
+
+    Builder append(Object value) {
+      return this;
+    }
+
+    String build() {
+      return \"done\";
+    }
+  }
+
+  public static String custom(Builder builder, Object value) {
+    return builder.append(\"prefix\").append(value).build();
+  }
+
+  public static String jdk(String value) {
+    var builder = new StringBuilder();
+    return builder.append(\"prefix\").append(value).toString();
+  }
+}
+")
+
 (def switch-expression-fixture
   "package com.acme.tokens;
 
@@ -2822,6 +2851,41 @@ public final class Demo {
                              [?ref :ref/owner-type ?owner]
                              [?owner :type/name ?owner-name]]
                            db)))))))))
+
+(deftest resolves-fluent-append-builder-chain-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/appendchain/Demo.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path append-builder-chain-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              append-refs (set (d/q '[:find ?owner-id ?type-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/method-call]
+                                       [?ref :ref/name "append"]
+                                       [?ref :ref/owner-type ?owner]
+                                       [?owner :type/id ?owner-id]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]]
+                                     db))]
+          (is (= #{["com.acme.appendchain.Demo$Builder" "com.acme.appendchain.Demo$Builder" true]
+                   ["java.lang.StringBuilder" "java.lang.StringBuilder" true]}
+                 append-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(= ?name "append")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
 
 (deftest resolves-enum-constant-method-call-refs
   (with-empty-db

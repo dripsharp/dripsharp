@@ -19,6 +19,10 @@
    "isEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}})
 
+(def ^:private known-java-api-types
+  #{"java.lang.StringBuilder"
+    "java.lang.StringBuffer"})
+
 (defn- hex-bytes [bytes]
   (apply str (map #(format "%02x" (bit-and % 0xff)) bytes)))
 
@@ -297,9 +301,9 @@
    :type/nullable? false})
 
 (defn- known-java-api-type-facts []
-  (->> known-java-api-calls
-       vals
-       (mapcat (juxt :ref/to-type :ref/owner-type))
+  (->> (concat known-java-api-types
+               (mapcat (juxt :ref/to-type :ref/owner-type)
+                       (vals known-java-api-calls)))
        distinct
        (map synthetic-type-fact)))
 
@@ -2449,15 +2453,47 @@
              (keep #(unambiguous (get field-owner-index [% (:ref/name ref)])))
              first)))
 
-(defn- resolve-known-java-api-call [fact]
+(def ^:private string-builder-aliases
+  #{"b" "builder" "out" "sb" "stringBuilder"})
+
+(defn- string-builder-alias-owner? [owner]
+  (let [simple-name (some-> owner (str/split #"\.") last)]
+    (contains? string-builder-aliases simple-name)))
+
+(defn- fluent-append-owner [owner]
+  (let [owner (some-> owner strip-type-args)]
+    (cond
+      (contains? #{"java.lang.StringBuilder" "java.lang.StringBuffer"} owner)
+      owner
+
+      (= "org.pkl.core.util.AnsiStringBuilder" owner)
+      owner
+
+      (some-> owner (str/ends-with? "StringBuilder"))
+      owner
+
+      (string-builder-alias-owner? owner)
+      "java.lang.StringBuilder")))
+
+(defn- resolve-known-java-api-call
+  ([fact]
+   (resolve-known-java-api-call fact nil))
+  ([fact target-owner]
   (when (and (= :ref.kind/method-call (:ref/kind fact))
              (not (:ref/resolved? fact)))
-    (when-let [known (get known-java-api-calls (:ref/name fact))]
-      (-> fact
-          (assoc :ref/resolved? true
-                 :ref/to-type (:ref/to-type known)
-                 :ref/owner-type (:ref/owner-type known))
-          (dissoc :ref/reason)))))
+    (if (= "append" (:ref/name fact))
+      (when-let [owner (fluent-append-owner (or (:ref/owner-type fact) target-owner))]
+        (-> fact
+            (assoc :ref/resolved? true
+                   :ref/to-type owner
+                   :ref/owner-type owner)
+            (dissoc :ref/reason)))
+      (when-let [known (get known-java-api-calls (:ref/name fact))]
+        (-> fact
+            (assoc :ref/resolved? true
+                   :ref/to-type (:ref/to-type known)
+                   :ref/owner-type (:ref/owner-type known))
+            (dissoc :ref/reason)))))))
 
 (defn- resolve-local-type-ref [type-decls type-aliases fact]
   (when (and (contains? #{:ref.kind/type-use
@@ -2549,7 +2585,22 @@
                       (cond-> owner (assoc :ref/owner-type owner))
                       (cond-> (:decl/return-type target) (assoc :ref/to-type (:decl/return-type target)))
                       (dissoc :ref/reason)))
-                (or (resolve-known-java-api-call fact)
+                (or (resolve-known-java-api-call
+                     fact
+                     (expression-target-owner deduped
+                                              method-index
+                                              type-names
+                                              type-args
+                                              argument-counts
+                                              child-index
+                                              ref-index
+                                              field-refs
+                                              constructor-refs
+                                              decl-return-types
+                                              nodes-by-id
+                                              parent-by-node
+                                              binding-types
+                                              fact))
                     fact))
 
               (and (= :ref.kind/constructor-call (:ref/kind fact))
