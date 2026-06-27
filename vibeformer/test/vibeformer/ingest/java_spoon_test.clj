@@ -352,6 +352,28 @@ public final class Child extends Parent {
 }
 ")
 
+(def partial-overloaded-method-fixture
+  "package com.acme.partialoverload;
+
+import java.lang.reflect.Type;
+
+interface Mapper {
+  <S, T> T map(S value, Type targetType);
+
+  <S, T> T map(S value, Class<T> targetType);
+}
+
+public final class Demo {
+  public String viaType(Mapper mapper, Object value, Type targetType) {
+    return mapper.map(value, targetType);
+  }
+
+  public String viaClass(Mapper mapper, Object value, Class<String> targetType) {
+    return mapper.map(value, targetType);
+  }
+}
+")
+
 (def interface-lineage-overloaded-method-fixture
   "package com.acme.syntaxoverload;
 
@@ -2160,6 +2182,50 @@ public final class Demo {
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
                       [(= ?name "createSourceSection")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-project-local-overloaded-method-calls-with-partial-argument-types
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/partialoverload/Demo.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path partial-overloaded-method-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              method-refs (set (d/q '[:find ?decl-id ?owner-id ?type-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/method-call]
+                                       [?ref :ref/name "map"]
+                                       [?ref :ref/to-decl ?decl]
+                                       [?decl :decl/id ?decl-id]
+                                       [?decl :decl/source-node]
+                                       [?ref :ref/owner-type ?owner]
+                                       [?owner :type/id ?owner-id]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]]
+                                     db))]
+          (is (= #{["java:com.acme.partialoverload.Mapper#map(S,java.lang.reflect.Type)"
+                    "com.acme.partialoverload.Mapper"
+                    "T"
+                    true]
+                   ["java:com.acme.partialoverload.Mapper#map(S,java.lang.Class)"
+                    "com.acme.partialoverload.Mapper"
+                    "T"
+                    true]}
+                 method-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(= ?name "map")]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 

@@ -2287,13 +2287,21 @@
           (str/replace #"\?$" "")
           strip-type-args))
 
+(defn- type-variable-param? [param-type]
+  (boolean
+   (some-> param-type
+           (str/replace #"\[\]$" "")
+           (str/replace #"\?$" "")
+           (#(re-matches #"[A-Z][A-Za-z0-9_]*" %)))))
+
 (defn- type-compatible? [type-aliases direct-supertypes param-type arg-type]
   (let [param-type (comparable-type-id (canonical-type-id type-aliases param-type))
         arg-type (comparable-type-id (canonical-type-id type-aliases arg-type))]
     (boolean
      (and param-type
           arg-type
-          (or (= param-type arg-type)
+          (or (type-variable-param? param-type)
+              (= param-type arg-type)
               (= "java.lang.Object" param-type)
               (contains? (set (type-lineage direct-supertypes arg-type)) param-type))))))
 
@@ -2324,6 +2332,21 @@
          (filter #(arg-types-match? type-aliases direct-supertypes % arg-types))
          unambiguous)))
 
+(defn- partial-arg-types-match? [type-aliases direct-supertypes decl arg-types]
+  (let [param-types (param-types-from-decl-id (:decl/id decl))
+        known-pairs (filter second (map vector param-types arg-types))]
+    (and (= (count param-types) (count arg-types))
+         (seq known-pairs)
+         (every? true?
+                 (map (fn [[param-type arg-type]]
+                        (type-compatible? type-aliases direct-supertypes param-type arg-type))
+                      known-pairs)))))
+
+(defn- method-target-by-partial-arg-types [type-aliases direct-supertypes candidates arg-types]
+  (->> candidates
+       (filter #(partial-arg-types-match? type-aliases direct-supertypes % arg-types))
+       unambiguous))
+
 (defn- varargs-method-candidates [varargs-method-index owner method-name arity]
   (->> (get varargs-method-index [owner method-name])
        (filter (fn [decl]
@@ -2340,8 +2363,10 @@
          varargs-candidates (varargs-method-candidates varargs-method-index owner method-name arity)]
      (or (unambiguous exact-candidates)
          (method-target-by-arg-types type-aliases direct-supertypes exact-candidates arg-types)
+         (method-target-by-partial-arg-types type-aliases direct-supertypes exact-candidates arg-types)
          (unambiguous varargs-candidates)
-         (method-target-by-arg-types type-aliases direct-supertypes varargs-candidates arg-types)))))
+         (method-target-by-arg-types type-aliases direct-supertypes varargs-candidates arg-types)
+         (method-target-by-partial-arg-types type-aliases direct-supertypes varargs-candidates arg-types)))))
 
 (defn- inherited-local-method-target
   [method-index varargs-method-index type-aliases argument-counts parent-by-node source-node-types direct-supertypes arg-types ref]
