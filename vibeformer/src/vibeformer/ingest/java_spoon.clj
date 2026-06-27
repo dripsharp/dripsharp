@@ -1741,6 +1741,21 @@
               [field-name (vec (sort-by :decl/qualified-name decls))]))
        (into {})))
 
+(defn- field-decl-owner-index [facts]
+  (->> facts
+       (filter #(and (= :decl.kind/field (:decl/kind %))
+                     (:decl/type %)
+                     (:decl/name %)
+                     (:decl/id %)))
+       (reduce (fn [index decl]
+                 (if-let [owner (owner-from-field-decl-id (:decl/id decl))]
+                   (update index [(strip-type-args owner) (:decl/name decl)] (fnil conj []) decl)
+                   index))
+               {})
+       (map (fn [[k decls]]
+              [k (vec (sort-by :decl/qualified-name decls))]))
+       (into {})))
+
 (defn- type-decl-index [facts]
   (->> facts
        (filter #(and (contains? #{:decl.kind/annotation
@@ -1754,6 +1769,37 @@
                      (:decl/source-node %)))
        (map (juxt :decl/type identity))
        (into {})))
+
+(defn- type-decl-source-node-index [facts]
+  (->> facts
+       (filter #(and (contains? #{:decl.kind/annotation
+                                  :decl.kind/class
+                                  :decl.kind/enum
+                                  :decl.kind/interface
+                                  :decl.kind/record
+                                  :decl.kind/type}
+                                (:decl/kind %))
+                     (:decl/type %)
+                     (:decl/source-node %)))
+       (map (juxt :decl/source-node :decl/type))
+       (into {})))
+
+(defn- parent-node-index [facts]
+  (->> facts
+       (filter #(and (:node/id %) (:node/parent %)))
+       (map (juxt :node/id :node/parent))
+       (into {})))
+
+(defn- direct-supertype-index [facts source-node-types]
+  (->> facts
+       (filter #(and (= :ref.kind/extends (:ref/kind %))
+                     (:ref/from-node %)
+                     (:ref/to-type %)))
+       (reduce (fn [index ref]
+                 (if-let [type-id (get source-node-types (:ref/from-node ref))]
+                   (assoc index (strip-type-args type-id) (strip-type-args (:ref/to-type ref)))
+                   index))
+               {})))
 
 (defn- unambiguous [xs]
   (when (= 1 (count xs))
@@ -1860,6 +1906,31 @@
                (filter #(= (:decl/type %) (strip-type-args (owner-from-field-decl-id (:decl/id %)))))
                unambiguous)))))
 
+(defn- enclosing-type [parent-by-node source-node-types node-id]
+  (loop [current node-id
+         seen #{}]
+    (when (and current (not (contains? seen current)))
+      (or (get source-node-types current)
+          (recur (get parent-by-node current) (conj seen current))))))
+
+(defn- type-lineage [direct-supertypes type-id]
+  (loop [lineage []
+         current (some-> type-id strip-type-args)
+         seen #{}]
+    (if (or (nil? current) (contains? seen current))
+      lineage
+      (recur (conj lineage current)
+             (get direct-supertypes current)
+             (conj seen current)))))
+
+(defn- inherited-local-field-target [field-owner-index parent-by-node source-node-types direct-supertypes ref]
+  (when (and (nil? (:ref/owner-type ref)) (:ref/name ref))
+    (some->> (:ref/from-node ref)
+             (enclosing-type parent-by-node source-node-types)
+             (type-lineage direct-supertypes)
+             (keep #(unambiguous (get field-owner-index [% (:ref/name ref)])))
+             first)))
+
 (defn- resolve-known-java-api-call [fact]
   (when (and (= :ref.kind/method-call (:ref/kind fact))
              (not (:ref/resolved? fact)))
@@ -1894,7 +1965,11 @@
         constructor-refs (constructor-ref-index deduped)
         decl-return-types (decl-return-type-index deduped)
         field-index (field-decl-index deduped)
-        type-decls (type-decl-index deduped)]
+        field-owner-index (field-decl-owner-index deduped)
+        type-decls (type-decl-index deduped)
+        source-node-types (type-decl-source-node-index deduped)
+        parent-by-node (parent-node-index deduped)
+        direct-supertypes (direct-supertype-index deduped source-node-types)]
     (mapv (fn [fact]
             (cond
               (contains? #{:ref.kind/type-use
@@ -1940,7 +2015,12 @@
 
               (and (= :ref.kind/field-access (:ref/kind fact))
                    (not (some-> fact :ref/owner-type (str/starts-with? "java."))))
-              (if-let [target (local-field-target field-index type-names fact)]
+              (if-let [target (or (local-field-target field-index type-names fact)
+                                  (inherited-local-field-target field-owner-index
+                                                                parent-by-node
+                                                                source-node-types
+                                                                direct-supertypes
+                                                                fact))]
                 (let [owner (owner-from-field-decl-id (:decl/id target))]
                   (-> fact
                       (assoc :ref/to-decl (:decl/id target)

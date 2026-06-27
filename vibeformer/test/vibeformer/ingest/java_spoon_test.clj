@@ -129,6 +129,20 @@ public final class UsesWidget {
 }
 ")
 
+(def inherited-field-fixture
+  "package com.acme.inherited;
+
+class Parent {
+  protected final String children = \"value\";
+}
+
+public final class Child extends Parent {
+  public String read() {
+    return children;
+  }
+}
+")
+
 (def control-flow-fixture
   "package com.acme.statements;
 
@@ -1308,6 +1322,48 @@ public final class Demo {
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
                       [(= ?name "com.acme.model.Widget")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-inherited-unqualified-java-field-accesses
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/inherited/Child.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path inherited-field-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              field-refs (set (d/q '[:find ?name ?decl-id ?owner-id ?type-id ?resolved?
+                                      :where
+                                      [?ref :ref/kind :ref.kind/field-access]
+                                      [?ref :ref/name ?name]
+                                      [(= ?name "children")]
+                                      [?ref :ref/to-decl ?decl]
+                                      [?decl :decl/id ?decl-id]
+                                      [?decl :decl/source-node]
+                                      [?ref :ref/owner-type ?owner]
+                                      [?owner :type/id ?owner-id]
+                                      [?ref :ref/to-type ?type]
+                                      [?type :type/id ?type-id]
+                                      [?ref :ref/resolved? ?resolved?]]
+                                    db))]
+          (is (= #{["children"
+                    "java:com.acme.inherited.Parent#field:children"
+                    "com.acme.inherited.Parent"
+                    "java.lang.String"
+                    true]}
+                 field-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(= ?name "children")]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 
