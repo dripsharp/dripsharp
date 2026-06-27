@@ -173,6 +173,8 @@ Read these documents for the detailed design:
 
 * [Architecture](doc/architecture.md): goal, philosophy, high-level pipeline,
   and why generated C# must not be patched.
+* [Port Scope](doc/port-scope.md): .NET library target, excluded product
+  surfaces, and third-party library scope decisions.
 * [Technology](doc/technology.md): Clojure, Datomic, Spoon, Kotlin PSI/Analysis
   API, and C# validation choices.
 * [Datomic Model](doc/datomic-model.md): normalized facts, feature inventory,

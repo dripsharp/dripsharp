@@ -8,6 +8,13 @@ for this is located in `../research/pkl`. Do not modify it, but use it to drive
 the features Vibeformer needs and test this library. Implement only what is
 needed for that project.
 
+The current product target is a .NET library, not every product surface in
+`../research/pkl`. The library target includes core Pkl runtime behavior and
+C# code generation. It explicitly excludes server support, CLI support,
+documentation generation, YAML support, MessagePack support, Java code
+generation, and Kotlin code generation. See [Port Scope](port-scope.md) for
+the current third-party library and product-surface decisions.
+
 The system should not be a one-shot LLM translator and should not rely on
 hand-editing generated C# output. Instead, it should behave more like a
 compiler/transpiler:
