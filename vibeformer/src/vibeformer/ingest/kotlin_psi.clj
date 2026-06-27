@@ -871,9 +871,21 @@
 (def ^:private known-classpath-types
   {"AbstractAssert" "org.assertj.core.api.AbstractAssert"
    "Assertions" "org.assertj.core.api.Assertions"
+   "ClassName" "com.squareup.javapoet.ClassName"
    "Executable" "org.junit.jupiter.api.function.Executable"
+   "Identifier" "org.pkl.core.runtime.Identifier"
+   "ParameterizedTypeName" "com.squareup.javapoet.ParameterizedTypeName"
+   "PClassInfo" "org.pkl.core.PClassInfo"
    "Path" "java.nio.file.Path"
+   "TypeName" "com.squareup.javapoet.TypeName"
    "URI" "java.net.URI"})
+
+(def ^:private known-static-get-types
+  #{"com.squareup.javapoet.ClassName"
+    "com.squareup.javapoet.ParameterizedTypeName"
+    "com.squareup.javapoet.TypeName"
+    "org.pkl.core.PClassInfo"
+    "org.pkl.core.runtime.Identifier"})
 
 (def ^:private absent :vibeformer.query/absent)
 
@@ -956,6 +968,9 @@
     (when-let [[_ call-name] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*\(.*" value)]
       (:ref/to-type (get known-function-calls call-name)))))
 
+(defn- receiver-known-static-type-id [value]
+  (some-> value str/trim known-classpath-types))
+
 (defn- project-call-argument-values [db project-id]
   (->> (d/q '[:find ?call-node-id ?ordinal ?value
               :in $ ?project-id
@@ -1019,7 +1034,8 @@
         value (get receiver-values-by-call node-id)]
     (or (some->> value simple-identifier (get binding-types))
         (literal-type-id value)
-        (receiver-known-call-type-id value))))
+        (receiver-known-call-type-id value)
+        (receiver-known-static-type-id value))))
 
 (defn- project-refs [db project-id]
   (let [binding-types-by-parent (project-binding-type-index db project-id)
@@ -1273,9 +1289,16 @@
         {:ref/to-type "org.assertj.core.api.AbstractAssert"
          :ref/owner-type "org.assertj.core.api.AbstractAssert"}))))
 
+(defn- kotlin-static-get-call [{:call/keys [receiver-type]}]
+  (when (contains? known-static-get-types receiver-type)
+    {:ref/to-type receiver-type
+     :ref/owner-type receiver-type}))
+
 (defn- known-call-resolution [{:ref/keys [name] :as ref}]
   (or (when (= "contains" name)
         (kotlin-contains-call ref))
+      (when (= "get" name)
+        (kotlin-static-get-call ref))
       (get known-function-calls name)))
 
 (defn- same-file-candidates [candidates file-id]

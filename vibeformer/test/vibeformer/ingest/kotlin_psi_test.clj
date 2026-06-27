@@ -94,6 +94,20 @@ private fun writePklFile(value: String): BetaResult = BetaResult()
 fun useBeta(): BetaResult = writePklFile(\"beta\")
 ")
 
+(def kotlin-static-get-fixture
+  "package com.acme.staticget
+
+import java.net.URI
+
+fun staticGets(): Any {
+  val className = ClassName.get(String::class.java)
+  val typeName = ParameterizedTypeName.get(ClassName.get(\"pkg\", \"Box\"), ClassName.get(String::class.java))
+  val info = PClassInfo.get(\"module\", \"Person\", URI(\"repl:test\"))
+  val identifier = Identifier.get(\"name\")
+  return className
+}
+")
+
 (def kotlin-api-call-fixture
   "package com.acme.api
 
@@ -604,6 +618,53 @@ public final class JavaPseudoTypes {
                    ["same-file:src/test/kotlin/com/acme/beta/Helpers.kt"
                     "kotlin:function:com.acme.beta.writePklFile(String)"
                     "kotlin:BetaResult"
+                    true]}
+                 resolved))
+          (is (empty? unresolved)))))))
+
+(deftest resolves-known-kotlin-static-get-factories
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "static-get"
+                  :project/name "Static Get"}]
+        (write-file! root
+                     "src/test/kotlin/com/acme/staticget/StaticGet.kt"
+                     kotlin-static-get-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "static-get"})
+        (kotlin-psi/enrich! conn {:project/id "static-get"})
+        (let [db (d/db conn)
+              resolved (set (d/q '[:find ?type-id ?owner-id ?resolved?
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name "get"]
+                                    [?ref :ref/resolved? ?resolved?]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/owner-type ?owner]
+                                    [?owner :type/id ?owner-id]]
+                                  db))
+              unresolved (set (d/q '[:find ?reason
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name "get"]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]]
+                                    db))]
+          (is (= #{["com.squareup.javapoet.ClassName"
+                    "com.squareup.javapoet.ClassName"
+                    true]
+                   ["com.squareup.javapoet.ParameterizedTypeName"
+                    "com.squareup.javapoet.ParameterizedTypeName"
+                    true]
+                   ["org.pkl.core.PClassInfo"
+                    "org.pkl.core.PClassInfo"
+                    true]
+                   ["org.pkl.core.runtime.Identifier"
+                    "org.pkl.core.runtime.Identifier"
                     true]}
                  resolved))
           (is (empty? unresolved)))))))
