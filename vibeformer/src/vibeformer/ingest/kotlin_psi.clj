@@ -862,10 +862,16 @@
                   :ref/owner-type "kotlin.collections.ArraysKt"}
    "configure" {:ref/to-type "kotlin:Unit"
                 :ref/owner-type "org.gradle.api.plugins.ExtensionContainer"}
+   "createDirectories" {:ref/to-type "java.nio.file.Path"
+                        :ref/owner-type "java.nio.file.Path"}
+   "createParentDirectories" {:ref/to-type "java.nio.file.Path"
+                              :ref/owner-type "java.nio.file.Path"}
    "emptyList" {:ref/to-type "kotlin.collections.List"
                 :ref/owner-type "kotlin.collections.CollectionsKt"}
    "endsWith" {:ref/to-type "kotlin:Boolean"
                :ref/owner-type "kotlin:String"}
+   "exists" {:ref/to-type "kotlin:Boolean"
+             :ref/owner-type "java.nio.file.Path"}
    "fail" {:ref/to-type "kotlin:Nothing"
            :ref/owner-type "org.junit.jupiter.api.Assertions"}
    "first" {:ref/to-type "kotlin:Any"
@@ -1479,6 +1485,26 @@
         {:ref/to-type "kotlin:Boolean"
          :ref/owner-type receiver-type}))))
 
+(defn- path-like-type? [receiver-type]
+  (contains? #{"java.nio.file.Path" "java.io.File"} receiver-type))
+
+(defn- kotlin-exists-call [{:call/keys [receiver-type]}]
+  (when receiver-type
+    (let [owner-root (unqualified-type-id receiver-type)]
+      (cond
+        (= "AbstractAssert" owner-root)
+        {:ref/to-type "org.assertj.core.api.AbstractAssert"
+         :ref/owner-type "org.assertj.core.api.AbstractAssert"}
+
+        (path-like-type? receiver-type)
+        {:ref/to-type "kotlin:Boolean"
+         :ref/owner-type receiver-type}))))
+
+(defn- kotlin-path-returning-call [{:call/keys [receiver-type]}]
+  (when (path-like-type? receiver-type)
+    {:ref/to-type receiver-type
+     :ref/owner-type receiver-type}))
+
 (defn- kotlin-static-get-call [{:call/keys [receiver-type]}]
   (when (contains? known-static-get-types receiver-type)
     {:ref/to-type receiver-type
@@ -1503,6 +1529,10 @@
         (kotlin-contains-call ref))
       (when (= "matches" name)
         (kotlin-matches-call ref))
+      (when (= "exists" name)
+        (kotlin-exists-call ref))
+      (when (contains? #{"createDirectories" "createParentDirectories"} name)
+        (kotlin-path-returning-call ref))
       (when (= "build" name)
         (kotlin-build-call ref))
       (when (= "get" name)

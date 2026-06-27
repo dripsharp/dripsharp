@@ -252,6 +252,9 @@ import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.fail
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createParentDirectories
+import kotlin.io.path.exists
 
 fun apiCalls(path: Path): URI {
   val text = \"\"\"
@@ -279,6 +282,12 @@ fun stdlibValues(values: List<String>): Boolean {
   val empty = emptyList<String>()
   val bytes = byteArrayOf(1.toByte(), 2.toByte())
   return values.first().endsWith(\"e\") && empty.isEmpty() && !bytes.isEmpty()
+}
+
+fun pathFacts(path: Path): Boolean {
+  assertThat(path).exists()
+  val dir = path.createParentDirectories().createDirectories()
+  return path.exists() && dir.exists()
 }
 
 fun assertions() {
@@ -1209,9 +1218,12 @@ public final class JavaPseudoTypes {
                              "assertFalse"
                              "assertTrue"
                              "byteArrayOf"
+                             "createDirectories"
+                             "createParentDirectories"
                              "doesNotThrowAnyException"
                              "emptyList"
                              "endsWith"
+                             "exists"
                              "fail"
                              "first"
                              "hasMessage"
@@ -1347,9 +1359,13 @@ public final class JavaPseudoTypes {
                    ["assertFalse" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
                    ["assertTrue" "kotlin:Unit" "org.junit.jupiter.api.Assertions" true]
                    ["byteArrayOf" "kotlin:ByteArray" "kotlin.collections.ArraysKt" true]
+                   ["createDirectories" "java.nio.file.Path" "java.nio.file.Path" true]
+                   ["createParentDirectories" "java.nio.file.Path" "java.nio.file.Path" true]
                    ["doesNotThrowAnyException" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["emptyList" "kotlin.collections.List" "kotlin.collections.CollectionsKt" true]
                    ["endsWith" "kotlin:Boolean" "kotlin:String" true]
+                   ["exists" "kotlin:Boolean" "java.nio.file.Path" true]
+                   ["exists" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["fail" "kotlin:Nothing" "org.junit.jupiter.api.Assertions" true]
                    ["first" "kotlin:Any" "kotlin.collections.Iterable" true]
                    ["hasMessage" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
