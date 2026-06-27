@@ -167,6 +167,26 @@ fun builderBuilds(runner: Runner): Any {
 }
 ")
 
+(def kotlin-matches-fixture
+  "package com.acme.matches
+
+import java.net.URI
+
+class Rule(val pattern: String) {
+  fun matches(uri: URI): Boolean = true
+}
+
+fun matchCalls(value: Any): Boolean {
+  val stringMatches = \"abc\".matches(Regex(\"a.*\"))
+  val regex = Regex(\"b.*\")
+  val regexMatches = regex.matches(\"bbb\")
+  val rule = Rule(\"*\")
+  val ruleMatches = rule.matches(URI(\"https://example.com\"))
+  val unknown = value.matches(\"anything\")
+  return stringMatches && regexMatches && ruleMatches
+}
+")
+
 (def kotlin-api-call-fixture
   "package com.acme.api
 
@@ -831,6 +851,55 @@ public final class JavaPseudoTypes {
                     "java.net.http.HttpRequest.Builder"
                     true]}
                  resolved))
+          (is (= #{[:resolve.reason/analysis-api-limitation]}
+                 unresolved)))))))
+
+(deftest resolves-kotlin-receiver-matches-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "matches"
+                  :project/name "Matches"}]
+        (write-file! root
+                     "src/main/kotlin/com/acme/matches/Matches.kt"
+                     kotlin-matches-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "matches"})
+        (kotlin-psi/enrich! conn {:project/id "matches"})
+        (let [db (d/db conn)
+              resolved (set (d/q '[:find ?type-id ?owner-id ?resolved?
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name "matches"]
+                                    [?ref :ref/resolved? ?resolved?]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/owner-type ?owner]
+                                    [?owner :type/id ?owner-id]]
+                                  db))
+              resolved-decls (set (d/q '[:find ?decl-id ?resolved?
+                                          :where
+                                          [?ref :ref/kind :ref.kind/function-call]
+                                          [?ref :ref/name "matches"]
+                                          [?ref :ref/resolved? ?resolved?]
+                                          [?ref :ref/to-decl ?decl]
+                                          [?decl :decl/id ?decl-id]]
+                                        db))
+              unresolved (set (d/q '[:find ?reason
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name "matches"]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]]
+                                    db))]
+          (is (= #{["kotlin:Boolean" "kotlin:String" true]
+                   ["kotlin:Boolean" "kotlin.text.Regex" true]
+                   ["kotlin:Boolean" "kotlin:com.acme.matches.Rule" true]}
+                 resolved))
+          (is (= #{["kotlin:function:com.acme.matches.Rule.matches(URI)" true]}
+                 resolved-decls))
           (is (= #{[:resolve.reason/analysis-api-limitation]}
                  unresolved)))))))
 

@@ -822,6 +822,7 @@
    "MutableList" "kotlin.collections.MutableList"
    "MutableMap" "kotlin.collections.MutableMap"
    "MutableSet" "kotlin.collections.MutableSet"
+   "Regex" "kotlin.text.Regex"
    "Set" "kotlin.collections.Set"
    "Unit" "kotlin:Unit"})
 
@@ -1230,6 +1231,12 @@
        (map with-function-param-types)
        (group-by :decl/name)))
 
+(defn- method-index [decls]
+  (->> decls
+       (filter #(= :decl.kind/method (:decl/kind %)))
+       (map with-function-param-types)
+       (group-by :decl/name)))
+
 (defn- type-lang [type-id]
   (if (str/starts-with? type-id "kotlin:")
     :lang/kotlin
@@ -1390,6 +1397,13 @@
         {:ref/to-type "org.assertj.core.api.AbstractAssert"
          :ref/owner-type "org.assertj.core.api.AbstractAssert"}))))
 
+(defn- kotlin-matches-call [{:call/keys [receiver-type]}]
+  (when receiver-type
+    (let [owner-root (unqualified-type-id receiver-type)]
+      (when (contains? #{"String" "Regex"} owner-root)
+        {:ref/to-type "kotlin:Boolean"
+         :ref/owner-type receiver-type}))))
+
 (defn- kotlin-static-get-call [{:call/keys [receiver-type]}]
   (when (contains? known-static-get-types receiver-type)
     {:ref/to-type receiver-type
@@ -1412,6 +1426,8 @@
 (defn- known-call-resolution [{:ref/keys [name] :as ref}]
   (or (when (= "contains" name)
         (kotlin-contains-call ref))
+      (when (= "matches" name)
+        (kotlin-matches-call ref))
       (when (= "build" name)
         (kotlin-build-call ref))
       (when (= "get" name)
@@ -1424,7 +1440,25 @@
       matches
       candidates)))
 
-(defn- function-resolution-tx [db functions source-types type-index {:ref/keys [id name] :call/keys [arg-types] :as ref}]
+(defn- same-type-id? [left right]
+  (= (type-name-from-id left)
+     (type-name-from-id right)))
+
+(defn- receiver-member-candidates [source-types {:ref/keys [name] :call/keys [receiver-type]} candidates]
+  (when (and (= "matches" name) receiver-type)
+    (seq (filter (fn [candidate]
+                   (when-let [owner-type (owner-type-id source-types candidate)]
+                     (same-type-id? receiver-type owner-type)))
+                 candidates))))
+
+(defn- resolve-function-candidates-tx [db source-types id arg-types candidates]
+  (case (count candidates)
+    0 nil
+    1 (resolve-decl-tx db source-types id (first candidates))
+    (when-let [decl (best-overload arg-types candidates)]
+      (resolve-decl-tx db source-types id decl))))
+
+(defn- function-resolution-tx [db functions methods source-types type-index {:ref/keys [id name] :call/keys [arg-types] :as ref}]
   (if-let [known-call (or (known-call-resolution ref)
                           (kotlin-constructor-call type-index ref))]
     (resolved-ref-tx db id
@@ -1434,13 +1468,18 @@
 
                        (:ref/owner-type known-call)
                        (assoc :ref/owner-type [:type/id (:ref/owner-type known-call)])))
-    (let [candidates (same-file-candidates (get functions name) (:ref/file-id ref))]
-      (case (count candidates)
-        0 (unresolved-ref-tx id :resolve.reason/missing-classpath)
-        1 (resolve-decl-tx db source-types id (first candidates))
-        (if-let [decl (best-overload arg-types candidates)]
-          (resolve-decl-tx db source-types id decl)
-          (unresolved-ref-tx id :resolve.reason/analysis-api-limitation))))))
+    (let [candidates (same-file-candidates (get functions name) (:ref/file-id ref))
+          member-candidates (concat (get functions name) (get methods name))]
+      (or (when-let [member-candidates (receiver-member-candidates source-types ref candidates)]
+            (resolve-function-candidates-tx db source-types id arg-types member-candidates))
+          (when-let [member-candidates (receiver-member-candidates source-types ref member-candidates)]
+            (resolve-function-candidates-tx db source-types id arg-types member-candidates))
+          (when-not (and (= "matches" name)
+                         (:call/receiver-type ref))
+            (resolve-function-candidates-tx db source-types id arg-types candidates))
+          (unresolved-ref-tx id (if (seq candidates)
+                                  :resolve.reason/analysis-api-limitation
+                                  :resolve.reason/missing-classpath))))))
 
 (defn semantic-resolution-facts
   "Return idempotent tx-data that enriches Kotlin refs with semantic links.
@@ -1457,6 +1496,7 @@
                           (normalize-classpath-types (:kotlin/classpath-types opts))
                           source-types)
         functions (function-index decls)
+        methods (method-index decls)
         analysis-api-tx (when (:kotlin/analysis-api? opts)
                           (:tx-data (kotlin-analysis-api/setup-facts db project-id opts)))]
     (vec
@@ -1471,7 +1511,7 @@
                   (type-resolution-tx db type-index ref)
 
                   :ref.kind/function-call
-                  (function-resolution-tx db functions source-types type-index ref)
+                  (function-resolution-tx db functions methods source-types type-index ref)
 
                   []))
               (project-refs db project-id type-index))))))
