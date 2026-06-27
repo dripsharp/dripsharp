@@ -225,6 +225,7 @@
              :java.node/variable-write}
            (set (remove nil? (keys rules-by-kind)))))
     (is (= #{:java.feature/class
+             :java.feature/inner-class
              :java.feature/annotation
              :java.feature/field
              :java.feature/generic-method
@@ -432,6 +433,7 @@
              :java.variable-read-node/to-csharp-variable
              :java.variable-write-node/to-csharp-variable
              :java.class-feature/to-csharp-class
+             :java.inner-class-feature/to-csharp-nested-type
              :java.annotation-feature/to-csharp-attribute
              :java.field-feature/to-csharp-field
              :java.checked-exception/to-csharp-unchecked-signature

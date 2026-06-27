@@ -293,6 +293,56 @@ public final class Child extends Parent {
 }
 ")
 
+(def nested-type-model-fixture
+  "package com.acme.nestedoverload;
+
+interface Node {}
+
+abstract class AbstractNode implements Node {}
+
+public final class Expr {
+  public static final class NonNullExpr extends AbstractNode {}
+}
+")
+
+(def nested-type-overloaded-method-fixture
+  "package com.acme.nestedoverload;
+
+import com.acme.nestedoverload.Expr.NonNullExpr;
+
+class Source {}
+
+class Span {}
+
+class Section {}
+
+class Parent {
+  protected Section createSourceSection(Node node) {
+    return new Section();
+  }
+
+  protected Section createSourceSection(Span span) {
+    return new Section();
+  }
+
+  protected static Section createSourceSection(Source source, Node node) {
+    return new Section();
+  }
+
+  protected static Section createSourceSection(Source source, Span span) {
+    return new Section();
+  }
+}
+
+public final class Child extends Parent {
+  public Section read(Source source, NonNullExpr expr) {
+    Section first = createSourceSection(expr);
+    Section second = createSourceSection(source, expr);
+    return second;
+  }
+}
+")
+
 (def control-flow-fixture
   "package com.acme.statements;
 
@@ -1702,6 +1752,61 @@ public final class Demo {
                    ["java:com.acme.syntaxoverload.Parent#createSourceSection(com.acme.syntaxoverload.Span)"
                     "com.acme.syntaxoverload.Parent"
                     "com.acme.syntaxoverload.Section"
+                    true]}
+                 method-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(= ?name "createSourceSection")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-inherited-overloaded-java-method-calls-through-nested-types
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/nestedoverload/Child.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/nestedoverload/Expr.java" nested-type-model-fixture)
+        (write-file! root file-path nested-type-overloaded-method-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              method-refs (set (d/q '[:find ?decl-id ?owner-id ?type-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/method-call]
+                                       [?ref :ref/name "createSourceSection"]
+                                       [?ref :ref/to-decl ?decl]
+                                       [?decl :decl/id ?decl-id]
+                                       [?decl :decl/source-node]
+                                       [?ref :ref/owner-type ?owner]
+                                       [?owner :type/id ?owner-id]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]]
+                                     db))
+              nested-type-decls (set (d/q '[:find ?type-id ?decl-id
+                                            :where
+                                            [?decl :decl/kind :decl.kind/class]
+                                            [?decl :decl/qualified-name ?type-id]
+                                            [?decl :decl/id ?decl-id]
+                                            [(= ?type-id "com.acme.nestedoverload.Expr$NonNullExpr")]]
+                                          db))]
+          (is (= #{["com.acme.nestedoverload.Expr$NonNullExpr"
+                    "java:com.acme.nestedoverload.Expr$NonNullExpr"]}
+                 nested-type-decls))
+          (is (= #{["java:com.acme.nestedoverload.Parent#createSourceSection(com.acme.nestedoverload.Node)"
+                    "com.acme.nestedoverload.Parent"
+                    "com.acme.nestedoverload.Section"
+                    true]
+                   ["java:com.acme.nestedoverload.Parent#createSourceSection(com.acme.nestedoverload.Source,com.acme.nestedoverload.Node)"
+                    "com.acme.nestedoverload.Parent"
+                    "com.acme.nestedoverload.Section"
                     true]}
                  method-refs))
           (is (empty?

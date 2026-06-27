@@ -682,6 +682,11 @@
     :rule/input-feature :java.feature/class
     :rule/output-feature :csharp.feature/class
     :rule/status implemented-status}
+   {:rule/id :java.inner-class-feature/to-csharp-nested-type
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.feature/inner-class
+    :rule/output-feature :csharp.feature/nested-type
+    :rule/status implemented-status}
    {:rule/id :java.interface-feature/to-csharp-interface
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/interface

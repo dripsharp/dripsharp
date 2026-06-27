@@ -1538,12 +1538,37 @@
   (and (contains? component-names (.getSimpleName method))
        (empty? (.getParameters method))))
 
+(defn- nested-types [^CtType type]
+  (try
+    (vec (.getNestedTypes type))
+    (catch Throwable _
+      [])))
+
+(defn- source-types [top-level-types]
+  (letfn [(walk [type]
+            (cons type
+                  (mapcat walk
+                          (sort-by #(source-order-key % (.getSimpleName %))
+                                   (nested-types type)))))]
+    (->> top-level-types
+         (mapcat walk)
+         (reduce (fn [acc type]
+                   (let [id (qname type)]
+                     (if (contains? (:seen acc) id)
+                       acc
+                       (-> acc
+                           (update :seen conj id)
+                           (update :types conj type)))))
+                 {:seen #{} :types []})
+         :types)))
+
 (defn- file-facts [file-record]
   (let [file-id (:file/id file-record)
         project-root (get-in file-record [:file/project :project/root])
         source-path (.resolve (path project-root) (:file/path file-record))
-        types (vec (parse-file source-path))
-        import-aliases (compilation-unit-import-aliases types)]
+        top-level-types (vec (parse-file source-path))
+        types (source-types top-level-types)
+        import-aliases (compilation-unit-import-aliases top-level-types)]
     (binding [*import-aliases* import-aliases]
       (doall
        (mapcat
@@ -1691,6 +1716,17 @@
        (map (juxt :type/id :type/name))
        (into {})))
 
+(defn- nested-type-alias-index [facts]
+  (->> facts
+       (keep :type/id)
+       (filter #(str/includes? % "$"))
+       (reduce (fn [aliases type-id]
+                 (assoc aliases (str/replace type-id #"\$" ".") type-id))
+               {})))
+
+(defn- canonical-type-id [type-aliases type-id]
+  (get type-aliases type-id type-id))
+
 (defn- type-arg-index [facts]
   (reduce (fn [index fact]
             (if (and (:type/id fact) (seq (:type/args fact)))
@@ -1775,7 +1811,7 @@
               [k (vec (sort-by :decl/qualified-name decls))]))
        (into {})))
 
-(defn- type-decl-index [facts]
+(defn- type-decl-index [facts type-aliases]
   (->> facts
        (filter #(and (contains? #{:decl.kind/annotation
                                   :decl.kind/class
@@ -1786,8 +1822,15 @@
                                 (:decl/kind %))
                      (:decl/type %)
                      (:decl/source-node %)))
-       (map (juxt :decl/type identity))
-       (into {})))
+       (reduce (fn [index decl]
+                 (let [type-id (:decl/type decl)
+                       aliases (for [[alias canonical] type-aliases
+                                     :when (= canonical type-id)]
+                                 alias)]
+                   (reduce #(assoc %1 %2 decl)
+                           (assoc index type-id decl)
+                           aliases)))
+               {})))
 
 (defn- type-decl-source-node-index [facts]
   (->> facts
@@ -1815,7 +1858,7 @@
        (map (juxt :node/id identity))
        (into {})))
 
-(defn- direct-supertype-index [facts source-node-types]
+(defn- direct-supertype-index [facts source-node-types type-aliases]
   (->> facts
        (filter #(and (contains? #{:ref.kind/extends :ref.kind/implements} (:ref/kind %))
                      (:ref/from-node %)
@@ -1823,9 +1866,9 @@
        (reduce (fn [index ref]
                  (if-let [type-id (get source-node-types (:ref/from-node ref))]
                    (update index
-                           (strip-type-args type-id)
+                           (strip-type-args (canonical-type-id type-aliases type-id))
                            (fnil conj [])
-                           (strip-type-args (:ref/to-type ref)))
+                           (strip-type-args (canonical-type-id type-aliases (:ref/to-type ref))))
                    index))
                {})))
 
@@ -1876,7 +1919,7 @@
           current
           (recur (get parent-by-node current) (conj seen current)))))))
 
-(defn- binding-type-index [facts nodes-by-id parent-by-node]
+(defn- binding-type-index [facts nodes-by-id parent-by-node type-aliases]
   (->> facts
        (filter #(and (= :ref.kind/type-use (:ref/kind %))
                      (:ref/source-name %)
@@ -1890,7 +1933,9 @@
                                     binding-node
                                     (enclosing-executable nodes-by-id parent-by-node binding-node))]
                    (if scope-node
-                     (assoc-in index [scope-node (:ref/source-name ref)] (:ref/to-type ref))
+                     (assoc-in index
+                               [scope-node (:ref/source-name ref)]
+                               (canonical-type-id type-aliases (:ref/to-type ref)))
                      index)))
                {})))
 
@@ -2159,9 +2204,9 @@
           (str/replace #"\?$" "")
           strip-type-args))
 
-(defn- type-compatible? [direct-supertypes param-type arg-type]
-  (let [param-type (comparable-type-id param-type)
-        arg-type (comparable-type-id arg-type)]
+(defn- type-compatible? [type-aliases direct-supertypes param-type arg-type]
+  (let [param-type (comparable-type-id (canonical-type-id type-aliases param-type))
+        arg-type (comparable-type-id (canonical-type-id type-aliases arg-type))]
     (boolean
      (and param-type
           arg-type
@@ -2169,9 +2214,9 @@
               (= "java.lang.Object" param-type)
               (contains? (set (type-lineage direct-supertypes arg-type)) param-type))))))
 
-(defn- fixed-arity-arg-types-match? [direct-supertypes param-types arg-types]
+(defn- fixed-arity-arg-types-match? [type-aliases direct-supertypes param-types arg-types]
   (and (= (count param-types) (count arg-types))
-       (every? true? (map #(type-compatible? direct-supertypes %1 %2)
+       (every? true? (map #(type-compatible? type-aliases direct-supertypes %1 %2)
                           param-types
                           arg-types))))
 
@@ -2183,17 +2228,17 @@
       (vec (concat fixed-params
                    (repeat (- arity (count fixed-params)) element-type))))))
 
-(defn- arg-types-match? [direct-supertypes decl arg-types]
+(defn- arg-types-match? [type-aliases direct-supertypes decl arg-types]
   (let [param-types (param-types-from-decl-id (:decl/id decl))
         arity (count arg-types)]
-    (or (fixed-arity-arg-types-match? direct-supertypes param-types arg-types)
+    (or (fixed-arity-arg-types-match? type-aliases direct-supertypes param-types arg-types)
         (when-let [expanded (varargs-param-types param-types arity)]
-          (fixed-arity-arg-types-match? direct-supertypes expanded arg-types)))))
+          (fixed-arity-arg-types-match? type-aliases direct-supertypes expanded arg-types)))))
 
-(defn- method-target-by-arg-types [direct-supertypes candidates arg-types]
+(defn- method-target-by-arg-types [type-aliases direct-supertypes candidates arg-types]
   (when (every? some? arg-types)
     (->> candidates
-         (filter #(arg-types-match? direct-supertypes % arg-types))
+         (filter #(arg-types-match? type-aliases direct-supertypes % arg-types))
          unambiguous)))
 
 (defn- varargs-method-candidates [varargs-method-index owner method-name arity]
@@ -2206,15 +2251,17 @@
   ([method-index varargs-method-index owner method-name arity]
    (method-target-for-owner method-index varargs-method-index nil owner method-name arity []))
   ([method-index varargs-method-index direct-supertypes owner method-name arity arg-types]
+   (method-target-for-owner method-index varargs-method-index {} direct-supertypes owner method-name arity arg-types))
+  ([method-index varargs-method-index type-aliases direct-supertypes owner method-name arity arg-types]
    (let [exact-candidates (get method-index [owner method-name arity])
          varargs-candidates (varargs-method-candidates varargs-method-index owner method-name arity)]
      (or (unambiguous exact-candidates)
-         (method-target-by-arg-types direct-supertypes exact-candidates arg-types)
+         (method-target-by-arg-types type-aliases direct-supertypes exact-candidates arg-types)
          (unambiguous varargs-candidates)
-         (method-target-by-arg-types direct-supertypes varargs-candidates arg-types)))))
+         (method-target-by-arg-types type-aliases direct-supertypes varargs-candidates arg-types)))))
 
 (defn- inherited-local-method-target
-  [method-index varargs-method-index argument-counts parent-by-node source-node-types direct-supertypes arg-types ref]
+  [method-index varargs-method-index type-aliases argument-counts parent-by-node source-node-types direct-supertypes arg-types ref]
   (when (and (nil? (:ref/owner-type ref)) (:ref/name ref))
     (let [arity (get argument-counts (:ref/from-node ref) 0)]
       (some->> (:ref/from-node ref)
@@ -2222,6 +2269,7 @@
                (type-lineage direct-supertypes)
                (keep #(method-target-for-owner method-index
                                                varargs-method-index
+                                               type-aliases
                                                direct-supertypes
                                                %
                                                (:ref/name ref)
@@ -2230,7 +2278,7 @@
                first))))
 
 (defn- local-method-target
-  [facts method-index varargs-method-index type-names type-args argument-counts child-index field-index ref-index field-refs constructor-refs decl-return-types nodes-by-id parent-by-node source-node-types direct-supertypes binding-types ref]
+  [facts method-index varargs-method-index type-names type-args type-aliases argument-counts child-index field-index ref-index field-refs constructor-refs decl-return-types nodes-by-id parent-by-node source-node-types direct-supertypes binding-types ref]
   (let [owner-type-id (:ref/owner-type ref)
         owner (type-owner type-names owner-type-id)
         enum-target-owner (some->> (enum-constant-target-type child-index field-index ref)
@@ -2254,15 +2302,16 @@
                                      (:ref/from-node ref))]
     (when (:ref/name ref)
       (or (when owner
-            (method-target-for-owner method-index varargs-method-index direct-supertypes owner (:ref/name ref) arity arg-types))
+            (method-target-for-owner method-index varargs-method-index type-aliases direct-supertypes owner (:ref/name ref) arity arg-types))
           (when enum-target-owner
-            (method-target-for-owner method-index varargs-method-index direct-supertypes enum-target-owner (:ref/name ref) arity arg-types))
+            (method-target-for-owner method-index varargs-method-index type-aliases direct-supertypes enum-target-owner (:ref/name ref) arity arg-types))
           (when constructor-target-owner
-            (method-target-for-owner method-index varargs-method-index direct-supertypes constructor-target-owner (:ref/name ref) arity arg-types))
+            (method-target-for-owner method-index varargs-method-index type-aliases direct-supertypes constructor-target-owner (:ref/name ref) arity arg-types))
           (when chained-target-owner
-            (method-target-for-owner method-index varargs-method-index direct-supertypes chained-target-owner (:ref/name ref) arity arg-types))
+            (method-target-for-owner method-index varargs-method-index type-aliases direct-supertypes chained-target-owner (:ref/name ref) arity arg-types))
           (inherited-local-method-target method-index
                                          varargs-method-index
+                                         type-aliases
                                          argument-counts
                                          parent-by-node
                                          source-node-types
@@ -2356,15 +2405,16 @@
                  :ref/owner-type (:ref/owner-type known))
           (dissoc :ref/reason)))))
 
-(defn- resolve-local-type-ref [type-decls fact]
+(defn- resolve-local-type-ref [type-decls type-aliases fact]
   (when (and (contains? #{:ref.kind/type-use
                           :ref.kind/extends
                           :ref.kind/implements}
                         (:ref/kind fact))
              (not (:ref/resolved? fact)))
-    (when-let [decl (get type-decls (:ref/to-type fact))]
+    (when-let [decl (get type-decls (canonical-type-id type-aliases (:ref/to-type fact)))]
       (-> fact
           (assoc :ref/to-decl (:decl/id decl)
+                 :ref/to-type (:decl/type decl)
                  :ref/resolved? true)
           (dissoc :ref/reason)))))
 
@@ -2374,6 +2424,7 @@
         varargs-method-index (varargs-method-decl-index deduped)
         constructor-index (constructor-decl-index deduped)
         type-names (type-name-index deduped)
+        type-aliases (nested-type-alias-index deduped)
         type-args (type-arg-index deduped)
         argument-counts (argument-counts deduped)
         child-index (child-node-index deduped)
@@ -2383,11 +2434,11 @@
         decl-return-types (decl-return-type-index deduped)
         field-index (field-decl-index deduped)
         field-owner-index (field-decl-owner-index deduped)
-        type-decls (type-decl-index deduped)
+        type-decls (type-decl-index deduped type-aliases)
         source-node-types (type-decl-source-node-index deduped)
         parent-by-node (parent-node-index deduped)
         nodes-by-id (node-index deduped)
-        basic-binding-types (binding-type-index deduped nodes-by-id parent-by-node)
+        basic-binding-types (binding-type-index deduped nodes-by-id parent-by-node type-aliases)
         binding-types (initializer-binding-type-index deduped
                                                        method-index
                                                        type-names
@@ -2401,14 +2452,14 @@
                                                        nodes-by-id
                                                        parent-by-node
                                                        basic-binding-types)
-        direct-supertypes (direct-supertype-index deduped source-node-types)]
+        direct-supertypes (direct-supertype-index deduped source-node-types type-aliases)]
     (mapv (fn [fact]
             (cond
               (contains? #{:ref.kind/type-use
                            :ref.kind/extends
                            :ref.kind/implements}
                          (:ref/kind fact))
-              (or (resolve-local-type-ref type-decls fact)
+              (or (resolve-local-type-ref type-decls type-aliases fact)
                   fact)
 
               (and (= :ref.kind/method-call (:ref/kind fact))
@@ -2418,6 +2469,7 @@
                                                    varargs-method-index
                                                    type-names
                                                    type-args
+                                                   type-aliases
                                                    argument-counts
                                                    child-index
                                                    field-index
