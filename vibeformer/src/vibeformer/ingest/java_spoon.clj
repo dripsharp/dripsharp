@@ -752,12 +752,12 @@
    ["java.lang.reflect.Parameter" "getName"] :java.reflection.parameter/get-name
    ["java.lang.reflect.Modifier" "isAbstract"] :java.reflection.modifier/is-abstract
    ["java.lang.reflect.Constructor" "getAnnotation"] :java.reflection.constructor/get-annotation
-   ["java.lang.reflect.Parameter" "getAnnotation"] :java.reflection.parameter/get-annotation})
+   ["java.lang.reflect.Parameter" "getAnnotation"] :java.reflection.parameter/get-annotation
+   ["java.lang.reflect.Method" "invoke"] :java.reflection.method/invoke})
 
 (def unsupported-reflection-features
   {["java.lang.Class" "getMethod"] :java.reflection.class/get-method
    ["java.lang.Class" "getDeclaredMethod"] :java.reflection.class/get-declared-method
-   ["java.lang.reflect.Method" "invoke"] :java.reflection.method/invoke
    ["java.lang.reflect.Constructor" "newInstance"] :java.reflection.constructor/new-instance})
 
 (defn- reflection-owner? [owner]

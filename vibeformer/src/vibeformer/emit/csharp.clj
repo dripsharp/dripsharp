@@ -1700,11 +1700,28 @@
 
       (and (= "java.lang.reflect.Method" owner)
            (= "invoke" source-method-name))
-      (unsupported node
-                   :java.reflection-method-invoke/unsupported
-                   {:method source-method-name
-                    :owner owner
-                    :reason :emit.reason/unsupported-dynamic-reflection})
+      (if (and target
+               (pos? (count (child-nodes db (:db/id node) :argument))))
+        (let [arg-count (count (child-nodes db (:db/id node) :argument))
+              receiver-result (emit-argument ctx node 0)
+              invocation-results (mapv #(emit-argument ctx node %) (range 1 arg-count))
+              invocation-args (if (seq invocation-results)
+                                (str "new object?[] { "
+                                     (str/join ", " (map :text invocation-results))
+                                     " }")
+                                "null")]
+          (-> (merge-emits (concat [target-result receiver-result] invocation-results))
+              (update :usings conj "System.Reflection")
+              (with-text (str target-text ".Invoke(" (:text receiver-result) ", " invocation-args ")!"))
+              (apply-rule node
+                          :java.reflection-method-invoke/to-csharp-method-info-invoke
+                          :rule-app.status/success)))
+        (unsupported node
+                     :java.reflection-method-invoke/to-csharp-method-info-invoke
+                     {:method source-method-name
+                      :owner owner
+                      :argument-count (count (child-nodes db (:db/id node) :argument))
+                      :reason :emit.reason/unsupported-reflection-method-invoke-overload}))
 
       (and (= "java.lang.reflect.Constructor" owner)
            (= "newInstance" source-method-name))

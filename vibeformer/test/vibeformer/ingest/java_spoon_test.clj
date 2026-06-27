@@ -389,6 +389,14 @@ public final class ReflectionApi {
     return type.getDeclaredConstructors();
   }
 
+  public Object call(Method method, Object target) throws Exception {
+    return method.invoke(target);
+  }
+
+  public Object callWithValue(Method method, Object target, Object value) throws Exception {
+    return method.invoke(target, value);
+  }
+
   public String reflectedTypeName(Type type) {
     return type.getTypeName();
   }
@@ -2532,6 +2540,7 @@ public final class Demo {
                                         :java.reflection.class/get-annotation
                                         :java.reflection.constructor/get-annotation
                                         :java.reflection.parameter/get-annotation
+                                        :java.reflection.method/invoke
                                         :java.feature/reflection}
                                        ?kind)]
                           [?feature :feature/status ?status]
@@ -2569,7 +2578,8 @@ public final class Demo {
                    [:java.reflection.class/for-name "forName" :feature.status/supported]
                    [:java.reflection.class/get-annotation "getAnnotation" :feature.status/supported]
                    [:java.reflection.constructor/get-annotation "getAnnotation" :feature.status/supported]
-                   [:java.reflection.parameter/get-annotation "getAnnotation" :feature.status/supported]}
+                   [:java.reflection.parameter/get-annotation "getAnnotation" :feature.status/supported]
+                   [:java.reflection.method/invoke "invoke" :feature.status/supported]}
                    reflection-features)))))))
 
 (deftest classifies-unsupported-reflection-api-facts
@@ -2591,7 +2601,6 @@ public final class Demo {
                           [?feature :feature/kind ?kind]
                           [(contains? #{:java.reflection.class/get-declared-method
                                         :java.reflection.class/get-method
-                                        :java.reflection.method/invoke
                                         :java.reflection.constructor/new-instance}
                                        ?kind)]
                           [?feature :feature/status ?status]
@@ -2600,7 +2609,6 @@ public final class Demo {
                         db))]
           (is (= #{[:java.reflection.class/get-declared-method "getDeclaredMethod" :feature.status/unsupported]
                    [:java.reflection.class/get-method "getMethod" :feature.status/unsupported]
-                   [:java.reflection.method/invoke "invoke" :feature.status/unsupported]
                    [:java.reflection.constructor/new-instance "newInstance" :feature.status/unsupported]}
                  reflection-features)))))))
 

@@ -153,6 +153,7 @@
                             :java.reflection-parameter-get-name/to-csharp-name
                             :java.reflection-constructor-get-annotation/to-csharp-custom-attribute
                             :java.reflection-parameter-get-annotation/to-csharp-custom-attribute
+                            :java.reflection-method-invoke/to-csharp-method-info-invoke
                             :java.modifier-is-abstract/to-csharp-type-attributes
                             :java.stream-source/to-csharp-enumerable
                             :java.stream-map/to-csharp-select
@@ -364,6 +365,7 @@
                      :java.reflection.class/get-annotation
                      :java.reflection.constructor/get-annotation
                      :java.reflection.parameter/get-annotation
+                     :java.reflection.method/invoke
                      :java.stream/map-to-int
                      :java.stream/min
                      :java.stream/max
@@ -378,7 +380,6 @@
              (:rule/status (first (rules-by-feature feature))))))
     (doseq [feature [:java.reflection.class/get-declared-method
                      :java.reflection.class/get-method
-                     :java.reflection.method/invoke
                      :java.reflection.constructor/new-instance
                      :java.feature/reflection
                      :java.feature/stream-api

@@ -395,6 +395,11 @@
     :rule/input-feature :java.reflection.parameter/get-annotation
     :rule/output-feature :csharp.api/custom-attribute
     :rule/status implemented-status}
+   {:rule/id :java.reflection-method-invoke/to-csharp-method-info-invoke
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.method/invoke
+    :rule/output-feature :csharp.api/method-info-invoke
+    :rule/status implemented-status}
    {:rule/id :java.modifier-is-abstract/to-csharp-type-attributes
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.modifier/is-abstract
@@ -411,10 +416,6 @@
    {:rule/id :java.class-get-declared-method/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.class/get-declared-method
-    :rule/status unsupported-status}
-   {:rule/id :java.reflection-method-invoke/unsupported
-    :rule/source-lang :lang/java
-    :rule/input-feature :java.reflection.method/invoke
     :rule/status unsupported-status}
    {:rule/id :java.reflection-constructor-new-instance/unsupported
     :rule/source-lang :lang/java

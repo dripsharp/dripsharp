@@ -405,6 +405,14 @@ public final class ReflectionApi {
     return type.getDeclaredConstructors();
   }
 
+  public static Object call(Method method, Object target) throws Exception {
+    return method.invoke(target);
+  }
+
+  public static Object callWithValue(Method method, Object target, Object value) throws Exception {
+    return method.invoke(target, value);
+  }
+
   private static boolean same(ClassLoader left, ClassLoader right) {
     return left == right;
   }
@@ -3135,6 +3143,10 @@ public final class Chain {
                            "return type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);"
                            "public static ConstructorInfo[] constructors(Type type)"
                            "return type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);"
+                           "public static object call(MethodInfo method, object target)"
+                           "return method.Invoke(target, null)!;"
+                           "public static object callWithValue(MethodInfo method, object target, object value)"
+                           "return method.Invoke(target, new object?[] { value })!;"
                            "private static bool same(Assembly left, Assembly right)"
                            "public static string reflectedTypeName(Type type)"
                            "return (type.FullName ?? type.Name);"
@@ -3180,6 +3192,7 @@ public final class Chain {
                         :java.class-get-declared-methods/to-csharp-get-methods
                         :java.class-get-declared-constructors/to-csharp-get-constructors
                         :java.class-for-name/to-csharp-get-type
+                        :java.reflection-method-invoke/to-csharp-method-info-invoke
                         :java.type-get-type-name/to-csharp-full-name
                         :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                         :java.parameterized-type-get-raw-type/to-csharp-type
@@ -3219,7 +3232,6 @@ public final class Chain {
           (is (str/includes? content "Unsupported Java node method-call"))
           (is (= #{:java.class-get-declared-method/unsupported
                    :java.class-get-method/unsupported
-                   :java.reflection-method-invoke/unsupported
                    :java.reflection-constructor-new-instance/unsupported}
                  diagnostic-rules)))))))
 
