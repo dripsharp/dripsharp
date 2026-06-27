@@ -962,16 +962,20 @@
    "Assertions" "org.assertj.core.api.Assertions"
    "ClassName" "com.squareup.javapoet.ClassName"
    "ByteArrayOutputStream" "java.io.ByteArrayOutputStream"
+   "Collectors" "java.util.stream.Collectors"
    "Executable" "org.junit.jupiter.api.function.Executable"
    "File" "java.io.File"
    "Files" "java.nio.file.Files"
    "HttpRequest" "java.net.http.HttpRequest"
    "Identifier" "org.pkl.core.runtime.Identifier"
+   "MessagePack" "org.msgpack.core.MessagePack"
    "ParameterizedTypeName" "com.squareup.javapoet.ParameterizedTypeName"
    "PClassInfo" "org.pkl.core.PClassInfo"
    "Path" "java.nio.file.Path"
    "StringWriter" "java.io.StringWriter"
    "Stream" "java.util.stream.Stream"
+   "System" "java.lang.System"
+   "ThreadLocal" "java.lang.ThreadLocal"
    "TypeName" "com.squareup.javapoet.TypeName"
    "URI" "java.net.URI"})
 
@@ -986,17 +990,24 @@
   (merge (update-vals known-function-calls :ref/to-type)
          {"any" "kotlin:Boolean"
           "asSequence" "kotlin.sequences.Sequence"
+          "childNodes" "kotlin.collections.List"
           "dropLast" "kotlin.collections.List"
+          "evaluateExpressionString" "kotlin:String"
+          "evaluateOutputBytes" "kotlin:ByteArray"
           "filter" "kotlin.collections.List"
           "filterNot" "kotlin.collections.List"
           "filterNotNull" "kotlin.collections.List"
           "findAll" "kotlin.sequences.Sequence"
+          "findTypesUsedBy" "kotlin.sequences.Sequence"
           "flatten" "kotlin.collections.List"
+          "generateSequence" "kotlin.sequences.Sequence"
           "isNotEmpty" "kotlin:Boolean"
           "joinToString" "kotlin:String"
           "lines" "kotlin.collections.List"
           "map" "kotlin.collections.List"
+          "mapNotNull" "kotlin.collections.List"
           "readText" "kotlin:String"
+          "distinctBy" "kotlin.collections.List"
           "sortedBy" "kotlin.collections.List"
           "sortedWith" "kotlin.collections.List"
           "split" "kotlin.collections.List"
@@ -1145,6 +1156,7 @@
 
 (def ^:private known-string-property-names
   #{"commandName"
+    "defaultContents"
     "error"
     "message"
     "moduleName"
@@ -1154,12 +1166,14 @@
     "pathString"
     "report"
     "sourceText"
+    "testMode"
     "text"
     "version"})
 
 (def ^:private known-collection-property-names
   #{"allClasses"
     "allMethods"
+    "allNative"
     "allProperties"
     "allTypeAliases"
     "allowedModules"
@@ -1167,23 +1181,38 @@
     "annotations"
     "authors"
     "badResponses"
+    "candidates"
+    "cases"
     "classSelectors"
     "dependencies"
+    "deltas"
+    "docModules"
     "entries"
+    "errors"
     "examples"
     "expectedFiles"
+    "jpmsExports"
+    "jvmArgs"
     "keys"
+    "mapping"
     "missingFiles"
     "modules"
     "packages"
     "packagesData"
+    "packageDatas"
     "packageSelectors"
+    "paths"
     "responses"
     "sections"
+    "sourceFileExts"
     "sourceModules"
     "subcommands"
+    "options"
     "typeArguments"
     "values"})
+
+(def ^:private known-byte-output-stream-property-names
+  #{"out"})
 
 (defn- qualified-property-name [value]
   (when-let [value (some-> value
@@ -1210,11 +1239,73 @@
       "kotlin:String"
 
       (or (contains? known-collection-property-names property-name)
-          (re-find #"(?i)(classes|dependencies|entries|files|keys|modules|packages|properties|responses|sections|selectors|values)$" property-name))
+          (re-find #"(?i)(args|candidates|cases|classes|datas|deltas|dependencies|entries|errors|exports|files|keys|mapping|methods|modules|options|packages|paths|properties|responses|sections|selectors|values)$" property-name))
       "kotlin.collections.List"
+
+      (contains? known-byte-output-stream-property-names property-name)
+      "java.io.ByteArrayOutputStream"
 
       (re-find #"(?i)(bytes|byteArray)$" property-name)
       "kotlin:ByteArray")))
+
+(defn- top-level-plus? [value]
+  (loop [idx 0
+         paren-depth 0
+         brace-depth 0
+         bracket-depth 0
+         string-delim nil
+         escaped? false]
+    (when (< idx (count value))
+      (let [ch (.charAt value idx)]
+        (cond
+          string-delim
+          (recur (inc idx)
+                 paren-depth
+                 brace-depth
+                 bracket-depth
+                 (when-not (and (= ch string-delim) (not escaped?))
+                   string-delim)
+                 (and (= ch \\) (not escaped?)))
+
+          (contains? #{\" \'} ch)
+          (recur (inc idx) paren-depth brace-depth bracket-depth ch false)
+
+          (= ch \()
+          (recur (inc idx) (inc paren-depth) brace-depth bracket-depth nil false)
+
+          (= ch \))
+          (recur (inc idx) (max 0 (dec paren-depth)) brace-depth bracket-depth nil false)
+
+          (= ch \{)
+          (recur (inc idx) paren-depth (inc brace-depth) bracket-depth nil false)
+
+          (= ch \})
+          (recur (inc idx) paren-depth (max 0 (dec brace-depth)) bracket-depth nil false)
+
+          (= ch \[)
+          (recur (inc idx) paren-depth brace-depth (inc bracket-depth) nil false)
+
+          (= ch \])
+          (recur (inc idx) paren-depth brace-depth (max 0 (dec bracket-depth)) nil false)
+
+          (and (= ch \+)
+               (zero? paren-depth)
+               (zero? brace-depth)
+               (zero? bracket-depth))
+          true
+
+          :else
+          (recur (inc idx) paren-depth brace-depth bracket-depth nil false))))))
+
+(defn- string-concat-type-id [value]
+  (when-let [value (some-> value str/trim)]
+    (let [inner-value (if (and (str/starts-with? value "(")
+                               (str/ends-with? value ")"))
+                        (subs value 1 (dec (count value)))
+                        value)]
+      (when (and (top-level-plus? inner-value)
+                 (re-find #"\"(?:\\.|[^\"])*\"" inner-value))
+        "kotlin:String"))))
 
 (defn- property-expression-type-id [value]
   (some-> value qualified-property-name inferred-name-type-id))
@@ -1289,11 +1380,14 @@
 (defn- known-call-return-type-id [receiver-type call-name]
   (let [owner-root (type-id-root receiver-type)]
     (cond
+      (contains? #{"also" "apply"} call-name)
+      receiver-type
+
       (and (contains? #{"filter" "map" "toList"} call-name)
            (contains? kotlin-collection-roots owner-root))
       "kotlin.collections.List"
 
-      (and (contains? #{"asSequence" "filterNot" "filterNotNull" "flatten" "sortedBy" "sortedWith"} call-name)
+      (and (contains? #{"asSequence" "distinctBy" "filterNot" "filterNotNull" "flatten" "mapNotNull" "sortedBy" "sortedWith"} call-name)
            (contains? kotlin-collection-roots owner-root))
       (if (= "asSequence" call-name)
         "kotlin.sequences.Sequence"
@@ -1317,6 +1411,10 @@
 
       (and (= "toList" call-name)
            (= "Stream" owner-root))
+      "kotlin.collections.List"
+
+      (and (= "toList" call-name)
+           (= "JavaVersionRange" owner-root))
       "kotlin.collections.List"
 
       (and (contains? #{"filter" "filterNot" "map" "toList"} call-name)
@@ -1345,9 +1443,30 @@
            (= "ByteArrayOutputStream" owner-root))
       "kotlin:ByteArray"
 
+      (and (= "toByteArray" call-name)
+           (contains? (conj kotlin-collection-roots "MessageBufferPacker") owner-root))
+      "kotlin:ByteArray"
+
       (and (= "list" call-name)
            (= "File" owner-root))
       "kotlin:Array"
+
+      (and (= "list" call-name)
+           (= "Files" owner-root))
+      "java.util.stream.Stream"
+
+      (and (contains? #{"getProperties" "getenv"} call-name)
+           (= "System" owner-root))
+      "kotlin.collections.Map"
+
+      (and (= "get" call-name)
+           (= "ListProperty" owner-root))
+      "kotlin.collections.List"
+
+      (and (= "get" call-name)
+           (= "ThreadLocal" owner-root))
+      (or (collection-element-type-id receiver-type)
+          "kotlin:Any")
 
       (and (= "toFile" call-name)
            (= "Path" owner-root))
@@ -1361,9 +1480,21 @@
            (= "File" owner-root))
       "kotlin.sequences.Sequence"
 
+      (and (= "walk" call-name)
+           (= "Path" owner-root))
+      "kotlin.sequences.Sequence"
+
       (and (= "findAll" call-name)
            (= "Regex" owner-root))
       "kotlin.sequences.Sequence"
+
+      (and (= "newDefaultBufferPacker" call-name)
+           (= "MessagePack" owner-root))
+      "org.msgpack.core.MessageBufferPacker"
+
+      (and (= "inclusive" call-name)
+           (= "JavaVersionRange" owner-root))
+      receiver-type
 
       (and (= "first" call-name)
            (contains? (conj kotlin-collection-roots "String") owner-root))
@@ -1430,11 +1561,13 @@
    (or (literal-type-id value)
        (some->> value simple-identifier (get binding-types))
        (property-expression-type-id value)
+       (string-concat-type-id value)
        (qualified-known-call-type-id type-index binding-types value)
        (constructor-expression-type-id type-index value)
        (builder-factory-expression-type-id type-index value)
        (receiver-known-call-type-id binding-types value)
        (receiver-known-static-type-id value)
+       (some->> value str/trim (get type-index))
        (simple-name-expression-type-id value))))
 
 (defn- project-inferred-binding-type-index [db project-id type-index seed-binding-types]
@@ -1916,7 +2049,12 @@
 (defn- kotlin-to-list-call [{:call/keys [receiver-type]}]
   (when receiver-type
     (let [owner-root (unqualified-type-id receiver-type)]
-      (when (contains? (conj kotlin-collection-roots "Stream") owner-root)
+      (cond
+        (= "Collectors" owner-root)
+        {:ref/to-type "java.util.stream.Collector"
+         :ref/owner-type receiver-type}
+
+        (contains? (conj kotlin-collection-roots "Stream" "JavaVersionRange") owner-root)
         {:ref/to-type "kotlin.collections.List"
          :ref/owner-type receiver-type}))))
 
@@ -1962,6 +2100,14 @@
       (kotlin-string-call "kotlin:ByteArray" ref)
 
       (= "ByteArrayOutputStream" owner-root)
+      {:ref/to-type "kotlin:ByteArray"
+       :ref/owner-type receiver-type}
+
+      (= "MessageBufferPacker" owner-root)
+      {:ref/to-type "kotlin:ByteArray"
+       :ref/owner-type receiver-type}
+
+      (contains? kotlin-collection-roots owner-root)
       {:ref/to-type "kotlin:ByteArray"
        :ref/owner-type receiver-type})))
 

@@ -248,18 +248,29 @@ import java.net.URI
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.stream.Collectors
+import org.gradle.api.provider.ListProperty
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatCode
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.fail
+import org.msgpack.core.MessagePack
+import org.msgpack.core.MessageBufferPacker
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createParentDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
+import kotlin.io.path.walk
 
 data class ApiDoc(val moduleName: String, val dependencies: List<String>, val outputBytes: ByteArray)
+
+class JavaVersionRange {
+  companion object {
+    fun inclusive(floor: Int, ceiling: Int): JavaVersionRange = JavaVersionRange()
+  }
+}
 
 fun apiCalls(path: Path): URI {
   val text = \"\"\"
@@ -357,6 +368,36 @@ fun inferredNameReceivers(): Boolean {
     normalizedPath.substring(0, 1).isNotEmpty() &&
     output.toByteArray().isNotEmpty() &&
     payloadBytes.isNotEmpty()
+}
+
+fun interopReceiverFacts(root: Path, jvmArgs: ListProperty<String>): Boolean {
+  val listed = Files.list(root).filter { it.toString().isNotEmpty() }.toList()
+  val collected = Files.walk(root).collect(Collectors.toList())
+  val props = System.getProperties().filter { it.key.toString().isNotEmpty() }
+  val msgBytes = MessagePack.newDefaultBufferPacker().apply { packInt(1) }.toByteArray()
+  val streamBytes = ByteArrayOutputStream().apply { write(1) }.toByteArray()
+  val packerThread: ThreadLocal<MessageBufferPacker> =
+    ThreadLocal.withInitial { MessagePack.newDefaultBufferPacker() }
+  val threadBytes = packerThread.get().toByteArray()
+  val range = JavaVersionRange.inclusive(8, 21).toList()
+  val argsText = jvmArgs.get().joinToString(\" \")
+  val options = loadOptions()
+  val deltas = loadDeltas()
+  val packageDatas = loadPackageDatas()
+  val walked = root.walk().map { it.toString() }.toList()
+  val generated = generateSequence(\"first\") { null }.mapNotNull { it }.toList()
+  return listed.isNotEmpty() &&
+    props.isNotEmpty() &&
+    msgBytes.isNotEmpty() &&
+    streamBytes.isNotEmpty() &&
+    threadBytes.isNotEmpty() &&
+    range.isNotEmpty() &&
+    argsText.isNotEmpty() &&
+    options.toList().isNotEmpty() &&
+    deltas.joinToString(\"\\n\").isNotEmpty() &&
+    packageDatas.distinctBy { it.toString() }.toList().isNotEmpty() &&
+    walked.isNotEmpty() &&
+    generated.isNotEmpty()
 }
 
 fun assertions() {
@@ -1491,6 +1532,7 @@ public final class JavaPseudoTypes {
                    ["isSameAs" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["filter" "kotlin.collections.List" "kotlin.collections.List" true]
                    ["filter" "kotlin.collections.List" "kotlin:List<kotlin:String>" true]
+                   ["filter" "kotlin.collections.List" "kotlin.collections.Map" true]
                    ["filter" "java.util.stream.Stream" "java.util.stream.Stream" true]
                    ["joinToString" "kotlin:String" "kotlin.collections.List" true]
                    ["joinToString" "kotlin:String" "kotlin:List<kotlin:String>" true]
@@ -1504,7 +1546,11 @@ public final class JavaPseudoTypes {
                    ["substring" "kotlin:String" "kotlin:String" true]
                    ["toByte" "kotlin:Byte" "kotlin:Number" true]
                    ["toByteArray" "kotlin:ByteArray" "java.io.ByteArrayOutputStream" true]
+                   ["toByteArray" "kotlin:ByteArray" "kotlin:MessageBufferPacker" true]
+                   ["toByteArray" "kotlin:ByteArray" "org.msgpack.core.MessageBufferPacker" true]
                    ["toByteArray" "kotlin:ByteArray" "kotlin:String" true]
+                   ["toList" "java.util.stream.Collector" "java.util.stream.Collectors" true]
+                   ["toList" "kotlin.collections.List" "kotlin:com.acme.api.JavaVersionRange" true]
                    ["toList" "kotlin.collections.List" "kotlin.sequences.Sequence" true]
                    ["toList" "kotlin.collections.List" "java.util.stream.Stream" true]
                    ["toList" "kotlin.collections.List" "kotlin.collections.List" true]
