@@ -46,6 +46,10 @@ import java.util.Locale
 
 class LocalValue
 
+class LocalHash {
+  override fun hashCode(): Int = 7
+}
+
 fun helper(value: String): String = value
 
 fun choose(value: String): String = value
@@ -65,6 +69,8 @@ fun gradleDslCalls(): Any {
 }
 
 fun stringify(value: Any): String = value.toString()
+
+fun hashes(value: Any, local: LocalHash): Int = value.hashCode() + local.hashCode()
 
 fun usesHelper(value: String, local: LocalValue, locale: Locale, missing: MissingType): String {
   val localAgain: LocalValue = local
@@ -616,6 +622,45 @@ public final class JavaPseudoTypes {
                                         db))]
               (is (= #{["kotlin:String" "kotlin:Any" true]}
                      resolved))
+              (is (empty? unresolved))))
+
+          (testing "universal hashCode calls resolve while local overrides keep declarations"
+            (let [known-resolved (set (d/q '[:find ?type-id ?owner-id ?resolved?
+                                             :where
+                                             [?ref :ref/kind :ref.kind/function-call]
+                                             [?ref :ref/name "hashCode"]
+                                             [?ref :ref/resolved? ?resolved?]
+                                             [?ref :ref/to-type ?type]
+                                             [?type :type/id ?type-id]
+                                             [?ref :ref/owner-type ?owner]
+                                             [?owner :type/id ?owner-id]
+                                             [(missing? $ ?ref :ref/to-decl)]]
+                                           db))
+                  local-resolved (set (d/q '[:find ?decl-id ?type-id ?owner-id ?resolved?
+                                             :where
+                                             [?ref :ref/kind :ref.kind/function-call]
+                                             [?ref :ref/name "hashCode"]
+                                             [?ref :ref/resolved? ?resolved?]
+                                             [?ref :ref/to-decl ?decl]
+                                             [?decl :decl/id ?decl-id]
+                                             [?ref :ref/to-type ?type]
+                                             [?type :type/id ?type-id]
+                                             [?ref :ref/owner-type ?owner]
+                                             [?owner :type/id ?owner-id]]
+                                           db))
+                  unresolved (set (d/q '[:find ?reason
+                                          :where
+                                          [?ref :ref/resolved? false]
+                                          [?ref :ref/name "hashCode"]
+                                          [?ref :ref/reason ?reason]]
+                                        db))]
+              (is (= #{["kotlin:Int" "kotlin:Any" true]}
+                     known-resolved))
+              (is (= #{["kotlin:function:com.acme.semantic.LocalHash.hashCode()"
+                        "kotlin:Int"
+                        "kotlin:com.acme.semantic.LocalHash"
+                        true]}
+                     local-resolved))
               (is (empty? unresolved))))
 
           (testing "nullable type-use refs keep nullability after semantic resolution"

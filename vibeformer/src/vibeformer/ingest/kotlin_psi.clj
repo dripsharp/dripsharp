@@ -844,6 +844,8 @@
                 :ref/owner-type "org.gradle.api.plugins.ExtensionContainer"}
    "getByName" {:ref/to-type "kotlin:Any"
                 :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
+   "hashCode" {:ref/to-type "kotlin:Int"
+               :ref/owner-type "kotlin:Any"}
    "isEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "lazy" {:ref/to-type "kotlin:Lazy"
@@ -1441,11 +1443,11 @@
       candidates)))
 
 (defn- same-type-id? [left right]
-  (= (type-name-from-id left)
-     (type-name-from-id right)))
+  (= (simple-type-name (type-name-from-id left))
+     (simple-type-name (type-name-from-id right))))
 
-(defn- receiver-member-candidates [source-types {:ref/keys [name] :call/keys [receiver-type]} candidates]
-  (when (and (= "matches" name) receiver-type)
+(defn- receiver-member-candidates [source-types {:call/keys [receiver-type]} candidates]
+  (when receiver-type
     (seq (filter (fn [candidate]
                    (when-let [owner-type (owner-type-id source-types candidate)]
                      (same-type-id? receiver-type owner-type)))
@@ -1458,28 +1460,33 @@
     (when-let [decl (best-overload arg-types candidates)]
       (resolve-decl-tx db source-types id decl))))
 
-(defn- function-resolution-tx [db functions methods source-types type-index {:ref/keys [id name] :call/keys [arg-types] :as ref}]
-  (if-let [known-call (or (known-call-resolution ref)
-                          (kotlin-constructor-call type-index ref))]
-    (resolved-ref-tx db id
-                     (cond-> {}
-                       (:ref/to-type known-call)
-                       (assoc :ref/to-type [:type/id (:ref/to-type known-call)])
+(defn- known-call-resolution-tx [db id known-call]
+  (resolved-ref-tx db id
+                   (cond-> {}
+                     (:ref/to-type known-call)
+                     (assoc :ref/to-type [:type/id (:ref/to-type known-call)])
 
-                       (:ref/owner-type known-call)
-                       (assoc :ref/owner-type [:type/id (:ref/owner-type known-call)])))
-    (let [candidates (same-file-candidates (get functions name) (:ref/file-id ref))
-          member-candidates (concat (get functions name) (get methods name))]
-      (or (when-let [member-candidates (receiver-member-candidates source-types ref candidates)]
-            (resolve-function-candidates-tx db source-types id arg-types member-candidates))
-          (when-let [member-candidates (receiver-member-candidates source-types ref member-candidates)]
-            (resolve-function-candidates-tx db source-types id arg-types member-candidates))
-          (when-not (and (= "matches" name)
-                         (:call/receiver-type ref))
-            (resolve-function-candidates-tx db source-types id arg-types candidates))
-          (unresolved-ref-tx id (if (seq candidates)
-                                  :resolve.reason/analysis-api-limitation
-                                  :resolve.reason/missing-classpath))))))
+                     (:ref/owner-type known-call)
+                     (assoc :ref/owner-type [:type/id (:ref/owner-type known-call)]))))
+
+(defn- function-resolution-tx [db functions methods source-types type-index {:ref/keys [id name] :call/keys [arg-types] :as ref}]
+  (let [candidates (same-file-candidates (get functions name) (:ref/file-id ref))
+        member-candidates (concat (get functions name) (get methods name))
+        receiver-candidates (or (receiver-member-candidates source-types ref candidates)
+                                (receiver-member-candidates source-types ref member-candidates))]
+    (or (when (and (= "hashCode" name) receiver-candidates)
+          (resolve-function-candidates-tx db source-types id arg-types receiver-candidates))
+        (when-let [known-call (or (known-call-resolution ref)
+                                  (kotlin-constructor-call type-index ref))]
+          (known-call-resolution-tx db id known-call))
+        (when (and (= "matches" name) receiver-candidates)
+          (resolve-function-candidates-tx db source-types id arg-types receiver-candidates))
+        (when-not (and (= "matches" name)
+                       (:call/receiver-type ref))
+          (resolve-function-candidates-tx db source-types id arg-types candidates))
+        (unresolved-ref-tx id (if (seq candidates)
+                                :resolve.reason/analysis-api-limitation
+                                :resolve.reason/missing-classpath)))))
 
 (defn semantic-resolution-facts
   "Return idempotent tx-data that enriches Kotlin refs with semantic links.
