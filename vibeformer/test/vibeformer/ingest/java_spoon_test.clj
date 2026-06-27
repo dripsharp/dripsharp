@@ -143,6 +143,28 @@ public final class Child extends Parent {
 }
 ")
 
+(def inherited-method-fixture
+  "package com.acme.inheritedmethod;
+
+class Parent {
+  protected Helper exceptionBuilder() {
+    return new Helper();
+  }
+}
+
+final class Helper {
+  Helper evalError(String code) {
+    return this;
+  }
+}
+
+public final class Child extends Parent {
+  public Helper read() {
+    return exceptionBuilder().evalError(\"invalid\");
+  }
+}
+")
+
 (def control-flow-fixture
   "package com.acme.statements;
 
@@ -1364,6 +1386,53 @@ public final class Demo {
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
                       [(= ?name "children")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-inherited-unqualified-java-method-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/inheritedmethod/Child.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path inherited-method-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              method-refs (set (d/q '[:find ?name ?decl-id ?owner-id ?type-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/method-call]
+                                       [?ref :ref/name ?name]
+                                       [(contains? #{"exceptionBuilder" "evalError"} ?name)]
+                                       [?ref :ref/to-decl ?decl]
+                                       [?decl :decl/id ?decl-id]
+                                       [?decl :decl/source-node]
+                                       [?ref :ref/owner-type ?owner]
+                                       [?owner :type/id ?owner-id]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]]
+                                     db))]
+          (is (= #{["exceptionBuilder"
+                    "java:com.acme.inheritedmethod.Parent#exceptionBuilder()"
+                    "com.acme.inheritedmethod.Parent"
+                    "com.acme.inheritedmethod.Helper"
+                    true]
+                   ["evalError"
+                    "java:com.acme.inheritedmethod.Helper#evalError(java.lang.String)"
+                    "com.acme.inheritedmethod.Helper"
+                    "com.acme.inheritedmethod.Helper"
+                    true]}
+                 method-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(contains? #{"exceptionBuilder" "evalError"} ?name)]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 

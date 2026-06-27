@@ -1871,7 +1871,24 @@
   (or (unambiguous (get method-index [owner method-name arity]))
       (varargs-method-target varargs-method-index owner method-name arity)))
 
-(defn- local-method-target [method-index varargs-method-index type-names argument-counts child-index field-index ref-index constructor-refs decl-return-types ref]
+(declare enclosing-type type-lineage)
+
+(defn- inherited-local-method-target
+  [method-index varargs-method-index argument-counts parent-by-node source-node-types direct-supertypes ref]
+  (when (and (nil? (:ref/owner-type ref)) (:ref/name ref))
+    (let [arity (get argument-counts (:ref/from-node ref) 0)]
+      (some->> (:ref/from-node ref)
+               (enclosing-type parent-by-node source-node-types)
+               (type-lineage direct-supertypes)
+               (keep #(method-target-for-owner method-index
+                                               varargs-method-index
+                                               %
+                                               (:ref/name ref)
+                                               arity))
+               first))))
+
+(defn- local-method-target
+  [method-index varargs-method-index type-names argument-counts child-index field-index ref-index constructor-refs decl-return-types parent-by-node source-node-types direct-supertypes ref]
   (let [owner-type-id (:ref/owner-type ref)
         owner (type-owner type-names owner-type-id)
         enum-target-owner (some->> (enum-constant-target-type child-index field-index ref)
@@ -1887,7 +1904,14 @@
           (when constructor-target-owner
             (method-target-for-owner method-index varargs-method-index constructor-target-owner (:ref/name ref) arity))
           (when chained-target-owner
-            (method-target-for-owner method-index varargs-method-index chained-target-owner (:ref/name ref) arity))))))
+            (method-target-for-owner method-index varargs-method-index chained-target-owner (:ref/name ref) arity))
+          (inherited-local-method-target method-index
+                                         varargs-method-index
+                                         argument-counts
+                                         parent-by-node
+                                         source-node-types
+                                         direct-supertypes
+                                         ref)))))
 
 (defn- local-constructor-target [constructor-index type-names argument-counts ref]
   (when-let [owner (type-owner type-names (:ref/to-type ref))]
@@ -1990,6 +2014,9 @@
                                                    ref-index
                                                    constructor-refs
                                                    decl-return-types
+                                                   parent-by-node
+                                                   source-node-types
+                                                   direct-supertypes
                                                    fact)]
                 (let [owner (owner-from-method-decl-id (:decl/id target))]
                   (-> fact
