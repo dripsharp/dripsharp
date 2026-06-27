@@ -1788,6 +1788,28 @@
 (defn- canonical-type-id [type-aliases type-id]
   (get type-aliases type-id type-id))
 
+(defn- type-id-variants [type-id]
+  (let [nested-variant (when (str/includes? (or type-id "") "$")
+                         (str/replace type-id #"\$" "."))
+        base-variants (remove nil? [type-id nested-variant])]
+    (distinct (concat base-variants
+                      (keep strip-type-args base-variants)))))
+
+(defn- type-decl-for-id [type-decls type-id]
+  (some #(get type-decls %) (type-id-variants type-id)))
+
+(defn- strip-nullable-suffix [type-id]
+  (cond-> type-id
+    (str/ends-with? (or type-id "") "?") (subs 0 (dec (count type-id)))))
+
+(defn- array-component-type-id [type-id]
+  (loop [candidate (strip-nullable-suffix type-id)]
+    (when candidate
+      (if (str/ends-with? candidate "[]")
+        (recur (subs candidate 0 (- (count candidate) 2)))
+        (when (not= candidate (strip-nullable-suffix type-id))
+          candidate)))))
+
 (defn- type-arg-index [facts]
   (reduce (fn [index fact]
             (if (and (:type/id fact) (seq (:type/args fact)))
@@ -2570,12 +2592,19 @@
                         (:ref/kind fact))
              (not (:ref/resolved? fact)))
     (let [type-id (canonical-type-id type-aliases (:ref/to-type fact))
-          decl-type-id (str/replace type-id #"\?$" "")]
-      (when-let [decl (or (get type-decls type-id)
-                          (get type-decls decl-type-id))]
+          decl-type-id (str/replace type-id #"\?$" "")
+          component-type-id (some->> type-id
+                                     array-component-type-id
+                                     (canonical-type-id type-aliases))
+          decl (or (type-decl-for-id type-decls type-id)
+                   (type-decl-for-id type-decls decl-type-id))
+          component-decl (when component-type-id
+                           (type-decl-for-id type-decls component-type-id))]
+      (when-let [decl (or decl component-decl)]
         (-> fact
             (assoc :ref/to-decl (:decl/id decl)
-                   :ref/to-type (if (str/ends-with? type-id "?")
+                   :ref/to-type (if (or component-decl
+                                        (str/ends-with? type-id "?"))
                                   type-id
                                   (:decl/type decl))
                    :ref/resolved? true)

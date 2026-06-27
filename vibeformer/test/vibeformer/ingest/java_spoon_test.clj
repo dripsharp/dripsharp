@@ -1,5 +1,6 @@
 (ns vibeformer.ingest.java-spoon-test
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [datomic.client.api :as d]
             [datomic.local :as dl]
@@ -125,6 +126,40 @@ public final class UsesWidget {
 
   public com.acme.model.Widget widget() {
     return widget;
+  }
+}
+")
+
+(def local-array-type-use-fixture
+  "package com.acme.uses;
+
+public final class UsesWidgetArray {
+  private com.acme.model.Widget[] widgets;
+  private com.acme.model.Widget[][] widgetMatrix;
+  private com.acme.missing.MissingWidget[] missingWidgets;
+
+  public com.acme.model.Widget[] widgets() {
+    return widgets;
+  }
+}
+")
+
+(def local-nested-array-type-use-fixture
+  "package com.acme.nested;
+
+public abstract class Tree {
+  protected interface Node<T> {
+  }
+
+  private Node[] root;
+  private Node<String>[] typedRoot;
+
+  public Node[] root() {
+    return root;
+  }
+
+  public Node<String>[] typedRoot() {
+    return typedRoot;
   }
 }
 ")
@@ -1624,6 +1659,114 @@ public final class Demo {
                       [?ref :ref/resolved? false]
                       [?ref :ref/name ?name]
                       [(= ?name "com.acme.model.Widget")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-project-local-java-array-type-use-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/model/Widget.java" local-type-widget-fixture)
+        (write-file! root "src/main/java/com/acme/uses/UsesWidgetArray.java" local-array-type-use-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              array-refs (set (d/q '[:find ?role ?name ?type-id ?decl-id ?resolved?
+                                      :where
+                                      [?ref :ref/kind :ref.kind/type-use]
+                                      [?ref :ref/role ?role]
+                                      [(contains? #{:field-type :return-type} ?role)]
+                                      [?ref :ref/name ?name]
+                                      [(contains? #{"com.acme.model.Widget[]"
+                                                    "com.acme.model.Widget[][]"
+                                                    "com.acme.missing.MissingWidget[]"}
+                                                  ?name)]
+                                      [?ref :ref/to-type ?type]
+                                      [?type :type/id ?type-id]
+                                      [?ref :ref/resolved? ?resolved?]
+                                      [(get-else $ ?ref :ref/to-decl :missing) ?decl]
+                                      [(get-else $ ?decl :decl/id "") ?decl-id]]
+                                    db))]
+          (is (contains? array-refs [:field-type
+                                     "com.acme.model.Widget[]"
+                                     "com.acme.model.Widget[]"
+                                     "java:com.acme.model.Widget"
+                                     true]))
+          (is (contains? array-refs [:field-type
+                                     "com.acme.model.Widget[][]"
+                                     "com.acme.model.Widget[][]"
+                                     "java:com.acme.model.Widget"
+                                     true]))
+          (is (contains? array-refs [:return-type
+                                     "com.acme.model.Widget[]"
+                                     "com.acme.model.Widget[]"
+                                     "java:com.acme.model.Widget"
+                                     true]))
+          (is (contains? array-refs [:field-type
+                                     "com.acme.missing.MissingWidget[]"
+                                     "com.acme.missing.MissingWidget[]"
+                                     ""
+                                     false]))
+          (is (= #{["com.acme.missing.MissingWidget[]" :resolve.reason/missing-classpath]}
+                 (set (d/q '[:find ?name ?reason
+                             :where
+                             [?ref :ref/resolved? false]
+                             [?ref :ref/name ?name]
+                             [(contains? #{"com.acme.model.Widget[]"
+                                           "com.acme.model.Widget[][]"
+                                           "com.acme.missing.MissingWidget[]"}
+                                         ?name)]
+                             [?ref :ref/reason ?reason]]
+                           db)))))))))
+
+(deftest resolves-project-local-java-nested-array-type-use-refs
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root "src/main/java/com/acme/nested/Tree.java" local-nested-array-type-use-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              nested-array-refs (->> (d/q '[:find ?role ?name ?type-id ?decl-id ?resolved?
+                                             :where
+                                             [?ref :ref/kind :ref.kind/type-use]
+                                             [?ref :ref/role ?role]
+                                             [(contains? #{:field-type :return-type} ?role)]
+                                             [?ref :ref/name ?name]
+                                             [?ref :ref/to-type ?type]
+                                             [?type :type/id ?type-id]
+                                             [?ref :ref/resolved? ?resolved?]
+                                             [(get-else $ ?ref :ref/to-decl :missing) ?decl]
+                                             [(get-else $ ?decl :decl/id "") ?decl-id]]
+                                           db)
+                                     (filter #(str/includes? (second %) "Tree$Node"))
+                                     set)]
+          (is (contains? nested-array-refs [:field-type
+                                            "com.acme.nested.Tree$Node[]"
+                                            "com.acme.nested.Tree$Node[]"
+                                            "java:com.acme.nested.Tree$Node"
+                                            true]))
+          (is (contains? nested-array-refs [:return-type
+                                            "com.acme.nested.Tree$Node[]"
+                                            "com.acme.nested.Tree$Node[]"
+                                            "java:com.acme.nested.Tree$Node"
+                                            true]))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(contains? #{"com.acme.nested.Tree$Node[]"
+                                    "com.acme.nested.Tree.Node[]"}
+                                  ?name)]
                       [?ref :ref/reason ?reason]]
                     db))))))))
 
