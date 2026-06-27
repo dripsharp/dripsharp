@@ -162,6 +162,24 @@ fun staticGets(): Any {
 }
 ")
 
+(def kotlin-static-factory-fixture
+  "package com.acme.staticfactory
+
+fun staticFactories(): Any {
+  val path = Path.of(\"fixture.pkl\")
+  val maybe = Optional.of(\"value\")
+  val flags = EnumSet.of(\"red\", \"blue\")
+  val version = JavaLanguageVersion.of(21)
+  val arrayType = ArrayTypeName.of(String::class.java)
+  val packageUri = CanonicalPackageUri.of(\"package://localhost:0/birds@0\")
+  val process = ExternalReaderProcess.of(\"spec\")
+  val moduleResolver = ExternalModuleResolver.of(\"transport\", 1)
+  val resourceResolver = ExternalResourceResolver.of(\"transport\", 1)
+  val timeout = java.time.Duration.ofMillis(100)
+  return path
+}
+")
+
 (def kotlin-constructor-call-fixture
   "package com.acme.ctors
 
@@ -1191,6 +1209,88 @@ public final class JavaPseudoTypes {
                     true]
                    ["org.pkl.core.runtime.Identifier"
                     "org.pkl.core.runtime.Identifier"
+                    true]}
+                 resolved))
+          (is (empty? unresolved)))))))
+
+(deftest resolves-known-kotlin-qualified-static-factories
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "static-factory"
+                  :project/name "Static Factory"}]
+        (write-file! root
+                     "src/test/kotlin/com/acme/staticfactory/StaticFactory.kt"
+                     kotlin-static-factory-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "static-factory"})
+        (kotlin-psi/enrich! conn {:project/id "static-factory"})
+        (let [db (d/db conn)
+              target-names #{"of" "ofMillis"}
+              resolved (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
+                                    :in $ ?target-names
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name ?name]
+                                    [(contains? ?target-names ?name)]
+                                    [?ref :ref/resolved? ?resolved?]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/owner-type ?owner]
+                                    [?owner :type/id ?owner-id]]
+                                  db
+                                  target-names))
+              unresolved (set (d/q '[:find ?name ?reason
+                                      :in $ ?target-names
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name ?name]
+                                      [(contains? ?target-names ?name)]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]]
+                                    db
+                                    target-names))]
+          (is (= #{["of"
+                    "java.nio.file.Path"
+                    "java.nio.file.Path"
+                    true]
+                   ["of"
+                    "java.util.Optional"
+                    "java.util.Optional"
+                    true]
+                   ["of"
+                    "java.util.EnumSet"
+                    "java.util.EnumSet"
+                    true]
+                   ["of"
+                    "org.gradle.jvm.toolchain.JavaLanguageVersion"
+                    "org.gradle.jvm.toolchain.JavaLanguageVersion"
+                    true]
+                   ["of"
+                    "com.squareup.javapoet.ArrayTypeName"
+                    "com.squareup.javapoet.ArrayTypeName"
+                    true]
+                   ["of"
+                    "org.pkl.core.project.CanonicalPackageUri"
+                    "org.pkl.core.project.CanonicalPackageUri"
+                    true]
+                   ["of"
+                    "org.pkl.core.externalreader.ExternalReaderProcess"
+                    "org.pkl.core.externalreader.ExternalReaderProcess"
+                    true]
+                   ["of"
+                    "org.pkl.core.externalreader.ExternalModuleResolver"
+                    "org.pkl.core.externalreader.ExternalModuleResolver"
+                    true]
+                   ["of"
+                    "org.pkl.core.externalreader.ExternalResourceResolver"
+                    "org.pkl.core.externalreader.ExternalResourceResolver"
+                    true]
+                   ["ofMillis"
+                    "java.time.Duration"
+                    "java.time.Duration"
                     true]}
                  resolved))
           (is (empty? unresolved)))))))

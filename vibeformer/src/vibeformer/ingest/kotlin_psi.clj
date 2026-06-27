@@ -977,17 +977,23 @@
 (def ^:private known-classpath-types
   {"AbstractAssert" "org.assertj.core.api.AbstractAssert"
    "Assertions" "org.assertj.core.api.Assertions"
+   "ArrayTypeName" "com.squareup.javapoet.ArrayTypeName"
    "ClassName" "com.squareup.javapoet.ClassName"
    "ByteArrayOutputStream" "java.io.ByteArrayOutputStream"
+   "CanonicalPackageUri" "org.pkl.core.project.CanonicalPackageUri"
    "Config" "org.pkl.config.java.Config"
    "ConfigDecoder" "org.pkl.config.java.ConfigDecoder"
    "ConfigDecoderBuilder" "org.pkl.config.java.ConfigDecoderBuilder"
    "ConfigEvaluator" "org.pkl.config.java.ConfigEvaluator"
    "ConfigEvaluatorBuilder" "org.pkl.config.java.ConfigEvaluatorBuilder"
    "Collectors" "java.util.stream.Collectors"
+   "EnumSet" "java.util.EnumSet"
    "Evaluator" "org.pkl.core.Evaluator"
    "EvaluatorBuilder" "org.pkl.core.EvaluatorBuilder"
    "Executable" "org.junit.jupiter.api.function.Executable"
+   "ExternalModuleResolver" "org.pkl.core.externalreader.ExternalModuleResolver"
+   "ExternalReaderProcess" "org.pkl.core.externalreader.ExternalReaderProcess"
+   "ExternalResourceResolver" "org.pkl.core.externalreader.ExternalResourceResolver"
    "File" "java.io.File"
    "FieldSpec" "com.squareup.javapoet.FieldSpec"
    "FileSpec" "com.squareup.kotlinpoet.FileSpec"
@@ -997,9 +1003,11 @@
    "HttpRequest" "java.net.http.HttpRequest"
    "Identifier" "org.pkl.core.runtime.Identifier"
    "JavaFile" "com.squareup.javapoet.JavaFile"
+   "JavaLanguageVersion" "org.gradle.jvm.toolchain.JavaLanguageVersion"
    "MessagePack" "org.msgpack.core.MessagePack"
    "MethodSpec" "com.squareup.javapoet.MethodSpec"
    "ModuleSource" "org.pkl.core.ModuleSource"
+   "Optional" "java.util.Optional"
    "ParameterizedTypeName" "com.squareup.javapoet.ParameterizedTypeName"
    "PClassInfo" "org.pkl.core.PClassInfo"
    "PModule" "org.pkl.core.PModule"
@@ -1013,6 +1021,7 @@
    "TypeName" "com.squareup.javapoet.TypeName"
    "ValueMapper" "org.pkl.config.java.mapper.ValueMapper"
    "ValueMapperBuilder" "org.pkl.config.java.mapper.ValueMapperBuilder"
+   "java.time.Duration" "java.time.Duration"
    "URI" "java.net.URI"})
 
 (def ^:private known-static-get-types
@@ -1021,6 +1030,21 @@
     "com.squareup.javapoet.TypeName"
     "org.pkl.core.PClassInfo"
     "org.pkl.core.runtime.Identifier"})
+
+(def ^:private known-static-of-types
+  #{"com.squareup.javapoet.ArrayTypeName"
+    "java.nio.file.Path"
+    "java.time.Duration"
+    "java.util.EnumSet"
+    "java.util.Optional"
+    "org.gradle.jvm.toolchain.JavaLanguageVersion"
+    "org.pkl.core.externalreader.ExternalModuleResolver"
+    "org.pkl.core.externalreader.ExternalReaderProcess"
+    "org.pkl.core.externalreader.ExternalResourceResolver"
+    "org.pkl.core.project.CanonicalPackageUri"})
+
+(def ^:private java-time-duration-factory-methods
+  #{"ofDays" "ofHours" "ofMillis" "ofMinutes" "ofNanos" "ofSeconds"})
 
 (def ^:private known-expression-call-types
   (merge (update-vals known-function-calls :ref/to-type)
@@ -1513,6 +1537,15 @@
   (let [owner-root (type-id-root receiver-type)]
     (cond
       (contains? #{"also" "apply"} call-name)
+      receiver-type
+
+      (and receiver-type
+           (= "of" call-name)
+           (contains? known-static-of-types receiver-type))
+      receiver-type
+
+      (and (= "java.time.Duration" receiver-type)
+           (contains? java-time-duration-factory-methods call-name))
       receiver-type
 
       (and receiver-type
@@ -2415,6 +2448,18 @@
     {:ref/to-type receiver-type
      :ref/owner-type receiver-type}))
 
+(defn- kotlin-static-factory-call [{:ref/keys [name] :call/keys [receiver-type]}]
+  (cond
+    (and (= "of" name)
+         (contains? known-static-of-types receiver-type))
+    {:ref/to-type receiver-type
+     :ref/owner-type receiver-type}
+
+    (and (= "java.time.Duration" receiver-type)
+         (contains? java-time-duration-factory-methods name))
+    {:ref/to-type receiver-type
+     :ref/owner-type receiver-type}))
+
 (defn- kotlin-get-call [{:call/keys [receiver-type]}]
   (let [owner-root (unqualified-type-id receiver-type)]
     (cond
@@ -2575,6 +2620,7 @@
       (kotlin-pkl-api-call ref)
       (kotlin-wiremock-static-call ref)
       (kotlin-wiremock-chain-call ref)
+      (kotlin-static-factory-call ref)
       (when (= "get" name)
         (or (kotlin-get-call ref)
             (kotlin-static-get-call ref)))
