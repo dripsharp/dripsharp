@@ -58,6 +58,7 @@ fun choose(value: String?): String = value ?: \"\"
 fun usesAction(action: Action): Action = action
 
 fun gradleDslCalls(): Any {
+  id(\"org.example.plugin\")
   named(\"publish\")
   addConfiguredDependencyTo(\"implementation\", \"org.example:lib:1\")
   addDependencyTo(\"implementation\", \"org.example:lib:1\")
@@ -595,6 +596,7 @@ public final class JavaPseudoTypes {
                                  "addDependencyTo"
                                  "addExternalModuleDependencyTo"
                                  "configure"
+                                 "id"
                                  "getByName"
                                  "append"}
                   resolved (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
@@ -638,6 +640,10 @@ public final class JavaPseudoTypes {
                        ["configure"
                         "kotlin:Unit"
                         "org.gradle.api.plugins.ExtensionContainer"
+                        true]
+                       ["id"
+                        "org.gradle.plugin.use.PluginDependencySpec"
+                        "org.gradle.plugin.use.PluginDependenciesSpec"
                         true]
                        ["getByName"
                         "kotlin:Any"

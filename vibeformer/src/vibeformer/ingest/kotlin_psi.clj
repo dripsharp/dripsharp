@@ -856,6 +856,8 @@
                 :ref/owner-type "org.gradle.api.NamedDomainObjectCollection"}
    "hashCode" {:ref/to-type "kotlin:Int"
                :ref/owner-type "kotlin:Any"}
+   "id" {:ref/to-type "org.gradle.plugin.use.PluginDependencySpec"
+         :ref/owner-type "org.gradle.plugin.use.PluginDependenciesSpec"}
    "isEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
                 :ref/owner-type "org.assertj.core.api.AbstractAssert"}
    "lazy" {:ref/to-type "kotlin:Lazy"
