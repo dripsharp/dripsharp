@@ -131,6 +131,42 @@ public final class JavaOptions {
 }
 ")
 
+(def kotlin-builder-build-fixture
+  "package com.acme.builder
+
+import java.net.URI
+import java.net.http.HttpRequest
+
+class Product {
+  class Builder {
+    fun option(): Builder = this
+    fun build(): Product = Product()
+  }
+
+  companion object {
+    fun builder(): Builder = Builder()
+  }
+}
+
+class ProductBuilder {
+  fun option(): ProductBuilder = this
+  fun build(): Product = Product()
+}
+
+class Runner {
+  fun build(): Any = Any()
+}
+
+fun builderBuilds(runner: Runner): Any {
+  val chained = Product.builder().option().build()
+  val explicit: ProductBuilder = ProductBuilder()
+  val explicitProduct = explicit.build()
+  val request = HttpRequest.newBuilder(URI(\"https://example.com\")).header(\"x\", \"y\").build()
+  val unknown = runner.build()
+  return chained
+}
+")
+
 (def kotlin-api-call-fixture
   "package com.acme.api
 
@@ -751,6 +787,51 @@ public final class JavaPseudoTypes {
                     true]}
                  resolved))
           (is (= #{["MissingOptions" :resolve.reason/missing-classpath]}
+                 unresolved)))))))
+
+(deftest resolves-kotlin-builder-chain-build-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "builder-build"
+                  :project/name "Builder Build"}]
+        (write-file! root
+                     "src/main/kotlin/com/acme/builder/BuilderBuild.kt"
+                     kotlin-builder-build-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "builder-build"})
+        (kotlin-psi/enrich! conn {:project/id "builder-build"})
+        (let [db (d/db conn)
+              resolved (set (d/q '[:find ?type-id ?owner-id ?resolved?
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name "build"]
+                                    [?ref :ref/resolved? ?resolved?]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/owner-type ?owner]
+                                    [?owner :type/id ?owner-id]]
+                                  db))
+              unresolved (set (d/q '[:find ?reason
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name "build"]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]]
+                                    db))]
+          (is (= #{["kotlin:com.acme.builder.Product"
+                    "kotlin:com.acme.builder.Product.Builder"
+                    true]
+                   ["kotlin:com.acme.builder.Product"
+                    "kotlin:com.acme.builder.ProductBuilder"
+                    true]
+                   ["java.net.http.HttpRequest"
+                    "java.net.http.HttpRequest.Builder"
+                    true]}
+                 resolved))
+          (is (= #{[:resolve.reason/analysis-api-limitation]}
                  unresolved)))))))
 
 (deftest kotlin-enrichment-does-not-rewrite-java-reference-facts

@@ -873,6 +873,7 @@
    "Assertions" "org.assertj.core.api.Assertions"
    "ClassName" "com.squareup.javapoet.ClassName"
    "Executable" "org.junit.jupiter.api.function.Executable"
+   "HttpRequest" "java.net.http.HttpRequest"
    "Identifier" "org.pkl.core.runtime.Identifier"
    "ParameterizedTypeName" "com.squareup.javapoet.ParameterizedTypeName"
    "PClassInfo" "org.pkl.core.PClassInfo"
@@ -887,6 +888,29 @@
     "com.squareup.javapoet.TypeName"
     "org.pkl.core.PClassInfo"
     "org.pkl.core.runtime.Identifier"})
+
+(def ^:private known-product-builder-types
+  {"java.net.http.HttpRequest" "java.net.http.HttpRequest.Builder"
+   "org.pkl.core.http.HttpClient" "org.pkl.core.http.HttpClientBuilder"})
+
+(def ^:private product-builder-factory-methods
+  #{"builder"
+    "newBuilder"
+    "annotationBuilder"
+    "anonymousClassBuilder"
+    "classBuilder"
+    "companionObjectBuilder"
+    "constructorBuilder"
+    "enumBuilder"
+    "funBuilder"
+    "interfaceBuilder"
+    "methodBuilder"
+    "objectBuilder"
+    "propertyBuilder"
+    "typeAliasBuilder"})
+
+(def ^:private builder-self-factory-methods
+  #{"preconfigured" "unconfigured"})
 
 (def ^:private absent :vibeformer.query/absent)
 
@@ -925,7 +949,7 @@
                [(get-else $ ?decl :decl/return-type :vibeformer.query/absent) ?return-type]]
              db project-id)))
 
-(defn- project-binding-type-index [db project-id]
+(defn- project-explicit-binding-type-index [db project-id]
   (reduce (fn [acc [function-node-id name type-id]]
             (assoc-in acc [function-node-id name] type-id))
           {}
@@ -964,6 +988,8 @@
     (when (re-matches #"[A-Za-z_][A-Za-z0-9_]*" value)
       value)))
 
+(declare expression-type-id)
+
 (defn- receiver-known-call-type-id [value]
   (when-let [value (some-> value str/trim)]
     (when-let [[_ call-name] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*\(.*" value)]
@@ -971,6 +997,80 @@
 
 (defn- receiver-known-static-type-id [value]
   (some-> value str/trim known-classpath-types))
+
+(defn- strip-builder-suffix [type-id]
+  (cond
+    (str/ends-with? type-id ".Builder")
+    (subs type-id 0 (- (count type-id) (count ".Builder")))
+
+    (str/ends-with? type-id "Builder")
+    (subs type-id 0 (- (count type-id) (count "Builder")))))
+
+(defn- builder-product-type-id [builder-type-id]
+  (or (some (fn [[product-type-id known-builder-type-id]]
+              (when (= known-builder-type-id builder-type-id)
+                product-type-id))
+            known-product-builder-types)
+      (strip-builder-suffix builder-type-id)))
+
+(defn- builder-type-from-product [product-type-id]
+  (or (get known-product-builder-types product-type-id)
+      (str product-type-id ".Builder")))
+
+(defn- constructor-expression-type-id [type-index value]
+  (when-let [value (some-> value str/trim)]
+    (or (when-let [[_ name] (re-matches #"([A-Z][A-Za-z0-9_]*)\s*\(.*" value)]
+          (get type-index name))
+        (when-let [[_ owner nested] (re-matches #"([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*)\.([A-Z][A-Za-z0-9_]*)\s*\(.*" value)]
+          (when-let [owner-type-id (get type-index (simple-type-name owner))]
+            (str owner-type-id "." nested))))))
+
+(defn- builder-factory-expression-type-id [type-index value]
+  (when-let [value (some-> value str/trim)]
+    (when-let [[_ owner method] (re-matches #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(.*" value)]
+      (when-let [owner-type-id (or (get type-index owner)
+                                   (get type-index (simple-type-name owner)))]
+        (cond
+          (contains? product-builder-factory-methods method)
+          (builder-type-from-product owner-type-id)
+
+          (contains? builder-self-factory-methods method)
+          owner-type-id)))))
+
+(defn- expression-type-id [type-index value]
+  (or (literal-type-id value)
+      (constructor-expression-type-id type-index value)
+      (builder-factory-expression-type-id type-index value)
+      (receiver-known-call-type-id value)
+      (receiver-known-static-type-id value)))
+
+(defn- project-inferred-binding-type-index [db project-id type-index]
+  (reduce (fn [acc [function-node-id name value]]
+            (if-let [type-id (expression-type-id type-index value)]
+              (assoc-in acc [function-node-id name] type-id)
+              acc))
+          {}
+          (d/q '[:find ?function-node-id ?name ?value
+                 :in $ ?project-id
+                 :where
+                 [?project :project/id ?project-id]
+                 [?file :file/project ?project]
+                 [?function :node/file ?file]
+                 [?function :node/id ?function-node-id]
+                 [?binding :node/parent ?function]
+                 [?binding :node/name ?name]
+                 [?binding :node/kind :kotlin.node/local-property]
+                 [?binding :node/value ?value]]
+               db
+               project-id)))
+
+(defn- merge-binding-type-indexes [& indexes]
+  (apply merge-with merge indexes))
+
+(defn- project-binding-type-index [db project-id type-index]
+  (merge-binding-type-indexes
+   (project-explicit-binding-type-index db project-id)
+   (project-inferred-binding-type-index db project-id type-index)))
 
 (defn- project-call-argument-values [db project-id]
   (->> (d/q '[:find ?call-node-id ?ordinal ?value
@@ -1029,17 +1129,15 @@
                 (literal-type-id value)))
           (get arg-values-by-call node-id []))))
 
-(defn- call-receiver-type-id [binding-types-by-parent receiver-values-by-call parent-by-call node-id]
+(defn- call-receiver-type-id [type-index binding-types-by-parent receiver-values-by-call parent-by-call node-id]
   (let [parent-node-id (get parent-by-call node-id)
         binding-types (get binding-types-by-parent parent-node-id)
         value (get receiver-values-by-call node-id)]
     (or (some->> value simple-identifier (get binding-types))
-        (literal-type-id value)
-        (receiver-known-call-type-id value)
-        (receiver-known-static-type-id value))))
+        (expression-type-id type-index value))))
 
-(defn- project-refs [db project-id]
-  (let [binding-types-by-parent (project-binding-type-index db project-id)
+(defn- project-refs [db project-id type-index]
+  (let [binding-types-by-parent (project-binding-type-index db project-id type-index)
         arg-values-by-call (project-call-argument-values db project-id)
         receiver-values-by-call (project-call-receiver-values db project-id)
         parent-by-call (project-call-parent-index db project-id)]
@@ -1050,7 +1148,8 @@
                                                       parent-by-call
                                                       node-id))
                   receiver-type (when (= :ref.kind/function-call kind)
-                                  (call-receiver-type-id binding-types-by-parent
+                                  (call-receiver-type-id type-index
+                                                         binding-types-by-parent
                                                          receiver-values-by-call
                                                          parent-by-call
                                                          node-id))]
@@ -1296,6 +1395,11 @@
     {:ref/to-type receiver-type
      :ref/owner-type receiver-type}))
 
+(defn- kotlin-build-call [{:call/keys [receiver-type]}]
+  (when-let [product-type-id (some-> receiver-type builder-product-type-id)]
+    {:ref/to-type product-type-id
+     :ref/owner-type receiver-type}))
+
 (defn- constructor-call-name? [name]
   (boolean (re-matches #"[A-Z][A-Za-z0-9_]*" (or name ""))))
 
@@ -1308,6 +1412,8 @@
 (defn- known-call-resolution [{:ref/keys [name] :as ref}]
   (or (when (= "contains" name)
         (kotlin-contains-call ref))
+      (when (= "build" name)
+        (kotlin-build-call ref))
       (when (= "get" name)
         (kotlin-static-get-call ref))
       (get known-function-calls name)))
@@ -1368,7 +1474,7 @@
                   (function-resolution-tx db functions source-types type-index ref)
 
                   []))
-              (project-refs db project-id))))))
+              (project-refs db project-id type-index))))))
 
 (defn enrich!
   "Enrich existing Kotlin PSI facts with conservative semantic resolution.
