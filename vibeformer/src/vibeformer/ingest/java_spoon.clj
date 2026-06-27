@@ -1804,12 +1804,15 @@
 
 (defn- direct-supertype-index [facts source-node-types]
   (->> facts
-       (filter #(and (= :ref.kind/extends (:ref/kind %))
+       (filter #(and (contains? #{:ref.kind/extends :ref.kind/implements} (:ref/kind %))
                      (:ref/from-node %)
                      (:ref/to-type %)))
        (reduce (fn [index ref]
                  (if-let [type-id (get source-node-types (:ref/from-node ref))]
-                   (assoc index (strip-type-args type-id) (strip-type-args (:ref/to-type ref)))
+                   (update index
+                           (strip-type-args type-id)
+                           (fnil conj [])
+                           (strip-type-args (:ref/to-type ref)))
                    index))
                {})))
 
@@ -2134,13 +2137,17 @@
 
 (defn- type-lineage [direct-supertypes type-id]
   (loop [lineage []
-         current (some-> type-id strip-type-args)
+         pending [(some-> type-id strip-type-args)]
          seen #{}]
-    (if (or (nil? current) (contains? seen current))
-      lineage
-      (recur (conj lineage current)
-             (get direct-supertypes current)
-             (conj seen current)))))
+    (if-let [current (first pending)]
+      (if (or (nil? current) (contains? seen current))
+        (recur lineage (subvec (vec pending) 1) seen)
+        (let [remaining (subvec (vec pending) 1)
+              parents (seq (keep identity (get direct-supertypes current)))]
+          (recur (conj lineage current)
+                 (into remaining parents)
+                 (conj seen current))))
+      lineage)))
 
 (defn- inherited-local-field-target [field-owner-index parent-by-node source-node-types direct-supertypes ref]
   (when (and (nil? (:ref/owner-type ref)) (:ref/name ref))

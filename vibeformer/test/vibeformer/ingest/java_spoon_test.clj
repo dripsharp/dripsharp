@@ -217,6 +217,55 @@ public final class Child extends Parent {
 }
 ")
 
+(def interface-lineage-overloaded-method-fixture
+  "package com.acme.syntaxoverload;
+
+class Source {}
+
+class Span {}
+
+interface Node {}
+
+abstract class AbstractNode implements Node {}
+
+final class ModuleDecl extends AbstractNode {
+  Span headerSpan() {
+    return new Span();
+  }
+}
+
+final class Type extends AbstractNode {}
+
+class Section {}
+
+class Parent {
+  protected Section createSourceSection(Node node) {
+    return new Section();
+  }
+
+  protected Section createSourceSection(Span span) {
+    return new Section();
+  }
+
+  protected static Section createSourceSection(Source source, Node node) {
+    return new Section();
+  }
+
+  protected static Section createSourceSection(Source source, Span span) {
+    return new Section();
+  }
+}
+
+public final class Child extends Parent {
+  public Section read(Source source, ModuleDecl moduleDecl, Type type) {
+    Section first = createSourceSection(type);
+    Section second = createSourceSection(source, moduleDecl);
+    Section third = createSourceSection(moduleDecl.headerSpan());
+    return second;
+  }
+}
+")
+
 (def control-flow-fixture
   "package com.acme.statements;
 
@@ -1535,6 +1584,54 @@ public final class Demo {
                    ["java:com.acme.inheritedoverload.Parent#createSourceSection(com.acme.inheritedoverload.Span)"
                     "com.acme.inheritedoverload.Parent"
                     "com.acme.inheritedoverload.Section"
+                    true]}
+                 method-refs))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(= ?name "createSourceSection")]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
+
+(deftest resolves-inherited-overloaded-java-method-calls-through-interfaces
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/syntaxoverload/Child.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path interface-lineage-overloaded-method-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              method-refs (set (d/q '[:find ?decl-id ?owner-id ?type-id ?resolved?
+                                       :where
+                                       [?ref :ref/kind :ref.kind/method-call]
+                                       [?ref :ref/name "createSourceSection"]
+                                       [?ref :ref/to-decl ?decl]
+                                       [?decl :decl/id ?decl-id]
+                                       [?decl :decl/source-node]
+                                       [?ref :ref/owner-type ?owner]
+                                       [?owner :type/id ?owner-id]
+                                       [?ref :ref/to-type ?type]
+                                       [?type :type/id ?type-id]
+                                       [?ref :ref/resolved? ?resolved?]]
+                                     db))]
+          (is (= #{["java:com.acme.syntaxoverload.Parent#createSourceSection(com.acme.syntaxoverload.Node)"
+                    "com.acme.syntaxoverload.Parent"
+                    "com.acme.syntaxoverload.Section"
+                    true]
+                   ["java:com.acme.syntaxoverload.Parent#createSourceSection(com.acme.syntaxoverload.Source,com.acme.syntaxoverload.Node)"
+                    "com.acme.syntaxoverload.Parent"
+                    "com.acme.syntaxoverload.Section"
+                    true]
+                   ["java:com.acme.syntaxoverload.Parent#createSourceSection(com.acme.syntaxoverload.Span)"
+                    "com.acme.syntaxoverload.Parent"
+                    "com.acme.syntaxoverload.Section"
                     true]}
                  method-refs))
           (is (empty?
