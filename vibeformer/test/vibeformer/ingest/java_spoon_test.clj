@@ -97,6 +97,18 @@ public final class UsesDependency {
 }
 ")
 
+(def assertj-call-fixture
+  "package com.acme.assertj;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+public final class UsesAssertJ {
+  public void run(String value) {
+    assertThat(value).isEqualTo(\"expected\");
+  }
+}
+")
+
 (def control-flow-fixture
   "package com.acme.statements;
 
@@ -1190,6 +1202,42 @@ public final class Demo {
           (is (= #{["org.example.Dependency" true nil]} type-refs))
           (is (= #{["doWork" "org.example.Dependency" true nil]} method-refs))
           (is (= #{["java:org.example.Dependency#doWork()" "doWork"]} method-decls)))))))
+
+(deftest resolves-known-java-assertj-calls-without-classpath
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            file-path "src/main/java/com/acme/assertj/UsesAssertJ.java"
+            opts {:source/root root
+                  :project/id "fixture"
+                  :project/name "Fixture"}]
+        (write-file! root file-path assertj-call-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "fixture"})
+        (let [db (d/db conn)
+              calls (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
+                                 :where
+                                 [?ref :ref/kind :ref.kind/method-call]
+                                 [?ref :ref/name ?name]
+                                 [(contains? #{"assertThat" "isEqualTo"} ?name)]
+                                 [?ref :ref/to-type ?type]
+                                 [?type :type/id ?type-id]
+                                 [?ref :ref/owner-type ?owner]
+                                 [?owner :type/id ?owner-id]
+                                 [?ref :ref/resolved? ?resolved?]]
+                               db))]
+          (is (= #{["assertThat" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.Assertions" true]
+                   ["isEqualTo" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]}
+                 calls))
+          (is (empty?
+               (d/q '[:find ?name ?reason
+                      :where
+                      [?ref :ref/resolved? false]
+                      [?ref :ref/name ?name]
+                      [(contains? #{"assertThat" "isEqualTo"} ?name)]
+                      [?ref :ref/reason ?reason]]
+                    db))))))))
 
 (deftest extracts-java-nullable-type-use-facts
   (with-empty-db

@@ -13,6 +13,12 @@
 (def ^:dynamic *classpath-types* #{})
 (def ^:dynamic *classpath-package-roots* #{})
 
+(def ^:private known-java-api-calls
+  {"assertThat" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                 :ref/owner-type "org.assertj.core.api.Assertions"}
+   "isEqualTo" {:ref/to-type "org.assertj.core.api.AbstractAssert"
+                :ref/owner-type "org.assertj.core.api.AbstractAssert"}})
+
 (defn- hex-bytes [bytes]
   (apply str (map #(format "%02x" (bit-and % 0xff)) bytes)))
 
@@ -258,6 +264,20 @@
      :type/lang lang
      :type/name id
      :type/nullable? false}))
+
+(defn- synthetic-type-fact [type-id]
+  {:db/id type-id
+   :type/id type-id
+   :type/lang lang
+   :type/name type-id
+   :type/nullable? false})
+
+(defn- known-java-api-type-facts []
+  (->> known-java-api-calls
+       vals
+       (mapcat (juxt :ref/to-type :ref/owner-type))
+       distinct
+       (map synthetic-type-fact)))
 
 (defn- node-kind [type]
   (cond
@@ -1769,8 +1789,18 @@
                (filter #(= (:decl/type %) (strip-type-args (owner-from-field-decl-id (:decl/id %)))))
                unambiguous)))))
 
+(defn- resolve-known-java-api-call [fact]
+  (when (and (= :ref.kind/method-call (:ref/kind fact))
+             (not (:ref/resolved? fact)))
+    (when-let [known (get known-java-api-calls (:ref/name fact))]
+      (-> fact
+          (assoc :ref/resolved? true
+                 :ref/to-type (:ref/to-type known)
+                 :ref/owner-type (:ref/owner-type known))
+          (dissoc :ref/reason)))))
+
 (defn- resolve-local-refs [facts]
-  (let [deduped (dedupe-facts facts)
+  (let [deduped (dedupe-facts (concat facts (known-java-api-type-facts)))
         method-index (method-decl-index deduped)
         constructor-index (constructor-decl-index deduped)
         type-names (type-name-index deduped)
@@ -1798,7 +1828,8 @@
                       (cond-> owner (assoc :ref/owner-type owner))
                       (cond-> (:decl/return-type target) (assoc :ref/to-type (:decl/return-type target)))
                       (dissoc :ref/reason)))
-                fact)
+                (or (resolve-known-java-api-call fact)
+                    fact))
 
               (and (= :ref.kind/constructor-call (:ref/kind fact))
                    (not (some-> fact :ref/to-type (str/starts-with? "java."))))
