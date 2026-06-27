@@ -464,6 +464,14 @@ fun wireMockMatcherFacts(): Any {
   return stubFor(any(anyUrl()).willReturn(aResponse().proxiedFrom(\"https://example.com\")))
 }
 
+fun wireMockBuilderChainFacts(): Any {
+  stubFor(get(urlEqualTo(\"/foo.pkl\")).withHost(equalTo(\"example.com\")).willReturn(ok(\"foo = 1\")))
+  stubFor(get(urlEqualTo(\"/bar.pkl\")).willReturn(permanentRedirect(\"/baz.pkl\")))
+  verify(getRequestedFor(urlEqualTo(\"/foo.pkl\")).withHeader(\"X-Foo\", equalTo(\"Foo\")))
+  verify(getRequestedFor(urlEqualTo(\"/bar.pkl\")).withHeader(\"X-Bar\", matching(\"bar.*\")).withoutHeader(\"X-Old\"))
+  return stubFor(get(anyUrl()).willReturn(ok()))
+}
+
 fun assertions() {
   val same = Any()
   assertThat(listOf(1, 2)).hasSize(2).containsExactly(1, 2)
@@ -1404,6 +1412,7 @@ public final class JavaPseudoTypes {
                              "any"
                              "anyUrl"
                              "aResponse"
+                             "equalTo"
                              "containsExactly"
                              "containsOnly"
                              "createDirectories"
@@ -1414,6 +1423,8 @@ public final class JavaPseudoTypes {
                              "exists"
                              "fail"
                              "first"
+                             "get"
+                             "getRequestedFor"
                              "hasMessage"
                              "hasMessageContaining"
                              "hasMessageStartingWith"
@@ -1431,6 +1442,7 @@ public final class JavaPseudoTypes {
                              "isSameAs"
                              "filter"
                              "joinToString"
+                             "matching"
                              "proxiedFrom"
                              "mutableMapOf"
                              "mutableSetOf"
@@ -1446,6 +1458,11 @@ public final class JavaPseudoTypes {
                              "toUri"
                              "trim"
                              "stubFor"
+                             "urlEqualTo"
+                             "verify"
+                             "withHeader"
+                             "withHost"
+                             "withoutHeader"
                              "willReturn"
                              "contains"}
               resolved-calls (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
@@ -1571,6 +1588,7 @@ public final class JavaPseudoTypes {
                    ["any" "com.github.tomakehurst.wiremock.client.MappingBuilder" "com.github.tomakehurst.wiremock.client.WireMock" true]
                    ["any" "kotlin:Boolean" "kotlin:List<kotlin:PObject>" true]
                    ["anyUrl" "com.github.tomakehurst.wiremock.matching.UrlPattern" "com.github.tomakehurst.wiremock.client.WireMock" true]
+                   ["equalTo" "com.github.tomakehurst.wiremock.matching.StringValuePattern" "com.github.tomakehurst.wiremock.client.WireMock" true]
                    ["containsExactly" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["containsOnly" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["createDirectories" "java.nio.file.Path" "java.nio.file.Path" true]
@@ -1582,6 +1600,10 @@ public final class JavaPseudoTypes {
                    ["exists" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["fail" "kotlin:Nothing" "org.junit.jupiter.api.Assertions" true]
                    ["first" "kotlin:Any" "kotlin.collections.Iterable" true]
+                   ["get" "com.github.tomakehurst.wiremock.client.MappingBuilder" "com.github.tomakehurst.wiremock.client.WireMock" true]
+                   ["get" "kotlin.collections.List" "kotlin:ListProperty<kotlin:String>" true]
+                   ["get" "kotlin:MessageBufferPacker" "kotlin:ThreadLocal<kotlin:MessageBufferPacker>" true]
+                   ["getRequestedFor" "com.github.tomakehurst.wiremock.client.RequestPatternBuilder" "com.github.tomakehurst.wiremock.client.WireMock" true]
                    ["hasMessage" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["hasMessageContaining" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["hasMessageStartingWith" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
@@ -1612,13 +1634,16 @@ public final class JavaPseudoTypes {
                    ["joinToString" "kotlin:String" "kotlin.collections.List" true]
                    ["joinToString" "kotlin:String" "kotlin:List<kotlin:String>" true]
                    ["joinToString" "kotlin:String" "kotlin.sequences.Sequence" true]
+                   ["matching" "com.github.tomakehurst.wiremock.matching.StringValuePattern" "com.github.tomakehurst.wiremock.client.WireMock" true]
                    ["mutableMapOf" "kotlin.collections.MutableMap" "kotlin.collections.MapsKt" true]
                    ["mutableSetOf" "kotlin.collections.MutableSet" "kotlin.collections.SetsKt" true]
                    ["proxiedFrom" "com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder" "com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder" true]
                    ["readText" "kotlin:String" "java.nio.file.Path" true]
                    ["replace" "kotlin:String" "kotlin:String" true]
                    ["stubFor" "com.github.tomakehurst.wiremock.stubbing.StubMapping" "com.github.tomakehurst.wiremock.client.WireMock" true]
+                   ["urlEqualTo" "com.github.tomakehurst.wiremock.matching.UrlPattern" "com.github.tomakehurst.wiremock.client.WireMock" true]
                    ["URI" "java.net.URI" "java.net.URI" true]
+                   ["verify" "kotlin:Unit" "com.github.tomakehurst.wiremock.client.WireMock" true]
                    ["resolve" "java.nio.file.Path" "java.nio.file.Path" true]
                    ["startsWith" "kotlin:Boolean" "kotlin:String" true]
                    ["substring" "kotlin:String" "kotlin:String" true]
@@ -1636,6 +1661,9 @@ public final class JavaPseudoTypes {
                    ["toList" "kotlin.collections.List" "kotlin:List<kotlin:String>" true]
                    ["toUri" "java.net.URI" "java.nio.file.Path" true]
                    ["trim" "kotlin:String" "kotlin:String" true]
+                   ["withHeader" "com.github.tomakehurst.wiremock.client.RequestPatternBuilder" "com.github.tomakehurst.wiremock.client.RequestPatternBuilder" true]
+                   ["withHost" "com.github.tomakehurst.wiremock.client.MappingBuilder" "com.github.tomakehurst.wiremock.client.MappingBuilder" true]
+                   ["withoutHeader" "com.github.tomakehurst.wiremock.client.RequestPatternBuilder" "com.github.tomakehurst.wiremock.client.RequestPatternBuilder" true]
                    ["willReturn" "com.github.tomakehurst.wiremock.client.MappingBuilder" "com.github.tomakehurst.wiremock.client.MappingBuilder" true]
                    ["contains" "org.assertj.core.api.AbstractAssert" "org.assertj.core.api.AbstractAssert" true]
                    ["contains" "kotlin:Boolean" "kotlin:List<kotlin:String>" true]

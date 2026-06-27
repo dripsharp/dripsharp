@@ -1071,7 +1071,9 @@
   {:wiremock "com.github.tomakehurst.wiremock.client.WireMock"
    :mapping-builder "com.github.tomakehurst.wiremock.client.MappingBuilder"
    :response-builder "com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder"
+   :request-pattern-builder "com.github.tomakehurst.wiremock.client.RequestPatternBuilder"
    :stub-mapping "com.github.tomakehurst.wiremock.stubbing.StubMapping"
+   :string-value-pattern "com.github.tomakehurst.wiremock.matching.StringValuePattern"
    :url-pattern "com.github.tomakehurst.wiremock.matching.UrlPattern"})
 
 (def ^:private absent :vibeformer.query/absent)
@@ -1589,8 +1591,16 @@
            (= "MappingBuilder" owner-root))
       receiver-type
 
+      (and (= "withHost" call-name)
+           (= "MappingBuilder" owner-root))
+      receiver-type
+
       (and (= "proxiedFrom" call-name)
            (= "ResponseDefinitionBuilder" owner-root))
+      receiver-type
+
+      (and (contains? #{"withHeader" "withoutHeader"} call-name)
+           (= "RequestPatternBuilder" owner-root))
       receiver-type)))
 
   (defn- receiver-known-call-type-id [binding-types value]
@@ -1606,7 +1616,16 @@
                 (:mapping-builder wiremock-type-ids))
         "anyUrl" (:url-pattern wiremock-type-ids)
         "aResponse" (:response-builder wiremock-type-ids)
+        "equalTo" (:string-value-pattern wiremock-type-ids)
+        "get" (when (re-find #"\b(?:anyUrl|urlEqualTo)\s*\(" value)
+                (:mapping-builder wiremock-type-ids))
+        "getRequestedFor" (when (re-find #"\b(?:anyUrl|urlEqualTo)\s*\(" value)
+                            (:request-pattern-builder wiremock-type-ids))
+        "matching" (:string-value-pattern wiremock-type-ids)
+        "ok" (:response-builder wiremock-type-ids)
+        "permanentRedirect" (:response-builder wiremock-type-ids)
         "stubFor" (:stub-mapping wiremock-type-ids)
+        "urlEqualTo" (:url-pattern wiremock-type-ids)
         nil))))
 
 (defn- qualified-known-call-type-id [type-index binding-types value]
@@ -1875,12 +1894,13 @@
              (= "it.value" (some-> receiver-value str/trim)))
     "kotlin.collections.Collection"))
 
-(defn- call-argument-type-ids [binding-types-by-parent arg-values-by-call parent-by-call parent-by-node node-id]
+(defn- call-argument-type-ids [type-index binding-types-by-parent arg-values-by-call parent-by-call parent-by-node node-id]
   (let [parent-node-id (get parent-by-call node-id)
         binding-types (nearest-binding-types binding-types-by-parent parent-by-node parent-node-id)]
     (mapv (fn [value]
             (or (some->> value simple-identifier (get binding-types))
-                (literal-type-id value)))
+                (literal-type-id value)
+                (expression-type-id type-index binding-types value)))
           (get arg-values-by-call node-id []))))
 
 (defn- call-receiver-type-id [type-index binding-types-by-parent receiver-values-by-call parent-by-call parent-by-node call-spans node-id call-name]
@@ -1913,7 +1933,8 @@
         call-spans (project-call-span-index db project-id)]
     (mapv (fn [[ref-id kind name to-type node-id file-id]]
             (let [arg-types (when (= :ref.kind/function-call kind)
-                              (call-argument-type-ids binding-types-by-parent
+                              (call-argument-type-ids type-index
+                                                      binding-types-by-parent
                                                       arg-values-by-call
                                                       parent-by-call
                                                       parent-by-node
@@ -2295,12 +2316,24 @@
     {:ref/to-type receiver-type
      :ref/owner-type receiver-type}))
 
+(defn- kotlin-get-call [{:call/keys [receiver-type]}]
+  (let [owner-root (unqualified-type-id receiver-type)]
+    (cond
+      (= "ListProperty" owner-root)
+      {:ref/to-type "kotlin.collections.List"
+       :ref/owner-type receiver-type}
+
+      (= "ThreadLocal" owner-root)
+      {:ref/to-type (or (collection-element-type-id receiver-type)
+                        "kotlin:Any")
+       :ref/owner-type receiver-type})))
+
 (defn- kotlin-build-call [{:call/keys [receiver-type]}]
   (when-let [product-type-id (some-> receiver-type builder-product-type-id)]
     {:ref/to-type product-type-id
      :ref/owner-type receiver-type}))
 
-(defn- kotlin-wiremock-static-call [{:ref/keys [name] :call/keys [receiver-type arg-count]}]
+(defn- kotlin-wiremock-static-call [{:ref/keys [name] :call/keys [receiver-type arg-count arg-types]}]
   (when (nil? receiver-type)
     (case name
       "any" (when (= 1 arg-count)
@@ -2310,8 +2343,30 @@
                 :ref/owner-type (:wiremock wiremock-type-ids)}
       "aResponse" {:ref/to-type (:response-builder wiremock-type-ids)
                    :ref/owner-type (:wiremock wiremock-type-ids)}
+      "equalTo" {:ref/to-type (:string-value-pattern wiremock-type-ids)
+                 :ref/owner-type (:wiremock wiremock-type-ids)}
+      "get" (when (and (= 1 arg-count)
+                       (= (:url-pattern wiremock-type-ids) (first arg-types)))
+              {:ref/to-type (:mapping-builder wiremock-type-ids)
+               :ref/owner-type (:wiremock wiremock-type-ids)})
+      "getRequestedFor" (when (and (= 1 arg-count)
+                                   (= (:url-pattern wiremock-type-ids) (first arg-types)))
+                          {:ref/to-type (:request-pattern-builder wiremock-type-ids)
+                           :ref/owner-type (:wiremock wiremock-type-ids)})
+      "matching" {:ref/to-type (:string-value-pattern wiremock-type-ids)
+                  :ref/owner-type (:wiremock wiremock-type-ids)}
+      "ok" {:ref/to-type (:response-builder wiremock-type-ids)
+            :ref/owner-type (:wiremock wiremock-type-ids)}
+      "permanentRedirect" {:ref/to-type (:response-builder wiremock-type-ids)
+                           :ref/owner-type (:wiremock wiremock-type-ids)}
       "stubFor" {:ref/to-type (:stub-mapping wiremock-type-ids)
                  :ref/owner-type (:wiremock wiremock-type-ids)}
+      "urlEqualTo" {:ref/to-type (:url-pattern wiremock-type-ids)
+                    :ref/owner-type (:wiremock wiremock-type-ids)}
+      "verify" (when (and (= 1 arg-count)
+                          (= (:request-pattern-builder wiremock-type-ids) (first arg-types)))
+                 {:ref/to-type "kotlin:Unit"
+                  :ref/owner-type (:wiremock wiremock-type-ids)})
       nil)))
 
 (defn- kotlin-wiremock-chain-call [{:ref/keys [name] :call/keys [receiver-type]}]
@@ -2322,8 +2377,18 @@
       {:ref/to-type receiver-type
        :ref/owner-type receiver-type}
 
+      (and (= "withHost" name)
+           (= "MappingBuilder" owner-root))
+      {:ref/to-type receiver-type
+       :ref/owner-type receiver-type}
+
       (and (= "proxiedFrom" name)
            (= "ResponseDefinitionBuilder" owner-root))
+      {:ref/to-type receiver-type
+       :ref/owner-type receiver-type}
+
+      (and (contains? #{"withHeader" "withoutHeader"} name)
+           (= "RequestPatternBuilder" owner-root))
       {:ref/to-type receiver-type
        :ref/owner-type receiver-type})))
 
@@ -2366,7 +2431,8 @@
       (kotlin-wiremock-static-call ref)
       (kotlin-wiremock-chain-call ref)
       (when (= "get" name)
-        (kotlin-static-get-call ref))
+        (or (kotlin-get-call ref)
+            (kotlin-static-get-call ref)))
       (get known-function-calls name)))
 
 (defn- same-file-candidates [candidates file-id]
