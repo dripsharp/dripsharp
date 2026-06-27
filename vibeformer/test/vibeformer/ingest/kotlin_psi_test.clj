@@ -108,6 +108,29 @@ fun staticGets(): Any {
 }
 ")
 
+(def kotlin-constructor-call-fixture
+  "package com.acme.ctors
+
+import java.io.StringWriter
+
+data class KotlinOptions(val name: String)
+
+fun constructorCalls(): Any {
+  val kotlinOptions = KotlinOptions(\"fixture\")
+  val javaOptions = JavaOptions()
+  val writer = StringWriter()
+  val missing = MissingOptions()
+  return kotlinOptions
+}
+")
+
+(def java-constructor-call-fixture
+  "package com.acme.ctors;
+
+public final class JavaOptions {
+}
+")
+
 (def kotlin-api-call-fixture
   "package com.acme.api
 
@@ -668,6 +691,67 @@ public final class JavaPseudoTypes {
                     true]}
                  resolved))
           (is (empty? unresolved)))))))
+
+(deftest resolves-kotlin-constructor-style-type-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "constructor-calls"
+                  :project/name "Constructor Calls"}]
+        (write-file! root
+                     "src/main/kotlin/com/acme/ctors/Constructors.kt"
+                     kotlin-constructor-call-fixture)
+        (write-file! root
+                     "src/main/java/com/acme/ctors/JavaOptions.java"
+                     java-constructor-call-fixture)
+        (source/ingest! conn opts)
+        (java-spoon/ingest! conn {:project/id "constructor-calls"})
+        (kotlin-psi/ingest! conn {:project/id "constructor-calls"})
+        (kotlin-psi/enrich! conn {:project/id "constructor-calls"})
+        (let [db (d/db conn)
+              constructor-names #{"KotlinOptions" "JavaOptions" "StringWriter"}
+              resolved (set (d/q '[:find ?name ?type-id ?owner-id ?resolved?
+                                    :in $ ?constructor-names
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name ?name]
+                                    [(contains? ?constructor-names ?name)]
+                                    [?ref :ref/resolved? ?resolved?]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/owner-type ?owner]
+                                    [?owner :type/id ?owner-id]]
+                                  db
+                                  constructor-names))
+              unresolved (set (d/q '[:find ?name ?reason
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name ?name]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]
+                                      [(contains? #{"KotlinOptions"
+                                                    "JavaOptions"
+                                                    "StringWriter"
+                                                    "MissingOptions"}
+                                                  ?name)]]
+                                    db))]
+          (is (= #{["KotlinOptions"
+                    "kotlin:com.acme.ctors.KotlinOptions"
+                    "kotlin:com.acme.ctors.KotlinOptions"
+                    true]
+                   ["JavaOptions"
+                    "com.acme.ctors.JavaOptions"
+                    "com.acme.ctors.JavaOptions"
+                    true]
+                   ["StringWriter"
+                    "java.io.StringWriter"
+                    "java.io.StringWriter"
+                    true]}
+                 resolved))
+          (is (= #{["MissingOptions" :resolve.reason/missing-classpath]}
+                 unresolved)))))))
 
 (deftest kotlin-enrichment-does-not-rewrite-java-reference-facts
   (with-empty-db

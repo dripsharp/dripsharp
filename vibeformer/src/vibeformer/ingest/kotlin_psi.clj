@@ -877,6 +877,7 @@
    "ParameterizedTypeName" "com.squareup.javapoet.ParameterizedTypeName"
    "PClassInfo" "org.pkl.core.PClassInfo"
    "Path" "java.nio.file.Path"
+   "StringWriter" "java.io.StringWriter"
    "TypeName" "com.squareup.javapoet.TypeName"
    "URI" "java.net.URI"})
 
@@ -1097,17 +1098,18 @@
 
     :else {}))
 
+(defn- source-declaration-type-id [{:decl/keys [kind qualified-name type]}]
+  (when (contains? #{:decl.kind/class
+                    :decl.kind/interface
+                    :decl.kind/object
+                    :decl.kind/companion-object}
+                  kind)
+    (or type (str "kotlin:" qualified-name))))
+
 (defn- source-type-index [decls]
-  (let [decl-types (keep :decl/type decls)
-        source-decl-types (keep (fn [{:decl/keys [kind qualified-name]}]
-                                  (when (contains? #{:decl.kind/class
-                                                     :decl.kind/interface
-                                                     :decl.kind/object
-                                                     :decl.kind/companion-object}
-                                                   kind)
-                                    (str "kotlin:" qualified-name)))
-                                decls)]
-    (->> (concat decl-types source-decl-types)
+  (let [decl-type-ids (keep :decl/type decls)
+        source-type-ids (keep source-declaration-type-id decls)]
+    (->> (concat decl-type-ids source-type-ids)
          (map (fn [type-id]
                 (let [type-name (str/replace type-id #"^kotlin:" "")]
                   [(simple-type-name type-name) type-id])))
@@ -1294,6 +1296,15 @@
     {:ref/to-type receiver-type
      :ref/owner-type receiver-type}))
 
+(defn- constructor-call-name? [name]
+  (boolean (re-matches #"[A-Z][A-Za-z0-9_]*" (or name ""))))
+
+(defn- kotlin-constructor-call [type-index {:ref/keys [name]}]
+  (when (constructor-call-name? name)
+    (when-let [type-id (get type-index name)]
+      {:ref/to-type type-id
+       :ref/owner-type type-id})))
+
 (defn- known-call-resolution [{:ref/keys [name] :as ref}]
   (or (when (= "contains" name)
         (kotlin-contains-call ref))
@@ -1307,8 +1318,9 @@
       matches
       candidates)))
 
-(defn- function-resolution-tx [db functions source-types {:ref/keys [id name] :call/keys [arg-types] :as ref}]
-  (if-let [known-call (known-call-resolution ref)]
+(defn- function-resolution-tx [db functions source-types type-index {:ref/keys [id name] :call/keys [arg-types] :as ref}]
+  (if-let [known-call (or (known-call-resolution ref)
+                          (kotlin-constructor-call type-index ref))]
     (resolved-ref-tx db id
                      (cond-> {}
                        (:ref/to-type known-call)
@@ -1353,7 +1365,7 @@
                   (type-resolution-tx db type-index ref)
 
                   :ref.kind/function-call
-                  (function-resolution-tx db functions source-types ref)
+                  (function-resolution-tx db functions source-types type-index ref)
 
                   []))
               (project-refs db project-id))))))
