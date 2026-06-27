@@ -100,6 +100,24 @@ private fun writePklFile(value: String): BetaResult = BetaResult()
 fun useBeta(): BetaResult = writePklFile(\"beta\")
 ")
 
+(def kotlin-inherited-helper-fixture
+  "package com.acme.inherited
+
+class PklFile
+
+open class AbstractTest {
+  protected fun writeFile(fileName: String, contents: String): PklFile = PklFile()
+}
+
+open class OtherTest {
+  protected fun writeFile(fileName: String, contents: String): PklFile = PklFile()
+}
+
+class GradleTest : AbstractTest() {
+  fun writes(): PklFile = writeFile(\"input.pkl\", \"x\")
+}
+")
+
 (def kotlin-static-get-fixture
   "package com.acme.staticget
 
@@ -742,6 +760,47 @@ public final class JavaPseudoTypes {
                    ["same-file:src/test/kotlin/com/acme/beta/Helpers.kt"
                     "kotlin:function:com.acme.beta.writePklFile(String)"
                     "kotlin:BetaResult"
+                    true]}
+                 resolved))
+          (is (empty? unresolved)))))))
+
+(deftest resolves-inherited-kotlin-helper-function-calls
+  (with-empty-db
+    (fn [conn]
+      (schema/install! conn)
+      (let [root (temp-root)
+            opts {:source/root root
+                  :project/id "inherited-helper"
+                  :project/name "Inherited Helper"}]
+        (write-file! root
+                     "src/test/kotlin/com/acme/inherited/GradleTest.kt"
+                     kotlin-inherited-helper-fixture)
+        (source/ingest! conn opts)
+        (kotlin-psi/ingest! conn {:project/id "inherited-helper"})
+        (kotlin-psi/enrich! conn {:project/id "inherited-helper"})
+        (let [db (d/db conn)
+              resolved (set (d/q '[:find ?decl-id ?type-id ?owner-id ?resolved?
+                                    :where
+                                    [?ref :ref/kind :ref.kind/function-call]
+                                    [?ref :ref/name "writeFile"]
+                                    [?ref :ref/to-decl ?decl]
+                                    [?decl :decl/id ?decl-id]
+                                    [?ref :ref/to-type ?type]
+                                    [?type :type/id ?type-id]
+                                    [?ref :ref/owner-type ?owner]
+                                    [?owner :type/id ?owner-id]
+                                    [?ref :ref/resolved? ?resolved?]]
+                                  db))
+              unresolved (set (d/q '[:find ?reason
+                                      :where
+                                      [?ref :ref/kind :ref.kind/function-call]
+                                      [?ref :ref/name "writeFile"]
+                                      [?ref :ref/resolved? false]
+                                      [?ref :ref/reason ?reason]]
+                                    db))]
+          (is (= #{["kotlin:function:com.acme.inherited.AbstractTest.writeFile(String,String)"
+                    "kotlin:PklFile"
+                    "kotlin:com.acme.inherited.AbstractTest"
                     true]}
                  resolved))
           (is (empty? unresolved)))))))

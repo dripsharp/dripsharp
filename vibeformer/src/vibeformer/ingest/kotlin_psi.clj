@@ -928,21 +928,23 @@
       (:type/id (d/pull db [:type/id] value)))))
 
 (defn- project-declarations [db project-id]
-  (mapv (fn [[decl-id kind name qualified-name decl-type return-type file-id]]
+  (mapv (fn [[decl-id kind name qualified-name decl-type return-type file-id node-id]]
           {:decl/id decl-id
            :decl/kind kind
            :decl/name name
            :decl/qualified-name qualified-name
            :decl/type (type-identity db decl-type)
            :decl/return-type (type-identity db return-type)
-           :decl/file-id file-id})
-        (d/q '[:find ?decl-id ?kind ?name ?qualified-name ?decl-type ?return-type ?file-id
+           :decl/file-id file-id
+           :node/id node-id})
+        (d/q '[:find ?decl-id ?kind ?name ?qualified-name ?decl-type ?return-type ?file-id ?node-id
                :in $ ?project-id
                :where
                [?project :project/id ?project-id]
                [?file :file/project ?project]
                [?file :file/id ?file-id]
                [?node :node/file ?file]
+               [?node :node/id ?node-id]
                [?decl :decl/source-node ?node]
                [?decl :decl/id ?decl-id]
                [?decl :decl/kind ?kind]
@@ -1446,12 +1448,102 @@
   (= (simple-type-name (type-name-from-id left))
      (simple-type-name (type-name-from-id right))))
 
+(defn- source-node-type-index [decls]
+  (into {}
+        (keep (fn [{:node/keys [id] :as decl}]
+                (when-let [type-id (source-declaration-type-id decl)]
+                  [id type-id])))
+        decls))
+
+(defn- project-parent-node-index [db project-id]
+  (into {}
+        (d/q '[:find ?node-id ?parent-node-id
+               :in $ ?project-id
+               :where
+               [?project :project/id ?project-id]
+               [?file :file/project ?project]
+               [?node :node/file ?file]
+               [?node :node/id ?node-id]
+               [?node :node/parent ?parent]
+               [?parent :node/id ?parent-node-id]]
+             db
+             project-id)))
+
+(defn- normalize-source-type-id [source-types type-index name type-id]
+  (or (get type-index name)
+      (some->> name simple-type-name (get type-index))
+      (when type-id
+        (or (get source-types (simple-type-name (type-name-from-id type-id)))
+            type-id))))
+
+(defn- project-direct-supertype-index [db project-id source-types type-index]
+  (reduce (fn [acc [node-id name to-type]]
+            (if-let [type-id (normalize-source-type-id source-types
+                                                       type-index
+                                                       name
+                                                       (type-identity db to-type))]
+              (update acc node-id (fnil conj #{}) type-id)
+              acc))
+          {}
+          (d/q '[:find ?node-id ?name ?to-type
+                 :in $ ?project-id
+                 :where
+                 [?project :project/id ?project-id]
+                 [?file :file/project ?project]
+                 [?node :node/file ?file]
+                 [?node :node/id ?node-id]
+                 [?ref :ref/from-node ?node]
+                 [?ref :ref/kind :ref.kind/implements]
+                 [?ref :ref/name ?name]
+                 [?ref :ref/to-type ?to-type]]
+               db
+               project-id)))
+
+(defn- enclosing-type-id [parent-by-node source-node-types node-id]
+  (loop [current node-id]
+    (when current
+      (or (get source-node-types current)
+          (recur (get parent-by-node current))))))
+
+(defn- source-type-node-index [source-node-types]
+  (into {}
+        (map (fn [[node-id type-id]]
+               [type-id node-id]))
+        source-node-types))
+
+(defn- type-lineage [type-node-by-id direct-supertypes type-id]
+  (loop [queue (conj clojure.lang.PersistentQueue/EMPTY type-id)
+         seen #{}
+         lineage []]
+    (if-let [current (peek queue)]
+      (let [queue (pop queue)]
+        (if (contains? seen current)
+          (recur queue seen lineage)
+          (let [super-types (->> current
+                                 (get type-node-by-id)
+                                 (get direct-supertypes)
+                                 sort)]
+            (recur (into queue super-types)
+                   (conj seen current)
+                   (conj lineage current)))))
+      lineage)))
+
 (defn- receiver-member-candidates [source-types {:call/keys [receiver-type]} candidates]
   (when receiver-type
     (seq (filter (fn [candidate]
                    (when-let [owner-type (owner-type-id source-types candidate)]
                      (same-type-id? receiver-type owner-type)))
                  candidates))))
+
+(defn- inherited-member-candidates [source-types parent-by-node source-node-types direct-supertypes {:call/keys [receiver-type] :node/keys [id]} candidates]
+  (when-not receiver-type
+    (when-let [current-type (enclosing-type-id parent-by-node source-node-types id)]
+      (let [type-node-by-id (source-type-node-index source-node-types)
+            lineage (set (type-lineage type-node-by-id direct-supertypes current-type))]
+        (seq (filter (fn [candidate]
+                       (when-let [owner-type (owner-type-id source-types candidate)]
+                         (contains? lineage owner-type)))
+                     candidates))))))
 
 (defn- resolve-function-candidates-tx [db source-types id arg-types candidates]
   (case (count candidates)
@@ -1469,11 +1561,17 @@
                      (:ref/owner-type known-call)
                      (assoc :ref/owner-type [:type/id (:ref/owner-type known-call)]))))
 
-(defn- function-resolution-tx [db functions methods source-types type-index {:ref/keys [id name] :call/keys [arg-types] :as ref}]
+(defn- function-resolution-tx [db functions methods source-types type-index parent-by-node source-node-types direct-supertypes {:ref/keys [id name] :call/keys [arg-types] :as ref}]
   (let [candidates (same-file-candidates (get functions name) (:ref/file-id ref))
         member-candidates (concat (get functions name) (get methods name))
         receiver-candidates (or (receiver-member-candidates source-types ref candidates)
-                                (receiver-member-candidates source-types ref member-candidates))]
+                                (receiver-member-candidates source-types ref member-candidates))
+        inherited-candidates (inherited-member-candidates source-types
+                                                          parent-by-node
+                                                          source-node-types
+                                                          direct-supertypes
+                                                          ref
+                                                          member-candidates)]
     (or (when (and (= "hashCode" name) receiver-candidates)
           (resolve-function-candidates-tx db source-types id arg-types receiver-candidates))
         (when-let [known-call (or (known-call-resolution ref)
@@ -1484,6 +1582,7 @@
         (when-not (and (= "matches" name)
                        (:call/receiver-type ref))
           (resolve-function-candidates-tx db source-types id arg-types candidates))
+        (resolve-function-candidates-tx db source-types id arg-types inherited-candidates)
         (unresolved-ref-tx id (if (seq candidates)
                                 :resolve.reason/analysis-api-limitation
                                 :resolve.reason/missing-classpath)))))
@@ -1504,6 +1603,9 @@
                           source-types)
         functions (function-index decls)
         methods (method-index decls)
+        parent-by-node (project-parent-node-index db project-id)
+        source-node-types (source-node-type-index decls)
+        direct-supertypes (project-direct-supertype-index db project-id source-types type-index)
         analysis-api-tx (when (:kotlin/analysis-api? opts)
                           (:tx-data (kotlin-analysis-api/setup-facts db project-id opts)))]
     (vec
@@ -1518,7 +1620,15 @@
                   (type-resolution-tx db type-index ref)
 
                   :ref.kind/function-call
-                  (function-resolution-tx db functions methods source-types type-index ref)
+                  (function-resolution-tx db
+                                          functions
+                                          methods
+                                          source-types
+                                          type-index
+                                          parent-by-node
+                                          source-node-types
+                                          direct-supertypes
+                                          ref)
 
                   []))
               (project-refs db project-id type-index))))))
