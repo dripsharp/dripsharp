@@ -630,6 +630,10 @@ public final class StreamOperations {
         .allMatch(cp -> cp == '$' || Character.isUnicodeIdentifierPart(cp));
   }
 
+  public void appendCodePoints(String value, List<Integer> output) {
+    value.codePoints().forEach(cp -> output.add(cp));
+  }
+
   public Object[] asArray(List<String> names) {
     return names.stream().toArray();
   }
@@ -3516,6 +3520,7 @@ public final class Demo {
                                                    :java.stream/any-match
                                                    :java.stream/all-match
                                                    :java.stream/none-match
+                                                   :java.stream/for-each
                                                    :java.stream/distinct
                                                    :java.stream/sorted
                                                    :java.optional/or-else
@@ -3567,6 +3572,7 @@ public final class Demo {
                    [:java.stream/any-match "anyMatch" :feature.status/supported]
                    [:java.stream/all-match "allMatch" :feature.status/supported]
                    [:java.stream/none-match "noneMatch" :feature.status/supported]
+                   [:java.stream/for-each "forEach" :feature.status/supported]
                    [:java.stream/flat-map "flatMap" :feature.status/supported]
                    [:java.stream/map-to-int "mapToInt" :feature.status/supported]
                    [:java.stream/map-to-long "mapToLong" :feature.status/supported]

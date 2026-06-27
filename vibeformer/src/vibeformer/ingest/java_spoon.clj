@@ -835,6 +835,7 @@
    "findFirst" :java.stream/find-first
    "distinct" :java.stream/distinct
    "sorted" :java.stream/sorted
+   "forEach" :java.stream/for-each
    "iterator" :java.stream/iterator})
 
 (def unsupported-stream-features

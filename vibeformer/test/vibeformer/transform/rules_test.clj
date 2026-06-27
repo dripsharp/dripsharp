@@ -174,6 +174,7 @@
                             :java.stream-find-first/to-csharp-first-or-default
                             :java.stream-distinct/to-csharp-distinct
                             :java.stream-sorted/to-csharp-order-by
+                            :java.stream-for-each/to-csharp-list-for-each
                             :java.stream-iterator/to-csharp-enumerator
                             :java.iterator-has-next/to-csharp-move-next
                             :java.primitive-iterator-next-int/to-csharp-current
@@ -296,6 +297,7 @@
              :java.stream/find-first
              :java.stream/distinct
              :java.stream/sorted
+             :java.stream/for-each
              :java.stream/iterator
              :java.iterator/has-next
              :java.primitive-iterator/next-int
@@ -371,6 +373,7 @@
                      :java.stream/min
                      :java.stream/max
                      :java.stream/skip
+                     :java.stream/for-each
                      :java.optional/or-else
                      :java.reflection.wildcard-type/get-lower-bounds
                      :java.reflection.wildcard-type/get-upper-bounds

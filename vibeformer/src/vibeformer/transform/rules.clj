@@ -526,6 +526,11 @@
     :rule/input-feature :java.stream/sorted
     :rule/output-feature :csharp.api/linq-order-by
     :rule/status implemented-status}
+   {:rule/id :java.stream-for-each/to-csharp-list-for-each
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.stream/for-each
+    :rule/output-feature :csharp.api/list-for-each
+    :rule/status implemented-status}
    {:rule/id :java.stream-iterator/to-csharp-enumerator
     :rule/source-lang :lang/java
     :rule/input-feature :java.stream/iterator

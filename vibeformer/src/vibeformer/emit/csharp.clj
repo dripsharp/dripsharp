@@ -1991,6 +1991,15 @@
             (with-text (str target-text ".OrderBy(it => it)"))
             (apply-rule node :java.stream-sorted/to-csharp-order-by :rule-app.status/success))
 
+        (and (= "forEach" source-method-name)
+             (stream-owner? owner)
+             target
+             (= 1 (count (child-nodes db (:db/id node) :argument))))
+        (-> combined
+            linq-result
+            (with-text (str target-text ".ToList().ForEach(" args ")"))
+            (apply-rule node :java.stream-for-each/to-csharp-list-for-each :rule-app.status/success))
+
         (and (= "toList" source-method-name)
              (= "java.util.stream.Collectors" owner)
              (zero? (count (child-nodes db (:db/id node) :argument))))

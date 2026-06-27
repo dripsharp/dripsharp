@@ -290,6 +290,10 @@ public final class StreamOperations {
         .allMatch(cp -> cp > 0);
   }
 
+  public void appendCodePoints(String value, List<Integer> output) {
+    value.codePoints().forEach(cp -> output.add(cp));
+  }
+
   public Object[] asArray(List<String> names) {
     return names.stream().toArray();
   }
@@ -3028,6 +3032,7 @@ public final class Chain {
                            "return names.Select(it => it.Length).DefaultIfEmpty(0).Max();"
                            "return versions.Where(it => it.compareTo(requested) >= 0).MinBy(it => it.getVersion());"
                            "return value.EnumerateRunes().Select(rune => rune.Value).Skip(1).All(cp => cp > 0);"
+                           "value.EnumerateRunes().Select(rune => rune.Value).ToList().ForEach(cp => output.Add(cp));"
                            "return names.ToArray();"]]
             (is (str/includes? content snippet)))
           (is (= {:ok? true :failures []} coverage))
@@ -3044,6 +3049,7 @@ public final class Chain {
                         :java.stream-any-match/to-csharp-any
                         :java.stream-all-match/to-csharp-all
                         :java.stream-none-match/to-csharp-not-any
+                        :java.stream-for-each/to-csharp-list-for-each
                         :java.stream-flat-map/to-csharp-select-many
                         :java.stream-map-to-int/to-csharp-select
                         :java.stream-map-to-long/to-csharp-select
