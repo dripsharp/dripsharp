@@ -335,6 +335,11 @@
     :rule/input-feature :java.reflection.class/get-declared-constructors
     :rule/output-feature :csharp.api/type-constructors
     :rule/status implemented-status}
+   {:rule/id :java.class-for-name/to-csharp-get-type
+    :rule/source-lang :lang/java
+    :rule/input-feature :java.reflection.class/for-name
+    :rule/output-feature :csharp.api/type-get-type
+    :rule/status implemented-status}
    {:rule/id :java.type-get-type-name/to-csharp-full-name
     :rule/source-lang :lang/java
     :rule/input-feature :java.reflection.type/get-type-name
@@ -383,10 +388,6 @@
    {:rule/id :java.reflection/unsupported
     :rule/source-lang :lang/java
     :rule/input-feature :java.feature/reflection
-    :rule/status unsupported-status}
-   {:rule/id :java.class-for-name/unsupported
-    :rule/source-lang :lang/java
-    :rule/input-feature :java.reflection.class/for-name
     :rule/status unsupported-status}
    {:rule/id :java.class-get-method/unsupported
     :rule/source-lang :lang/java

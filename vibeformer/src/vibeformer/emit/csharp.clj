@@ -1649,12 +1649,22 @@
           (apply-rule node :java.modifier-is-abstract/to-csharp-type-attributes :rule-app.status/success))
 
       (and (= "java.lang.Class" owner)
+           (= "forName" source-method-name)
+           (= 1 (count (child-nodes db (:db/id node) :argument))))
+      (let [name-result (emit-argument ctx node 0)]
+        (-> name-result
+            (update :usings conj "System")
+            (with-text (str "Type.GetType(" (:text name-result) ", true)!"))
+            (apply-rule node :java.class-for-name/to-csharp-get-type :rule-app.status/success)))
+
+      (and (= "java.lang.Class" owner)
            (= "forName" source-method-name))
       (unsupported node
-                   :java.class-for-name/unsupported
+                   :java.class-for-name/to-csharp-get-type
                    {:method source-method-name
                     :owner owner
-                    :reason :emit.reason/unsupported-class-for-name})
+                    :argument-count (count (child-nodes db (:db/id node) :argument))
+                    :reason :emit.reason/unsupported-class-for-name-overload})
 
       (and (= "java.lang.Class" owner)
            (= "getMethod" source-method-name))

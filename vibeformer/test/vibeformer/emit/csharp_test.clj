@@ -380,6 +380,10 @@ public final class ReflectionApi {
     return ReflectionApi.class.getClassLoader();
   }
 
+  public static Class<?> load(String javaName) throws Exception {
+    return Class.forName(javaName);
+  }
+
   public static boolean sameLoader(Class<?> type) {
     return same(type.getClassLoader(), ReflectionApi.class.getClassLoader());
   }
@@ -3106,6 +3110,8 @@ public final class Chain {
                            "return type.Assembly;"
                            "public static Assembly localLoader()"
                            "return typeof(ReflectionApi).Assembly;"
+                           "public static Type load(string javaName)"
+                           "return Type.GetType(javaName, true)!;"
                            "public static bool sameLoader(Type type)"
                            "return ReflectionApi.same(type.Assembly, typeof(ReflectionApi).Assembly);"
                            "public static string castString(Type type, object value)"
@@ -3154,6 +3160,7 @@ public final class Chain {
                         :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream
                         :java.class-get-declared-methods/to-csharp-get-methods
                         :java.class-get-declared-constructors/to-csharp-get-constructors
+                        :java.class-for-name/to-csharp-get-type
                         :java.type-get-type-name/to-csharp-full-name
                         :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                         :java.parameterized-type-get-raw-type/to-csharp-type

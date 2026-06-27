@@ -141,6 +141,7 @@
                             :java.class-get-resource-as-stream/to-csharp-manifest-resource-stream
                             :java.class-get-declared-methods/to-csharp-get-methods
                             :java.class-get-declared-constructors/to-csharp-get-constructors
+                            :java.class-for-name/to-csharp-get-type
                             :java.type-get-type-name/to-csharp-full-name
                             :java.parameterized-type-get-actual-type-arguments/to-csharp-generic-arguments
                             :java.parameterized-type-get-raw-type/to-csharp-type
@@ -349,13 +350,14 @@
            (:rule/status (first (rules-by-feature :java.feature/synchronized-block)))))
     (is (= :rule.status/unsupported
            (:rule/status (first (rules-by-feature :java.feature/native-method)))))
-    (is (= :rule.status/unsupported
+    (is (= :rule.status/implemented
            (:rule/status (first (rules-by-feature :java.reflection.class/for-name)))))
     (doseq [feature [:java.stream.collector/to-map
                      :java.stream.collector/to-collection
                      :java.reflection.class/get-class-loader
                      :java.reflection.class/get-declared-methods
                      :java.reflection.class/get-declared-constructors
+                     :java.reflection.class/for-name
                      :java.stream/map-to-int
                      :java.stream/min
                      :java.stream/max

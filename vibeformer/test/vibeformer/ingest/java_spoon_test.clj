@@ -2550,7 +2550,7 @@ public final class Demo {
                    [:java.reflection.parameter/is-name-present "isNamePresent" :feature.status/supported]
                    [:java.reflection.parameter/get-name "getName" :feature.status/supported]
                    [:java.reflection.modifier/is-abstract "isAbstract" :feature.status/supported]
-                   [:java.reflection.class/for-name "forName" :feature.status/unsupported]}
+                   [:java.reflection.class/for-name "forName" :feature.status/supported]}
                    reflection-features)))))))
 
 (deftest classifies-unsupported-reflection-api-facts
