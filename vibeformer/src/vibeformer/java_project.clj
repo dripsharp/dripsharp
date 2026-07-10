@@ -55,7 +55,7 @@
                        {:schema-version (:schema-version configuration)}))
   (doseq [[section keys] [[:project [:assembly-name :root-namespace
                                     :target-framework :nullable :implicit-usings]]
-                          [:package [:id :version :description]]
+                          [:package [:id :version :description :authors :tags]]
                           [:output [:project-directory :source-directory
                                     :resource-directory :project-file
                                     :source-map-file :diagnostics-file
@@ -764,6 +764,9 @@
          "    <PackageId>" (xml-escape (:id package)) "</PackageId>\n"
          "    <Version>" (xml-escape (:version package)) "</Version>\n"
          "    <Description>" (xml-escape (:description package)) "</Description>\n"
+         "    <Authors>" (xml-escape (:authors package)) "</Authors>\n"
+         "    <PackageTags>" (xml-escape (:tags package)) "</PackageTags>\n"
+         "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
          "    <IsPackable>true</IsPackable>\n"
          "  </PropertyGroup>\n"
          "  <ItemGroup>\n"

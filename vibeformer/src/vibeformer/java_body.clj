@@ -418,16 +418,27 @@
     :else false))
 
 (defn- case-labels [children ^CtCase element]
-  (let [expressions (.getCaseExpressions element)]
+  (let [expressions (.getCaseExpressions element)
+        parent (.getParent element)
+        selector (cond
+                   (instance? CtSwitch parent) (.getSelector ^CtSwitch parent)
+                   (instance? CtSwitchExpression parent) (.getSelector ^CtSwitchExpression parent)
+                   :else nil)]
     (if (seq expressions)
       (sequence-node
        (map-indexed
         (fn [index expression]
           (let [{:keys [line column]} (spoon/source-location expression)
-                binding (str "__case_" (or line 0) "_" (or column 0) "_" index)]
-            (sequence-node [(raw (str "case var " binding
-                                      " when global::System.Object.Equals(" binding ", "))
-                            (child-node children expression) (raw "):")])))
+                binding (str "__case_" (or line 0) "_" (or column 0) "_" index)
+                primitive? (and selector
+                                (primitive-expression? selector)
+                                (primitive-expression? expression))]
+            (if primitive?
+              (sequence-node [(raw (str "case var " binding " when " binding " == "))
+                              (child-node children expression) (raw ":")])
+              (sequence-node [(raw (str "case var " binding
+                                        " when global::System.Object.Equals(" binding ", "))
+                              (child-node children expression) (raw "):")]))))
         expressions)
        "\n")
       (raw "default:"))))

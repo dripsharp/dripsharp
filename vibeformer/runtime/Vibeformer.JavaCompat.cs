@@ -8,6 +8,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Resources;
@@ -214,14 +215,103 @@ internal sealed class JavaDeque<T>
 
 internal sealed class JavaResourceBundle
 {
-    private readonly ResourceManager resources;
-    private readonly CultureInfo locale;
+    private readonly IReadOnlyDictionary<string, string> resources;
+
     internal JavaResourceBundle(string baseName, CultureInfo locale)
     {
-        resources = new ResourceManager(baseName, Assembly.GetExecutingAssembly());
-        this.locale = locale;
+        _ = locale;
+        var resourceName = baseName + ".properties";
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+            ?? throw new MissingManifestResourceException(resourceName);
+        resources = ReadProperties(stream);
     }
-    internal string GetString(string name) => resources.GetString(name, locale) ?? throw new MissingManifestResourceException(name);
+
+    internal string GetString(string name) =>
+        resources.TryGetValue(name, out var value) ? value : throw new MissingManifestResourceException(name);
+
+    private static IReadOnlyDictionary<string, string> ReadProperties(Stream stream)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        using var reader = new StreamReader(stream, Encoding.Latin1, false, 1024, leaveOpen: true);
+        var logicalLine = new StringBuilder();
+        var continued = false;
+
+        while (reader.ReadLine() is { } physicalLine)
+        {
+            if (continued) physicalLine = physicalLine.TrimStart(' ', '\t', '\f');
+            logicalLine.Append(physicalLine);
+            var slashCount = 0;
+            for (var index = logicalLine.Length - 1; index >= 0 && logicalLine[index] == '\\'; index--) slashCount++;
+            if (slashCount % 2 == 1)
+            {
+                logicalLine.Length--;
+                continued = true;
+                continue;
+            }
+
+            AddProperty(result, logicalLine.ToString());
+            logicalLine.Clear();
+            continued = false;
+        }
+
+        if (logicalLine.Length > 0) AddProperty(result, logicalLine.ToString());
+        return result;
+    }
+
+    private static void AddProperty(IDictionary<string, string> properties, string line)
+    {
+        var start = 0;
+        while (start < line.Length && char.IsWhiteSpace(line[start])) start++;
+        if (start == line.Length || line[start] is '#' or '!') return;
+
+        var escaped = false;
+        var keyEnd = start;
+        while (keyEnd < line.Length)
+        {
+            var current = line[keyEnd];
+            if (!escaped && (current is '=' or ':' || char.IsWhiteSpace(current))) break;
+            if (current == '\\' && !escaped) escaped = true;
+            else escaped = false;
+            keyEnd++;
+        }
+
+        var valueStart = keyEnd;
+        while (valueStart < line.Length && char.IsWhiteSpace(line[valueStart])) valueStart++;
+        if (valueStart < line.Length && line[valueStart] is '=' or ':') valueStart++;
+        while (valueStart < line.Length && char.IsWhiteSpace(line[valueStart])) valueStart++;
+
+        properties[Unescape(line[start..keyEnd])] = Unescape(line[valueStart..]);
+    }
+
+    private static string Unescape(string value)
+    {
+        var result = new StringBuilder(value.Length);
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] != '\\' || index + 1 == value.Length)
+            {
+                result.Append(value[index]);
+                continue;
+            }
+
+            var escaped = value[++index];
+            switch (escaped)
+            {
+                case 't': result.Append('\t'); break;
+                case 'n': result.Append('\n'); break;
+                case 'r': result.Append('\r'); break;
+                case 'f': result.Append('\f'); break;
+                case 'u':
+                    if (index + 4 >= value.Length)
+                        throw new FormatException("Incomplete Unicode escape in Java properties resource");
+                    result.Append((char)Convert.ToInt32(value.Substring(index + 1, 4), 16));
+                    index += 4;
+                    break;
+                default: result.Append(escaped); break;
+            }
+        }
+        return result.ToString();
+    }
 }
 
 internal class JavaFormat

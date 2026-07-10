@@ -55,6 +55,7 @@ Run these commands from `vibeformer`:
 ```text
 clojure -M:run generate
 clojure -M:run verify
+clojure -M:run package
 clojure -M:test
 clojure -M:test --namespace vibeformer.harness-test
 ```
@@ -67,3 +68,8 @@ classpath, and Java toolchain from its Gradle project. Generated files under
 `verify` performs that same clean generation and immediately builds the fresh
 project with warnings as errors. Compiler diagnostics are parsed and correlated
 through `source-map.edn` to the originating Spoon element and translation rule.
+
+`package` first performs the clean `verify` gate, packs that exact generated
+build into a fresh local feed, and restores, builds, and runs a newly created
+consumer with an isolated NuGet package cache. The consumer has no project
+reference or access to generated source and exercises the public parser package.

@@ -1,7 +1,8 @@
 (ns vibeformer.main
   (:require [clojure.string :as str]
             [vibeformer.compiler :as compiler]
-            [vibeformer.harness :as harness])
+            [vibeformer.harness :as harness]
+            [vibeformer.packaging :as packaging])
   (:import [clojure.lang ExceptionInfo]))
 
 (defn- fail!
@@ -12,17 +13,18 @@
 
 (defn -main
   [& args]
-  (if-not (contains? #{["generate"] ["verify"]} (vec args))
-    (fail! "Usage: clojure -M:run generate|verify" 2)
+  (if-not (contains? #{["generate"] ["verify"] ["package"]} (vec args))
+    (fail! "Usage: clojure -M:run generate|verify|package" 2)
     (try
       (case (first args)
         "generate" (harness/generate!)
-        "verify" (compiler/verify-clean-build!))
+        "verify" (compiler/verify-clean-build!)
+        "package" (packaging/verify-package-consumption!))
       (catch ExceptionInfo error
         (let [{:keys [output]} (ex-data error)]
-          (fail! (str "Vibeformer generation failed: " (.getMessage error)
+          (fail! (str "Vibeformer command failed: " (.getMessage error)
                       (when-not (str/blank? output)
                         (str "\n" (str/trim output))))
                  1)))
       (catch Throwable error
-        (fail! (str "Vibeformer generation failed unexpectedly: " (.getMessage error)) 1)))))
+        (fail! (str "Vibeformer command failed unexpectedly: " (.getMessage error)) 1)))))

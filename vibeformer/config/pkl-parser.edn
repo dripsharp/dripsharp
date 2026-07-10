@@ -6,7 +6,9 @@
            :implicit-usings false}
  :package {:id "Pkl.Parser"
            :version "0.0.0-development"
-           :description "Disposable Vibeformer generation of the Pkl parser API."}
+           :description "Disposable Vibeformer generation of the Pkl parser API."
+           :authors "Vibeformer"
+           :tags "pkl parser vibeformer"}
  :output {:project-directory "generated/pkl-parser"
           :source-directory "src"
           :resource-directory "resources"

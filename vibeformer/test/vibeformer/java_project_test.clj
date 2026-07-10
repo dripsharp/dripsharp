@@ -93,6 +93,11 @@
                   sources))
         (is (some #(str/includes? % "public override string ToString()")
                   sources))
+        (is (some #(re-find #"case var __case_\d+_\d+_\d+ when __case_\d+_\d+_\d+ == '=':"
+                            %)
+                  sources))
+        (is (some #(re-find #"when global::System.Object.Equals\(__case_" %)
+                  sources))
         (doseq [resolved-family
                 ["JavaCompat.ArrayCopy"             ; arrays
                  "JavaCompat.DequePush"             ; deque mutation/order
@@ -119,6 +124,8 @@
             upstream (first (:resources (:discovery (fixture/models))))]
         (is (str/includes? project "<TargetFramework>net8.0</TargetFramework>"))
         (is (str/includes? project "<Nullable>enable</Nullable>"))
+        (is (str/includes? project "<Authors>Vibeformer</Authors>"))
+        (is (str/includes? project "<PackageTags>pkl parser vibeformer</PackageTags>"))
         (is (str/includes? project
                            "LogicalName=\"org.pkl.parser.errorMessages.properties\""))
         (is (= (vec (Files/readAllBytes ^Path upstream))
