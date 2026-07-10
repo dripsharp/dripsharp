@@ -2,172 +2,132 @@
 
 ## Goal
 
-Build a source-to-source migration system that ports Java and Kotlin code to
-C#. The ultimate goal is to port `pkl` from Java and Kotlin to C#. The source
-for this is located in `../research/pkl`. Do not modify it, but use it to drive
-the features Vibeformer needs and test this library. Implement only what is
-needed for that project.
+Vibeformer is a reusable Java/Kotlin-to-C# source translator. Pkl is its first
+product target and requirements driver, not a reason to make the translator
+Pkl-specific. The Pkl source is in `../research/pkl`; do not modify it.
 
-The current product target is a .NET library, not every product surface in
-`../research/pkl`. The library target includes core Pkl runtime behavior and
-C# code generation. It explicitly excludes server support, CLI support,
-documentation generation, YAML support, MessagePack support, Java code
-generation, and Kotlin code generation. See [Port Scope](port-scope.md) for
-the current third-party library and product-surface decisions.
+The Pkl product boundary is defined by [Authoritative Product Goal](product-goal.md)
+and [Port Scope](port-scope.md). Temporary sequencing and status belong in
+Beads, not in this document.
 
-The system should not be a one-shot LLM translator and should not rely on
-hand-editing generated C# output. Instead, it should behave more like a
-compiler/transpiler:
+## Primary Pipeline
 
 ```text
-analyze source
-  -> store source facts in Datomic
-  -> transform from facts using deterministic rules
-  -> emit disposable C# output
+resolve projects, source sets, generated sources, and dependencies
+  -> build a typed semantic AST with resolved symbols
+  -> recursively translate declarations, statements, and expressions
+  -> map resolved source symbols to .NET equivalents
+  -> request focused compatibility/runtime support only when necessary
+  -> emit complete disposable C# projects
   -> compile
-  -> if compilation fails, fix the analyzer/model/transform rules
-  -> delete generated output and regenerate from scratch
+  -> compare behavior independently
+  -> fix the translator or runtime boundary and regenerate from scratch
 ```
 
-The generated C# is disposable. The durable assets are:
+For Java, Spoon's resolved model is the semantic AST. Translation walks that
+model directly. Vibeformer must not reconstruct a second partial AST in a
+database or reparse source text to translate constructs already represented by
+Spoon.
 
-1. The original Java/Kotlin source.
-2. The analysis facts stored in Datomic.
-3. The deterministic transformation rules.
-4. The mapping/provenance data between source constructs and generated output.
-5. The compiler diagnostics used to improve the transformer.
+For Kotlin, the same principle applies using PSI plus the Kotlin Analysis API:
+syntax and resolved semantics come from the language frontend, then a recursive
+translator emits C#.
 
-Compiler errors are not treated as local patch targets. They are evidence that
-the transpiler is incomplete or incorrect.
+## Durable Assets
 
-## Core Philosophy
+Generated C# is disposable. Durable assets are:
 
-The central principle is:
+1. Original Java/Kotlin source.
+2. Project and semantic-resolution configuration.
+3. Recursive translators.
+4. Resolved-symbol mapping registries.
+5. Focused compatibility and destination-runtime source.
+6. Independent behavior tests and compiler regressions.
+7. Optional provenance or analysis data derived from translation.
+
+Generated output must never require manual patches. A failure is fixed in
+resolution, a mapping, a transform, project emission, or the focused runtime
+boundary, then the output is regenerated.
+
+## Semantic Resolution Requirement
+
+Accepted translation requires the real project classpath, generated sources,
+and dependency information. Source references must resolve to their actual
+types, overloads, constructors, fields, and generic arguments.
+
+No-classpath parsing is useful for inventory and diagnostics over incomplete
+inputs. It is not sufficient evidence for product emission. Unresolved symbols,
+ambiguous overloads, and fallback types block accepted output.
+
+## Recursive Translation
+
+The normal case is intentionally simple:
 
 ```text
-source code is truth
-Datomic facts are analyzed truth
-transform rules are the transpiler
-generated C# is disposable
-compiler errors are bugs in the transpiler
+class       -> translate its members
+method      -> translate its parameters, return type, and body
+block       -> translate each statement
+if          -> translate condition, then branch, and else branch
+invocation  -> translate target and arguments, then apply a resolved-method map
+type        -> translate type arguments, then apply a resolved-type map
 ```
 
-Do not patch generated C# directly. If generated code fails to compile, the
-correct response is to improve one or more of:
+Each translation result may include a C# node or text, required usings,
+compatibility-helper requests, diagnostics, source mapping, and rule identity.
+Children are translated recursively from the frontend model.
 
-* Source fact extraction
-* Semantic modeling
-* Type mapping
-* Rule selection
-* Transformation logic
-* Runtime compatibility helpers
-* Project/dependency mapping
+## Reusable Translation and Runtime Boundary
 
-Then regenerate the entire C# project from source facts.
+Ordinary Java/Kotlin language behavior and standard-library APIs should map to
+normal C# and existing .NET facilities. Do not introduce a parallel JVM runtime
+when .NET already provides suitable semantics.
 
-## High-Level Pipeline
+Native .NET code is appropriate only when generated C# and existing .NET APIs
+cannot faithfully provide the required behavior. Native replacements must be:
+
+* Limited to missing JVM, GraalVM, Truffle, or source-product semantics.
+* Isolated behind explicit capability boundaries.
+* Implemented as reviewable C# source, not escaped C# embedded in Clojure.
+* Independently tested against upstream behavior.
+* Generalized when the capability is useful to other migrations.
+
+Pkl-specific evaluator semantics belong in the Pkl destination runtime, not in
+the reusable Java/Kotlin analyzer or emitter. The Pkl execution substrate will
+need a focused .NET replacement for behavior supplied by Truffle, while normal
+collections, I/O, URIs, reflection, concurrency, and similar platform APIs
+should use .NET wherever practical.
+
+## Optional Analysis Side Channel
+
+Datomic may be used for inventory, cross-project queries, provenance, rule
+applications, or diagnostic history when those capabilities materially help.
+It is not the semantic frontend and is not a mandatory intermediate
+representation.
+
+A direct typed-AST-node-to-C# translation must not wait for the frontend model
+to be serialized into and reconstructed from Datomic.
+
+## Validation
+
+Compilation is necessary but not sufficient:
 
 ```text
-1. Source discovery
-   Locate .java, .kt, build files, generated sources, resources, dependencies.
-
-2. Per-language analysis
-   Java source -> Spoon extractor
-   Kotlin source -> Kotlin PSI / Kotlin Analysis API extractor
-
-3. Normalize into Datomic
-   Store declarations, types, calls, inheritance, features, source spans, rule coverage data.
-
-4. Feature inventory
-   Query what Java/Kotlin constructs actually exist in the codebase.
-
-5. Conversion planning
-   Determine which features are supported, unsupported, risky, or intentionally stubbed.
-
-6. Transform
-   Apply deterministic conversion rules from Datomic facts to C# output.
-
-7. Emit
-   Generate full C# project files and provenance mappings.
-
-8. Compile
-   Run dotnet build or csc.
-
-9. Diagnose
-   Ingest compiler errors back into Datomic and map them to source nodes and transform rules.
-
-10. Fix transpiler
-   Update extractor/model/rules/helpers.
-
-11. Regenerate from scratch
-   Delete generated output and rerun the pipeline.
+generated project -> dotnet build
+packed package     -> independent consumer
+source behavior    -> compare with generated-package behavior
 ```
 
-## Current Milestone Boundary
+Product tests must be independent of the implementation generator. Upstream Pkl
+tests and fixtures are authoritative behavior evidence for the in-scope .NET
+library.
 
-The committed implementation has not completed this whole pipeline for
-`../research/pkl`. The current milestone is intentionally staged:
+## First Architectural Proof
 
-```text
-samples:
-  analyze -> Datomic -> transform -> emit C# -> optional dotnet build
-          -> ingest diagnostics when build output exists
+The first proof for the new pipeline is the complete `pkl-parser` Java module:
 
-research/pkl:
-  discover -> classpath/destination mapping -> source facts -> inventory
-           -> unresolved-reference diagnostics -> provenance
-           -> skip C# emission in facts-only mode
-```
+* Resolve the full module and its classpath.
+* Translate all reachable declarations and bodies through the typed Spoon AST.
+* Build the generated C# parser without manual output edits.
+* Compare parser behavior with upstream Pkl.
 
-That distinction matters. Green samples and a green facts-only research dry-run
-mean the durable pipeline is improving; they do not mean Pkl is portable yet.
-The next milestone is to reduce unresolved references, generate full research
-C# projects from destination facts, run `dotnet build` where feasible, and feed
-diagnostics back into analyzer/model/rule/helper work.
-
-## Important Non-Goal: Patching Generated C#
-
-Do not use this workflow:
-
-```text
-generate rough C#
-  -> patch generated C#
-  -> LLM fix generated C#
-  -> keep massaging generated output
-```
-
-That creates unreproducible state and undermines the transpiler.
-
-Instead use:
-
-```text
-generate C#
-  -> compile fails
-  -> identify bad source feature / transform rule / type mapping
-  -> fix transpiler
-  -> regenerate everything
-```
-
-Generated C# should be treated like `target/`, `bin/`, generated protobuf code,
-or compiler output.
-
-## Summary
-
-The desired system is a compiler-like Java/Kotlin-to-C# migration pipeline.
-
-The correct loop is:
-
-```text
-analyze -> Datomic -> transform -> compile
-```
-
-If compilation fails, the generated output is not patched. Instead, the
-analyzer, source model, type mapping, transform rule, or helper library is
-fixed. Then the generated C# output is deleted and recreated from scratch.
-
-This keeps the migration reproducible, queryable, testable, and incrementally
-improvable.
-
-The main implementation challenge is not syntax emission. It is building a
-useful source fact model, tracking feature coverage, and making every compiler
-failure actionable against the deterministic transpiler.
+This is an architectural proof, not a narrowing of the Pkl product goal.

@@ -14,6 +14,13 @@ The target library should provide the Pkl behavior needed by .NET consumers:
   points.
 * C# code generation for Pkl schemas and APIs.
 
+Pkl is the first product target, not the definition of the translator. The
+Java/Kotlin-to-C# pipeline, resolved-symbol mappings, and compatibility layer
+should remain reusable by future projects. Pkl evaluation and language
+semantics belong in the generated/product implementation rather than in a
+generic Vibeformer runtime. The generic runtime should contain only facilities
+needed to bridge JVM behavior for which .NET has no suitable equivalent.
+
 The target does not include command-line tooling, the Pkl server, Gradle
 integration, documentation site generation, Java/Kotlin code generators, native
 image packaging, or build/test infrastructure except where those systems expose
@@ -47,8 +54,9 @@ surface they support, not merely by Maven coordinate.
 These are relevant to the .NET library target:
 
 * GraalVM / Truffle: supports the current JVM runtime and language
-  implementation. There is no direct .NET package mapping. This is an
-  architecture and reimplementation/adaptation problem, not a dependency swap.
+  implementation. There is no direct .NET package mapping. Pkl-specific
+  evaluation behavior must be reimplemented as product code; only genuinely
+  reusable missing-JVM facilities belong in Vibeformer's compatibility layer.
 * Paguro: supports persistent/immutable data structures. Prefer .NET collection
   semantics such as `System.Collections.Immutable` or focused helpers, depending
   on the exact source usage.
