@@ -444,10 +444,31 @@ namespace Pkl.Core.Runtime
 
 namespace Pkl.Core.Runtime.Polyglot
 {
+    public sealed class Engine
+    {
+        public static Builder NewBuilder(params string[] languages) => new();
+
+        public sealed class Builder
+        {
+            public Builder Option(string key, string value) => this;
+            public Engine Build() => new();
+        }
+    }
+
     public sealed class Context : IDisposable
     {
+        public static Builder NewBuilder(params string[] languages) => new();
+        public void Initialize(string language) { }
+        public void Enter() { }
+        public void Leave() { }
         public void Close(bool cancelIfExecuting) { }
         public void Dispose() => Close(false);
+
+        public sealed class Builder
+        {
+            public Builder Engine(Engine engine) => this;
+            public Context Build() => new();
+        }
     }
 }
 
@@ -617,6 +638,19 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         internal T Insert<T>(T child) where T : Node { child.parent = this; return child; }
     }
 
+    // Truffle uses this exception family for non-error interpreter control
+    // flow.  Keeping it distinct from ordinary failures preserves the
+    // generated evaluator's catch behavior.
+    public class ControlFlowException : Exception { }
+
+    [AttributeUsage(AttributeTargets.Class, Inherited = true)]
+    public sealed class NodeInfo : Attribute
+    {
+        private readonly string shortName;
+        public NodeInfo(string shortName = "") => this.shortName = shortName;
+        public string ShortName() => shortName;
+    }
+
     public abstract class RootNode : Node
     {
         protected RootNode(object? language, FrameDescriptor descriptor) { }
@@ -642,6 +676,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
 
 namespace Pkl.Core.Runtime.Truffle.api.instrumentation
 {
+    using Pkl.Core.Runtime.Truffle.api.frame;
     using Pkl.Core.Runtime.Truffle.api.nodes;
 
     public interface InstrumentableNode
@@ -649,10 +684,128 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
         public interface WrapperNode
         {
             Node GetDelegateNode();
+            ProbeNode GetProbeNode();
+        }
+    }
+
+    public class ProbeNode : Node
+    {
+        public static readonly object UNWIND_ACTION_REENTER = new();
+
+        public virtual void OnEnter(VirtualFrame frame) { }
+        public virtual void OnReturnValue(VirtualFrame frame, object? value) { }
+        public virtual object? OnReturnExceptionalOrUnwind(
+            VirtualFrame frame,
+            Exception exception,
+            bool wasOnReturnExecuted) => null;
+    }
+
+    public sealed class EventContext
+    {
+        private readonly Node instrumentedNode;
+        internal EventContext(Node instrumentedNode) => this.instrumentedNode = instrumentedNode;
+        public Node GetInstrumentedNode() => instrumentedNode;
+    }
+
+    public abstract class ExecutionEventNode : Node
+    {
+        protected internal virtual void OnReturnValue(VirtualFrame frame, object? result) { }
+    }
+
+    public delegate ExecutionEventNode ExecutionEventNodeFactory(EventContext context);
+
+    public sealed class EventBinding<T> : IDisposable
+    {
+        public void Dispose() { }
+    }
+
+    public sealed class Instrumenter
+    {
+        public EventBinding<ExecutionEventNodeFactory> AttachExecutionEventFactory(
+            SourceSectionFilter filter,
+            ExecutionEventNodeFactory factory) => new();
+    }
+
+    public sealed class SourceSectionFilter
+    {
+        public static Builder NewBuilder() => new();
+
+        public sealed class Builder
+        {
+            public Builder TagIs(params Type[] tags) => this;
+            public SourceSectionFilter Build() => new();
         }
     }
 
     public class Tag { }
+}
+
+namespace Pkl.Core.Runtime.Truffle.api.dsl
+{
+    using Pkl.Core.Runtime.Truffle.api.nodes;
+
+    public static class DSLSupport
+    {
+        public static bool AssertIdempotence(bool value) => value;
+    }
+
+    public sealed class UnsupportedSpecializationException : Exception
+    {
+        public UnsupportedSpecializationException(
+            Node node,
+            Node[] suppliedNodes,
+            params object?[] suppliedValues)
+            : base("No generated Truffle specialization accepts the supplied values.") { }
+    }
+
+    public static class InlineSupport
+    {
+        public class ReferenceField
+        {
+            protected readonly string FieldName;
+
+            protected ReferenceField(string fieldName) => FieldName = fieldName;
+
+            // The Truffle generator calls the raw Java factory and relies on
+            // assignment conversion to its parameterized updater type.  A
+            // dynamic result preserves that generated call shape in C# while
+            // constructing the exact closed updater requested by valueType.
+            public static dynamic Create(object updater, string fieldName, Type valueType)
+            {
+                var closedType = typeof(ReferenceField<>).MakeGenericType(valueType);
+                return Activator.CreateInstance(closedType, fieldName)!;
+            }
+        }
+
+        public sealed class ReferenceField<T> : ReferenceField where T : class
+        {
+            public ReferenceField(string fieldName) : base(fieldName) { }
+
+            private System.Reflection.FieldInfo Field(object receiver) =>
+                receiver.GetType().GetField(
+                    FieldName,
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(receiver.GetType().FullName, FieldName);
+
+            public T? GetVolatile(object receiver)
+            {
+                lock (receiver) return (T?)Field(receiver).GetValue(receiver);
+            }
+
+            public bool CompareAndSet(object receiver, T? expected, T? update)
+            {
+                lock (receiver)
+                {
+                    var field = Field(receiver);
+                    if (!ReferenceEquals(field.GetValue(receiver), expected)) return false;
+                    field.SetValue(receiver, update);
+                    return true;
+                }
+            }
+        }
+    }
 }
 
 namespace Pkl.Core.Runtime.Truffle.api.exception
@@ -689,6 +842,7 @@ namespace Pkl.Core.Runtime.Truffle.api
     public static class CompilerDirectives
     {
         internal static void TransferToInterpreter() { }
+        internal static void TransferToInterpreterAndInvalidate() { }
     }
 
     public static class Truffle
@@ -704,10 +858,37 @@ namespace Pkl.Core.Runtime.Truffle.api
         internal RootCallTarget CreateCallTarget(RootNode root) => new(root);
     }
 
-    public abstract class TruffleLanguage<TContext> { }
+    public sealed class ContextThreadLocal<T> where T : class
+    {
+        private readonly System.Threading.ThreadLocal<T> local;
+        internal ContextThreadLocal(Func<object?, System.Threading.Thread, T> factory) =>
+            local = new System.Threading.ThreadLocal<T>(
+                () => factory(null, System.Threading.Thread.CurrentThread));
+        public T Get() => local.Value!;
+    }
+
+    public sealed class ContextLocalSupport
+    {
+        public ContextThreadLocal<T> CreateContextThreadLocal<T>(
+            Func<object?, System.Threading.Thread, T> factory) where T : class => new(factory);
+    }
+
+    public abstract class TruffleLanguage<TContext> where TContext : class
+    {
+        protected readonly ContextLocalSupport locals = new();
+        protected internal abstract TContext CreateContext(TruffleLanguage.Env env);
+        public abstract CallTarget Parse(TruffleLanguage.ParsingRequest request);
+    }
 
     public static class TruffleLanguage
     {
+        public sealed class Env
+        {
+            public dynamic Lookup(Type serviceType) => Activator.CreateInstance(serviceType)!;
+        }
+
+        public sealed class ParsingRequest { }
+
         public sealed class LanguageReference<TLanguage> where TLanguage : class
         {
             private readonly Lazy<TLanguage> language;

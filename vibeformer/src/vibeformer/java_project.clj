@@ -872,6 +872,8 @@
 (defn- method-modifiers [^CtType owner-type ^CtMethod method body name]
   (let [interface? (instance? CtInterface owner-type)
         sealed-owner? (or (modifier? owner-type ModifierKind/FINAL)
+                          (and (instance? CtClass owner-type)
+                               (.isAnonymous ^CtClass owner-type))
                           (instance? CtRecord owner-type)
                           (instance? CtEnum owner-type))
         static? (modifier? method ModifierKind/STATIC)
@@ -1007,12 +1009,26 @@
 (defn- field-name [^CtField field]
   (identifier (.getSimpleName field)))
 
+(defn- private-type-component? [^CtTypeReference reference]
+  (when reference
+    (some (fn [^CtTypeReference argument]
+            (or (some-> argument .getTypeDeclaration
+                        (modifier? ModifierKind/PRIVATE))
+                (private-type-component? argument)))
+          (.getActualTypeArguments reference))))
+
 (defn- field-node [ctx ^CtType owner-type ^CtField field]
   (let [owner (.getQualifiedName owner-type)
         enum-value? (instance? CtEnumValue field)
         name (if enum-value? (identifier (.getSimpleName field)) (field-name field))
         initializer (.getDefaultExpression field)
-        words [(visibility field (if enum-value? "public" "internal"))
+        ;; Java erases generic arguments when checking member accessibility,
+        ;; while C# includes them.  Cap a field at private when its closed type
+        ;; mentions a private nested declaration (as Truffle cache updaters do).
+        field-visibility (if (private-type-component? (.getType field))
+                           "private"
+                           (visibility field (if enum-value? "public" "internal")))
+        words [field-visibility
                (when (or enum-value? (modifier? field ModifierKind/STATIC)) "static")
                (when (or enum-value? (modifier? field ModifierKind/FINAL)) "readonly")
                (when (modifier? field ModifierKind/VOLATILE) "volatile")]
