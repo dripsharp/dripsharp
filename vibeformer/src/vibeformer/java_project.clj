@@ -881,6 +881,46 @@
   (let [type (.getDeclaringType executable)]
     (str (.getQualifiedName type) "#" (.getSignature executable))))
 
+(defn- destination-type-key [^CtTypeReference reference]
+  (let [component (when (.isArray reference) (.getComponentType reference))
+        qualified (.getQualifiedName reference)
+        base (if component
+               (str (destination-type-key component) "[]")
+               (or (first (get external-type-mappings qualified)) qualified))
+        arguments (when-not component (.getActualTypeArguments reference))]
+    (if (seq arguments)
+      (str base "<" (str/join "," (map destination-type-key arguments)) ">")
+      base)))
+
+(defn- destination-parameter-key [^CtMethod method]
+  (mapv #(destination-type-key (.getType ^CtParameter %)) (.getParameters method)))
+
+(defn- direct-methods [^CtType type]
+  (filter #(instance? CtMethod %) (.getTypeMembers type)))
+
+(defn- destination-overload-collision? [^CtMethod method]
+  (let [simple-name (.getSimpleName method)
+        destination-key (destination-parameter-key method)
+        owners (distinct
+                (keep #(.getDeclaringType ^CtMethod %)
+                      (cons method (.getTopDefinitions method))))]
+    (boolean
+     (some (fn [^CtType owner]
+             (< 1 (count (filter #(and (= simple-name (.getSimpleName ^CtMethod %))
+                                       (= destination-key (destination-parameter-key %)))
+                                 (direct-methods owner)))))
+           owners))))
+
+(defn- overload-source-suffix [^CtMethod method]
+  (let [parts (map (fn [^CtParameter parameter]
+                     (let [reference (.getType parameter)
+                           simple (if (.isArray reference)
+                                    (str (.getSimpleName (.getComponentType reference)) "Array")
+                                    (.getSimpleName reference))]
+                       (pascal (str/replace simple #"[$.]" "_"))))
+                   (.getParameters method))]
+    (str "From" (str/join "And" parts))))
+
 (defn- method-name [^CtMethod method]
   (let [simple-name (.getSimpleName method)
         owner (.getDeclaringType method)
@@ -902,15 +942,22 @@
     ;; Java permits a method and nested type to share a name; C# does not.
     ;; Derive the destination factory name from the live declaring type so the
     ;; declaration and all resolved project call sites take the same path.
-    (if (contains? nested-type-names base-name)
-      (str "Create" base-name)
-      base-name)))
+    (let [base-name (if (contains? nested-type-names base-name)
+                      (str "Create" base-name)
+                      base-name)]
+      (if (destination-overload-collision? method)
+        (str base-name (overload-source-suffix method))
+        base-name))))
 
 (defn- top-definitions [^CtMethod method]
   (vec (.getTopDefinitions method)))
 
 (defn- class-definition [^CtMethod method]
   (some #(when-not (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
+        (top-definitions method)))
+
+(defn- interface-definition [^CtMethod method]
+  (some #(when (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
         (top-definitions method)))
 
 (defn- superclass-method-definition [^CtType owner-type ^CtMethod method]
@@ -981,16 +1028,7 @@
         override? (and (not static?)
                        (or (java-object-override? method)
                            overridable-base
-                           (and (nil? (:selected-declarations ctx))
-                                (inherited-interface-contract? owner-type method))))
-        annotated-override? (some #(= "java.lang.Override"
-                                      (some-> ^CtAnnotation % .getAnnotationType .getQualifiedName))
-                                  (.getAnnotations method))
-        concrete-superclass? (let [superclass (when (instance? CtClass owner-type)
-                                                (.getSuperclass ^CtClass owner-type))]
-                               (and superclass
-                                    (not= "java.lang.Object" (.getQualifiedName superclass))))
-        override? (or override? (and annotated-override? concrete-superclass?))
+                           (inherited-interface-contract? owner-type method)))
         base-owner (some-> overridable-base .getDeclaringType .getQualifiedName)
         member-visibility (if (and overridable-base
                                    (modifier? overridable-base ModifierKind/PROTECTED)
@@ -1046,8 +1084,7 @@
       {:owner owner :signature (.getSignature method)})))
 
 (defn- missing-interface-contracts [ctx ^CtType type]
-  (when (and (nil? (:selected-declarations ctx))
-             (instance? CtClass type)
+  (when (and (instance? CtClass type)
              (modifier? type ModifierKind/ABSTRACT))
     (let [own-methods (vec (.getMethods type))]
       (->> (.getSuperInterfaces type)
@@ -1067,7 +1104,12 @@
         words (method-modifiers ctx owner-type method body name)
         signature (str name "(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
                                                     (.getParameters method))) ")")
-        return-type (type-node ctx (.getType method))
+        destination-return-reference
+        (or (some-> (superclass-method-definition owner-type method) .getType)
+            (some-> (class-definition method) .getType)
+            (some-> (interface-definition method) .getType)
+            (.getType method))
+        return-type (type-node ctx destination-return-reference)
         return-type (if (and (nullable-annotation? method)
                              (not (.isPrimitive (.getType method))))
                       (sequence-node [return-type (raw "?")])

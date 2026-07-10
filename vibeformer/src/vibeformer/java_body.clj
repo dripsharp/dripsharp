@@ -250,16 +250,20 @@
 (defn- executable-key [context ^CtInvocation invocation]
   (:key (occurrence context (.getExecutable invocation))))
 
-(defn- normal-invocation [element children]
-  (let [target-element (.getTarget ^CtInvocation element)
-        target (when target-element
-                 (let [node (child-node children target-element)]
-                   (if (nullable-expression? target-element)
-                     (sequence-node [node (raw "!")])
-                     node)))
-        executable (child-node children (.getExecutable ^CtInvocation element))
-        callable (if target (member target (:text (csharp/render executable))) executable)]
-    (invoke callable (children-nodes children (.getArguments ^CtInvocation element)))))
+(defn- normal-invocation
+  ([element children] (normal-invocation element children false))
+  ([element children property?]
+   (let [target-element (.getTarget ^CtInvocation element)
+         target (when target-element
+                  (let [node (child-node children target-element)]
+                    (if (nullable-expression? target-element)
+                      (sequence-node [node (raw "!")])
+                      node)))
+         executable (child-node children (.getExecutable ^CtInvocation element))
+         callable (if target (member target (:text (csharp/render executable))) executable)]
+     (if property?
+       callable
+       (invoke callable (children-nodes children (.getArguments ^CtInvocation element)))))))
 
 (defn- class-literal? [^CtFieldRead element]
   (and (= "class" (some-> element .getVariable .getSimpleName))
@@ -416,7 +420,11 @@
               (raw "")
               (= :record-component-accessor (:resolution resolved))
               (member target ((:pascal services) (.getSimpleName (.getExecutable element))))
-              (= :project (:origin resolved)) (normal-invocation element children)
+              (= :project (:origin resolved))
+              (normal-invocation
+               element children
+               (boolean (and (instance? CtMethod (:declaration resolved))
+                             ((:record-component-contract? services) (:declaration resolved)))))
               (some #(str/starts-with? key (str "executable:" %))
                     ["org.pkl.parser."
                      "java."
