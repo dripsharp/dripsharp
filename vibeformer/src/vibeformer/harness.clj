@@ -35,12 +35,13 @@
    (let [root (paths/absolute workspace-root)
          render-many #(->> % (map (partial portable-path root)) sort vec)]
      (cond-> {:schema-version 1
-              :project :pkl-parser
+              :project (keyword (subs (or (:gradle-project discovery) ":pkl-parser") 1))
               :submodule {:path "research/pkl" :revision revision}
               :toolchain {:java-home (portable-path root (:java-home discovery))
                           :java-release (:java-release discovery)
                           :preview-features (:preview-features discovery)}
               :production {:java-sources (render-many (:java-sources discovery))
+                           :resource-root (portable-path root (:resource-root discovery))
                            :resources (render-many (:resources discovery))
                            :classpath (render-many (:classpath discovery))}}
        destination (assoc :destination destination)))))
@@ -72,7 +73,8 @@
          source-count (count (get-in config [:production :java-sources]))
          resources (get-in config [:production :resources])]
      (spit (str config-file) (str (pr-str config) "\n"))
-     (println (format "Prepared pkl-parser: %d production Java files, %d production resource%s, %d classpath entries."
+     (println (format "Prepared %s: %d production Java files, %d production resource%s, %d classpath entries."
+                      (or (:gradle-project discovery) ":pkl-parser")
                       source-count
                       (count resources)
                       (if (= 1 (count resources)) "" "s")

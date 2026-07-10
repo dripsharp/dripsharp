@@ -1,11 +1,15 @@
 import org.gradle.api.tasks.SourceSetContainer
 
 gradle.projectsEvaluated {
-  def parserProject = gradle.rootProject.findProject(":pkl-parser")
-  if (parserProject != null) {
-    parserProject.tasks.register("vibeformerDescribeMain") {
+  def projectPath = providers.gradleProperty("vibeformer.project").orElse(":pkl-parser").get()
+  def selectedProject = gradle.rootProject.findProject(projectPath)
+  if (selectedProject != null) {
+    def compileJavaProvider = selectedProject.tasks.named("compileJava")
+    def processResourcesProvider = selectedProject.tasks.named("processResources")
+    selectedProject.tasks.register("vibeformerDescribeMain") {
       group = "vibeformer"
-      description = "Reports resolved pkl-parser production inputs to Vibeformer"
+      description = "Reports resolved ${projectPath} production inputs to Vibeformer"
+      dependsOn(compileJavaProvider, processResourcesProvider)
 
       doLast {
         def outputProperty = providers.gradleProperty("vibeformer.output")
@@ -13,26 +17,38 @@ gradle.projectsEvaluated {
           throw new GradleException("Missing required -Pvibeformer.output=<path>")
         }
 
-        def sourceSets = parserProject.extensions.getByType(SourceSetContainer)
+        def sourceSets = selectedProject.extensions.getByType(SourceSetContainer)
         def main = sourceSets.getByName("main")
-        def compileJava = parserProject.tasks.named("compileJava").get()
+        def compileJava = compileJavaProvider.get()
+        def processResources = processResourcesProvider.get()
         def javaHome = compileJava.javaCompiler.get().metadata.installationPath.asFile
         def javaRelease = compileJava.options.release.orNull
         if (javaRelease == null) {
-          throw new GradleException("pkl-parser compileJava does not declare a Java release")
+          throw new GradleException("${projectPath} compileJava does not declare a Java release")
         }
         def previewFeatures = compileJava.options.compilerArgs.contains("--enable-preview")
         def records = []
 
+        records.add(["project-path", projectPath])
         records.add(["java-home", javaHome])
         records.add(["java-release", javaRelease])
         records.add(["preview-features", previewFeatures])
+        records.add(["resource-root", processResources.destinationDir])
         main.allJava.files.each { records.add(["source", it]) }
-        main.resources.files.each { records.add(["resource", it]) }
-        main.compileClasspath.files.each { records.add(["classpath", it]) }
+        if (compileJava.options.generatedSourceOutputDirectory.present) {
+          compileJava.options.generatedSourceOutputDirectory.get().asFileTree
+            .matching { include("**/*.java") }
+            .files.each { records.add(["source", it]) }
+        }
+        processResources.destinationDir.eachFileRecurse { resource ->
+          if (resource.isFile()) records.add(["resource", resource])
+        }
+        main.compileClasspath.files.findAll { it.exists() }.each {
+          records.add(["classpath", it])
+        }
 
         records = records.collect { record ->
-          def value = record[0] in ["java-release", "preview-features"]
+          def value = record[0] in ["project-path", "java-release", "preview-features"]
             ? record[1].toString()
             : record[1].canonicalFile.absolutePath
           if (value.contains("\t") || value.contains("\n") || value.contains("\r")) {
@@ -41,12 +57,14 @@ gradle.projectsEvaluated {
           [record[0], value]
         }.sort { left, right ->
           def kindOrder = [
-            "java-home": 0,
-            "java-release": 1,
-            "preview-features": 2,
-            "source": 3,
-            "resource": 4,
-            "classpath": 5,
+            "project-path": 0,
+            "java-home": 1,
+            "java-release": 2,
+            "preview-features": 3,
+            "resource-root": 4,
+            "source": 5,
+            "resource": 6,
+            "classpath": 7,
           ]
           (kindOrder[left[0]] <=> kindOrder[right[0]]) ?: (left[1] <=> right[1])
         }
@@ -54,7 +72,7 @@ gradle.projectsEvaluated {
         def outputFile = file(outputProperty.get())
         outputFile.parentFile.mkdirs()
         outputFile.withWriter("UTF-8") { writer ->
-          writer.write("VIBEFORMER_GRADLE_INPUTS_V2\n")
+          writer.write("VIBEFORMER_GRADLE_INPUTS_V3\n")
           records.each { record -> writer.write("${record[0]}\t${record[1]}\n") }
         }
       }

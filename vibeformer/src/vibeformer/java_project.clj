@@ -779,14 +779,15 @@
          "  </ItemGroup>\n"
          "</Project>\n")))
 
-(defn- resource-relative [^Path resource]
-  (let [portable (str/replace (str resource) "\\" "/")
-        marker "/src/main/resources/"
-        index (.indexOf portable marker)]
-    (when (neg? index)
-      (throw (ex-info "Production resource is outside src/main/resources"
-                      {:kind :unmapped-production-resource :path portable})))
-    (subs portable (+ index (count marker)))))
+(defn- resource-relative [^Path resource-root ^Path resource]
+  (let [root (.normalize resource-root)
+        resource (.normalize resource)]
+    (when-not (.startsWith resource root)
+      (throw (ex-info "Production resource is outside the Gradle resource output root"
+                      {:kind :unmapped-production-resource
+                       :root (str root)
+                       :path (str resource)})))
+    (str/replace (str (.relativize root resource)) "\\" "/")))
 
 (defn- portable [^Path root value]
   (let [path (paths/absolute value)]
@@ -881,7 +882,7 @@
     (let [resource-artifacts
           (mapv
            (fn [^Path source]
-             (let [relative (resource-relative source)
+             (let [relative (resource-relative (:resource-root discovery) source)
                    mapping (get-in configuration [:resources relative])]
                (when-not mapping
                  (throw (ex-info "Production resource has no explicit destination mapping"

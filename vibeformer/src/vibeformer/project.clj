@@ -5,7 +5,10 @@
   (:import [clojure.lang ExceptionInfo]
            [java.nio.file Files Path]))
 
-(def ^:private manifest-header "VIBEFORMER_GRADLE_INPUTS_V2")
+(def ^:private manifest-header "VIBEFORMER_GRADLE_INPUTS_V3")
+(def ^:private default-gradle-project ":pkl-parser")
+(def ^:private gradle-project-pattern
+  #"^:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*$")
 (def ^:private gitlink-pattern
   #"(?m)^160000 commit ([0-9a-f]{40})\s+research/pkl\s*$")
 
@@ -71,6 +74,15 @@
                :record-kind kind
                :value value})))))
 
+(defn- validate-gradle-project!
+  [gradle-project]
+  (when-not (and (string? gradle-project)
+                 (re-matches gradle-project-pattern gradle-project))
+    (throw (ex-info
+            (str "Invalid Gradle project path: " (pr-str gradle-project))
+            {:kind :invalid-gradle-project :gradle-project gradle-project})))
+  gradle-project)
+
 (defn read-discovery-manifest
   "Reads and validates the Gradle-derived production input manifest."
   [manifest]
@@ -90,6 +102,12 @@
                             distinct
                             (sort-by str)
                             vec)
+          gradle-project (validate-gradle-project!
+                          (exactly-one grouped :project-path
+                                       "Gradle discovery must report exactly one project path"))
+          resource-root (paths/absolute
+                         (exactly-one grouped :resource-root
+                                      "Gradle discovery must report exactly one resource root"))
           java-home (paths/absolute
                      (exactly-one grouped :java-home
                                   "Gradle discovery must report exactly one Java toolchain"))
@@ -109,9 +127,11 @@
                                      {:kind :invalid-discovery-manifest
                                       :record-kind :preview-features
                                       :value preview-value})))
-          discovery {:java-home java-home
+          discovery {:gradle-project gradle-project
+                     :java-home java-home
                      :java-release java-release
                      :preview-features preview-features
+                     :resource-root resource-root
                      :java-sources (path-values :source)
                      :resources (path-values :resource)
                      :classpath (path-values :classpath)}]
@@ -119,19 +139,26 @@
         (throw (ex-info
                 (str "Gradle-reported Java toolchain is missing: " (:java-home discovery))
                 {:kind :toolchain-missing :path (str (:java-home discovery))})))
+      (when-not (paths/directory? resource-root)
+        (throw (ex-info
+                (str "Gradle-reported resource root is missing: " resource-root)
+                {:kind :resource-root-missing :path (str resource-root)})))
       (when-not (seq (:java-sources discovery))
         (throw (ex-info
-                "Gradle reported no pkl-parser production Java sources"
-                {:kind :production-sources-missing})))
+                (str "Gradle reported no production Java sources for " gradle-project)
+                {:kind :production-sources-missing :gradle-project gradle-project})))
       (when-not (seq (:classpath discovery))
         (throw (ex-info
-                "Gradle reported an empty pkl-parser compile classpath"
-                {:kind :classpath-missing})))
+                (str "Gradle reported an empty compile classpath for " gradle-project)
+                {:kind :classpath-missing :gradle-project gradle-project})))
       (doseq [[kind inputs] [[:source (:java-sources discovery)]
                              [:resource (:resources discovery)]
                              [:classpath (:classpath discovery)]]
               ^Path input inputs]
-        (when-not (Files/isRegularFile input paths/no-links)
+        (when-not (if (= :classpath kind)
+                    (or (Files/isRegularFile input paths/no-links)
+                        (Files/isDirectory input paths/no-links))
+                    (Files/isRegularFile input paths/no-links))
           (throw (ex-info
                   (str "Gradle-reported " (name kind) " input is missing: " input)
                   {:kind :input-missing :input-kind kind :path (str input)}))))
@@ -139,8 +166,10 @@
 
 (defn discover-main!
   "Asks the tracked Gradle project for its resolved production inputs."
-  [{:keys [workspace-root manifest run-command!] :or {run-command! process/run!}}]
-  (let [root (paths/absolute workspace-root)
+  [{:keys [workspace-root manifest gradle-project run-command!]
+    :or {gradle-project default-gradle-project run-command! process/run!}}]
+  (let [gradle-project (validate-gradle-project! gradle-project)
+        root (paths/absolute workspace-root)
         pkl-root (paths/resolve-path root "research" "pkl")
         init-script (paths/resolve-path root "vibeformer" "gradle" "discover-main.gradle")
         gradlew (paths/resolve-path pkl-root "gradlew")]
@@ -156,7 +185,8 @@
                   "--console=plain"
                   "--no-daemon"
                   "-I" (str init-script)
-                  ":pkl-parser:vibeformerDescribeMain"
+                  (str gradle-project ":vibeformerDescribeMain")
+                  (str "-Pvibeformer.project=" gradle-project)
                   (str "-Pvibeformer.output=" (paths/absolute manifest))]
         :directory pkl-root})
       (catch ExceptionInfo error
@@ -165,4 +195,11 @@
                 (merge {:kind :gradle-discovery-failed}
                        (select-keys (ex-data error) [:command :exit :output]))
                 error))))
-    (read-discovery-manifest manifest)))
+    (let [discovery (read-discovery-manifest manifest)]
+      (when-not (= gradle-project (:gradle-project discovery))
+        (throw (ex-info
+                "Gradle discovery reported a different project than requested"
+                {:kind :gradle-project-mismatch
+                 :requested gradle-project
+                 :reported (:gradle-project discovery)})))
+      discovery)))

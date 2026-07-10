@@ -24,11 +24,13 @@
         source-a (create-file! root "research/pkl/pkl-parser/src/main/java/A.java")
         source-b (create-file! root "research/pkl/pkl-parser/src/main/java/B.java")
         resource (create-file! root "research/pkl/pkl-parser/src/main/resources/errorMessages.properties")
+        resource-root (.getParent ^Path resource)
         classpath (create-file! root "cache/jspecify.jar")]
     {:java-home java-home
      :java-release 17
      :preview-features false
      :java-sources [source-b source-a]
+     :resource-root resource-root
      :resources [resource]
      :classpath [classpath]}))
 
