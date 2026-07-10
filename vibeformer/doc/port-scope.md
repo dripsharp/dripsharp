@@ -93,8 +93,8 @@ useful source examples, but their target products are out of scope.
 * JavaPoet and KotlinPoet should not be ported as runtime dependencies.
 * Existing Java/Kotlin codegen behavior should be mined for concepts and tests
   that matter to C# output.
-* The durable implementation should be a C# generator, driven by normalized
-  facts and deterministic rules.
+* The durable implementation should be a C# generator driven directly by
+  resolved frontend models and deterministic symbol mappings.
 
 ### Excluded Product Surfaces
 
@@ -110,7 +110,6 @@ The following libraries generally belong to out-of-scope surfaces for the first
 * Shadow, Spotless, Error Prone, NullAway, checksum, download, and native-image
   build plugins: build and packaging infrastructure.
 
-Out-of-scope does not mean the source can be ignored during analysis. It means
-the inventory, coverage gates, and reports should classify these features as
-excluded from the .NET library target unless they are needed by an in-scope
-runtime path.
+Out-of-scope source still matters when it exposes behavior required by an
+in-scope runtime path. Otherwise, project selection should exclude it
+explicitly rather than letting it enter translation accidentally.

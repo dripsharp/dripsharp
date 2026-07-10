@@ -34,7 +34,7 @@ A translation result should carry more than text:
  :required-usings #{"System"}
  :required-helpers #{}
  :diagnostics []
- :provenance []}
+ :source-mappings []}
 ```
 
 Parent results combine their children's nodes and metadata. The final emitter

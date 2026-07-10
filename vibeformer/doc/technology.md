@@ -22,8 +22,8 @@ semantic information includes:
 * Inheritance and interface relationships.
 * Modifiers, annotations, statements, expressions, and source positions.
 
-Spoon no-classpath mode may support inventory over incomplete inputs, but it is
-not an accepted product-emission path.
+Spoon no-classpath mode may support diagnostics over incomplete inputs, but it
+is not an accepted product-emission path.
 
 ## Kotlin Frontend
 
@@ -50,12 +50,6 @@ Use independent consumers and upstream differential tests as the behavior
 oracle. A generated test that shares implementation assumptions with the
 translator is not sufficient product evidence.
 
-## Optional Datomic Use
-
-Datomic is optional. Suitable uses include inventory, provenance, rule
-application history, and aggregated diagnostics. Do not store or reconstruct
-the complete Spoon/PSI tree as a prerequisite for translation.
-
 ## Core Stack
 
 ```text
@@ -65,5 +59,4 @@ Kotlin PSI and Analysis API for Kotlin
 resolved-symbol mapping registries
 ordinary C# compatibility/destination-runtime projects
 dotnet build and independent behavior tests
-optional Datomic analysis side channel
 ```

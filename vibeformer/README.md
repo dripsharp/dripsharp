@@ -48,6 +48,5 @@ The documentation is limited to durable product and architecture decisions:
 ## Development Rule
 
 Use complete projects with their real generated sources and classpaths. A
-passing hand-selected source slice, facts-only inventory, or sample fixture is
-useful evidence for a local rule but is not evidence that a module or the
-product is complete.
+passing hand-selected source slice or sample fixture is useful evidence for a
+local rule but is not evidence that a module or the product is complete.

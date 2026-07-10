@@ -97,16 +97,6 @@ need a focused .NET replacement for behavior supplied by Truffle, while normal
 collections, I/O, URIs, reflection, concurrency, and similar platform APIs
 should use .NET wherever practical.
 
-## Optional Analysis Side Channel
-
-Datomic may be used for inventory, cross-project queries, provenance, rule
-applications, or diagnostic history when those capabilities materially help.
-It is not the semantic frontend and is not a mandatory intermediate
-representation.
-
-A direct typed-AST-node-to-C# translation must not wait for the frontend model
-to be serialized into and reconstructed from Datomic.
-
 ## Validation
 
 Compilation is necessary but not sufficient:

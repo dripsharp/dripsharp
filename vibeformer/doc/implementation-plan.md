@@ -17,9 +17,6 @@ records only the durable dependency order for implementation.
 8. Add focused compatibility or destination-runtime code only where existing
    .NET facilities cannot preserve required behavior.
 
-Optional inventory, provenance, and diagnostic persistence may be added around
-this spine. It must not become a prerequisite for translating the typed AST.
-
 ## First Proof: Complete Pkl Parser
 
 The first architectural proof is the complete `pkl-parser` Java module, not a
