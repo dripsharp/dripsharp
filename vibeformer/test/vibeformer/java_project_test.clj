@@ -38,7 +38,7 @@
         manifest (edn/read-string (slurp (str (:manifest-file first-emission))))]
     (testing "all production inputs and source declarations are accounted for"
       (is (= 50 (:compilation-units summary)))
-      (is (= 47 (:generated-files summary)))
+      (is (= 48 (:generated-files summary)))
       (is (= 1 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
@@ -58,28 +58,63 @@
                               (:strategy %))
                   (:sources manifest))))
 
-    (testing "unsupported executable semantics remain hard failures"
-      (is (= 983 (:hard-failures summary)))
-      (is (= {:unsupported-enum-value-initializer 274
-              :unsupported-executable-body 691
-              :unsupported-field-initializer 18}
-             (frequencies (map :kind (:diagnostics first-emission)))))
-      (is (every? :blocking? (:diagnostics first-emission)))
-      (is (some #(str/includes? % "#error VIBEFORMER_")
-                (map #(slurp (str (paths/resolve-path first-root (:file %))))
-                     (:artifacts first-emission)))))
+    (testing "all executable roots pass accepted recursive coverage"
+      (is (= 983 (:executable-roots summary)))
+      (is (= 0 (:hard-failures summary)))
+      (is (empty? (:diagnostics first-emission)))
+      (is (= {:semantic 38938
+              :fallback 0
+              :visited 89271
+              :missing-mappings 0
+              :unsupported-elements 0
+              :missing-occurrences 0
+              :structural 50333
+              :blocked 0
+              :covered 89271}
+             (:executable-coverage summary)))
+      (let [sources (map #(slurp (str (paths/resolve-path first-root (:file %))))
+                         (:artifacts first-emission))]
+        (is (not-any? #(re-find #"#error VIBEFORMER_|NotImplementedException|TODO" %)
+                      sources))
+        (is (some #(str/includes? %
+                                 "GenericParserError(string msg, global::Pkl.Parser.Syntax.Generic.FullSpan span) : base(msg)")
+                  sources))
+        (is (some #(str/includes? % "global::Vibeformer.Runtime.JavaCompat.CodePointAt")
+                  sources))
+        (is (some #(str/includes? % "global::Vibeformer.Runtime.JavaCompat.SubList")
+                  sources))
+        (doseq [resolved-family
+                ["JavaCompat.ArrayCopy"             ; arrays
+                 "JavaCompat.DequePush"             ; deque mutation/order
+                 "JavaCompat.ListOf"                ; immutable list factory
+                 "JavaCompat.DeepEquals"            ; Objects/deep array equality
+                 "JavaCompat.IsUnicodeIdentifierStart" ; Character/code points
+                 "JavaCompat.Map"                   ; streams
+                 "JavaCompat.Collect"               ; collectors
+                 "JavaCompat.GetResourceBundle"     ; ResourceBundle
+                 "JavaMessageFormat"                ; MessageFormat
+                 "CultureInfo.CurrentCulture"       ; Locale
+                 "parser()"]]                       ; Supplier.get
+          (is (some #(str/includes? % resolved-family) sources)
+              (str "missing resolved mapping family " resolved-family)))))
 
     (testing "the project and resource strategy come only from explicit configuration"
       (let [project (slurp (str (:project-file first-emission)))
             resource (paths/resolve-path first-root
                                          "resources/org/pkl/parser/errorMessages.properties")
+            helper (paths/resolve-path first-root
+                                       "src/Vibeformer/Runtime/JavaCompat.cs")
+            helper-source (paths/resolve-path (paths/workspace-root)
+                                              "vibeformer/runtime/Vibeformer.JavaCompat.cs")
             upstream (first (:resources (:discovery (fixture/models))))]
         (is (str/includes? project "<TargetFramework>net8.0</TargetFramework>"))
         (is (str/includes? project "<Nullable>enable</Nullable>"))
         (is (str/includes? project
                            "LogicalName=\"org.pkl.parser.errorMessages.properties\""))
         (is (= (vec (Files/readAllBytes ^Path upstream))
-               (vec (Files/readAllBytes resource))))))
+               (vec (Files/readAllBytes resource))))
+        (is (= (vec (Files/readAllBytes helper-source))
+               (vec (Files/readAllBytes helper))))))
 
     (testing "two clean emissions are byte-for-byte identical"
       (is (= (directory-bytes first-root) (directory-bytes second-root))))))

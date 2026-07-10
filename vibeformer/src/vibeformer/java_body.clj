@@ -1,0 +1,649 @@
+(ns vibeformer.java-body
+  "Resolved, fail-closed translation of Java executable Spoon trees.
+
+  Structural rules consume only live Spoon objects and their already translated
+  live children.  Semantic rules are installed for each exact resolved symbol
+  identity in the model; project symbols and the deliberately supported JDK
+  surface are never recovered from rendered Java text."
+  (:require [clojure.string :as str]
+            [vibeformer.csharp :as csharp]
+            [vibeformer.java-translate :as java]
+            [vibeformer.spoon :as spoon])
+  (:import [java.util IdentityHashMap]
+           [spoon.reflect.code BinaryOperatorKind CtArrayRead CtArrayWrite CtAssert
+            CtAssignment CtBinaryOperator CtBlock CtBreak CtCase CtCatch
+            CtCatchVariable CtComment CtConditional CtConstructorCall CtDo
+            CtExecutableReferenceExpression CtExpression CtFieldRead CtFieldWrite
+            CtFor CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable
+            CtNewArray CtOperatorAssignment CtReturn CtStatement CtSuperAccess
+            CtSwitch CtSwitchExpression CtThisAccess CtThrow CtTry CtTypeAccess
+            CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtWhile
+            CtYieldStatement UnaryOperatorKind]
+           [spoon.reflect.declaration CtAnnotation CtConstructor CtElement CtMethod CtParameter]
+           [spoon.reflect.reference CtCatchVariableReference CtExecutableReference
+            CtFieldReference CtLocalVariableReference CtPackageReference
+            CtParameterReference CtTypeReference]))
+
+(defn- raw [value] (csharp/raw (str value)))
+(defn- sequence-node
+  ([nodes] (csharp/sequence-node (vec (remove nil? nodes))))
+  ([nodes separator]
+   (csharp/sequence-node (vec (remove nil? nodes)) separator)))
+
+(defn- child-node [children element]
+  (:node (java/child-result children element)))
+
+(defn- children-nodes [children elements]
+  (mapv #(child-node children %) elements))
+
+(defn- role [^CtElement element]
+  (when (.isParentInitialized element) (str (.getRoleInParent element))))
+
+(defn- statement-expression? [^CtElement element]
+  (and (instance? CtStatement element)
+       (let [element-role (role element)
+             parent (when (.isParentInitialized element) (.getParent element))]
+         (or (= "statement" element-role)
+             (and (contains? #{"then" "else"} element-role)
+                  (instance? CtIf parent))
+             (and (= "body" element-role)
+                  (or (instance? CtFor parent) (instance? CtForEach parent)
+                      (instance? CtWhile parent) (instance? CtDo parent)))))))
+
+(defn- identifier [services value]
+  ((:identifier services) (str value)))
+
+(defn- member [target name]
+  (if target
+    (csharp/member target name)
+    (raw name)))
+
+(defn- invoke [target arguments]
+  (csharp/invocation target arguments))
+
+(defn- wrap-casts [services children ^CtExpression expression node]
+  (reduce (fn [value ^CtTypeReference cast]
+            (sequence-node [(raw "(") (child-node children cast) (raw ")(") value (raw ")")]))
+          node
+          (reverse (vec (.getTypeCasts expression)))))
+
+(defn- finish-expression [services children ^CtExpression expression node]
+  (let [node (wrap-casts services children expression node)]
+    (if (statement-expression? expression)
+      (sequence-node [node (raw ";")])
+      node)))
+
+(defn- escape-string [value]
+  (str "\""
+       (apply str
+              (map (fn [ch]
+                     (case ch
+                       \" "\\\""
+                       \\ "\\\\"
+                       \newline "\\n"
+                       \return "\\r"
+                       \tab "\\t"
+                       \backspace "\\b"
+                       \formfeed "\\f"
+                       (if (or (< (int ch) 32) (= (int ch) 127))
+                         (format "\\u%04X" (int ch))
+                         (str ch))))
+                   value))
+       "\""))
+
+(defn- escape-char [value]
+  (let [ch (char value)]
+    (str "'"
+         (case ch
+           \' "\\'"
+           \\ "\\\\"
+           \newline "\\n"
+           \return "\\r"
+           \tab "\\t"
+           \backspace "\\b"
+           \formfeed "\\f"
+           (if (or (< (int ch) 32) (> (int ch) 126))
+             (format "\\u%04X" (int ch))
+             (str ch)))
+         "'")))
+
+(defn- literal-text [value]
+  (cond
+    (nil? value) "null"
+    (string? value) (escape-string value)
+    (instance? Character value) (escape-char value)
+    (instance? Boolean value) (if value "true" "false")
+    (instance? Long value) (str value "L")
+    (instance? Float value) (str value "F")
+    (instance? Double value)
+    (cond
+      (Double/isNaN value) "double.NaN"
+      (= Double/POSITIVE_INFINITY value) "double.PositiveInfinity"
+      (= Double/NEGATIVE_INFINITY value) "double.NegativeInfinity"
+      :else (str value "D"))
+    :else (str value)))
+
+(def ^:private binary-operators
+  {"AND" ["&&" 30]
+   "OR" ["||" 20]
+   "EQ" ["==" 40]
+   "NE" ["!=" 40]
+   "LT" ["<" 50]
+   "LE" ["<=" 50]
+   "GT" [">" 50]
+   "GE" [">=" 50]
+   "PLUS" ["+" 60]
+   "MINUS" ["-" 60]})
+
+(defn- primitive-expression? [^CtExpression expression]
+  (boolean (some-> expression .getType .isPrimitive)))
+
+(defn- string-expression? [^CtExpression expression]
+  (= "java.lang.String" (some-> expression .getType .getQualifiedName)))
+
+(defn- binary-node [services ^CtBinaryOperator element children]
+  (let [kind (str (.getKind element))
+        left-expression (.getLeftHandOperand element)
+        right-expression (.getRightHandOperand element)
+        left (child-node children left-expression)
+        right (child-node children right-expression)]
+    (cond
+      (= kind "INSTANCEOF")
+      (csharp/binary "is" 40 left right)
+
+      (and (contains? #{"EQ" "NE"} kind)
+           (not (or (primitive-expression? left-expression)
+                    (primitive-expression? right-expression))))
+      (let [equals (invoke (raw "global::System.Object.ReferenceEquals") [left right])]
+        (if (= kind "NE") (csharp/prefix "!" equals) equals))
+
+      (and (= kind "PLUS") (string-expression? element))
+      (invoke (raw "global::Vibeformer.Runtime.JavaCompat.Concat") [left right])
+
+      :else
+      (if-let [[operator precedence] (get binary-operators kind)]
+        (csharp/binary operator precedence left right)
+        (throw (ex-info "Unsupported Java binary operator"
+                        {:kind :unsupported-java-binary-operator :operator kind
+                         :source (spoon/source-location element)}))))))
+
+(defn- unary-node [^CtUnaryOperator element operand]
+  (case (str (.getKind element))
+    "NEG" (csharp/prefix "-" operand)
+    "NOT" (csharp/prefix "!" operand)
+    "PREINC" (csharp/prefix "++" operand)
+    "PREDEC" (csharp/prefix "--" operand)
+    "POSTINC" (sequence-node [operand (raw "++")])
+    "POSTDEC" (sequence-node [operand (raw "--")])
+    (throw (ex-info "Unsupported Java unary operator"
+                    {:kind :unsupported-java-unary-operator
+                     :operator (str (.getKind element))
+                     :source (spoon/source-location element)}))))
+
+(defn- occurrence [context element]
+  (.get ^IdentityHashMap (:occurrence-index context) element))
+
+(defn- executable-key [context ^CtInvocation invocation]
+  (:key (occurrence context (.getExecutable invocation))))
+
+(defn- normal-invocation [element children]
+  (let [target-element (.getTarget ^CtInvocation element)
+        target (when target-element (child-node children target-element))
+        executable (child-node children (.getExecutable ^CtInvocation element))
+        callable (if target (member target (:text (csharp/render executable))) executable)]
+    (invoke callable (children-nodes children (.getArguments ^CtInvocation element)))))
+
+(defn- compat-call [name arguments]
+  (invoke (raw (str "global::Vibeformer.Runtime.JavaCompat." name)) arguments))
+
+(defn- invocation-node [context services ^CtInvocation element children]
+  (let [key (executable-key context element)
+        target-element (.getTarget element)
+        target (when target-element (child-node children target-element))
+        args (children-nodes children (.getArguments element))
+        argc (count args)
+        arg #(nth args %)
+        call-member #(invoke (member target %) args)
+        node
+        (case key
+          "executable:java.lang.CharSequence#isEmpty()" (csharp/binary "==" 40 (member target "Length") (raw "0"))
+          "executable:java.lang.Character#isDigit(int)" (compat-call "IsDigit" args)
+          "executable:java.lang.Character#isLetterOrDigit(int)" (compat-call "IsLetterOrDigit" args)
+          "executable:java.lang.Character#isUnicodeIdentifierPart(int)" (compat-call "IsUnicodeIdentifierPart" args)
+          "executable:java.lang.Character#isUnicodeIdentifierStart(int)" (compat-call "IsUnicodeIdentifierStart" args)
+          "executable:java.lang.Character#toString(int)" (compat-call "CodePointToString" args)
+          "executable:java.lang.Class#getSimpleName()" (member target "Name")
+          "executable:java.lang.Enum#name()" (compat-call "EnumName" [target])
+          "executable:java.lang.Integer#parseInt(java.lang.String,int)" (compat-call "ParseInt" args)
+          "executable:java.lang.Object#getClass()" (call-member "GetType")
+          "executable:java.lang.String#charAt(int)" (sequence-node [target (raw "[") (arg 0) (raw "]")])
+          "executable:java.lang.String#codePointAt(int)" (compat-call "CodePointAt" (into [target] args))
+          "executable:java.lang.String#codePoints()" (compat-call "CodePoints" [target])
+          "executable:java.lang.String#formatted(java.lang.Object[])" (compat-call "Formatted" (into [target] args))
+          "executable:java.lang.String#indexOf(int,int)" (compat-call "IndexOfCodePoint" (into [target] args))
+          "executable:java.lang.String#isBlank()" (invoke (raw "global::System.String.IsNullOrWhiteSpace") [target])
+          "executable:java.lang.String#isEmpty()" (csharp/binary "==" 40 (member target "Length") (raw "0"))
+          "executable:java.lang.String#length()" (member target "Length")
+          "executable:java.lang.String#repeat(int)" (compat-call "Repeat" (into [target] args))
+          "executable:java.lang.String#startsWith(java.lang.String)" (compat-call "StartsWith" (into [target] args))
+          "executable:java.lang.String#substring(int,int)" (compat-call "Substring" (into [target] args))
+          "executable:java.lang.String#toCharArray()" (invoke (member target "ToCharArray") [])
+          "executable:java.lang.String#toLowerCase(java.util.Locale)" (invoke (member target "ToLowerInvariant") [])
+          "executable:java.lang.StringBuilder#append(char)" (call-member "Append")
+          "executable:java.lang.StringBuilder#append(java.lang.CharSequence,int,int)" (compat-call "AppendRange" (into [target] args))
+          "executable:java.lang.StringBuilder#append(java.lang.String)" (call-member "Append")
+          "executable:java.lang.StringBuilder#reverse()" (compat-call "Reverse" [target])
+          "executable:java.lang.StringBuilder#toString()" (call-member "ToString")
+          "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)" (compat-call "ArrayCopy" args)
+          "executable:java.lang.Throwable#getMessage()" (member target "Message")
+          "executable:java.text.Format#format(java.lang.Object)" (compat-call "Format" (into [target] args))
+          "executable:java.util.ArrayList#add(java.lang.Object)" (compat-call "Add" (into [target] args))
+          "executable:java.util.ArrayList#addAll(java.util.Collection)" (compat-call "AddAll" (into [target] args))
+          "executable:java.util.ArrayList#clear()" (call-member "Clear")
+          "executable:java.util.ArrayList#get(int)" (sequence-node [target (raw "[") (arg 0) (raw "]")])
+          "executable:java.util.ArrayList#isEmpty()" (csharp/binary "==" 40 (member target "Count") (raw "0"))
+          "executable:java.util.ArrayList#size()" (member target "Count")
+          "executable:java.util.Arrays#asList(java.lang.Object[])" (compat-call "AsList" args)
+          "executable:java.util.Collection#stream()" target
+          "executable:java.util.Collections#emptyList()" (compat-call "ListOf" [])
+          "executable:java.util.Collections#singletonList(java.lang.Object)" (compat-call "ListOf" args)
+          "executable:java.util.Collections#unmodifiableList(java.util.List)" (compat-call "UnmodifiableList" args)
+          "executable:java.util.Deque#getFirst()" (compat-call "DequeGetFirst" [target])
+          "executable:java.util.Deque#peek()" (compat-call "DequePeek" [target])
+          "executable:java.util.Deque#pop()" (compat-call "DequePop" [target])
+          "executable:java.util.Deque#push(java.lang.Object)" (compat-call "DequePush" (into [target] args))
+          "executable:java.util.List#add(java.lang.Object)" (compat-call "Add" (into [target] args))
+          "executable:java.util.List#get(int)" (sequence-node [target (raw "[") (arg 0) (raw "]")])
+          "executable:java.util.List#isEmpty()" (csharp/binary "==" 40 (member target "Count") (raw "0"))
+          "executable:java.util.List#of()" (compat-call "ListOf" [])
+          "executable:java.util.List#of(java.lang.Object)" (compat-call "ListOf" args)
+          "executable:java.util.List#of(java.lang.Object,java.lang.Object)" (compat-call "ListOf" args)
+          "executable:java.util.List#of(java.lang.Object,java.lang.Object,java.lang.Object)" (compat-call "ListOf" args)
+          "executable:java.util.List#size()" (member target "Count")
+          "executable:java.util.List#subList(int,int)" (compat-call "SubList" (into [target] args))
+          "executable:java.util.Locale#getDefault()" (raw "global::System.Globalization.CultureInfo.CurrentCulture")
+          "executable:java.util.Objects#deepEquals(java.lang.Object,java.lang.Object)" (compat-call "DeepEquals" args)
+          "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)" (compat-call "Equals" args)
+          "executable:java.util.Objects#hash(java.lang.Object[])" (compat-call "Hash" args)
+          "executable:java.util.ResourceBundle#getBundle(java.lang.String,java.util.Locale)" (compat-call "GetResourceBundle" args)
+          "executable:java.util.ResourceBundle#getString(java.lang.String)" (compat-call "GetResourceString" (into [target] args))
+          "executable:java.util.function.Supplier#get()" (invoke target [])
+          "executable:java.util.stream.Collectors#joining(java.lang.CharSequence)" (compat-call "Joining" args)
+          "executable:java.util.stream.IntStream#allMatch(java.util.function.IntPredicate)" (compat-call "All" (into [target] args))
+          "executable:java.util.stream.IntStream#skip(long)" (compat-call "Skip" (into [target] args))
+          "executable:java.util.stream.Stream#collect(java.util.stream.Collector)" (compat-call "Collect" (into [target] args))
+          "executable:java.util.stream.Stream#map(java.util.function.Function)" (compat-call "Map" (into [target] args))
+          ;; Project-local calls are mapped by exact declaration identity.  A
+          ;; constructor invocation is handled separately below.
+          (let [resolved (occurrence context (.getExecutable element))]
+            (cond
+              (= :constructor (:kind resolved))
+              ;; Explicit this/super constructor calls are emitted on the C#
+              ;; constructor signature by constructor-initializer.
+              (raw "")
+              (= :project (:origin resolved)) (normal-invocation element children)
+              :else
+              (throw (ex-info "Unsupported resolved executable mapping"
+                              {:kind :unsupported-resolved-executable
+                               :key key :origin (:origin resolved)
+                               :source (spoon/source-location element)})))))]
+    (finish-expression services children element node)))
+
+(defn- constructor-node [services ^CtConstructorCall element children]
+  (let [type ((:type-node services) (.getType element))
+        args (children-nodes children (.getArguments element))]
+    (finish-expression services children element
+                       (sequence-node [(raw "new ") type (raw "(")
+                                       (sequence-node args ", ") (raw ")")]))))
+
+(defn- block-node [children ^CtBlock element]
+  (sequence-node [(raw "{")
+                  (when (seq (.getStatements element)) (raw "\n"))
+                  (sequence-node (children-nodes children (.getStatements element)) "\n")
+                  (when (seq (.getStatements element)) (raw "\n"))
+                  (raw "}")]))
+
+(defn- case-labels [children ^CtCase element]
+  (let [expressions (.getCaseExpressions element)]
+    (if (seq expressions)
+      (sequence-node
+       (mapv #(sequence-node [(raw "case ") (child-node children %) (raw ":")]) expressions)
+       "\n")
+      (raw "default:"))))
+
+(defn- structural-rules [services]
+  (java/structural-rules
+   [{:id :java.expression/array-read :class CtArrayRead
+     :emit (fn [{:keys [^CtArrayRead element children]}]
+             {:node (finish-expression services children element
+                       (sequence-node [(child-node children (.getTarget element)) (raw "[")
+                                       (child-node children (.getIndexExpression element)) (raw "]")]))})}
+    {:id :java.expression/array-write :class CtArrayWrite
+     :emit (fn [{:keys [^CtArrayWrite element children]}]
+             {:node (finish-expression services children element
+                       (sequence-node [(child-node children (.getTarget element)) (raw "[")
+                                       (child-node children (.getIndexExpression element)) (raw "]")]))})}
+    {:id :java.statement/assert :class CtAssert
+     :emit (fn [{:keys [^CtAssert element children]}]
+             (let [condition (child-node children (.getAssertExpression element))
+                   message (.getExpression element)]
+               {:node (sequence-node [(raw "if (!(") condition (raw ")) throw new global::System.Exception(")
+                                      (if message (child-node children message) (raw (escape-string "Assertion failed")))
+                                      (raw ");")])}))}
+    {:id :java.expression/operator-assignment :class CtOperatorAssignment
+     :emit (fn [{:keys [^CtOperatorAssignment element children]}]
+             (let [operator (case (str (.getKind element)) "PLUS" "+=" "MINUS" "-="
+                                  (throw (ex-info "Unsupported operator assignment" {:operator (.getKind element)})))]
+               {:node (finish-expression services children element
+                       (sequence-node [(child-node children (.getAssigned element)) (raw (str " " operator " "))
+                                       (child-node children (.getAssignment element))]))}))}
+    {:id :java.expression/assignment :class CtAssignment
+     :emit (fn [{:keys [^CtAssignment element children]}]
+             {:node (finish-expression services children element
+                       (sequence-node [(child-node children (.getAssigned element)) (raw " = ")
+                                       (child-node children (.getAssignment element))]))})}
+    {:id :java.expression/binary :class CtBinaryOperator
+     :emit (fn [{:keys [^CtBinaryOperator element children]}]
+             {:node (finish-expression services children element (binary-node services element children))})}
+    {:id :java.statement/block :class CtBlock
+     :emit (fn [{:keys [^CtBlock element children]}] {:node (block-node children element)})}
+    {:id :java.statement/break :class CtBreak
+     :emit (fn [_] {:node (raw "break;")})}
+    {:id :java.statement/case :class CtCase
+     :emit (fn [{:keys [^CtCase element children]}]
+             (let [statements (children-nodes children (.getStatements element))]
+               {:node (sequence-node [(case-labels children element) (raw "\n")
+                                      (sequence-node statements "\n")
+                                      (when (and (seq statements)
+                                                 (not-any? #(instance? CtYieldStatement %) (.getStatements element)))
+                                        (raw "\nbreak;"))])}))}
+    {:id :java.statement/catch :class CtCatch
+     :emit (fn [{:keys [^CtCatch element children]}]
+             {:node (sequence-node [(raw "catch (") (child-node children (.getParameter element))
+                                    (raw ") ") (child-node children (.getBody element))])})}
+    {:id :java.declaration/catch-variable :class CtCatchVariable
+     :emit (fn [{:keys [^CtCatchVariable element children]}]
+             {:node (sequence-node [(child-node children (.getType element)) (raw " ")
+                                    (raw (identifier services (.getSimpleName element)))])})}
+    {:id :java.trivia/comment :class CtComment :emit (fn [_] {:node (raw "")})}
+    {:id :java.expression/conditional :class CtConditional
+     :emit (fn [{:keys [^CtConditional element children]}]
+             {:node (finish-expression services children element
+                       (sequence-node [(raw "(") (child-node children (.getCondition element))
+                                       (raw " ? ") (child-node children (.getThenExpression element))
+                                       (raw " : ") (child-node children (.getElseExpression element)) (raw ")")]))})}
+    {:id :java.expression/constructor-call :class CtConstructorCall
+     :emit (fn [{:keys [^CtConstructorCall element children]}]
+             {:node (constructor-node services element children)})}
+    {:id :java.statement/do :class CtDo
+     :emit (fn [{:keys [^CtDo element children]}]
+             {:node (sequence-node [(raw "do ") (child-node children (.getBody element))
+                                    (raw " while (") (child-node children (.getLoopingExpression element))
+                                    (raw ");")])})}
+    {:id :java.expression/method-reference :class CtExecutableReferenceExpression
+     :emit (fn [{:keys [^CtExecutableReferenceExpression element children]}]
+             (let [target-element (.getTarget element)
+                   target (child-node children target-element)
+                   executable (child-node children (.getExecutable element))
+                   method-name (:text (csharp/render executable))
+                   node (if (instance? CtTypeAccess target-element)
+                          (sequence-node [(raw "value => value.") (raw method-name) (raw "()")])
+                          (member target method-name))]
+               {:node (finish-expression services children element node)}))}
+    {:id :java.expression/field-read :class CtFieldRead
+     :emit (fn [{:keys [^CtFieldRead element children]}]
+             (let [target-element (.getTarget element)
+                   target (when target-element (child-node children target-element))
+                   field (:text (csharp/render (child-node children (.getVariable element))))]
+               {:node (finish-expression services children element (member target field))}))}
+    {:id :java.expression/field-write :class CtFieldWrite
+     :emit (fn [{:keys [^CtFieldWrite element children]}]
+             (let [target-element (.getTarget element)
+                   target (when target-element (child-node children target-element))
+                   field (:text (csharp/render (child-node children (.getVariable element))))]
+               {:node (finish-expression services children element (member target field))}))}
+    {:id :java.statement/foreach :class CtForEach
+     :emit (fn [{:keys [^CtForEach element children]}]
+             {:node (sequence-node [(raw "foreach (") (child-node children (.getVariable element))
+                                    (raw " in ") (child-node children (.getExpression element)) (raw ") ")
+                                    (child-node children (.getBody element))])})}
+    {:id :java.statement/for :class CtFor
+     :emit (fn [{:keys [^CtFor element children]}]
+             {:node (sequence-node [(raw "for (")
+                                    (sequence-node (children-nodes children (.getForInit element)) ", ")
+                                    (raw "; ")
+                                    (when-let [expression (.getExpression element)] (child-node children expression))
+                                    (raw "; ")
+                                    (sequence-node (children-nodes children (.getForUpdate element)) ", ")
+                                    (raw ") ") (child-node children (.getBody element))])})}
+    {:id :java.statement/if :class CtIf
+     :emit (fn [{:keys [^CtIf element children]}]
+             {:node (sequence-node [(raw "if (") (child-node children (.getCondition element))
+                                    (raw ") ") (child-node children (.getThenStatement element))
+                                    (when-let [else (.getElseStatement element)]
+                                      (sequence-node [(raw " else ") (child-node children else)]))])})}
+    {:id :java.expression/invocation :class CtInvocation
+     :emit (fn [{:keys [context ^CtInvocation element children]}]
+             {:node (invocation-node context services element children)})}
+    {:id :java.expression/lambda :class CtLambda
+     :emit (fn [{:keys [^CtLambda element children]}]
+             (let [parameters (mapv #(raw (identifier services (.getSimpleName ^CtParameter %)))
+                                    (.getParameters element))
+                   body (if-let [expression (.getExpression element)]
+                          (child-node children expression)
+                          (child-node children (.getBody element)))]
+               {:node (finish-expression services children element
+                       (sequence-node [(raw "(") (sequence-node parameters ", ") (raw ") => ") body]))}))}
+    {:id :java.expression/literal :class CtLiteral
+     :emit (fn [{:keys [^CtLiteral element children]}]
+             {:node (finish-expression services children element (raw (literal-text (.getValue element))))})}
+    {:id :java.declaration/local-variable :class CtLocalVariable
+     :emit (fn [{:keys [^CtLocalVariable element children]}]
+             (let [default (.getDefaultExpression element)
+                   declaration (sequence-node [(child-node children (.getType element)) (raw " ")
+                                               (raw (identifier services (.getSimpleName element)))
+                                               (when default (sequence-node [(raw " = ") (child-node children default)]))])]
+               {:node (if (= "statement" (role element))
+                        (sequence-node [declaration (raw ";")]) declaration)}))}
+    {:id :java.expression/new-array :class CtNewArray
+     :emit (fn [{:keys [^CtNewArray element children]}]
+             (let [type-reference (.getType element)
+                   component (if (.isArray type-reference) (.getComponentType type-reference) type-reference)
+                   dimensions (.getDimensionExpressions element)
+                   elements (.getElements element)
+                   node (if (seq elements)
+                          (sequence-node [(raw "new[] { ") (sequence-node (children-nodes children elements) ", ") (raw " }")])
+                          (sequence-node [(raw "new ") ((:type-node services) component) (raw "[")
+                                          (sequence-node (children-nodes children dimensions) ", ") (raw "]")]))]
+               {:node (finish-expression services children element node)}))}
+    {:id :java.statement/return :class CtReturn
+     :emit (fn [{:keys [^CtReturn element children]}]
+             {:node (sequence-node [(raw "return")
+                                    (when-let [expression (.getReturnedExpression element)]
+                                      (sequence-node [(raw " ") (child-node children expression)]))
+                                    (raw ";")])})}
+    {:id :java.expression/super :class CtSuperAccess
+     :emit (fn [{:keys [^CtSuperAccess element children]}]
+             {:node (finish-expression services children element (raw "base"))})}
+    {:id :java.expression/switch-expression :class CtSwitchExpression
+     :emit (fn [{:keys [^CtSwitchExpression element children]}]
+             (let [selector (child-node children (.getSelector element))
+                   cases (children-nodes children (.getCases element))
+                   result-type (child-node children (.getType element))]
+               {:node (finish-expression services children element
+                       (sequence-node [(raw "((global::System.Func<") result-type
+                                       (raw ">)(() => { switch (") selector (raw ") {\n")
+                                       (sequence-node cases "\n")
+                                       (raw "\n} throw new global::System.InvalidOperationException(); }))()")]))}))}
+    {:id :java.statement/switch :class CtSwitch
+     :emit (fn [{:keys [^CtSwitch element children]}]
+             {:node (sequence-node [(raw "switch (") (child-node children (.getSelector element))
+                                    (raw ") {\n") (sequence-node (children-nodes children (.getCases element)) "\n")
+                                    (raw "\n}")])})}
+    {:id :java.expression/this :class CtThisAccess
+     :emit (fn [{:keys [^CtThisAccess element children]}]
+             {:node (finish-expression services children element (raw "this"))})}
+    {:id :java.statement/throw :class CtThrow
+     :emit (fn [{:keys [^CtThrow element children]}]
+             {:node (sequence-node [(raw "throw ") (child-node children (.getThrownExpression element)) (raw ";")])})}
+    {:id :java.statement/try :class CtTry
+     :emit (fn [{:keys [^CtTry element children]}]
+             {:node (sequence-node [(raw "try ") (child-node children (.getBody element))
+                                    (when (seq (.getCatchers element)) (raw " "))
+                                    (sequence-node (children-nodes children (.getCatchers element)) " ")
+                                    (when-let [finalizer (.getFinalizer element)]
+                                      (sequence-node [(raw " finally ") (child-node children finalizer)]))])})}
+    {:id :java.expression/type-access :class CtTypeAccess
+     :emit (fn [{:keys [^CtTypeAccess element children]}]
+             {:node (finish-expression services children element
+                       (child-node children (.getAccessedType element)))})}
+    {:id :java.expression/type-pattern :class CtTypePattern
+     :emit (fn [{:keys [^CtTypePattern element children]}]
+             (let [variable (.getVariable element)]
+               {:node (sequence-node [((:type-node services) (.getType variable)) (raw " ")
+                                      (raw (identifier services (.getSimpleName variable)))])}))}
+    {:id :java.expression/unary :class CtUnaryOperator
+     :emit (fn [{:keys [^CtUnaryOperator element children]}]
+             {:node (finish-expression services children element
+                       (unary-node element (child-node children (.getOperand element))))})}
+    {:id :java.expression/variable-read :class CtVariableRead
+     :emit (fn [{:keys [^CtVariableRead element children]}]
+             {:node (finish-expression services children element
+                       (child-node children (.getVariable element)))})}
+    {:id :java.expression/variable-write :class CtVariableWrite
+     :emit (fn [{:keys [^CtVariableWrite element children]}]
+             {:node (finish-expression services children element
+                       (child-node children (.getVariable element)))})}
+    {:id :java.statement/while :class CtWhile
+     :emit (fn [{:keys [^CtWhile element children]}]
+             {:node (sequence-node [(raw "while (") (child-node children (.getLoopingExpression element))
+                                    (raw ") ") (child-node children (.getBody element))])})}
+    {:id :java.statement/yield :class CtYieldStatement
+     :emit (fn [{:keys [^CtYieldStatement element children]}]
+             {:node (sequence-node [(raw "return ") (child-node children (.getExpression element)) (raw ";")])})}
+    {:id :java.declaration/lambda-parameter :class CtParameter
+     :emit (fn [{:keys [^CtParameter element]}]
+             {:node (raw (identifier services (.getSimpleName element)))})}
+    {:id :java.reference/catch-variable :class CtCatchVariableReference
+     :emit (fn [{:keys [^CtCatchVariableReference element]}]
+             {:node (raw (identifier services (.getSimpleName element)))})}
+    {:id :java.reference/local-variable :class CtLocalVariableReference
+     :emit (fn [{:keys [^CtLocalVariableReference element]}]
+             {:node (raw (identifier services (.getSimpleName element)))})}
+    {:id :java.reference/parameter :class CtParameterReference
+     :emit (fn [{:keys [^CtParameterReference element]}]
+             {:node (raw (identifier services (.getSimpleName element)))})}
+    {:id :java.reference/package :class CtPackageReference
+     :emit (fn [_] {:node (raw "")})}]))
+
+(defn- project-executable-name [services occurrence ^CtExecutableReference reference]
+  (if-let [declaration (:declaration occurrence)]
+    (if (instance? CtMethod declaration)
+      ((:method-name services) declaration)
+      (identifier services (.getSimpleName reference)))
+    (identifier services (.getSimpleName reference))))
+
+(defn- executable-name [services occurrence ^CtExecutableReference reference]
+  (if (= :project (:origin occurrence))
+    (project-executable-name services occurrence reference)
+    ;; Whole-invocation JDK rules own semantic rewrites.  This token remains
+    ;; mapped so every resolved reference is independently covered.
+    (identifier services (.getSimpleName reference))))
+
+(defn- field-name [services occurrence ^CtFieldReference reference]
+  (cond
+    (= "field:<array>#length" (:key occurrence)) "Length"
+    (= "field:java.util.Locale#ROOT" (:key occurrence)) "InvariantCulture"
+    (= :record-component (:resolution occurrence))
+    ((:pascal services) (.getSimpleName reference))
+    :else (identifier services (.getSimpleName reference))))
+
+(defn- registry-entry [id emit]
+  {:id id :emit emit})
+
+(defn- semantic-mappings [resolved-model services]
+  (reduce
+   (fn [registries occurrence]
+     (let [key (:key occurrence)
+           category (case (:kind occurrence)
+                      :type :types :executable :executables :constructor :constructors
+                      :field :fields :annotation :annotations nil)]
+       (if (or (nil? category) (get-in registries [category key]))
+         registries
+         (assoc-in
+          registries [category key]
+          (case category
+            :types (registry-entry
+                    (keyword "resolved.type" (name (:origin occurrence)))
+                    (fn [{:keys [element]}] {:node ((:type-node services) element)}))
+            :executables (registry-entry
+                          (keyword "resolved.executable" (name (:origin occurrence)))
+                          (fn [{:keys [element occurrence]}]
+                            {:node (raw (executable-name services occurrence element))}))
+            :constructors (registry-entry
+                           (keyword "resolved.constructor" (name (:origin occurrence)))
+                           (fn [_] {:node (raw "<init>")}))
+            :fields (registry-entry
+                     (keyword "resolved.field" (name (:origin occurrence)))
+                     (fn [{:keys [element occurrence]}]
+                       {:node (raw (field-name services occurrence element))}))
+            :annotations (registry-entry
+                          (keyword "resolved.annotation" (name (:origin occurrence)))
+                          (fn [_] {:node (raw "")})))))))
+   {:types {} :executables {} :constructors {} :fields {} :annotations {}}
+   (:occurrences resolved-model)))
+
+(defn context
+  "Creates the accepted executable translator for one live resolved model.
+  Services provide destination declaration naming/type mappings without
+  introducing a second frontend representation."
+  [resolved-model services]
+  (java/context resolved-model
+                {:mode :accepted
+                 :rules (structural-rules services)
+                 :mappings (semantic-mappings resolved-model services)}))
+
+(defn translate
+  "Translates and gates one live executable body or initializer."
+  [translation-context element]
+  (java/coverage-gate! (java/translate-element translation-context element)))
+
+(defn explicit-constructor-invocation
+  "Returns the first live this/super constructor invocation when Java requires
+  it to precede all body statements."
+  [translation-context ^CtBlock body]
+  (when-let [first-statement (first (.getStatements body))]
+    (when (and (instance? CtInvocation first-statement)
+               (not (.isImplicit ^CtElement first-statement)))
+      (let [resolved (occurrence translation-context (.getExecutable ^CtInvocation first-statement))]
+        (when (= :constructor (:kind resolved)) first-statement)))))
+
+(defn constructor-initializer
+  "Emits a C# constructor initializer directly from a resolved Java this/super
+  invocation.  Its body traversal still visits the invocation, but the
+  invocation rule deliberately emits no body statement."
+  [translation-context ^CtInvocation invocation]
+  (let [occurrence (occurrence translation-context (.getExecutable invocation))
+        called-owner (some-> invocation .getExecutable .getDeclaringType .getQualifiedName)
+        ^CtConstructor owner (loop [current (.getParent invocation)]
+                               (cond
+                                 (nil? current) nil
+                                 (instance? CtConstructor current) current
+                                 :else (recur (.getParent ^CtElement current))))
+        label (if (= called-owner (some-> owner .getDeclaringType .getQualifiedName))
+                "this" "base")
+        arguments (mapv #(translate translation-context %) (.getArguments invocation))
+        node (sequence-node [(raw (str " : " label "("))
+                             (sequence-node (mapv :node arguments) ", ") (raw ")")])]
+    (-> node
+        (csharp/with-source {:identity (spoon/frontend-identity invocation)
+                             :location (spoon/source-location invocation)
+                             :rule :java.constructor/initializer})
+        (csharp/with-source {:identity (spoon/frontend-identity (.getExecutable invocation))
+                             :location (spoon/source-location (.getExecutable invocation))
+                             :rule :resolved.constructor/project
+                             :mapping {:registry :constructors
+                                       :identity :resolved.constructor/project
+                                       :resolved-key (:key occurrence)
+                                       :origin (:origin occurrence)
+                                       :resolution (:resolution occurrence)}}))))

@@ -7,6 +7,7 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [vibeformer.csharp :as csharp]
+            [vibeformer.java-body :as java-body]
             [vibeformer.java-translate :as java]
             [vibeformer.paths :as paths]
             [vibeformer.spoon :as spoon])
@@ -200,8 +201,13 @@
    "java.lang.Integer" ["int" :dotnet.type/int32]
    "java.lang.Long" ["long" :dotnet.type/int64]
    "java.lang.Character" ["char" :dotnet.type/char]
+   "java.lang.Class" ["global::System.Type" :dotnet.type/type]
+   "java.lang.Enum" ["object" :dotnet.type/enum-base]
    "java.lang.Float" ["float" :dotnet.type/single]
    "java.lang.Double" ["double" :dotnet.type/double]
+   "java.lang.NumberFormatException" ["global::System.FormatException" :dotnet.type/format-exception]
+   "java.lang.StringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
+   "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.lang.Void" ["void" :dotnet.type/void]
    "java.lang.Throwable" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.Exception" ["global::System.Exception" :dotnet.type/exception]
@@ -217,22 +223,32 @@
    "java.util.HashSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/hash-set]
    "java.util.Map" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
    "java.util.HashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/dictionary]
-   "java.util.Deque" ["global::System.Collections.Generic.LinkedList" :dotnet.type/deque]
-   "java.util.ArrayDeque" ["global::System.Collections.Generic.LinkedList" :dotnet.type/deque]
+   "java.util.Deque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
+   "java.util.ArrayDeque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.Iterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
    "java.util.Optional" ["global::System.Nullable" :dotnet.type/nullable-value]
-   "java.util.ResourceBundle" ["global::System.Resources.ResourceManager" :dotnet.type/resource-manager]
+   "java.util.Arrays" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.util.Collections" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.util.Objects" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.util.ResourceBundle" ["global::Vibeformer.Runtime.JavaResourceBundle" :dotnet.type/resource-bundle]
    "java.util.Locale" ["global::System.Globalization.CultureInfo" :dotnet.type/culture-info]
    "java.util.function.Supplier" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Function" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.Predicate" ["global::System.Predicate" :dotnet.type/predicate]
+   "java.util.function.IntPredicate" ["global::System.Predicate<int>" :dotnet.type/int-predicate]
    "java.util.stream.Stream" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "java.util.stream.IntStream" ["global::System.Collections.Generic.IEnumerable<int>" :dotnet.type/int-enumerable]
+   "java.util.stream.Collector" ["global::Vibeformer.Runtime.JavaCollector" :dotnet.type/collector]
+   "java.util.stream.Collectors" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.text.Format" ["global::Vibeformer.Runtime.JavaFormat" :dotnet.type/format]
+   "java.text.MessageFormat" ["global::Vibeformer.Runtime.JavaMessageFormat" :dotnet.type/message-format]
    "org.jspecify.annotations.Nullable" ["object" :dotnet.annotation/nullable]
    "org.jspecify.annotations.NullMarked" ["object" :dotnet.annotation/null-marked]})
 
 (def ^:private primitive-type-mappings
-  {"void" ["void" :dotnet.type/void]
+  {"<null>" ["object" :dotnet.type/null]
+   "void" ["void" :dotnet.type/void]
    "boolean" ["bool" :dotnet.type/boolean]
    "byte" ["sbyte" :dotnet.type/sbyte]
    "short" ["short" :dotnet.type/int16]
@@ -258,7 +274,9 @@
     [(identifier (.getSimpleName reference)) :dotnet.type/type-parameter]
 
     (= :intrinsic (:origin occurrence))
-    (or (get primitive-type-mappings (.getQualifiedName reference))
+    (or (when (= :null-type (:resolution occurrence))
+          ["object" :dotnet.type/null])
+        (get primitive-type-mappings (.getQualifiedName reference))
         (throw (ex-info (str "Unsupported intrinsic declaration type " (:key occurrence))
                         {:kind :unsupported-declaration-type :occurrence (dissoc occurrence :reference :declaration)})))
 
@@ -399,17 +417,10 @@
     (swap! (:diagnostics ctx) conj diagnostic)
     id))
 
-(defn- blocked-body [ctx ^CtElement body owner]
-  (let [id (blocker! ctx body :unsupported-executable-body owner)]
-    (with-source
-      (sequence-node [(raw "{\n#error ") (raw id)
-                      (raw " Executable Java body requires direct Spoon translation\n}")])
-      body :java.executable/pending {:diagnostic-id id})))
-
-(defn- blocker-directive [ctx ^CtElement expression kind owner]
-  (let [id (blocker! ctx expression kind owner)]
-    (with-source (raw (str "#error " id " Executable Java initializer requires direct Spoon translation\n"))
-      expression :java.executable/pending {:diagnostic-id id})))
+(defn- translated-node [ctx ^CtElement element]
+  (let [translation (java-body/translate (:body-context ctx) element)]
+    (swap! (:body-translations ctx) conj translation)
+    (:node translation)))
 
 (defn- executable-owner [^CtExecutable executable]
   (let [type (.getDeclaringType executable)]
@@ -440,7 +451,7 @@
           (type-node ctx (.getType method)) (raw (str " " name)) node
           (raw "(") (sequence-node params ", ") (raw ")")
           (constraints-node ctx parameters)
-          (if body (sequence-node [(raw " ") (blocked-body ctx body owner)]) (raw ";"))])]
+          (if body (sequence-node [(raw " ") (translated-node ctx body)]) (raw ";"))])]
     (attach-declaration ctx declaration method :method (.getQualifiedName owner-type)
                         name signature :java.declaration/method)))
 
@@ -452,12 +463,18 @@
         body (.getBody constructor)
         signature (str ".ctor(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
                                                    (.getParameters constructor))) ")")
+        explicit-invocation (when body
+                              (java-body/explicit-constructor-invocation
+                               (:body-context ctx) body))
+        initializer (when explicit-invocation
+                      (java-body/constructor-initializer
+                       (:body-context ctx) explicit-invocation))
         declaration
         (sequence-node
          [(raw (join-words [(visibility constructor "internal")]))
-          (raw name) node (raw "(") (sequence-node params ", ") (raw ")")
+          (raw name) node (raw "(") (sequence-node params ", ") (raw ")") initializer
           (constraints-node ctx parameters)
-          (if body (sequence-node [(raw " ") (blocked-body ctx body owner)]) (raw ";"))])]
+          (if body (sequence-node [(raw " ") (translated-node ctx body)]) (raw ";"))])]
     (attach-declaration ctx declaration constructor :constructor
                         (.getQualifiedName owner-type) name signature
                         :java.declaration/constructor)))
@@ -476,12 +493,10 @@
                (when (modifier? field ModifierKind/VOLATILE) "volatile")]
         declaration
         (sequence-node
-         [(when initializer (blocker-directive ctx initializer
-                                              (if enum-value? :unsupported-enum-value-initializer
-                                                  :unsupported-field-initializer)
-                                              (str owner "#" (.getSimpleName field))))
-          (raw (join-words words)) (type-node ctx (.getType field))
-          (raw (str " " name ";"))])]
+         [(raw (join-words words)) (type-node ctx (.getType field))
+          (raw (str " " name))
+          (when initializer (sequence-node [(raw " = ") (translated-node ctx initializer)]))
+          (raw ";")])]
     (attach-declaration ctx declaration field
                         (if enum-value? :enum-value :field) owner name nil
                         (if enum-value? :java.declaration/enum-value :java.declaration/field))))
@@ -689,15 +704,24 @@
         root (paths/absolute workspace-root)
         project-root (paths/resolve-path target (get-in configuration [:output :project-directory]))
         source-root (paths/resolve-path project-root (get-in configuration [:output :source-directory]))
-        ctx {:configuration configuration
-             :resolved-model resolved-model
-             :occurrence-index (java/resolved-occurrence-index resolved-model)
-             :emitted (IdentityHashMap.)
-             :declarations (atom [])
-             :diagnostics (atom [])
-             :blocker-counter (atom 0)}
+        ctx-holder (atom nil)
+        base-context {:configuration configuration
+                      :resolved-model resolved-model
+                      :occurrence-index (java/resolved-occurrence-index resolved-model)
+                      :emitted (IdentityHashMap.)
+                      :declarations (atom [])
+                      :diagnostics (atom [])
+                      :blocker-counter (atom 0)
+                      :body-translations (atom [])}
+        services {:identifier identifier
+                  :pascal pascal
+                  :method-name method-name
+                  :type-node (fn [reference] (type-node @ctx-holder reference))}
+        body-context (java-body/context resolved-model services)
+        ctx (assoc base-context :body-context body-context)
+        _ (reset! ctx-holder ctx)
         roots (java/project-roots resolved-model)
-        artifacts
+        declaration-artifacts
         (mapv
          (fn [^CtType type]
            (let [namespace (destination-namespace ctx type)
@@ -715,6 +739,17 @@
               :mappings (mapv #(assoc % :file (portable project-root file))
                               (:mappings rendered))}))
          roots)
+        helper-source (paths/resolve-path root "vibeformer/runtime/Vibeformer.JavaCompat.cs")
+        helper-file (paths/resolve-path source-root "Vibeformer/Runtime/JavaCompat.cs")
+        _ (Files/createDirectories (.getParent helper-file)
+                                   (make-array java.nio.file.attribute.FileAttribute 0))
+        _ (Files/copy helper-source helper-file
+                      (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
+        artifacts (conj declaration-artifacts
+                        {:file (portable project-root helper-file)
+                         :source {:file (portable root helper-source) :line 1 :column 1}
+                         :mappings []
+                         :strategy :reviewable-java-compatibility-source})
         artifact-collisions (->> artifacts (group-by :file) vals (filter #(< 1 (count %))) vec)
         declaration-collisions (collision-errors @(:declarations ctx))]
     (when (or (seq artifact-collisions) (seq declaration-collisions))
@@ -753,6 +788,13 @@
           missing-mappings (sort (remove mapped-declaration-ids declaration-ids))
           accounts (source-accounting ctx root (:java-sources discovery))
           counts (frequencies (map :kind @(:declarations ctx)))
+          body-results @(:body-translations ctx)
+          body-coverage (reduce (fn [totals result]
+                                  (merge-with + totals (java/coverage-totals result)))
+                                {:visited 0 :covered 0 :blocked 0 :structural 0
+                                 :semantic 0 :unsupported-elements 0
+                                 :missing-mappings 0 :missing-occurrences 0 :fallback 0}
+                                body-results)
           summary {:compilation-units (count accounts)
                    :generated-files (count artifacts)
                    :resources (count resource-artifacts)
@@ -761,6 +803,8 @@
                    :source-mappings (count mappings)
                    :missing-source-mappings (count missing-mappings)
                    :hard-failures (count @(:diagnostics ctx))
+                   :executable-roots (count body-results)
+                   :executable-coverage body-coverage
                    :collisions 0
                    :skipped-source-units 0}]
       (when (seq missing-mappings)
