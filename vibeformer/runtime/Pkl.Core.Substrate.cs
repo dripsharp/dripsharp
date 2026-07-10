@@ -581,6 +581,25 @@ namespace Pkl.Core.Runtime.Truffle.api.source
         internal static Builder NewBuilder(string language, string characters, string name) =>
             new(characters);
         internal string GetCharacters() => characters;
+        internal string GetCharacters(int line)
+        {
+            if (line < 1) throw new ArgumentOutOfRangeException(nameof(line));
+            var currentLine = 1;
+            var lineStart = 0;
+            for (var index = 0; index <= characters.Length; index++)
+            {
+                if (index != characters.Length && characters[index] != '\n') continue;
+                if (currentLine == line)
+                {
+                    var lineEnd = index;
+                    if (lineEnd > lineStart && characters[lineEnd - 1] == '\r') lineEnd--;
+                    return characters.Substring(lineStart, lineEnd - lineStart);
+                }
+                currentLine++;
+                lineStart = index + 1;
+            }
+            throw new ArgumentOutOfRangeException(nameof(line));
+        }
         internal SourceSection CreateSection(int start, int length) => new(this, start, length, false);
         internal SourceSection CreateUnavailableSection() => new(this, 0, 0, true);
         internal Uri? GetUri() => uri;
@@ -609,6 +628,25 @@ namespace Pkl.Core.Runtime.Truffle.api.source
         internal int GetCharIndex() => start;
         internal int GetCharLength() => length;
         internal bool IsAvailable() => !unavailable;
+        internal string GetCharacters() => unavailable ? string.Empty : source.GetCharacters().Substring(start, length);
+        internal int GetStartLine() => GetPosition(start).line;
+        internal int GetStartColumn() => GetPosition(start).column;
+        internal int GetEndLine() => GetPosition(length == 0 ? start : start + length - 1).line;
+        internal int GetEndColumn() => GetPosition(length == 0 ? start : start + length - 1).column;
+
+        private (int line, int column) GetPosition(int offset)
+        {
+            var characters = source.GetCharacters();
+            var boundedOffset = Math.Clamp(offset, 0, characters.Length);
+            var line = 1;
+            var column = 1;
+            for (var index = 0; index < boundedOffset; index++)
+            {
+                if (characters[index] == '\n') { line++; column = 1; }
+                else column++;
+            }
+            return (line, column);
+        }
     }
 }
 
@@ -621,23 +659,63 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
     public class Frame
     {
         protected readonly object?[] Arguments;
-        internal Frame(object?[]? arguments = null) => Arguments = arguments ?? Array.Empty<object?>();
+        private readonly Dictionary<int, object?> values = new();
+        private readonly Dictionary<int, object?> auxiliaryValues = new();
+        private readonly FrameDescriptor descriptor;
+
+        internal Frame(object?[]? arguments = null, FrameDescriptor? descriptor = null)
+        {
+            Arguments = arguments ?? Array.Empty<object?>();
+            this.descriptor = descriptor ?? new FrameDescriptor();
+        }
         internal object?[] GetArguments() => Arguments;
+        internal FrameDescriptor GetFrameDescriptor() => descriptor;
+        internal object GetValue(int slot) => values.TryGetValue(slot, out var value) ? value! : null!;
+        internal object GetObject(int slot) => GetValue(slot);
+        internal long GetLong(int slot) => GetValue(slot) is long value ? value : throw new FrameSlotTypeException();
+        internal double GetDouble(int slot) => GetValue(slot) is double value ? value : throw new FrameSlotTypeException();
+        internal bool GetBoolean(int slot) => GetValue(slot) is bool value ? value : throw new FrameSlotTypeException();
+        internal void SetObject(int slot, object? value) => values[slot] = value;
+        internal void SetLong(int slot, long value) => values[slot] = value;
+        internal void SetDouble(int slot, double value) => values[slot] = value;
+        internal void SetBoolean(int slot, bool value) => values[slot] = value;
+        internal object? GetAuxiliarySlot(int slot) =>
+            auxiliaryValues.TryGetValue(slot, out var value) ? value : null;
+        internal void SetAuxiliarySlot(int slot, object? value) => auxiliaryValues[slot] = value;
+        protected void CopyStateTo(Frame target)
+        {
+            foreach (var entry in values) target.values[entry.Key] = entry.Value;
+            foreach (var entry in auxiliaryValues) target.auxiliaryValues[entry.Key] = entry.Value;
+        }
     }
 
     public sealed class VirtualFrame : Frame
     {
         internal VirtualFrame(object?[]? arguments = null) : base(arguments) { }
+        internal MaterializedFrame Materialize()
+        {
+            var result = new MaterializedFrame(Arguments, GetFrameDescriptor());
+            CopyStateTo(result);
+            return result;
+        }
     }
 
     public sealed class MaterializedFrame : Frame
     {
-        internal MaterializedFrame(object?[]? arguments = null) : base(arguments) { }
+        internal MaterializedFrame(object?[]? arguments = null, FrameDescriptor? descriptor = null) :
+            base(arguments, descriptor) { }
     }
 
     public sealed class FrameDescriptor
     {
+        private readonly Dictionary<int, FrameSlotKind> slotKinds = new();
+        private readonly Dictionary<object, int> auxiliarySlots = new();
+
         internal static Builder NewBuilder(int capacity) => new(capacity);
+        internal FrameSlotKind GetSlotKind(int slot) =>
+            slotKinds.TryGetValue(slot, out var kind) ? kind : FrameSlotKind.Illegal;
+        internal void SetSlotKind(int slot, FrameSlotKind kind) => slotKinds[slot] = kind;
+        internal IDictionary<object, int> GetAuxiliarySlots() => auxiliarySlots;
         public sealed class Builder
         {
             private int slots;
