@@ -667,7 +667,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     public abstract class RootNode : Node
     {
         protected RootNode(object? language, FrameDescriptor descriptor) { }
-        protected internal virtual object? Execute(VirtualFrame frame) => null;
+        public virtual object? Execute(VirtualFrame frame) => null;
         public virtual string GetName() => GetType().Name;
         public virtual bool IsInternal() => false;
         internal Pkl.Core.Runtime.Truffle.api.RootCallTarget GetCallTarget() => new(this);
@@ -892,7 +892,7 @@ namespace Pkl.Core.Runtime.Truffle.api
     {
         protected readonly ContextLocalSupport locals = new();
         protected internal abstract TContext CreateContext(TruffleLanguage.Env env);
-        public abstract CallTarget Parse(TruffleLanguage.ParsingRequest request);
+        protected internal abstract CallTarget Parse(TruffleLanguage.ParsingRequest request);
     }
 
     public static class TruffleLanguage

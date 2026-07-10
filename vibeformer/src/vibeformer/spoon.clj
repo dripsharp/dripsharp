@@ -734,9 +734,14 @@
           (let [all-definitions (.getTopDefinitions method)
                 definitions (->> all-definitions
                                  (remove #(.isShadow ^CtType (.getDeclaringType ^CtMethod %))))
+                override-annotation?
+                (some #(= "java.lang.Override"
+                          (some-> ^CtAnnotation % .getAnnotationType .getQualifiedName))
+                      (.getAnnotations method))
                 own-obligation? (or (nil? (.getBody method))
                                     (and (instance? CtInterface declaration)
                                          (some? (.getBody method)))
+                                    override-annotation?
                                     (seq all-definitions))]
             (concat
              (when own-obligation?

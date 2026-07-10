@@ -4,7 +4,7 @@
            :target-framework "net8.0"
            :nullable "enable"
            :implicit-usings false
-           :no-warn ["CS0693" "CS8714" "CS8767"]}
+           :no-warn ["CS0108" "CS0109" "CS0693" "CS8714" "CS8764" "CS8765" "CS8767"]}
  :package {:id "Pkl.Core"
            :version "0.0.0-development"
            :description "Disposable Vibeformer generation of the selected Pkl evaluator and value-model slice."

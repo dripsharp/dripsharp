@@ -983,8 +983,23 @@
                            overridable-base
                            (and (nil? (:selected-declarations ctx))
                                 (inherited-interface-contract? owner-type method))))
+        annotated-override? (some #(= "java.lang.Override"
+                                      (some-> ^CtAnnotation % .getAnnotationType .getQualifiedName))
+                                  (.getAnnotations method))
+        concrete-superclass? (let [superclass (when (instance? CtClass owner-type)
+                                                (.getSuperclass ^CtClass owner-type))]
+                               (and superclass
+                                    (not= "java.lang.Object" (.getQualifiedName superclass))))
+        override? (or override? (and annotated-override? concrete-superclass?))
+        base-owner (some-> overridable-base .getDeclaringType .getQualifiedName)
+        member-visibility (if (and overridable-base
+                                   (modifier? overridable-base ModifierKind/PROTECTED)
+                                   (str/starts-with? (or base-owner "") "org.pkl.parser."))
+                            "protected"
+                            (visibility (or overridable-base method)
+                                        (if interface? "public" "internal")))
         destination-hiding? (and (= "GetType" name) (not override?))]
-    [(visibility (or overridable-base method) (if interface? "public" "internal"))
+    [member-visibility
      (when destination-hiding? "new")
      (when static? "static")
      (when abstract? "abstract")
@@ -1158,9 +1173,17 @@
           (let [qualified (.getQualifiedName reference)
                 declaration (.getTypeDeclaration reference)]
             (and (instance? CtInterface declaration)
+                 (not (contains? #{"java.util.Iterator"
+                                   "java.util.ListIterator"
+                                   "java.util.PrimitiveIterator$OfLong"}
+                                 qualified))
                  (some #(str/starts-with? qualified %)
-                       ["java." "com.oracle.truffle." "org.graalvm."]))))]
-    (vec (remove #(or (nil? %) (implicit-base? %) (external-jvm-interface? %))
+                       ["java." "com.oracle.truffle." "org.graalvm."]))))
+        object-marker?
+        (fn [^CtTypeReference reference]
+          (= "object" (first (get external-type-mappings (.getQualifiedName reference)))))]
+    (vec (remove #(or (nil? %) (implicit-base? %) (external-jvm-interface? %)
+                      (object-marker? %))
                  (concat [superclass] (.getSuperInterfaces type))))))
 
 (declare type-node-declaration)
@@ -1265,7 +1288,7 @@
                    :services services)
        :capture-names capture-names})))
 
-(declare iterator-bridge-members)
+(declare iterator-bridge-members iterator-bridge-members-for-reference)
 
 (defn- anonymous-type-node [ctx ^CtType owner-type ^CtConstructorCall call]
   (let [^CtClass anonymous-class (anonymous-class-for-call call)
@@ -1348,7 +1371,9 @@
                                            :class name
                                            :source (source-ref member :java.declaration/anonymous-member)}))))
                       raw-members)
-        members (into (vec (iterator-bridge-members ctx anonymous-class)) members)
+        members (into (vec (or (iterator-bridge-members ctx anonymous-class)
+                               (iterator-bridge-members-for-reference ctx base-reference)))
+                      members)
         constructor
         (sequence-node
          [(raw (str "public " name "("))
@@ -1397,27 +1422,39 @@
              (raw ((:local-name services) declaration)))
            captures)))))
 
+(defn- iterator-element-from-reference [^CtTypeReference reference]
+  (let [qualified (.getQualifiedName reference)]
+    (cond
+      (= "java.util.PrimitiveIterator$OfLong" qualified) :long
+      (contains? #{"java.util.Iterator" "java.util.ListIterator"
+                   "org.organicdesign.fp.collections.UnmodSortedIterator"}
+                 qualified)
+      (or (first (.getActualTypeArguments reference))
+          :object))))
+
 (defn- iterator-element-reference [^CtType type]
-  (some (fn [^CtTypeReference reference]
-          (let [qualified (.getQualifiedName reference)]
-            (cond
-              (= "java.util.PrimitiveIterator$OfLong" qualified) :long
-              (contains? #{"java.util.Iterator" "java.util.ListIterator"
-                           "org.organicdesign.fp.collections.UnmodSortedIterator"}
-                         qualified)
-              (first (.getActualTypeArguments reference)))))
-        (.getSuperInterfaces type)))
+  (some iterator-element-from-reference (.getSuperInterfaces type)))
+
+(defn- iterator-bridge-members-for-element [ctx element]
+  (let [element-node (case element
+                       :long (raw "long")
+                       :object (raw "object")
+                       (type-node ctx element))]
+    [(sequence-node
+      [(raw "private ") element-node (raw " __iteratorCurrent = default!;\n")
+       (raw "public ") element-node (raw " Current => this.__iteratorCurrent;\n")
+       (raw "object global::System.Collections.IEnumerator.Current => this.__iteratorCurrent!;\n")
+       (raw "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.Next(); return true; }\n")
+       (raw "public void Reset() => throw new global::System.NotSupportedException();\n")
+       (raw "public void Dispose() { }")])]))
+
+(defn- iterator-bridge-members-for-reference [ctx reference]
+  (when-let [element (iterator-element-from-reference reference)]
+    (iterator-bridge-members-for-element ctx element)))
 
 (defn- iterator-bridge-members [ctx ^CtType type]
   (when-let [element (iterator-element-reference type)]
-    (let [element-node (if (= :long element) (raw "long") (type-node ctx element))]
-      [(sequence-node
-        [(raw "private ") element-node (raw " __iteratorCurrent = default!;\n")
-         (raw "public ") element-node (raw " Current => this.__iteratorCurrent;\n")
-         (raw "object global::System.Collections.IEnumerator.Current => this.__iteratorCurrent!;\n")
-         (raw "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.Next(); return true; }\n")
-         (raw "public void Reset() => throw new global::System.NotSupportedException();\n")
-         (raw "public void Dispose() { }")])])))
+    (iterator-bridge-members-for-element ctx element)))
 
 (defn- rrb-tree-list-bridge-members [^CtType type]
   (when (= "org.pkl.core.util.paguro.RrbTree" (.getQualifiedName type))
