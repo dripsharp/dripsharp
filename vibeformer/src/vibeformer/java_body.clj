@@ -423,8 +423,10 @@
               (= :project (:origin resolved))
               (normal-invocation
                element children
-               (boolean (and (instance? CtMethod (:declaration resolved))
-                             ((:record-component-contract? services) (:declaration resolved)))))
+               (boolean
+                (when-let [record-component-contract? (:record-component-contract? services)]
+                  (and (instance? CtMethod (:declaration resolved))
+                       (record-component-contract? (:declaration resolved))))))
               (some #(str/starts-with? key (str "executable:" %))
                     ["org.pkl.parser."
                      "java."

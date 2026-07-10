@@ -956,10 +956,6 @@
   (some #(when-not (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
         (top-definitions method)))
 
-(defn- interface-definition [^CtMethod method]
-  (some #(when (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
-        (top-definitions method)))
-
 (defn- superclass-method-definition [^CtType owner-type ^CtMethod method]
   (loop [superclass (when (instance? CtClass owner-type)
                       (.getSuperclass ^CtClass owner-type))]
@@ -1089,6 +1085,11 @@
     (let [own-methods (vec (.getMethods type))]
       (->> (.getSuperInterfaces type)
            (keep #(.getTypeDeclaration ^CtTypeReference %))
+           ;; External/synthetic interface declarations are not part of the
+           ;; selected occurrence-closed product slice.  Only synthesize
+           ;; deferred members from live selected project interfaces whose
+           ;; signatures were resolved and indexed.
+           (filter #(selected-declaration? ctx %))
            (mapcat #(.getMethods ^CtType %))
            (remove (fn [^CtMethod contract]
                      (some #(.isOverriding ^CtMethod % contract) own-methods)))
@@ -1104,12 +1105,12 @@
         words (method-modifiers ctx owner-type method body name)
         signature (str name "(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
                                                     (.getParameters method))) ")")
-        destination-return-reference
-        (or (some-> (superclass-method-definition owner-type method) .getType)
-            (some-> (class-definition method) .getType)
-            (some-> (interface-definition method) .getType)
-            (.getType method))
-        return-type (type-node ctx destination-return-reference)
+        ;; The declaration reference carries Spoon's resolved substitution for
+        ;; inherited generic contracts (for example ParserVisitor<Result>
+        ;; implemented as BaseParserVisitor<T>).  Top-definition references
+        ;; retain the interface's unsubstituted parameter name and therefore
+        ;; cannot be emitted directly in the implementing owner.
+        return-type (type-node ctx (.getType method))
         return-type (if (and (nullable-annotation? method)
                              (not (.isPrimitive (.getType method))))
                       (sequence-node [return-type (raw "?")])
