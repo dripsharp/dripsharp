@@ -11,16 +11,16 @@
             [vibeformer.spoon :as spoon])
   (:import [java.util IdentityHashMap]
            [spoon.reflect.code BinaryOperatorKind CtArrayRead CtArrayWrite CtAssert
-            CtAssignment CtBinaryOperator CtBlock CtBreak CtCase CtCatch
+            CtAssignment CtBinaryOperator CtBlock CtBreak CtCase CtCatch CtContinue
             CtCatchVariable CtComment CtConditional CtConstructorCall CtDo
             CtExecutableReferenceExpression CtExpression CtFieldRead CtFieldWrite
             CtFor CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable
             CtNewArray CtOperatorAssignment CtReturn CtStatement CtSuperAccess
-            CtSwitch CtSwitchExpression CtThisAccess CtThrow CtTry CtTypeAccess
+            CtSwitch CtSwitchExpression CtSynchronized CtThisAccess CtThrow CtTry CtTypeAccess
             CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtWhile
             CtYieldStatement UnaryOperatorKind]
-           [spoon.reflect.declaration CtAnnotation CtConstructor CtElement CtMethod CtParameter
-            CtRecordComponent]
+           [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement CtField CtMethod
+            CtParameter CtRecordComponent]
            [spoon.reflect.reference CtCatchVariableReference CtExecutableReference
             CtFieldReference CtLocalVariableReference CtPackageReference
             CtParameterReference CtTypeReference]
@@ -59,6 +59,14 @@
   (if-let [namer (:local-name services)]
     (namer element)
     (identifier services (.getSimpleName element))))
+
+(defn- enclosing-type [^CtElement element]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (nil? current) nil
+      (instance? spoon.reflect.declaration.CtType current) current
+      :else (recur (when (.isParentInitialized ^CtElement current)
+                     (.getParent ^CtElement current))))))
 
 (defn- nullable-annotation? [^CtElement element]
   (boolean
@@ -174,7 +182,16 @@
    "GT" [">" 50]
    "GE" [">=" 50]
    "PLUS" ["+" 60]
-   "MINUS" ["-" 60]})
+   "MINUS" ["-" 60]
+   "MUL" ["*" 70]
+   "DIV" ["/" 70]
+   "MOD" ["%" 70]
+   "BITAND" ["&" 37]
+   "BITXOR" ["^" 36]
+   "BITOR" ["|" 35]
+   "SL" ["<<" 55]
+   "SR" [">>" 55]
+   "USR" [">>>" 55]})
 
 (defn- primitive-expression? [^CtExpression expression]
   (boolean (some-> expression .getType .isPrimitive)))
@@ -374,6 +391,13 @@
               (= :record-component-accessor (:resolution resolved))
               (member target ((:pascal services) (.getSimpleName (.getExecutable element))))
               (= :project (:origin resolved)) (normal-invocation element children)
+              (some #(str/starts-with? key (str "executable:" %))
+                    ["org.pkl.parser."
+                     "java."
+                     "com.oracle.truffle."
+                     "org.graalvm.collections."
+                     "org.graalvm.polyglot."])
+              (normal-invocation element children)
               :else
               (throw (ex-info "Unsupported resolved executable mapping"
                               {:kind :unsupported-resolved-executable
@@ -385,10 +409,16 @@
 
 (defn- constructor-node [services ^CtConstructorCall element children]
   (let [type ((:type-node services) (.getType element))
-        args (children-nodes children (.getArguments element))]
+        args (children-nodes children (.getArguments element))
+        anonymous-body (some (fn [child]
+                               (when (instance? CtClass (:source-element child))
+                                 (:node child)))
+                             children)]
     (finish-expression services children element
                        (sequence-node [(raw "new ") type (raw "(")
-                                       (sequence-node args ", ") (raw ")")]))))
+                                       (sequence-node args ", ") (raw ")")
+                                       (when anonymous-body
+                                         (sequence-node [(raw " ") anonymous-body]))]))))
 
 (defn- block-node [children ^CtBlock element]
   (sequence-node [(raw "{")
@@ -468,8 +498,11 @@
                                       (raw ");")])}))}
     {:id :java.expression/operator-assignment :class CtOperatorAssignment
      :emit (fn [{:keys [^CtOperatorAssignment element children]}]
-             (let [operator (case (str (.getKind element)) "PLUS" "+=" "MINUS" "-="
-                                  (throw (ex-info "Unsupported operator assignment" {:operator (.getKind element)})))]
+             (let [operator (case (str (.getKind element))
+                              "PLUS" "+=" "MINUS" "-=" "MUL" "*=" "DIV" "/=" "MOD" "%="
+                              "BITAND" "&=" "BITOR" "|=" "BITXOR" "^="
+                              "SL" "<<=" "SR" ">>=" "USR" ">>>="
+                              (throw (ex-info "Unsupported operator assignment" {:operator (.getKind element)})))]
                {:node (finish-expression services children element
                        (sequence-node [(child-node children (.getAssigned element)) (raw (str " " operator " "))
                                        (child-node children (.getAssignment element))]))}))}
@@ -485,6 +518,8 @@
      :emit (fn [{:keys [^CtBlock element children]}] {:node (block-node children element)})}
     {:id :java.statement/break :class CtBreak
      :emit (fn [_] {:node (raw "break;")})}
+    {:id :java.statement/continue :class CtContinue
+     :emit (fn [_] {:node (raw "continue;")})}
     {:id :java.statement/case :class CtCase
      :emit (fn [{:keys [^CtCase element children]}]
              (let [source-statements (vec (.getStatements element))
@@ -499,18 +534,62 @@
     {:id :java.statement/catch :class CtCatch
      :emit (fn [{:keys [^CtCatch element children]}]
              (let [parameter (.getParameter element)
+                   multi-types (vec (.getMultiTypes ^CtCatchVariable parameter))
                    used? (some (fn [^CtVariableRead read]
                                  (identical? parameter (some-> read .getVariable .getDeclaration)))
-                               (.getElements (.getBody element) (TypeFilter. CtVariableRead)))]
+                               (.getElements (.getBody element) (TypeFilter. CtVariableRead)))
+                   parameter-name (identifier services (.getSimpleName parameter))
+                   multi? (> (count multi-types) 1)]
                {:node (sequence-node [(raw "catch (")
-                                    (if used?
-                                      (child-node children parameter)
-                                      ((:type-node services) (.getType parameter)))
-                                    (raw ") ") (child-node children (.getBody element))])}))}
+                                      (if multi?
+                                        (sequence-node [(raw "global::System.Exception ")
+                                                        (raw parameter-name)])
+                                        (if used?
+                                          (child-node children parameter)
+                                          ((:type-node services)
+                                           (or (first multi-types) (.getType parameter)))))
+                                      (raw ")")
+                                      (when multi?
+                                        (sequence-node
+                                         [(raw (str " when (" parameter-name " is "))
+                                          (sequence-node
+                                           (mapv #((:type-node services) %) multi-types)
+                                           " or ")
+                                          (raw ")")]))
+                                      (raw " ") (child-node children (.getBody element))])}))}
     {:id :java.declaration/catch-variable :class CtCatchVariable
      :emit (fn [{:keys [^CtCatchVariable element children]}]
-             {:node (sequence-node [(child-node children (.getType element)) (raw " ")
-                                    (raw (identifier services (.getSimpleName element)))])})}
+             (let [type (or (first (.getMultiTypes element)) (.getType element))]
+               {:node (sequence-node [((:type-node services) type) (raw " ")
+                                      (raw (identifier services (.getSimpleName element)))])}))}
+    {:id :java.declaration/anonymous-class :class CtClass
+     :emit (fn [{:keys [^CtClass element children]}]
+             {:node (sequence-node
+                     [(raw "{")
+                      (when (seq (.getTypeMembers element)) (raw "\n"))
+                      (sequence-node (children-nodes children (.getTypeMembers element)) "\n")
+                      (when (seq (.getTypeMembers element)) (raw "\n"))
+                      (raw "}")])})}
+    {:id :java.declaration/anonymous-field :class CtField
+     :emit (fn [{:keys [^CtField element children]}]
+             {:node (sequence-node
+                     [((:type-node services) (.getType element)) (raw " ")
+                      (raw (identifier services (.getSimpleName element)))
+                      (when-let [value (.getDefaultExpression element)]
+                        (sequence-node [(raw " = ") (child-node children value)]))
+                      (raw ";")])})}
+    {:id :java.declaration/anonymous-method :class CtMethod
+     :emit (fn [{:keys [^CtMethod element children]}]
+             {:node (sequence-node
+                     [((:type-node services) (.getType element)) (raw " ")
+                      (raw ((:method-name services) element)) (raw "(")
+                      (sequence-node (children-nodes children (.getParameters element)) ", ")
+                      (raw ") ")
+                      (when-let [body (.getBody element)] (child-node children body))])})}
+    {:id :java.declaration/anonymous-constructor :class CtConstructor
+     :emit (fn [{:keys [^CtConstructor element children]}]
+             {:node (or (when-let [body (.getBody element)] (child-node children body))
+                        (raw "{}"))})}
     {:id :java.trivia/comment :class CtComment :emit (fn [_] {:node (raw "")})}
     {:id :java.expression/conditional :class CtConditional
      :emit (fn [{:keys [^CtConditional element children]}]
@@ -644,6 +723,12 @@
              {:node (sequence-node [(raw "switch (") (child-node children (.getSelector element))
                                     (raw ") {\n") (sequence-node (children-nodes children (.getCases element)) "\n")
                                     (raw "\n}")])})}
+    {:id :java.statement/synchronized :class CtSynchronized
+     :emit (fn [{:keys [^CtSynchronized element children]}]
+             {:node (sequence-node [(raw "lock (")
+                                    (child-node children (.getExpression element))
+                                    (raw ") ")
+                                    (child-node children (.getBlock element))])})}
     {:id :java.expression/this :class CtThisAccess
      :emit (fn [{:keys [^CtThisAccess element children]}]
              {:node (finish-expression services children element (raw "this"))})}
@@ -707,7 +792,12 @@
 
 (defn- project-executable-name [services occurrence ^CtExecutableReference reference]
   (if (= :record-component-accessor (:resolution occurrence))
-    ((:pascal services) (.getSimpleName reference))
+    (if-let [component (when (instance? CtRecordComponent (:declaration occurrence))
+                         (:declaration occurrence))]
+      ((:record-component-name services) (enclosing-type component) component)
+      (if-let [owner (some-> reference .getDeclaringType .getTypeDeclaration)]
+        ((:record-component-name services) owner reference)
+        ((:pascal services) (.getSimpleName reference))))
     (if-let [declaration (:declaration occurrence)]
     (if (instance? CtMethod declaration)
       ((:method-name services) declaration)
@@ -719,7 +809,7 @@
     (project-executable-name services occurrence reference)
     ;; Whole-invocation JDK rules own semantic rewrites.  This token remains
     ;; mapped so every resolved reference is independently covered.
-    (identifier services (.getSimpleName reference))))
+    ((:pascal services) (.getSimpleName reference))))
 
 (defn- field-name [services occurrence ^CtFieldReference reference]
   (cond
@@ -727,7 +817,10 @@
     (= "field:java.util.Locale#ROOT" (:key occurrence)) "InvariantCulture"
     (or (= :record-component (:resolution occurrence))
         (instance? CtRecordComponent (:declaration occurrence)))
-    ((:pascal services) (.getSimpleName reference))
+    (if-let [component (when (instance? CtRecordComponent (:declaration occurrence))
+                         (:declaration occurrence))]
+      ((:record-component-name services) (enclosing-type component) component)
+      ((:pascal services) (.getSimpleName reference)))
     :else (identifier services (.getSimpleName reference))))
 
 (defn- registry-entry [id emit]

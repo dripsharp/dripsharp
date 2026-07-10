@@ -162,6 +162,12 @@
         body (if (str/starts-with? name "@") (subs name 1) name)]
     (str prefix (str/upper-case (subs body 0 1)) (subs body 1))))
 
+(defn- record-component-name
+  [^CtType owner-type component]
+  (let [candidate (pascal (.getSimpleName ^CtElement component))
+        nested-names (set (map #(.getSimpleName ^CtType %) (.getNestedTypes owner-type)))]
+    (if (contains? nested-names candidate) (str candidate "Value") candidate)))
+
 (defn- package-name [^CtType type]
   (some-> type .getPackage .getQualifiedName))
 
@@ -235,6 +241,8 @@
    "java.lang.NumberFormatException" ["global::System.FormatException" :dotnet.type/format-exception]
    "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
+   "java.lang.Math" ["global::System.Math" :dotnet.type/math]
+   "java.lang.StrictMath" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.lang.Void" ["void" :dotnet.type/void]
    "java.lang.Throwable" ["global::System.Exception" :dotnet.type/exception]
@@ -243,18 +251,52 @@
    "java.lang.IllegalArgumentException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
    "java.lang.IllegalStateException" ["global::System.InvalidOperationException" :dotnet.type/invalid-operation]
    "java.lang.AssertionError" ["global::System.Exception" :dotnet.type/exception]
+   "java.lang.ArithmeticException" ["global::System.ArithmeticException" :dotnet.type/arithmetic-exception]
+   "java.lang.ExceptionInInitializerError" ["global::System.TypeInitializationException" :dotnet.type/type-initialization-exception]
+   "java.lang.UnsupportedOperationException" ["global::System.NotSupportedException" :dotnet.type/not-supported-exception]
+   "java.lang.StackTraceElement" ["global::System.Diagnostics.StackFrame" :dotnet.type/stack-frame]
+   "java.lang.Runnable" ["global::System.Action" :dotnet.type/action]
+   "java.lang.AutoCloseable" ["global::System.IDisposable" :dotnet.type/disposable]
+   "java.lang.Comparable" ["global::System.IComparable" :dotnet.type/comparable]
+   "java.io.IOException" ["global::System.IO.IOException" :dotnet.type/io-exception]
+   "java.io.FileNotFoundException" ["global::System.IO.FileNotFoundException" :dotnet.type/file-not-found-exception]
+   "java.io.UncheckedIOException" ["global::System.IO.IOException" :dotnet.type/io-exception]
+   "java.io.Reader" ["global::System.IO.TextReader" :dotnet.type/text-reader]
+   "java.io.StringReader" ["global::System.IO.StringReader" :dotnet.type/string-reader]
+   "java.io.Writer" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
+   "java.io.PrintWriter" ["global::Vibeformer.Runtime.JavaPrintWriter" :dotnet.type/print-writer]
+   "java.io.Serializable" ["object" :dotnet.type/serializable-marker]
+   "java.net.URI" ["global::System.Uri" :dotnet.type/uri]
+   "java.net.URISyntaxException" ["global::System.UriFormatException" :dotnet.type/uri-format-exception]
+   "java.net.URLEncoder" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.nio.charset.Charset" ["global::System.Text.Encoding" :dotnet.type/encoding]
+   "java.nio.charset.StandardCharsets" ["global::System.Text.Encoding" :dotnet.type/encoding]
+   "java.nio.file.Path" ["string" :dotnet.type/path]
+   "java.nio.file.NoSuchFileException" ["global::System.IO.FileNotFoundException" :dotnet.type/file-not-found-exception]
+   "java.time.Duration" ["global::System.TimeSpan" :dotnet.type/time-span]
+   "java.time.temporal.TemporalUnit" ["global::Vibeformer.Runtime.JavaTemporalUnit" :dotnet.type/temporal-unit]
+   "java.time.temporal.ChronoUnit" ["global::Vibeformer.Runtime.JavaTemporalUnit" :dotnet.type/temporal-unit]
    "java.lang.Iterable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.Collection" ["global::System.Collections.Generic.ICollection" :dotnet.type/collection]
    "java.util.List" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
    "java.util.ArrayList" ["global::System.Collections.Generic.List" :dotnet.type/list]
    "java.util.Set" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
    "java.util.HashSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/hash-set]
+   "java.util.LinkedHashSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/linked-hash-set]
+   "java.util.EnumSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/enum-set]
+   "java.util.AbstractCollection" ["global::System.Collections.Generic.ICollection" :dotnet.type/collection]
+   "java.util.AbstractSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
    "java.util.Map" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
    "java.util.HashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/dictionary]
+   "java.util.LinkedHashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/linked-dictionary]
+   "java.util.Map$Entry" ["global::System.Collections.Generic.KeyValuePair" :dotnet.type/map-entry]
+   "java.util.Comparator" ["global::System.Collections.Generic.IComparer" :dotnet.type/comparer]
    "java.util.Deque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.ArrayDeque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.Iterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
    "java.util.Optional" ["global::System.Nullable" :dotnet.type/nullable-value]
+   "java.util.OptionalInt" ["int?" :dotnet.type/nullable-int]
+   "java.util.NoSuchElementException" ["global::System.InvalidOperationException" :dotnet.type/invalid-operation]
    "java.util.Arrays" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.Collections" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.Objects" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
@@ -264,6 +306,10 @@
    "java.util.function.Function" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.Predicate" ["global::System.Predicate" :dotnet.type/predicate]
+   "java.util.function.BiConsumer" ["global::System.Action" :dotnet.type/action]
+   "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.IntFunction" ["global::Vibeformer.Runtime.JavaIntFunction" :dotnet.type/int-function]
+   "java.util.function.ToIntFunction" ["global::Vibeformer.Runtime.JavaToIntFunction" :dotnet.type/to-int-function]
    "java.util.function.IntPredicate" ["global::System.Predicate<int>" :dotnet.type/int-predicate]
    "java.util.stream.Stream" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.stream.IntStream" ["global::System.Collections.Generic.IEnumerable<int>" :dotnet.type/int-enumerable]
@@ -271,8 +317,46 @@
    "java.util.stream.Collectors" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.text.Format" ["global::Vibeformer.Runtime.JavaFormat" :dotnet.type/format]
    "java.text.MessageFormat" ["global::Vibeformer.Runtime.JavaMessageFormat" :dotnet.type/message-format]
+   "java.util.regex.Matcher" ["global::System.Text.RegularExpressions.Match" :dotnet.type/regex-match]
+   "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex" :dotnet.type/regex]
+   "java.util.concurrent.ConcurrentHashMap" ["global::System.Collections.Concurrent.ConcurrentDictionary" :dotnet.type/concurrent-dictionary]
+   "java.util.concurrent.ScheduledExecutorService" ["global::Vibeformer.Runtime.JavaScheduledExecutor" :dotnet.type/scheduled-executor]
+   "java.util.concurrent.ScheduledFuture" ["global::System.Threading.Tasks.Task" :dotnet.type/task]
+   "java.util.concurrent.TimeUnit" ["global::Vibeformer.Runtime.JavaTimeUnit" :dotnet.type/time-unit]
    "org.jspecify.annotations.Nullable" ["object" :dotnet.annotation/nullable]
    "org.jspecify.annotations.NullMarked" ["object" :dotnet.annotation/null-marked]})
+
+(defn- dotted-external-type
+  [prefix destination qualified-name rule]
+  (when (or (= qualified-name prefix)
+            (str/starts-with? qualified-name (str prefix ".")))
+    (let [suffix (subs qualified-name (count prefix))
+          parts (->> (str/split suffix #"[.$]") (remove str/blank?))]
+      [(str "global::" destination
+            (when (seq parts) (str "." (str/join "." (map identifier parts)))))
+       rule])))
+
+(defn- derived-external-type-mapping
+  "Maps resolved external product/substrate identities without reconstructing
+  source syntax. Parser types target the separately generated Pkl.Parser
+  package; Truffle and Graal identities target explicit compatibility owners
+  pending their native product implementations. Compile-time annotations are
+  erased only after their exact resolved package identity is known."
+  [qualified-name]
+  (or (dotted-external-type "org.pkl.parser" "Pkl.Parser" qualified-name
+                            :dotnet.type/pkl-parser-package)
+      (dotted-external-type "com.oracle.truffle" "Pkl.Core.Runtime.Truffle" qualified-name
+                            :pkl-core.type/truffle-substrate)
+      (dotted-external-type "org.graalvm.collections" "Pkl.Core.Runtime.GraalCollections" qualified-name
+                            :pkl-core.type/graal-collections-substrate)
+      (dotted-external-type "org.graalvm.polyglot" "Pkl.Core.Runtime.Polyglot" qualified-name
+                            :pkl-core.type/polyglot-substrate)
+      (when (or (str/starts-with? qualified-name "com.google.errorprone.annotations.")
+                (str/starts-with? qualified-name "java.lang.annotation."))
+        ["object" :dotnet.annotation/compile-time-metadata])
+      (when (contains? #{"java.lang.FunctionalInterface" "java.lang.Override"
+                         "java.lang.SuppressWarnings"} qualified-name)
+        ["object" :dotnet.annotation/compile-time-metadata])))
 
 (def ^:private primitive-type-mappings
   {"<null>" ["object" :dotnet.type/null]
@@ -315,6 +399,7 @@
           ["global::System.Collections.Generic.IEnumerable"
            :dotnet.type/covariant-enumerable])
         (get external-type-mappings (.getQualifiedName reference))
+        (derived-external-type-mapping (.getQualifiedName reference))
         (throw (ex-info (str "No declaration type mapping for " (:key occurrence))
                         {:kind :unsupported-declaration-type
                          :occurrence (dissoc occurrence :reference :declaration)})))))
@@ -374,13 +459,42 @@
    (fn [^CtAnnotation annotation]
      (let [occurrence (occurrence! ctx annotation :annotation)
            key (:key occurrence)
-           rule (case key
-                  "annotation:org.jspecify.annotations.Nullable" :dotnet.annotation/nullable-metadata
-                  "annotation:org.jspecify.annotations.NullMarked" :dotnet.annotation/nullable-context
-                  "annotation:java.lang.Override" :dotnet.annotation/language-override
-                  "annotation:java.lang.SuppressWarnings" :dotnet.annotation/compiler-warning
-                  (throw (ex-info (str "No declaration annotation mapping for " key)
-                                  {:kind :unsupported-declaration-annotation :key key})))]
+           rule (cond
+                  (= key "annotation:org.jspecify.annotations.Nullable")
+                  :dotnet.annotation/nullable-metadata
+                  (= key "annotation:org.jspecify.annotations.NullMarked")
+                  :dotnet.annotation/nullable-context
+                  (= key "annotation:java.lang.Override")
+                  :dotnet.annotation/language-override
+                  (= key "annotation:java.lang.SuppressWarnings")
+                  :dotnet.annotation/compiler-warning
+                  (contains?
+                   #{"annotation:com.google.errorprone.annotations.Immutable"
+                     "annotation:com.google.errorprone.annotations.concurrent.GuardedBy"
+                     "annotation:com.oracle.truffle.api.CompilerDirectives$CompilationFinal"
+                     "annotation:com.oracle.truffle.api.CompilerDirectives$TruffleBoundary"
+                     "annotation:com.oracle.truffle.api.CompilerDirectives$ValueType"
+                     "annotation:com.oracle.truffle.api.TruffleLanguage$Registration"
+                     "annotation:com.oracle.truffle.api.dsl.GeneratedBy"
+                     "annotation:com.oracle.truffle.api.dsl.ImportStatic"
+                     "annotation:com.oracle.truffle.api.dsl.NeverDefault"
+                     "annotation:com.oracle.truffle.api.dsl.NodeChild"
+                     "annotation:com.oracle.truffle.api.dsl.TypeSystem"
+                     "annotation:com.oracle.truffle.api.dsl.TypeSystemReference"
+                     "annotation:com.oracle.truffle.api.instrumentation.GenerateWrapper"
+                     "annotation:com.oracle.truffle.api.instrumentation.ProvidedTags"
+                     "annotation:com.oracle.truffle.api.instrumentation.Tag$Identifier"
+                     "annotation:com.oracle.truffle.api.nodes.Node$Child"
+                     "annotation:com.oracle.truffle.api.nodes.Node$Children"
+                     "annotation:com.oracle.truffle.api.nodes.NodeInfo"
+                     "annotation:java.lang.FunctionalInterface"
+                     "annotation:java.lang.annotation.Retention"
+                     "annotation:java.lang.annotation.Target"}
+                   key)
+                  :dotnet.annotation/resolved-compile-time-metadata
+                  (= :project (:origin occurrence))
+                  :pkl-core.annotation/resolved-product-metadata
+                  :else :dotnet.annotation/resolved-external-metadata)]
        (source-ref annotation rule
                    {:mapping {:registry :annotations
                               :identity rule
@@ -460,11 +574,15 @@
     (str (.getQualifiedName type) "#" (.getSignature executable))))
 
 (defn- method-name [^CtMethod method]
-  (case (.getSimpleName method)
-    "toString" "ToString"
-    "hashCode" "GetHashCode"
-    "equals" "Equals"
-    (pascal (.getSimpleName method))))
+  (let [simple-name (.getSimpleName method)
+        owner (some-> method .getDeclaringType .getQualifiedName)]
+    (cond
+      (and (= owner "org.pkl.core.module.ModuleKeys") (= simple-name "synthetic"))
+      "CreateSynthetic"
+      (= simple-name "toString") "ToString"
+      (= simple-name "hashCode") "GetHashCode"
+      (= simple-name "equals") "Equals"
+      :else (pascal simple-name))))
 
 (defn- top-definitions [^CtMethod method]
   (vec (.getTopDefinitions method)))
@@ -645,7 +763,7 @@
 
 (defn- record-component-node [ctx ^CtType owner-type ^CtRecordComponent component]
   (let [owner (.getQualifiedName owner-type)
-        name (pascal (.getSimpleName component))
+        name (record-component-name owner-type component)
         node (sequence-node [(type-node ctx (.getType component)) (raw (str " " name))])]
     (attach-declaration ctx node component :record-component owner name nil
                         :java.declaration/record-component)))
@@ -764,13 +882,18 @@
        (mapv (fn [^CtAnnotation annotation]
                (let [occurrence (occurrence! ctx annotation :annotation)
                      key (:key occurrence)
-                     strategy (case key
-                                "annotation:org.jspecify.annotations.Nullable" :csharp-nullable-metadata
-                                "annotation:org.jspecify.annotations.NullMarked" :project-nullable-context
-                                "annotation:java.lang.Override" :csharp-language-semantics
-                                "annotation:java.lang.SuppressWarnings" :source-analysis-only
-                                (throw (ex-info (str "No annotation decision for " key)
-                                                {:kind :unsupported-declaration-annotation :key key})))]
+                     strategy (cond
+                                (= key "annotation:org.jspecify.annotations.Nullable")
+                                :csharp-nullable-metadata
+                                (= key "annotation:org.jspecify.annotations.NullMarked")
+                                :project-nullable-context
+                                (= key "annotation:java.lang.Override")
+                                :csharp-language-semantics
+                                (= key "annotation:java.lang.SuppressWarnings")
+                                :source-analysis-only
+                                (= :project (:origin occurrence))
+                                :resolved-product-metadata
+                                :else :resolved-external-metadata)]
                  {:source (source-ref annotation :java.annotation/resolved)
                   :resolved-key key :origin (:origin occurrence)
                   :strategy strategy :emitted-runtime-attribute false})))))
@@ -887,6 +1010,7 @@
         services {:identifier identifier
                   :pascal pascal
                   :method-name method-name
+                  :record-component-name record-component-name
                   :local-name (fn [^CtElement element]
                                 (let [{:keys [line column]} (spoon/source-location element)]
                                   (str (identifier (.getSimpleName ^spoon.reflect.declaration.CtNamedElement element))

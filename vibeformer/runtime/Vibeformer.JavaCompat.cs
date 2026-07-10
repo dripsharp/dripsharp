@@ -16,6 +16,9 @@ using System.Text;
 
 namespace Vibeformer.Runtime;
 
+internal delegate TResult JavaIntFunction<out TResult>(int value);
+internal delegate int JavaToIntFunction<in TValue>(TValue value);
+
 internal static class JavaCompat
 {
     internal static T RequireNonNull<T>(T? value, string? message = null) =>
