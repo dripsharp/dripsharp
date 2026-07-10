@@ -340,7 +340,14 @@ namespace Pkl.Core.Runtime
     public sealed class JavaCertificateFactory
     {
         public static JavaCertificateFactory GetInstance(string type) => new();
-        public System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateCertificate(System.IO.Stream stream) => new(stream);
+        public System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateCertificate(System.IO.Stream stream)
+        {
+            using var bytes = new System.IO.MemoryStream();
+            stream.CopyTo(bytes);
+#pragma warning disable SYSLIB0057 // net8-compatible certificate construction
+            return new System.Security.Cryptography.X509Certificates.X509Certificate2(bytes.ToArray());
+#pragma warning restore SYSLIB0057
+        }
     }
     public sealed class JavaSslContext
     {
@@ -377,7 +384,7 @@ namespace Pkl.Core.Runtime
         internal System.Net.Http.HttpRequestMessage Message { get; }
         public JavaHttpRequest(System.Net.Http.HttpRequestMessage message) => Message = message;
         public static Builder NewBuilder() => new();
-        public static Builder NewBuilder(Uri uri) => new().Uri(uri);
+        public static Builder NewBuilder(Uri uri) => new Builder().Uri(uri);
         public Uri Uri() => Message.RequestUri!;
         public sealed class Builder
         {
@@ -491,13 +498,14 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal bool Contains(T value) => Values.Contains(value);
         internal int Size() => Values.Count;
         internal bool IsEmpty() => Values.Count == 0;
+        internal IEnumerable<T> Items() => Values;
     }
 
     public sealed class EconomicSet<T> : UnmodifiableEconomicSet<T> where T : notnull
     {
         internal EconomicSet(int capacity = 0) : base(new HashSet<T>(capacity)) { }
         internal bool Add(T value) => Values.Add(value);
-        internal void AddAll(UnmodifiableEconomicSet<T> other) => Values.UnionWith(other.Values);
+        internal void AddAll(UnmodifiableEconomicSet<T> other) => Values.UnionWith(other.Items());
     }
 
     public static class EconomicSet
@@ -723,5 +731,163 @@ namespace Pkl.Core.Runtime.Truffle.api
     {
         internal Node? GetLocation() => null;
         internal CallTarget? GetTarget() => null;
+    }
+}
+
+// SnakeYAML Engine contracts reached by the evaluator's YAML parser closure.
+// The generated Pkl classes retain ownership of Pkl conversion and value-model
+// behavior; these types provide the external library surface resolved by Spoon.
+namespace Pkl.Core.Runtime.SnakeYaml.api
+{
+    using Pkl.Core.Runtime.SnakeYaml.constructor;
+    using Pkl.Core.Runtime.SnakeYaml.nodes;
+
+    public interface ConstructNode
+    {
+        object? Construct(Node node);
+        void ConstructRecursive(Node node, object? data) { }
+    }
+
+    public sealed class LoadSettings
+    {
+        internal LoadSettings() { }
+        public static LoadSettingsBuilder Builder() => new();
+    }
+
+    public sealed class LoadSettingsBuilder
+    {
+        public LoadSettingsBuilder SetAllowNonScalarKeys(bool value) => this;
+        public LoadSettingsBuilder SetLabel(string value) => this;
+        public LoadSettingsBuilder SetMaxAliasesForCollections(int value) => this;
+        public LoadSettingsBuilder SetSchema(schema.Schema value) => this;
+        public LoadSettings Build() => new();
+    }
+
+    public sealed class Load
+    {
+        private readonly BaseConstructor constructor;
+        public Load(LoadSettings settings, BaseConstructor constructor) => this.constructor = constructor;
+        public object? LoadFromString(string text) =>
+            throw new exceptions.YamlEngineException("SnakeYAML parsing substrate is not implemented yet.");
+        public IEnumerable<object?> LoadAllFromString(string text) =>
+            throw new exceptions.YamlEngineException("SnakeYAML parsing substrate is not implemented yet.");
+    }
+}
+
+namespace Pkl.Core.Runtime.SnakeYaml.constructor
+{
+    using Pkl.Core.Runtime.SnakeYaml.api;
+    using Pkl.Core.Runtime.SnakeYaml.nodes;
+
+    public class BaseConstructor
+    {
+        protected readonly Dictionary<Tag, ConstructNode> TagConstructors = new();
+        public virtual object? ConstructObject(Node node) => null;
+        protected void FlattenMapping(MappingNode node) { }
+    }
+
+    public class StandardConstructor : BaseConstructor
+    {
+        public StandardConstructor(api.LoadSettings settings) { }
+    }
+}
+
+namespace Pkl.Core.Runtime.SnakeYaml.exceptions
+{
+    public sealed class Mark { }
+
+    public class YamlEngineException : Exception
+    {
+        public YamlEngineException(string message) : base(message) { }
+    }
+}
+
+namespace Pkl.Core.Runtime.SnakeYaml.nodes
+{
+    using Pkl.Core.Runtime.SnakeYaml.exceptions;
+
+    public class Tag : IEquatable<Tag>
+    {
+        public const string PREFIX = "tag:yaml.org,2002:";
+        public static readonly Tag BINARY = new(PREFIX + "binary");
+        public static readonly Tag BOOL = new(PREFIX + "bool");
+        public static readonly Tag FLOAT = new(PREFIX + "float");
+        public static readonly Tag INT = new(PREFIX + "int");
+        public static readonly Tag MAP = new(PREFIX + "map");
+        public static readonly Tag NULL = new(PREFIX + "null");
+        public static readonly Tag SEQ = new(PREFIX + "seq");
+        public static readonly Tag SET = new(PREFIX + "set");
+        public static readonly Tag STR = new(PREFIX + "str");
+
+        private readonly string value;
+        public Tag(string value) => this.value = value;
+        public bool Equals(Tag? other) => other is not null && value == other.value;
+        public override bool Equals(object? other) => Equals(other as Tag);
+        public override int GetHashCode() => value.GetHashCode(StringComparison.Ordinal);
+        public override string ToString() => value;
+    }
+
+    public class Node
+    {
+        public virtual JavaOptional<Mark> GetStartMark() => JavaOptional<Mark>.Empty();
+        public virtual JavaOptional<Mark> GetEndMark() => JavaOptional<Mark>.Empty();
+        public virtual bool IsRecursive() => false;
+    }
+
+    public sealed class ScalarNode : Node
+    {
+        private readonly string value;
+        public ScalarNode(string value) => this.value = value;
+        public string GetValue() => value;
+    }
+
+    public sealed class SequenceNode : Node
+    {
+        private readonly IList<Node> value;
+        public SequenceNode(IList<Node> value) => this.value = value;
+        public IList<Node> GetValue() => value;
+    }
+
+    public sealed class NodeTuple
+    {
+        private readonly Node keyNode;
+        private readonly Node valueNode;
+        public NodeTuple(Node keyNode, Node valueNode)
+        {
+            this.keyNode = keyNode;
+            this.valueNode = valueNode;
+        }
+        public Node GetKeyNode() => keyNode;
+        public Node GetValueNode() => valueNode;
+    }
+
+    public sealed class MappingNode : Node
+    {
+        private readonly IList<NodeTuple> value;
+        public MappingNode(IList<NodeTuple> value) => this.value = value;
+        public IList<NodeTuple> GetValue() => value;
+    }
+}
+
+namespace Pkl.Core.Runtime.SnakeYaml.resolver
+{
+    using Pkl.Core.Runtime.SnakeYaml.nodes;
+
+    public interface ScalarResolver
+    {
+        Tag Resolve(string value, bool implicitValue);
+    }
+}
+
+namespace Pkl.Core.Runtime.SnakeYaml.schema
+{
+    using Pkl.Core.Runtime.SnakeYaml.api;
+    using Pkl.Core.Runtime.SnakeYaml.nodes;
+    using Pkl.Core.Runtime.SnakeYaml.resolver;
+
+    public abstract class Schema
+    {
+        public abstract ScalarResolver GetScalarResolver();
+        public abstract IDictionary<Tag, ConstructNode> GetSchemaTagConstructors();
     }
 }

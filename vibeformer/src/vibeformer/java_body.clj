@@ -421,7 +421,8 @@
                      "org.graalvm.collections."
                      "org.graalvm.polyglot."
                      "org.organicdesign.fp."
-                     "org.msgpack."])
+                     "org.msgpack."
+                     "org.snakeyaml.engine.v2."])
               (normal-invocation element children)
               :else
               (throw (ex-info "Unsupported resolved executable mapping"

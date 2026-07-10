@@ -259,6 +259,7 @@
    "java.lang.Class" ["global::System.Type" :dotnet.type/type]
    "java.lang.ClassLoader" ["global::System.Reflection.Assembly" :dotnet.type/assembly]
    "java.lang.Enum" ["object" :dotnet.type/enum-base]
+   "java.lang.Record" ["object" :dotnet.type/record-base]
    "java.lang.Float" ["float" :dotnet.type/single]
    "java.lang.Double" ["double" :dotnet.type/double]
    "java.lang.NumberFormatException" ["global::System.FormatException" :dotnet.type/format-exception]
@@ -429,6 +430,7 @@
    "java.util.HashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/dictionary]
    "java.util.IdentityHashMap" ["global::Pkl.Core.Runtime.JavaIdentityDictionary" :pkl-core.type/identity-map]
    "java.util.LinkedHashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/linked-dictionary]
+   "java.util.WeakHashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/weak-map]
    "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary" :dotnet.type/sorted-dictionary]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet" :dotnet.type/sorted-set]
    "java.util.Map$Entry" ["global::System.Collections.Generic.KeyValuePair" :dotnet.type/map-entry]
@@ -519,6 +521,7 @@
    "org.organicdesign.fp.collections.UnmodSortedIterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
    "org.organicdesign.fp.collections.Cowry" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "org.organicdesign.fp.function.Fn0" ["global::System.Func" :dotnet.type/func]
+   "org.organicdesign.fp.function.Fn1" ["global::System.Func" :dotnet.type/func]
    "org.organicdesign.fp.indent.IndentUtils" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "org.organicdesign.fp.indent.Indented" ["object" :dotnet.type/marker]
    "org.organicdesign.fp.oneOf.Option" ["global::Pkl.Core.Runtime.JavaOptional" :pkl-core.type/optional]
@@ -536,6 +539,7 @@
    "org.msgpack.value.Value" ["object" :excluded.messagepack/value]
    "org.msgpack.value.impl.ImmutableStringValueImpl" ["object" :excluded.messagepack/value]
    "org.jspecify.annotations.Nullable" ["object" :dotnet.annotation/nullable]
+   "org.jspecify.annotations.NonNull" ["object" :dotnet.annotation/non-null]
    "org.jspecify.annotations.NullMarked" ["object" :dotnet.annotation/null-marked]})
 
 (defn- dotted-external-type
@@ -564,6 +568,8 @@
                             :pkl-core.type/graal-collections-substrate)
       (dotted-external-type "org.graalvm.polyglot" "Pkl.Core.Runtime.Polyglot" qualified-name
                             :pkl-core.type/polyglot-substrate)
+      (dotted-external-type "org.snakeyaml.engine.v2" "Pkl.Core.Runtime.SnakeYaml" qualified-name
+                            :pkl-core.type/snakeyaml-substrate)
       (when (or (str/starts-with? qualified-name "com.google.errorprone.annotations.")
                 (str/starts-with? qualified-name "java.lang.annotation."))
         ["object" :dotnet.annotation/compile-time-metadata])
