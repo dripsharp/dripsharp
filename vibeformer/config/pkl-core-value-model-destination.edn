@@ -3,7 +3,8 @@
            :root-namespace "Pkl.Core"
            :target-framework "net8.0"
            :nullable "enable"
-           :implicit-usings false}
+           :implicit-usings false
+           :no-warn ["CS0693" "CS8714" "CS8767"]}
  :package {:id "Pkl.Core"
            :version "0.0.0-development"
            :description "Disposable Vibeformer generation of the selected Pkl evaluator and value-model slice."
@@ -20,4 +21,6 @@
  :namespaces {"org.pkl.core" "Pkl.Core"}
  :namespace-prefixes {"org.pkl.core" "Pkl.Core"}
  :resources {}
+ :project-references ["../pkl-parser/Pkl.Parser.csproj"]
+ :runtime-sources ["vibeformer/runtime/Pkl.Core.Substrate.cs"]
  :resource-policy {:strategy :embedded-resource-preserve-path}}

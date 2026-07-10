@@ -228,6 +228,8 @@
 (defn- unary-node [^CtUnaryOperator element operand]
   (case (str (.getKind element))
     "NEG" (csharp/prefix "-" operand)
+    "POS" (csharp/prefix "+" operand)
+    "COMPL" (csharp/prefix "~" operand)
     "NOT" (csharp/prefix "!" operand)
     "PREINC" (csharp/prefix "++" operand)
     "PREDEC" (csharp/prefix "--" operand)
@@ -254,6 +256,10 @@
         executable (child-node children (.getExecutable ^CtInvocation element))
         callable (if target (member target (:text (csharp/render executable))) executable)]
     (invoke callable (children-nodes children (.getArguments ^CtInvocation element)))))
+
+(defn- class-literal? [^CtFieldRead element]
+  (and (= "class" (some-> element .getVariable .getSimpleName))
+       (instance? CtTypeAccess (.getTarget element))))
 
 (defn- compat-call [name arguments]
   (invoke (raw (str "global::Vibeformer.Runtime.JavaCompat." name)) arguments))
@@ -316,8 +322,10 @@
           "executable:java.lang.Character#isUnicodeIdentifierStart(int)" (compat-call "IsUnicodeIdentifierStart" args)
           "executable:java.lang.Character#toString(int)" (compat-call "CodePointToString" args)
           "executable:java.lang.Class#getSimpleName()" (member target "Name")
+          "executable:java.lang.Class#getClassLoader()" (member target "Assembly")
           "executable:java.lang.Enum#name()" (compat-call "EnumName" [target])
           "executable:java.lang.Integer#parseInt(java.lang.String,int)" (compat-call "ParseInt" args)
+          "executable:java.lang.invoke.MethodHandles#lookup()" (raw "new object()")
           "executable:java.lang.Object#getClass()" (call-member "GetType")
           "executable:java.lang.String#charAt(int)" (sequence-node [target (raw "[") (arg 0) (raw "]")])
           "executable:java.lang.String#codePointAt(int)" (compat-call "CodePointAt" (into [target] args))
@@ -340,6 +348,16 @@
           "executable:java.lang.StringBuilder#setLength(int)" (csharp/binary "=" 10 (member target "Length") (arg 0))
           "executable:java.lang.StringBuilder#toString()" (call-member "ToString")
           "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)" (compat-call "ArrayCopy" args)
+          "executable:java.lang.System#getenv()" (compat-call "GetEnvironment" [])
+          "executable:java.lang.System#getProperties()" (compat-call "GetProperties" [])
+          "executable:java.lang.System#getProperty(java.lang.String)" (compat-call "GetProperty" args)
+          "executable:java.lang.System#setProperty(java.lang.String,java.lang.String)" (compat-call "SetProperty" args)
+          "executable:java.lang.System#identityHashCode(java.lang.Object)" (compat-call "IdentityHashCode" args)
+          "executable:java.lang.System#nanoTime()" (compat-call "NanoTime" [])
+          "executable:java.lang.System#console()" (raw "(global::System.Console.IsInputRedirected ? null : new object())")
+          "executable:java.nio.charset.Charset#forName(java.lang.String)" (invoke (raw "global::System.Text.Encoding.GetEncoding") args)
+          "executable:java.nio.charset.Charset#newDecoder()" (invoke (raw "new global::Pkl.Core.Runtime.JavaCharsetDecoder") [target])
+          "executable:java.nio.charset.Charset#newEncoder()" (invoke (raw "new global::Pkl.Core.Runtime.JavaCharsetEncoder") [target])
           "executable:java.lang.Throwable#getMessage()" (member target "Message")
           "executable:java.text.Format#format(java.lang.Object)" (compat-call "Format" (into [target] args))
           "executable:java.util.ArrayList#add(java.lang.Object)" (compat-call "Add" (into [target] args))
@@ -374,12 +392,16 @@
           "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)" (compat-call "RequireNonNull" args)
           "executable:java.util.ResourceBundle#getBundle(java.lang.String,java.util.Locale)" (compat-call "GetResourceBundle" args)
           "executable:java.util.ResourceBundle#getString(java.lang.String)" (compat-call "GetResourceString" (into [target] args))
+          "executable:java.util.ServiceLoader#load(java.lang.Class)" (generic-compat-call services element "LoadServices" args)
+          "executable:java.util.ServiceLoader#load(java.lang.Class,java.lang.ClassLoader)" (generic-compat-call services element "LoadServices" args)
+          "executable:java.util.ServiceLoader#spliterator()" target
           "executable:java.util.function.Supplier#get()" (invoke target [])
           "executable:java.util.stream.Collectors#joining(java.lang.CharSequence)" (compat-call "Joining" args)
           "executable:java.util.stream.IntStream#allMatch(java.util.function.IntPredicate)" (compat-call "All" (into [target] args))
           "executable:java.util.stream.IntStream#skip(long)" (compat-call "Skip" (into [target] args))
           "executable:java.util.stream.Stream#collect(java.util.stream.Collector)" (compat-call "Collect" (into [target] args))
           "executable:java.util.stream.Stream#map(java.util.function.Function)" (compat-call "Map" (into [target] args))
+          "executable:java.util.stream.StreamSupport#stream(java.util.Spliterator,boolean)" (arg 0)
           ;; Project-local calls are mapped by exact declaration identity.  A
           ;; constructor invocation is handled separately below.
           (let [resolved (occurrence context (.getExecutable element))]
@@ -394,9 +416,12 @@
               (some #(str/starts-with? key (str "executable:" %))
                     ["org.pkl.parser."
                      "java."
+                     "javax."
                      "com.oracle.truffle."
                      "org.graalvm.collections."
-                     "org.graalvm.polyglot."])
+                     "org.graalvm.polyglot."
+                     "org.organicdesign.fp."
+                     "org.msgpack."])
               (normal-invocation element children)
               :else
               (throw (ex-info "Unsupported resolved executable mapping"
@@ -606,21 +631,39 @@
                                     (raw " while (") (child-node children (.getLoopingExpression element))
                                     (raw ");")])})}
     {:id :java.expression/method-reference :class CtExecutableReferenceExpression
-     :emit (fn [{:keys [^CtExecutableReferenceExpression element children]}]
+     :emit (fn [{:keys [context ^CtExecutableReferenceExpression element children]}]
              (let [target-element (.getTarget element)
                    target (child-node children target-element)
                    executable (child-node children (.getExecutable element))
                    method-name (:text (csharp/render executable))
-                   node (if (instance? CtTypeAccess target-element)
+                   resolved (occurrence context (.getExecutable element))
+                   constructor? (= :constructor (:kind resolved))
+                   target-type (when (instance? CtTypeAccess target-element)
+                                 (.getAccessedType ^CtTypeAccess target-element))
+                   node (cond
+                          (and constructor? target-type (.isArray target-type))
+                          (sequence-node [(raw "value => new ")
+                                          ((:type-node services) (.getComponentType target-type))
+                                          (raw "[value]")])
+
+                          (and constructor? (instance? CtTypeAccess target-element))
+                          (sequence-node [(raw "value => new ") target (raw "(value)")])
+
+                          (instance? CtTypeAccess target-element)
                           (sequence-node [(raw "value => value.") (raw method-name) (raw "()")])
-                          (member target method-name))]
+
+                          :else (member target method-name))]
                {:node (finish-expression services children element node)}))}
     {:id :java.expression/field-read :class CtFieldRead
      :emit (fn [{:keys [^CtFieldRead element children]}]
              (let [target-element (.getTarget element)
                    target (when target-element (child-node children target-element))
                    field (:text (csharp/render (child-node children (.getVariable element))))]
-               {:node (finish-expression services children element (member target field))}))}
+               {:node (finish-expression
+                       services children element
+                       (if (class-literal? element)
+                         (sequence-node [(raw "typeof(") target (raw ")")])
+                         (member target field)))}))}
     {:id :java.expression/field-write :class CtFieldWrite
      :emit (fn [{:keys [^CtFieldWrite element children]}]
              (let [target-element (.getTarget element)
@@ -666,11 +709,19 @@
      :emit (fn [{:keys [^CtLocalVariable element children]}]
              (let [default (.getDefaultExpression element)
                    type-reference (.getType element)
-                   type (if (.isInferred element)
-                          (raw "var")
-                          (sequence-node [(child-node children type-reference)
-                                          (when-not (.isPrimitive type-reference) (raw "?"))]))
-                   declaration (sequence-node [type (raw " ")
+                   parent (when (.isParentInitialized element) (.getParent element))
+                   later-for-initializer?
+                   (and (instance? CtFor parent)
+                        (not (identical? element (first (.getForInit ^CtFor parent)))))
+                   type (when-not later-for-initializer?
+                          (if (.isInferred element)
+                            (raw "var")
+                            (sequence-node
+                             [(child-node children type-reference)
+                              (when (and (not (.isPrimitive type-reference))
+                                         (not (nullable-type? type-reference)))
+                                (raw "?"))])))
+                   declaration (sequence-node [type (when type (raw " "))
                                                (raw (local-name services element))
                                                (when default (sequence-node [(raw " = ") (child-node children default)]))])]
                {:node (if (= "statement" (role element))

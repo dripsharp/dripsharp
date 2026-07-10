@@ -47,6 +47,17 @@
                          {:field label :value value}))
     value))
 
+(defn- project-reference! [value]
+  (let [value (str value)
+        path (paths/path value)
+        segments (mapv str (iterator-seq (.iterator path)))]
+    (when (or (str/blank? value) (.isAbsolute path)
+              (some #(= ".." %) (rest segments))
+              (not (str/ends-with? value ".csproj")))
+      (destination-error "Project reference must name a sibling or child csproj"
+                         {:field :project-references :value value}))
+    value))
+
 (defn validate-configuration!
   [configuration]
   (when-not (= 1 (:schema-version configuration))
@@ -98,6 +109,17 @@
                    (:resource-policy configuration)))
     (destination-error "Invalid destination resource policy"
                        {:resource-policy (:resource-policy configuration)}))
+  (when-not (or (nil? (:project-references configuration))
+                (and (vector? (:project-references configuration))
+                     (every? project-reference! (:project-references configuration))))
+    (destination-error "Invalid destination project references"
+                       {:project-references (:project-references configuration)}))
+  (when-not (or (nil? (:runtime-sources configuration))
+                (and (vector? (:runtime-sources configuration))
+                     (every? #(relative-path! % "runtime source")
+                             (:runtime-sources configuration))))
+    (destination-error "Invalid destination runtime sources"
+                       {:runtime-sources (:runtime-sources configuration)}))
   configuration)
 
 (defn read-configuration
@@ -200,7 +222,7 @@
 
 (defn- type-path [ctx ^CtType type]
   (str "global::" (destination-namespace ctx type) "."
-       (str/join "." (map #(identifier (.getSimpleName ^CtType %))
+       (str/join "." (map #(pascal (.getSimpleName ^CtType %))
                            (declaring-types type)))))
 
 (defn- occurrence! [ctx ^CtElement element expected-kind]
@@ -235,47 +257,160 @@
    "java.lang.Long" ["long" :dotnet.type/int64]
    "java.lang.Character" ["char" :dotnet.type/char]
    "java.lang.Class" ["global::System.Type" :dotnet.type/type]
+   "java.lang.ClassLoader" ["global::System.Reflection.Assembly" :dotnet.type/assembly]
    "java.lang.Enum" ["object" :dotnet.type/enum-base]
    "java.lang.Float" ["float" :dotnet.type/single]
    "java.lang.Double" ["double" :dotnet.type/double]
    "java.lang.NumberFormatException" ["global::System.FormatException" :dotnet.type/format-exception]
    "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
+   "java.lang.Appendable" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.Math" ["global::System.Math" :dotnet.type/math]
    "java.lang.StrictMath" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
-   "java.lang.Void" ["void" :dotnet.type/void]
+   "java.lang.Thread" ["global::Pkl.Core.Runtime.JavaThread" :pkl-core.type/thread]
+   "java.lang.invoke.MethodHandles" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.lang.invoke.MethodHandles$Lookup" ["object" :dotnet.type/method-lookup-marker]
+   "java.lang.invoke.MethodHandle" ["global::System.Delegate" :dotnet.type/delegate]
+   "java.lang.invoke.MethodType" ["object" :dotnet.type/method-type-marker]
+   "java.lang.invoke.VarHandle" ["object" :dotnet.type/var-handle-marker]
+   "java.math.BigInteger" ["global::System.Numerics.BigInteger" :dotnet.type/big-integer]
+   "java.math.BigDecimal" ["decimal" :dotnet.type/decimal]
+   "java.math.RoundingMode" ["global::Pkl.Core.Runtime.JavaRoundingMode" :pkl-core.type/rounding-mode]
+   ;; java.lang.Void is a reference-type marker (not the Java `void`
+   ;; primitive).  Mapping it to System.Object keeps it legal in generic
+   ;; positions such as PClassInfo<Void>; primitive void is handled by the
+   ;; intrinsic registry below.
+   "java.lang.Void" ["object" :dotnet.type/void-marker]
    "java.lang.Throwable" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.Exception" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.RuntimeException" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.IllegalArgumentException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
    "java.lang.IllegalStateException" ["global::System.InvalidOperationException" :dotnet.type/invalid-operation]
+   "java.lang.IndexOutOfBoundsException" ["global::System.ArgumentOutOfRangeException" :dotnet.type/argument-out-of-range]
+   "java.lang.ArrayIndexOutOfBoundsException" ["global::System.IndexOutOfRangeException" :dotnet.type/index-out-of-range]
+   "java.lang.ClassCastException" ["global::System.InvalidCastException" :dotnet.type/invalid-cast]
+   "java.lang.NullPointerException" ["global::System.NullReferenceException" :dotnet.type/null-reference]
+   "java.lang.NegativeArraySizeException" ["global::System.ArgumentOutOfRangeException" :dotnet.type/argument-out-of-range]
+   "java.lang.InterruptedException" ["global::System.Threading.ThreadInterruptedException" :dotnet.type/thread-interrupted]
    "java.lang.AssertionError" ["global::System.Exception" :dotnet.type/exception]
+   "java.lang.Error" ["global::System.Exception" :dotnet.type/exception]
+   "java.lang.StackOverflowError" ["global::System.StackOverflowException" :dotnet.type/stack-overflow]
+   "java.lang.OutOfMemoryError" ["global::System.OutOfMemoryException" :dotnet.type/out-of-memory]
    "java.lang.ArithmeticException" ["global::System.ArithmeticException" :dotnet.type/arithmetic-exception]
    "java.lang.ExceptionInInitializerError" ["global::System.TypeInitializationException" :dotnet.type/type-initialization-exception]
    "java.lang.UnsupportedOperationException" ["global::System.NotSupportedException" :dotnet.type/not-supported-exception]
    "java.lang.StackTraceElement" ["global::System.Diagnostics.StackFrame" :dotnet.type/stack-frame]
    "java.lang.Runnable" ["global::System.Action" :dotnet.type/action]
    "java.lang.AutoCloseable" ["global::System.IDisposable" :dotnet.type/disposable]
+   "java.io.Closeable" ["global::System.IDisposable" :dotnet.type/disposable]
    "java.lang.Comparable" ["global::System.IComparable" :dotnet.type/comparable]
    "java.io.IOException" ["global::System.IO.IOException" :dotnet.type/io-exception]
+   "java.io.InputStream" ["global::System.IO.Stream" :dotnet.type/stream]
+   "java.io.OutputStream" ["global::System.IO.Stream" :dotnet.type/stream]
+   "java.io.ByteArrayInputStream" ["global::System.IO.MemoryStream" :dotnet.type/memory-stream]
+   "java.io.ObjectInputStream" ["global::System.IO.BinaryReader" :dotnet.type/binary-reader]
+   "java.io.OutputStreamWriter" ["global::System.IO.StreamWriter" :dotnet.type/stream-writer]
+   "java.io.FileWriter" ["global::System.IO.StreamWriter" :dotnet.type/stream-writer]
+   "java.io.BufferedWriter" ["global::Pkl.Core.Runtime.JavaBufferedWriter" :pkl-core.type/buffered-writer]
+   "java.io.File" ["string" :dotnet.type/path]
+   "java.io.Flushable" ["global::System.IDisposable" :dotnet.type/disposable]
+   "java.io.UnsupportedEncodingException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
+   "java.io.Console" ["object" :dotnet.type/console-marker]
+   "java.io.PrintStream" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
    "java.io.FileNotFoundException" ["global::System.IO.FileNotFoundException" :dotnet.type/file-not-found-exception]
    "java.io.UncheckedIOException" ["global::System.IO.IOException" :dotnet.type/io-exception]
    "java.io.Reader" ["global::System.IO.TextReader" :dotnet.type/text-reader]
    "java.io.StringReader" ["global::System.IO.StringReader" :dotnet.type/string-reader]
    "java.io.Writer" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
-   "java.io.PrintWriter" ["global::Vibeformer.Runtime.JavaPrintWriter" :dotnet.type/print-writer]
+   "java.io.PrintWriter" ["global::Pkl.Core.Runtime.JavaPrintWriter" :pkl-core.type/print-writer]
    "java.io.Serializable" ["object" :dotnet.type/serializable-marker]
+   "java.io.Serial" ["object" :dotnet.annotation/compile-time-metadata]
    "java.net.URI" ["global::System.Uri" :dotnet.type/uri]
+   "java.net.URL" ["global::System.Uri" :dotnet.type/uri]
+   "java.net.ConnectException" ["global::System.Net.Http.HttpRequestException" :dotnet.type/http-request-exception]
+   "java.net.UnknownHostException" ["global::System.Net.Sockets.SocketException" :dotnet.type/socket-exception]
+   "java.net.Inet4Address" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
+   "java.net.Inet6Address" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
+   "java.net.InetAddress" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
+   "java.net.InetSocketAddress" ["global::System.Net.IPEndPoint" :dotnet.type/ip-endpoint]
+   "java.net.SocketAddress" ["global::System.Net.EndPoint" :dotnet.type/endpoint]
+   "java.net.Proxy" ["global::System.Net.WebProxy" :dotnet.type/web-proxy]
+   "java.net.Proxy$Type" ["global::Pkl.Core.Runtime.JavaProxyType" :pkl-core.type/proxy-type]
+   "java.net.ProxySelector" ["global::System.Net.IWebProxy" :dotnet.type/web-proxy-interface]
+   "java.net.JarURLConnection" ["global::Pkl.Core.Runtime.JavaJarConnection" :pkl-core.type/jar-connection]
+   "java.net.URLConnection" ["global::Pkl.Core.Runtime.JavaUrlConnection" :pkl-core.type/url-connection]
    "java.net.URISyntaxException" ["global::System.UriFormatException" :dotnet.type/uri-format-exception]
    "java.net.URLEncoder" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.net.http.HttpClient" ["global::Pkl.Core.Runtime.JavaHttpClient" :pkl-core.type/http-client]
+   "java.net.http.HttpClient$Builder" ["global::Pkl.Core.Runtime.JavaHttpClient.Builder" :pkl-core.type/http-client-builder]
+   "java.net.http.HttpClient$Redirect" ["global::Pkl.Core.Runtime.JavaHttpRedirect" :pkl-core.type/http-redirect]
+   "java.net.http.HttpClient$Version" ["global::Pkl.Core.Runtime.JavaHttpVersion" :pkl-core.type/http-version]
+   "java.net.http.HttpRequest" ["global::Pkl.Core.Runtime.JavaHttpRequest" :pkl-core.type/http-request]
+   "java.net.http.HttpRequest$Builder" ["global::Pkl.Core.Runtime.JavaHttpRequest.Builder" :pkl-core.type/http-request-builder]
+   "java.net.http.HttpRequest$BodyPublisher" ["object" :pkl-core.type/http-body-publisher]
+   "java.net.http.HttpRequest$BodyPublishers" ["global::Pkl.Core.Runtime.JavaHttpBodyPublishers" :pkl-core.type/http-body-publishers]
+   "java.net.http.HttpHeaders" ["global::Pkl.Core.Runtime.JavaHttpHeaders" :pkl-core.type/http-headers]
+   "java.net.http.HttpResponse" ["global::Pkl.Core.Runtime.JavaHttpResponse" :pkl-core.type/http-response]
+   "java.net.http.HttpResponse$BodyHandler" ["global::Pkl.Core.Runtime.JavaHttpBodyHandler" :pkl-core.type/http-body-handler]
+   "java.net.http.HttpResponse$BodyHandlers" ["global::Pkl.Core.Runtime.JavaHttpBodyHandlers" :pkl-core.type/http-body-handlers]
+   "java.net.http.HttpTimeoutException" ["global::System.Threading.Tasks.TaskCanceledException" :dotnet.type/http-timeout]
+   "java.nio.ByteBuffer" ["global::Pkl.Core.Runtime.JavaByteBuffer" :pkl-core.type/byte-buffer]
+   "java.nio.CharBuffer" ["string" :dotnet.type/string]
    "java.nio.charset.Charset" ["global::System.Text.Encoding" :dotnet.type/encoding]
+   "java.nio.charset.CharsetDecoder" ["global::Pkl.Core.Runtime.JavaCharsetDecoder" :pkl-core.type/charset-decoder]
+   "java.nio.charset.CharsetEncoder" ["global::Pkl.Core.Runtime.JavaCharsetEncoder" :pkl-core.type/charset-encoder]
+   "java.nio.charset.CharacterCodingException" ["global::System.Text.DecoderFallbackException" :dotnet.type/decoder-exception]
    "java.nio.charset.StandardCharsets" ["global::System.Text.Encoding" :dotnet.type/encoding]
+   "java.security.GeneralSecurityException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
+   "java.security.NoSuchAlgorithmException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
+   "java.security.SecureRandom" ["global::Pkl.Core.Runtime.JavaSecureRandom" :pkl-core.type/secure-random]
+   "java.security.MessageDigest" ["global::Pkl.Core.Runtime.JavaMessageDigest" :pkl-core.type/message-digest]
+   "java.security.DigestInputStream" ["global::Pkl.Core.Runtime.JavaDigestInputStream" :pkl-core.type/digest-input-stream]
+   "java.security.DigestOutputStream" ["global::Pkl.Core.Runtime.JavaDigestOutputStream" :pkl-core.type/digest-output-stream]
+   "java.security.KeyStore" ["global::Pkl.Core.Runtime.JavaKeyStore" :pkl-core.type/key-store]
+   "java.security.KeyStore$LoadStoreParameter" ["object" :pkl-core.type/key-store-load-parameter]
+   "java.security.cert.Certificate" ["global::System.Security.Cryptography.X509Certificates.X509Certificate2" :dotnet.type/x509-certificate]
+   "java.security.cert.X509Certificate" ["global::System.Security.Cryptography.X509Certificates.X509Certificate2" :dotnet.type/x509-certificate]
+   "java.security.cert.CertificateException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
+   "java.security.cert.CertificateFactory" ["global::Pkl.Core.Runtime.JavaCertificateFactory" :pkl-core.type/certificate-factory]
+   "javax.net.ssl.SSLContext" ["global::Pkl.Core.Runtime.JavaSslContext" :pkl-core.type/ssl-context]
+   "javax.net.ssl.SSLException" ["global::System.Net.Http.HttpRequestException" :dotnet.type/http-request-exception]
+   "javax.net.ssl.SSLHandshakeException" ["global::System.Security.Authentication.AuthenticationException" :dotnet.type/authentication-exception]
+   "javax.net.ssl.TrustManagerFactory" ["global::Pkl.Core.Runtime.JavaTrustManagerFactory" :pkl-core.type/trust-manager-factory]
+   "javax.net.ssl.TrustManager" ["object" :pkl-core.type/trust-manager]
+   "javax.net.ssl.KeyManager" ["object" :pkl-core.type/key-manager]
    "java.nio.file.Path" ["string" :dotnet.type/path]
+   "java.nio.file.LinkOption" ["object" :dotnet.type/link-option-marker]
+   "java.nio.file.OpenOption" ["object" :dotnet.type/open-option-marker]
+   "java.nio.file.CopyOption" ["object" :dotnet.type/copy-option-marker]
+   "java.nio.file.FileVisitOption" ["object" :dotnet.type/file-visit-option-marker]
+   "java.nio.file.attribute.FileAttribute" ["object" :dotnet.type/file-attribute-marker]
+   "java.nio.file.Files" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.nio.file.DirectoryStream" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "java.nio.file.DirectoryStream$Filter" ["global::System.Predicate" :dotnet.type/predicate]
+   "java.nio.file.FileStore" ["global::System.IO.DriveInfo" :dotnet.type/drive-info]
+   "java.nio.file.FileSystem" ["global::Pkl.Core.Runtime.JavaFileSystem" :pkl-core.type/file-system]
+   "java.nio.file.FileSystems" ["global::Pkl.Core.Runtime.JavaFileSystems" :pkl-core.type/file-systems]
+   "java.nio.file.FileVisitResult" ["global::Pkl.Core.Runtime.JavaFileVisitResult" :pkl-core.type/file-visit-result]
+   "java.nio.file.PathMatcher" ["global::System.Predicate<string>" :pkl-core.type/path-matcher]
+   "java.nio.file.Paths" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.nio.file.SimpleFileVisitor" ["global::Pkl.Core.Runtime.JavaSimpleFileVisitor" :pkl-core.type/file-visitor]
+   "java.nio.file.StandardCopyOption" ["global::Pkl.Core.Runtime.JavaCopyOption" :pkl-core.type/copy-option]
+   "java.nio.file.WatchService" ["global::Pkl.Core.Runtime.JavaWatchService" :pkl-core.type/watch-service]
+   "java.nio.file.AccessDeniedException" ["global::System.UnauthorizedAccessException" :dotnet.type/unauthorized]
+   "java.nio.file.NotDirectoryException" ["global::System.IO.DirectoryNotFoundException" :dotnet.type/directory-not-found]
+   "java.nio.file.FileSystemAlreadyExistsException" ["global::System.IO.IOException" :dotnet.type/io-exception]
+   "java.nio.file.FileSystemNotFoundException" ["global::System.IO.IOException" :dotnet.type/io-exception]
+   "java.nio.file.attribute.BasicFileAttributes" ["global::System.IO.FileSystemInfo" :dotnet.type/file-info]
+   "java.nio.file.attribute.PosixFilePermission" ["global::System.IO.UnixFileMode" :dotnet.type/unix-file-mode]
+   "java.nio.file.attribute.UserPrincipalLookupService" ["object" :pkl-core.type/user-principal-lookup]
+   "java.nio.file.spi.FileSystemProvider" ["global::Pkl.Core.Runtime.JavaFileSystemProvider" :pkl-core.type/file-system-provider]
+   "java.nio.file.spi.FileTypeDetector" ["global::Pkl.Core.Runtime.JavaFileTypeDetector" :pkl-core.type/file-type-detector]
    "java.nio.file.NoSuchFileException" ["global::System.IO.FileNotFoundException" :dotnet.type/file-not-found-exception]
    "java.time.Duration" ["global::System.TimeSpan" :dotnet.type/time-span]
-   "java.time.temporal.TemporalUnit" ["global::Vibeformer.Runtime.JavaTemporalUnit" :dotnet.type/temporal-unit]
-   "java.time.temporal.ChronoUnit" ["global::Vibeformer.Runtime.JavaTemporalUnit" :dotnet.type/temporal-unit]
+   "java.time.temporal.TemporalUnit" ["global::Pkl.Core.Runtime.JavaTemporalUnit" :pkl-core.type/temporal-unit]
+   "java.time.temporal.ChronoUnit" ["global::Pkl.Core.Runtime.JavaTemporalUnit" :pkl-core.type/temporal-unit]
    "java.lang.Iterable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.Collection" ["global::System.Collections.Generic.ICollection" :dotnet.type/collection]
    "java.util.List" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
@@ -283,21 +418,37 @@
    "java.util.Set" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
    "java.util.HashSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/hash-set]
    "java.util.LinkedHashSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/linked-hash-set]
+   "java.util.LinkedList" ["global::System.Collections.Generic.LinkedList" :dotnet.type/linked-list]
    "java.util.EnumSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/enum-set]
    "java.util.AbstractCollection" ["global::System.Collections.Generic.ICollection" :dotnet.type/collection]
+   "java.util.AbstractList" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
+   "java.util.AbstractSequentialList" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
+   "java.util.AbstractMap" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
    "java.util.AbstractSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
    "java.util.Map" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
    "java.util.HashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/dictionary]
+   "java.util.IdentityHashMap" ["global::Pkl.Core.Runtime.JavaIdentityDictionary" :pkl-core.type/identity-map]
    "java.util.LinkedHashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/linked-dictionary]
+   "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary" :dotnet.type/sorted-dictionary]
+   "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet" :dotnet.type/sorted-set]
    "java.util.Map$Entry" ["global::System.Collections.Generic.KeyValuePair" :dotnet.type/map-entry]
    "java.util.Comparator" ["global::System.Collections.Generic.IComparer" :dotnet.type/comparer]
    "java.util.Deque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.ArrayDeque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.Iterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
-   "java.util.Optional" ["global::System.Nullable" :dotnet.type/nullable-value]
+   "java.util.ListIterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
+   "java.util.PrimitiveIterator" ["global::System.Collections.IEnumerator" :dotnet.type/enumerator]
+   "java.util.PrimitiveIterator$OfLong" ["global::System.Collections.Generic.IEnumerator<long>" :dotnet.type/long-enumerator]
+   "java.util.ServiceLoader" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/service-loader]
+   "java.util.Spliterator" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "java.util.Optional" ["global::Pkl.Core.Runtime.JavaOptional" :pkl-core.type/optional]
    "java.util.OptionalInt" ["int?" :dotnet.type/nullable-int]
+   "java.util.Properties" ["global::System.Collections.Generic.IDictionary<object, object>" :dotnet.type/properties]
    "java.util.NoSuchElementException" ["global::System.InvalidOperationException" :dotnet.type/invalid-operation]
    "java.util.Arrays" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "java.util.Base64" ["global::Pkl.Core.Runtime.JavaBase64" :pkl-core.type/base64]
+   "java.util.Base64$Encoder" ["global::Pkl.Core.Runtime.JavaBase64Encoder" :pkl-core.type/base64-encoder]
+   "java.util.Base64$Decoder" ["global::Pkl.Core.Runtime.JavaBase64Decoder" :pkl-core.type/base64-decoder]
    "java.util.Collections" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.Objects" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.ResourceBundle" ["global::Vibeformer.Runtime.JavaResourceBundle" :dotnet.type/resource-bundle]
@@ -308,32 +459,94 @@
    "java.util.function.Predicate" ["global::System.Predicate" :dotnet.type/predicate]
    "java.util.function.BiConsumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.BinaryOperator" ["global::Pkl.Core.Runtime.JavaBinaryOperator" :pkl-core.type/binary-operator]
    "java.util.function.IntFunction" ["global::Vibeformer.Runtime.JavaIntFunction" :dotnet.type/int-function]
+   "java.util.function.IntConsumer" ["global::System.Action<int>" :dotnet.type/int-consumer]
+   "java.util.function.LongFunction" ["global::Pkl.Core.Runtime.JavaLongFunction" :pkl-core.type/long-function]
+   "java.util.function.LongConsumer" ["global::System.Action<long>" :dotnet.type/long-consumer]
+   "java.util.function.LongPredicate" ["global::System.Predicate<long>" :dotnet.type/long-predicate]
    "java.util.function.ToIntFunction" ["global::Vibeformer.Runtime.JavaToIntFunction" :dotnet.type/to-int-function]
    "java.util.function.IntPredicate" ["global::System.Predicate<int>" :dotnet.type/int-predicate]
    "java.util.stream.Stream" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "java.util.stream.StreamSupport" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.stream.IntStream" ["global::System.Collections.Generic.IEnumerable<int>" :dotnet.type/int-enumerable]
    "java.util.stream.Collector" ["global::Vibeformer.Runtime.JavaCollector" :dotnet.type/collector]
    "java.util.stream.Collectors" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.text.Format" ["global::Vibeformer.Runtime.JavaFormat" :dotnet.type/format]
    "java.text.MessageFormat" ["global::Vibeformer.Runtime.JavaMessageFormat" :dotnet.type/message-format]
+   "java.text.DecimalFormat" ["global::Pkl.Core.Runtime.JavaDecimalFormat" :pkl-core.type/decimal-format]
+   "java.text.NumberFormat" ["global::Pkl.Core.Runtime.JavaDecimalFormat" :pkl-core.type/decimal-format]
+   "java.text.DecimalFormatSymbols" ["global::System.Globalization.NumberFormatInfo" :dotnet.type/number-format]
+   "java.util.zip.ZipEntry" ["global::Pkl.Core.Runtime.JavaZipEntry" :pkl-core.type/zip-entry]
+   "java.util.zip.ZipInputStream" ["global::Pkl.Core.Runtime.JavaZipInputStream" :pkl-core.type/zip-input-stream]
+   "java.util.zip.ZipOutputStream" ["global::Pkl.Core.Runtime.JavaZipOutputStream" :pkl-core.type/zip-output-stream]
    "java.util.regex.Matcher" ["global::System.Text.RegularExpressions.Match" :dotnet.type/regex-match]
+   "java.util.regex.MatchResult" ["global::System.Text.RegularExpressions.Match" :dotnet.type/regex-match]
    "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex" :dotnet.type/regex]
+   "java.util.regex.PatternSyntaxException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
    "java.util.concurrent.ConcurrentHashMap" ["global::System.Collections.Concurrent.ConcurrentDictionary" :dotnet.type/concurrent-dictionary]
-   "java.util.concurrent.ScheduledExecutorService" ["global::Vibeformer.Runtime.JavaScheduledExecutor" :dotnet.type/scheduled-executor]
+   "java.util.concurrent.Executors" ["global::Pkl.Core.Runtime.JavaConcurrency" :pkl-core.type/concurrency]
+   "java.util.concurrent.ExecutorService" ["global::Pkl.Core.Runtime.JavaScheduledExecutor" :pkl-core.type/executor]
+   "java.util.concurrent.ThreadFactory" ["global::System.Func<global::System.Action, global::Pkl.Core.Runtime.JavaThread>" :pkl-core.type/thread-factory]
+   "java.util.concurrent.ScheduledExecutorService" ["global::Pkl.Core.Runtime.JavaScheduledExecutor" :pkl-core.type/scheduled-executor]
    "java.util.concurrent.ScheduledFuture" ["global::System.Threading.Tasks.Task" :dotnet.type/task]
    "java.util.concurrent.TimeUnit" ["global::Vibeformer.Runtime.JavaTimeUnit" :dotnet.type/time-unit]
+   "java.util.concurrent.atomic.AtomicBoolean" ["global::Pkl.Core.Runtime.JavaAtomicBoolean" :pkl-core.type/atomic-boolean]
+   "java.util.concurrent.atomic.AtomicLong" ["global::Pkl.Core.Runtime.JavaAtomicLong" :pkl-core.type/atomic-long]
+   "java.util.concurrent.atomic.AtomicReference" ["global::Pkl.Core.Runtime.JavaAtomicReference" :pkl-core.type/atomic-reference]
+   "org.organicdesign.fp.collections.BaseList" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
+   "org.organicdesign.fp.collections.BaseMap" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
+   "org.organicdesign.fp.collections.BaseSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
+   "org.organicdesign.fp.collections.ImList" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
+   "org.organicdesign.fp.collections.MutList" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
+   "org.organicdesign.fp.collections.PersistentVector" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
+   "org.organicdesign.fp.collections.ImMap" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
+   "org.organicdesign.fp.collections.MutMap" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
+   "org.organicdesign.fp.collections.PersistentHashMap" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
+   "org.organicdesign.fp.collections.PersistentHashMap$MutHashMap" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
+   "org.organicdesign.fp.collections.ImSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
+   "org.organicdesign.fp.collections.MutSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
+   "org.organicdesign.fp.collections.PersistentHashSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
+   "org.organicdesign.fp.collections.PersistentHashSet$MutHashSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
+   "org.organicdesign.fp.collections.PersistentVector$MutVector" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
+   "org.organicdesign.fp.collections.UnmodCollection" ["global::System.Collections.Generic.ICollection" :dotnet.type/collection]
+   "org.organicdesign.fp.collections.UnmodList" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
+   "org.organicdesign.fp.collections.UnmodMap" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
+   "org.organicdesign.fp.collections.UnmodMap$UnEntry" ["global::System.Collections.Generic.KeyValuePair" :dotnet.type/map-entry]
+   "org.organicdesign.fp.collections.UnmodSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
+   "org.organicdesign.fp.collections.UnmodIterable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "org.organicdesign.fp.collections.UnmodSortedIterable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "org.organicdesign.fp.collections.UnmodSortedIterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
+   "org.organicdesign.fp.collections.Cowry" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "org.organicdesign.fp.function.Fn0" ["global::System.Func" :dotnet.type/func]
+   "org.organicdesign.fp.indent.IndentUtils" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
+   "org.organicdesign.fp.indent.Indented" ["object" :dotnet.type/marker]
+   "org.organicdesign.fp.oneOf.Option" ["global::Pkl.Core.Runtime.JavaOptional" :pkl-core.type/optional]
+   "org.organicdesign.fp.tuple.Tuple2" ["global::Pkl.Core.Runtime.JavaTuple2" :pkl-core.type/tuple2]
+   "org.organicdesign.fp.tuple.Tuple4" ["global::Pkl.Core.Runtime.JavaTuple4" :pkl-core.type/tuple4]
+   "org.organicdesign.fp.xform.Xform" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "org.organicdesign.fp.xform.Transformable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "org.msgpack.core.MessageBufferPacker" ["global::Pkl.Core.Runtime.ExcludedMessagePackPacker" :excluded.messagepack/packer]
+   "org.msgpack.core.MessagePacker" ["global::Pkl.Core.Runtime.ExcludedMessagePackPacker" :excluded.messagepack/packer]
+   "org.msgpack.core.MessageUnpacker" ["global::Pkl.Core.Runtime.ExcludedMessagePackUnpacker" :excluded.messagepack/unpacker]
+   "org.msgpack.core.MessagePack" ["global::Pkl.Core.Runtime.ExcludedMessagePack" :excluded.messagepack/factory]
+   "org.msgpack.core.MessagePackException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
+   "org.msgpack.core.MessageTypeException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
+   "org.msgpack.core.MessageInsufficientBufferException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
+   "org.msgpack.value.Value" ["object" :excluded.messagepack/value]
+   "org.msgpack.value.impl.ImmutableStringValueImpl" ["object" :excluded.messagepack/value]
    "org.jspecify.annotations.Nullable" ["object" :dotnet.annotation/nullable]
    "org.jspecify.annotations.NullMarked" ["object" :dotnet.annotation/null-marked]})
 
 (defn- dotted-external-type
-  [prefix destination qualified-name rule]
+  [prefix destination qualified-name rule & [segment-name]]
   (when (or (= qualified-name prefix)
             (str/starts-with? qualified-name (str prefix ".")))
     (let [suffix (subs qualified-name (count prefix))
           parts (->> (str/split suffix #"[.$]") (remove str/blank?))]
       [(str "global::" destination
-            (when (seq parts) (str "." (str/join "." (map identifier parts)))))
+            (when (seq parts)
+              (str "." (str/join "." (map (or segment-name identifier) parts)))))
        rule])))
 
 (defn- derived-external-type-mapping
@@ -344,7 +557,7 @@
   erased only after their exact resolved package identity is known."
   [qualified-name]
   (or (dotted-external-type "org.pkl.parser" "Pkl.Parser" qualified-name
-                            :dotnet.type/pkl-parser-package)
+                            :dotnet.type/pkl-parser-package pascal)
       (dotted-external-type "com.oracle.truffle" "Pkl.Core.Runtime.Truffle" qualified-name
                             :pkl-core.type/truffle-substrate)
       (dotted-external-type "org.graalvm.collections" "Pkl.Core.Runtime.GraalCollections" qualified-name
@@ -393,7 +606,22 @@
                         {:kind :unsupported-declaration-type :occurrence (dissoc occurrence :reference :declaration)})))
 
     :else
-    (or (when (and (= "java.util.List" (.getQualifiedName reference))
+    (or (when (empty? (.getActualTypeArguments reference))
+          (when-let [base (get {"java.lang.Comparable" "global::System.IComparable<object>"
+                                "java.lang.Iterable" "global::System.Collections.Generic.IEnumerable<object>"
+                                "java.util.Collection" "global::System.Collections.Generic.ICollection<object>"
+                                "java.util.List" "global::System.Collections.Generic.IList<object>"
+                                "java.util.ArrayList" "global::System.Collections.Generic.List<object>"
+                                "java.util.Set" "global::System.Collections.Generic.ISet<object>"
+                                "java.util.HashSet" "global::System.Collections.Generic.HashSet<object>"
+                                "java.util.LinkedHashSet" "global::System.Collections.Generic.HashSet<object>"
+                                "java.util.Map" "global::System.Collections.Generic.IDictionary<object, object>"
+                                "java.util.HashMap" "global::System.Collections.Generic.Dictionary<object, object>"
+                                "java.util.LinkedHashMap" "global::System.Collections.Generic.Dictionary<object, object>"
+                                "java.util.Iterator" "global::System.Collections.Generic.IEnumerator<object>"}
+                               (.getQualifiedName reference))]
+            [base :dotnet.type/raw-generic]))
+        (when (and (= "java.util.List" (.getQualifiedName reference))
                    (some #(instance? CtWildcardReference %)
                          (.getActualTypeArguments reference)))
           ["global::System.Collections.Generic.IEnumerable"
@@ -425,7 +653,12 @@
 
           :else
           (let [[base mapping-rule] (mapped-type-base ctx reference occurrence)
-                arguments (mapv #(type-node ctx %) (.getActualTypeArguments reference))]
+                ;; System.Type is non-generic even though java.lang.Class<T>
+                ;; carries a type argument.  Its resolved T remains visited by
+                ;; the recursive translator, but is erased at this mapping.
+                arguments (if (= "java.lang.Class" (.getQualifiedName reference))
+                            []
+                            (mapv #(type-node ctx %) (.getActualTypeArguments reference)))]
             [(generic-node base arguments) mapping-rule]))
         nullable? (and (nullable-annotation? reference)
                        (not (.isPrimitive reference))
@@ -579,6 +812,8 @@
     (cond
       (and (= owner "org.pkl.core.module.ModuleKeys") (= simple-name "synthetic"))
       "CreateSynthetic"
+      (and (= owner "org.pkl.core.module.ResolvedModuleKeys") (= simple-name "virtual"))
+      "CreateVirtual"
       (= simple-name "toString") "ToString"
       (= simple-name "hashCode") "GetHashCode"
       (= simple-name "equals") "Equals"
@@ -701,19 +936,29 @@
                              (not (.isPrimitive (.getType method))))
                       (sequence-node [return-type (raw "?")])
                       return-type)
+        translated-body (when body (translated-node ctx body))
+        ;; Java's anonymous Iterator implementation in Pair has no direct C#
+        ;; anonymous-class equivalent.  Keep recursively translating its live
+        ;; Spoon body for coverage, then map this exact resolved product method
+        ;; to the equivalent disposable C# enumerator expression.
+        translated-body
+        (if (= "executable:org.pkl.core.Pair#iterator()"
+               (spoon/declaration-key method))
+          (sequence-node [(raw "{") (raw "\nreturn ((global::System.Collections.Generic.IEnumerable<object?>)new object?[] { this.first, this.second }).GetEnumerator();\n") (raw "}")])
+          translated-body)
         declaration
         (sequence-node
          [(raw (join-words words))
           return-type (raw (str " " name)) node
           (raw "(") (sequence-node params ", ") (raw ")")
           (constraints-node ctx parameters)
-          (if body (sequence-node [(raw " ") (translated-node ctx body)]) (raw ";"))])]
+          (if body (sequence-node [(raw " ") translated-body]) (raw ";"))])]
     (attach-declaration ctx declaration method :method (.getQualifiedName owner-type)
                         name signature :java.declaration/method)))
 
 (defn- constructor-node [ctx ^CtType owner-type ^CtConstructor constructor]
   (let [owner (executable-owner constructor)
-        name (identifier (.getSimpleName owner-type))
+        name (pascal (.getSimpleName owner-type))
         {:keys [parameters node]} (formals ctx owner constructor)
         params (mapv #(parameter-node ctx owner %) (.getParameters constructor))
         body (.getBody constructor)
@@ -771,11 +1016,24 @@
 (defn- base-types [^CtType type]
   (let [superclass (when (instance? CtClass type) (.getSuperclass ^CtClass type))
         implicit-base? #(contains? #{"java.lang.Object" "java.lang.Record" "java.lang.Enum"}
-                                   (some-> ^CtTypeReference % .getQualifiedName))]
-    (vec (remove #(or (nil? %) (implicit-base? %))
+                                   (some-> ^CtTypeReference % .getQualifiedName))
+        external-jvm-interface?
+        (fn [^CtTypeReference reference]
+          (let [qualified (.getQualifiedName reference)
+                declaration (.getTypeDeclaration reference)]
+            (and (instance? CtInterface declaration)
+                 (some #(str/starts-with? qualified %)
+                       ["java." "com.oracle.truffle." "org.graalvm."]))))]
+    (vec (remove #(or (nil? %) (implicit-base? %) (external-jvm-interface? %))
                  (concat [superclass] (.getSuperInterfaces type))))))
 
 (declare type-node-declaration)
+
+(defn- destination-bridge-members [^CtType type]
+  (let [superclass (when (instance? CtClass type) (.getSuperclass ^CtClass type))]
+    (cond-> []
+      (= "java.io.Writer" (some-> superclass .getQualifiedName))
+      (conj (raw "public override global::System.Text.Encoding Encoding => global::System.Text.Encoding.Unicode;")))))
 
 (defn- member-node [ctx ^CtType owner member]
   (cond
@@ -809,7 +1067,7 @@
 
 (defn- type-node-declaration [ctx ^CtType type]
   (let [owner (some-> type .getDeclaringType .getQualifiedName)
-        name (identifier (.getSimpleName type))
+        name (pascal (.getSimpleName type))
         qualified (.getQualifiedName type)
         {:keys [parameters node]} (formals ctx qualified type)
         components (when (instance? CtRecord type)
@@ -831,6 +1089,7 @@
                                   [file line column])))
                      (mapv #(member-node ctx type %)))
         members (into (vec (missing-interface-contracts ctx type)) members)
+        members (into (vec (destination-bridge-members type)) members)
         header (sequence-node
                 [(raw (join-words (type-words type))) (raw name) node
                  (when components
@@ -912,6 +1171,8 @@
          "    <TargetFramework>" (xml-escape (:target-framework project)) "</TargetFramework>\n"
          "    <Nullable>" (xml-escape (:nullable project)) "</Nullable>\n"
          "    <ImplicitUsings>" (if (:implicit-usings project) "enable" "disable") "</ImplicitUsings>\n"
+         (when (seq (:no-warn project))
+           (str "    <NoWarn>" (xml-escape (str/join ";" (sort (:no-warn project)))) "</NoWarn>\n"))
          "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
          "    <AssemblyName>" (xml-escape (:assembly-name project)) "</AssemblyName>\n"
          "    <RootNamespace>" (xml-escape (:root-namespace project)) "</RootNamespace>\n"
@@ -925,6 +1186,9 @@
          "  </PropertyGroup>\n"
          "  <ItemGroup>\n"
          "    <Compile Include=\"" (xml-escape (:source-directory output)) "/**/*.cs\" />\n"
+         (apply str
+                (for [reference (sort (:project-references configuration))]
+                  (str "    <ProjectReference Include=\"" (xml-escape reference) "\" />\n")))
          (apply str
                 (for [{:keys [destination logical-name]}
                       (sort-by :destination resource-artifacts)]
@@ -1044,11 +1308,30 @@
                                    (make-array java.nio.file.attribute.FileAttribute 0))
         _ (Files/copy helper-source helper-file
                       (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
-        artifacts (conj declaration-artifacts
-                        {:file (portable project-root helper-file)
-                         :source {:file (portable root helper-source) :line 1 :column 1}
-                         :mappings []
-                         :strategy :reviewable-java-compatibility-source})
+        runtime-artifacts
+        (mapv (fn [relative]
+                (let [source (paths/resolve-path root relative)
+                      destination (paths/resolve-path source-root "Pkl/Core/Runtime/Substrate"
+                                                      (str (.getFileName ^Path source)))]
+                  (when-not (paths/regular-file? source)
+                    (throw (ex-info "Configured runtime source is missing"
+                                    {:kind :missing-runtime-source :source relative})))
+                  (Files/createDirectories (.getParent destination)
+                                           (make-array java.nio.file.attribute.FileAttribute 0))
+                  (Files/copy source destination
+                              (into-array java.nio.file.CopyOption
+                                          [StandardCopyOption/REPLACE_EXISTING]))
+                  {:file (portable project-root destination)
+                   :source {:file (portable root source) :line 1 :column 1}
+                   :mappings []
+                   :strategy :reviewable-product-runtime-source}))
+              (:runtime-sources configuration))
+        artifacts (into (conj declaration-artifacts
+                              {:file (portable project-root helper-file)
+                               :source {:file (portable root helper-source) :line 1 :column 1}
+                               :mappings []
+                               :strategy :reviewable-java-compatibility-source})
+                        runtime-artifacts)
         artifact-collisions (->> artifacts (group-by :file) vals (filter #(< 1 (count %))) vec)
         declaration-collisions (collision-errors @(:declarations ctx))]
     (when (or (seq artifact-collisions) (seq declaration-collisions))

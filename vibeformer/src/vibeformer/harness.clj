@@ -39,6 +39,9 @@
                      (= profile-name (:profile profile))
                      (re-matches #":[A-Za-z0-9_.-]+" (or (:gradle-project profile) ""))
                      (string? (:destination-config profile))
+                     (or (nil? (:dependency-profiles profile))
+                         (and (vector? (:dependency-profiles profile))
+                              (every? string? (:dependency-profiles profile))))
                      (or (nil? (:seeds profile)) (vector? (:seeds profile))))
         (throw (ex-info "Invalid Vibeformer generation profile"
                         {:kind :invalid-generation-profile
@@ -88,7 +91,7 @@
 (defn generate!
   "Cleans disposable output, resolves pkl-parser, and emits disposable project inputs."
   ([] (generate! {}))
-  ([{:keys [workspace-root profile verify-submodule-fn discover-main-fn
+  ([{:keys [workspace-root profile generate-dependencies? verify-submodule-fn discover-main-fn
             build-resolved-model-fn build-resolved-closure-fn
             read-profile-fn read-destination-fn emit-project-fn]
      :or {verify-submodule-fn project/verify-submodule!
@@ -113,6 +116,29 @@
          java-model (if-let [seeds (:seeds generation-profile)]
                       (build-resolved-closure-fn root discovery seeds)
                       (build-resolved-model-fn root discovery))
+         dependency-emissions
+         (when (not= false generate-dependencies?)
+           (mapv
+            (fn [dependency-name]
+              (let [dependency-profile (read-profile-fn root dependency-name)
+                    dependency-manifest (paths/resolve-path
+                                         target (str "gradle-main-inputs-" dependency-name ".tsv"))
+                    dependency-discovery
+                    (discover-main-fn {:workspace-root root
+                                       :manifest dependency-manifest
+                                       :gradle-project (:gradle-project dependency-profile)})
+                    dependency-destination
+                    (read-destination-fn root (:destination-config dependency-profile))
+                    dependency-model
+                    (if-let [dependency-seeds (:seeds dependency-profile)]
+                      (build-resolved-closure-fn root dependency-discovery dependency-seeds)
+                      (build-resolved-model-fn root dependency-discovery))]
+                (emit-project-fn {:workspace-root root
+                                  :target target
+                                  :discovery dependency-discovery
+                                  :resolved-model dependency-model
+                                  :configuration dependency-destination})))
+            (:dependency-profiles generation-profile)))
          emission (emit-project-fn {:workspace-root root
                                     :target target
                                     :discovery discovery
@@ -135,4 +161,5 @@
      (println "Disposable configuration:" (portable-path root config-file))
      (assoc config
             :java-model java-model
+            :dependency-emissions dependency-emissions
             :emission emission))))

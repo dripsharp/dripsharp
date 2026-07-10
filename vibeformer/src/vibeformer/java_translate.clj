@@ -347,7 +347,9 @@
                 (str "Java translation coverage is blocked at "
                      (or (get-in diagnostic [:location :file]) "an unknown source")
                      (when-let [line (get-in diagnostic [:location :line])]
-                       (str ":" line)))
+                       (str ":" line))
+                     (when-let [message (:message diagnostic)]
+                       (str ": " message)))
                 "Diagnostic Java translation cannot satisfy accepted generation")
               {:kind :java-translation-coverage-failed
                :mode (:mode translation)

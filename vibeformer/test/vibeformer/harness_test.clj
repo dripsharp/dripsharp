@@ -91,6 +91,7 @@
         result (harness/generate!
                 {:workspace-root root
                  :profile "pkl-core-value-model"
+                 :generate-dependencies? false
                  :read-profile-fn (fn [_ profile-name]
                                     (harness/read-profile (paths/workspace-root)
                                                           profile-name))

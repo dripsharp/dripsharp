@@ -11,10 +11,10 @@
            [java.util IdentityHashMap]
            [spoon Launcher]
            [spoon.reflect CtModel]
-           [spoon.reflect.code CtThisAccess CtTypeAccess]
+           [spoon.reflect.code CtInvocation CtThisAccess CtTypeAccess]
            [spoon.reflect.cu SourcePosition]
            [spoon.reflect.declaration CtAnnotation CtClass CtElement CtExecutable
-            CtField CtModifiable CtRecord CtRecordComponent CtType CtTypeMember
+            CtField CtInterface CtMethod CtModifiable CtRecord CtRecordComponent CtType CtTypeMember
             CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtExecutableReference
             CtFieldReference CtIntersectionTypeReference CtTypeParameterReference
@@ -149,10 +149,15 @@
       ;; signature (for example List<? extends T>) without attaching a shadow
       ;; CtTypeParameter.  Their exact owner is still the resolved executable
       ;; reference, which is the stable semantic identity used here.
-      (when-let [^CtExecutableReference owner
-                 (parent-of-type reference CtExecutableReference)]
+      (if-let [^CtExecutableReference owner
+               (or (parent-of-type reference CtExecutableReference)
+                   (some-> (parent-of-type reference CtInvocation) .getExecutable))]
         (str "type-parameter:" (executable-owner-key owner)
-             "#" (.getSimpleName reference))))))
+             "#" (.getSimpleName reference))
+        (when-let [^CtFieldReference field (parent-of-type reference CtFieldReference)]
+          (str "type-parameter:"
+               (some-> field .getDeclaringType type-name) "#"
+               (.getSimpleName field) "#" (.getSimpleName reference)))))))
 
 (defn- jdk-class?
   [^Class klass]
@@ -342,6 +347,12 @@
             (when (= name (.getSimpleName component)) component))
           (.getRecordComponents ^CtRecord owner))))
 
+(defn- inherited-field-declaration [^CtType owner name]
+  (some (fn [^CtFieldReference candidate]
+          (when (= name (.getSimpleName candidate))
+            (.getFieldDeclaration candidate)))
+        (.getAllFields owner)))
+
 (defn- field-key
   ([^CtFieldReference reference]
    (field-key reference (some-> reference .getDeclaringType type-name)))
@@ -401,13 +412,15 @@
         (if-let [^CtType owner
                  (project-type-declaration project-types owner-reference reference)]
             (if-let [declaration (or (record-component owner name)
-                                     (.getFieldDeclaration reference))]
-              (resolved :field (field-key reference (.getQualifiedName owner))
+                                     (.getFieldDeclaration reference)
+                                     (inherited-field-declaration owner name))]
+              (let [declaring-owner (or (parent-of-type declaration CtType) owner)]
+                (resolved :field (field-key reference (.getQualifiedName ^CtType declaring-owner))
                         :project reference
                         declaration
                         (if (instance? CtRecordComponent declaration)
                           :record-component
-                          :source-declaration))
+                          :source-declaration)))
               {:failure (diagnostic
                          :unresolved-field reference
                          (str "Cannot resolve project field "
@@ -652,13 +665,18 @@
                  elements)
         failures (vec (keep :failure results))]
     (when (seq failures)
-      (throw (ex-info
+      (let [first-failure (first failures)]
+        (throw (ex-info
               (str "Spoon semantic resolution failed inside closure declaration "
-                   (declaration-key declaration))
+                   (declaration-key declaration) ": " (:message first-failure)
+                   (when-let [file (get-in first-failure [:location :file])]
+                     (str " at " file
+                          (when-let [line (get-in first-failure [:location :line])]
+                            (str ":" line)))))
               {:kind :closure-semantic-resolution-failed
                :declaration-key (declaration-key declaration)
                :failure-count (count failures)
-               :failures failures})))
+               :failures failures}))))
     (vec (remove :failure results))))
 
 (defn- owner-type-items
@@ -699,6 +717,29 @@
              :declaration member
              :expand (if (instance? CtType member) :public-api :body)})
           (direct-public-members declaration))))
+
+(defn- compilation-obligation-items
+  "Selects real frontend bodies required for a selected type to remain a
+  concrete implementation in C#. Java permits those bodies to sit outside the
+  call graph that first reached the type, but the destination compiler still
+  requires every abstract/interface contract. Default interface bodies are
+  retained for the same reason."
+  [^CtType declaration]
+  (->> (.getMethods declaration)
+       (filter (fn [^CtMethod method]
+                 (and (not (.isImplicit method))
+                      ;; MessagePack transport is a user-approved product
+                      ;; exclusion. Its Evaluator override is not a C#
+                      ;; compilation obligation for the target library.
+                      (not= "executable:org.pkl.core.EvaluatorImpl#evaluateExpressionPklBinary(org.pkl.core.ModuleSource,java.lang.String)"
+                            (declaration-key method))
+                      (or (and (instance? CtInterface declaration)
+                               (some? (.getBody method)))
+                          (seq (.getTopDefinitions method))))))
+       (mapv (fn [^CtMethod method]
+               {:key (declaration-key method)
+                :declaration method
+                :expand :body}))))
 
 (defn- stronger-expansion
   [left right]
@@ -785,8 +826,10 @@
                   members (if (instance? CtType declaration)
                             (member-items declaration expand)
                             nil)
+                  obligations (when (instance? CtType declaration)
+                                (compilation-obligation-items declaration))
                   owners (owner-type-items declaration)
-                  additions (->> (concat dependencies members owners)
+                  additions (->> (concat dependencies members obligations owners)
                                  (remove #(nil? (:key %)))
                                  (sort-by (juxt :key #(expansion-rank (:expand %))))
                                  vec)
