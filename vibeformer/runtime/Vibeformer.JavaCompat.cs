@@ -43,7 +43,13 @@ internal static class JavaCompat
                    UnicodeCategory.SpacingCombiningMark or UnicodeCategory.Format;
     }
 
-    internal static string CodePointToString(int codePoint) => char.ConvertFromUtf32(codePoint);
+    internal static string CodePointToString(int codePoint)
+    {
+        // Character.toString(int) preserves every BMP char value, including an
+        // unpaired surrogate. ConvertFromUtf32 is stricter and rejects those.
+        if (codePoint is >= char.MinValue and <= char.MaxValue) return ((char)codePoint).ToString();
+        return char.ConvertFromUtf32(codePoint);
+    }
 
     internal static int CodePointAt(string value, int index) => char.ConvertToUtf32(value, index);
 
@@ -328,8 +334,44 @@ internal sealed class JavaMessageFormat : JavaFormat
         this.pattern = pattern;
         this.locale = locale;
     }
-    internal override string Format(object? value) =>
-        string.Format(locale, pattern.Replace("''", "'", StringComparison.Ordinal), value as object?[] ?? new[] { value });
+    internal override string Format(object? value)
+    {
+        var arguments = value as object?[] ?? new[] { value };
+        var result = new StringBuilder(pattern.Length);
+        var quoted = false;
+        for (var index = 0; index < pattern.Length; index++)
+        {
+            var current = pattern[index];
+            if (current == '\'')
+            {
+                if (index + 1 < pattern.Length && pattern[index + 1] == '\'')
+                {
+                    result.Append('\'');
+                    index++;
+                }
+                else
+                {
+                    quoted = !quoted;
+                }
+                continue;
+            }
+            if (!quoted && current == '{')
+            {
+                var close = pattern.IndexOf('}', index + 1);
+                if (close < 0 || !int.TryParse(pattern.AsSpan(index + 1, close - index - 1),
+                                               NumberStyles.None, CultureInfo.InvariantCulture,
+                                               out var argumentIndex))
+                    throw new FormatException("Invalid Java MessageFormat placeholder");
+                if (argumentIndex < 0 || argumentIndex >= arguments.Length)
+                    throw new FormatException("Java MessageFormat argument index is out of range");
+                result.Append(Convert.ToString(arguments[argumentIndex], locale) ?? "null");
+                index = close;
+                continue;
+            }
+            result.Append(current);
+        }
+        return result.ToString();
+    }
 }
 
 internal sealed class JavaCollector

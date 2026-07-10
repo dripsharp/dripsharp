@@ -56,6 +56,7 @@ Run these commands from `vibeformer`:
 clojure -M:run generate
 clojure -M:run verify
 clojure -M:run package
+clojure -M:run differential
 clojure -M:test
 clojure -M:test --namespace vibeformer.harness-test
 ```
@@ -73,3 +74,10 @@ through `source-map.edn` to the originating Spoon element and translation rule.
 build into a fresh local feed, and restores, builds, and runs a newly created
 consumer with an isolated NuGet package cache. The consumer has no project
 reference or access to generated source and exercises the public parser package.
+
+`differential` performs the complete package gate, separately builds and runs
+the pinned upstream JVM parser as an oracle, then runs a package-only .NET probe
+over all 940 LanguageSnippetTests inputs and the upstream lexer/span edge cases.
+It compares normalized public tokens, syntax trees and ordering, spans, and
+diagnostics, and deliberately perturbs an oracle result to prove mismatches are
+detected.
