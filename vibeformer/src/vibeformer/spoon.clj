@@ -8,22 +8,42 @@
   (:import [java.io File]
            [java.lang.reflect Constructor Field]
            [java.nio.file Path]
+           [java.util IdentityHashMap]
            [spoon Launcher]
            [spoon.reflect CtModel]
            [spoon.reflect.code CtThisAccess CtTypeAccess]
            [spoon.reflect.cu SourcePosition]
            [spoon.reflect.declaration CtAnnotation CtClass CtElement CtExecutable
-            CtRecord CtRecordComponent CtType CtTypeParameter]
+            CtField CtModifiable CtRecord CtRecordComponent CtType CtTypeMember
+            CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtExecutableReference
             CtFieldReference CtIntersectionTypeReference CtTypeParameterReference
             CtTypeReference CtWildcardReference]
            [spoon.reflect.visitor.filter TypeFilter]))
+
+(defrecord JavaFrontendModel
+  [^Launcher launcher
+   ^CtModel model
+   compilation-units
+   project-types
+   source-files
+   totals])
 
 (defrecord ResolvedJavaModel
   [^Launcher launcher
    ^CtModel model
    compilation-units
    project-types
+   symbols
+   occurrences
+   totals])
+
+(defrecord ResolvedJavaClosure
+  [^JavaFrontendModel frontend
+   seeds
+   declarations
+   source-inputs
+   public-api-declarations
    symbols
    occurrences
    totals])
@@ -270,41 +290,45 @@
 (defn- resolve-executable
   [project-types ^CtExecutableReference reference]
   (try
-    (if-let [owner-reference (.getDeclaringType reference)]
-      (let [owner-name (type-name owner-reference)]
-        (if-let [owner (get project-types owner-name)]
-          (if-let [component (when (and (instance? CtRecord owner)
-                                        (not (.isConstructor reference))
-                                        (empty? (.getParameters reference)))
-                               (record-component owner (.getSimpleName reference)))]
-            (resolved :executable (executable-key reference) :project reference
-                      component :record-component-accessor)
-            (if-let [declaration (.getExecutableDeclaration reference)]
-            (resolved (if (.isConstructor reference) :constructor :executable)
-                      (executable-key reference) :project reference declaration
-                      :source-declaration)
-            (if-let [implicit-resolution
-                     (when (.isConstructor reference)
-                       (implicit-constructor-resolution owner reference))]
-              ;; Java records and ordinary classes may have an implicit canonical
-              ;; or default constructor.  The resolved constructor reference and
-              ;; its live CtType declaration are the frontend identity; no
-              ;; constructor AST is reconstructed here.
-              (resolved :constructor (executable-key reference) :project
-                        reference owner implicit-resolution)
-              {:failure (diagnostic
-                         :unresolved-executable reference
-                         (str "Cannot resolve project executable "
-                              (executable-key reference)))})))
-          (let [member (if (.isConstructor reference)
-                         (.getActualConstructor reference)
-                         (.getActualMethod reference))
-                ^Class declaring-class (.getDeclaringClass member)]
-            (resolved (if (instance? Constructor member) :constructor :executable)
-                      (executable-key reference) (class-origin declaring-class)
-                      reference member :runtime-member))))
-      {:failure (diagnostic :unresolved-executable reference
-                            "Executable reference has no declaring type")})
+    (if (and (.isConstructor reference)
+             (instance? CtArrayTypeReference (.getDeclaringType reference)))
+      (resolved :constructor (executable-key reference) :intrinsic reference nil
+                :array-constructor)
+      (if-let [owner-reference (.getDeclaringType reference)]
+        (let [owner-name (type-name owner-reference)]
+          (if-let [owner (get project-types owner-name)]
+            (if-let [component (when (and (instance? CtRecord owner)
+                                          (not (.isConstructor reference))
+                                          (empty? (.getParameters reference)))
+                                 (record-component owner (.getSimpleName reference)))]
+              (resolved :executable (executable-key reference) :project reference
+                        component :record-component-accessor)
+              (if-let [declaration (.getExecutableDeclaration reference)]
+                (resolved (if (.isConstructor reference) :constructor :executable)
+                          (executable-key reference) :project reference declaration
+                          :source-declaration)
+                (if-let [implicit-resolution
+                         (when (.isConstructor reference)
+                           (implicit-constructor-resolution owner reference))]
+                  ;; Java records and ordinary classes may have an implicit canonical
+                  ;; or default constructor.  The resolved constructor reference and
+                  ;; its live CtType declaration are the frontend identity; no
+                  ;; constructor AST is reconstructed here.
+                  (resolved :constructor (executable-key reference) :project
+                            reference owner implicit-resolution)
+                  {:failure (diagnostic
+                             :unresolved-executable reference
+                             (str "Cannot resolve project executable "
+                                  (executable-key reference)))})))
+            (let [member (if (.isConstructor reference)
+                           (.getActualConstructor reference)
+                           (.getActualMethod reference))
+                  ^Class declaring-class (.getDeclaringClass member)]
+              (resolved (if (instance? Constructor member) :constructor :executable)
+                        (executable-key reference) (class-origin declaring-class)
+                        reference member :runtime-member))))
+        {:failure (diagnostic :unresolved-executable reference
+                              "Executable reference has no declaring type")}))
     (catch Throwable error
       {:failure (diagnostic
                  :unresolved-executable reference
@@ -325,6 +349,28 @@
    (str "field:" owner-name
         "#" (.getSimpleName reference))))
 
+(defn declaration-key
+  "Returns the stable resolved-symbol identity for a live project declaration.
+  This is an index key over Spoon objects, not a reconstructed declaration."
+  [^CtElement declaration]
+  (cond
+    (and (instance? CtType declaration)
+         (not (instance? CtTypeParameter declaration)))
+    (str "type:" (.getQualifiedName ^CtType declaration))
+
+    (instance? CtExecutable declaration)
+    (executable-key (.getReference ^CtExecutable declaration))
+
+    (instance? CtField declaration)
+    (field-key (.getReference ^CtField declaration))
+
+    (instance? CtRecordComponent declaration)
+    (when-let [^CtType owner (parent-of-type declaration CtType)]
+      (str "field:" (.getQualifiedName owner)
+           "#" (.getSimpleName ^CtRecordComponent declaration)))
+
+    :else nil))
+
 (defn- resolve-field
   [project-types ^CtFieldReference reference]
   (try
@@ -339,6 +385,17 @@
         (nil? owner-reference)
         {:failure (diagnostic :unresolved-field reference
                               "Field reference has no declaring type")}
+
+        (= "class" name)
+        (let [type-result (resolve-type project-types owner-reference)]
+          (if-let [failure (:failure type-result)]
+            {:failure (assoc failure
+                             :kind :unresolved-class-literal
+                             :frontend (frontend-identity reference)
+                             :location (source-location reference))}
+            (resolved :field (field-key reference)
+                      (:origin type-result) reference (:declaration type-result)
+                      :class-literal)))
 
         :else
         (if-let [^CtType owner
@@ -397,6 +454,10 @@
 (defn- elements-of
   [^CtModel model klass]
   (vec (.getElements model (TypeFilter. klass))))
+
+(defn- child-elements-of
+  [^CtElement element klass]
+  (vec (.getElements element (TypeFilter. klass))))
 
 (defn- project-type-index
   [^CtModel model source-files]
@@ -466,6 +527,311 @@
                :failures (vec (take 100 failures))})))
     occurrences))
 
+(def ^:private expansion-rank {:shell 0 :body 1 :public-api 2})
+
+(defn- declaration-kind
+  [^CtElement declaration]
+  (cond
+    (instance? CtType declaration) :type
+    (instance? CtRecordComponent declaration) :record-component
+    (instance? CtField declaration) :field
+    (instance? CtExecutable declaration)
+    (if (.isConstructor (.getReference ^CtExecutable declaration))
+      :constructor
+      :executable)
+    :else :unknown))
+
+(defn- project-declaration?
+  [source-files ^CtElement declaration]
+  (when-let [location (source-location declaration)]
+    (contains? source-files (:file location))))
+
+(defn- declaration-index
+  [^CtModel model project-types source-files]
+  (let [declarations (concat (vals project-types)
+                             (elements-of model CtExecutable)
+                             (elements-of model CtField)
+                             (elements-of model CtRecordComponent))]
+    (reduce
+     (fn [index ^CtElement declaration]
+       (if (and (project-declaration? source-files declaration)
+                (not (and (instance? CtField declaration)
+                          (when-let [^CtType owner (parent-of-type declaration CtType)]
+                            (record-component owner
+                                              (.getSimpleName ^CtField declaration))))))
+         (if-let [key (declaration-key declaration)]
+           (update index key
+                   (fn [matches]
+                     (let [matches (or matches [])]
+                       (if (some #(identical? declaration %) matches)
+                         matches
+                         (conj matches declaration)))))
+           index)
+         index))
+     (sorted-map)
+     declarations)))
+
+(defn- exact-declaration!
+  [index key context]
+  (let [matches (get index key)]
+    (when-not (= 1 (count matches))
+      (throw (ex-info
+              (str "Expected exactly one live Spoon declaration for " key)
+              {:kind (if (seq matches)
+                       :ambiguous-project-declaration
+                       :missing-project-declaration)
+               :context context
+               :key key
+               :match-count (count matches)
+               :locations (mapv source-location matches)})))
+    (first matches)))
+
+(defn- public-api-declaration?
+  [^CtElement declaration]
+  (let [declared-public? (or (and (instance? CtModifiable declaration)
+                                  (.hasModifier ^CtModifiable declaration
+                                                ModifierKind/PUBLIC))
+                             (instance? CtRecordComponent declaration))]
+    (and declared-public?
+         (loop [current declaration]
+           (if-let [^CtType owner (parent-of-type current CtType)]
+             (and (.hasModifier ^CtModifiable owner ModifierKind/PUBLIC)
+                  (recur owner))
+             true)))))
+
+(defn- direct-public-members
+  [^CtType type]
+  (->> (.getTypeMembers type)
+       (filter public-api-declaration?)
+       (sort-by declaration-key)))
+
+(defn- type-shell-element?
+  [^CtType root ^CtElement element]
+  (loop [current element]
+    (cond
+      (identical? current root) true
+      (not (.isParentInitialized current)) false
+      :else
+      (let [parent (.getParent current)]
+        (cond
+          (identical? parent root) true
+          (and (instance? CtTypeMember parent)
+               (not (instance? CtTypeParameter parent))) false
+          :else (recur parent))))))
+
+(defn- closure-elements
+  [^CtElement declaration expansion klass]
+  (let [elements (child-elements-of declaration klass)]
+    (if (and (= :shell expansion) (instance? CtType declaration))
+      (filterv #(type-shell-element? declaration %) elements)
+      elements)))
+
+(defn- occurrence-sort-key
+  [^CtElement element]
+  (let [{:keys [file line column]} (source-location element)]
+    [(or file "") (or line 0) (or column 0)
+     (.getName (class element))
+     (str (.getRoleInParent element))]))
+
+(defn- resolve-closure-occurrences!
+  [project-types source-files ^CtElement declaration expansion]
+  (let [groups [[CtTypeReference #(resolve-type project-types %)]
+                [CtExecutableReference #(resolve-executable project-types %)]
+                [CtFieldReference #(resolve-field project-types %)]
+                [CtAnnotation #(resolve-annotation project-types %)]]
+        elements (->> groups
+                      (mapcat (fn [[klass resolver]]
+                                (map #(vector % resolver)
+                                     (closure-elements declaration expansion klass))))
+                      (sort-by (comp occurrence-sort-key first)))
+        results (mapv
+                 (fn [[^CtElement element resolver]]
+                   (if-let [failure (source-position-failure source-files element)]
+                     {:failure failure}
+                     (resolver element)))
+                 elements)
+        failures (vec (keep :failure results))]
+    (when (seq failures)
+      (throw (ex-info
+              (str "Spoon semantic resolution failed inside closure declaration "
+                   (declaration-key declaration))
+              {:kind :closure-semantic-resolution-failed
+               :declaration-key (declaration-key declaration)
+               :failure-count (count failures)
+               :failures failures})))
+    (vec (remove :failure results))))
+
+(defn- owner-type-items
+  [^CtElement declaration]
+  (loop [current declaration result []]
+    (if-let [^CtType owner (parent-of-type current CtType)]
+      (recur owner (conj result {:key (declaration-key owner)
+                                 :declaration owner
+                                 :expand :shell}))
+      result)))
+
+(defn- dependency-items
+  [occurrence]
+  (when (= :project (:origin occurrence))
+    (let [^CtElement declaration (:declaration occurrence)]
+      (when-not (instance? CtElement declaration)
+        (throw (ex-info
+                "Resolved project occurrence does not retain a live Spoon declaration"
+                {:kind :missing-live-project-declaration
+                 :occurrence (dissoc occurrence :reference :declaration)})))
+      (let [key (declaration-key declaration)]
+        (when-not key
+          (throw (ex-info
+                  "Resolved project occurrence points to an unindexable Spoon declaration"
+                  {:kind :unindexable-project-declaration
+                   :occurrence (dissoc occurrence :reference :declaration)
+                   :declaration (frontend-identity declaration)})))
+        (into [{:key key
+                :declaration declaration
+                :expand (if (instance? CtType declaration) :shell :body)}]
+              (owner-type-items declaration))))))
+
+(defn- member-items
+  [^CtType declaration expansion]
+  (when (= :public-api expansion)
+    (mapv (fn [^CtElement member]
+            {:key (declaration-key member)
+             :declaration member
+             :expand (if (instance? CtType member) :public-api :body)})
+          (direct-public-members declaration))))
+
+(defn- stronger-expansion
+  [left right]
+  (if (> (expansion-rank right) (expansion-rank left)) right left))
+
+(defn- declaration-entry
+  [^CtElement declaration expansion]
+  {:key (declaration-key declaration)
+   :kind (declaration-kind declaration)
+   :expansion expansion
+   :location (source-location declaration)
+   :declaration declaration})
+
+(defn- add-distinct-occurrences
+  [^IdentityHashMap seen occurrences additions]
+  (reduce
+   (fn [result occurrence]
+     (let [reference (:reference occurrence)]
+       (if (.containsKey seen reference)
+         result
+         (do (.put seen reference true)
+             (conj result occurrence)))))
+   occurrences
+   additions))
+
+(defn- source-input-index
+  [declarations]
+  (reduce
+   (fn [index [key {:keys [location]}]]
+     (update index (:file location)
+             (fn [entry]
+               (-> (or entry {:path (:file location) :declarations []})
+                   (update :declarations conj key)))))
+   (sorted-map)
+   declarations))
+
+(defn select-resolved-closure!
+  "Selects a dependency-closed set of live Spoon declarations from a complete
+  frontend. Seeds are exact stable declaration keys with :shell, :body, or
+  :public-api expansion. Project references recursively enqueue their resolved
+  declarations; no source-file list or secondary AST participates."
+  [^JavaFrontendModel frontend seed-specs]
+  (let [{:keys [model project-types source-files]} frontend
+        index (declaration-index model project-types source-files)
+        seed-specs (->> seed-specs
+                        (map #(update % :expand (fnil identity :body)))
+                        (sort-by :key)
+                        vec)
+        _ (when-not (= (count seed-specs) (count (distinct (map :key seed-specs))))
+            (throw (ex-info "Closure seed identities must be unique"
+                            {:kind :duplicate-closure-seed})))
+        _ (doseq [{:keys [key expand]} seed-specs]
+            (when-not (contains? expansion-rank expand)
+              (throw (ex-info "Invalid closure seed expansion"
+                              {:kind :invalid-closure-expansion
+                               :key key :expand expand}))))
+        seeds (mapv (fn [{:keys [key expand]}]
+                      (let [declaration (exact-declaration! index key :closure-seed)]
+                        {:key key :expand expand :declaration declaration
+                         :location (source-location declaration)}))
+                    seed-specs)
+        queue (mapv #(select-keys % [:key :expand :declaration]) seeds)
+        seen (IdentityHashMap.)]
+    (loop [queue queue
+           processed (sorted-map)
+           declarations (sorted-map)
+           occurrences []]
+      (if-let [{:keys [key expand declaration]} (first queue)]
+        (let [previous (get processed key)
+              remaining (subvec queue 1)]
+          (if (and previous
+                   (>= (expansion-rank previous) (expansion-rank expand)))
+            (recur remaining processed declarations occurrences)
+            (let [indexed (exact-declaration! index key :closure-dependency)
+                  _ (when-not (identical? indexed declaration)
+                      (throw (ex-info
+                              "Closure dependency changed Spoon declaration identity"
+                              {:kind :project-declaration-identity-mismatch :key key})))
+                  resolved (resolve-closure-occurrences!
+                            project-types source-files declaration
+                            (if (= :public-api expand) :shell expand))
+                  occurrences (add-distinct-occurrences seen occurrences resolved)
+                  dependencies (mapcat dependency-items resolved)
+                  members (if (instance? CtType declaration)
+                            (member-items declaration expand)
+                            nil)
+                  owners (owner-type-items declaration)
+                  additions (->> (concat dependencies members owners)
+                                 (remove #(nil? (:key %)))
+                                 (sort-by (juxt :key #(expansion-rank (:expand %))))
+                                 vec)
+                  prior-entry (get declarations key)
+                  strongest (if prior-entry
+                              (stronger-expansion (:expansion prior-entry) expand)
+                              expand)]
+              (recur (into remaining additions)
+                     (assoc processed key expand)
+                     (assoc declarations key (declaration-entry declaration strongest))
+                     occurrences))))
+        (let [source-inputs (source-input-index declarations)
+              public-api (into (sorted-map)
+                               (filter (fn [[_ {:keys [declaration]}]]
+                                         (public-api-declaration? declaration)))
+                               declarations)
+              symbols (reduce (fn [result occurrence]
+                                (update result (:key occurrence) (fnil conj []) occurrence))
+                              (sorted-map)
+                              occurrences)
+              kind-counts (frequencies (map :kind occurrences))
+              origin-counts (frequencies (map :origin occurrences))
+              totals {:seeds (count seeds)
+                      :declarations (count declarations)
+                      :source-inputs (count source-inputs)
+                      :public-api-declarations (count public-api)
+                      :type-references (get kind-counts :type 0)
+                      :executable-references (get kind-counts :executable 0)
+                      :constructor-references (get kind-counts :constructor 0)
+                      :field-references (get kind-counts :field 0)
+                      :annotations (get kind-counts :annotation 0)
+                      :symbols (count symbols)
+                      :project-occurrences (get origin-counts :project 0)
+                      :jdk-occurrences (get origin-counts :jdk 0)
+                      :dependency-occurrences (get origin-counts :dependency 0)
+                      :intrinsic-occurrences (get origin-counts :intrinsic 0)
+                      :type-parameter-occurrences (get origin-counts :type-parameter 0)
+                      :shadow-symbols 0
+                      :unresolved-symbols 0
+                      :ambiguous-symbols 0
+                      :fallback-symbols 0
+                      :guessed-symbols 0}]
+          (->ResolvedJavaClosure frontend seeds declarations source-inputs
+                                 public-api symbols occurrences totals))))))
+
 (defn- compiler-failure-diagnostic
   [error]
   (let [message (.getMessage ^Throwable error)
@@ -479,10 +845,10 @@
      :frontend {:frontend-class (.getName (class error))
                 :role "model-builder"}}))
 
-(defn build-resolved-model!
-  "Builds a complete, fail-closed Spoon model from Gradle-resolved production
-  inputs.  The returned value owns the live Launcher, CtModel, declarations,
-  references, and resolved-symbol occurrence index for direct translation."
+(defn build-frontend-model!
+  "Builds the complete live Spoon frontend from Gradle-resolved inputs with
+  classpath resolution enabled. Semantic acceptance is performed separately so
+  callers may validate either the whole project or an exact declaration closure."
   [_workspace-root discovery]
   (let [source-files (set (map #(canonical-file (.toFile ^Path %))
                                (:java-sources discovery)))
@@ -509,7 +875,17 @@
                :error-count (.getErrorCount environment)})))
     (let [compilation-units (validate-compilation-units! launcher source-files)
           project-types (project-type-index model source-files)
-          occurrences (validate-references! model project-types source-files)
+          totals {:compilation-units (count compilation-units)
+                  :project-types (count project-types)}]
+      (->JavaFrontendModel launcher model compilation-units project-types
+                           source-files totals))))
+
+(defn resolve-complete-model!
+  "Fail-closed semantic acceptance for every reference in a frontend model."
+  [^JavaFrontendModel frontend]
+  (let [{:keys [launcher model compilation-units project-types source-files]}
+        frontend
+        occurrences (validate-references! model project-types source-files)
           symbols (reduce (fn [index occurrence]
                             (update index (:key occurrence) (fnil conj []) occurrence))
                           (sorted-map)
@@ -533,8 +909,22 @@
                   :unresolved-symbols 0
                   :ambiguous-symbols 0
                   :fallback-symbols 0}]
-      (->ResolvedJavaModel launcher model compilation-units project-types
-                           symbols occurrences totals))))
+    (->ResolvedJavaModel launcher model compilation-units project-types
+                         symbols occurrences totals)))
+
+(defn build-resolved-model!
+  "Builds and accepts a complete, fail-closed Spoon model from Gradle-resolved
+  production inputs. The returned value retains the live frontend objects."
+  [workspace-root discovery]
+  (resolve-complete-model! (build-frontend-model! workspace-root discovery)))
+
+(defn build-resolved-closure!
+  "Builds the complete production frontend and accepts only the exact resolved
+  declaration closure reached from seed-specs."
+  [workspace-root discovery seed-specs]
+  (select-resolved-closure!
+   (build-frontend-model! workspace-root discovery)
+   seed-specs))
 
 (defn summary-line
   [^ResolvedJavaModel resolved-model]

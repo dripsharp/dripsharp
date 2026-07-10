@@ -1,0 +1,27 @@
+{:gradle-project ":pkl-core"
+ :seeds
+ [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
+   :expand :body}
+  {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpression(org.pkl.core.ModuleSource,java.lang.String)"
+   :expand :body}
+  {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValue(org.pkl.core.ModuleSource)"
+   :expand :body}
+  {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValueAs(org.pkl.core.ModuleSource,org.pkl.core.PClassInfo)"
+   :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmValue#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmValue#export(java.lang.Object)" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmValue#exportNullable(java.lang.Object)" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmTyped#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmNull#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmDuration#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmDataSize#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmPair#export()" :expand :body}
+  {:key "type:org.pkl.core.Value" :expand :public-api}
+  {:key "type:org.pkl.core.ValueVisitor" :expand :public-api}
+  {:key "type:org.pkl.core.ValueConverter" :expand :public-api}
+  {:key "type:org.pkl.core.PModule" :expand :public-api}
+  {:key "type:org.pkl.core.PObject" :expand :public-api}
+  {:key "type:org.pkl.core.PNull" :expand :public-api}
+  {:key "type:org.pkl.core.Duration" :expand :public-api}
+  {:key "type:org.pkl.core.DataSize" :expand :public-api}
+  {:key "type:org.pkl.core.Pair" :expand :public-api}]}
