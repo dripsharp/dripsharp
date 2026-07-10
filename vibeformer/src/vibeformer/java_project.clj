@@ -13,13 +13,15 @@
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
-           [spoon.reflect.code CtExpression]
+           [spoon.reflect.code CtConstructorCall CtExpression CtLocalVariable CtThisAccess
+            CtVariableAccess]
            [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass
             CtConstructor CtElement CtEnum CtEnumValue CtExecutable CtField
-           CtInterface CtMethod CtModifiable CtParameter CtRecord
+            CtInterface CtMethod CtModifiable CtParameter CtRecord
             CtRecordComponent CtType CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtIntersectionTypeReference
-            CtTypeParameterReference CtTypeReference CtWildcardReference]))
+            CtTypeParameterReference CtTypeReference CtWildcardReference]
+           [spoon.reflect.visitor.filter TypeFilter]))
 
 (def ^:private default-config-file "vibeformer/config/pkl-parser.edn")
 
@@ -814,16 +816,28 @@
 
 (defn- method-name [^CtMethod method]
   (let [simple-name (.getSimpleName method)
-        owner (some-> method .getDeclaringType .getQualifiedName)]
-    (cond
-      (and (= owner "org.pkl.core.module.ModuleKeys") (= simple-name "synthetic"))
-      "CreateSynthetic"
-      (and (= owner "org.pkl.core.module.ResolvedModuleKeys") (= simple-name "virtual"))
-      "CreateVirtual"
-      (= simple-name "toString") "ToString"
-      (= simple-name "hashCode") "GetHashCode"
-      (= simple-name "equals") "Equals"
-      :else (pascal simple-name))))
+        owner (.getDeclaringType method)
+        owner-name (some-> owner .getQualifiedName)
+        base-name (cond
+                    (and (= owner-name "org.pkl.core.module.ModuleKeys")
+                         (= simple-name "synthetic"))
+                    "CreateSynthetic"
+                    (and (= owner-name "org.pkl.core.module.ResolvedModuleKeys")
+                         (= simple-name "virtual"))
+                    "CreateVirtual"
+                    (= simple-name "toString") "ToString"
+                    (= simple-name "hashCode") "GetHashCode"
+                    (= simple-name "equals") "Equals"
+                    :else (pascal simple-name))
+        nested-type-names (when owner
+                            (set (map #(pascal (.getSimpleName ^CtType %))
+                                      (.getNestedTypes ^CtType owner))))]
+    ;; Java permits a method and nested type to share a name; C# does not.
+    ;; Derive the destination factory name from the live declaring type so the
+    ;; declaration and all resolved project call sites take the same path.
+    (if (contains? nested-type-names base-name)
+      (str "Create" base-name)
+      base-name)))
 
 (defn- top-definitions [^CtMethod method]
   (vec (.getTopDefinitions method)))
@@ -1035,6 +1049,227 @@
 
 (declare type-node-declaration)
 
+(defn- anonymous-class-name [^CtConstructorCall call]
+  (let [{:keys [line column]} (spoon/source-location call)]
+    (str "Anonymous_" (or line 0) "_" (or column 0))))
+
+(defn- anonymous-class-for-call [^CtConstructorCall call]
+  (some #(when (instance? CtClass %) %) (.getDirectChildren call)))
+
+(defn- nearest-enclosing-type [^CtElement element]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (nil? current) nil
+      (instance? CtType current) current
+      :else (recur (when (.isParentInitialized ^CtElement current)
+                     (.getParent ^CtElement current))))))
+
+(defn- inside? [^CtElement element ^CtElement ancestor]
+  (loop [current element]
+    (cond
+      (nil? current) false
+      (identical? current ancestor) true
+      :else (recur (when (.isParentInitialized current) (.getParent current))))))
+
+(defn- anonymous-captures [^CtClass anonymous-class]
+  (->> (.getElements anonymous-class (TypeFilter. CtVariableAccess))
+       (keep (fn [^CtVariableAccess access]
+               (let [reference (.getVariable access)
+                     declaration (.getDeclaration reference)]
+                 (when (and declaration
+                            (or (instance? CtLocalVariable declaration)
+                                (instance? CtParameter declaration))
+                            (not (inside? declaration anonymous-class)))
+                   {:declaration declaration
+                    :type-reference (.getType reference)}))))
+       (reduce (fn [result {:keys [declaration] :as capture}]
+                 (if (some #(identical? declaration (:declaration %)) result)
+                   result
+                   (conj result capture))) [])
+       (sort-by (fn [{:keys [^CtElement declaration]}]
+                  (let [{:keys [file line column]} (spoon/source-location declaration)]
+                    [file line column])))
+       vec))
+
+(defn- anonymous-uses-outer? [^CtClass anonymous-class ^CtType owner-type]
+  (let [owner-name (.getQualifiedName owner-type)]
+    (boolean
+     (some #(= owner-name (some-> ^CtThisAccess % .getType .getQualifiedName))
+           (.getElements anonymous-class (TypeFilter. CtThisAccess))))))
+
+(defn- capture-type-node [ctx {:keys [^CtElement declaration]}]
+  (let [reference (.getType ^spoon.reflect.declaration.CtTypedElement declaration)
+        qualified-name (.getQualifiedName ^CtTypeReference reference)
+        location (spoon/source-location declaration)
+        candidates
+        (->> (:occurrences (:resolved-model ctx))
+             (filter #(= :type (:kind %)))
+             (map :reference)
+             (filter #(= qualified-name (.getQualifiedName ^CtTypeReference %)))
+             (sort-by (fn [^CtTypeReference candidate]
+                        (let [candidate-location (spoon/source-location candidate)]
+                          [(if (= (:file location) (:file candidate-location)) 0 1)
+                           (Math/abs (long (- (or (:line location) 0)
+                                              (or (:line candidate-location) 0))))
+                           (Math/abs (long (- (or (:column location) 0)
+                                              (or (:column candidate-location) 0))))]))))
+        resolved-reference (first candidates)]
+    (when-not resolved-reference
+      (throw (ex-info "Captured variable has no resolved declaration type occurrence"
+                      {:kind :missing-captured-variable-type
+                       :type qualified-name
+                       :source (source-ref declaration :java.capture/type)})))
+    (type-node ctx resolved-reference)))
+
+(defn- anonymous-context [ctx ^CtClass anonymous-class ^CtType owner-type captures outer?]
+  (let [capture-declarations (mapv :declaration captures)
+        capture-names (mapv #(str "__capture_" %2)
+                            captures (range))
+        original-services (:services ctx)
+        services
+        (assoc original-services
+               :local-name
+               (fn [^CtElement element]
+                 (if-let [index (first (keep-indexed
+                                       (fn [index declaration]
+                                         (when (identical? element declaration) index))
+                                       capture-declarations))]
+                   (str "this." (nth capture-names index))
+                   ((:local-name original-services) element)))
+               :this-node
+               (fn [^CtThisAccess access]
+                 (if (and outer?
+                          (= (.getQualifiedName owner-type)
+                             (some-> access .getType .getQualifiedName)))
+                   (raw "this.__outer")
+                   (raw "this"))))]
+    {:ctx (assoc ctx :body-context (java-body/context (:resolved-model ctx) services))
+     :capture-names capture-names}))
+
+(defn- anonymous-type-node [ctx ^CtType owner-type ^CtConstructorCall call]
+  (let [^CtClass anonymous-class (anonymous-class-for-call call)
+        name (anonymous-class-name call)
+        owner-type-node (with-source (raw (type-path ctx owner-type)) owner-type
+                          :dotnet.type/project-declaration
+                          {:mapping {:registry :types
+                                     :identity :dotnet.type/project-declaration
+                                     :resolved-key (spoon/declaration-key owner-type)
+                                     :origin :project
+                                     :resolution :declaration}})
+        captures (anonymous-captures anonymous-class)
+        outer? (anonymous-uses-outer? anonymous-class owner-type)
+        {:keys [ctx capture-names]}
+        (anonymous-context ctx anonymous-class owner-type captures outer?)
+        constructor-arguments (vec (.getArguments call))
+        constructor-parameters
+        (mapv (fn [index ^CtExpression argument]
+                (sequence-node [(type-node ctx (.getType argument))
+                                (raw (str " __base_" index))]))
+              (range) constructor-arguments)
+        capture-parameters
+        (concat
+         (when outer?
+           [(sequence-node [owner-type-node
+                            (raw " __outer")])])
+         (mapv (fn [capture capture-name]
+                 (sequence-node [(capture-type-node ctx capture)
+                                 (raw (str " " capture-name))]))
+               captures capture-names))
+        constructor-parameter-nodes (vec (concat constructor-parameters capture-parameters))
+        constructor-assignments
+        (concat
+         (when outer? [(raw "this.__outer = __outer;")])
+         (mapv (fn [capture-name]
+                 (raw (str "this." capture-name " = " capture-name ";")))
+               capture-names))
+        base-reference (.getType call)
+        base-name (.getQualifiedName ^CtTypeReference base-reference)
+        base-node (when-not (= "java.lang.Object" base-name) (type-node ctx base-reference))
+        base-declaration (some-> base-reference .getTypeDeclaration)
+        base-interface? (instance? CtInterface base-declaration)
+        base-initializer (when (and (seq constructor-arguments) (not base-interface?))
+                           (sequence-node
+                            [(raw " : base(")
+                             (sequence-node
+                              (mapv #(raw (str "__base_" %))
+                                    (range (count constructor-arguments))) ", ")
+                             (raw ")")]))
+        capture-fields
+        (concat
+         (when outer?
+           [(sequence-node [(raw "private readonly ")
+                            owner-type-node
+                            (raw " __outer;")])])
+         (mapv (fn [capture capture-name]
+                 (sequence-node [(raw "private readonly ")
+                                 (capture-type-node ctx capture)
+                                 (raw (str " " capture-name ";"))]))
+               captures capture-names))
+        raw-members (->> (.getTypeMembers anonymous-class)
+                         (remove #(.isImplicit ^CtElement %))
+                         (sort-by (fn [^CtElement member]
+                                    (let [{:keys [file line column]}
+                                          (spoon/source-location member)]
+                                      [file line column]))))
+        members (mapv (fn [member]
+                        (cond
+                          (instance? CtField member) (field-node ctx anonymous-class member)
+                          (instance? CtMethod member) (method-node ctx anonymous-class member)
+                          (instance? CtType member) (type-node-declaration ctx member)
+                          :else
+                          (throw (ex-info "Unsupported anonymous-class member"
+                                          {:kind :unsupported-anonymous-class-member
+                                           :class name
+                                           :source (source-ref member :java.declaration/anonymous-member)}))))
+                      raw-members)
+        constructor
+        (sequence-node
+         [(raw (str "public " name "("))
+          (sequence-node constructor-parameter-nodes ", ") (raw ")")
+          base-initializer (raw " {\n")
+          (sequence-node constructor-assignments "\n")
+          (raw "\n}")])
+        declaration
+        (sequence-node
+         [(raw (str "private sealed class " name))
+          (when base-node (sequence-node [(raw " : ") base-node]))
+          (raw "\n{\n")
+          (sequence-node (vec (concat capture-fields [constructor] members)) "\n\n")
+          (raw "\n}")])]
+    (attach-declaration ctx declaration anonymous-class :type
+                        (.getQualifiedName owner-type) name name
+                        :java.declaration/anonymous-class-hoist)))
+
+(defn- direct-owner-member [^CtElement element ^CtType owner-type]
+  (loop [current element]
+    (when (and current (.isParentInitialized current))
+      (let [parent (.getParent current)]
+        (if (identical? parent owner-type)
+          current
+          (recur parent))))))
+
+(defn- owner-anonymous-calls [ctx ^CtType owner-type]
+  (->> (.getElements owner-type (TypeFilter. CtConstructorCall))
+       (filter anonymous-class-for-call)
+       (filter #(identical? owner-type (nearest-enclosing-type %)))
+       (filter #(selected-declaration? ctx (direct-owner-member % owner-type)))
+       (sort-by (fn [^CtElement call]
+                  (let [{:keys [file line column]} (spoon/source-location call)]
+                    [file line column])))
+       vec))
+
+(defn- anonymous-constructor-arguments [services ^CtConstructorCall call]
+  (let [anonymous-class (anonymous-class-for-call call)
+        owner-type (nearest-enclosing-type call)
+        captures (anonymous-captures anonymous-class)
+        outer? (anonymous-uses-outer? anonymous-class owner-type)]
+    (vec
+     (concat
+      (when outer? [(raw "this")])
+      (map (fn [{:keys [declaration]}]
+             (raw ((:local-name services) declaration)))
+           captures)))))
+
 (defn- destination-bridge-members [^CtType type]
   (let [superclass (when (instance? CtClass type) (.getSuperclass ^CtClass type))]
     (cond-> []
@@ -1096,6 +1331,8 @@
                      (mapv #(member-node ctx type %)))
         members (into (vec (missing-interface-contracts ctx type)) members)
         members (into (vec (destination-bridge-members type)) members)
+        members (into members (mapv #(anonymous-type-node ctx type %)
+                                    (owner-anonymous-calls ctx type)))
         header (sequence-node
                 [(raw (join-words (type-words type))) (raw name) node
                  (when components
@@ -1277,17 +1514,20 @@
                       :diagnostics (atom [])
                       :blocker-counter (atom 0)
                       :body-translations (atom [])}
-        services {:identifier identifier
+        base-services {:identifier identifier
                   :pascal pascal
                   :method-name method-name
+                  :anonymous-class-name anonymous-class-name
                   :record-component-name record-component-name
                   :local-name (fn [^CtElement element]
                                 (let [{:keys [line column]} (spoon/source-location element)]
                                   (str (identifier (.getSimpleName ^spoon.reflect.declaration.CtNamedElement element))
                                        "__" (or line 0) "_" (or column 0))))
                   :type-node (fn [reference] (type-node @ctx-holder reference))}
+        services (assoc base-services :anonymous-constructor-arguments
+                        #(anonymous-constructor-arguments base-services %))
         body-context (java-body/context resolved-model services)
-        ctx (assoc base-context :body-context body-context)
+        ctx (assoc base-context :body-context body-context :services services)
         _ (reset! ctx-holder ctx)
         roots (java/project-roots resolved-model)
         declaration-artifacts

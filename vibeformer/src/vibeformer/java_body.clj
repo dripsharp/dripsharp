@@ -16,7 +16,7 @@
             CtExecutableReferenceExpression CtExpression CtFieldRead CtFieldWrite
             CtFor CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable
             CtNewArray CtOperatorAssignment CtReturn CtStatement CtSuperAccess
-            CtSwitch CtSwitchExpression CtSynchronized CtThisAccess CtThrow CtTry CtTypeAccess
+            CtSwitch CtSwitchExpression CtSynchronized CtThisAccess CtThrow CtTry CtTryWithResource CtTypeAccess
             CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtWhile
             CtYieldStatement UnaryOperatorKind]
            [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement CtField CtMethod
@@ -134,7 +134,11 @@
                        \tab "\\t"
                        \backspace "\\b"
                        \formfeed "\\f"
-                       (if (or (< (int ch) 32) (= (int ch) 127))
+                       ;; C# treats Unicode line/paragraph separators as real
+                       ;; newlines inside ordinary string literals.  Escaping
+                       ;; every non-ASCII UTF-16 code unit also keeps control
+                       ;; characters and source encoding deterministic.
+                       (if (or (< (int ch) 32) (> (int ch) 126))
                          (format "\\u%04X" (int ch))
                          (str ch))))
                    value))
@@ -434,12 +438,21 @@
       (finish-expression services children element node))))
 
 (defn- constructor-node [services ^CtConstructorCall element children]
-  (let [type ((:type-node services) (.getType element))
-        args (children-nodes children (.getArguments element))
-        anonymous-body (some (fn [child]
-                               (when (instance? CtClass (:source-element child))
-                                 (:node child)))
-                             children)]
+  (let [anonymous-class (some (fn [child]
+                                (when (instance? CtClass (:source-element child))
+                                  (:source-element child)))
+                              children)
+        anonymous-name (when anonymous-class
+                         (when-let [namer (:anonymous-class-name services)]
+                           (namer element)))
+        type (if anonymous-name
+               (raw anonymous-name)
+               ((:type-node services) (.getType element)))
+        args (into (children-nodes children (.getArguments element))
+                   (when (and anonymous-name (:anonymous-constructor-arguments services))
+                     ((:anonymous-constructor-arguments services) element)))
+        anonymous-body (when (and anonymous-class (not anonymous-name))
+                         (:node (java/child-result children anonymous-class)))]
     (finish-expression services children element
                        (sequence-node [(raw "new ") type (raw "(")
                                        (sequence-node args ", ") (raw ")")
@@ -783,17 +796,49 @@
                                     (child-node children (.getBlock element))])})}
     {:id :java.expression/this :class CtThisAccess
      :emit (fn [{:keys [^CtThisAccess element children]}]
-             {:node (finish-expression services children element (raw "this"))})}
+             {:node (finish-expression
+                     services children element
+                     (if-let [this-node (:this-node services)]
+                       (this-node element)
+                       (raw "this")))})}
     {:id :java.statement/throw :class CtThrow
      :emit (fn [{:keys [^CtThrow element children]}]
              {:node (sequence-node [(raw "throw ") (child-node children (.getThrownExpression element)) (raw ";")])})}
     {:id :java.statement/try :class CtTry
      :emit (fn [{:keys [^CtTry element children]}]
-             {:node (sequence-node [(raw "try ") (child-node children (.getBody element))
-                                    (when (seq (.getCatchers element)) (raw " "))
-                                    (sequence-node (children-nodes children (.getCatchers element)) " ")
-                                    (when-let [finalizer (.getFinalizer element)]
-                                      (sequence-node [(raw " finally ") (child-node children finalizer)]))])})}
+             (let [resources (if (instance? CtTryWithResource element)
+                               (vec (.getResources ^CtTryWithResource element))
+                               [])
+                   handlers? (or (seq (.getCatchers element)) (.getFinalizer element))
+                   body (child-node children (.getBody element))
+                   guarded-body
+                   (if (seq resources)
+                     (sequence-node
+                      [(raw "{\n")
+                       (sequence-node
+                        (mapv (fn [index resource]
+                                (if (instance? CtLocalVariable resource)
+                                  (sequence-node [(raw "using ")
+                                                  (child-node children resource)
+                                                  (raw ";")])
+                                  (sequence-node
+                                   [(raw (str "using var __resource_" index " = "))
+                                    (child-node children resource)
+                                    (raw ";")])))
+                              (range) resources)
+                        "\n")
+                       (raw "\n") body (raw "\n}")])
+                     body)]
+               {:node (if handlers?
+                        (sequence-node [(raw "try ") guarded-body
+                                        (when (seq (.getCatchers element)) (raw " "))
+                                        (sequence-node
+                                         (children-nodes children (.getCatchers element)) " ")
+                                        (when-let [finalizer (.getFinalizer element)]
+                                          (sequence-node
+                                           [(raw " finally ")
+                                            (child-node children finalizer)]))])
+                        guarded-body)}))}
     {:id :java.expression/type-access :class CtTypeAccess
      :emit (fn [{:keys [^CtTypeAccess element children]}]
              {:node (finish-expression services children element

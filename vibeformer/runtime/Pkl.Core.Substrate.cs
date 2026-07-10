@@ -581,6 +581,11 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
         internal object?[] GetArguments() => Arguments;
     }
 
+    public sealed class VirtualFrame : Frame
+    {
+        internal VirtualFrame(object?[]? arguments = null) : base(arguments) { }
+    }
+
     public sealed class MaterializedFrame : Frame
     {
         internal MaterializedFrame(object?[]? arguments = null) : base(arguments) { }
@@ -615,7 +620,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     public abstract class RootNode : Node
     {
         protected RootNode(object? language, FrameDescriptor descriptor) { }
-        internal virtual object? Execute(Frame frame) => null;
+        internal virtual object? Execute(VirtualFrame frame) => null;
         internal Pkl.Core.Runtime.Truffle.api.RootCallTarget GetCallTarget() => new(this);
     }
 
@@ -673,7 +678,7 @@ namespace Pkl.Core.Runtime.Truffle.api
         private readonly RootNode? root;
         internal CallTarget(RootNode? root = null) => this.root = root;
         internal virtual object? Call(params object?[] arguments) =>
-            root?.Execute(new Frame(arguments));
+            root?.Execute(new VirtualFrame(arguments));
     }
 
     public sealed class RootCallTarget : CallTarget
