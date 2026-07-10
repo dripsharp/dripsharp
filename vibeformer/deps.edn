@@ -1,4 +1,11 @@
 {:paths ["src"]
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         fr.inria.gforge.spoon/spoon-core {:mvn/version "11.4.0"}
-        org.jetbrains.kotlin/kotlin-compiler-embeddable {:mvn/version "2.2.21"}}}
+        org.jetbrains.kotlin/kotlin-compiler-embeddable {:mvn/version "2.2.21"}}
+ :aliases
+ {:run
+  {:main-opts ["-m" "vibeformer.main"]}
+
+  :test
+  {:extra-paths ["test"]
+   :main-opts ["-m" "vibeformer.test-runner"]}}}

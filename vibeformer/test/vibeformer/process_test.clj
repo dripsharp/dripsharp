@@ -1,0 +1,15 @@
+(ns vibeformer.process-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [vibeformer.process :as process]))
+
+(deftest command-failure-is-explicit
+  (testing "nonzero commands preserve their exit and merged output"
+    (let [error (try
+                  (process/run! {:command ["sh" "-c" "printf harness-failure >&2; exit 17"]
+                                 :directory "."})
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (some? error))
+      (is (= :command-failed (:kind (ex-data error))))
+      (is (= 17 (:exit (ex-data error))))
+      (is (= "harness-failure" (:output (ex-data error)))))))

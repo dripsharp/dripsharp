@@ -47,3 +47,18 @@ The documentation is limited to durable product and architecture decisions:
 Use complete projects with their real generated sources and classpaths. A
 passing hand-selected source slice or sample fixture is useful evidence for a
 local rule but is not evidence that a module or the product is complete.
+
+## Development Commands
+
+Run these commands from `vibeformer`:
+
+```text
+clojure -M:run generate
+clojure -M:test
+clojure -M:test --namespace vibeformer.harness-test
+```
+
+`generate` removes and recreates `target`, verifies the tracked `research/pkl`
+gitlink, and obtains the pkl-parser production sources, resources, compile
+classpath, and Java toolchain from its Gradle project. Generated files under
+`target` are disposable.
