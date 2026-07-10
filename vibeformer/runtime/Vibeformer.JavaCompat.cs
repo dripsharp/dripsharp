@@ -18,6 +18,9 @@ namespace Vibeformer.Runtime;
 
 internal static class JavaCompat
 {
+    internal static T RequireNonNull<T>(T? value, string? message = null) =>
+        value is null ? throw new NullReferenceException(message) : value;
+
     internal static string Concat(object? left, object? right) =>
         JavaString(left) + JavaString(right);
 

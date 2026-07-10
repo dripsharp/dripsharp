@@ -16,13 +16,12 @@
            [spoon.reflect.code CtExpression]
            [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass
             CtConstructor CtElement CtEnum CtEnumValue CtExecutable CtField
-            CtInterface CtMethod CtModifiable CtParameter CtRecord
+           CtInterface CtMethod CtModifiable CtParameter CtRecord
             CtRecordComponent CtType CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtIntersectionTypeReference
-            CtTypeParameterReference CtTypeReference CtWildcardReference]
-           [spoon.reflect.visitor.filter TypeFilter]))
+            CtTypeParameterReference CtTypeReference CtWildcardReference]))
 
-(def ^:private config-file "vibeformer/config/pkl-parser.edn")
+(def ^:private default-config-file "vibeformer/config/pkl-parser.edn")
 
 (def ^:private csharp-keywords
   #{"abstract" "as" "base" "bool" "break" "byte" "case" "catch" "char"
@@ -80,6 +79,12 @@
                          (mapcat identity (:namespaces configuration))))
     (destination-error "Destination namespace mappings must be non-blank strings"
                        {:namespaces (:namespaces configuration)}))
+  (when-not (or (nil? (:namespace-prefixes configuration))
+                (and (map? (:namespace-prefixes configuration))
+                     (every? #(and (string? %) (not (str/blank? %)))
+                             (mapcat identity (:namespace-prefixes configuration)))))
+    (destination-error "Destination namespace-prefix mappings must be non-blank strings"
+                       {:namespace-prefixes (:namespace-prefixes configuration)}))
   (when-not (and (map? (:resources configuration))
                  (every? (fn [[source {:keys [strategy destination logical-name]}]]
                            (and (= :embedded-resource strategy)
@@ -88,14 +93,21 @@
                          (:resources configuration)))
     (destination-error "Invalid destination resource mapping"
                        {:resources (:resources configuration)}))
+  (when-not (or (nil? (:resource-policy configuration))
+                (= {:strategy :embedded-resource-preserve-path}
+                   (:resource-policy configuration)))
+    (destination-error "Invalid destination resource policy"
+                       {:resource-policy (:resource-policy configuration)}))
   configuration)
 
 (defn read-configuration
-  [workspace-root]
-  (let [file (paths/resolve-path (paths/absolute workspace-root) config-file)]
-    (when-not (paths/regular-file? file)
-      (destination-error "Destination configuration is missing" {:path (str file)}))
-    (validate-configuration! (edn/read-string (slurp (str file))))))
+  ([workspace-root]
+   (read-configuration workspace-root default-config-file))
+  ([workspace-root config-file]
+   (let [file (paths/resolve-path (paths/absolute workspace-root) config-file)]
+     (when-not (paths/regular-file? file)
+       (destination-error "Destination configuration is missing" {:path (str file)}))
+     (validate-configuration! (edn/read-string (slurp (str file)))))))
 
 (defn- canonicalize [value]
   (cond
@@ -162,8 +174,23 @@
 (defn- destination-namespace [ctx ^CtType type]
   (let [package (package-name (first (declaring-types type)))]
     (or (get-in ctx [:configuration :namespaces package])
+        (some (fn [[source destination]]
+                (when (or (= package source)
+                          (str/starts-with? package (str source ".")))
+                  (let [suffix (subs package (count source))
+                        segments (remove str/blank? (str/split suffix #"\."))]
+                    (str destination
+                         (when (seq segments)
+                           (str "." (str/join "." (map pascal segments))))))))
+              (sort-by (comp - count key)
+                       (get-in ctx [:configuration :namespace-prefixes])))
         (throw (ex-info (str "No destination namespace mapping for " package)
                         {:kind :missing-namespace-mapping :package package})))))
+
+(defn- selected-declaration?
+  [ctx ^CtElement declaration]
+  (or (nil? (:selected-declarations ctx))
+      (.containsKey ^IdentityHashMap (:selected-declarations ctx) declaration)))
 
 (defn- type-path [ctx ^CtType type]
   (str "global::" (destination-namespace ctx type) "."
@@ -206,6 +233,7 @@
    "java.lang.Float" ["float" :dotnet.type/single]
    "java.lang.Double" ["double" :dotnet.type/double]
    "java.lang.NumberFormatException" ["global::System.FormatException" :dotnet.type/format-exception]
+   "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.lang.Void" ["void" :dotnet.type/void]
@@ -529,7 +557,8 @@
       {:owner owner :signature (.getSignature method)})))
 
 (defn- missing-interface-contracts [ctx ^CtType type]
-  (when (and (instance? CtClass type)
+  (when (and (nil? (:selected-declarations ctx))
+             (instance? CtClass type)
              (modifier? type ModifierKind/ABSTRACT))
     (let [own-methods (vec (.getMethods type))]
       (->> (.getSuperInterfaces type)
@@ -678,6 +707,7 @@
                                  result
                                  (conj result member))) [])
                      (remove #(.isImplicit ^CtElement %))
+                     (filter #(selected-declaration? ctx %))
                      (sort-by (fn [^CtElement member]
                                 (let [{:keys [file line column]} (spoon/source-location member)]
                                   [file line column])))
@@ -725,7 +755,9 @@
           duplicate-groups)))
 
 (defn- annotation-decisions [ctx]
-  (->> (.getElements (:model (:resolved-model ctx)) (TypeFilter. CtAnnotation))
+  (->> (:occurrences (:resolved-model ctx))
+       (filter #(= :annotation (:kind %)))
+       (map :reference)
        (sort-by (fn [^CtAnnotation annotation]
                   (let [{:keys [file line column]} (spoon/source-location annotation)]
                     [file line column (.getQualifiedName (.getAnnotationType annotation))])))
@@ -748,11 +780,10 @@
       (str/replace ">" "&gt;") (str/replace "\"" "&quot;")
       (str/replace "'" "&apos;")))
 
-(defn- project-text [configuration]
+(defn- project-text [configuration resource-artifacts]
   (let [project (:project configuration)
         package (:package configuration)
-        output (:output configuration)
-        resources (:resources configuration)]
+        output (:output configuration)]
     (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
          "  <PropertyGroup>\n"
          "    <TargetFramework>" (xml-escape (:target-framework project)) "</TargetFramework>\n"
@@ -772,9 +803,10 @@
          "  <ItemGroup>\n"
          "    <Compile Include=\"" (xml-escape (:source-directory output)) "/**/*.cs\" />\n"
          (apply str
-                (for [[_ {:keys [destination logical-name]}] (sort-by key resources)]
+                (for [{:keys [destination logical-name]}
+                      (sort-by :destination resource-artifacts)]
                   (str "    <EmbeddedResource Include=\""
-                       (xml-escape (str (:resource-directory output) "/" destination))
+                       (xml-escape destination)
                        "\" LogicalName=\"" (xml-escape logical-name) "\" />\n")))
          "  </ItemGroup>\n"
          "</Project>\n")))
@@ -815,6 +847,26 @@
           :hard-failures (count (get by-file canonical))}))
      (sort-by str files))))
 
+(defn- selected-source-files [resolved-model discovery]
+  (if-let [source-inputs (:source-inputs resolved-model)]
+    (mapv (comp paths/path key) source-inputs)
+    (:java-sources discovery)))
+
+(defn- selected-declaration-index [resolved-model]
+  (when-let [declarations (:declarations resolved-model)]
+    (let [index (IdentityHashMap.)]
+      (doseq [[_ {:keys [declaration]}] declarations]
+        (.put index declaration true))
+      index)))
+
+(defn- resource-mapping [configuration relative]
+  (or (get-in configuration [:resources relative])
+      (when (= :embedded-resource-preserve-path
+               (get-in configuration [:resource-policy :strategy]))
+        {:strategy :embedded-resource
+         :destination relative
+         :logical-name (str/replace relative "/" ".")})))
+
 (defn emit-project!
   "Emits declaration-complete, body-blocked C# project inputs from a live model."
   [{:keys [workspace-root target discovery resolved-model configuration]}]
@@ -826,6 +878,7 @@
         base-context {:configuration configuration
                       :resolved-model resolved-model
                       :occurrence-index (java/resolved-occurrence-index resolved-model)
+                      :selected-declarations (selected-declaration-index resolved-model)
                       :emitted (IdentityHashMap.)
                       :declarations (atom [])
                       :diagnostics (atom [])
@@ -883,7 +936,7 @@
           (mapv
            (fn [^Path source]
              (let [relative (resource-relative (:resource-root discovery) source)
-                   mapping (get-in configuration [:resources relative])]
+                   mapping (resource-mapping configuration relative)]
                (when-not mapping
                  (throw (ex-info "Production resource has no explicit destination mapping"
                                  {:kind :unmapped-production-resource :resource relative})))
@@ -908,7 +961,8 @@
           declaration-ids (set (map :id @(:declarations ctx)))
           mapped-declaration-ids (set (keep #(get-in % [:source :declaration-id]) mappings))
           missing-mappings (sort (remove mapped-declaration-ids declaration-ids))
-          accounts (source-accounting ctx root (:java-sources discovery))
+          accounts (source-accounting ctx root
+                                      (selected-source-files resolved-model discovery))
           counts (frequencies (map :kind @(:declarations ctx)))
           body-results @(:body-translations ctx)
           body-coverage (reduce (fn [totals result]
@@ -933,7 +987,7 @@
         (throw (ex-info "Generated declarations are missing Spoon source mappings"
                         {:kind :missing-declaration-source-mapping
                          :declaration-ids missing-mappings})))
-      (write-text! project-file (project-text configuration))
+      (write-text! project-file (project-text configuration resource-artifacts))
       (write-text! source-map-file (edn-text {:schema-version 1 :mappings mappings}))
       (write-text! diagnostics-file (edn-text {:schema-version 1 :diagnostics @(:diagnostics ctx)}))
       (write-text! annotations-file

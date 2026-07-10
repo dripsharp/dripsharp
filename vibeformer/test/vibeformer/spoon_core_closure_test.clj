@@ -2,11 +2,12 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.complete-core-closure-fixture :as fixture]
+            [vibeformer.java-translate :as java]
             [vibeformer.paths :as paths]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Path]
            [java.security MessageDigest]
-           [spoon.reflect.declaration CtElement]))
+           [spoon.reflect.declaration CtElement CtType]))
 
 (def ^:private expected-seeds
   [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
@@ -76,6 +77,7 @@
                           (keys (:source-inputs first)))
         declaration-keys (keys (:declarations first))
         public-api-keys (keys (:public-api-declarations first))
+        project-roots (java/project-roots first)
         discovery-sources (set (map #(str (.toFile ^Path %))
                                     (:java-sources discovery)))]
     (testing "the bounded entry paths are exact live declaration identities"
@@ -115,7 +117,12 @@
       (is (= discovery-sources (set (:compilation-units (:frontend first)))))
       (is (every? discovery-sources (keys (:source-inputs first))))
       (is (every? #(instance? CtElement (:declaration %))
-                  (vals (:declarations first)))))
+                  (vals (:declarations first))))
+      (is (= 344 (count project-roots)))
+      (is (every? #(.isTopLevel ^CtType %) project-roots))
+      (is (every? #(contains? (:declarations first)
+                              (str "type:" (.getQualifiedName ^CtType %)))
+                  project-roots)))
 
     (testing "public value contracts and exported representations are retained"
       (is (every? #(contains? (:public-api-declarations first) %)

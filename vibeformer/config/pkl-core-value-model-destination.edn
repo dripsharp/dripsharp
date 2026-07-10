@@ -1,0 +1,23 @@
+{:schema-version 1
+ :project {:assembly-name "Pkl.Core"
+           :root-namespace "Pkl.Core"
+           :target-framework "net8.0"
+           :nullable "enable"
+           :implicit-usings false}
+ :package {:id "Pkl.Core"
+           :version "0.0.0-development"
+           :description "Disposable Vibeformer generation of the selected Pkl evaluator and value-model slice."
+           :authors "Vibeformer"
+           :tags "pkl evaluator runtime value-model vibeformer"}
+ :output {:project-directory "generated/pkl-core-value-model"
+          :source-directory "src"
+          :resource-directory "resources"
+          :project-file "Pkl.Core.csproj"
+          :source-map-file "source-map.edn"
+          :diagnostics-file "diagnostics.edn"
+          :manifest-file "generation-manifest.edn"
+          :annotation-decisions-file "annotation-decisions.edn"}
+ :namespaces {"org.pkl.core" "Pkl.Core"}
+ :namespace-prefixes {"org.pkl.core" "Pkl.Core"}
+ :resources {}
+ :resource-policy {:strategy :embedded-resource-preserve-path}}

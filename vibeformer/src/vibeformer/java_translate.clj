@@ -359,8 +359,17 @@
 (defn project-roots
   "Returns each live top-level project declaration exactly once."
   [resolved-model]
-  (->> (vals (:project-types resolved-model))
+  (->> (if-let [project-types (:project-types resolved-model)]
+         (vals project-types)
+         (keep (fn [[_ entry]]
+                 (let [declaration (:declaration entry)]
+                   (when (instance? CtType declaration) declaration)))
+               (:declarations resolved-model)))
        (filter #(.isTopLevel ^CtType %))
+       (reduce (fn [result ^CtType type]
+                 (assoc result (.getQualifiedName type) type))
+               (sorted-map))
+       vals
        (sort-by #(.getQualifiedName ^CtType %))
        vec))
 

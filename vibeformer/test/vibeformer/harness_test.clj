@@ -1,5 +1,6 @@
 (ns vibeformer.harness-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.edn :as edn]
+            [clojure.test :refer [deftest is]]
             [vibeformer.harness :as harness]
             [vibeformer.paths :as paths]
             [vibeformer.spoon :as spoon])
@@ -43,15 +44,17 @@
                 {:workspace-root root
                  :verify-submodule-fn (fn [_] {:revision "tracked-revision"})
                  :discover-main-fn
-                 (fn [{:keys [manifest]}]
+                 (fn [{:keys [manifest gradle-project]}]
                    (reset! saw-clean-target?
                            (and (paths/directory? (.getParent ^Path manifest))
-                                (not (paths/exists? stale))))
-                   discovery)
+                                (not (paths/exists? stale))
+                                (= ":pkl-parser" gradle-project)))
+                   (assoc discovery :gradle-project gradle-project))
                  :read-destination-fn
-                 (fn [_]
+                 (fn [_ config-file]
                    {:schema-version 1
-                    :fixture true})
+                    :fixture true
+                    :config-file config-file})
                  :build-resolved-model-fn
                  (fn [_ _]
                    (spoon/map->ResolvedJavaModel
@@ -74,10 +77,65 @@
     (is @saw-clean-target?)
     (is (paths/regular-file? (paths/resolve-path root "vibeformer/target/generation-config.edn")))
     (is (= 2 (count (get-in config [:production :java-sources]))))
-    (is (= {:schema-version 1 :fixture true} (:destination config)))
+    (is (= {:schema-version 1 :fixture true
+            :config-file "vibeformer/config/pkl-parser.edn"}
+           (:destination config)))
     (is (= ["research/pkl/pkl-parser/src/main/java/A.java"
             "research/pkl/pkl-parser/src/main/java/B.java"]
            (get-in config [:production :java-sources])))))
+
+(deftest explicit-core-profile-selects-live-closure-path
+  (let [root (temp-directory)
+        discovery (fixture-discovery root)
+        captured (atom nil)
+        result (harness/generate!
+                {:workspace-root root
+                 :profile "pkl-core-value-model"
+                 :read-profile-fn (fn [_ profile-name]
+                                    (harness/read-profile (paths/workspace-root)
+                                                          profile-name))
+                 :verify-submodule-fn (fn [_] {:revision "tracked-revision"})
+                 :discover-main-fn (fn [options]
+                                     (swap! captured assoc :discovery-options options)
+                                     (assoc discovery :gradle-project (:gradle-project options)))
+                 :read-destination-fn (fn [_ file]
+                                        (swap! captured assoc :destination-file file)
+                                        {:schema-version 1 :fixture true})
+                 :build-resolved-closure-fn
+                 (fn [_ _ seeds]
+                   (swap! captured assoc :seeds seeds)
+                   (spoon/map->ResolvedJavaClosure
+                    {:totals {:declarations 1 :source-inputs 1
+                              :type-references 0 :executable-references 0
+                              :constructor-references 0 :field-references 0
+                              :annotations 0 :symbols 0 :shadow-symbols 0
+                              :unresolved-symbols 0 :ambiguous-symbols 0
+                              :fallback-symbols 0}}))
+                 :emit-project-fn
+                 (fn [{:keys [resolved-model target]}]
+                   (swap! captured assoc :resolved-model resolved-model)
+                   {:project-file (paths/resolve-path target "core.csproj")
+                    :summary {:compilation-units 1}})})]
+    (is (= ":pkl-core" (get-in @captured [:discovery-options :gradle-project])))
+    (is (= "vibeformer/config/pkl-core-value-model-destination.edn"
+           (:destination-file @captured)))
+    (is (= 21 (count (:seeds @captured))))
+    (is (instance? vibeformer.spoon.ResolvedJavaClosure (:resolved-model @captured)))
+    (is (= "pkl-core-value-model" (get-in result [:generation-profile :profile])))
+    (let [written (edn/read-string
+                   (slurp (str (paths/resolve-path root "vibeformer" "target"
+                                                  "generation-config.edn"))))]
+      (is (= (:generation-profile result) (:generation-profile written))))))
+
+(deftest unknown-profile-fails-before-cleaning-output
+  (let [root (temp-directory)
+        stale (create-file! root "vibeformer/target/stale/output.cs")
+        error (try
+                (harness/generate! {:workspace-root root :profile "missing"})
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :unknown-generation-profile (:kind (ex-data error))))
+    (is (paths/regular-file? stale))))
 
 (deftest configuration-is-deterministic
   (let [root (temp-directory)

@@ -1,4 +1,7 @@
-{:gradle-project ":pkl-core"
+{:schema-version 1
+ :profile "pkl-core-value-model"
+ :gradle-project ":pkl-core"
+ :destination-config "vibeformer/config/pkl-core-value-model-destination.edn"
  :seeds
  [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
    :expand :body}

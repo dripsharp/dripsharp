@@ -927,16 +927,25 @@
    seed-specs))
 
 (defn summary-line
-  [^ResolvedJavaModel resolved-model]
+  [resolved-model]
   (let [{:keys [compilation-units project-types type-references
                 executable-references constructor-references field-references
                 annotations symbols shadow-symbols unresolved-symbols
                 ambiguous-symbols fallback-symbols]}
         (:totals resolved-model)]
-    (format (str "%d units, %d project types, %d type uses, %d calls, "
+    (if (instance? ResolvedJavaClosure resolved-model)
+      (format (str "%d selected declarations in %d source inputs, %d type uses, "
+                   "%d calls, %d constructors, %d fields, %d annotations, %d stable symbols; "
+                   "shadow=%d unresolved=%d ambiguous=%d fallback=%d")
+              (:declarations (:totals resolved-model))
+              (:source-inputs (:totals resolved-model))
+              type-references executable-references constructor-references
+              field-references annotations symbols shadow-symbols unresolved-symbols
+              ambiguous-symbols fallback-symbols)
+      (format (str "%d units, %d project types, %d type uses, %d calls, "
                  "%d constructors, %d fields, %d annotations, %d stable symbols; "
                  "shadow=%d unresolved=%d ambiguous=%d fallback=%d")
             compilation-units project-types type-references
             executable-references constructor-references field-references
             annotations symbols shadow-symbols unresolved-symbols
-            ambiguous-symbols fallback-symbols)))
+            ambiguous-symbols fallback-symbols))))
