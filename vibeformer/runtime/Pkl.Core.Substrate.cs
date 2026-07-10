@@ -457,6 +457,14 @@ namespace Pkl.Core.Runtime
 
 namespace Pkl.Core.Runtime.Polyglot
 {
+    public sealed class PolyglotException : Exception
+    {
+        public PolyglotException(string? message = null, Exception? cause = null)
+            : base(message, cause) { }
+
+        public bool IsCancelled() => false;
+    }
+
     public sealed class Engine
     {
         public static Builder NewBuilder(params string[] languages) => new();
@@ -608,6 +616,8 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
 {
     public enum FrameSlotKind { Illegal, Object, Long, Double, Boolean }
 
+    public sealed class FrameSlotTypeException : Exception { }
+
     public class Frame
     {
         protected readonly object?[] Arguments;
@@ -656,6 +666,23 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     // generated evaluator's catch behavior.
     public class ControlFlowException : Exception { }
 
+    public sealed class UnexpectedResultException : Exception
+    {
+        private readonly object result;
+
+        public UnexpectedResultException(object result) => this.result = result;
+
+        public object GetResult() => result;
+    }
+
+    public static class LoopNode
+    {
+        // Truffle consumes this count as a compilation profile hint. The CLR
+        // has no corresponding interpreter notification, so evaluation keeps
+        // the observable loop behavior while deliberately ignoring the hint.
+        public static void ReportLoopCount(Node node, long count) { }
+    }
+
     [AttributeUsage(AttributeTargets.Class, Inherited = true)]
     public sealed class NodeInfo : Attribute
     {
@@ -683,6 +710,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
 
     public sealed class IndirectCallNode : Node
     {
+        internal static IndirectCallNode Create() => new();
         internal static IndirectCallNode GetUncached() => new();
         internal object? Call(Pkl.Core.Runtime.Truffle.api.CallTarget target, params object?[] arguments) =>
             target.Call(arguments);
@@ -858,6 +886,16 @@ namespace Pkl.Core.Runtime.Truffle.api
     {
         internal static void TransferToInterpreter() { }
         internal static void TransferToInterpreterAndInvalidate() { }
+    }
+
+    public static class CompilerAsserts
+    {
+        internal static void NeverPartOfCompilation() { }
+    }
+
+    public static class TruffleOptions
+    {
+        internal const bool AOT = false;
     }
 
     public static class Truffle

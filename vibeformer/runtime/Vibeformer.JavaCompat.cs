@@ -18,6 +18,7 @@ namespace Vibeformer.Runtime;
 
 internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
+internal enum JavaTimeUnit { MILLISECONDS }
 
 internal readonly struct JavaOptional<T>
 {
@@ -44,6 +45,14 @@ internal static class JavaCompat
     internal static readonly TextWriter @out = Console.Out;
     internal static readonly TextWriter err = Console.Error;
     private static readonly Dictionary<string, string> SystemProperties = new(StringComparer.Ordinal);
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IEnumerator, IteratorState>
+        IteratorStates = new();
+
+    private sealed class IteratorState
+    {
+        internal bool Prepared;
+        internal bool Exhausted;
+    }
 
     internal static T RequireNonNull<T>(T? value, string? message = null) =>
         value is null ? throw new NullReferenceException(message) : value;
@@ -214,6 +223,34 @@ internal static class JavaCompat
 
     internal static T ListGet<T>(IEnumerable<T> values, int index) =>
         values is IList<T> list ? list[index] : values.ElementAt(index);
+
+    internal static bool IteratorHasNext(IEnumerator iterator)
+    {
+        var state = IteratorStates.GetValue(iterator, _ => new IteratorState());
+        if (!state.Prepared && !state.Exhausted)
+        {
+            state.Prepared = iterator.MoveNext();
+            state.Exhausted = !state.Prepared;
+        }
+        return state.Prepared;
+    }
+
+    internal static T IteratorNext<T>(IEnumerator<T> iterator)
+    {
+        var state = IteratorStates.GetValue(iterator, _ => new IteratorState());
+        if (!state.Prepared)
+        {
+            if (state.Exhausted || !iterator.MoveNext())
+            {
+                state.Exhausted = true;
+                throw new InvalidOperationException("Iterator is exhausted");
+            }
+        }
+        state.Prepared = false;
+        return iterator.Current;
+    }
+
+    internal static long IteratorNextLong(IEnumerator<long> iterator) => IteratorNext(iterator);
 
     internal static T DequeGetFirst<T>(JavaDeque<T> deque) => deque.GetFirst();
     internal static T? DequePeek<T>(JavaDeque<T> deque) => deque.Peek();
