@@ -1781,6 +1781,33 @@
                                      .getTypeDeclaration))))
           (.getNestedTypes owner))))
 
+(defn- implemented-interface? [ctx ^CtInterface interface]
+  (boolean
+   (some (fn [declaration]
+           (and (instance? CtClass declaration)
+                (some #(identical? interface (.getTypeDeclaration ^CtTypeReference %))
+                      (.getSuperInterfaces ^CtClass declaration))))
+         (when-let [^IdentityHashMap selected (:selected-declarations ctx)]
+           (.keySet selected)))))
+
+(defn- functional-interface-method [ctx ^CtType type]
+  ;; A Java single-abstract-method interface is represented by a C# delegate
+  ;; when the interface owns no additional members or parent contracts. This
+  ;; preserves lambda conversion and invocation without inventing adapters.
+  ;; Interfaces with default/static helpers remain ordinary interfaces.
+  (when (and (instance? CtInterface type)
+             (empty? (.getSuperInterfaces type))
+             (not (implemented-interface? ctx type)))
+    (let [members (->> (.getTypeMembers type)
+                       (remove #(.isImplicit ^CtElement %))
+                       vec)]
+      (when (and (= 1 (count members))
+                 (instance? CtMethod (first members))
+                 (nil? (.getBody ^CtMethod (first members)))
+                 (empty? (.getFormalCtTypeParameters ^CtMethod (first members)))
+                 (not (modifier? (first members) ModifierKind/STATIC)))
+        (first members)))))
+
 (defn- type-words [^CtType type]
   (let [;; Java allows a public nested class to extend a less-visible sibling.
         ;; C# exposes the base type in the derived type's metadata and rejects
@@ -1804,6 +1831,7 @@
   (let [owner (some-> type .getDeclaringType .getQualifiedName)
         name (pascal (.getSimpleName type))
         qualified (.getQualifiedName type)
+        functional-method (functional-interface-method ctx type)
         member-ctx (assoc ctx :current-type type)
         {:keys [parameters node]} (formals ctx qualified type)
         explicit-record-constructor? (and (instance? CtRecord type)
@@ -1816,17 +1844,19 @@
         raw-members (concat (when (instance? CtEnum type)
                               (.getEnumValues ^CtEnum type))
                             (.getTypeMembers type))
-        members (->> raw-members
-                     (reduce (fn [result member]
-                               (if (some #(identical? member %) result)
-                                 result
-                                 (conj result member))) [])
-                     (remove #(.isImplicit ^CtElement %))
-                     (filter #(selected-declaration? ctx %))
-                     (sort-by (fn [^CtElement member]
-                                (let [{:keys [file line column]} (spoon/source-location member)]
-                                  [file line column])))
-                     (mapv #(member-node member-ctx type %)))
+        members (if functional-method
+                  []
+                  (->> raw-members
+                       (reduce (fn [result member]
+                                 (if (some #(identical? member %) result)
+                                   result
+                                   (conj result member))) [])
+                       (remove #(.isImplicit ^CtElement %))
+                       (filter #(selected-declaration? ctx %))
+                       (sort-by (fn [^CtElement member]
+                                  (let [{:keys [file line column]} (spoon/source-location member)]
+                                    [file line column])))
+                       (mapv #(member-node member-ctx type %))))
         members (if explicit-record-constructor?
                   (into (mapv #(record-component-property-node ctx type %)
                               (.getRecordComponents ^CtRecord type))
@@ -1843,10 +1873,31 @@
                  (when (seq bases)
                    (sequence-node [(raw " : ") (sequence-node bases ", ")]))
                  (constraints-node ctx parameters)])
-        declaration (sequence-node
-                     [header (raw "\n{\n")
-                      (sequence-node members "\n\n")
-                      (raw "\n}")])]
+        declaration
+        (if functional-method
+          (let [method-owner (executable-owner functional-method)
+                method-name (method-name functional-method)
+                signature (.getSignature functional-method)
+                params (mapv #(parameter-node ctx method-owner %)
+                             (.getParameters functional-method))
+                delegate-node
+                (sequence-node
+                 [(raw (join-words [(visibility type (if (.isTopLevel type)
+                                                        "internal"
+                                                        "private"))
+                                    "delegate"]))
+                  (type-node ctx (.getType functional-method))
+                  (raw (str " " name)) node
+                  (raw "(") (sequence-node params ", ") (raw ")")
+                  (constraints-node ctx parameters)
+                  (raw ";")])]
+            (attach-declaration ctx delegate-node functional-method :method
+                                qualified method-name signature
+                                :dotnet.declaration/functional-interface-method))
+          (sequence-node
+           [header (raw "\n{\n")
+            (sequence-node members "\n\n")
+            (raw "\n}")]))]
     (attach-declaration ctx declaration type :type owner name qualified
                         (cond
                           (instance? CtInterface type) :java.declaration/interface
@@ -2030,6 +2081,12 @@
                   :type-node (fn [reference] (type-node @ctx-holder reference))}
         base-services (assoc base-services :record-component-contract?
                              #(record-component-contract? @ctx-holder %))
+        base-services (assoc base-services :functional-interface-method?
+                             (fn [^CtMethod method]
+                               (identical? method
+                                           (some-> method .getDeclaringType
+                                                   (#(functional-interface-method
+                                                      @ctx-holder %))))))
         services (assoc base-services :anonymous-constructor-arguments
                         #(anonymous-constructor-arguments base-services %))
         body-context (java-body/context resolved-model services)

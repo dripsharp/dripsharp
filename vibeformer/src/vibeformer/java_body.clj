@@ -20,7 +20,7 @@
             CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtWhile
             CtYieldStatement UnaryOperatorKind]
            [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement CtField CtMethod
-            CtParameter CtRecordComponent]
+            CtParameter CtRecordComponent ModifierKind]
            [spoon.reflect.reference CtCatchVariableReference CtExecutableReference
             CtFieldReference CtLocalVariableReference CtPackageReference
             CtParameterReference CtTypeReference]
@@ -427,12 +427,17 @@
               (= :record-component-accessor (:resolution resolved))
               (member target ((:pascal services) (.getSimpleName (.getExecutable element))))
               (= :project (:origin resolved))
-              (normal-invocation
-               element children
-               (boolean
-                (when-let [record-component-contract? (:record-component-contract? services)]
-                  (and (instance? CtMethod (:declaration resolved))
-                       (record-component-contract? (:declaration resolved))))))
+              (if (and (instance? CtMethod (:declaration resolved))
+                       (when-let [functional-interface-method?
+                                  (:functional-interface-method? services)]
+                         (functional-interface-method? (:declaration resolved))))
+                (invoke target args)
+                (normal-invocation
+                 element children
+                 (boolean
+                  (when-let [record-component-contract? (:record-component-contract? services)]
+                    (and (instance? CtMethod (:declaration resolved))
+                         (record-component-contract? (:declaration resolved)))))))
               (some #(str/starts-with? key (str "executable:" %))
                     ["org.pkl.parser."
                      "java."
@@ -668,6 +673,13 @@
                    method-name (:text (csharp/render executable))
                    resolved (occurrence context (.getExecutable element))
                    constructor? (= :constructor (:kind resolved))
+                   declaration (:declaration resolved)
+                   static? (and (instance? CtMethod declaration)
+                                (.hasModifier ^CtMethod declaration ModifierKind/STATIC))
+                   parameter-count (if (instance? CtMethod declaration)
+                                     (count (.getParameters ^CtMethod declaration))
+                                     0)
+                   parameters (mapv #(raw (str "value" %)) (range parameter-count))
                    target-type (when (instance? CtTypeAccess target-element)
                                  (.getAccessedType ^CtTypeAccess target-element))
                    node (cond
@@ -678,6 +690,11 @@
 
                           (and constructor? (instance? CtTypeAccess target-element))
                           (sequence-node [(raw "value => new ") target (raw "(value)")])
+
+                          (and static? (instance? CtTypeAccess target-element))
+                          (sequence-node
+                           [(raw "(") (sequence-node parameters ", ") (raw ") => ")
+                            (invoke (member target method-name) parameters)])
 
                           (instance? CtTypeAccess target-element)
                           (sequence-node [(raw "value => value.") (raw method-name) (raw "()")])
