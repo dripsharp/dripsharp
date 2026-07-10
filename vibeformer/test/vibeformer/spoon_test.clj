@@ -1,44 +1,16 @@
 (ns vibeformer.spoon-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [vibeformer.complete-parser-fixture :as fixture]
             [vibeformer.paths :as paths]
-            [vibeformer.process :as process]
-            [vibeformer.project :as project]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
            [spoon.reflect.declaration CtElement]))
 
-(defn- research-status
-  [root]
-  (:output
-   (process/run! {:command ["git" "status" "--porcelain" "--untracked-files=no"]
-                  :directory (paths/resolve-path root "research" "pkl")})))
-
-(defn- resolve-complete-parser-twice
-  []
-  (let [root (paths/workspace-root)
-        status-before (research-status root)
-        manifest (Files/createTempFile "vibeformer-main-inputs" ".tsv"
-                                       (make-array java.nio.file.attribute.FileAttribute 0))
-        submodule (project/verify-submodule! {:workspace-root root})
-        discovery (project/discover-main! {:workspace-root root :manifest manifest})
-        first-model (spoon/build-resolved-model! root discovery)
-        second-model (spoon/build-resolved-model! root discovery)
-        status-after (research-status root)]
-    {:root root
-     :submodule submodule
-     :discovery discovery
-     :first first-model
-     :second second-model
-     :status-before status-before
-     :status-after status-after}))
-
-(defonce ^:private complete-parser (delay (resolve-complete-parser-twice)))
-
 (deftest complete-gradle-production-inputs-are-modeled
   (let [{:keys [discovery status-before status-after]
-         first-model :first} @complete-parser
+         first-model :first} (fixture/models)
         sources (map str (:java-sources discovery))
         classpath (map str (:classpath discovery))]
     (is (= 17 (:java-release discovery)))
@@ -54,7 +26,7 @@
     (is (= status-before status-after))))
 
 (deftest complete-parser-resolution-is-exact-and-live
-  (let [{first-model :first} @complete-parser
+  (let [{first-model :first} (fixture/models)
         symbols (:symbols first-model)]
     (is (= {:compilation-units 50
             :project-types 114
@@ -117,7 +89,7 @@
         (is (pos? (get-in occurrence [:location :line])))))))
 
 (deftest complete-parser-resolution-is-deterministic
-  (let [{first-model :first second-model :second} @complete-parser]
+  (let [{first-model :first second-model :second} (fixture/models)]
     (is (= (:totals first-model) (:totals second-model)))
     (is (= (keys (:symbols first-model)) (keys (:symbols second-model))))
     (is (= (mapv #(select-keys % [:kind :key :origin :resolution :location])
