@@ -197,7 +197,7 @@
     (is (= :unsupported-resolved-symbol (:kind diagnostic)))
     (is (= "field:org.pkl.parser.Span#length"
            (get-in diagnostic [:resolved :key])))
-    (is (= :source-declaration
+    (is (= :record-component
            (get-in diagnostic [:resolved :resolution])))
     (is (pos? (get-in diagnostic [:location :line])))
     (is (str/includes? (:message diagnostic)

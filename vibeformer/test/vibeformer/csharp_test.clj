@@ -29,7 +29,15 @@
               (csharp/member (csharp/raw "items") "Get")
               [(csharp/binary "+" 60
                               (csharp/raw "index")
-                              (csharp/raw "1"))])))))))
+                              (csharp/raw "1"))]))))))
+  (testing "generic method names remain atomic invocation targets"
+    (is (= "Factory.Create<string>(value)"
+           (:text
+            (csharp/render
+             (csharp/invocation
+              (csharp/generic-name (csharp/raw "Factory.Create")
+                                   [(csharp/raw "string")])
+              [(csharp/raw "value")])))))))
 
 (deftest structured-writer-derives-exact-source-ranges
   (let [left-source {:identity :left}

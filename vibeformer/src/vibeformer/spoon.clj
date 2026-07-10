@@ -265,13 +265,21 @@
 
     :else nil))
 
+(declare record-component)
+
 (defn- resolve-executable
   [project-types ^CtExecutableReference reference]
   (try
     (if-let [owner-reference (.getDeclaringType reference)]
       (let [owner-name (type-name owner-reference)]
         (if-let [owner (get project-types owner-name)]
-          (if-let [declaration (.getExecutableDeclaration reference)]
+          (if-let [component (when (and (instance? CtRecord owner)
+                                        (not (.isConstructor reference))
+                                        (empty? (.getParameters reference)))
+                               (record-component owner (.getSimpleName reference)))]
+            (resolved :executable (executable-key reference) :project reference
+                      component :record-component-accessor)
+            (if-let [declaration (.getExecutableDeclaration reference)]
             (resolved (if (.isConstructor reference) :constructor :executable)
                       (executable-key reference) :project reference declaration
                       :source-declaration)
@@ -287,7 +295,7 @@
               {:failure (diagnostic
                          :unresolved-executable reference
                          (str "Cannot resolve project executable "
-                              (executable-key reference)))}))
+                              (executable-key reference)))})))
           (let [member (if (.isConstructor reference)
                          (.getActualConstructor reference)
                          (.getActualMethod reference))
@@ -335,8 +343,8 @@
         :else
         (if-let [^CtType owner
                  (project-type-declaration project-types owner-reference reference)]
-            (if-let [declaration (or (.getFieldDeclaration reference)
-                                     (record-component owner name))]
+            (if-let [declaration (or (record-component owner name)
+                                     (.getFieldDeclaration reference))]
               (resolved :field (field-key reference (.getQualifiedName owner))
                         :project reference
                         declaration

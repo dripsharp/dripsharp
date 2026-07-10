@@ -54,6 +54,7 @@ Run these commands from `vibeformer`:
 
 ```text
 clojure -M:run generate
+clojure -M:run verify
 clojure -M:test
 clojure -M:test --namespace vibeformer.harness-test
 ```
@@ -62,3 +63,7 @@ clojure -M:test --namespace vibeformer.harness-test
 gitlink, and obtains the pkl-parser production sources, resources, compile
 classpath, and Java toolchain from its Gradle project. Generated files under
 `target` are disposable.
+
+`verify` performs that same clean generation and immediately builds the fresh
+project with warnings as errors. Compiler diagnostics are parsed and correlated
+through `source-map.edn` to the originating Spoon element and translation rule.

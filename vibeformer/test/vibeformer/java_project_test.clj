@@ -83,6 +83,16 @@
                   sources))
         (is (some #(str/includes? % "global::Vibeformer.Runtime.JavaCompat.SubList")
                   sources))
+        (is (some #(str/includes? %
+                                 "public abstract T Accept<T>(global::Pkl.Parser.ParserVisitor<T> visitor);")
+                  sources))
+        (is (some #(str/includes? % "public virtual string Text(char[] source)")
+                  sources))
+        (is (some #(str/includes? %
+                                 "public override global::System.Collections.Generic.IList<global::Pkl.Parser.Syntax.StringPart> GetParts()")
+                  sources))
+        (is (some #(str/includes? % "public override string ToString()")
+                  sources))
         (doseq [resolved-family
                 ["JavaCompat.ArrayCopy"             ; arrays
                  "JavaCompat.DequePush"             ; deque mutation/order

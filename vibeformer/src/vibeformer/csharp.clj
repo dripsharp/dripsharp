@@ -74,6 +74,15 @@
    :member member-name
    :precedence postfix-precedence})
 
+(defn generic-name
+  "Creates a source-mappable generic type or method name that remains an
+  atomic target when used by member access or invocation."
+  [target arguments]
+  {:kind :generic-name
+   :target (node! target)
+   :arguments (mapv node! arguments)
+   :precedence atom-precedence})
+
 (defn invocation
   [target arguments]
   {:kind :invocation
@@ -141,6 +150,14 @@
     :member
     (-> (render-node (:target node) postfix-precedence)
         (append-rendered {:text (str "." (:member node)) :mappings []}))
+
+    :generic-name
+    (let [arguments (join-rendered
+                     (mapv #(render-node % 0) (:arguments node)) ", ")]
+      (-> (render-node (:target node) atom-precedence)
+          (append-rendered {:text "<" :mappings []})
+          (append-rendered arguments)
+          (append-rendered {:text ">" :mappings []})))
 
     :invocation
     (let [arguments (join-rendered

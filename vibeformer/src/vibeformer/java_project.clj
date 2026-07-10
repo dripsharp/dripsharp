@@ -281,7 +281,12 @@
                         {:kind :unsupported-declaration-type :occurrence (dissoc occurrence :reference :declaration)})))
 
     :else
-    (or (get external-type-mappings (.getQualifiedName reference))
+    (or (when (and (= "java.util.List" (.getQualifiedName reference))
+                   (some #(instance? CtWildcardReference %)
+                         (.getActualTypeArguments reference)))
+          ["global::System.Collections.Generic.IEnumerable"
+           :dotnet.type/covariant-enumerable])
+        (get external-type-mappings (.getQualifiedName reference))
         (throw (ex-info (str "No declaration type mapping for " (:key occurrence))
                         {:kind :unsupported-declaration-type
                          :occurrence (dissoc occurrence :reference :declaration)})))))
@@ -364,7 +369,7 @@
 (defn- visibility [^CtModifiable element default]
   (cond
     (modifier? element ModifierKind/PUBLIC) "public"
-    (modifier? element ModifierKind/PROTECTED) "protected"
+    (modifier? element ModifierKind/PROTECTED) "protected internal"
     (modifier? element ModifierKind/PRIVATE) "private"
     :else default))
 
@@ -433,22 +438,126 @@
     "equals" "Equals"
     (pascal (.getSimpleName method))))
 
+(defn- top-definitions [^CtMethod method]
+  (vec (.getTopDefinitions method)))
+
+(defn- class-definition? [^CtMethod method]
+  (some #(not (instance? CtInterface (.getDeclaringType ^CtMethod %)))
+        (top-definitions method)))
+
+(defn- java-object-override? [^CtMethod method]
+  (let [name (.getSimpleName method)
+        parameters (vec (.getParameters method))]
+    (or (and (contains? #{"toString" "hashCode"} name) (empty? parameters))
+        (and (= "equals" name)
+             (= 1 (count parameters))
+             (= "java.lang.Object" (.getQualifiedName (.getType ^CtParameter (first parameters))))))))
+
+(defn- inherited-interface-contract? [^CtType owner-type ^CtMethod method]
+  (let [interface-types
+        (keep (fn [^CtMethod definition]
+                (let [owner (.getDeclaringType definition)]
+                  (when (instance? CtInterface owner)
+                    (.getReference owner))))
+              (top-definitions method))]
+    (boolean
+     (when (seq interface-types)
+       (loop [superclass (when (instance? CtClass owner-type)
+                           (.getSuperclass ^CtClass owner-type))]
+         (when superclass
+           (or (some #(.isSubtypeOf superclass ^CtTypeReference %) interface-types)
+               (recur (some-> superclass .getTypeDeclaration .getSuperclass)))))))))
+
+(defn- method-modifiers [^CtType owner-type ^CtMethod method body name]
+  (let [interface? (instance? CtInterface owner-type)
+        sealed-owner? (or (modifier? owner-type ModifierKind/FINAL)
+                          (instance? CtRecord owner-type)
+                          (instance? CtEnum owner-type))
+        static? (modifier? method ModifierKind/STATIC)
+        private? (modifier? method ModifierKind/PRIVATE)
+        final? (modifier? method ModifierKind/FINAL)
+        abstract? (and (not interface?) (nil? body))
+        override? (and (not static?)
+                       (or (java-object-override? method)
+                           (class-definition? method)
+                           (inherited-interface-contract? owner-type method)))
+        destination-hiding? (and (= "GetType" name) (not override?))]
+    [(visibility method (if interface? "public" "internal"))
+     (when destination-hiding? "new")
+     (when static? "static")
+     (when abstract? "abstract")
+     (when (and (not abstract?) final? override?) "sealed")
+     (when override? "override")
+     (when (and (not interface?) (not static?) (not private?) (not final?)
+                (not sealed-owner?) (not abstract?) (not override?))
+       "virtual")]))
+
+(defn- synthetic-formals-node [^CtMethod method]
+  (let [parameters (vec (.getFormalCtTypeParameters method))]
+    {:parameters parameters
+     :node (when (seq parameters)
+             (sequence-node
+              [(raw "<")
+               (sequence-node
+                (mapv #(with-source (raw (identifier (.getSimpleName ^CtTypeParameter %)))
+                                    % :dotnet.interface/deferred-type-parameter {})
+                      parameters)
+                ", ")
+               (raw ">")]))}))
+
+(defn- deferred-interface-method-node [ctx ^CtMethod method]
+  (let [owner (executable-owner method)
+        name (method-name method)
+        {:keys [parameters node]} (synthetic-formals-node method)
+        body (.getBody method)
+        params (mapv (fn [^CtParameter parameter]
+                       (sequence-node [(type-node ctx (.getType parameter))
+                                       (raw (str " " (identifier (.getSimpleName parameter))))]))
+                     (.getParameters method))
+        declaration
+        (sequence-node
+         [(raw (if body "public virtual " "public abstract "))
+          (type-node ctx (.getType method)) (raw (str " " name)) node
+          (raw "(") (sequence-node params ", ") (raw ")")
+          (constraints-node ctx parameters)
+          (if body
+            (sequence-node [(raw " ") (:node (java-body/translate (:body-context ctx) body))])
+            (raw ";"))])]
+    (with-source declaration method (if body
+                                      :dotnet.interface/inherited-default-contract
+                                      :dotnet.interface/deferred-abstract-contract)
+      {:owner owner :signature (.getSignature method)})))
+
+(defn- missing-interface-contracts [ctx ^CtType type]
+  (when (and (instance? CtClass type)
+             (modifier? type ModifierKind/ABSTRACT))
+    (let [own-methods (vec (.getMethods type))]
+      (->> (.getSuperInterfaces type)
+           (keep #(.getTypeDeclaration ^CtTypeReference %))
+           (mapcat #(.getMethods ^CtType %))
+           (remove (fn [^CtMethod contract]
+                     (some #(.isOverriding ^CtMethod % contract) own-methods)))
+           (sort-by #(.getSignature ^CtMethod %))
+           (mapv #(deferred-interface-method-node ctx %))))))
+
 (defn- method-node [ctx owner-type ^CtMethod method]
   (let [owner (executable-owner method)
         name (method-name method)
         {:keys [parameters node]} (formals ctx owner method)
         params (mapv #(parameter-node ctx owner %) (.getParameters method))
         body (.getBody method)
-        interface? (instance? CtInterface owner-type)
-        words [(visibility method (if interface? "public" "internal"))
-               (when (modifier? method ModifierKind/STATIC) "static")
-               (when (and (not interface?) (nil? body)) "abstract")]
+        words (method-modifiers owner-type method body name)
         signature (str name "(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
                                                     (.getParameters method))) ")")
+        return-type (type-node ctx (.getType method))
+        return-type (if (and (nullable-annotation? method)
+                             (not (.isPrimitive (.getType method))))
+                      (sequence-node [return-type (raw "?")])
+                      return-type)
         declaration
         (sequence-node
          [(raw (join-words words))
-          (type-node ctx (.getType method)) (raw (str " " name)) node
+          return-type (raw (str " " name)) node
           (raw "(") (sequence-node params ", ") (raw ")")
           (constraints-node ctx parameters)
           (if body (sequence-node [(raw " ") (translated-node ctx body)]) (raw ";"))])]
@@ -469,9 +578,13 @@
         initializer (when explicit-invocation
                       (java-body/constructor-initializer
                        (:body-context ctx) explicit-invocation))
+        constructor-visibility (if (and (modifier? constructor ModifierKind/PRIVATE)
+                                        (not (.isTopLevel owner-type)))
+                                 "internal"
+                                 (visibility constructor "internal"))
         declaration
         (sequence-node
-         [(raw (join-words [(visibility constructor "internal")]))
+         [(raw (join-words [constructor-visibility]))
           (raw name) node (raw "(") (sequence-node params ", ") (raw ")") initializer
           (constraints-node ctx parameters)
           (if body (sequence-node [(raw " ") (translated-node ctx body)]) (raw ";"))])]
@@ -569,6 +682,7 @@
                                 (let [{:keys [file line column]} (spoon/source-location member)]
                                   [file line column])))
                      (mapv #(member-node ctx type %)))
+        members (into (vec (missing-interface-contracts ctx type)) members)
         header (sequence-node
                 [(raw (join-words (type-words type))) (raw name) node
                  (when components
@@ -716,6 +830,10 @@
         services {:identifier identifier
                   :pascal pascal
                   :method-name method-name
+                  :local-name (fn [^CtElement element]
+                                (let [{:keys [line column]} (spoon/source-location element)]
+                                  (str (identifier (.getSimpleName ^spoon.reflect.declaration.CtNamedElement element))
+                                       "__" (or line 0) "_" (or column 0))))
                   :type-node (fn [reference] (type-node @ctx-holder reference))}
         body-context (java-body/context resolved-model services)
         ctx (assoc base-context :body-context body-context)

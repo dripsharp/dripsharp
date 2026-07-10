@@ -136,21 +136,29 @@ internal static class JavaCompat
         return changed;
     }
 
-    internal static dynamic ListOf(params object?[] values) => new ReadOnlyCollection<object?>(values);
+    internal static IList<T> ListOf<T>(params T[] values) => new ReadOnlyCollection<T>(values);
 
-    internal static dynamic AsList(object?[] values) => new JavaArrayList<object?>(values);
+    internal static IList<T> AsList<T>(params T[] values) => new JavaArrayList<T>(values);
 
-    internal static IList<T> UnmodifiableList<T>(IList<T> values) => new ReadOnlyCollection<T>(values);
+    internal static IList<T> UnmodifiableList<T>(IEnumerable<T> values) =>
+        new ReadOnlyCollection<T>(values is IList<T> list ? list : values.ToList());
 
-    internal static IList<T> SubList<T>(IList<T> values, int fromIndex, int toIndex) =>
-        new JavaSubList<T>(values, fromIndex, toIndex);
+    internal static IList<T> SubList<T>(IEnumerable<T> values, int fromIndex, int toIndex) =>
+        new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
+
+    internal static int ListCount<T>(IEnumerable<T> values) => values.Count();
+
+    internal static bool ListIsEmpty<T>(IEnumerable<T> values) => !values.Any();
+
+    internal static T ListGet<T>(IEnumerable<T> values, int index) =>
+        values is IList<T> list ? list[index] : values.ElementAt(index);
 
     internal static T DequeGetFirst<T>(JavaDeque<T> deque) => deque.GetFirst();
     internal static T? DequePeek<T>(JavaDeque<T> deque) => deque.Peek();
     internal static T DequePop<T>(JavaDeque<T> deque) => deque.Pop();
     internal static void DequePush<T>(JavaDeque<T> deque, T value) => deque.Push(value);
 
-    internal static bool Equals(object? left, object? right) => object.Equals(left, right);
+    internal new static bool Equals(object? left, object? right) => object.Equals(left, right);
 
     internal static bool DeepEquals(object? left, object? right)
     {
@@ -183,7 +191,7 @@ internal static class JavaCompat
     internal static IEnumerable<T> Skip<T>(IEnumerable<T> values, long count) => values.Skip(checked((int)count));
 
     internal static dynamic Collect<T>(IEnumerable<T> values, JavaCollector collector) =>
-        string.Join(collector.Delimiter, values.Select(JavaString));
+        string.Join(collector.Delimiter, values.Select(value => JavaString(value)));
 
     internal static IEnumerable<TResult> Map<T, TResult>(IEnumerable<T> values, Func<T, TResult> mapper) => values.Select(mapper);
 }
@@ -191,7 +199,9 @@ internal static class JavaCompat
 internal sealed class JavaDeque<T>
 {
     private readonly LinkedList<T> values = new();
-    internal T GetFirst() => values.First?.Value ?? throw new InvalidOperationException("Deque is empty");
+    internal T GetFirst() => values.First is { } first
+        ? first.Value
+        : throw new InvalidOperationException("Deque is empty");
     internal T? Peek() => values.First is null ? default : values.First.Value;
     internal T Pop()
     {
@@ -237,8 +247,6 @@ internal sealed class JavaCollector
     internal string Delimiter { get; }
     internal JavaCollector(string delimiter) => Delimiter = delimiter;
 }
-
-internal sealed class JavaCollector<T, A, R> { }
 
 internal sealed class JavaArrayList<T> : Collection<T>
 {
