@@ -10,12 +10,12 @@
             [vibeformer.spoon :as spoon])
   (:import [java.util IdentityHashMap]
            [spoon.reflect.code CtExpression CtStatement]
-           [spoon.reflect.declaration CtElement CtExecutable CtType]
+           [spoon.reflect.declaration CtAnnotation CtElement CtExecutable CtType]
            [spoon.reflect.reference CtExecutableReference CtFieldReference
             CtTypeReference]))
 
 (def ^:private mapping-categories
-  #{:types :executables :constructors :fields})
+  #{:types :executables :constructors :fields :annotations})
 
 (defn structural-rules
   "Validates an ordered structural rule vector.  A rule is
@@ -44,6 +44,7 @@
          :executables (str/starts-with? key "executable:")
          :constructors (str/starts-with? key "executable:")
          :fields (str/starts-with? key "field:")
+         :annotations (str/starts-with? key "annotation:")
          false)))
 
 (defn mapping-registries
@@ -128,7 +129,8 @@
   [element]
   (or (instance? CtTypeReference element)
       (instance? CtExecutableReference element)
-      (instance? CtFieldReference element)))
+      (instance? CtFieldReference element)
+      (instance? CtAnnotation element)))
 
 (defn- occurrence-category
   [occurrence]
@@ -137,6 +139,7 @@
     :executable :executables
     :constructor :constructors
     :field :fields
+    :annotation :annotations
     nil))
 
 (defn- semantic-plan
@@ -281,6 +284,7 @@
                                     (instance? CtTypeReference element) :type
                                     (instance? CtExecutableReference element) :executable
                                     (instance? CtFieldReference element) :field
+                                    (instance? CtAnnotation element) :annotation
                                     (instance? CtType element) :declaration
                                     (instance? CtExecutable element) :declaration
                                     (instance? CtStatement element) :statement

@@ -46,6 +46,10 @@
                            (and (paths/directory? (.getParent ^Path manifest))
                                 (not (paths/exists? stale))))
                    discovery)
+                 :read-destination-fn
+                 (fn [_]
+                   {:schema-version 1
+                    :fixture true})
                  :build-resolved-model-fn
                  (fn [_ _]
                    (spoon/map->ResolvedJavaModel
@@ -60,10 +64,15 @@
                               :shadow-symbols 0
                               :unresolved-symbols 0
                               :ambiguous-symbols 0
-                              :fallback-symbols 0}}))})]
+                              :fallback-symbols 0}}))
+                 :emit-project-fn
+                 (fn [{:keys [target]}]
+                   {:project-file (paths/resolve-path target "fixture.csproj")
+                    :summary {:compilation-units 2}})})]
     (is @saw-clean-target?)
     (is (paths/regular-file? (paths/resolve-path root "vibeformer/target/generation-config.edn")))
     (is (= 2 (count (get-in config [:production :java-sources]))))
+    (is (= {:schema-version 1 :fixture true} (:destination config)))
     (is (= ["research/pkl/pkl-parser/src/main/java/A.java"
             "research/pkl/pkl-parser/src/main/java/B.java"]
            (get-in config [:production :java-sources])))))

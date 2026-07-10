@@ -1,0 +1,25 @@
+{:schema-version 1
+ :project {:assembly-name "Pkl.Parser"
+           :root-namespace "Pkl.Parser"
+           :target-framework "net8.0"
+           :nullable "enable"
+           :implicit-usings false}
+ :package {:id "Pkl.Parser"
+           :version "0.0.0-development"
+           :description "Disposable Vibeformer generation of the Pkl parser API."}
+ :output {:project-directory "generated/pkl-parser"
+          :source-directory "src"
+          :resource-directory "resources"
+          :project-file "Pkl.Parser.csproj"
+          :source-map-file "source-map.edn"
+          :diagnostics-file "diagnostics.edn"
+          :manifest-file "generation-manifest.edn"
+          :annotation-decisions-file "annotation-decisions.edn"}
+ :namespaces {"org.pkl.parser" "Pkl.Parser"
+              "org.pkl.parser.syntax" "Pkl.Parser.Syntax"
+              "org.pkl.parser.syntax.generic" "Pkl.Parser.Syntax.Generic"
+              "org.pkl.parser.util" "Pkl.Parser.Util"}
+ :resources {"org/pkl/parser/errorMessages.properties"
+             {:strategy :embedded-resource
+              :destination "org/pkl/parser/errorMessages.properties"
+              :logical-name "org.pkl.parser.errorMessages.properties"}}}
