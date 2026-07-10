@@ -5,7 +5,7 @@
   (:import [clojure.lang ExceptionInfo]
            [java.nio.file Files Path]))
 
-(def ^:private manifest-header "VIBEFORMER_GRADLE_INPUTS_V1")
+(def ^:private manifest-header "VIBEFORMER_GRADLE_INPUTS_V2")
 (def ^:private gitlink-pattern
   #"(?m)^160000 commit ([0-9a-f]{40})\s+research/pkl\s*$")
 
@@ -46,7 +46,30 @@
       (throw (ex-info
               (str "Invalid Gradle discovery record: " (pr-str line))
               {:kind :invalid-discovery-manifest :line line})))
-    [(keyword kind) (paths/absolute value)]))
+    [(keyword kind) value]))
+
+(defn- exactly-one
+  [grouped kind message]
+  (let [values (->> (get grouped kind) (map second) distinct vec)]
+    (when-not (= 1 (count values))
+      (throw (ex-info message {:kind :invalid-discovery-manifest
+                               :record-kind kind
+                               :values values})))
+    (first values)))
+
+(defn- parse-positive-int
+  [kind value]
+  (try
+    (let [parsed (Integer/parseInt value)]
+      (when-not (pos? parsed)
+        (throw (NumberFormatException.)))
+      parsed)
+    (catch NumberFormatException _
+      (throw (ex-info
+              (str "Gradle reported an invalid " (name kind) ": " (pr-str value))
+              {:kind :invalid-discovery-manifest
+               :record-kind kind
+               :value value})))))
 
 (defn read-discovery-manifest
   "Reads and validates the Gradle-derived production input manifest."
@@ -62,19 +85,36 @@
               {:kind :invalid-discovery-manifest :header header})))
     (let [records (mapv parse-record (remove str/blank? lines))
           grouped (group-by first records)
-          values #(->> (get grouped %)
-                       (map second)
-                       distinct
-                       (sort-by str)
-                       vec)
-          discovery {:java-home (first (values :java-home))
-                     :java-sources (values :source)
-                     :resources (values :resource)
-                     :classpath (values :classpath)}]
-      (when-not (= 1 (count (values :java-home)))
-        (throw (ex-info
-                "Gradle discovery must report exactly one Java toolchain"
-                {:kind :toolchain-missing})))
+          path-values #(->> (get grouped %)
+                            (map (comp paths/absolute second))
+                            distinct
+                            (sort-by str)
+                            vec)
+          java-home (paths/absolute
+                     (exactly-one grouped :java-home
+                                  "Gradle discovery must report exactly one Java toolchain"))
+          java-release (parse-positive-int
+                        :java-release
+                        (exactly-one grouped :java-release
+                                     "Gradle discovery must report exactly one Java release"))
+          preview-value (exactly-one
+                         grouped :preview-features
+                         "Gradle discovery must report exactly one preview-features setting")
+          preview-features (case preview-value
+                             "true" true
+                             "false" false
+                             (throw (ex-info
+                                     (str "Gradle reported an invalid preview-features setting: "
+                                          (pr-str preview-value))
+                                     {:kind :invalid-discovery-manifest
+                                      :record-kind :preview-features
+                                      :value preview-value})))
+          discovery {:java-home java-home
+                     :java-release java-release
+                     :preview-features preview-features
+                     :java-sources (path-values :source)
+                     :resources (path-values :resource)
+                     :classpath (path-values :classpath)}]
       (when-not (paths/directory? (:java-home discovery))
         (throw (ex-info
                 (str "Gradle-reported Java toolchain is missing: " (:java-home discovery))

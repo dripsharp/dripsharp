@@ -20,7 +20,7 @@
   [^Path root records]
   (let [manifest (paths/resolve-path root "manifest.tsv")]
     (spit (str manifest)
-          (str "VIBEFORMER_GRADLE_INPUTS_V1\n"
+          (str "VIBEFORMER_GRADLE_INPUTS_V2\n"
                (apply str (for [[kind value] records]
                             (str kind "\t" value "\n")))))
     manifest))
@@ -38,13 +38,17 @@
                   [["source" source-b]
                    ["classpath" classpath]
                    ["java-home" java-home]
+                   ["java-release" "17"]
+                   ["preview-features" "false"]
                    ["resource" resource]
                    ["source" source-a]])
         discovery (project/read-discovery-manifest manifest)]
     (is (= [source-a source-b] (:java-sources discovery)))
     (is (= [resource] (:resources discovery)))
     (is (= [classpath] (:classpath discovery)))
-    (is (= java-home (:java-home discovery)))))
+    (is (= java-home (:java-home discovery)))
+    (is (= 17 (:java-release discovery)))
+    (is (false? (:preview-features discovery)))))
 
 (deftest missing-classpath-input-is-explicit
   (let [root (temp-directory)
@@ -55,6 +59,8 @@
         manifest (write-manifest!
                   root
                   [["java-home" java-home]
+                   ["java-release" "17"]
+                   ["preview-features" "false"]
                    ["source" source]
                    ["classpath" missing]])
         error (try

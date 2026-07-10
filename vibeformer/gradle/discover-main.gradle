@@ -17,28 +17,44 @@ gradle.projectsEvaluated {
         def main = sourceSets.getByName("main")
         def compileJava = parserProject.tasks.named("compileJava").get()
         def javaHome = compileJava.javaCompiler.get().metadata.installationPath.asFile
+        def javaRelease = compileJava.options.release.orNull
+        if (javaRelease == null) {
+          throw new GradleException("pkl-parser compileJava does not declare a Java release")
+        }
+        def previewFeatures = compileJava.options.compilerArgs.contains("--enable-preview")
         def records = []
 
         records.add(["java-home", javaHome])
+        records.add(["java-release", javaRelease])
+        records.add(["preview-features", previewFeatures])
         main.allJava.files.each { records.add(["source", it]) }
         main.resources.files.each { records.add(["resource", it]) }
         main.compileClasspath.files.each { records.add(["classpath", it]) }
 
         records = records.collect { record ->
-          def value = record[1].canonicalFile.absolutePath
+          def value = record[0] in ["java-release", "preview-features"]
+            ? record[1].toString()
+            : record[1].canonicalFile.absolutePath
           if (value.contains("\t") || value.contains("\n") || value.contains("\r")) {
             throw new GradleException("Vibeformer cannot encode path containing a tab or newline: ${value}")
           }
           [record[0], value]
         }.sort { left, right ->
-          def kindOrder = ["java-home": 0, "source": 1, "resource": 2, "classpath": 3]
+          def kindOrder = [
+            "java-home": 0,
+            "java-release": 1,
+            "preview-features": 2,
+            "source": 3,
+            "resource": 4,
+            "classpath": 5,
+          ]
           (kindOrder[left[0]] <=> kindOrder[right[0]]) ?: (left[1] <=> right[1])
         }
 
         def outputFile = file(outputProperty.get())
         outputFile.parentFile.mkdirs()
         outputFile.withWriter("UTF-8") { writer ->
-          writer.write("VIBEFORMER_GRADLE_INPUTS_V1\n")
+          writer.write("VIBEFORMER_GRADLE_INPUTS_V2\n")
           records.each { record -> writer.write("${record[0]}\t${record[1]}\n") }
         }
       }

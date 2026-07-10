@@ -1,7 +1,8 @@
 (ns vibeformer.harness-test
   (:require [clojure.test :refer [deftest is]]
             [vibeformer.harness :as harness]
-            [vibeformer.paths :as paths])
+            [vibeformer.paths :as paths]
+            [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]))
 
@@ -25,6 +26,8 @@
         resource (create-file! root "research/pkl/pkl-parser/src/main/resources/errorMessages.properties")
         classpath (create-file! root "cache/jspecify.jar")]
     {:java-home java-home
+     :java-release 17
+     :preview-features false
      :java-sources [source-b source-a]
      :resources [resource]
      :classpath [classpath]}))
@@ -42,7 +45,22 @@
                    (reset! saw-clean-target?
                            (and (paths/directory? (.getParent ^Path manifest))
                                 (not (paths/exists? stale))))
-                   discovery)})]
+                   discovery)
+                 :build-resolved-model-fn
+                 (fn [_ _]
+                   (spoon/map->ResolvedJavaModel
+                    {:totals {:compilation-units 2
+                              :project-types 0
+                              :type-references 0
+                              :executable-references 0
+                              :constructor-references 0
+                              :field-references 0
+                              :annotations 0
+                              :symbols 0
+                              :shadow-symbols 0
+                              :unresolved-symbols 0
+                              :ambiguous-symbols 0
+                              :fallback-symbols 0}}))})]
     (is @saw-clean-target?)
     (is (paths/regular-file? (paths/resolve-path root "vibeformer/target/generation-config.edn")))
     (is (= 2 (count (get-in config [:production :java-sources]))))
