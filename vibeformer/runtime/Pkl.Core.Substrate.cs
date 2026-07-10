@@ -240,15 +240,28 @@ namespace Pkl.Core.Runtime
         public virtual JavaFileVisitResult PostVisitDirectory(T directory, System.IO.IOException? error) => JavaFileVisitResult.CONTINUE;
         public virtual JavaFileVisitResult VisitFileFailed(T file, System.IO.IOException error) => JavaFileVisitResult.CONTINUE;
     }
-    public sealed class JavaFileSystem : IDisposable
+    public class JavaFileSystem : IDisposable
     {
-        public string GetPath(string first, params string[] more) => System.IO.Path.Combine(new[] { first }.Concat(more).ToArray());
-        public Predicate<string> GetPathMatcher(string syntaxAndPattern) => value => true;
-        public IEnumerable<string> GetRootDirectories() => System.IO.DriveInfo.GetDrives().Select(drive => drive.RootDirectory.FullName);
-        public JavaWatchService NewWatchService() => new();
-        public bool IsOpen() => true;
-        public void Close() { }
+        public virtual JavaFileSystemProvider Provider() => new();
+        public virtual string GetPath(string first, params string[] more) => System.IO.Path.Combine(new[] { first }.Concat(more).ToArray());
+        public virtual Predicate<string> GetPathMatcher(string syntaxAndPattern) => value => true;
+        public virtual IEnumerable<string> GetRootDirectories() => System.IO.DriveInfo.GetDrives().Select(drive => drive.RootDirectory.FullName);
+        public virtual IEnumerable<System.IO.DriveInfo> GetFileStores() => System.IO.DriveInfo.GetDrives();
+        public virtual ISet<string> SupportedFileAttributeViews() => new HashSet<string>();
+        public virtual object GetUserPrincipalLookupService() => new();
+        public virtual JavaWatchService NewWatchService() => new();
+        public virtual bool IsOpen() => true;
+        public virtual bool IsReadOnly() => false;
+        public virtual string GetSeparator() => System.IO.Path.DirectorySeparatorChar.ToString();
+        public virtual void Close() { }
         public void Dispose() { }
+    }
+
+    public class JavaProxySelector
+    {
+        public static JavaProxySelector GetDefault() => new();
+        public virtual IList<System.Net.WebProxy> Select(Uri uri) => new[] { new System.Net.WebProxy() };
+        public virtual void ConnectFailed(Uri uri, System.Net.EndPoint address, System.IO.IOException error) { }
     }
     public static class JavaFileSystems
     {
@@ -654,7 +667,9 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     public abstract class RootNode : Node
     {
         protected RootNode(object? language, FrameDescriptor descriptor) { }
-        internal virtual object? Execute(VirtualFrame frame) => null;
+        protected internal virtual object? Execute(VirtualFrame frame) => null;
+        public virtual string GetName() => GetType().Name;
+        public virtual bool IsInternal() => false;
         internal Pkl.Core.Runtime.Truffle.api.RootCallTarget GetCallTarget() => new(this);
     }
 

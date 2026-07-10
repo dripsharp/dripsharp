@@ -726,20 +726,34 @@
   retained for the same reason."
   [^CtType declaration]
   (->> (.getMethods declaration)
-       (filter (fn [^CtMethod method]
-                 (and (not (.isImplicit method))
-                      ;; MessagePack transport is a user-approved product
-                      ;; exclusion. Its Evaluator override is not a C#
-                      ;; compilation obligation for the target library.
-                      (not= "executable:org.pkl.core.EvaluatorImpl#evaluateExpressionPklBinary(org.pkl.core.ModuleSource,java.lang.String)"
-                            (declaration-key method))
-                      (or (and (instance? CtInterface declaration)
-                               (some? (.getBody method)))
-                          (seq (.getTopDefinitions method))))))
-       (mapv (fn [^CtMethod method]
-               {:key (declaration-key method)
-                :declaration method
-                :expand :body}))))
+       (remove #(.isImplicit ^CtMethod %))
+       (remove #(= "executable:org.pkl.core.EvaluatorImpl#evaluateExpressionPklBinary(org.pkl.core.ModuleSource,java.lang.String)"
+                   (declaration-key ^CtMethod %)))
+       (mapcat
+        (fn [^CtMethod method]
+          (let [all-definitions (.getTopDefinitions method)
+                definitions (->> all-definitions
+                                 (remove #(.isShadow ^CtType (.getDeclaringType ^CtMethod %))))
+                own-obligation? (or (nil? (.getBody method))
+                                    (and (instance? CtInterface declaration)
+                                         (some? (.getBody method)))
+                                    (seq all-definitions))]
+            (concat
+             (when own-obligation?
+               [{:key (declaration-key method)
+                 :declaration method
+                 :expand :body}])
+             ;; Spoon exposes override ancestry through live top-definition
+             ;; methods rather than ordinary reference occurrences. Pull
+             ;; project-owned definitions into the closure so C# override
+             ;; declarations always have the base member they name.
+             (map (fn [^CtMethod definition]
+                    {:key (declaration-key definition)
+                     :declaration definition
+                     :expand :body})
+                  definitions)))))
+       (sort-by :key)
+       vec))
 
 (defn- stronger-expansion
   [left right]

@@ -17,7 +17,7 @@
             CtVariableAccess]
            [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass
             CtConstructor CtElement CtEnum CtEnumValue CtExecutable CtField
-            CtInterface CtMethod CtModifiable CtParameter CtRecord
+            CtFormalTypeDeclarer CtInterface CtMethod CtModifiable CtParameter CtRecord
             CtRecordComponent CtType CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtIntersectionTypeReference
             CtTypeParameterReference CtTypeReference CtWildcardReference]
@@ -222,10 +222,42 @@
   (or (nil? (:selected-declarations ctx))
       (.containsKey ^IdentityHashMap (:selected-declarations ctx) declaration)))
 
-(defn- type-path [ctx ^CtType type]
-  (str "global::" (destination-namespace ctx type) "."
-       (str/join "." (map #(pascal (.getSimpleName ^CtType %))
-                           (declaring-types type)))))
+(defn- same-type? [^CtType left ^CtType right]
+  (and left right (= (.getQualifiedName left) (.getQualifiedName right))))
+
+(defn- common-declaring-prefix [left right]
+  (loop [left left right right result []]
+    (if (and (seq left) (seq right) (same-type? (first left) (first right)))
+      (recur (next left) (next right) (conj result (first left)))
+      result)))
+
+(defn- raw-generic-segment [^CtType type]
+  (let [arity (count (.getFormalCtTypeParameters type))]
+    (str (pascal (.getSimpleName type))
+         (when (pos? arity)
+           (str "<" (str/join ", " (repeat arity "object")) ">")))))
+
+(defn- project-type-base
+  "Emits the resolved project declaration path up to, but not including, the
+  reference's own type arguments. Java static nested types do not capture a
+  generic declaring type, whereas C# nests them in every constructed declaring
+  type. References within the same lexical owner can use the nested name
+  directly; references from elsewhere select a stable object-closed owner."
+  [ctx ^CtType declaration]
+  (let [declarations (declaring-types declaration)
+        current (some-> (:current-type ctx) declaring-types)
+        common (common-declaring-prefix declarations current)
+        relative (drop (count common) declarations)
+        ;; A reference to the current type or one of its lexical ancestors has
+        ;; no remaining relative segment. Keep its own declaration name.
+        relative (if (seq relative) relative [declaration])
+        prefix (when (empty? common)
+                 (str "global::" (destination-namespace ctx declaration) "."))
+        owners (butlast relative)
+        leaf (last relative)]
+    (str prefix
+         (str/join "." (concat (map raw-generic-segment owners)
+                                [(pascal (.getSimpleName ^CtType leaf))])))))
 
 (defn- occurrence! [ctx ^CtElement element expected-kind]
   (let [occurrence (.get ^IdentityHashMap (:occurrence-index ctx) element)]
@@ -340,7 +372,7 @@
    "java.net.SocketAddress" ["global::System.Net.EndPoint" :dotnet.type/endpoint]
    "java.net.Proxy" ["global::System.Net.WebProxy" :dotnet.type/web-proxy]
    "java.net.Proxy$Type" ["global::Pkl.Core.Runtime.JavaProxyType" :pkl-core.type/proxy-type]
-   "java.net.ProxySelector" ["global::System.Net.IWebProxy" :dotnet.type/web-proxy-interface]
+   "java.net.ProxySelector" ["global::Pkl.Core.Runtime.JavaProxySelector" :pkl-core.type/proxy-selector]
    "java.net.JarURLConnection" ["global::Pkl.Core.Runtime.JavaJarConnection" :pkl-core.type/jar-connection]
    "java.net.URLConnection" ["global::Pkl.Core.Runtime.JavaUrlConnection" :pkl-core.type/url-connection]
    "java.net.URISyntaxException" ["global::System.UriFormatException" :dotnet.type/uri-format-exception]
@@ -598,10 +630,22 @@
     (sequence-node [(raw base) (raw "<") (sequence-node arguments ", ") (raw ">")])
     (raw base)))
 
+(def ^:private raw-close-derived-type-rules
+  #{:dotnet.type/pkl-parser-package
+    :pkl-core.type/truffle-substrate
+    :pkl-core.type/graal-collections-substrate
+    :pkl-core.type/polyglot-substrate
+    :pkl-core.type/snakeyaml-substrate})
+
+(defn- formal-type-arity [declaration]
+  (if (instance? CtFormalTypeDeclarer declaration)
+    (count (.getFormalCtTypeParameters ^CtFormalTypeDeclarer declaration))
+    0))
+
 (defn- mapped-type-base [ctx ^CtTypeReference reference occurrence]
   (cond
     (= :project (:origin occurrence))
-    [(type-path ctx ^CtType (:declaration occurrence)) :dotnet.type/project]
+    [(project-type-base ctx ^CtType (:declaration occurrence)) :dotnet.type/project]
 
     (= :type-parameter (:origin occurrence))
     [(identifier (.getSimpleName reference)) :dotnet.type/type-parameter]
@@ -664,8 +708,21 @@
                 ;; System.Type is non-generic even though java.lang.Class<T>
                 ;; carries a type argument.  Its resolved T remains visited by
                 ;; the recursive translator, but is erased at this mapping.
-                arguments (if (= "java.lang.Class" (.getQualifiedName reference))
+                arguments (cond
+                            (= "java.lang.Class" (.getQualifiedName reference))
                             []
+
+                            (and (= :project (:origin occurrence))
+                                 (empty? (.getActualTypeArguments reference)))
+                            (repeat (formal-type-arity (:declaration occurrence))
+                                    (raw "object"))
+
+                            (and (contains? raw-close-derived-type-rules mapping-rule)
+                                 (empty? (.getActualTypeArguments reference)))
+                            (repeat (formal-type-arity (.getTypeDeclaration reference))
+                                    (raw "object"))
+
+                            :else
                             (mapv #(type-node ctx %) (.getActualTypeArguments reference)))]
             [(generic-node base arguments) mapping-rule]))
         nullable? (and (nullable-annotation? reference)
@@ -805,8 +862,18 @@
     (swap! (:diagnostics ctx) conj diagnostic)
     id))
 
+
+(defn- current-body-context [ctx]
+  ;; The complete semantic mapping registry is intentionally built once. Its
+  ;; type service consults this holder so each sequential member translation
+  ;; can retain lexical ownership without rebuilding the million-occurrence
+  ;; registry for every body.
+  (when-let [ctx-holder (:ctx-holder ctx)]
+    (reset! ctx-holder ctx))
+  (:body-context ctx))
+
 (defn- translated-node [ctx ^CtElement element]
-  (let [translation (java-body/translate (:body-context ctx) element)]
+  (let [translation (java-body/translate (current-body-context ctx) element)]
     (swap! (:body-translations ctx) conj translation)
     (:node translation)))
 
@@ -842,17 +909,22 @@
 (defn- top-definitions [^CtMethod method]
   (vec (.getTopDefinitions method)))
 
-(defn- class-definition? [^CtMethod method]
-  (some #(not (instance? CtInterface (.getDeclaringType ^CtMethod %)))
+(defn- class-definition [^CtMethod method]
+  (some #(when-not (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
         (top-definitions method)))
 
-(defn- java-object-override? [^CtMethod method]
-  (let [name (.getSimpleName method)
-        parameters (vec (.getParameters method))]
-    (or (and (contains? #{"toString" "hashCode"} name) (empty? parameters))
-        (and (= "equals" name)
-             (= 1 (count parameters))
-             (= "java.lang.Object" (.getQualifiedName (.getType ^CtParameter (first parameters))))))))
+(defn- superclass-method-definition [^CtType owner-type ^CtMethod method]
+  (loop [superclass (when (instance? CtClass owner-type)
+                      (.getSuperclass ^CtClass owner-type))]
+    (when-let [^CtType declaration (some-> superclass .getTypeDeclaration)]
+      (or (some (fn [^CtMethod candidate]
+                  (when (or (.isOverriding method candidate)
+                            (and (= (.getSimpleName method) (.getSimpleName candidate))
+                                 (= (.getSignature method) (.getSignature candidate))))
+                    candidate))
+                (.getMethods declaration))
+          (recur (when (instance? CtClass declaration)
+                   (.getSuperclass ^CtClass declaration)))))))
 
 (defn- inherited-interface-contract? [^CtType owner-type ^CtMethod method]
   (let [interface-types
@@ -869,8 +941,34 @@
            (or (some #(.isSubtypeOf superclass ^CtTypeReference %) interface-types)
                (recur (some-> superclass .getTypeDeclaration .getSuperclass)))))))))
 
-(defn- method-modifiers [^CtType owner-type ^CtMethod method body name]
+(defn- destination-overridable-definition? [^CtMethod definition]
+  (let [owner (some-> definition .getDeclaringType .getQualifiedName)
+        name (.getSimpleName definition)
+        parameter-types (mapv #(.getQualifiedName (.getType ^CtParameter %))
+                              (.getParameters definition))]
+    (not
+     (or (and (= "java.lang.Throwable" owner)
+              (contains? #{"getMessage" "getLocalizedMessage" "fillInStackTrace"} name))
+         (and (= "java.io.Writer" owner)
+              (or (= "append" name)
+                  (and (= "write" name)
+                       (= ["java.lang.String" "int" "int"] parameter-types))))))))
+
+(defn- java-object-override? [^CtMethod method]
+  (let [name (.getSimpleName method)
+        parameters (vec (.getParameters method))]
+    (or (and (contains? #{"toString" "hashCode"} name) (empty? parameters))
+        (and (= "equals" name)
+             (= 1 (count parameters))
+             (= "java.lang.Object" (.getQualifiedName (.getType ^CtParameter (first parameters))))))))
+
+(defn- method-modifiers [ctx ^CtType owner-type ^CtMethod method body name]
   (let [interface? (instance? CtInterface owner-type)
+        base-definition (or (superclass-method-definition owner-type method)
+                            (class-definition method))
+        overridable-base (when (and base-definition
+                                    (destination-overridable-definition? base-definition))
+                           base-definition)
         sealed-owner? (or (modifier? owner-type ModifierKind/FINAL)
                           (and (instance? CtClass owner-type)
                                (.isAnonymous ^CtClass owner-type))
@@ -882,10 +980,11 @@
         abstract? (and (not interface?) (nil? body))
         override? (and (not static?)
                        (or (java-object-override? method)
-                           (class-definition? method)
-                           (inherited-interface-contract? owner-type method)))
+                           overridable-base
+                           (and (nil? (:selected-declarations ctx))
+                                (inherited-interface-contract? owner-type method))))
         destination-hiding? (and (= "GetType" name) (not override?))]
-    [(visibility method (if interface? "public" "internal"))
+    [(visibility (or overridable-base method) (if interface? "public" "internal"))
      (when destination-hiding? "new")
      (when static? "static")
      (when abstract? "abstract")
@@ -950,7 +1049,7 @@
         {:keys [parameters node]} (formals ctx owner method)
         params (mapv #(parameter-node ctx owner %) (.getParameters method))
         body (.getBody method)
-        words (method-modifiers owner-type method body name)
+        words (method-modifiers ctx owner-type method body name)
         signature (str name "(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
                                                     (.getParameters method))) ")")
         return-type (type-node ctx (.getType method))
@@ -986,12 +1085,13 @@
         body (.getBody constructor)
         signature (str ".ctor(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
                                                    (.getParameters constructor))) ")")
+        body-context (current-body-context ctx)
         explicit-invocation (when body
                               (java-body/explicit-constructor-invocation
-                               (:body-context ctx) body))
+                               body-context body))
         initializer (when explicit-invocation
                       (java-body/constructor-initializer
-                       (:body-context ctx) explicit-invocation))
+                       body-context explicit-invocation))
         constructor-visibility (if (and (modifier? constructor ModifierKind/PRIVATE)
                                         (not (.isTopLevel owner-type)))
                                  "internal"
@@ -1159,13 +1259,23 @@
                              (some-> access .getType .getQualifiedName)))
                    (raw "this.__outer")
                    (raw "this"))))]
-    {:ctx (assoc ctx :body-context (java-body/context (:resolved-model ctx) services))
-     :capture-names capture-names}))
+    (let [services (assoc services :type-node #(type-node ctx %))
+          body-context (java-body/context (:resolved-model ctx) services)]
+      {:ctx (assoc ctx :body-context body-context
+                   :services services)
+       :capture-names capture-names})))
+
+(declare iterator-bridge-members)
 
 (defn- anonymous-type-node [ctx ^CtType owner-type ^CtConstructorCall call]
   (let [^CtClass anonymous-class (anonymous-class-for-call call)
         name (anonymous-class-name call)
-        owner-type-node (with-source (raw (type-path ctx owner-type)) owner-type
+        owner-type-node (with-source
+                          (generic-node
+                           (project-type-base ctx owner-type)
+                           (mapv #(raw (identifier (.getSimpleName ^CtTypeParameter %)))
+                                 (.getFormalCtTypeParameters owner-type)))
+                          owner-type
                           :dotnet.type/project-declaration
                           {:mapping {:registry :types
                                      :identity :dotnet.type/project-declaration
@@ -1238,6 +1348,7 @@
                                            :class name
                                            :source (source-ref member :java.declaration/anonymous-member)}))))
                       raw-members)
+        members (into (vec (iterator-bridge-members ctx anonymous-class)) members)
         constructor
         (sequence-node
          [(raw (str "public " name "("))
@@ -1286,11 +1397,53 @@
              (raw ((:local-name services) declaration)))
            captures)))))
 
-(defn- destination-bridge-members [^CtType type]
+(defn- iterator-element-reference [^CtType type]
+  (some (fn [^CtTypeReference reference]
+          (let [qualified (.getQualifiedName reference)]
+            (cond
+              (= "java.util.PrimitiveIterator$OfLong" qualified) :long
+              (contains? #{"java.util.Iterator" "java.util.ListIterator"
+                           "org.organicdesign.fp.collections.UnmodSortedIterator"}
+                         qualified)
+              (first (.getActualTypeArguments reference)))))
+        (.getSuperInterfaces type)))
+
+(defn- iterator-bridge-members [ctx ^CtType type]
+  (when-let [element (iterator-element-reference type)]
+    (let [element-node (if (= :long element) (raw "long") (type-node ctx element))]
+      [(sequence-node
+        [(raw "private ") element-node (raw " __iteratorCurrent = default!;\n")
+         (raw "public ") element-node (raw " Current => this.__iteratorCurrent;\n")
+         (raw "object global::System.Collections.IEnumerator.Current => this.__iteratorCurrent!;\n")
+         (raw "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.Next(); return true; }\n")
+         (raw "public void Reset() => throw new global::System.NotSupportedException();\n")
+         (raw "public void Dispose() { }")])])))
+
+(defn- rrb-tree-list-bridge-members [^CtType type]
+  (when (= "org.pkl.core.util.paguro.RrbTree" (.getQualifiedName type))
+    [(raw (str
+           "public int Count => this.Size();\n"
+           "public bool IsReadOnly => true;\n"
+           "public E this[int index] { get => this.Get(index); set => throw new global::System.NotSupportedException(); }\n"
+           "public int IndexOf(E item) { for (var i = 0; i < this.Size(); i++) if (global::System.Collections.Generic.EqualityComparer<E>.Default.Equals(this.Get(i), item)) return i; return -1; }\n"
+           "void global::System.Collections.Generic.IList<E>.Insert(int index, E item) => throw new global::System.NotSupportedException();\n"
+           "public void RemoveAt(int index) => throw new global::System.NotSupportedException();\n"
+           "void global::System.Collections.Generic.ICollection<E>.Add(E item) => throw new global::System.NotSupportedException();\n"
+           "public void Clear() => throw new global::System.NotSupportedException();\n"
+           "public bool Contains(E item) => this.IndexOf(item) >= 0;\n"
+           "public void CopyTo(E[] array, int arrayIndex) { for (var i = 0; i < this.Size(); i++) array[arrayIndex + i] = this.Get(i); }\n"
+           "public bool Remove(E item) => throw new global::System.NotSupportedException();\n"
+           "public global::System.Collections.Generic.IEnumerator<E> GetEnumerator() => this.Iterator();\n"
+           "global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();"))]))
+
+(defn- destination-bridge-members [ctx ^CtType type]
   (let [superclass (when (instance? CtClass type) (.getSuperclass ^CtClass type))]
-    (cond-> []
-      (= "java.io.Writer" (some-> superclass .getQualifiedName))
-      (conj (raw "public override global::System.Text.Encoding Encoding => global::System.Text.Encoding.Unicode;")))))
+    (vec
+     (concat
+      (when (= "java.io.Writer" (some-> superclass .getQualifiedName))
+        [(raw "public override global::System.Text.Encoding Encoding => global::System.Text.Encoding.Unicode;")])
+      (iterator-bridge-members ctx type)
+      (rrb-tree-list-bridge-members type)))))
 
 (defn- member-node [ctx ^CtType owner member]
   (cond
@@ -1326,6 +1479,7 @@
   (let [owner (some-> type .getDeclaringType .getQualifiedName)
         name (pascal (.getSimpleName type))
         qualified (.getQualifiedName type)
+        member-ctx (assoc ctx :current-type type)
         {:keys [parameters node]} (formals ctx qualified type)
         components (when (instance? CtRecord type)
                      (mapv #(record-component-node ctx type %)
@@ -1344,11 +1498,11 @@
                      (sort-by (fn [^CtElement member]
                                 (let [{:keys [file line column]} (spoon/source-location member)]
                                   [file line column])))
-                     (mapv #(member-node ctx type %)))
-        members (into (vec (missing-interface-contracts ctx type)) members)
-        members (into (vec (destination-bridge-members type)) members)
-        members (into members (mapv #(anonymous-type-node ctx type %)
-                                    (owner-anonymous-calls ctx type)))
+                     (mapv #(member-node member-ctx type %)))
+        members (into (vec (missing-interface-contracts member-ctx type)) members)
+        members (into (vec (destination-bridge-members member-ctx type)) members)
+        members (into members (mapv #(anonymous-type-node member-ctx type %)
+                                    (owner-anonymous-calls member-ctx type)))
         header (sequence-node
                 [(raw (join-words (type-words type))) (raw name) node
                  (when components
@@ -1523,6 +1677,7 @@
         ctx-holder (atom nil)
         base-context {:configuration configuration
                       :resolved-model resolved-model
+                      :ctx-holder ctx-holder
                       :occurrence-index (java/resolved-occurrence-index resolved-model)
                       :selected-declarations (selected-declaration-index resolved-model)
                       :emitted (IdentityHashMap.)
