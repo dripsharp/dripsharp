@@ -43,7 +43,7 @@ Generated C# is disposable. Durable assets are:
 4. Resolved-symbol mapping registries.
 5. Focused compatibility and destination-runtime source.
 6. Independent behavior tests and compiler regressions.
-7. Optional provenance or analysis data derived from translation.
+7. Source mappings and diagnostics produced during translation.
 
 Generated output must never require manual patches. A failure is fixed in
 resolution, a mapping, a transform, project emission, or the focused runtime
@@ -55,9 +55,9 @@ Accepted translation requires the real project classpath, generated sources,
 and dependency information. Source references must resolve to their actual
 types, overloads, constructors, fields, and generic arguments.
 
-No-classpath parsing is useful for inventory and diagnostics over incomplete
-inputs. It is not sufficient evidence for product emission. Unresolved symbols,
-ambiguous overloads, and fallback types block accepted output.
+No-classpath parsing may diagnose incomplete inputs, but it is not sufficient
+for product emission. Unresolved symbols, ambiguous overloads, and fallback
+types block accepted output.
 
 ## Recursive Translation
 

@@ -42,9 +42,6 @@ The documentation is limited to durable product and architecture decisions:
   and mapping contracts.
 * [Conversion Concerns](doc/conversion-concerns.md) records semantic mismatches
   that require explicit handling.
-* [Implementation Plan](doc/implementation-plan.md) records only durable
-  dependency order; current milestones and follow-up work belong in Beads.
-
 ## Development Rule
 
 Use complete projects with their real generated sources and classpaths. A
