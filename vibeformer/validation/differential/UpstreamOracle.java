@@ -3,8 +3,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.Arrays;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.pkl.parser.GenericParser;
 import org.pkl.parser.GenericParserError;
 import org.pkl.parser.Lexer;
@@ -34,6 +37,7 @@ public final class UpstreamOracle {
     try (BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8)) {
       write(writer, "@span", "SPAN", spanObservations());
       write(writer, "@identifier", "IDENTIFIER", identifierObservations());
+      write(writer, "@equality", "EQUALITY", equalityObservations());
       for (String line : Files.readAllLines(manifest, StandardCharsets.UTF_8)) {
         if (line.isEmpty()) continue;
         String[] fields = line.split("\\t", -1);
@@ -71,6 +75,42 @@ public final class UpstreamOracle {
           .append(',').append(BASE64.encodeToString(Lexer.maybeQuoteIdentifier(identifier).getBytes(StandardCharsets.UTF_8)))
           .append(';');
     }
+    return result.toString();
+  }
+
+  private static String equalityObservations() {
+    var source = "name = 42\n";
+    var generic = new GenericParser().parseModule(source);
+    var equivalentGeneric = new GenericParser().parseModule(source);
+    var differentGeneric = new GenericParser().parseModule("other = 420\n");
+    Node typed = new Parser().parseModule(source);
+    Node equivalentTyped = new Parser().parseModule(source);
+    Node differentTyped = new Parser().parseModule("other = 420\n");
+
+    var list = List.of("outer", List.of("inner"));
+    var equivalentList = Arrays.asList("outer", List.of("inner"));
+    var differentList = List.of("outer", List.of("different"));
+    Object[] array = {"outer", new Object[] {"inner"}};
+    Object[] equivalentArray = {"outer", new Object[] {"inner"}};
+    Object[] differentArray = {"outer", new Object[] {"different"}};
+
+    return observations(
+        generic.equals(equivalentGeneric),
+        generic.hashCode() == equivalentGeneric.hashCode(),
+        !generic.equals(differentGeneric),
+        typed.equals(equivalentTyped),
+        typed.hashCode() == equivalentTyped.hashCode(),
+        !typed.equals(differentTyped),
+        Objects.equals(list, equivalentList),
+        Objects.hash(list) == Objects.hash(equivalentList),
+        !Objects.equals(list, differentList),
+        Objects.deepEquals(array, equivalentArray),
+        !Objects.deepEquals(array, differentArray));
+  }
+
+  private static String observations(boolean... values) {
+    var result = new StringBuilder();
+    for (boolean value : values) result.append(value).append(';');
     return result.toString();
   }
 

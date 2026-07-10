@@ -44,6 +44,11 @@ static class PackageConsumer
 
         var parser = new Parser();
         Pkl.Parser.Syntax.Module module = parser.ParseModule(source);
+        Pkl.Parser.Syntax.Module equivalentModule = new Parser().ParseModule(source);
+        Pkl.Parser.Syntax.Module differentModule = new Parser().ParseModule("other = 420\n");
+        Check.That(module.Equals(equivalentModule), "independent typed tree structural equality");
+        Check.That(module.GetHashCode() == equivalentModule.GetHashCode(), "typed equality/hash consistency");
+        Check.That(!module.Equals(differentModule), "different typed trees compare unequal");
         Check.That(module.GetProperties().Count == 1, "syntax property count");
         ClassProperty property = module.GetProperties()[0];
         Check.That(property.GetName().GetValue() == "name", "syntax property name");
@@ -52,6 +57,11 @@ static class PackageConsumer
         Check.That(module.Accept(new IdentifierVisitor()) == 1, "visitor traversal");
 
         GenericNode generic = new GenericParser().ParseModule(source);
+        GenericNode equivalentGeneric = new GenericParser().ParseModule(source);
+        GenericNode differentGeneric = new GenericParser().ParseModule("other = 420\n");
+        Check.That(generic.Equals(equivalentGeneric), "independent generic tree structural equality");
+        Check.That(generic.GetHashCode() == equivalentGeneric.GetHashCode(), "generic equality/hash consistency");
+        Check.That(!generic.Equals(differentGeneric), "different generic trees compare unequal");
         Check.That(generic.children.Count > 0, "generic parser children");
         Check.That(generic.Text(sourceChars) == source.TrimEnd('\n'), "generic parser source span");
         Check.That(generic.span.CharIndex == 0 && generic.span.LineBegin == 1, "generic full span");

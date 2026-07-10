@@ -20,6 +20,7 @@ static class PackageProbe
         using var writer = new StreamWriter(args[1], false, new UTF8Encoding(false));
         Write(writer, "@span", "SPAN", SpanObservations());
         Write(writer, "@identifier", "IDENTIFIER", IdentifierObservations());
+        Write(writer, "@equality", "EQUALITY", EqualityObservations());
         foreach (string line in File.ReadLines(args[0], Encoding.UTF8))
         {
             if (line.Length == 0) continue;
@@ -59,6 +60,52 @@ static class PackageProbe
                 .Append(Lexer.IsRegularIdentifier(identifier).ToString().ToLowerInvariant()).Append(',')
                 .Append(B64(Lexer.MaybeQuoteIdentifier(identifier))).Append(';');
         }
+        return result.ToString();
+    }
+
+    static string EqualityObservations()
+    {
+        const string source = "name = 42\n";
+        GenericNode generic = new GenericParser().ParseModule(source);
+        GenericNode equivalentGeneric = new GenericParser().ParseModule(source);
+        GenericNode differentGeneric = new GenericParser().ParseModule("other = 420\n");
+        SyntaxNode typed = new Parser().ParseModule(source);
+        SyntaxNode equivalentTyped = new Parser().ParseModule(source);
+        SyntaxNode differentTyped = new Parser().ParseModule("other = 420\n");
+
+        var list = new List<object> { "outer", new List<string> { "inner" } };
+        var equivalentList = new List<object> { "outer", new List<string> { "inner" } };
+        var differentList = new List<object> { "outer", new List<string> { "different" } };
+        object[] array = { "outer", new object[] { "inner" } };
+        object[] equivalentArray = { "outer", new object[] { "inner" } };
+        object[] differentArray = { "outer", new object[] { "different" } };
+
+        System.Type compat = typeof(Parser).Assembly.GetType("Vibeformer.Runtime.JavaCompat", throwOnError: true)!;
+        MethodInfo equals = compat.GetMethod("Equals", BindingFlags.NonPublic | BindingFlags.Static)!;
+        MethodInfo deepEquals = compat.GetMethod("DeepEquals", BindingFlags.NonPublic | BindingFlags.Static)!;
+        MethodInfo hash = compat.GetMethod("Hash", BindingFlags.NonPublic | BindingFlags.Static)!;
+        bool CompatEquals(object left, object right) => (bool)equals.Invoke(null, new[] { left, right })!;
+        bool CompatDeepEquals(object left, object right) => (bool)deepEquals.Invoke(null, new[] { left, right })!;
+        int CompatHash(object value) => (int)hash.Invoke(null, new object?[] { new[] { value } })!;
+
+        return Observations(
+            generic.Equals(equivalentGeneric),
+            generic.GetHashCode() == equivalentGeneric.GetHashCode(),
+            !generic.Equals(differentGeneric),
+            typed.Equals(equivalentTyped),
+            typed.GetHashCode() == equivalentTyped.GetHashCode(),
+            !typed.Equals(differentTyped),
+            CompatEquals(list, equivalentList),
+            CompatHash(list) == CompatHash(equivalentList),
+            !CompatEquals(list, differentList),
+            CompatDeepEquals(array, equivalentArray),
+            !CompatDeepEquals(array, differentArray));
+    }
+
+    static string Observations(params bool[] values)
+    {
+        var result = new StringBuilder();
+        foreach (bool value in values) result.Append(value.ToString().ToLowerInvariant()).Append(';');
         return result.ToString();
     }
 

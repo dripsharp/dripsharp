@@ -165,15 +165,32 @@ internal static class JavaCompat
     internal static T DequePop<T>(JavaDeque<T> deque) => deque.Pop();
     internal static void DequePush<T>(JavaDeque<T> deque, T value) => deque.Push(value);
 
-    internal new static bool Equals(object? left, object? right) => object.Equals(left, right);
+    internal new static bool Equals(object? left, object? right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left is null || right is null) return false;
+        if (IsJavaList(left)) return IsJavaList(right) && ListsEqual((IEnumerable)left, (IEnumerable)right);
+        return left.Equals(right);
+    }
 
     internal static bool DeepEquals(object? left, object? right)
     {
         if (ReferenceEquals(left, right)) return true;
-        if (left is not Array leftArray || right is not Array rightArray) return object.Equals(left, right);
+        if (left is not Array leftArray || right is not Array rightArray)
+            return left is not Array && right is not Array && Equals(left, right);
+        if (leftArray.Rank != 1 || rightArray.Rank != 1) return false;
         if (leftArray.Length != rightArray.Length) return false;
+        var leftElement = leftArray.GetType().GetElementType()!;
+        var rightElement = rightArray.GetType().GetElementType()!;
+        var primitiveElements = leftElement.IsValueType || rightElement.IsValueType;
+        if (primitiveElements && leftElement != rightElement) return false;
         for (var index = 0; index < leftArray.Length; index++)
-            if (!DeepEquals(leftArray.GetValue(index), rightArray.GetValue(index))) return false;
+        {
+            var equal = primitiveElements
+                ? object.Equals(leftArray.GetValue(index), rightArray.GetValue(index))
+                : DeepEquals(leftArray.GetValue(index), rightArray.GetValue(index));
+            if (!equal) return false;
+        }
         return true;
     }
 
@@ -182,7 +199,46 @@ internal static class JavaCompat
         unchecked
         {
             var result = 1;
-            foreach (var value in values) result = 31 * result + (value?.GetHashCode() ?? 0);
+            foreach (var value in values) result = 31 * result + JavaHashCode(value);
+            return result;
+        }
+    }
+
+    private static bool IsJavaList(object value) =>
+        value is not Array && value is IEnumerable &&
+        (value is IList || value.GetType().GetInterfaces().Any(type =>
+            type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IList<>)));
+
+    private static bool ListsEqual(IEnumerable left, IEnumerable right)
+    {
+        var leftEnumerator = left.GetEnumerator();
+        var rightEnumerator = right.GetEnumerator();
+        try
+        {
+            while (true)
+            {
+                var leftHasValue = leftEnumerator.MoveNext();
+                var rightHasValue = rightEnumerator.MoveNext();
+                if (leftHasValue != rightHasValue) return false;
+                if (!leftHasValue) return true;
+                if (!Equals(leftEnumerator.Current, rightEnumerator.Current)) return false;
+            }
+        }
+        finally
+        {
+            (leftEnumerator as IDisposable)?.Dispose();
+            (rightEnumerator as IDisposable)?.Dispose();
+        }
+    }
+
+    private static int JavaHashCode(object? value)
+    {
+        if (value is null) return 0;
+        if (!IsJavaList(value)) return value.GetHashCode();
+        unchecked
+        {
+            var result = 1;
+            foreach (var element in (IEnumerable)value) result = 31 * result + JavaHashCode(element);
             return result;
         }
     }

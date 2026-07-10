@@ -102,6 +102,7 @@
                 ["JavaCompat.ArrayCopy"             ; arrays
                  "JavaCompat.DequePush"             ; deque mutation/order
                  "JavaCompat.ListOf"                ; immutable list factory
+                 "JavaCompat.Equals"                ; Objects/list structural equality
                  "JavaCompat.DeepEquals"            ; Objects/deep array equality
                  "JavaCompat.IsUnicodeIdentifierStart" ; Character/code points
                  "JavaCompat.Map"                   ; streams
