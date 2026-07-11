@@ -106,6 +106,12 @@
     (boolean (some nullable-expression? (.getElements ^CtNewArray expression)))
     :else false))
 
+(defn- nullable-parameter? [^CtTypeReference parameter-type parameter-declaration]
+  (or (nullable-type? parameter-type)
+      (and parameter-declaration
+           (or (nullable-annotation? parameter-declaration)
+               (nullable-type? (.getType ^CtParameter parameter-declaration))))))
+
 (defn- member [target name]
   (if target
     (csharp/member target name)
@@ -129,9 +135,21 @@
 
 (defn- wrap-casts [services children ^CtExpression expression node]
   (if (and (instance? CtInvocation expression)
-           (= "getProperties" (some-> ^CtInvocation expression .getExecutable .getSimpleName))
-           (= "java.lang.System" (some-> ^CtInvocation expression .getExecutable .getDeclaringType
-                                          .getQualifiedName)))
+           (= "subList" (some-> ^CtInvocation expression .getExecutable .getSimpleName))
+           (= 1 (count (.getTypeCasts expression)))
+           (= 1 (count (.getActualTypeArguments ^CtTypeReference
+                                                (first (.getTypeCasts expression))))))
+    (invoke
+     (csharp/generic-name
+      (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
+      [((:type-node services)
+        (first (.getActualTypeArguments ^CtTypeReference
+                                        (first (.getTypeCasts expression)))))])
+     [node])
+    (if (and (instance? CtInvocation expression)
+             (= "getProperties" (some-> ^CtInvocation expression .getExecutable .getSimpleName))
+             (= "java.lang.System" (some-> ^CtInvocation expression .getExecutable .getDeclaringType
+                                            .getQualifiedName)))
     node
     (reduce (fn [value ^CtTypeReference cast]
               (if (.isPrimitive cast)
@@ -143,7 +161,7 @@
                   (sequence-node [(raw "((") (child-node children cast)
                                   (raw ")((object)(") (null-forgiven value) (raw ")))")]))))
             node
-            (reverse (vec (.getTypeCasts expression))))))
+            (reverse (vec (.getTypeCasts expression)))))))
 
 (defn- finish-expression [services children ^CtExpression expression node]
   (let [node (wrap-casts services children expression node)]
@@ -682,12 +700,22 @@
                      (non-null-node target-element node)
                      node)))
         parameters (vec (.getParameters (.getExecutable element)))
+        parameter-declarations (some-> (.getExecutableDeclaration (.getExecutable element))
+                                       .getParameters vec)
         args (mapv (fn [index source node]
-                     (let [node (if (nullable-expression? source)
+                     (let [parameter (when (< index (count parameters))
+                                       (nth parameters index))
+                           parameter-declaration (when (and parameter-declarations
+                                                            (< index (count parameter-declarations)))
+                                                   (nth parameter-declarations index))
+                           node (if (and (nullable-expression? source)
+                                         (not (and parameter
+                                                   (nullable-parameter? parameter
+                                                                        parameter-declaration))))
                                   (non-null-node source node)
                                   node)]
-                       (if (< index (count parameters))
-                         (invariant-argument-cast services source (nth parameters index) node)
+                       (if parameter
+                         (invariant-argument-cast services source parameter node)
                          node)))
                    (range)
                    (.getArguments element)
@@ -1465,16 +1493,26 @@
                (raw "global::Pkl.Core.Util.Paguro.RrbTree<E>.Iter")
                :else ((:type-node services) (.getType element)))
         constructor-parameters (vec (.getParameters (.getExecutable element)))
+        constructor-declarations (some-> (.getExecutableDeclaration (.getExecutable element))
+                                         .getParameters vec)
         args (into (vec (when-let [outer-argument (:named-inner-constructor-argument services)]
                           (when-let [argument (outer-argument element)] [argument])))
                    (mapv (fn [index source node]
-                           (let [node (if (nullable-expression? source)
+                           (let [parameter (when (< index (count constructor-parameters))
+                                             (nth constructor-parameters index))
+                                 parameter-declaration (when (and constructor-declarations
+                                                                  (< index (count constructor-declarations)))
+                                                         (nth constructor-declarations index))
+                                 node (if (and (nullable-expression? source)
+                                               (not (and parameter
+                                                         (nullable-parameter? parameter
+                                                                              parameter-declaration))))
                                         (non-null-node source node)
                                         node)]
                              (if (and (not rrb-constructor?)
-                                      (< index (count constructor-parameters)))
+                                      parameter)
                                (invariant-argument-cast services source
-                                                        (nth constructor-parameters index) node)
+                                                        parameter node)
                                node)))
                          (range)
                          (.getArguments element)
@@ -1967,8 +2005,18 @@
                                                      (non-null-node expression node)
                                                      node)]
                                           (if-let [return-type (generic-invariant-return-type element)]
-                                            (sequence-node [(raw "((") ((:type-node services) return-type)
-                                                            (raw ")((object)(") node (raw ")))!")])
+                                            (if (and (instance? CtInvocation expression)
+                                                     (= "subList" (some-> ^CtInvocation expression
+                                                                          .getExecutable .getSimpleName))
+                                                     (= 1 (count (.getActualTypeArguments return-type))))
+                                              (invoke
+                                               (csharp/generic-name
+                                                (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
+                                                [((:type-node services)
+                                                  (first (.getActualTypeArguments return-type)))])
+                                               [node])
+                                              (sequence-node [(raw "((") ((:type-node services) return-type)
+                                                              (raw ")((object)(") node (raw ")))!")]))
                                             node))]))
                                     (raw ";")])})}
     {:id :java.expression/super :class CtSuperAccess

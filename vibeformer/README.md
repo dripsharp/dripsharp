@@ -57,6 +57,7 @@ clojure -M:run generate
 clojure -M:run verify
 clojure -J-Xmx8g -M:run pack pkl-core-value-model
 clojure -M:run package
+clojure -J-Xmx8g -M:run package pkl-core-value-model
 clojure -M:run differential
 clojure -M:test
 clojure -M:test --namespace vibeformer.harness-test
@@ -87,10 +88,12 @@ package determinism, and writes the inspected packages to a fresh local feed.
 The pkl-core profile currently requires an explicit larger JVM heap, such as
 `-J-Xmx8g`, in this environment.
 
-`package` first performs the clean `verify` gate, packs that exact generated
+`package [profile]` first performs the clean `verify` gate, packs that exact generated
 build into a fresh local feed, and restores, builds, and runs a newly created
 consumer with an isolated NuGet package cache. The consumer has no project
-reference or access to generated source and exercises the public parser package.
+reference or access to generated source. The default profile exercises the
+public parser package; `pkl-core-value-model` exercises the packed evaluator and
+value-model surface plus its exact package dependency on `Pkl.Parser`.
 
 `differential` performs the complete package gate, separately builds and runs
 the pinned upstream JVM parser as an oracle, then runs a package-only .NET probe

@@ -37,6 +37,16 @@
            (sort-by str)
            vec))))
 
+(defn- child-directories [^Path directory]
+  (if-not (paths/directory? directory)
+    []
+    (with-open [entries (Files/list directory)]
+      (->> (.toArray entries)
+           (map #(cast Path %))
+           (filter paths/directory?)
+           (sort-by str)
+           vec))))
+
 (defn- package-artifact! [^Path feed package-id version]
   (let [packages (filter #(and (str/ends-with? (str %) ".nupkg")
                                (not (str/ends-with? (str %) ".snupkg")))
@@ -182,6 +192,67 @@
        "\" Version=\"" (xml-escape version) "\" />\n"
        "  </ItemGroup>\n"
        "</Project>\n"))
+
+(def ^:private consumer-profiles
+  {"pkl-parser"
+   {:project-file "Pkl.Parser.PackageConsumer.csproj"
+    :fixture-file "Program.cs"
+    :success-message "Independent Pkl.Parser package consumer passed."}
+   "pkl-core-value-model"
+   {:project-file "Pkl.Core.PackageConsumer.csproj"
+    :fixture-file "Pkl.Core.Program.cs"
+    :success-message "Independent Pkl.Core package consumer passed."}})
+
+(defn inspect-consumer-dependencies!
+  "Proves that the generated consumer project has one package reference, no
+  source/project reference escape hatch, and that restore populated only the
+  exact dependency-closed package identities in its isolated cache."
+  [^Path project-file ^Path assets-file ^Path packages primary-identity identities]
+  (let [project (Files/readString project-file)
+        package-references (re-seq #"<PackageReference\s+Include=\"([^\"]+)\"\s+Version=\"([^\"]+)\"\s*/>"
+                                   project)
+        expected-reference [(:id primary-identity) (:version primary-identity)]
+        forbidden-project (->> [#"<ProjectReference\b" #"<Compile\b"
+                                 #"<Reference\b" #"(?i)target/generated"
+                                 #"(?i)\.\./.*\.csproj"]
+                               (filter #(re-find % project))
+                               (mapv str))]
+    (when-not (= [expected-reference] (mapv #(vec (rest %)) package-references))
+      (fail! "Independent consumer does not reference exactly the primary package"
+             {:project-file (str project-file) :expected expected-reference
+              :actual (mapv #(vec (rest %)) package-references)}))
+    (when (seq forbidden-project)
+      (fail! "Independent consumer contains a source, assembly, or project-reference escape hatch"
+             {:project-file (str project-file) :forbidden forbidden-project}))
+    (when-not (paths/regular-file? assets-file)
+      (fail! "Independent consumer restore did not produce a dependency graph"
+             {:assets-file (str assets-file)}))
+    (let [assets (Files/readString assets-file)
+          project-libraries (re-seq #"\"type\"\s*:\s*\"project\"" assets)
+          expected-cache-roots (->> identities (map :id) (map str/lower-case) sort vec)
+          actual-cache-roots (->> (child-directories packages)
+                                  (map #(str/lower-case (str (.getFileName ^Path %))))
+                                  sort vec)]
+      (when (seq project-libraries)
+        (fail! "Restored package graph leaked a project dependency"
+               {:assets-file (str assets-file) :project-library-count (count project-libraries)}))
+      (doseq [{:keys [id version]} identities]
+        (let [key (str id "/" version)
+              artifact (paths/resolve-path packages (str/lower-case id) version
+                                           (str (str/lower-case id) "." version ".nupkg"))]
+          (when-not (str/includes? assets (str "\"" key "\""))
+            (fail! "Restored package graph is missing an exact package identity"
+                   {:identity key :assets-file (str assets-file)}))
+          (when-not (paths/regular-file? artifact)
+            (fail! "Isolated package cache is missing an exact package artifact"
+                   {:identity key :artifact (str artifact)}))))
+      (when-not (= expected-cache-roots actual-cache-roots)
+        (fail! "Isolated package cache contains packages outside the packed dependency closure"
+               {:expected expected-cache-roots :actual actual-cache-roots
+                :packages (str packages)}))
+      {:package-reference expected-reference
+       :packages (mapv #(select-keys % [:id :version :sha256]) identities)
+       :assets-file (str assets-file)})))
 
 (defn- nuget-config [^Path feed package-ids]
   (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
@@ -347,12 +418,16 @@
 (defn verify-package-consumption!
   "Runs clean generation/compilation, packs it, and proves isolated consumption."
   ([] (verify-package-consumption! {}))
-  ([{:keys [workspace-root verify-fn run-command! pack-fn]
+  ([{:keys [workspace-root profile verify-fn run-command! pack-fn]
      :or {verify-fn compiler/verify-clean-build!
           pack-fn pack-verified-profile!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         package-proof (pack-fn {:workspace-root root :profile "pkl-parser"
+         profile (or profile "pkl-parser")
+         consumer-profile (or (get consumer-profiles profile)
+                              (fail! "Profile has no independent package-consumer fixture"
+                                     {:profile profile :supported (sort (keys consumer-profiles))}))
+         package-proof (pack-fn {:workspace-root root :profile profile
                                  :verify-fn verify-fn :run-command! run-command!})
          verification (:verification package-proof)
          generation (:generation verification)
@@ -369,11 +444,12 @@
          packages (doto (paths/resolve-path proof-root "packages")
                     (Files/createDirectories
                      (make-array java.nio.file.attribute.FileAttribute 0)))
-         consumer-project-file (paths/resolve-path consumer "Pkl.Parser.PackageConsumer.csproj")
+         consumer-project-file (paths/resolve-path consumer (:project-file consumer-profile))
          nuget-config-file (paths/resolve-path consumer "NuGet.Config")
          consumer-source (paths/resolve-path consumer "Program.cs")
          fixture-source (paths/resolve-path root "vibeformer" "validation"
-                                            "package-consumer" "Program.cs")]
+                                            "package-consumer" (:fixture-file consumer-profile))
+         identities (mapv :identity (:packages package-proof))]
      (when-not (paths/regular-file? fixture-source)
        (fail! "Independent package-consumer source is missing"
               {:path (str fixture-source)}))
@@ -381,7 +457,7 @@
            inspection (:inspection package-proof)]
        (write-text! consumer-project-file
                     (consumer-project id version consumer-target-framework))
-       (write-text! nuget-config-file (nuget-config feed [id]))
+       (write-text! nuget-config-file (nuget-config feed (map :id identities)))
        (Files/copy fixture-source consumer-source
                    (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
        (run-command! {:command ["dotnet" "restore" (str consumer-project-file)
@@ -389,6 +465,10 @@
                                 "--packages" (str packages)
                                 "--no-cache" "--force" "--force-evaluate"]
                       :directory consumer})
+       (let [dependency-proof
+             (inspect-consumer-dependencies!
+              consumer-project-file (paths/resolve-path consumer "obj" "project.assets.json")
+              packages (:identity package-proof) identities)]
        (run-command! {:command ["dotnet" "build" (str consumer-project-file)
                                 "--nologo" "--verbosity:minimal" "--no-restore"
                                 "--no-incremental" "-warnaserror"]
@@ -401,7 +481,7 @@
              identity {:id id :version version :sha256 (sha256 artifact)
                        :file (str (.getFileName ^Path artifact))}]
          (when-not (str/includes? (:output run-result)
-                                  "Independent Pkl.Parser package consumer passed.")
+                                  (:success-message consumer-profile))
            (fail! "Independent package consumer did not report successful behavior checks"
                   {:output (:output run-result)}))
          (println "Independent NuGet consumption passed:" (pr-str identity))
@@ -409,5 +489,6 @@
           :artifact artifact
           :identity identity
           :inspection inspection
+          :dependency-proof dependency-proof
           :consumer-root consumer
-          :run run-result})))))
+          :run run-result}))))))

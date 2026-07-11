@@ -6,6 +6,11 @@
  :seeds
  [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
    :expand :body}
+  {:key "initializer:org.pkl.core.Release#static@52:10" :expand :body}
+  {:key "initializer:org.pkl.core.resource.ResourceReaders$FromServiceProviders#static@651:12"
+   :expand :body}
+  {:key "initializer:org.pkl.core.module.ModuleKeyFactories$FromServiceProviders#static@255:12"
+   :expand :body}
   {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpression(org.pkl.core.ModuleSource,java.lang.String)"
    :expand :body}
   {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpressionPklBinary(org.pkl.core.ModuleSource,java.lang.String)"

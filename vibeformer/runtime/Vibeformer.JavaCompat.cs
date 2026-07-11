@@ -22,6 +22,65 @@ internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
 internal enum JavaTimeUnit { MILLISECONDS }
 
+internal sealed class JavaProperties
+{
+    private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
+
+    internal void Load(Stream stream)
+    {
+        using var reader = new StreamReader(stream, Encoding.Latin1, false, 1024, leaveOpen: true);
+        string? pending = null;
+        while (reader.ReadLine() is { } physicalLine)
+        {
+            var line = pending is null ? physicalLine : pending + physicalLine.TrimStart();
+            var trailingSlashes = line.Reverse().TakeWhile(character => character == '\\').Count();
+            if ((trailingSlashes & 1) == 1)
+            {
+                pending = line[..^1];
+                continue;
+            }
+            pending = null;
+            var trimmed = line.TrimStart();
+            if (trimmed.Length == 0 || trimmed[0] is '#' or '!') continue;
+            var separator = -1;
+            var escaped = false;
+            for (var index = 0; index < trimmed.Length; index++)
+            {
+                var character = trimmed[index];
+                if (!escaped && (character is '=' or ':' || char.IsWhiteSpace(character)))
+                {
+                    separator = index;
+                    break;
+                }
+                escaped = !escaped && character == '\\';
+                if (character != '\\') escaped = false;
+            }
+            var key = separator < 0 ? trimmed : trimmed[..separator];
+            var valueStart = separator < 0 ? trimmed.Length : separator;
+            while (valueStart < trimmed.Length && char.IsWhiteSpace(trimmed[valueStart])) valueStart++;
+            if (valueStart < trimmed.Length && trimmed[valueStart] is '=' or ':') valueStart++;
+            while (valueStart < trimmed.Length && char.IsWhiteSpace(trimmed[valueStart])) valueStart++;
+            values[Unescape(key)] = Unescape(trimmed[valueStart..]);
+        }
+    }
+
+    internal string? GetProperty(string key) => values.TryGetValue(key, out var value) ? value : null;
+
+    private static string Unescape(string value) => Regex.Replace(
+        value,
+        @"\\(u[0-9A-Fa-f]{4}|.)",
+        match => match.Groups[1].Value switch
+        {
+            "t" => "\t",
+            "n" => "\n",
+            "r" => "\r",
+            "f" => "\f",
+            var escaped when escaped.StartsWith('u') =>
+                ((char)Convert.ToInt32(escaped[1..], 16)).ToString(),
+            var escaped => escaped
+        });
+}
+
 internal sealed class JavaOptional<T>
 {
     private readonly T? value;
@@ -52,7 +111,21 @@ internal static class JavaCompat
 {
     internal static readonly TextWriter @out = Console.Out;
     internal static readonly TextWriter err = Console.Error;
-    private static readonly Dictionary<string, string> SystemProperties = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, string> SystemProperties = new(StringComparer.Ordinal)
+    {
+        ["os.name"] = OperatingSystem.IsMacOS() ? "Mac OS X"
+            : OperatingSystem.IsWindows() ? "Windows"
+            : OperatingSystem.IsLinux() ? "Linux"
+            : Environment.OSVersion.Platform.ToString(),
+        ["os.version"] = Environment.OSVersion.VersionString,
+        ["java.version"] = Environment.Version.ToString(),
+        ["user.home"] = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ["user.dir"] = Environment.CurrentDirectory,
+        ["java.io.tmpdir"] = Path.GetTempPath(),
+        ["file.separator"] = Path.DirectorySeparatorChar.ToString(),
+        ["path.separator"] = Path.PathSeparator.ToString(),
+        ["line.separator"] = Environment.NewLine
+    };
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IEnumerator, IteratorState>
         IteratorStates = new();
 
@@ -242,12 +315,29 @@ internal static class JavaCompat
     #endif
     internal static T ClassCast<T>(Type type, object value) =>
         type.IsInstanceOfType(value) ? (T)value : throw new InvalidCastException();
+    private static string? ClassResourceName(Assembly assembly, Type? type, string name)
+    {
+        var absolute = name.TrimStart('/').Replace('/', '.');
+        var relative = name.StartsWith('/') || type?.Namespace is null
+            ? absolute
+            : type.Namespace + "." + absolute;
+        if (assembly.GetManifestResourceInfo(relative) is not null) return relative;
+        if (assembly.GetManifestResourceInfo(absolute) is not null) return absolute;
+        var suffix = "." + absolute;
+        var matches = assembly.GetManifestResourceNames()
+            .Where(candidate => candidate.EndsWith(suffix, StringComparison.Ordinal))
+            .Take(2)
+            .ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
     internal static Uri? ClassGetResource(Type type, string name) =>
-        type.Assembly.GetManifestResourceInfo(name.TrimStart('/')) is null ? null : new Uri("resource:///" + name.TrimStart('/'));
+        ClassResourceName(type.Assembly, type, name) is { } resource ? new Uri("resource:///" + resource) : null;
     internal static Uri? ClassGetResource(Assembly assembly, string name) =>
         assembly.GetManifestResourceInfo(name.TrimStart('/')) is null ? null : new Uri("resource:///" + name.TrimStart('/'));
     internal static Stream? ClassGetResourceAsStream(Type type, string name) =>
-        type.Assembly.GetManifestResourceStream(name.TrimStart('/'));
+        ClassResourceName(type.Assembly, type, name) is { } resource
+            ? type.Assembly.GetManifestResourceStream(resource)
+            : null;
     internal static Stream? ClassGetResourceAsStream(Assembly assembly, string name) =>
         assembly.GetManifestResourceStream(name.TrimStart('/'));
     internal static T? ClassGetAnnotation<T>(Type type, Type annotationType) where T : class =>
@@ -679,6 +769,8 @@ internal static class JavaCompat
 
     internal static IList<T> SubList<T>(IEnumerable<T> values, int fromIndex, int toIndex) =>
         new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
+    internal static IList<T> CastList<T>(IEnumerable values) =>
+        values.Cast<object?>().Select(value => (T)value!).ToList();
 
     internal static T[] CopyOf<T>(T[] source, int length)
     {
@@ -946,7 +1038,8 @@ internal static class JavaCompat
                 try { return assembly.GetTypes(); }
                 catch (ReflectionTypeLoadException error) { return error.Types.Where(type => type is not null)!; }
             })
-            .Where(type => type is not null && !type.IsAbstract && serviceType.IsAssignableFrom(type))
+            .Where(type => type is not null && !type.IsAbstract && serviceType.IsAssignableFrom(type)
+                           && type.GetConstructor(Type.EmptyTypes) is not null)
             .Select(type => (T)Activator.CreateInstance(type!)!);
 
     internal static int HashCode(object? value) => JavaHashCode(value);

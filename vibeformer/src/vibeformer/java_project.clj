@@ -496,7 +496,7 @@
    "java.util.Spliterator" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.Optional" ["global::Pkl.Core.Runtime.JavaOptional" :pkl-core.type/optional]
    "java.util.OptionalInt" ["int?" :dotnet.type/nullable-int]
-   "java.util.Properties" ["global::System.Collections.Generic.IDictionary<object, object>" :dotnet.type/properties]
+   "java.util.Properties" ["global::Vibeformer.Runtime.JavaProperties" :dotnet.type/properties]
    "java.util.NoSuchElementException" ["global::System.InvalidOperationException" :dotnet.type/invalid-operation]
    "java.util.Arrays" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.Base64" ["global::Pkl.Core.Runtime.JavaBase64" :pkl-core.type/base64]
@@ -2091,9 +2091,19 @@
     (instance? CtConstructor member) (constructor-node ctx owner member)
     (instance? CtType member) (type-node-declaration ctx member)
     (instance? CtAnonymousExecutable member)
-    (let [id (blocker! ctx member :unsupported-initializer-block (.getQualifiedName owner))]
-      (with-source (raw (str "#error " id " Java initializer block requires direct Spoon translation"))
-        member :java.executable/pending {:diagnostic-id id}))
+    (if (modifier? member ModifierKind/STATIC)
+      (let [name (pascal (.getSimpleName owner))
+            signature ".cctor()"
+            declaration (sequence-node [(raw (str "static " name "() "))
+                                        (translated-node ctx (.getBody ^CtAnonymousExecutable member))])]
+        (attach-declaration ctx declaration member :initializer
+                            (.getQualifiedName owner) name signature
+                            :java.declaration/static-initializer))
+      (let [id (blocker! ctx member :unsupported-instance-initializer-block
+                         (.getQualifiedName owner))]
+        (with-source
+          (raw (str "#error " id " Java instance initializer block requires direct Spoon translation"))
+          member :java.executable/pending {:diagnostic-id id})))
     :else
     (throw (ex-info (str "Unsupported live Spoon type member " (.getName (class member)))
                     {:kind :unsupported-declaration-member

@@ -14,7 +14,7 @@
            [spoon.reflect CtModel]
            [spoon.reflect.code CtInvocation CtThisAccess CtTypeAccess]
            [spoon.reflect.cu SourcePosition]
-           [spoon.reflect.declaration CtAnnotation CtClass CtElement CtExecutable
+           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtElement CtExecutable
             CtField CtInterface CtMethod CtModifiable CtRecord CtRecordComponent CtType CtTypeMember
             CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtExecutableReference
@@ -366,6 +366,14 @@
   This is an index key over Spoon objects, not a reconstructed declaration."
   [^CtElement declaration]
   (cond
+    (instance? CtAnonymousExecutable declaration)
+    (let [^CtType owner (parent-of-type declaration CtType)
+          {:keys [line column]} (source-location declaration)]
+      (str "initializer:" (.getQualifiedName owner)
+           "#" (if (.hasModifier ^CtModifiable declaration ModifierKind/STATIC)
+                  "static" "instance")
+           "@" line ":" column))
+
     (and (instance? CtType declaration)
          (not (instance? CtTypeParameter declaration)))
     (str "type:" (.getQualifiedName ^CtType declaration))

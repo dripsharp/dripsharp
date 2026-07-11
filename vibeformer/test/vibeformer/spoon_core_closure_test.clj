@@ -20,6 +20,11 @@
     :expand :body}
    {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValueAs(org.pkl.core.ModuleSource,org.pkl.core.PClassInfo)"
     :expand :body}
+   {:key "initializer:org.pkl.core.Release#static@52:10" :expand :body}
+   {:key "initializer:org.pkl.core.module.ModuleKeyFactories$FromServiceProviders#static@255:12"
+    :expand :body}
+   {:key "initializer:org.pkl.core.resource.ResourceReaders$FromServiceProviders#static@651:12"
+    :expand :body}
    {:key "executable:org.pkl.core.runtime.VmValue#export()" :expand :body}
    {:key "executable:org.pkl.core.runtime.VmValue#export(java.lang.Object)" :expand :body}
    {:key "executable:org.pkl.core.runtime.VmValue#exportNullable(java.lang.Object)" :expand :body}
@@ -90,31 +95,31 @@
 
     (testing "the recursively resolved project declaration and source sets are exact"
       (is (= {:ambiguous-symbols 0
-              :executable-references 29159
-              :seeds 22
-              :constructor-references 4443
+              :executable-references 29184
+              :seeds 25
+              :constructor-references 4453
               :shadow-symbols 0
-              :public-api-declarations 7132
-              :type-references 440716
+              :public-api-declarations 7133
+              :type-references 441038
               :fallback-symbols 0
               :guessed-symbols 0
               :source-inputs 603
-              :intrinsic-occurrences 90370
-              :dependency-occurrences 57129
-              :type-parameter-occurrences 4377
+              :intrinsic-occurrences 90390
+              :dependency-occurrences 57132
+              :type-parameter-occurrences 4391
               :annotations 10560
-              :jdk-occurrences 97199
+              :jdk-occurrences 97416
               :unresolved-symbols 0
-              :declarations 16108
-              :project-occurrences 251950
-              :symbols 15752
-              :field-references 16147}
+              :declarations 16114
+              :project-occurrences 252064
+              :symbols 15772
+              :field-references 16158}
              (:totals first)))
-      (is (= "933fa26a8ad6c3687532f54820afa5fa2a6ee8cba4f13bec05b6d117f049f770"
+      (is (= "6aa6ddc87aca3296922099e9c139a4d702ae3093cca1bd50b13eaa719106fb08"
              (sha-256 declaration-keys)))
       (is (= "49b2a9892cce1436adf2d6aadc086fc97501e677bbbd4b222d1b6cef8a50647f"
              (sha-256 source-paths)))
-      (is (= "f5cad9d57d54218b8cedf162948c75f1329034e028610a76b90465271332e3cc"
+      (is (= "bff75068016aae7f70a6ea202248855a83cdba7ebf39e58356e87508a698df99"
              (sha-256 public-api-keys)))
       (is (= discovery-sources (set (:compilation-units (:frontend first)))))
       (is (every? discovery-sources (keys (:source-inputs first))))
@@ -153,7 +158,7 @@
     (is (= (keys (:public-api-declarations first))
            (keys (:public-api-declarations second))))
     (is (= first-occurrences second-occurrences))
-    (is (= "1b8be3a09a542c03fa18b949fe48ba555731d72a67e350ec3740b6902ff032fe"
+    (is (= "318c44032071861eb4b86dca9979e7325c34089e112a2826ca974c19f1365428"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))
