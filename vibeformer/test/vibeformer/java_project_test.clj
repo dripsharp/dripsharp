@@ -38,7 +38,27 @@
         first-root (:project-root first-emission)
         second-root (:project-root second-emission)
         summary (:summary first-emission)
+        first-profile (:emission-profile first-emission)
+        second-profile (:emission-profile second-emission)
         manifest (edn/read-string (slurp (str (:manifest-file first-emission))))]
+    (testing "the dominant root is partitioned across the bounded worker pool"
+      (is (= {:name "org.pkl.parser.ParserImpl"
+              :weight 29708
+              :member-count 82}
+             (:largest-root first-profile)
+             (:largest-root second-profile)))
+      (is (= 82 (get-in first-profile [:dominant-root :member-count])))
+      (is (= 29699 (get-in first-profile [:dominant-root :member-weight])))
+      (is (= 3445 (get-in first-profile [:dominant-root :largest-member-weight])))
+      (is (= 1 (get-in first-profile [:dominant-root :worker-participation])))
+      (is (< 1 (get-in second-profile [:dominant-root :worker-participation])))
+      (is (every? #(str/starts-with? % "vibeformer-worker-")
+                  (get-in second-profile [:dominant-root :worker-threads])))
+      (is (= (dissoc (:dominant-root first-profile)
+                     :worker-threads :worker-participation :elapsed-millis)
+             (dissoc (:dominant-root second-profile)
+                     :worker-threads :worker-participation :elapsed-millis))))
+
     (testing "all production inputs and source declarations are accounted for"
       (is (= 50 (:compilation-units summary)))
       (is (= 48 (:generated-files summary)))

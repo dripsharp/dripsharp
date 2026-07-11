@@ -2157,6 +2157,23 @@
              (when (modifier? type ModifierKind/FINAL) "sealed")
              "partial" "class"])))
 
+(defn- source-order-key [^CtElement element]
+  (let [{:keys [file line column]} (spoon/source-location element)]
+    [file line column]))
+
+(defn- distinct-selected-members [ctx ^CtType type]
+  (->> (concat (when (instance? CtEnum type)
+                 (.getEnumValues ^CtEnum type))
+               (.getTypeMembers type))
+       (reduce (fn [result member]
+                 (if (some #(identical? member %) result)
+                   result
+                   (conj result member))) [])
+       (remove #(.isImplicit ^CtElement %))
+       (filter #(selected-declaration? ctx %))
+       (sort-by source-order-key)
+       vec))
+
 (defn- type-node-declaration [ctx ^CtType type]
   (let [owner (some-> type .getDeclaringType .getQualifiedName)
         name (pascal (.getSimpleName type))
@@ -2184,19 +2201,12 @@
         raw-members (concat (when (instance? CtEnum type)
                               (.getEnumValues ^CtEnum type))
                             (.getTypeMembers type))
+        selected-members (distinct-selected-members ctx type)
         members (if functional-method
                   []
-                  (->> raw-members
-                       (reduce (fn [result member]
-                                 (if (some #(identical? member %) result)
-                                   result
-                                   (conj result member))) [])
-                       (remove #(.isImplicit ^CtElement %))
-                       (filter #(selected-declaration? ctx %))
-                       (sort-by (fn [^CtElement member]
-                                  (let [{:keys [file line column]} (spoon/source-location member)]
-                                    [file line column])))
-                       (mapv #(member-node member-ctx type %))))
+                  (if-let [emit-members (:emit-members ctx)]
+                    (emit-members ctx type selected-members)
+                    (mapv #(member-node member-ctx type %) selected-members)))
         members (if explicit-record-constructor?
                   (into (mapv #(record-component-property-node ctx type %)
                               (.getRecordComponents ^CtRecord type))
@@ -2476,6 +2486,38 @@
     (reset! (:ctx-holder template) ctx)
     ctx))
 
+(defn- element-weight [^CtElement element]
+  (count (.getElements element (TypeFilter. CtElement))))
+
+(defn- merge-emission-context! [target source]
+  (doseq [entry (.entrySet ^IdentityHashMap (:emitted source))]
+    (let [element (.getKey ^java.util.Map$Entry entry)
+          declaration (.getValue ^java.util.Map$Entry entry)]
+      (when (.containsKey ^IdentityHashMap (:emitted target) element)
+        (throw (ex-info "A live Spoon declaration was emitted by multiple member jobs"
+                        {:kind :duplicate-source-declaration
+                         :declaration declaration})))
+      (.put ^IdentityHashMap (:emitted target) element declaration)))
+  (swap! (:declarations target) into @(:declarations source))
+  (swap! (:diagnostics target) into @(:diagnostics source))
+  (swap! (:body-translations target) into @(:body-translations source)))
+
+(defn- balanced-work-order
+  "Places largest jobs at the front of separate executor chunks while keeping
+  the returned order deterministic. Results are reassembled by canonical job
+  indexes, so this ordering affects scheduling only."
+  [jobs]
+  (let [jobs (vec (sort-by (juxt (comp - :weight) :kind :index) jobs))
+        chunk-size (max 1 (long (Math/ceil
+                                 (/ (double (count jobs))
+                                    (* 16.0 (concurrency/current-worker-count))))))
+        chunk-count (max 1 (long (Math/ceil (/ (double (count jobs)) chunk-size))))
+        chunks (reduce (fn [result [index job]]
+                         (update result (mod index chunk-count) conj job))
+                       (vec (repeat chunk-count []))
+                       (map-indexed vector jobs))]
+    (vec (mapcat identity chunks))))
+
 (defn emit-project!
   "Emits declaration-complete, body-blocked C# project inputs from a live model."
   [{:keys [workspace-root target discovery resolved-model configuration]}]
@@ -2492,39 +2534,132 @@
               (fn [index ^CtType type]
                 {:index index
                  :type type
-                 :weight (count (.getElements type (TypeFilter. CtElement)))}))
-             (sort-by (juxt (comp - :weight) :index))
+                 :weight (element-weight type)
+                 :member-count (+ (count (.getTypeMembers type))
+                                  (if (instance? CtEnum type)
+                                    (count (.getEnumValues ^CtEnum type))
+                                    0))}))
              vec)
+        average-root-weight (if (seq scheduled-roots)
+                              (/ (double (reduce + (map :weight scheduled-roots)))
+                                 (count scheduled-roots))
+                              0.0)
+        dominant-root
+        (let [candidate (first (sort-by (juxt (comp - :weight) :index) scheduled-roots))]
+          (when (and candidate
+                     (<= 8 (:member-count candidate))
+                     (<= (* 4.0 average-root-weight) (:weight candidate)))
+            candidate))
         worker-template
         (proxy [ThreadLocal] []
           (initialValue [] (emission-template resolved-model)))
+        emission-profile (atom {:root-count (count scheduled-roots)
+                                :average-root-weight average-root-weight
+                                :largest-root
+                                (when-let [{:keys [^CtType type weight member-count]}
+                                           (first (sort-by (juxt (comp - :weight) :index)
+                                                           scheduled-roots))]
+                                  {:name (.getQualifiedName type)
+                                   :weight weight
+                                   :member-count member-count})
+                                :dominant-root nil})
         declaration-results
-        (concurrency/mapv-ordered
-         :declaration-translation-and-emission
-         (fn [{:keys [index type]}]
-           (let [^CtType type type
-                 template (.get ^ThreadLocal worker-template)
-                 ctx (root-emission-context template configuration resolved-model occurrence-index
-                                            selected-declarations (* index 1000000))
-                 namespace (destination-namespace ctx type)
-                 relative (str (str/replace namespace "." "/") "/"
-                               (identifier (.getSimpleName type)) ".cs")
-                 file (paths/resolve-path source-root relative)
-                 node (sequence-node [(raw (str "// <auto-generated />\n#nullable "
-                                                (get-in configuration [:project :nullable])
-                                                "\nnamespace " namespace ";\n\n"))
-                                      (type-node-declaration ctx type) (raw "\n")])
-                 rendered (csharp/render node)]
-             (write-text! file (:text rendered))
-             {:index index
-              :artifact {:file (portable project-root file)
-                         :source (spoon/source-location type)
-                         :mappings (mapv #(assoc % :file (portable project-root file))
-                                         (:mappings rendered))}
-              :declarations @(:declarations ctx)
-              :diagnostics @(:diagnostics ctx)
-              :body-translations @(:body-translations ctx)}))
-         scheduled-roots)
+        (let [ordinary-results (atom [])]
+          (letfn [(emit-root!
+                    [{:keys [index type]} emit-members]
+                    (let [^CtType type type
+                          template (.get ^ThreadLocal worker-template)
+                          base-ctx (root-emission-context
+                                    template configuration resolved-model occurrence-index
+                                    selected-declarations (* index 1000000000))
+                          ctx (cond-> base-ctx emit-members (assoc :emit-members emit-members))
+                          _ (reset! (:ctx-holder template) ctx)
+                          namespace (destination-namespace ctx type)
+                          relative (str (str/replace namespace "." "/") "/"
+                                        (identifier (.getSimpleName type)) ".cs")
+                          file (paths/resolve-path source-root relative)
+                          node (sequence-node
+                                [(raw (str "// <auto-generated />\n#nullable "
+                                           (get-in configuration [:project :nullable])
+                                           "\nnamespace " namespace ";\n\n"))
+                                 (type-node-declaration ctx type) (raw "\n")])
+                          rendered (csharp/render node)]
+                      (write-text! file (:text rendered))
+                      {:index index
+                       :artifact {:file (portable project-root file)
+                                  :source (spoon/source-location type)
+                                  :mappings
+                                  (mapv #(assoc % :file (portable project-root file))
+                                        (:mappings rendered))}
+                       :declarations @(:declarations ctx)
+                       :diagnostics @(:diagnostics ctx)
+                       :body-translations @(:body-translations ctx)}))
+                  (translate-member!
+                    [root-index ^CtType owner index member]
+                    (let [template (.get ^ThreadLocal worker-template)
+                          ctx (root-emission-context
+                               template configuration resolved-model occurrence-index
+                               selected-declarations
+                               (+ (* root-index 1000000000) (* (inc index) 1000000)))
+                          member-ctx (type-body-context (assoc ctx :current-type owner) owner)
+                          node (member-node member-ctx owner member)]
+                      {:kind :member
+                       :index index
+                       :node node
+                       :ctx ctx
+                       :thread (.getName (Thread/currentThread))}))
+                  (emit-dominant-members
+                    [dominant-ctx ^CtType owner members]
+                    (let [started (System/nanoTime)
+                          root-index (:index dominant-root)
+                          member-jobs
+                          (mapv (fn [index member]
+                                  {:kind :member :index index :member member
+                                   :weight (element-weight member)})
+                                (range) members)
+                          root-jobs
+                          (->> scheduled-roots
+                               (remove #(= root-index (:index %)))
+                               (mapv #(assoc % :kind :root)))
+                          jobs (balanced-work-order (into root-jobs member-jobs))
+                          results
+                          (concurrency/mapv-ordered
+                           :root-and-member-translation
+                           (fn [{:keys [kind index member] :as job}]
+                             (case kind
+                               :root {:kind :root :index index
+                                      :result (emit-root! job nil)}
+                               :member (translate-member! root-index owner index member)))
+                           jobs)
+                          member-results (sort-by :index (filter #(= :member (:kind %)) results))
+                          roots (mapv :result (sort-by :index (filter #(= :root (:kind %)) results)))
+                          threads (->> member-results (map :thread) set sort vec)
+                          elapsed (- (System/nanoTime) started)]
+                      (reset! ordinary-results roots)
+                      (doseq [{member-ctx :ctx} member-results]
+                        (merge-emission-context! dominant-ctx member-ctx))
+                      ;; Single-worker execution runs the jobs on this same
+                      ;; thread and therefore changes its template holder.
+                      (reset! (:ctx-holder dominant-ctx) dominant-ctx)
+                      (swap! emission-profile assoc
+                             :dominant-root
+                             {:name (.getQualifiedName owner)
+                              :weight (:weight dominant-root)
+                              :member-count (count members)
+                              :member-weight (reduce + (map :weight member-jobs))
+                              :largest-member-weight (reduce max 0 (map :weight member-jobs))
+                              :worker-threads threads
+                              :worker-participation (count threads)
+                              :elapsed-millis (/ elapsed 1000000.0)})
+                      (mapv :node member-results)))]
+            (if dominant-root
+              (let [dominant-result (emit-root! dominant-root emit-dominant-members)]
+                (conj @ordinary-results dominant-result))
+              (concurrency/mapv-ordered
+               :declaration-translation-and-emission
+               #(emit-root! % nil)
+               (balanced-work-order
+                (mapv #(assoc % :kind :root) scheduled-roots))))))
         declaration-results (vec (sort-by :index declaration-results))
         declaration-artifacts (mapv :artifact declaration-results)
         ctx {:configuration configuration
@@ -2642,6 +2777,7 @@
        :project-file project-file
        :manifest-file manifest-file
        :summary summary
+       :emission-profile @emission-profile
        :diagnostics @(:diagnostics ctx)
        :artifacts artifacts
        :source-accounts accounts

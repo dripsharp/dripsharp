@@ -37,12 +37,35 @@
 
 (deftest complete-core-value-model-emission-is-zero-failure-and-stable
   (let [{:keys [first second]} (fixture/models)
-        first-emission (emit! (temp-directory) first 4)
+        first-emission (emit! (temp-directory) first 1)
         second-emission (emit! (temp-directory) second 4)
         summary (:summary first-emission)
+        first-profile (:emission-profile first-emission)
+        second-profile (:emission-profile second-emission)
         project-root (:project-root first-emission)
         manifest (edn/read-string (slurp (str (:manifest-file first-emission))))
         diagnostics (:diagnostics first-emission)]
+    (testing "the dominant core root is split deterministically across workers"
+      (is (= {:name "org.pkl.core.stdlib.base.ListNodesFactory"
+              :weight 72524
+              :member-count 96}
+             (:largest-root first-profile)
+             (:largest-root second-profile)))
+      (is (some? (:dominant-root first-profile)))
+      (is (= {:name "org.pkl.core.stdlib.base.ListNodesFactory"
+              :weight 72524
+              :member-count 95
+              :member-weight 72486
+              :largest-member-weight 1688}
+             (dissoc (:dominant-root first-profile)
+                     :worker-threads :worker-participation :elapsed-millis)))
+      (is (= 1 (get-in first-profile [:dominant-root :worker-participation])))
+      (is (< 1 (get-in second-profile [:dominant-root :worker-participation])))
+      (is (= (dissoc (:dominant-root first-profile)
+                     :worker-threads :worker-participation :elapsed-millis)
+             (dissoc (:dominant-root second-profile)
+                     :worker-threads :worker-participation :elapsed-millis))))
+
     (testing "the entire selected declaration and body closure is accounted for"
       (is (= 603 (:compilation-units summary)))
       (is (= 605 (:generated-files summary)))
