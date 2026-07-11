@@ -47,3 +47,31 @@
         diagnostics (compiler/parse-diagnostics (str line "\n" line "\n"))]
     (is (= 1 (count diagnostics)))
     (is (= :warning (:severity (first diagnostics))))))
+
+(deftest explicit-profile-is-cleanly-generated-and-built-in-release
+  (let [root (Files/createTempDirectory "vibeformer-compiler-profile"
+                                        (make-array FileAttribute 0))
+        project-file (paths/resolve-path root "Pkl.Core.csproj")
+        source-map (paths/resolve-path root "source-map.edn")
+        generated-options (atom nil)
+        command (atom nil)
+        _ (Files/writeString project-file "<Project />" (make-array OpenOption 0))
+        _ (Files/writeString source-map "{:schema-version 1 :mappings []}\n"
+                             (make-array OpenOption 0))
+        result
+        (compiler/verify-clean-build!
+         {:profile "pkl-core-value-model"
+          :generate-fn
+          (fn [options]
+            (reset! generated-options options)
+            {:destination {:package {:id "Pkl.Core"}
+                           :output {:source-map-file "source-map.edn"}}
+             :emission {:project-root root :project-file project-file}})
+          :run-command!
+          (fn [request]
+            (reset! command (:command request))
+            {:exit 0 :output ""})})]
+    (is (= {:profile "pkl-core-value-model"} @generated-options))
+    (is (= ["--configuration" "Release"]
+           (->> @command (drop-while #(not= "--configuration" %)) (take 2) vec)))
+    (is (= "Release" (:build-configuration result)))))

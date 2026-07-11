@@ -186,4 +186,6 @@
              :summary {:compilation-units 2}})})]
     (is (= ["dependency-b" "dependency-a"]
            (mapv :profile (:dependency-emissions result))))
+    (is (= ["dependency-b.edn" "dependency-a.edn"]
+           (mapv #(get-in % [:destination :file]) (:dependency-emissions result))))
     (is (= 2 (count @dependency-threads)))))

@@ -3,4 +3,6 @@
 .lsp/
 .nrepl-*
 /target/
+/validation/**/bin/
+/validation/**/obj/
 *.class

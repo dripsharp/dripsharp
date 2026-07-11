@@ -13,6 +13,13 @@
    :authors "Vibeformer"
    :tags "pkl parser vibeformer"})
 
+(def core-package
+  {:id "Pkl.Core"
+   :version "0.0.0-development"
+   :description "Disposable core package."
+   :authors "Vibeformer"
+   :tags "pkl core vibeformer"})
+
 (defn- nuspec []
   (str "<package><metadata>"
        "<id>" (:id package) "</id>"
@@ -20,6 +27,18 @@
        "<description>" (:description package) "</description>"
        "<authors>" (:authors package) "</authors>"
        "<tags>" (:tags package) "</tags>"
+       "</metadata></package>"))
+
+(defn- core-nuspec []
+  (str "<package><metadata>"
+       "<id>" (:id core-package) "</id>"
+       "<version>" (:version core-package) "</version>"
+       "<description>" (:description core-package) "</description>"
+       "<authors>" (:authors core-package) "</authors>"
+       "<tags>" (:tags core-package) "</tags>"
+       "<dependencies><group targetFramework=\"net8.0\">"
+       "<dependency id=\"Pkl.Parser\" version=\"0.0.0-development\" exclude=\"Build,Analyzers\" />"
+       "</group></dependencies>"
        "</metadata></package>"))
 
 (defn- archive! [entries]
@@ -52,3 +71,30 @@
     (testing "translator and generated-source implementation details cannot ship"
       (is (= :package-consumption-failed (:kind (ex-data error))))
       (is (= ["src/Parser.cs"] (:forbidden (ex-data error)))))))
+
+(deftest package-inspection-pins-dependency-closure-without-bundling-it
+  (let [artifact (archive! {"Pkl.Core.nuspec" (core-nuspec)
+                            "lib/net8.0/Pkl.Core.dll" "assembly"})
+        renamed (.resolve (.getParent artifact) "Pkl.Core.0.0.0-development.nupkg")
+        _ (Files/move artifact renamed (make-array java.nio.file.CopyOption 0))
+        inspection (packaging/inspect-package!
+                    renamed core-package "net8.0" "Pkl.Core"
+                    [{:id "Pkl.Parser" :version "0.0.0-development"}])]
+    (is (= [{:id "Pkl.Parser" :version "0.0.0-development"}]
+           (:dependencies inspection)))))
+
+(deftest package-inspection-rejects-a-bundled-project-dependency-assembly
+  (let [artifact (archive! {"Pkl.Core.nuspec" (core-nuspec)
+                            "lib/net8.0/Pkl.Core.dll" "assembly"
+                            "lib/net8.0/Pkl.Parser.dll" "leaked dependency"})
+        renamed (.resolve (.getParent artifact) "Pkl.Core.0.0.0-development.nupkg")
+        _ (Files/move artifact renamed (make-array java.nio.file.CopyOption 0))
+        error (try
+                (packaging/inspect-package!
+                 renamed core-package "net8.0" "Pkl.Core"
+                 [{:id "Pkl.Parser" :version "0.0.0-development"}])
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :package-consumption-failed (:kind (ex-data error))))
+    (is (= ["lib/net8.0/Pkl.Core.dll" "lib/net8.0/Pkl.Parser.dll"]
+           (:assemblies (ex-data error))))))

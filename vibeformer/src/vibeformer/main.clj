@@ -14,13 +14,17 @@
 
 (defn -main
   [& args]
-  (if-not (or (contains? #{["generate"] ["verify"] ["package"] ["differential"]} (vec args))
-              (and (= 2 (count args)) (= "generate" (first args))))
-    (fail! "Usage: clojure -M:run generate [pkl-parser|pkl-core-value-model]|verify|package|differential" 2)
+  (if-not (or (contains? #{["generate"] ["verify"] ["pack"] ["package"] ["differential"]}
+                         (vec args))
+              (and (= 2 (count args))
+                   (contains? #{"generate" "verify" "pack"} (first args))))
+    (fail! "Usage: clojure -M:run generate|verify|pack [pkl-parser|pkl-core-value-model]|package|differential" 2)
     (try
       (case (first args)
         "generate" (harness/generate! {:profile (or (second args) "pkl-parser")})
-        "verify" (compiler/verify-clean-build!)
+        "verify" (compiler/verify-clean-build! {:profile (or (second args) "pkl-parser")})
+        "pack" (packaging/pack-verified-profile!
+                {:profile (or (second args) "pkl-parser")})
         "package" (packaging/verify-package-consumption!)
         "differential" (differential/verify-differential!))
       (catch ExceptionInfo error

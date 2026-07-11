@@ -65,34 +65,40 @@
   "Regenerates all disposable output and then builds exactly that fresh project.
   Compiler failures retain correlations to live-Spoon source mappings."
   ([] (verify-clean-build! {}))
-  ([{:keys [generate-fn run-command!]
+  ([{:keys [profile build-configuration generate-fn run-command!]
      :or {generate-fn harness/generate! run-command! process/run!}}]
-   (let [generation (generate-fn)
+   (let [build-configuration (or build-configuration "Release")
+         generation (if profile
+                      (generate-fn {:profile profile})
+                      (generate-fn))
          emission (:emission generation)
          ^Path project-root (:project-root emission)
          project-file (:project-file emission)
+         package-id (get-in generation [:destination :package :id])
          source-map-file (paths/resolve-path
                           project-root
                           (get-in generation [:destination :output :source-map-file]))
          source-map (edn/read-string (slurp (str source-map-file)))
          command ["dotnet" "build" (str project-file) "--nologo"
+                  "--configuration" build-configuration
                   "--verbosity:minimal" "--no-incremental"
                   "-p:RestoreIgnoreFailedSources=true" "-warnaserror"]]
      (try
        (let [result (run-command! {:command command :directory project-root})
              diagnostics (parse-diagnostics (:output result))]
          (when (seq diagnostics)
-           (throw (ex-info "Clean pkl-parser build emitted compiler diagnostics"
+           (throw (ex-info (str "Clean " package-id " build emitted compiler diagnostics")
                            {:kind :compiler-diagnostics
                             :diagnostics (map-diagnostics project-root source-map diagnostics)
                             :output (:output result)})))
-         (println "Clean pkl-parser compilation: 0 warnings, 0 errors")
-         {:generation generation :build result :diagnostics []})
+         (println (str "Clean " package-id " compilation: 0 warnings, 0 errors"))
+         {:generation generation :build result :build-configuration build-configuration
+          :diagnostics []})
        (catch ExceptionInfo error
          (let [data (ex-data error)]
            (if (= :command-failed (:kind data))
              (let [diagnostics (parse-diagnostics (:output data))]
-               (throw (ex-info "Clean pkl-parser compilation failed"
+               (throw (ex-info (str "Clean " package-id " compilation failed")
                                (assoc data
                                       :kind :compiler-build-failed
                                       :diagnostics (map-diagnostics project-root source-map diagnostics))

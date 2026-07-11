@@ -8,7 +8,7 @@
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files Path StandardCopyOption]
            [java.security MessageDigest]
-           [java.util.zip ZipFile]))
+           [java.util.zip ZipEntry ZipFile ZipOutputStream]))
 
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind :package-consumption-failed))))
@@ -40,56 +40,120 @@
 (defn- package-artifact! [^Path feed package-id version]
   (let [packages (filter #(and (str/ends-with? (str %) ".nupkg")
                                (not (str/ends-with? (str %) ".snupkg")))
-                         (regular-files feed))]
-    (when-not (= 1 (count packages))
-      (fail! "Packing must produce exactly one NuGet package"
-             {:feed (str feed) :artifacts (mapv str packages)}))
-    (let [artifact (first packages)
-          expected (str/lower-case (str package-id "." version ".nupkg"))]
-      (when-not (= expected (str/lower-case (str (.getFileName artifact))))
-        (fail! "NuGet artifact name does not match configured identity"
-               {:expected expected :actual (str (.getFileName artifact))}))
-      artifact)))
+                         (regular-files feed))
+        expected (str/lower-case (str package-id "." version ".nupkg"))
+        matches (filter #(= expected (str/lower-case (str (.getFileName ^Path %))))
+                        packages)]
+    (when-not (= 1 (count matches))
+      (fail! "NuGet feed does not contain exactly one artifact for the configured identity"
+             {:feed (str feed) :expected expected :artifacts (mapv str packages)}))
+    (first matches)))
 
 (defn- zip-text [^ZipFile archive entry-name]
   (when-let [entry (.getEntry archive entry-name)]
     (with-open [input (.getInputStream archive entry)]
       (String. (.readAllBytes input) StandardCharsets/UTF_8))))
 
+(def ^:private core-properties-prefix
+  "package/services/metadata/core-properties/")
+
+(def ^:private canonical-core-properties
+  (str core-properties-prefix "core-properties.psmdcp"))
+
+(defn- canonical-relationships [bytes]
+  (let [next-id (atom 0)]
+    (-> (String. bytes StandardCharsets/UTF_8)
+        (str/replace #"/package/services/metadata/core-properties/[^\"]+\.psmdcp"
+                     (str "/" canonical-core-properties))
+        (str/replace #"Id=\"[^\"]+\""
+                     (fn [_] (str "Id=\"R" (swap! next-id inc) "\"")))
+        (.getBytes StandardCharsets/UTF_8))))
+
+(defn- canonicalize-package!
+  "Rewrites NuGet's random OPC relationship identifiers and core-properties
+  filename, then emits a stable entry order and timestamps. Package payload
+  bytes and declared package metadata are otherwise preserved."
+  [source ^Path destination]
+  (with-open [archive (ZipFile. (str source))]
+    (let [entries
+          (->> (enumeration-seq (.entries archive))
+               (remove #(.isDirectory ^java.util.zip.ZipEntry %))
+               (map (fn [^java.util.zip.ZipEntry entry]
+                      (let [name (.getName entry)
+                            bytes (with-open [input (.getInputStream archive entry)]
+                                    (.readAllBytes input))]
+                        [(if (str/starts-with? name core-properties-prefix)
+                           canonical-core-properties
+                           name)
+                         (if (= "_rels/.rels" name)
+                           (canonical-relationships bytes)
+                           bytes)])))
+               (into (sorted-map)))]
+      (Files/createDirectories (.getParent destination)
+                               (make-array java.nio.file.attribute.FileAttribute 0))
+      (with-open [output (ZipOutputStream. (Files/newOutputStream
+                                            destination
+                                            (make-array java.nio.file.OpenOption 0)))]
+        (doseq [[name bytes] entries]
+          (let [entry (doto (ZipEntry. name) (.setTime 0))]
+            (.putNextEntry output entry)
+            (.write output bytes)
+            (.closeEntry output))))
+      destination)))
+
 (defn inspect-package!
   "Checks the package payload and metadata without extracting generated sources."
-  [artifact {:keys [id version description authors tags]} target-framework assembly-name]
-  (with-open [archive (ZipFile. (str artifact))]
-    (let [entries (->> (enumeration-seq (.entries archive))
-                       (map #(.getName %))
-                       sort
-                       vec)
-          nuspec-name (str id ".nuspec")
-          assembly-entry (str "lib/" target-framework "/" assembly-name ".dll")
-          nuspec (zip-text archive nuspec-name)
-          forbidden (filterv #(or (re-find #"(?i)(^|/)(src|test|translator)(/|$)" %)
-                                  (re-find #"(?i)\.(cs|clj|edn|java|kt)$" %)
-                                  (re-find #"(?i)(source-map|diagnostics|generation-manifest)" %))
-                             entries)]
-      (when-not (some #{assembly-entry} entries)
-        (fail! "NuGet package does not contain the generated parser assembly"
-               {:required assembly-entry :entries entries}))
-      (when-not nuspec
-        (fail! "NuGet package does not contain its nuspec metadata"
-               {:required nuspec-name :entries entries}))
-      (doseq [[element value] [["id" id]
-                               ["version" version]
-                               ["description" description]
-                               ["authors" authors]
-                               ["tags" tags]]]
-        (when-not (str/includes? nuspec (str "<" element ">" (xml-escape value)
-                                            "</" element ">"))
-          (fail! (str "NuGet metadata is missing configured " element)
-                 {:element element :value value :nuspec nuspec})))
-      (when (seq forbidden)
-        (fail! "NuGet package contains translator, test, or generated-source internals"
-               {:forbidden forbidden :entries entries}))
-      {:entries entries :assembly-entry assembly-entry :nuspec nuspec})))
+  ([artifact package target-framework assembly-name]
+   (inspect-package! artifact package target-framework assembly-name []))
+  ([artifact {:keys [id version description authors tags]} target-framework assembly-name
+    expected-dependencies]
+   (with-open [archive (ZipFile. (str artifact))]
+     (let [entries (->> (enumeration-seq (.entries archive))
+                        (map #(.getName %))
+                        sort
+                        vec)
+           nuspec-name (str id ".nuspec")
+           assembly-entry (str "lib/" target-framework "/" assembly-name ".dll")
+           library-assemblies (filterv #(re-matches
+                                         (re-pattern
+                                          (str "lib/" (java.util.regex.Pattern/quote target-framework)
+                                               "/[^/]+\\.dll"))
+                                         %)
+                                       entries)
+           nuspec (zip-text archive nuspec-name)
+           dependencies (when nuspec
+                          (->> (re-seq #"<dependency id=\"([^\"]+)\" version=\"([^\"]+)\"[^>]*/>"
+                                       nuspec)
+                               (mapv (fn [[_ dependency-id dependency-version]]
+                                       {:id dependency-id :version dependency-version}))))
+           expected-dependencies (mapv #(select-keys % [:id :version]) expected-dependencies)
+           forbidden (filterv #(or (re-find #"(?i)(^|/)(src|test|translator)(/|$)" %)
+                                   (re-find #"(?i)\.(cs|clj|edn|java|kt|csproj)$" %)
+                                   (re-find #"(?i)(source-map|diagnostics|generation-manifest)" %))
+                              entries)]
+       (when-not (= [assembly-entry] library-assemblies)
+         (fail! "NuGet package library payload does not contain exactly its configured assembly"
+                {:required assembly-entry :assemblies library-assemblies :entries entries}))
+       (when-not nuspec
+         (fail! "NuGet package does not contain its nuspec metadata"
+                {:required nuspec-name :entries entries}))
+       (doseq [[element value] [["id" id]
+                                ["version" version]
+                                ["description" description]
+                                ["authors" authors]
+                                ["tags" tags]]]
+         (when-not (str/includes? nuspec (str "<" element ">" (xml-escape value)
+                                             "</" element ">"))
+           (fail! (str "NuGet metadata is missing configured " element)
+                  {:element element :value value :nuspec nuspec})))
+       (when-not (= expected-dependencies dependencies)
+         (fail! "NuGet package dependencies do not match the generated project dependency closure"
+                {:expected expected-dependencies :actual dependencies :nuspec nuspec}))
+       (when (seq forbidden)
+         (fail! "NuGet package contains translator, test, or generated-source internals"
+                {:forbidden forbidden :entries entries}))
+       {:entries entries :assembly-entry assembly-entry :nuspec nuspec
+        :dependencies dependencies}))))
 
 (defn- hex [bytes]
   (apply str (map #(format "%02x" (bit-and 0xff %)) bytes)))
@@ -119,7 +183,7 @@
        "  </ItemGroup>\n"
        "</Project>\n"))
 
-(defn- nuget-config [^Path feed package-id]
+(defn- nuget-config [^Path feed package-ids]
   (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
        "<configuration>\n"
        "  <packageSources>\n"
@@ -129,7 +193,8 @@
        "  </packageSources>\n"
        "  <packageSourceMapping>\n"
        "    <packageSource key=\"vibeformer-local\">\n"
-       "      <package pattern=\"" (xml-escape package-id) "\" />\n"
+       (apply str (for [package-id (sort package-ids)]
+                    (str "      <package pattern=\"" (xml-escape package-id) "\" />\n")))
        "    </packageSource>\n"
        "    <packageSource key=\"nuget.org\">\n"
        "      <package pattern=\"Microsoft.*\" />\n"
@@ -155,28 +220,149 @@
              {:library-target library-target :installed versions :output (:output result)}))
     (str "net" (first selected) "." (second selected))))
 
+(defn- package-specs [generation]
+  (let [dependency-specs
+        (mapv (fn [{:keys [profile destination] :as emission}]
+                (when-not destination
+                  (fail! "Dependency emission is missing its destination configuration"
+                         {:profile profile :emission (keys emission)}))
+                {:profile profile :emission emission :destination destination
+                 :expected-dependencies []})
+              (:dependency-emissions generation))
+        expected-dependencies (mapv #(get-in % [:destination :package]) dependency-specs)]
+    (conj dependency-specs
+          {:profile (get-in generation [:generation-profile :profile])
+           :emission (:emission generation)
+           :destination (:destination generation)
+           :expected-dependencies expected-dependencies
+           :primary? true})))
+
+(defn- pack-project! [run-command! build-configuration ^Path output
+                      {:keys [emission]}]
+  (let [project-root (:project-root emission)
+        project-file (:project-file emission)]
+    (run-command! {:command ["dotnet" "pack" (str project-file)
+                             "--nologo" "--verbosity:minimal"
+                             "--configuration" build-configuration
+                             "--no-build" "--no-restore" "--output" (str output)]
+                   :directory project-root})))
+
+(defn- inspect-embedded-resources!
+  [run-command! root artifact assembly-entry expected]
+  (let [inspector (paths/resolve-path root "vibeformer" "validation"
+                                      "package-inspector" "PackageInspector.csproj")
+        result (run-command!
+                {:command (into ["dotnet" "run" "--project" (str inspector)
+                                 "--configuration" "Release" "--verbosity" "quiet"
+                                 "--" (str artifact) assembly-entry]
+                                expected)
+                 :directory root})]
+    (when-not (str/includes? (:output result)
+                             (str "Embedded resource inspection passed: " (count expected)))
+      (fail! "Package resource inspector did not report the expected manifest"
+             {:artifact (str artifact) :expected expected :output (:output result)}))
+    result))
+
+(defn pack-verified-profile!
+  "Cleanly generates and verifies a profile, then packs its complete declared
+  dependency closure twice and publishes byte-identical inspected artifacts to
+  a fresh local feed. This does not perform independent package consumption."
+  ([] (pack-verified-profile! {}))
+  ([{:keys [workspace-root profile verify-fn run-command! inspect-resources-fn]
+     :or {verify-fn compiler/verify-clean-build!
+          run-command! process/run!
+          inspect-resources-fn inspect-embedded-resources!}}]
+   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+         profile (or profile "pkl-parser")
+         verification (verify-fn {:profile profile :build-configuration "Release"})
+         generation (:generation verification)
+         build-configuration (:build-configuration verification)
+         specs (package-specs generation)
+         proof-root (harness/clean-directory!
+                     (paths/resolve-path root "vibeformer" "target" "package-proof"))
+         first-output (doto (paths/resolve-path proof-root "first-pack")
+                        (Files/createDirectories
+                         (make-array java.nio.file.attribute.FileAttribute 0)))
+         second-output (doto (paths/resolve-path proof-root "second-pack")
+                         (Files/createDirectories
+                          (make-array java.nio.file.attribute.FileAttribute 0)))
+         first-canonical (doto (paths/resolve-path proof-root "first-canonical")
+                           (Files/createDirectories
+                            (make-array java.nio.file.attribute.FileAttribute 0)))
+         second-canonical (doto (paths/resolve-path proof-root "second-canonical")
+                            (Files/createDirectories
+                             (make-array java.nio.file.attribute.FileAttribute 0)))
+         feed (doto (paths/resolve-path proof-root "feed")
+                (Files/createDirectories
+                 (make-array java.nio.file.attribute.FileAttribute 0)))]
+     (doseq [spec specs]
+       (pack-project! run-command! build-configuration first-output spec)
+       (pack-project! run-command! build-configuration second-output spec))
+     (let [packages
+           (mapv
+            (fn [{:keys [profile emission destination expected-dependencies primary?]}]
+              (let [{:keys [id version] :as package} (:package destination)
+                    target-framework (get-in destination [:project :target-framework])
+                    assembly-name (get-in destination [:project :assembly-name])
+                    raw-first (package-artifact! first-output id version)
+                    raw-second (package-artifact! second-output id version)
+                    filename (str (.getFileName ^Path raw-first))
+                    first-artifact (canonicalize-package!
+                                    raw-first (paths/resolve-path first-canonical filename))
+                    second-artifact (canonicalize-package!
+                                     raw-second (paths/resolve-path second-canonical filename))
+                    first-hash (sha256 first-artifact)
+                    second-hash (sha256 second-artifact)]
+                (when-not (= first-hash second-hash)
+                  (fail! "Repeated packing of the same verified build was not byte deterministic"
+                         {:profile profile :first first-hash :second second-hash}))
+                (let [artifact (paths/resolve-path feed (str (.getFileName ^Path first-artifact)))
+                      _ (Files/copy first-artifact artifact
+                                    (into-array StandardCopyOption
+                                                [StandardCopyOption/REPLACE_EXISTING]))
+                      inspection (inspect-package! artifact package target-framework
+                                                   assembly-name expected-dependencies)
+                      expected-resources (->> (:resource-artifacts emission)
+                                              (map :logical-name) sort vec)
+                      resource-proof (inspect-resources-fn
+                                      run-command! root artifact
+                                      (:assembly-entry inspection) expected-resources)]
+                  {:profile profile :primary? primary? :artifact artifact
+                   :identity {:id id :version version :sha256 first-hash
+                              :file (str (.getFileName ^Path artifact))}
+                   :inspection inspection :resource-proof resource-proof
+                   :resources expected-resources})))
+            specs)
+           primary (first (filter :primary? packages))
+           summary {:profile profile
+                    :packages (mapv :identity packages)
+                    :resource-counts (into (sorted-map)
+                                           (map (juxt #(get-in % [:identity :id])
+                                                      #(count (:resources %))) packages))}]
+       (println "Deterministic dependency-closed NuGet packing passed:" (pr-str summary))
+       {:verification verification :proof-root proof-root :feed feed :packages packages
+        :artifact (:artifact primary) :identity (:identity primary)
+        :inspection (:inspection primary) :summary summary}))))
+
 (defn verify-package-consumption!
   "Runs clean generation/compilation, packs it, and proves isolated consumption."
   ([] (verify-package-consumption! {}))
-  ([{:keys [workspace-root verify-fn run-command!]
+  ([{:keys [workspace-root verify-fn run-command! pack-fn]
      :or {verify-fn compiler/verify-clean-build!
+          pack-fn pack-verified-profile!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         verification (verify-fn)
+         package-proof (pack-fn {:workspace-root root :profile "pkl-parser"
+                                 :verify-fn verify-fn :run-command! run-command!})
+         verification (:verification package-proof)
          generation (:generation verification)
          configuration (:destination generation)
-         project-root (get-in generation [:emission :project-root])
-         project-file (get-in generation [:emission :project-file])
-         {:keys [id version] :as package} (:package configuration)
+         {:keys [id version]} (:package configuration)
          target-framework (get-in configuration [:project :target-framework])
          consumer-target-framework
          (installed-runtime-target! run-command! root target-framework)
-         assembly-name (get-in configuration [:project :assembly-name])
-         proof-root (harness/clean-directory!
-                     (paths/resolve-path root "vibeformer" "target" "package-proof"))
-         feed (doto (paths/resolve-path proof-root "feed")
-                (Files/createDirectories
-                 (make-array java.nio.file.attribute.FileAttribute 0)))
+         proof-root (:proof-root package-proof)
+         feed (:feed package-proof)
          consumer (doto (paths/resolve-path proof-root "consumer")
                     (Files/createDirectories
                      (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -191,16 +377,11 @@
      (when-not (paths/regular-file? fixture-source)
        (fail! "Independent package-consumer source is missing"
               {:path (str fixture-source)}))
-     (run-command! {:command ["dotnet" "pack" (str project-file)
-                              "--nologo" "--verbosity:minimal"
-                              "--configuration" "Debug" "--no-build" "--no-restore"
-                              "--output" (str feed)]
-                    :directory project-root})
-     (let [artifact (package-artifact! feed id version)
-           inspection (inspect-package! artifact package target-framework assembly-name)]
+     (let [artifact (:artifact package-proof)
+           inspection (:inspection package-proof)]
        (write-text! consumer-project-file
                     (consumer-project id version consumer-target-framework))
-       (write-text! nuget-config-file (nuget-config feed id))
+       (write-text! nuget-config-file (nuget-config feed [id]))
        (Files/copy fixture-source consumer-source
                    (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
        (run-command! {:command ["dotnet" "restore" (str consumer-project-file)

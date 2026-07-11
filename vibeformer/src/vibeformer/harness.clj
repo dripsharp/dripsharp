@@ -144,7 +144,8 @@
                                          :discovery dependency-discovery
                                          :resolved-model dependency-model
                                          :configuration dependency-destination})
-                       :profile dependency-name)))
+                       :profile dependency-name
+                       :destination dependency-destination)))
             (:dependency-profiles generation-profile)))
          emission (emit-project-fn {:workspace-root root
                                     :target target
