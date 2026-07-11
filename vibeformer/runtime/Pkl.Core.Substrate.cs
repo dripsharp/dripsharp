@@ -573,6 +573,7 @@ namespace Pkl.Core.Runtime.Polyglot
         }
         public void Enter() { }
         public void Leave() { }
+        public void Close() => Close(false);
         public void Close(bool cancelIfExecuting)
         {
             if (!initialized) return;
@@ -888,7 +889,11 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         private Node? parent;
         public virtual SourceSection? GetSourceSection() => null;
         internal Node? GetParent() => parent;
-        internal T Insert<T>(T child) where T : Node { child.parent = this; return child; }
+        internal T? Insert<T>(T? child) where T : Node
+        {
+            if (child is not null) child.parent = this;
+            return child;
+        }
         internal RootNode? GetRootNode()
         {
             Node? current = this;
@@ -1188,20 +1193,27 @@ namespace Pkl.Core.Runtime.Truffle.api
 
     public static class TruffleLanguage
     {
-        private static readonly System.Threading.AsyncLocal<Dictionary<Type, object>?> Contexts = new();
+        private static readonly System.Threading.AsyncLocal<Dictionary<Type, IReadOnlyList<object>>?> Contexts = new();
         internal static void InstallContext(Type languageType, object context)
         {
             var contexts = Contexts.Value is { } existing
-                ? new Dictionary<Type, object>(existing)
-                : new Dictionary<Type, object>();
-            contexts[languageType] = context;
+                ? new Dictionary<Type, IReadOnlyList<object>>(existing)
+                : new Dictionary<Type, IReadOnlyList<object>>();
+            var stack = contexts.TryGetValue(languageType, out var current)
+                ? current.ToList()
+                : new List<object>();
+            stack.Add(context);
+            contexts[languageType] = stack;
             Contexts.Value = contexts;
         }
         internal static void RemoveContext(Type languageType)
         {
             if (Contexts.Value is not { } existing) return;
-            var contexts = new Dictionary<Type, object>(existing);
-            contexts.Remove(languageType);
+            var contexts = new Dictionary<Type, IReadOnlyList<object>>(existing);
+            if (contexts.TryGetValue(languageType, out var current) && current.Count > 1)
+                contexts[languageType] = current.Take(current.Count - 1).ToList();
+            else
+                contexts.Remove(languageType);
             Contexts.Value = contexts;
         }
         public sealed class Env
@@ -1229,8 +1241,8 @@ namespace Pkl.Core.Runtime.Truffle.api
             internal static ContextReference<TContext> Create(Type languageType) => new(languageType);
             internal static ContextReference<T> Create<TLanguage, T>(Type languageType) where T : class => new(languageType);
             internal TContext Get(Node? node) =>
-                Contexts.Value is { } contexts && contexts.TryGetValue(languageType, out var context)
-                    ? (TContext)context
+                Contexts.Value is { } contexts && contexts.TryGetValue(languageType, out var stack)
+                    ? (TContext)stack[^1]
                     : throw new InvalidOperationException("Pkl context has not been installed for this execution.");
         }
     }

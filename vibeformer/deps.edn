@@ -4,8 +4,10 @@
         org.jetbrains.kotlin/kotlin-compiler-embeddable {:mvn/version "2.2.21"}}
  :aliases
  {:run
-  {:main-opts ["-m" "vibeformer.main"]}
+  {:jvm-opts ["-Xmx8g"]
+   :main-opts ["-m" "vibeformer.main"]}
 
   :test
-  {:extra-paths ["test"]
+  {:jvm-opts ["-Xmx8g"]
+   :extra-paths ["test"]
    :main-opts ["-m" "vibeformer.test-runner"]}}}

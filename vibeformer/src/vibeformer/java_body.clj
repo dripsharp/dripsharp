@@ -24,6 +24,7 @@
            [spoon.reflect.reference CtCatchVariableReference CtExecutableReference
             CtFieldReference CtLocalVariableReference CtPackageReference
             CtParameterReference CtTypeParameterReference CtTypeReference]
+           [spoon.reflect.reference CtWildcardReference]
            [spoon.reflect.visitor.filter TypeFilter]))
 
 (defn- raw [value] (csharp/raw (str value)))
@@ -134,9 +135,9 @@
     (null-forgiven node)))
 
 (defn- wrap-casts [services children ^CtExpression expression node]
-  (if (and (instance? CtInvocation expression)
-           (= "subList" (some-> ^CtInvocation expression .getExecutable .getSimpleName))
-           (= 1 (count (.getTypeCasts expression)))
+  (if (and (= 1 (count (.getTypeCasts expression)))
+           (= "java.util.List"
+              (.getQualifiedName ^CtTypeReference (first (.getTypeCasts expression))))
            (= 1 (count (.getActualTypeArguments ^CtTypeReference
                                                 (first (.getTypeCasts expression))))))
     (invoke
@@ -345,6 +346,9 @@
 (defn- string-expression? [^CtExpression expression]
   (= "java.lang.String" (some-> expression .getType .getQualifiedName)))
 
+(defn- pclass-info-expression? [^CtExpression expression]
+  (= "org.pkl.core.PClassInfo" (some-> expression .getType .getQualifiedName)))
+
 (defn- binary-node [services ^CtBinaryOperator element children]
   (let [kind (str (.getKind element))
         left-expression (.getLeftHandOperand element)
@@ -357,6 +361,14 @@
     (cond
       (= kind "INSTANCEOF")
       (csharp/binary "is" 40 left right)
+
+      (and (contains? #{"EQ" "NE"} kind)
+           (pclass-info-expression? left-expression)
+           (pclass-info-expression? right-expression))
+      (let [equals (invoke (raw "global::System.Object.Equals")
+                           [(invoke (member left "AsObject") [])
+                            (invoke (member right "AsObject") [])])]
+        (if (= kind "NE") (csharp/prefix "!" equals) equals))
 
       (and (contains? #{"EQ" "NE"} kind)
            (not (or (primitive-expression? left-expression)
@@ -2005,17 +2017,30 @@
                                                      (non-null-node expression node)
                                                      node)]
                                           (if-let [return-type (generic-invariant-return-type element)]
-                                            (if (and (instance? CtInvocation expression)
-                                                     (= "subList" (some-> ^CtInvocation expression
-                                                                          .getExecutable .getSimpleName))
-                                                     (= 1 (count (.getActualTypeArguments return-type))))
+                                            (cond
+                                              (and (= "org.pkl.core.PClassInfo"
+                                                      (.getQualifiedName ^CtTypeReference return-type))
+                                                   (= 1 (count (.getActualTypeArguments return-type)))
+                                                   (instance? CtWildcardReference
+                                                              (first (.getActualTypeArguments return-type)))
+                                                   (= "org.pkl.core.PClassInfo"
+                                                      (some-> expression .getType .getQualifiedName)))
+                                              (invoke (member node "AsObject") [])
+
+                                              (and (instance? CtInvocation expression)
+                                                   (= "subList" (some-> ^CtInvocation expression
+                                                                        .getExecutable .getSimpleName))
+                                                   (= 1 (count (.getActualTypeArguments return-type))))
                                               (invoke
                                                (csharp/generic-name
                                                 (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
                                                 [((:type-node services)
                                                   (first (.getActualTypeArguments return-type)))])
                                                [node])
-                                              (sequence-node [(raw "((") ((:type-node services) return-type)
+
+                                              :else
+                                              (sequence-node [(raw "((")
+                                                              ((:type-node services) return-type)
                                                               (raw ")((object)(") node (raw ")))!")]))
                                             node))]))
                                     (raw ";")])})}

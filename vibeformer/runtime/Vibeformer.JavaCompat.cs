@@ -226,7 +226,18 @@ internal static class JavaCompat
                ?? value.ToString() ?? string.Empty;
     }
 
-    internal static int EnumOrdinal(object value) => Convert.ToInt32(value, CultureInfo.InvariantCulture);
+    internal static int EnumOrdinal(object value)
+    {
+        var type = value.GetType();
+        if (type.IsEnum) return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+        var constants = type.GetFields(flags)
+            .Where(field => type.IsAssignableFrom(field.FieldType))
+            .OrderBy(field => field.MetadataToken)
+            .ToArray();
+        var ordinal = Array.FindIndex(constants, field => ReferenceEquals(field.GetValue(null), value));
+        return ordinal >= 0 ? ordinal : throw new ArgumentException("Value is not a declared enum constant", nameof(value));
+    }
 
     internal static int ParseInt(string value) => int.Parse(value, CultureInfo.InvariantCulture);
 
@@ -769,8 +780,8 @@ internal static class JavaCompat
 
     internal static IList<T> SubList<T>(IEnumerable<T> values, int fromIndex, int toIndex) =>
         new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
-    internal static IList<T> CastList<T>(IEnumerable values) =>
-        values.Cast<object?>().Select(value => (T)value!).ToList();
+    internal static IList<T> CastList<T>(object values) =>
+        ((IEnumerable)values).Cast<object?>().Select(value => (T)value!).ToList();
 
     internal static T[] CopyOf<T>(T[] source, int length)
     {

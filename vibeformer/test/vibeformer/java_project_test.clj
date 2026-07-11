@@ -107,6 +107,9 @@
         (is (some #(str/includes? % "global::Vibeformer.Runtime.JavaCompat.SubList")
                   sources))
         (is (some #(str/includes? %
+                                 "JavaCompat.CastList<global::Pkl.Parser.Syntax.Identifier>(base.children)")
+                  sources))
+        (is (some #(str/includes? %
                                  "public abstract T Accept<T>(global::Pkl.Parser.ParserVisitor<T> visitor);")
                   sources))
         (is (some #(str/includes? % "public virtual string Text(char[] source)")

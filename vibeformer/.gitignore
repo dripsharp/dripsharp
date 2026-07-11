@@ -3,6 +3,7 @@
 .lsp/
 .nrepl-*
 /target/
+/validation-output/
 /validation/**/bin/
 /validation/**/obj/
 *.class

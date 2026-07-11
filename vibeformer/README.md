@@ -95,9 +95,15 @@ reference or access to generated source. The default profile exercises the
 public parser package; `pkl-core-value-model` exercises the packed evaluator and
 value-model surface plus its exact package dependency on `Pkl.Parser`.
 
-`differential` performs the complete package gate, separately builds and runs
-the pinned upstream JVM parser as an oracle, then runs a package-only .NET probe
-over all 940 LanguageSnippetTests inputs and the upstream lexer/span edge cases.
-It compares normalized public tokens, syntax trees and ordering, spans, and
-diagnostics, and deliberately perturbs an oracle result to prove mismatches are
-detected.
+`differential` performs both complete package gates. It separately builds and
+runs the pinned upstream JVM parser as an oracle, then runs a package-only .NET
+probe over all 940 LanguageSnippetTests inputs and the upstream lexer/span edge
+cases. It retains that complete parser proof, then independently compares the
+packaged Pkl.Core evaluator and value model with a separate JVM oracle across
+module and nested-object export, expression evaluation, output-value export,
+normalized syntax/type/evaluation errors, `Duration`, `DataSize`, `Pair`,
+`PNull`, and `ModuleSource` behavior. Neither probe loads generated sources or
+shares runtime state with its oracle. Both comparisons deliberately perturb an
+oracle result to prove mismatches are detected. Proof outputs are retained under
+`validation-output/differential-proof` even while later generation cleans the
+disposable `target` tree.

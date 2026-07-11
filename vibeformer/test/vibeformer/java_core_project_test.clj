@@ -73,13 +73,13 @@
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 29086 (:declarations summary)))
+      (is (= 29091 (:declarations summary)))
       (is (= {:constructor 1123
               :enum-value 77
-              :field 3426
-              :initializer 3
-              :method 8665
-              :parameter 13418
+              :field 3427
+              :initializer 4
+              :method 8666
+              :parameter 13420
               :record-component 131
               :type 2098
               :type-parameter 145}
@@ -89,17 +89,17 @@
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 10393 (:executable-roots summary)))
+      (is (= 10396 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 425100
+      (is (= {:semantic 425312
               :fallback 0
-              :visited 985224
+              :visited 985691
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 560124
+              :structural 560379
               :blocked 0
-              :covered 985224}
+              :covered 985691}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
