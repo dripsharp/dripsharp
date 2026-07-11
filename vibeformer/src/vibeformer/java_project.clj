@@ -87,6 +87,13 @@
                        (get-in configuration [:project :nullable]))
     (destination-error "Destination nullable setting must be enable or disable"
                        {:nullable (get-in configuration [:project :nullable])}))
+  (when-not (or (nil? (get-in configuration [:project :define-constants]))
+                (and (vector? (get-in configuration [:project :define-constants]))
+                     (every? #(and (string? %)
+                                   (re-matches #"[A-Za-z_][A-Za-z0-9_]*" %))
+                             (get-in configuration [:project :define-constants]))))
+    (destination-error "Destination define constants must be C# identifiers"
+                       {:define-constants (get-in configuration [:project :define-constants])}))
   (when-not (and (map? (:namespaces configuration))
                  (every? #(and (string? %) (not (str/blank? %)))
                          (mapcat identity (:namespaces configuration))))
@@ -255,9 +262,18 @@
                  (str "global::" (destination-namespace ctx declaration) "."))
         owners (butlast relative)
         leaf (last relative)]
-    (str prefix
-         (str/join "." (concat (map raw-generic-segment owners)
-                                [(pascal (.getSimpleName ^CtType leaf))])))))
+    (if (and (.getDeclaringType declaration)
+             (str/starts-with? (.getQualifiedName declaration)
+                               "org.pkl.core.util.paguro.RrbTree$"))
+      ;; Java's RRB helper types are static nested declarations and therefore
+      ;; do not capture RrbTree<E>.  C# nested types do capture their generic
+      ;; owner, so select one stable object-closed owner at every reference.
+      (str "global::" (destination-namespace ctx declaration) ".RrbTree<object>."
+           (str/join "." (concat (map raw-generic-segment (rest (butlast declarations)))
+                                  [(pascal (.getSimpleName ^CtType leaf))])))
+      (str prefix
+           (str/join "." (concat (map raw-generic-segment owners)
+                                  [(pascal (.getSimpleName ^CtType leaf))]))))))
 
 (defn- occurrence! [ctx ^CtElement element expected-kind]
   (let [occurrence (.get ^IdentityHashMap (:occurrence-index ctx) element)]
@@ -363,7 +379,7 @@
    "java.io.Serial" ["object" :dotnet.annotation/compile-time-metadata]
    "java.net.URI" ["global::System.Uri" :dotnet.type/uri]
    "java.net.URL" ["global::System.Uri" :dotnet.type/uri]
-   "java.net.ConnectException" ["global::System.Net.Http.HttpRequestException" :dotnet.type/http-request-exception]
+   "java.net.ConnectException" ["global::System.Net.Sockets.SocketException" :dotnet.type/socket-exception]
    "java.net.UnknownHostException" ["global::System.Net.Sockets.SocketException" :dotnet.type/socket-exception]
    "java.net.Inet4Address" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
    "java.net.Inet6Address" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
@@ -422,7 +438,7 @@
    "java.nio.file.FileVisitOption" ["object" :dotnet.type/file-visit-option-marker]
    "java.nio.file.attribute.FileAttribute" ["object" :dotnet.type/file-attribute-marker]
    "java.nio.file.Files" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
-   "java.nio.file.DirectoryStream" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
+   "java.nio.file.DirectoryStream" ["global::Vibeformer.Runtime.JavaDirectoryStream" :dotnet.type/directory-stream]
    "java.nio.file.DirectoryStream$Filter" ["global::System.Predicate" :dotnet.type/predicate]
    "java.nio.file.FileStore" ["global::System.IO.DriveInfo" :dotnet.type/drive-info]
    "java.nio.file.FileSystem" ["global::Pkl.Core.Runtime.JavaFileSystem" :pkl-core.type/file-system]
@@ -468,7 +484,7 @@
    "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary" :dotnet.type/sorted-dictionary]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet" :dotnet.type/sorted-set]
    "java.util.Map$Entry" ["global::System.Collections.Generic.KeyValuePair" :dotnet.type/map-entry]
-   "java.util.Comparator" ["global::System.Collections.Generic.IComparer" :dotnet.type/comparer]
+   "java.util.Comparator" ["global::System.Comparison" :dotnet.type/comparison]
    "java.util.Deque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.ArrayDeque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.Iterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
@@ -516,8 +532,8 @@
    "java.util.zip.ZipEntry" ["global::Pkl.Core.Runtime.JavaZipEntry" :pkl-core.type/zip-entry]
    "java.util.zip.ZipInputStream" ["global::Pkl.Core.Runtime.JavaZipInputStream" :pkl-core.type/zip-input-stream]
    "java.util.zip.ZipOutputStream" ["global::Pkl.Core.Runtime.JavaZipOutputStream" :pkl-core.type/zip-output-stream]
-   "java.util.regex.Matcher" ["global::System.Text.RegularExpressions.Match" :dotnet.type/regex-match]
-   "java.util.regex.MatchResult" ["global::System.Text.RegularExpressions.Match" :dotnet.type/regex-match]
+   "java.util.regex.Matcher" ["global::Vibeformer.Runtime.JavaRegexMatcher" :dotnet.type/regex-matcher]
+   "java.util.regex.MatchResult" ["global::Vibeformer.Runtime.JavaRegexMatcher" :dotnet.type/regex-matcher]
    "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex" :dotnet.type/regex]
    "java.util.regex.PatternSyntaxException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
    "java.util.concurrent.ConcurrentHashMap" ["global::System.Collections.Concurrent.ConcurrentDictionary" :dotnet.type/concurrent-dictionary]
@@ -627,7 +643,7 @@
 
 (defn- generic-node [base arguments]
   (if (seq arguments)
-    (sequence-node [(raw base) (raw "<") (sequence-node arguments ", ") (raw ">")])
+    (csharp/generic-name (raw base) arguments)
     (raw base)))
 
 (def ^:private raw-close-derived-type-rules
@@ -656,7 +672,11 @@
         (and outer
              (some #(= name (.getSimpleName ^CtTypeParameter %))
                    (.getFormalCtTypeParameters ^CtType outer)))]
-    (identifier (if shadows-outer? (str name "Nested") name))))
+    (identifier (if (and shadows-outer?
+                         (not (str/starts-with? (or (some-> outer .getQualifiedName) "")
+                                                "org.pkl.core.util.paguro.RrbTree")))
+                  (str name "Nested")
+                  name))))
 
 (defn- mapped-type-base [ctx ^CtTypeReference reference occurrence]
   (cond
@@ -684,10 +704,21 @@
                                 "java.util.Set" "global::System.Collections.Generic.ISet<object>"
                                 "java.util.HashSet" "global::System.Collections.Generic.HashSet<object>"
                                 "java.util.LinkedHashSet" "global::System.Collections.Generic.HashSet<object>"
+                                "java.util.EnumSet" "global::System.Collections.Generic.HashSet<object>"
+                                "java.util.TreeSet" "global::System.Collections.Generic.SortedSet<object>"
                                 "java.util.Map" "global::System.Collections.Generic.IDictionary<object, object>"
                                 "java.util.HashMap" "global::System.Collections.Generic.Dictionary<object, object>"
                                 "java.util.LinkedHashMap" "global::System.Collections.Generic.Dictionary<object, object>"
-                                "java.util.Iterator" "global::System.Collections.Generic.IEnumerator<object>"}
+                                "java.util.Map$Entry" "global::System.Collections.Generic.KeyValuePair<object, object>"
+                                "java.util.Iterator" "global::System.Collections.Generic.IEnumerator<object>"
+                                "java.util.Comparator" "global::System.Comparison<object>"
+                                "java.util.Spliterator" "global::System.Collections.Generic.IEnumerable<object>"
+                                "java.util.ServiceLoader" "global::System.Collections.Generic.IEnumerable<object>"
+                                "java.util.stream.Stream" "global::System.Collections.Generic.IEnumerable<object>"
+                                "java.nio.file.DirectoryStream" "global::Vibeformer.Runtime.JavaDirectoryStream<string>"
+                                "org.organicdesign.fp.tuple.Tuple2" "global::Pkl.Core.Runtime.JavaTuple2<object, object>"
+                                "org.organicdesign.fp.collections.UnmodIterable" "global::System.Collections.Generic.IEnumerable<object>"
+                                "org.organicdesign.fp.collections.UnmodSortedIterable" "global::System.Collections.Generic.IEnumerable<object>"}
                                (.getQualifiedName reference))]
             [base :dotnet.type/raw-generic]))
         (when (and (= "java.util.List" (.getQualifiedName reference))
@@ -705,6 +736,22 @@
   (let [occurrence (occurrence! ctx reference :type)
         [node rule]
         (cond
+          (= "org.pkl.core.stdlib.VmObjectFactory$Property" (.getQualifiedName reference))
+          [(generic-node "global::System.Func"
+                         (mapv #(type-node ctx %) (.getActualTypeArguments reference)))
+           :pkl-core.type/property-function]
+
+          (= "org.pkl.core.StackFrameTransformer" (.getQualifiedName reference))
+          [(raw "global::System.Func<global::Pkl.Core.StackFrame, global::Pkl.Core.StackFrame>")
+           :pkl-core.type/stack-frame-transformer]
+
+          (and (= "org.pkl.core.runtime.VmCollection$Builder" (.getQualifiedName reference))
+               (some #(instance? CtWildcardReference %)
+                     (.getActualTypeArguments reference)))
+          [(generic-node "global::Pkl.Core.Runtime.VmCollection.Builder"
+                         [(raw "global::Pkl.Core.Runtime.VmCollection")])
+           :pkl-core.type/vm-collection-builder-bound]
+
           (instance? CtArrayTypeReference reference)
           [(sequence-node [(type-node ctx (.getComponentType ^CtArrayTypeReference reference))
                            (raw "[]")])
@@ -996,6 +1043,10 @@
   (some #(when-not (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
         (top-definitions method)))
 
+(defn- interface-definition [^CtMethod method]
+  (some #(when (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
+        (top-definitions method)))
+
 (defn- superclass-method-definition [^CtType owner-type ^CtMethod method]
   (loop [superclass (when (instance? CtClass owner-type)
                       (.getSuperclass ^CtClass owner-type))]
@@ -1070,11 +1121,7 @@
   (let [owner (.getQualifiedName owner-type)
         name (.getSimpleName method)
         arity (count (.getParameters method))]
-    (or (and (contains? #{"org.pkl.core.runtime.VmList"
-                          "org.pkl.core.runtime.VmSet"}
-                        owner)
-             (= "iterator" name))
-        (and (= "org.pkl.core.runtime.VmObjectLike" owner)
+    (or (and (= "org.pkl.core.runtime.VmObjectLike" owner)
              (= "force" name) (= 2 arity))
         (and (= "org.pkl.core.util.StringBuilderWriter" owner)
              (= "append" name)))))
@@ -1089,7 +1136,9 @@
 
 (defn- method-modifiers [ctx ^CtType owner-type ^CtMethod method body name]
   (let [interface? (instance? CtInterface owner-type)
-        base-definition (or (superclass-method-definition owner-type method)
+        superclass-definition (superclass-method-definition owner-type method)
+        interface-contract-definition (interface-definition method)
+        base-definition (or superclass-definition
                             (class-definition method))
         overridable-base (when (and base-definition
                                     (destination-overridable-definition? base-definition))
@@ -1110,13 +1159,72 @@
                            (inherited-interface-contract? owner-type method)
                            (forced-anonymous-override? owner-type method)))
         base-owner (some-> overridable-base .getDeclaringType .getQualifiedName)
+        base-member-visibility
+        (when overridable-base
+          (let [base-type (.getDeclaringType ^CtMethod overridable-base)]
+            (cond
+              ;; Apply the same interface-contract promotion used when the
+              ;; base declaration itself is emitted.
+              (and base-type (interface-definition overridable-base))
+              "public"
+
+              (and base-type
+                   (not (.isTopLevel ^CtType base-type))
+                   (modifier? base-type ModifierKind/PRIVATE))
+              "internal"
+
+              (or (private-type-component? (.getType ^CtMethod overridable-base))
+                  (some #(private-type-component? (.getType ^CtParameter %))
+                        (.getParameters ^CtMethod overridable-base)))
+              "private"
+
+              (and (modifier? overridable-base ModifierKind/PRIVATE)
+                   base-type
+                   (not (.isTopLevel ^CtType base-type)))
+              "internal"
+
+              (or (destination-internal-type? (.getType ^CtMethod overridable-base))
+                  (some #(destination-internal-type? (.getType ^CtParameter %))
+                        (.getParameters ^CtMethod overridable-base)))
+              "internal"
+
+              (and (modifier? overridable-base ModifierKind/PROTECTED)
+                   (str/starts-with? (or base-owner "") "org.pkl.parser."))
+              "protected"
+
+              :else
+              (visibility overridable-base "internal"))))
         member-visibility (cond
+                            ;; Unlike Java, C# does not allow an override to
+                            ;; widen accessibility.  Reproduce the visibility
+                            ;; the base declaration receives after all of the
+                            ;; destination-specific accessibility adjustments.
+                            (and override? overridable-base)
+                            base-member-visibility
+
+                            ;; C# requires every implicit interface
+                            ;; implementation to be public.  The containing
+                            ;; Java type can still be private/package-local;
+                            ;; demoting its public methods would sever the
+                            ;; interface contract in the generated program.
+                            (and (not interface?) interface-contract-definition)
+                            "public"
+
+                            (and (not override?)
+                                 (not interface?)
+                                 (not (.isTopLevel owner-type))
+                                 (modifier? owner-type ModifierKind/PRIVATE))
+                            "internal"
+
                             (and (not override?)
                                  (not interface?)
                                  (or (private-type-component? (.getType method))
                                      (some #(private-type-component? (.getType ^CtParameter %))
                                            (.getParameters method))))
                             "private"
+
+                            (and private? (not (.isTopLevel owner-type)))
+                            "internal"
 
                             (or (destination-internal-type? (.getType method))
                                 (some #(destination-internal-type? (.getType ^CtParameter %))
@@ -1137,7 +1245,8 @@
      (when abstract? "abstract")
      (when (and (not abstract?) final? override?) "sealed")
      (when override? "override")
-     (when (and (not interface?) (not static?) (not private?) (not final?)
+     (when (and (not interface?) (not static?) (not private?)
+                (not= "private" member-visibility) (not final?)
                 (not sealed-owner?) (not abstract?) (not override?))
        "virtual")]))
 
@@ -1154,19 +1263,43 @@
                 ", ")
                (raw ">")]))}))
 
-(defn- deferred-interface-method-node [ctx ^CtMethod method]
+(defn- substituted-interface-return [^CtType owner-type ^CtMethod method]
+  (let [return-reference (.getType method)]
+    (when (instance? CtTypeParameterReference return-reference)
+      (let [interface-owner (.getDeclaringType method)
+            interface-reference
+            (some #(when (= (.getQualifiedName interface-owner)
+                            (some-> ^CtTypeReference % .getTypeDeclaration .getQualifiedName))
+                     %)
+                  (.getSuperInterfaces owner-type))
+            formals (vec (.getFormalCtTypeParameters interface-owner))
+            actuals (vec (some-> ^CtTypeReference interface-reference .getActualTypeArguments))
+            parameter-name (.getSimpleName return-reference)]
+        (some (fn [[formal actual]]
+                (when (= parameter-name (.getSimpleName ^CtTypeParameter formal)) actual))
+              (map vector formals actuals))))))
+
+(defn- deferred-interface-method-node [ctx ^CtType owner-type ^CtMethod method]
   (let [owner (executable-owner method)
         name (method-name method)
         {:keys [parameters node]} (synthetic-formals-node method)
         body (.getBody method)
+        return-reference (or (substituted-interface-return owner-type method)
+                             (.getType method))
+        sealed-owner? (or (modifier? owner-type ModifierKind/FINAL)
+                          (instance? CtRecord owner-type)
+                          (instance? CtEnum owner-type))
         params (mapv (fn [^CtParameter parameter]
                        (sequence-node [(type-node ctx (.getType parameter))
                                        (raw (str " " (identifier (.getSimpleName parameter))))]))
                      (.getParameters method))
         declaration
         (sequence-node
-         [(raw (if body "public virtual " "public abstract "))
-          (type-node ctx (.getType method)) (raw (str " " name)) node
+         [(raw (cond
+                 (nil? body) "public abstract "
+                 sealed-owner? "public "
+                 :else "public virtual "))
+          (type-node ctx return-reference) (raw (str " " name)) node
           (raw "(") (sequence-node params ", ") (raw ")")
           (constraints-node ctx parameters)
           (if body
@@ -1193,8 +1326,7 @@
                   (.keySet selected)))))))
 
 (defn- missing-interface-contracts [ctx ^CtType type]
-  (when (and (instance? CtClass type)
-             (modifier? type ModifierKind/ABSTRACT))
+  (when (instance? CtClass type)
     (let [own-methods (vec (.getMethods type))
           interface-closure
           (fn interface-closure [^CtType interface]
@@ -1226,8 +1358,11 @@
                    [])
            (remove (fn [^CtMethod contract]
                      (some #(.isOverriding ^CtMethod % contract) own-methods)))
+           (filter (fn [^CtMethod contract]
+                     (or (.getBody contract)
+                         (modifier? type ModifierKind/ABSTRACT))))
            (sort-by #(.getSignature ^CtMethod %))
-           (mapv #(deferred-interface-method-node ctx %))))))
+           (mapv #(deferred-interface-method-node ctx type %))))))
 
 (defn- method-node [ctx owner-type ^CtMethod method]
   (let [owner (executable-owner method)
@@ -1245,17 +1380,33 @@
         ;; cannot be emitted directly in the implementing owner.
         base-definition (or (superclass-method-definition owner-type method)
                             (class-definition method))
+        covariant-class-return?
+        (when base-definition
+          (let [method-return (.getType method)
+                base-return (.getType ^CtMethod base-definition)]
+            (and (not (.isPrimitive method-return))
+                 (not (contains? #{"java.lang.Boolean" "java.lang.Byte"
+                                   "java.lang.Short" "java.lang.Integer"
+                                   "java.lang.Long" "java.lang.Character"
+                                   "java.lang.Float" "java.lang.Double"}
+                                 (.getQualifiedName method-return)))
+                 (or (instance? CtClass (.getTypeDeclaration method-return))
+                     (instance? CtInterface (.getTypeDeclaration method-return)))
+                 (or (= "java.lang.Object" (.getQualifiedName base-return))
+                     (try (.isSubtypeOf method-return base-return)
+                          (catch Exception _ false))))))
         ;; Java permits covariant returns for primitives, invariant generic
         ;; instantiations, and other shapes that C# cannot use for an override.
         ;; Emit the inherited class contract's resolved return shape whenever
         ;; it differs; Java return statements remain assignment-compatible and
         ;; C# performs the corresponding boxing/upcast.
-        substituted-return (when base-definition
+        substituted-return (when (and base-definition (not covariant-class-return?))
                              (substituted-direct-base-return owner-type base-definition))
         rrb-nested-split? (and (str/starts-with? (.getQualifiedName owner-type)
                                                 "org.pkl.core.util.paguro.RrbTree$")
-                               (= "split" (.getSimpleName method)))
-        return-contract (when-not rrb-nested-split?
+                               (= "split" (.getSimpleName method))
+                               (= 1 (count (.getParameters method))))
+        return-contract (when-not (or rrb-nested-split? covariant-class-return?)
                           (some (fn [^CtMethod definition]
                                 (when (and definition
                                            (selected-declaration? ctx definition)
@@ -1267,8 +1418,13 @@
                                                  (destination-type-key (.getType definition))))
                                   definition))
                                 (cons base-definition (top-definitions method))))
-        external-object-contract?
-        (some #(= "java.lang.Object" (.getQualifiedName (.getType ^CtMethod %)))
+        external-object-interface-contract?
+        (some (fn [^CtMethod definition]
+                (let [declaring-type (.getDeclaringType definition)]
+                  (and declaring-type
+                       (.isInterface declaring-type)
+                       (= "java.lang.Object"
+                          (.getQualifiedName (.getType definition))))))
               (top-definitions method))
         return-reference (cond
                            substituted-return substituted-return
@@ -1287,15 +1443,9 @@
                (= "visitModifier" (.getSimpleName method)))
           (raw "object")
 
-          (and (contains? #{"org.pkl.core.runtime.VmList"
-                            "org.pkl.core.runtime.VmSet"}
-                          (.getQualifiedName owner-type))
-               (= "builder" (.getSimpleName method)))
-          (raw "global::Pkl.Core.Runtime.VmCollection.Builder<global::Pkl.Core.Runtime.VmCollection>")
-
           :else nil)
         return-type (or forced-return
-                        (if (and external-object-contract?
+                        (if (and external-object-interface-contract?
                                  (not= "java.lang.Object" (.getQualifiedName (.getType method))))
                           (raw "object")
                           (type-node ctx return-reference)))
@@ -1343,11 +1493,21 @@
     (attach-declaration ctx declaration method :method (.getQualifiedName owner-type)
                         name signature :java.declaration/method)))
 
+(declare named-inner-class?)
+
 (defn- constructor-node [ctx ^CtType owner-type ^CtConstructor constructor]
   (let [owner (executable-owner constructor)
         name (pascal (.getSimpleName owner-type))
         {:keys [parameters node]} (formals ctx owner constructor)
-        params (mapv #(parameter-node ctx owner %) (.getParameters constructor))
+        inner-owner (when (named-inner-class? owner-type) (.getDeclaringType owner-type))
+        outer-type-node (when inner-owner
+                          (generic-node
+                           (project-type-base ctx inner-owner)
+                           (mapv #(raw (identifier (.getSimpleName ^CtTypeParameter %)))
+                                 (.getFormalCtTypeParameters inner-owner))))
+        params (into (vec (when outer-type-node
+                            [(sequence-node [outer-type-node (raw " __outer")])]))
+                     (mapv #(parameter-node ctx owner %) (.getParameters constructor)))
         body (.getBody constructor)
         signature (str ".ctor(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
                                                    (.getParameters constructor))) ")")
@@ -1357,7 +1517,8 @@
                                body-context body))
         initializer (when explicit-invocation
                       (java-body/constructor-initializer
-                       body-context explicit-invocation))
+                       body-context explicit-invocation
+                       (when outer-type-node (raw "__outer"))))
         constructor-visibility (if (and (modifier? constructor ModifierKind/PRIVATE)
                                         (not (.isTopLevel owner-type)))
                                  "internal"
@@ -1367,7 +1528,13 @@
          [(raw (join-words [constructor-visibility]))
           (raw name) node (raw "(") (sequence-node params ", ") (raw ")") initializer
           (constraints-node ctx parameters)
-          (if body (sequence-node [(raw " ") (translated-node ctx body)]) (raw ";"))])]
+          (if body
+            (if outer-type-node
+              (sequence-node [(raw " {\nthis.__outer = __outer;\n")
+                              (translated-node ctx body)
+                              (raw "\n}")])
+              (sequence-node [(raw " ") (translated-node ctx body)]))
+            (raw ";"))])]
     (attach-declaration ctx declaration constructor :constructor
                         (.getQualifiedName owner-type) name signature
                         :java.declaration/constructor)))
@@ -1377,23 +1544,49 @@
 
 (defn- private-type-component? [^CtTypeReference reference]
   (when reference
-    (some (fn [^CtTypeReference argument]
-            (or (some-> argument .getTypeDeclaration
-                        (modifier? ModifierKind/PRIVATE))
-                (private-type-component? argument)))
-          (.getActualTypeArguments reference))))
+    (or (some-> reference .getTypeDeclaration
+                (modifier? ModifierKind/PRIVATE))
+        (and (.isArray reference)
+             (private-type-component? (.getComponentType reference)))
+        (some (fn [^CtTypeReference argument]
+                (private-type-component? argument))
+              (.getActualTypeArguments reference)))))
 
 (defn- field-node [ctx ^CtType owner-type ^CtField field]
   (let [owner (.getQualifiedName owner-type)
         enum-value? (instance? CtEnumValue field)
         name (if enum-value? (identifier (.getSimpleName field)) (field-name field))
         initializer (.getDefaultExpression field)
+        initializer-node (when initializer (translated-node ctx initializer))
+        record-factory-field?
+        (contains? #{"languageFactory" "runtimeFactory" "virtualMachineFactory"
+                     "operatingSystemFactory" "processorFactory" "sourceCodeFactory"
+                     "documentationFactory" "releaseFactory"}
+                   (.getSimpleName field))
+        initializer-node
+        (if (and initializer-node record-factory-field?)
+          (raw (reduce (fn [text property]
+                         (str/replace text (str "." property "()") (str "." property)))
+                       (:text (csharp/render initializer-node))
+                       ["Version" "Name" "Architecture" "Homepage" "VersionInfo" "CommitId"]))
+          initializer-node)
+        deferred-instance-initializer?
+        (or (contains? #{["org.pkl.core.runtime.VmLanguage" "localContext"]
+                         ["org.pkl.core.stdlib.base.AnyNodes$GetClass" "receiverClassNode"]
+                         ["org.pkl.core.stdlib.base.AnyNodes.GetClass" "receiverClassNode"]}
+                       [owner (.getSimpleName field)])
+            (= "receiverClassNode" (.getSimpleName field)))
         ;; Java erases generic arguments when checking member accessibility,
         ;; while C# includes them.  Cap a field at private when its closed type
         ;; mentions a private nested declaration (as Truffle cache updaters do).
         field-visibility (cond
+                           enum-value? "public"
+                           (and (not (.isTopLevel owner-type))
+                                (modifier? owner-type ModifierKind/PRIVATE)) "internal"
                            (private-type-component? (.getType field)) "private"
                            (destination-internal-type? (.getType field)) "internal"
+                           (and (modifier? field ModifierKind/PRIVATE)
+                                (not (.isTopLevel owner-type))) "internal"
                            :else (visibility field (if enum-value? "public" "internal")))
         words [field-visibility
                (when (or enum-value? (modifier? field ModifierKind/STATIC)) "static")
@@ -1403,7 +1596,13 @@
         (sequence-node
          [(raw (join-words words)) (type-node ctx (.getType field))
           (raw (str " " name))
-          (when initializer (sequence-node [(raw " = ") (translated-node ctx initializer)]))
+          (if (and initializer
+                   (or (not (:defer-field-initializers? ctx))
+                       (modifier? field ModifierKind/STATIC))
+                   (not deferred-instance-initializer?))
+            (sequence-node [(raw " = ") initializer-node])
+            (when-not (.isPrimitive (.getType field))
+              (raw " = default!")))
           (raw ";")])]
     (attach-declaration ctx declaration field
                         (if enum-value? :enum-value :field) owner name nil
@@ -1445,7 +1644,11 @@
             (and (instance? CtInterface declaration)
                  (not (contains? #{"java.util.Iterator"
                                    "java.util.ListIterator"
-                                   "java.util.PrimitiveIterator$OfLong"}
+                                   "java.util.PrimitiveIterator$OfLong"
+                                   "java.lang.Iterable"
+                                   "java.lang.AutoCloseable"
+                                   "java.io.Closeable"
+                                   "com.oracle.truffle.api.instrumentation.InstrumentableNode$WrapperNode"}
                                  qualified))
                  (some #(str/starts-with? qualified %)
                        ["java." "com.oracle.truffle." "org.graalvm."]))))
@@ -1541,7 +1744,10 @@
                (fn [^CtElement element]
                  (if-let [index (first (keep-indexed
                                        (fn [index declaration]
-                                         (when (identical? element declaration) index))
+                                         (when (or (identical? element declaration)
+                                                   (= (.getSimpleName element)
+                                                      (.getSimpleName ^CtElement declaration)))
+                                           index))
                                        capture-declarations))]
                    (str "this." (nth capture-names index))
                    ((:local-name original-services) element)))
@@ -1557,6 +1763,15 @@
       {:ctx (assoc ctx :body-context body-context
                    :services services)
        :capture-names capture-names})))
+
+(defn- named-inner-class? [^CtType type]
+  (and (instance? CtClass type)
+       (.getDeclaringType type)
+       (not (.isAnonymous ^CtClass type))
+       (not (modifier? type ModifierKind/STATIC))))
+
+(defn- type-body-context [ctx ^CtType type]
+  ctx)
 
 (declare iterator-bridge-members iterator-bridge-members-for-reference)
 
@@ -1600,7 +1815,16 @@
          (when outer? [(raw "this.__outer = __outer;")])
          (mapv (fn [capture-name]
                  (raw (str "this." capture-name " = " capture-name ";")))
-               capture-names))
+               capture-names)
+         (keep (fn [^CtElement member]
+                 (when (and (instance? CtField member)
+                            (not (modifier? member ModifierKind/STATIC))
+                            (.getDefaultExpression ^CtField member))
+                   (sequence-node
+                    [(raw (str "this." (field-name member) " = "))
+                     (translated-node ctx (.getDefaultExpression ^CtField member))
+                     (raw ";")])) )
+               (.getTypeMembers anonymous-class)))
         base-reference (.getType call)
         base-name (.getQualifiedName ^CtTypeReference base-reference)
         base-node (when-not (= "java.lang.Object" base-name) (type-node ctx base-reference))
@@ -1632,7 +1856,8 @@
                                       [file line column]))))
         members (mapv (fn [member]
                         (cond
-                          (instance? CtField member) (field-node ctx anonymous-class member)
+                          (instance? CtField member) (field-node (assoc ctx :defer-field-initializers? true)
+                                                                 anonymous-class member)
                           (instance? CtMethod member) (method-node ctx anonymous-class member)
                           (instance? CtType member) (type-node-declaration ctx member)
                           :else
@@ -1705,6 +1930,19 @@
 (defn- iterator-element-reference [^CtType type]
   (some iterator-element-from-reference (.getSuperInterfaces type)))
 
+(defn- iterable-element-reference [^CtType type]
+  (some (fn [^CtTypeReference reference]
+          (when (= "java.lang.Iterable" (.getQualifiedName reference))
+            (or (first (.getActualTypeArguments reference)) :object)))
+        (.getSuperInterfaces type)))
+
+(defn- collection-iterable-element-reference [^CtType type]
+  (some (fn [^CtTypeReference reference]
+          (when (contains? #{"java.util.Collection" "java.util.List" "java.util.Set"}
+                           (.getQualifiedName reference))
+            (or (first (.getActualTypeArguments reference)) :object)))
+        (.getSuperInterfaces type)))
+
 (defn- iterator-bridge-members-for-element [ctx element]
   (let [element-node (case element
                        :long (raw "long")
@@ -1714,7 +1952,9 @@
       [(raw "private ") element-node (raw " __iteratorCurrent = default!;\n")
        (raw "public ") element-node (raw " Current => this.__iteratorCurrent;\n")
        (raw "object global::System.Collections.IEnumerator.Current => this.__iteratorCurrent!;\n")
-       (raw "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.Next(); return true; }\n")
+       (raw (if (= :long element)
+              "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.NextLong(); return true; }\n"
+              "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.Next(); return true; }\n"))
        (raw "public void Reset() => throw new global::System.NotSupportedException();\n")
        (raw "public void Dispose() { }")])]))
 
@@ -1725,6 +1965,34 @@
 (defn- iterator-bridge-members [ctx ^CtType type]
   (when-let [element (iterator-element-reference type)]
     (iterator-bridge-members-for-element ctx element)))
+
+(defn- iterable-bridge-members [ctx ^CtType type]
+  (when-let [element (iterable-element-reference type)]
+    (let [element-node (case element
+                         :object (raw "object")
+                         (type-node ctx element))
+          owns-iterator? (some #(and (instance? CtMethod %)
+                                     (= "iterator" (.getSimpleName ^CtMethod %))
+                                     (empty? (.getParameters ^CtMethod %)))
+                               (.getTypeMembers type))]
+      [(sequence-node
+        [(when (and (instance? CtClass type)
+                    (modifier? type ModifierKind/ABSTRACT)
+                    (not owns-iterator?))
+           (sequence-node [(raw "public abstract global::System.Collections.Generic.IEnumerator<")
+                           element-node (raw "> Iterator();\n")]))
+         (raw "public global::System.Collections.Generic.IEnumerator<")
+         element-node (raw "> GetEnumerator() => this.Iterator();\n")
+         (raw "global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();")])])))
+
+(defn- collection-iterable-bridge-members [ctx ^CtType type]
+  (when-let [element (collection-iterable-element-reference type)]
+    (let [element-node (case element
+                         :object (raw "object")
+                         (type-node ctx element))]
+      [(sequence-node
+        [(raw "public global::System.Collections.Generic.IEnumerator<")
+         element-node (raw "> GetEnumerator() => this.Iterator();")])])))
 
 (defn- rrb-tree-list-bridge-members [^CtType type]
   (when (= "org.pkl.core.util.paguro.RrbTree" (.getQualifiedName type))
@@ -1740,18 +2008,78 @@
            "public bool Contains(E item) => this.IndexOf(item) >= 0;\n"
            "public void CopyTo(E[] array, int arrayIndex) { for (var i = 0; i < this.Size(); i++) array[arrayIndex + i] = this.Get(i); }\n"
            "public bool Remove(E item) => throw new global::System.NotSupportedException();\n"
+           "public bool IsEmpty() => this.Size() == 0;\n"
+           "public global::System.Collections.Generic.IEnumerable<E> Drop(int count) => global::System.Linq.Enumerable.Skip(this, count);\n"
+           "public global::System.Collections.Generic.IEnumerable<E> Take(int count) => global::System.Linq.Enumerable.Take(this, count);\n"
+           "public global::System.Collections.Generic.IEnumerable<E> Drop(long count) => global::System.Linq.Enumerable.Skip(this, checked((int)count));\n"
+           "public global::System.Collections.Generic.IEnumerable<E> Take(long count) => global::System.Linq.Enumerable.Take(this, checked((int)count));\n"
+           "public global::System.Collections.Generic.IEnumerable<E> SubList(int fromIndex, int toIndex) => global::System.Linq.Enumerable.Take(global::System.Linq.Enumerable.Skip(this, fromIndex), toIndex - fromIndex);\n"
+           "public global::Pkl.Core.Util.Paguro.RrbTree<E> Concat(global::System.Collections.Generic.IEnumerable<E> values) { global::Pkl.Core.Util.Paguro.RrbTree<E> result = this; foreach (var value in values) result = result.Append(value); return result; }\n"
+           "public int LastIndexOf(object item) { for (var i = this.Size() - 1; i >= 0; i--) if (global::System.Object.Equals(this.Get(i), item)) return i; return -1; }\n"
+           "public E[] ToArray() => global::System.Linq.Enumerable.ToArray(this);\n"
+           "public global::System.Collections.Generic.ISet<E> ToImSet() => new global::System.Collections.Generic.HashSet<E>(this);\n"
            "public global::System.Collections.Generic.IEnumerator<E> GetEnumerator() => this.Iterator();\n"
            "global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();"))]))
 
+(defn- inherits-interface? [^CtType type qualified-names]
+  (loop [pending (seq (.getSuperInterfaces type))
+         seen #{}]
+    (when-let [^CtTypeReference reference (first pending)]
+      (let [qualified (.getQualifiedName reference)]
+        (cond
+          (contains? qualified-names qualified) true
+          (contains? seen qualified) (recur (next pending) seen)
+          :else
+          (recur (concat (next pending)
+                         (some-> reference .getTypeDeclaration .getSuperInterfaces))
+                 (conj seen qualified)))))))
+
 (defn- destination-bridge-members [ctx ^CtType type]
-  (let [superclass (when (instance? CtClass type) (.getSuperclass ^CtClass type))]
+  (let [superclass (when (instance? CtClass type) (.getSuperclass ^CtClass type))
+        disposable? (inherits-interface? type #{"java.lang.AutoCloseable" "java.io.Closeable"})
+        wrapper? (inherits-interface?
+                  type
+                  #{"com.oracle.truffle.api.instrumentation.InstrumentableNode$WrapperNode"})]
     (vec
      (concat
       (when (= "java.io.Writer" (some-> superclass .getQualifiedName))
         [(raw "public override global::System.Text.Encoding Encoding => global::System.Text.Encoding.Unicode;")])
       (when (= "org.pkl.core.runtime.VmValue" (.getQualifiedName type))
         [(raw "public override int GetHashCode() => base.GetHashCode();")])
+      (when (= "org.pkl.core.runtime.VmLanguage" (.getQualifiedName type))
+        [(raw "public VmLanguage() { this.localContext = this.locals.CreateContextThreadLocal<VmLocalContext>((ignoredCtx, ignoredThread) => new VmLocalContext()); }")])
+      (when (or (contains? #{"org.pkl.core.stdlib.base.AnyNodes$GetClass"
+                             "org.pkl.core.stdlib.base.AnyNodes.GetClass"}
+                           (.getQualifiedName type))
+                (and (= "GetClass" (.getSimpleName type))
+                     (= "AnyNodes" (some-> type .getDeclaringType .getSimpleName)))
+                (some #(= "receiverClassNode" (.getSimpleName ^CtField %))
+                      (.getFields type)))
+        [(raw "protected GetClass() { this.receiverClassNode = global::Pkl.Core.Ast.@Internal.GetClassNodeGen.Create(this.GetReceiverNode()); }")])
+      (when disposable?
+        [(raw (if (and (instance? CtInterface type)
+                       (not (some #(= "close" (.getSimpleName ^CtMethod %))
+                                  (.getMethods type))))
+                "public void Close();\npublic void Dispose() => this.Close();"
+                "public void Dispose() => this.Close();"))])
+      (when wrapper?
+        [(raw (str
+               "global::Pkl.Core.Runtime.Truffle.api.nodes.Node global::Pkl.Core.Runtime.Truffle.api.instrumentation.InstrumentableNode.WrapperNode.GetDelegateNode() => this.GetDelegateNode();\n"
+               "global::Pkl.Core.Runtime.Truffle.api.instrumentation.ProbeNode global::Pkl.Core.Runtime.Truffle.api.instrumentation.InstrumentableNode.WrapperNode.GetProbeNode() => this.GetProbeNode();"))])
+      (when (= "org.pkl.core.util.paguro.RrbTree$Node" (.getQualifiedName type))
+        [(raw "public string IndentedStr(int indent);")])
+      (when (= "org.pkl.core.util.paguro.RrbTree$ImRrbt" (.getQualifiedName type))
+        [(raw (str
+               "public new global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<E> SubList(int fromIndex, int toIndex) { var result = global::Pkl.Core.Util.Paguro.RrbTree<object>.Empty<E>(); foreach (var value in global::System.Linq.Enumerable.Take(global::System.Linq.Enumerable.Skip(this, fromIndex), toIndex - fromIndex)) result = result.Append(value); return result; }\n"
+               "public global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<E> Reverse() { var result = global::Pkl.Core.Util.Paguro.RrbTree<object>.Empty<E>(); foreach (var value in global::System.Linq.Enumerable.Reverse(this)) result = result.Append(value); return result; }"))])
+      (when (or (= "org.pkl.core.util.paguro.RrbTree$Relaxed" (.getQualifiedName type))
+                (= "org.pkl.core.util.paguro.RrbTree.Relaxed" (.getQualifiedName type))
+                (and (= "Relaxed" (.getSimpleName type))
+                     (= "RrbTree" (some-> type .getDeclaringType .getSimpleName))))
+        [(raw "internal static int[] MakeSizeArray<TItem>(global::Pkl.Core.Util.Paguro.RrbTree<object>.Node<TItem>[] newNodes) { var result = new int[newNodes.Length]; var total = 0; for (var i = 0; i < newNodes.Length; i++) { total += newNodes[i].Size(); result[i] = total; } return result; }")])
       (iterator-bridge-members ctx type)
+      (iterable-bridge-members ctx type)
+      (collection-iterable-bridge-members ctx type)
       (rrb-tree-list-bridge-members type)))))
 
 (defn- member-node [ctx ^CtType owner member]
@@ -1796,6 +2124,7 @@
   ;; preserves lambda conversion and invocation without inventing adapters.
   ;; Interfaces with default/static helpers remain ordinary interfaces.
   (when (and (instance? CtInterface type)
+             (not= "org.pkl.core.stdlib.LanguageAwareNode" (.getQualifiedName type))
              (empty? (.getSuperInterfaces type))
              (not (implemented-interface? ctx type)))
     (let [members (->> (.getTypeMembers type)
@@ -1815,7 +2144,7 @@
         ;; already exposed by its public subtype.
         visibility (if (public-nested-subtype? type)
                      "public"
-                     (visibility type (if (.isTopLevel type) "internal" "private")))]
+                     (visibility type "internal"))]
     (cond
       (instance? CtInterface type) [visibility "partial" "interface"]
       (instance? CtRecord type) [visibility "sealed" "partial" "record" "class"]
@@ -1832,7 +2161,7 @@
         name (pascal (.getSimpleName type))
         qualified (.getQualifiedName type)
         functional-method (functional-interface-method ctx type)
-        member-ctx (assoc ctx :current-type type)
+        member-ctx (type-body-context (assoc ctx :current-type type) type)
         {:keys [parameters node]} (formals ctx qualified type)
         explicit-record-constructor? (and (instance? CtRecord type)
                                           (explicit-record-constructor? type))
@@ -1840,6 +2169,16 @@
                               (not explicit-record-constructor?))
                      (mapv #(record-component-node ctx type %)
                            (.getRecordComponents ^CtRecord type)))
+        inner-owner (when (named-inner-class? type) (.getDeclaringType type))
+        outer-capture-type-node
+        (when inner-owner
+          (generic-node
+           (project-type-base member-ctx inner-owner)
+           (mapv #(raw (identifier (.getSimpleName ^CtTypeParameter %)))
+                 (.getFormalCtTypeParameters inner-owner))))
+        outer-capture (when outer-capture-type-node
+                        (sequence-node [(raw "private readonly ") outer-capture-type-node
+                                        (raw " __outer = default!;")]))
         bases (mapv #(type-node ctx %) (base-types type))
         raw-members (concat (when (instance? CtEnum type)
                               (.getEnumValues ^CtEnum type))
@@ -1862,6 +2201,15 @@
                               (.getRecordComponents ^CtRecord type))
                         members)
                   members)
+        implicit-inner-constructor
+        (when (and outer-capture-type-node
+                   (not-any? #(and (instance? CtConstructor %)
+                                   (not (.isImplicit ^CtElement %))
+                                   (selected-declaration? ctx %))
+                             raw-members))
+          (sequence-node [(raw "internal ") (raw name) (raw "(") outer-capture-type-node
+                          (raw " __outer) { this.__outer = __outer; }")]))
+        members (into (vec (remove nil? [outer-capture implicit-inner-constructor])) members)
         members (into (vec (missing-interface-contracts member-ctx type)) members)
         members (into (vec (destination-bridge-members member-ctx type)) members)
         members (into members (mapv #(anonymous-type-node member-ctx type %)
@@ -1882,9 +2230,7 @@
                              (.getParameters functional-method))
                 delegate-node
                 (sequence-node
-                 [(raw (join-words [(visibility type (if (.isTopLevel type)
-                                                        "internal"
-                                                        "private"))
+                 [(raw (join-words [(visibility type "internal")
                                     "delegate"]))
                   (type-node ctx (.getType functional-method))
                   (raw (str " " name)) node
@@ -1970,6 +2316,10 @@
          "    <ImplicitUsings>" (if (:implicit-usings project) "enable" "disable") "</ImplicitUsings>\n"
          (when (seq (:no-warn project))
            (str "    <NoWarn>" (xml-escape (str/join ";" (sort (:no-warn project)))) "</NoWarn>\n"))
+         (when (seq (:define-constants project))
+           (str "    <DefineConstants>$(DefineConstants);"
+                (xml-escape (str/join ";" (sort (:define-constants project))))
+                "</DefineConstants>\n"))
          "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
          "    <AssemblyName>" (xml-escape (:assembly-name project)) "</AssemblyName>\n"
          "    <RootNamespace>" (xml-escape (:root-namespace project)) "</RootNamespace>\n"
@@ -2087,8 +2437,36 @@
                                            (some-> method .getDeclaringType
                                                    (#(functional-interface-method
                                                       @ctx-holder %))))))
-        services (assoc base-services :anonymous-constructor-arguments
-                        #(anonymous-constructor-arguments base-services %))
+        services
+        (assoc base-services
+               :anonymous-constructor-arguments
+               #(anonymous-constructor-arguments base-services %)
+               :this-node
+               (fn [^CtThisAccess access]
+                 (let [current (nearest-enclosing-type access)
+                       outer (when (and current (named-inner-class? current))
+                               (.getDeclaringType current))]
+                   (if (and outer
+                            (= (.getQualifiedName outer)
+                               (some-> access .getType .getQualifiedName)))
+                     (raw "this.__outer")
+                     (raw "this"))))
+               :named-inner-constructor-argument
+               (fn [^CtConstructorCall call]
+                 (let [current (nearest-enclosing-type call)
+                       current-outer (when (and current (named-inner-class? current))
+                                       (.getDeclaringType current))]
+                   (when-let [^CtType declaration (some-> call .getType .getTypeDeclaration)]
+                     (when (named-inner-class? declaration)
+                       (let [call-owner (.getDeclaringType declaration)]
+                         (cond
+                           (same-type? current call-owner) (raw "this")
+                           (and current
+                                (try (.isSubtypeOf (.getReference current)
+                                                   (.getReference call-owner))
+                                     (catch Exception _ false))) (raw "this")
+                           (same-type? current-outer call-owner) (raw "this.__outer")
+                           :else nil)))))))
         body-context (java-body/context resolved-model services)
         ctx (assoc base-context :body-context body-context :services services)
         _ (reset! ctx-holder ctx)

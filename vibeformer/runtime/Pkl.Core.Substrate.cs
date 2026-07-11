@@ -11,6 +11,15 @@ namespace Pkl.Core.Runtime
 {
     public delegate T JavaBinaryOperator<T>(T left, T right);
     public delegate T JavaLongFunction<T>(long value);
+    public sealed partial class VmList
+    {
+        internal static VmList Create(IEnumerable<object> values) => CreateFromUnmodIterable(values);
+    }
+    public sealed partial class VmSet
+    {
+        internal static VmSet Create(ISet<object> values, global::Pkl.Core.Util.Paguro.RrbTree<object> order) =>
+            Create(values, (global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<object>)(object)order);
+    }
     public static class ExcludedMessagePack
     {
         public static ExcludedMessagePackPacker NewDefaultBufferPacker() => new();
@@ -20,10 +29,14 @@ namespace Pkl.Core.Runtime
     {
         private static NotSupportedException Excluded() => new("MessagePack is excluded from the Vibeformer product target.");
         public void Clear() { }
-        public byte[] ToByteArray() => throw Excluded();
+        public sbyte[] ToByteArray() => throw Excluded();
         public ExcludedMessagePackPacker PackNil() => throw Excluded();
         public ExcludedMessagePackPacker PackBoolean(bool value) => throw Excluded();
         public ExcludedMessagePackPacker PackLong(long value) => throw Excluded();
+        public ExcludedMessagePackPacker PackByte(sbyte value) => throw Excluded();
+        public ExcludedMessagePackPacker PackBinaryHeader(int length) => throw Excluded();
+        public ExcludedMessagePackPacker WritePayload(sbyte[] value) => throw Excluded();
+        public ExcludedMessagePackPacker AddPayload(sbyte[] value) => throw Excluded();
         public ExcludedMessagePackPacker PackDouble(double value) => throw Excluded();
         public ExcludedMessagePackPacker PackString(string value) => throw Excluded();
         public ExcludedMessagePackPacker PackArrayHeader(int size) => throw Excluded();
@@ -41,12 +54,13 @@ namespace Pkl.Core.Runtime
     }
     public class JavaTuple2<A, B>
     {
-        protected readonly A _1; protected readonly B _2;
+        public readonly A _1; public readonly B _2;
         public JavaTuple2(A first, B second) { _1 = first; _2 = second; }
+        public static JavaTuple2<X, Y> Of<X, Y>(X first, Y second) => new(first, second);
     }
     public class JavaTuple4<A, B, C, D>
     {
-        protected readonly A _1; protected readonly B _2; protected readonly C _3; protected readonly D _4;
+        public readonly A _1; public readonly B _2; public readonly C _3; public readonly D _4;
         public JavaTuple4(A first, B second, C third, D fourth) { _1 = first; _2 = second; _3 = third; _4 = fourth; }
     }
     public sealed class JavaIdentityDictionary<K, V> : Dictionary<K, V> where K : notnull
@@ -61,9 +75,13 @@ namespace Pkl.Core.Runtime
     public sealed class JavaDecimalFormat
     {
         private readonly string pattern; private readonly System.Globalization.NumberFormatInfo format;
+        public JavaDecimalFormat() : this(string.Empty, System.Globalization.CultureInfo.InvariantCulture.NumberFormat) { }
         public JavaDecimalFormat(string pattern, System.Globalization.NumberFormatInfo format) { this.pattern = pattern; this.format = format; }
         public string Format(object value) => string.Format(format, "{0}", value);
         public void SetGroupingUsed(bool value) { }
+        public void SetMinimumFractionDigits(int value) => format.NumberDecimalDigits = Math.Max(format.NumberDecimalDigits, value);
+        public void SetMaximumFractionDigits(int value) => format.NumberDecimalDigits = value;
+        public void SetDecimalFormatSymbols(System.Globalization.NumberFormatInfo value) { }
     }
     public static class JavaBase64
     {
@@ -77,16 +95,17 @@ namespace Pkl.Core.Runtime
         private readonly bool url; public JavaBase64Encoder(bool url) => this.url = url;
         public string EncodeToString(byte[] bytes)
         { var value = Convert.ToBase64String(bytes); return url ? value.TrimEnd('=').Replace('+', '-').Replace('/', '_') : value; }
+        public string EncodeToString(sbyte[] bytes) => EncodeToString(bytes.Select(value => unchecked((byte)value)).ToArray());
         public JavaBase64Encoder WithoutPadding() => this;
     }
     public sealed class JavaBase64Decoder
     {
         private readonly bool url; public JavaBase64Decoder(bool url) => this.url = url;
-        public byte[] Decode(string value)
-        { if (url) value = value.Replace('-', '+').Replace('_', '/'); value = value.PadRight((value.Length + 3) / 4 * 4, '='); return Convert.FromBase64String(value); }
+        public sbyte[] Decode(string value)
+        { if (url) value = value.Replace('-', '+').Replace('_', '/'); value = value.PadRight((value.Length + 3) / 4 * 4, '='); return Convert.FromBase64String(value).Select(item => unchecked((sbyte)item)).ToArray(); }
     }
 
-    public readonly struct JavaOptional<T>
+    public sealed class JavaOptional<T>
     {
         private readonly T? value;
         private readonly bool present;
@@ -98,6 +117,12 @@ namespace Pkl.Core.Runtime
         public bool IsEmpty() => !present;
         public T Get() => present ? value! : throw new InvalidOperationException("Optional is empty");
         public T OrElse(T fallback) => present ? value! : fallback;
+        public void IfPresent(Action<T> action) { if (present) action(value!); }
+        public void IfPresentOrElse(Action<T> action, Action emptyAction) { if (present) action(value!); else emptyAction(); }
+        public T OrElseThrow() => Get();
+        public JavaOptional<R> Map<R>(Func<T, R> mapper) => present ? JavaOptional<R>.OfNullable(mapper(value!)) : JavaOptional<R>.Empty();
+        public R Match<R>(Func<T, R> presentCase, Func<R> emptyCase) =>
+            present ? presentCase(value!) : emptyCase();
     }
 
     public sealed class JavaPrintWriter
@@ -120,6 +145,15 @@ namespace Pkl.Core.Runtime
                 await System.Threading.Tasks.Task.Delay(TimeSpan.FromMilliseconds(delay));
                 action();
             });
+        public System.Threading.Tasks.Task Schedule(object runnable, long delay, object unit) =>
+            System.Threading.Tasks.Task.Run(async () =>
+            {
+                await System.Threading.Tasks.Task.Delay(TimeSpan.FromMilliseconds(delay));
+                runnable.GetType().GetMethod("Run", System.Reflection.BindingFlags.Instance |
+                                                   System.Reflection.BindingFlags.Public |
+                                                   System.Reflection.BindingFlags.NonPublic)!
+                        .Invoke(runnable, null);
+            });
         public void Shutdown() { }
     }
 
@@ -130,6 +164,9 @@ namespace Pkl.Core.Runtime
         {
             thread = new System.Threading.Thread(() => action()) { Name = name };
         }
+        private JavaThread(System.Threading.Thread thread) => this.thread = thread;
+        public static JavaThread CurrentThread() => new(System.Threading.Thread.CurrentThread);
+        public void Interrupt() => thread.Interrupt();
         public void SetDaemon(bool daemon) => thread.IsBackground = daemon;
         public void Start() => thread.Start();
     }
@@ -146,6 +183,7 @@ namespace Pkl.Core.Runtime
         public JavaAtomicBoolean(bool value = false) => this.value = value ? 1 : 0;
         public bool Get() => System.Threading.Volatile.Read(ref value) != 0;
         public void Set(bool next) => System.Threading.Volatile.Write(ref value, next ? 1 : 0);
+        public bool GetAndSet(bool next) => System.Threading.Interlocked.Exchange(ref value, next ? 1 : 0) != 0;
         public bool CompareAndSet(bool expected, bool next) =>
             System.Threading.Interlocked.CompareExchange(ref value, next ? 1 : 0, expected ? 1 : 0) == (expected ? 1 : 0);
     }
@@ -173,6 +211,7 @@ namespace Pkl.Core.Runtime
         private int position;
         private JavaByteBuffer(byte[] bytes) => this.bytes = bytes;
         public static JavaByteBuffer Wrap(byte[] bytes) => new(bytes);
+        public static JavaByteBuffer Wrap(sbyte[] bytes) => new(bytes.Select(value => unchecked((byte)value)).ToArray());
         public static JavaByteBuffer Allocate(int capacity) => new(new byte[capacity]);
         public JavaByteBuffer PutLong(long value)
         {
@@ -192,14 +231,22 @@ namespace Pkl.Core.Runtime
             position += 8;
             return value;
         }
-        public byte[] Array() => bytes;
+        public sbyte[] Array() => bytes.Select(value => unchecked((sbyte)value)).ToArray();
+        public byte[] UnsignedArray() => (byte[])bytes.Clone();
         public int Remaining() => bytes.Length - position;
         public JavaByteBuffer Flip() { position = 0; return this; }
     }
 
     public class JavaUrlConnection
     {
-        public virtual System.IO.Stream GetInputStream() => throw new NotSupportedException();
+        private readonly Uri? uri;
+        public JavaUrlConnection() { }
+        public JavaUrlConnection(Uri uri) => this.uri = uri;
+        public virtual void Connect() { }
+        public virtual Uri GetURL() => uri ?? throw new InvalidOperationException("URL is unavailable");
+        public virtual System.IO.Stream GetInputStream() =>
+            uri is null ? throw new NotSupportedException() :
+            new System.Net.Http.HttpClient().GetStreamAsync(uri).GetAwaiter().GetResult();
         public virtual void SetUseCaches(bool value) { }
     }
     public sealed class JavaJarConnection : JavaUrlConnection
@@ -221,7 +268,7 @@ namespace Pkl.Core.Runtime
     {
         private readonly System.Text.Encoding encoding;
         public JavaCharsetDecoder(System.Text.Encoding encoding) => this.encoding = encoding;
-        public string Decode(JavaByteBuffer buffer) => encoding.GetString(buffer.Array());
+        public string Decode(JavaByteBuffer buffer) => encoding.GetString(buffer.UnsignedArray());
     }
     public sealed class JavaCharsetEncoder
     {
@@ -266,6 +313,7 @@ namespace Pkl.Core.Runtime
     public static class JavaFileSystems
     {
         public static JavaFileSystem GetDefault() => new();
+        public static JavaFileSystem GetFileSystem(Uri uri) => new();
         public static JavaFileSystem NewFileSystem(Uri uri, IDictionary<string, object> environment) => new();
     }
     public sealed class JavaFileSystemProvider
@@ -314,7 +362,13 @@ namespace Pkl.Core.Runtime
         public static JavaMessageDigest GetInstance(string name) =>
             new(new System.Security.Cryptography.HashAlgorithmName(name.Replace("-", "", StringComparison.Ordinal)));
         public void Update(byte[] bytes) => hash.AppendData(bytes);
-        public byte[] Digest() => hash.GetHashAndReset();
+        public void Update(sbyte[] bytes) => hash.AppendData(bytes.Select(value => unchecked((byte)value)).ToArray());
+        public sbyte[] Digest() => hash.GetHashAndReset().Select(value => unchecked((sbyte)value)).ToArray();
+        public sbyte[] Digest(sbyte[] bytes)
+        {
+            Update(bytes);
+            return Digest();
+        }
     }
 
     public sealed class JavaDigestInputStream : System.IO.Stream
@@ -325,6 +379,8 @@ namespace Pkl.Core.Runtime
         { this.stream = stream; this.digest = digest; }
         public override int Read(byte[] buffer, int offset, int count)
         { var read = stream.Read(buffer, offset, count); digest.Update(buffer[offset..(offset + read)]); return read; }
+        public byte[] ReadAllBytes() { using var output = new System.IO.MemoryStream(); CopyTo(output); return output.ToArray(); }
+        public JavaMessageDigest GetMessageDigest() => digest;
         public override bool CanRead => stream.CanRead; public override bool CanSeek => false; public override bool CanWrite => false;
         public override long Length => stream.Length; public override long Position { get => stream.Position; set => throw new NotSupportedException(); }
         public override void Flush() => stream.Flush(); public override long Seek(long o, System.IO.SeekOrigin so) => throw new NotSupportedException();
@@ -361,6 +417,8 @@ namespace Pkl.Core.Runtime
             return new System.Security.Cryptography.X509Certificates.X509Certificate2(bytes.ToArray());
 #pragma warning restore SYSLIB0057
         }
+        public ICollection<System.Security.Cryptography.X509Certificates.X509Certificate2> GenerateCertificates(System.IO.Stream stream) =>
+            new[] { GenerateCertificate(stream) };
     }
     public sealed class JavaSslContext
     {
@@ -390,6 +448,12 @@ namespace Pkl.Core.Runtime
         public T Body() => body;
         public JavaHttpRequest Request() => new(response.RequestMessage!);
         public JavaOptional<JavaHttpResponse<T>> PreviousResponse() => JavaOptional<JavaHttpResponse<T>>.Empty();
+        public Uri Uri() => response.RequestMessage?.RequestUri ?? new Uri("about:blank");
+        public JavaHttpHeaders Headers() => new(response.Headers.Concat(response.Content.Headers)
+            .ToDictionary(header => header.Key,
+                          header => (IReadOnlyList<string>)header.Value.ToList(),
+                          StringComparer.OrdinalIgnoreCase));
+        public JavaHttpVersion Version() => response.Version.Major >= 2 ? JavaHttpVersion.HTTP_2 : JavaHttpVersion.HTTP_1_1;
     }
 
     public sealed class JavaHttpRequest
@@ -399,6 +463,16 @@ namespace Pkl.Core.Runtime
         public static Builder NewBuilder() => new();
         public static Builder NewBuilder(Uri uri) => new Builder().Uri(uri);
         public Uri Uri() => Message.RequestUri!;
+        public JavaHttpHeaders Headers() => new(Message.Headers.Concat(Message.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
+            .ToDictionary(header => header.Key,
+                          header => (IReadOnlyList<string>)header.Value.ToList(),
+                          StringComparer.OrdinalIgnoreCase));
+        public bool ExpectContinue() => Message.Headers.ExpectContinue ?? false;
+        public string Method() => Message.Method.Method;
+        public JavaOptional<TimeSpan> Timeout() => JavaOptional<TimeSpan>.Empty();
+        public JavaOptional<JavaHttpVersion> Version() =>
+            JavaOptional<JavaHttpVersion>.Of(Message.Version.Major >= 2 ? JavaHttpVersion.HTTP_2 : JavaHttpVersion.HTTP_1_1);
+        public JavaOptional<object> BodyPublisher() => JavaOptional<object>.OfNullable(Message.Content);
         public sealed class Builder
         {
             private readonly System.Net.Http.HttpRequestMessage message = new();
@@ -406,7 +480,11 @@ namespace Pkl.Core.Runtime
             public Builder Timeout(TimeSpan timeout) { return this; }
             public Builder Version(JavaHttpVersion version) { return this; }
             public Builder Header(string name, string value) { message.Headers.TryAddWithoutValidation(name, value); return this; }
+            public Builder SetHeader(string name, string value) { message.Headers.Remove(name); return Header(name, value); }
+            public Builder ExpectContinue(bool value) { message.Headers.ExpectContinue = value; return this; }
             public Builder Method(string method, object? body) { message.Method = new System.Net.Http.HttpMethod(method); return this; }
+            public Builder GET() { message.Method = System.Net.Http.HttpMethod.Get; return this; }
+            public Builder DELETE() { message.Method = System.Net.Http.HttpMethod.Delete; return this; }
             public JavaHttpRequest Build() => new(message);
         }
     }
@@ -430,8 +508,9 @@ namespace Pkl.Core.Runtime
     {
         public static JavaHttpBodyHandler<System.IO.Stream> OfInputStream() =>
             response => response.Content.ReadAsStream();
-        public static JavaHttpBodyHandler<byte[]> OfByteArray() =>
-            response => response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+        public static JavaHttpBodyHandler<sbyte[]> OfByteArray() =>
+            response => response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+                .Select(value => unchecked((sbyte)value)).ToArray();
     }
 
     public sealed class JavaHttpClient : IDisposable
@@ -450,6 +529,8 @@ namespace Pkl.Core.Runtime
             public Builder ConnectTimeout(TimeSpan timeout) => this;
             public Builder FollowRedirects(JavaHttpRedirect redirect) => this;
             public Builder Version(JavaHttpVersion version) => this;
+            public Builder SslContext(object context) => this;
+            public Builder Proxy(object proxySelector) => this;
             public JavaHttpClient Build() => new();
         }
     }
@@ -507,6 +588,7 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal int Size() => Values.Count;
         internal bool IsEmpty() => Values.Count == 0;
         internal IEnumerable<V> GetValues() => Values.Values;
+        internal IEnumerable<K> GetKeys() => Values.Keys;
         internal UnmodifiableMapCursor<K, V> GetEntries() => new(Values.GetEnumerator());
     }
 
@@ -525,6 +607,29 @@ namespace Pkl.Core.Runtime.GraalCollections
         {
             foreach (var entry in other.GetEntries().Entries()) Values[entry.Key] = entry.Value;
         }
+        internal V? PutIfAbsent(K key, V value)
+        {
+            if (Values.TryGetValue(key, out var previous)) return previous;
+            Values[key] = value;
+            return default;
+        }
+        internal V? RemoveKey(K key)
+        {
+            if (Values.Remove(key, out var previous)) return previous;
+            return default;
+        }
+        internal void Clear() => Values.Clear();
+        internal EconomicMap<K, V> DeepCopy()
+        {
+            var result = new EconomicMap<K, V>(Values.Count);
+            foreach (var entry in Values) result.Values[entry.Key] = entry.Value;
+            return result;
+        }
+        internal static EconomicMap<K, V> Create() => new();
+        internal static EconomicMap<K, V> Create(int capacity) => new(capacity);
+        internal static EconomicMap<K2, V2> Create<K2, V2>() where K2 : notnull => new();
+        internal static EconomicMap<K2, V2> Create<K2, V2>(int capacity) where K2 : notnull => new(capacity);
+        internal static UnmodifiableEconomicMap<K2, V2> EmptyMap<K2, V2>() where K2 : notnull => new EconomicMap<K2, V2>();
     }
 
     public static class EconomicMap
@@ -533,7 +638,7 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal static EconomicMap<K, V> Create<K, V>(int capacity) where K : notnull => new(capacity);
     }
 
-    public class UnmodifiableEconomicSet<T> where T : notnull
+    public class UnmodifiableEconomicSet<T> : IEnumerable<T> where T : notnull
     {
         protected readonly HashSet<T> Values;
         protected UnmodifiableEconomicSet(HashSet<T>? values = null) => Values = values ?? new HashSet<T>();
@@ -541,6 +646,8 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal int Size() => Values.Count;
         internal bool IsEmpty() => Values.Count == 0;
         internal IEnumerable<T> Items() => Values;
+        public IEnumerator<T> GetEnumerator() => Values.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     public sealed class EconomicSet<T> : UnmodifiableEconomicSet<T> where T : notnull
@@ -548,6 +655,11 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal EconomicSet(int capacity = 0) : base(new HashSet<T>(capacity)) { }
         internal bool Add(T value) => Values.Add(value);
         internal void AddAll(UnmodifiableEconomicSet<T> other) => Values.UnionWith(other.Items());
+        internal void Clear() => Values.Clear();
+        internal static EconomicSet<T> Create() => new();
+        internal static EconomicSet<T> Create(int capacity) => new(capacity);
+        internal static EconomicSet<T2> Create<T2>() where T2 : notnull => new();
+        internal static EconomicSet<T2> Create<T2>(int capacity) where T2 : notnull => new(capacity);
     }
 
     public static class EconomicSet
@@ -575,11 +687,15 @@ namespace Pkl.Core.Runtime.Truffle.api.source
     public sealed class Source
     {
         private readonly string characters;
+        private readonly string name;
         private readonly Uri? uri;
-        private Source(string characters, Uri? uri) { this.characters = characters; this.uri = uri; }
+        private Source(string characters, string name, Uri? uri)
+        { this.characters = characters; this.name = name; this.uri = uri; }
 
         internal static Builder NewBuilder(string language, string characters, string name) =>
-            new(characters);
+            new(characters, name);
+        internal string GetName() => name;
+        internal int GetLength() => characters.Length;
         internal string GetCharacters() => characters;
         internal string GetCharacters(int line)
         {
@@ -601,18 +717,23 @@ namespace Pkl.Core.Runtime.Truffle.api.source
             throw new ArgumentOutOfRangeException(nameof(line));
         }
         internal SourceSection CreateSection(int start, int length) => new(this, start, length, false);
+        internal SourceSection CreateSection(int start) => CreateSection(start, characters.Length - start);
+        internal SourceSection CreateSourceSection(int start, int length) => CreateSection(start, length);
         internal SourceSection CreateUnavailableSection() => new(this, 0, 0, true);
         internal Uri? GetUri() => uri;
+        internal Uri? GetURI() => uri;
 
         public sealed class Builder
         {
             private readonly string characters;
+            private readonly string name;
             private Uri? uri;
-            internal Builder(string characters) => this.characters = characters;
+            internal Builder(string characters, string name)
+            { this.characters = characters; this.name = name; }
             internal Builder MimeType(string value) => this;
             internal Builder Uri(Uri value) { uri = value; return this; }
             internal Builder Cached(bool value) => this;
-            internal Source Build() => new(characters, uri);
+            internal Source Build() => new(characters, name, uri);
         }
     }
 
@@ -627,6 +748,8 @@ namespace Pkl.Core.Runtime.Truffle.api.source
         internal Source GetSource() => source;
         internal int GetCharIndex() => start;
         internal int GetCharLength() => length;
+        internal int GetLength() => length;
+        internal int GetCharEndIndex() => start + length;
         internal bool IsAvailable() => !unavailable;
         internal string GetCharacters() => unavailable ? string.Empty : source.GetCharacters().Substring(start, length);
         internal int GetStartLine() => GetPosition(start).line;
@@ -689,9 +812,10 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
         }
     }
 
-    public sealed class VirtualFrame : Frame
+    public class VirtualFrame : Frame
     {
         internal VirtualFrame(object?[]? arguments = null) : base(arguments) { }
+        protected VirtualFrame(object?[]? arguments, FrameDescriptor? descriptor) : base(arguments, descriptor) { }
         internal MaterializedFrame Materialize()
         {
             var result = new MaterializedFrame(Arguments, GetFrameDescriptor());
@@ -700,7 +824,7 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
         }
     }
 
-    public sealed class MaterializedFrame : Frame
+    public sealed class MaterializedFrame : VirtualFrame
     {
         internal MaterializedFrame(object?[]? arguments = null, FrameDescriptor? descriptor = null) :
             base(arguments, descriptor) { }
@@ -710,18 +834,30 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
     {
         private readonly Dictionary<int, FrameSlotKind> slotKinds = new();
         private readonly Dictionary<object, int> auxiliarySlots = new();
+        private int slots;
 
         internal static Builder NewBuilder(int capacity) => new(capacity);
+        internal static Builder NewBuilder() => new(0);
         internal FrameSlotKind GetSlotKind(int slot) =>
             slotKinds.TryGetValue(slot, out var kind) ? kind : FrameSlotKind.Illegal;
         internal void SetSlotKind(int slot, FrameSlotKind kind) => slotKinds[slot] = kind;
         internal IDictionary<object, int> GetAuxiliarySlots() => auxiliarySlots;
+        internal int GetNumberOfSlots() => slots;
+        internal int GetNumberOfAuxiliarySlots() => auxiliarySlots.Count;
+        internal object? GetSlotName(int slot) => auxiliarySlots.FirstOrDefault(entry => entry.Value == slot).Key;
+        internal int FindOrAddAuxiliarySlot(object key)
+        {
+            if (auxiliarySlots.TryGetValue(key, out var slot)) return slot;
+            slot = auxiliarySlots.Count;
+            auxiliarySlots[key] = slot;
+            return slot;
+        }
         public sealed class Builder
         {
             private int slots;
             internal Builder(int capacity) => slots = 0;
             internal int AddSlot(FrameSlotKind kind, object identifier, object? info) => slots++;
-            internal FrameDescriptor Build() => new();
+            internal FrameDescriptor Build() => new() { slots = slots };
         }
     }
 }
@@ -737,6 +873,20 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         public virtual SourceSection? GetSourceSection() => null;
         internal Node? GetParent() => parent;
         internal T Insert<T>(T child) where T : Node { child.parent = this; return child; }
+        internal RootNode? GetRootNode()
+        {
+            Node? current = this;
+            while (current is not null && current is not RootNode) current = current.parent;
+            return current as RootNode;
+        }
+        internal void AdoptChildren() { }
+        internal Node DeepCopy() => (Node)MemberwiseClone();
+        internal T Replace<T>(T replacement) where T : Node
+        {
+            replacement.parent = parent;
+            return replacement;
+        }
+        internal bool Accept(Func<Node, bool> visitor) => visitor(this);
     }
 
     // Truffle uses this exception family for non-error interpreter control
@@ -771,10 +921,12 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
 
     public abstract class RootNode : Node
     {
-        protected RootNode(object? language, FrameDescriptor descriptor) { }
+        private readonly FrameDescriptor descriptor;
+        protected RootNode(object? language, FrameDescriptor descriptor) => this.descriptor = descriptor;
         public virtual object? Execute(VirtualFrame frame) => null;
         public virtual string GetName() => GetType().Name;
         public virtual bool IsInternal() => false;
+        internal FrameDescriptor GetFrameDescriptor() => descriptor;
         internal Pkl.Core.Runtime.Truffle.api.RootCallTarget GetCallTarget() => new(this);
     }
 
@@ -845,6 +997,7 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
         public EventBinding<ExecutionEventNodeFactory> AttachExecutionEventFactory(
             SourceSectionFilter filter,
             ExecutionEventNodeFactory factory) => new();
+        public EventBinding<T> AttachExecutionEventFactory<T>(SourceSectionFilter filter, T factory) where T : Delegate => new();
     }
 
     public sealed class SourceSectionFilter
@@ -896,6 +1049,9 @@ namespace Pkl.Core.Runtime.Truffle.api.dsl
                 var closedType = typeof(ReferenceField<>).MakeGenericType(valueType);
                 return Activator.CreateInstance(closedType, fieldName)!;
             }
+
+            public static ReferenceField<T> Create<T>(object updater, string fieldName, Type valueType) where T : class =>
+                new(fieldName);
         }
 
         public sealed class ReferenceField<T> : ReferenceField where T : class
@@ -953,6 +1109,7 @@ namespace Pkl.Core.Runtime.Truffle.api
         internal CallTarget(RootNode? root = null) => this.root = root;
         internal virtual object? Call(params object?[] arguments) =>
             root?.Execute(new VirtualFrame(arguments));
+        internal RootNode? GetRootNode() => root;
     }
 
     public sealed class RootCallTarget : CallTarget
@@ -964,6 +1121,7 @@ namespace Pkl.Core.Runtime.Truffle.api
     {
         internal static void TransferToInterpreter() { }
         internal static void TransferToInterpreterAndInvalidate() { }
+        internal static void Blackhole(object? value) { }
     }
 
     public static class CompilerAsserts
@@ -984,6 +1142,7 @@ namespace Pkl.Core.Runtime.Truffle.api
 
     public sealed class TruffleRuntime
     {
+        internal VirtualFrame CreateVirtualFrame(object?[] arguments, FrameDescriptor descriptor) => new(arguments);
         internal MaterializedFrame CreateMaterializedFrame(object?[] arguments) => new(arguments);
         internal IndirectCallNode CreateIndirectCallNode() => IndirectCallNode.GetUncached();
         internal RootCallTarget CreateCallTarget(RootNode root) => new(root);
@@ -1016,6 +1175,7 @@ namespace Pkl.Core.Runtime.Truffle.api
         public sealed class Env
         {
             public dynamic Lookup(Type serviceType) => Activator.CreateInstance(serviceType)!;
+            public T Lookup<T>(Type serviceType) => (T)Activator.CreateInstance(serviceType)!;
         }
 
         public sealed class ParsingRequest { }
@@ -1026,6 +1186,7 @@ namespace Pkl.Core.Runtime.Truffle.api
             private LanguageReference(Type type) =>
                 language = new Lazy<TLanguage>(() => (TLanguage)Activator.CreateInstance(type, nonPublic: true)!);
             internal static LanguageReference<TLanguage> Create(Type type) => new(type);
+            internal static LanguageReference<T> Create<T>(Type type) where T : class => new(type);
             internal TLanguage Get(Node? node) => language.Value;
         }
 
@@ -1033,6 +1194,7 @@ namespace Pkl.Core.Runtime.Truffle.api
         {
             private ContextReference() { }
             internal static ContextReference<TContext> Create(Type languageType) => new();
+            internal static ContextReference<T> Create<TLanguage, T>(Type languageType) where T : class => new();
             internal TContext Get(Node? node) =>
                 throw new InvalidOperationException("Pkl context has not been installed for this execution.");
         }
@@ -1099,6 +1261,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.constructor
     public class BaseConstructor
     {
         protected readonly Dictionary<Tag, ConstructNode> TagConstructors = new();
+        protected Dictionary<Tag, ConstructNode> tagConstructors => TagConstructors;
         public virtual object? ConstructObject(Node node) => null;
         protected void FlattenMapping(MappingNode node) { }
     }
@@ -1206,5 +1369,29 @@ namespace Pkl.Core.Runtime.SnakeYaml.schema
     {
         public abstract ScalarResolver GetScalarResolver();
         public abstract IDictionary<Tag, ConstructNode> GetSchemaTagConstructors();
+    }
+}
+
+namespace Pkl.Core.Util
+{
+    public sealed partial class HttpUtils
+    {
+        public static void CheckHasStatusCode200<T>(global::Pkl.Core.Runtime.JavaHttpResponse<T> response)
+        {
+            if (response.StatusCode() == 200) return;
+            if (response.Body() is IDisposable disposable) disposable.Dispose();
+            throw new System.IO.IOException(ErrorMessages.Create("badHttpStatusCode", response.StatusCode(), response.Uri()));
+        }
+    }
+}
+
+namespace Pkl.Core
+{
+    public sealed partial class PClassInfo<T>
+    {
+        public PClassInfo<object> AsObject() =>
+            this is PClassInfo<object> exact
+                ? exact
+                : new PClassInfo<object>(this.moduleName, this.className, this.javaClass, this.moduleUri);
     }
 }
