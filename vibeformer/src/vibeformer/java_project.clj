@@ -6,6 +6,7 @@
   and every type is selected through the resolver's exact occurrence identity."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
+            [vibeformer.concurrency :as concurrency]
             [vibeformer.csharp :as csharp]
             [vibeformer.java-body :as java-body]
             [vibeformer.java-translate :as java]
@@ -2401,34 +2402,22 @@
          :destination relative
          :logical-name (str/replace relative "/" ".")})))
 
-(defn emit-project!
-  "Emits declaration-complete, body-blocked C# project inputs from a live model."
-  [{:keys [workspace-root target discovery resolved-model configuration]}]
-  (let [configuration (validate-configuration! configuration)
-        root (paths/absolute workspace-root)
-        project-root (paths/resolve-path target (get-in configuration [:output :project-directory]))
-        source-root (paths/resolve-path project-root (get-in configuration [:output :source-directory]))
-        ctx-holder (atom nil)
-        base-context {:configuration configuration
-                      :resolved-model resolved-model
-                      :ctx-holder ctx-holder
-                      :occurrence-index (java/resolved-occurrence-index resolved-model)
-                      :selected-declarations (selected-declaration-index resolved-model)
-                      :emitted (IdentityHashMap.)
-                      :declarations (atom [])
-                      :diagnostics (atom [])
-                      :blocker-counter (atom 0)
-                      :body-translations (atom [])}
+(defn- emission-template
+  [resolved-model]
+  (let [ctx-holder (atom nil)
         base-services {:identifier identifier
-                  :pascal pascal
-                  :method-name method-name
-                  :anonymous-class-name anonymous-class-name
-                  :record-component-name record-component-name
-                  :local-name (fn [^CtElement element]
-                                (let [{:keys [line column]} (spoon/source-location element)]
-                                  (str (identifier (.getSimpleName ^spoon.reflect.declaration.CtNamedElement element))
-                                       "__" (or line 0) "_" (or column 0))))
-                  :type-node (fn [reference] (type-node @ctx-holder reference))}
+                       :pascal pascal
+                       :method-name method-name
+                       :anonymous-class-name anonymous-class-name
+                       :record-component-name record-component-name
+                       :local-name (fn [^CtElement element]
+                                     (let [{:keys [line column]}
+                                           (spoon/source-location element)]
+                                       (str (identifier
+                                             (.getSimpleName
+                                              ^spoon.reflect.declaration.CtNamedElement element))
+                                            "__" (or line 0) "_" (or column 0))))
+                       :type-node (fn [reference] (type-node @ctx-holder reference))}
         base-services (assoc base-services :record-component-contract?
                              #(record-component-contract? @ctx-holder %))
         base-services (assoc base-services :functional-interface-method?
@@ -2467,14 +2456,57 @@
                                      (catch Exception _ false))) (raw "this")
                            (same-type? current-outer call-owner) (raw "this.__outer")
                            :else nil)))))))
-        body-context (java-body/context resolved-model services)
-        ctx (assoc base-context :body-context body-context :services services)
-        _ (reset! ctx-holder ctx)
+        body-context (java-body/context resolved-model services)]
+    {:ctx-holder ctx-holder :services services :body-context body-context}))
+
+(defn- root-emission-context
+  [template configuration resolved-model occurrence-index selected-declarations blocker-start]
+  (let [ctx {:configuration configuration
+             :resolved-model resolved-model
+             :ctx-holder (:ctx-holder template)
+             :occurrence-index occurrence-index
+             :selected-declarations selected-declarations
+             :emitted (IdentityHashMap.)
+             :declarations (atom [])
+             :diagnostics (atom [])
+             :blocker-counter (atom blocker-start)
+             :body-translations (atom [])
+             :body-context (:body-context template)
+             :services (:services template)}]
+    (reset! (:ctx-holder template) ctx)
+    ctx))
+
+(defn emit-project!
+  "Emits declaration-complete, body-blocked C# project inputs from a live model."
+  [{:keys [workspace-root target discovery resolved-model configuration]}]
+  (let [configuration (validate-configuration! configuration)
+        root (paths/absolute workspace-root)
+        project-root (paths/resolve-path target (get-in configuration [:output :project-directory]))
+        source-root (paths/resolve-path project-root (get-in configuration [:output :source-directory]))
+        occurrence-index (java/resolved-occurrence-index resolved-model)
+        selected-declarations (selected-declaration-index resolved-model)
         roots (java/project-roots resolved-model)
-        declaration-artifacts
-        (mapv
-         (fn [^CtType type]
-           (let [namespace (destination-namespace ctx type)
+        scheduled-roots
+        (->> roots
+             (map-indexed
+              (fn [index ^CtType type]
+                {:index index
+                 :type type
+                 :weight (count (.getElements type (TypeFilter. CtElement)))}))
+             (sort-by (juxt (comp - :weight) :index))
+             vec)
+        worker-template
+        (proxy [ThreadLocal] []
+          (initialValue [] (emission-template resolved-model)))
+        declaration-results
+        (concurrency/mapv-ordered
+         :declaration-translation-and-emission
+         (fn [{:keys [index type]}]
+           (let [^CtType type type
+                 template (.get ^ThreadLocal worker-template)
+                 ctx (root-emission-context template configuration resolved-model occurrence-index
+                                            selected-declarations (* index 1000000))
+                 namespace (destination-namespace ctx type)
                  relative (str (str/replace namespace "." "/") "/"
                                (identifier (.getSimpleName type)) ".cs")
                  file (paths/resolve-path source-root relative)
@@ -2484,11 +2516,24 @@
                                       (type-node-declaration ctx type) (raw "\n")])
                  rendered (csharp/render node)]
              (write-text! file (:text rendered))
-             {:file (portable project-root file)
-              :source (spoon/source-location type)
-              :mappings (mapv #(assoc % :file (portable project-root file))
-                              (:mappings rendered))}))
-         roots)
+             {:index index
+              :artifact {:file (portable project-root file)
+                         :source (spoon/source-location type)
+                         :mappings (mapv #(assoc % :file (portable project-root file))
+                                         (:mappings rendered))}
+              :declarations @(:declarations ctx)
+              :diagnostics @(:diagnostics ctx)
+              :body-translations @(:body-translations ctx)}))
+         scheduled-roots)
+        declaration-results (vec (sort-by :index declaration-results))
+        declaration-artifacts (mapv :artifact declaration-results)
+        ctx {:configuration configuration
+             :resolved-model resolved-model
+             :occurrence-index occurrence-index
+             :selected-declarations selected-declarations
+             :declarations (atom (vec (mapcat :declarations declaration-results)))
+             :diagnostics (atom (vec (mapcat :diagnostics declaration-results)))
+             :body-translations (atom (vec (mapcat :body-translations declaration-results)))}
         helper-source (paths/resolve-path root "vibeformer/runtime/Vibeformer.JavaCompat.cs")
         helper-file (paths/resolve-path source-root "Vibeformer/Runtime/JavaCompat.cs")
         _ (Files/createDirectories (.getParent helper-file)

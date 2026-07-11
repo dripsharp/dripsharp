@@ -1,5 +1,6 @@
 (ns vibeformer.complete-parser-fixture
-  (:require [vibeformer.paths :as paths]
+  (:require [vibeformer.concurrency :as concurrency]
+            [vibeformer.paths :as paths]
             [vibeformer.process :as process]
             [vibeformer.project :as project]
             [vibeformer.spoon :as spoon])
@@ -20,8 +21,12 @@
                                        (make-array FileAttribute 0))
         submodule (project/verify-submodule! {:workspace-root root})
         discovery (project/discover-main! {:workspace-root root :manifest manifest})
-        first-model (spoon/build-resolved-model! root discovery)
-        second-model (spoon/build-resolved-model! root discovery)
+        first-model (concurrency/call-with-executor
+                     {:worker-count 1}
+                     #(spoon/build-resolved-model! root discovery))
+        second-model (concurrency/call-with-executor
+                      {:worker-count 4}
+                      #(spoon/build-resolved-model! root discovery))
         status-after (research-status root)]
     {:root root
      :submodule submodule

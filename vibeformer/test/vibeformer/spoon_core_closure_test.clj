@@ -14,6 +14,8 @@
     :expand :body}
    {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpression(org.pkl.core.ModuleSource,java.lang.String)"
     :expand :body}
+   {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpressionPklBinary(org.pkl.core.ModuleSource,java.lang.String)"
+    :expand :body}
    {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValue(org.pkl.core.ModuleSource)"
     :expand :body}
    {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValueAs(org.pkl.core.ModuleSource,org.pkl.core.PClassInfo)"
@@ -88,37 +90,37 @@
 
     (testing "the recursively resolved project declaration and source sets are exact"
       (is (= {:ambiguous-symbols 0
-              :executable-references 4037
-              :seeds 21
-              :constructor-references 2190
+              :executable-references 29159
+              :seeds 22
+              :constructor-references 4443
               :shadow-symbols 0
-              :public-api-declarations 3381
-              :type-references 78408
+              :public-api-declarations 7132
+              :type-references 440716
               :fallback-symbols 0
               :guessed-symbols 0
-              :source-inputs 344
-              :intrinsic-occurrences 6967
-              :dependency-occurrences 13436
-              :type-parameter-occurrences 885
-              :annotations 3220
-              :jdk-occurrences 13924
+              :source-inputs 603
+              :intrinsic-occurrences 90370
+              :dependency-occurrences 57129
+              :type-parameter-occurrences 4377
+              :annotations 10560
+              :jdk-occurrences 97199
               :unresolved-symbols 0
-              :declarations 5519
-              :project-occurrences 55882
-              :symbols 6965
-              :field-references 3239}
+              :declarations 16108
+              :project-occurrences 251950
+              :symbols 15752
+              :field-references 16147}
              (:totals first)))
-      (is (= "ec24190817873255790c94298dbf0cf2532195c60825b03d93ed454f551cd14a"
+      (is (= "933fa26a8ad6c3687532f54820afa5fa2a6ee8cba4f13bec05b6d117f049f770"
              (sha-256 declaration-keys)))
-      (is (= "7fcd4c29f56090f1f7037bb7b261c8feea1e61138a6b27a98895338c56b9a016"
+      (is (= "49b2a9892cce1436adf2d6aadc086fc97501e677bbbd4b222d1b6cef8a50647f"
              (sha-256 source-paths)))
-      (is (= "788ba05645decc14f3b8b2c3ec254e1c0d697128fab721a4d23ff033c89fe54b"
+      (is (= "f5cad9d57d54218b8cedf162948c75f1329034e028610a76b90465271332e3cc"
              (sha-256 public-api-keys)))
       (is (= discovery-sources (set (:compilation-units (:frontend first)))))
       (is (every? discovery-sources (keys (:source-inputs first))))
       (is (every? #(instance? CtElement (:declaration %))
                   (vals (:declarations first))))
-      (is (= 344 (count project-roots)))
+      (is (= 603 (count project-roots)))
       (is (every? #(.isTopLevel ^CtType %) project-roots))
       (is (every? #(contains? (:declarations first)
                               (str "type:" (.getQualifiedName ^CtType %)))
@@ -151,7 +153,7 @@
     (is (= (keys (:public-api-declarations first))
            (keys (:public-api-declarations second))))
     (is (= first-occurrences second-occurrences))
-    (is (= "99be32166f926478ef9383c806d96fb9e4366a3aaf233622e3ea27cc8171aad0"
+    (is (= "1b8be3a09a542c03fa18b949fe48ba555731d72a67e350ec3740b6902ff032fe"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))

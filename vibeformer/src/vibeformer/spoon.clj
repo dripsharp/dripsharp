@@ -4,7 +4,8 @@
   This namespace deliberately retains Spoon objects.  The occurrence and symbol
   indexes are navigation aids over the frontend model, not a serialized semantic
   fact model or a replacement AST."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [vibeformer.concurrency :as concurrency])
   (:import [java.io File]
            [java.lang.reflect Constructor Field]
            [java.nio.file Path]
@@ -521,14 +522,16 @@
                 [CtExecutableReference #(resolve-executable project-types %) :executable]
                 [CtFieldReference #(resolve-field project-types %) :field]
                 [CtAnnotation #(resolve-annotation project-types %) :annotation]]
-        results (mapcat
-                 (fn [[klass resolver _]]
-                   (map (fn [^CtElement element]
-                          (if-let [failure (source-position-failure source-files element)]
-                            {:failure failure}
-                            (resolver element)))
-                        (elements-of model klass)))
-                 groups)
+        inputs (mapcat (fn [[klass resolver kind]]
+                         (map #(vector kind resolver %) (elements-of model klass)))
+                       groups)
+        results (concurrency/mapv-ordered
+                 :complete-model-reference-resolution
+                 (fn [[_kind resolver ^CtElement element]]
+                   (if-let [failure (source-position-failure source-files element)]
+                     {:failure failure}
+                     (resolver element)))
+                 inputs)
         failures (vec (keep :failure results))
         occurrences (vec (remove :failure results))]
     (when (seq failures)
@@ -657,7 +660,8 @@
                                 (map #(vector % resolver)
                                      (closure-elements declaration expansion klass))))
                       (sort-by (comp occurrence-sort-key first)))
-        results (mapv
+        results (concurrency/mapv-ordered
+                 :closure-reference-resolution
                  (fn [[^CtElement element resolver]]
                    (if-let [failure (source-position-failure source-files element)]
                      {:failure failure}

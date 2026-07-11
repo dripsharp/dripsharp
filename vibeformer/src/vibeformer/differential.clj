@@ -1,6 +1,7 @@
 (ns vibeformer.differential
   "Independent upstream-JVM versus packaged-.NET parser behavior validation."
   (:require [clojure.string :as str]
+            [vibeformer.concurrency :as concurrency]
             [vibeformer.harness :as harness]
             [vibeformer.packaging :as packaging]
             [vibeformer.paths :as paths]
@@ -103,10 +104,17 @@
              {:oracle (str oracle) :perturbed (str perturbed)}))
     comparison))
 
-(defn verify-differential!
+(defn- run-independent-probes!
+  [run-command! probes]
+  (concurrency/mapv-ordered
+   :differential-probes
+   (fn [{:keys [name command directory]}]
+     (assoc (run-command! {:command command :directory directory}) :probe name))
+   probes))
+
+(defn- verify-differential-with-executor!
   "Regenerates, packs, consumes, runs the upstream oracle, and compares observations."
-  ([] (verify-differential! {}))
-  ([{:keys [workspace-root package-fn run-command!]
+  [{:keys [workspace-root package-fn run-command!]
      :or {package-fn packaging/verify-package-consumption!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
@@ -144,19 +152,23 @@
      (run-command! {:command ["javac" "--release" "21" "-cp" (str upstream-main)
                               "-d" (str oracle-classes) (str oracle-source)]
                     :directory root})
-     (run-command! {:command ["java" "-cp" classpath "UpstreamOracle"
-                              (str manifest) (str oracle-output)]
-                    :directory upstream-root})
      (Files/copy probe-source consumer-source
                  (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
      (run-command! {:command ["dotnet" "build" (str consumer-project) "--nologo"
                               "--verbosity:minimal" "--no-restore" "--no-incremental"
                               "-warnaserror"]
                     :directory consumer-root})
-     (run-command! {:command ["dotnet" "run" "--project" (str consumer-project)
-                              "--no-build" "--no-restore" "--" (str manifest)
-                              (str package-output)]
-                    :directory consumer-root})
+     (run-independent-probes!
+      run-command!
+      [{:name :upstream-java-oracle
+        :command ["java" "-cp" classpath "UpstreamOracle"
+                  (str manifest) (str oracle-output)]
+        :directory upstream-root}
+       {:name :packaged-dotnet-probe
+        :command ["dotnet" "run" "--project" (str consumer-project)
+                  "--no-build" "--no-restore" "--" (str manifest)
+                  (str package-output)]
+        :directory consumer-root}])
      (let [comparison (assert-equal! oracle-output package-output)
            perturbation (prove-perturbation! oracle-output perturbed-output)
            revision (str/trim (:output (run-command! {:command ["git" "rev-parse" "HEAD"]
@@ -173,4 +185,13 @@
         :summary summary
         :manifest manifest
         :oracle-output oracle-output
-        :package-output package-output}))))
+        :package-output package-output})))
+
+(defn verify-differential!
+  "Regenerates, packs, consumes, runs independent probes concurrently, and
+  compares observations. Accepts the same :worker-count policy as generation."
+  ([] (verify-differential! {}))
+  ([options]
+   (concurrency/call-with-executor
+    {:worker-count (:worker-count options)}
+    #(verify-differential-with-executor! options))))

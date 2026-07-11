@@ -120,7 +120,7 @@
     (is (= ":pkl-core" (get-in @captured [:discovery-options :gradle-project])))
     (is (= "vibeformer/config/pkl-core-value-model-destination.edn"
            (:destination-file @captured)))
-    (is (= 21 (count (:seeds @captured))))
+    (is (= 22 (count (:seeds @captured))))
     (is (instance? vibeformer.spoon.ResolvedJavaClosure (:resolved-model @captured)))
     (is (= "pkl-core-value-model" (get-in result [:generation-profile :profile])))
     (let [written (edn/read-string
@@ -147,3 +147,43 @@
                      (update :classpath #(vec (reverse %))))]
     (is (= (harness/configuration root "revision" discovery)
            (harness/configuration root "revision" reversed)))))
+
+(deftest independent-dependency-profiles-run-concurrently-and-collate-in-order
+  (let [root (temp-directory)
+        discovery (fixture-discovery root)
+        dependency-threads (atom #{})
+        result
+        (harness/generate!
+         {:workspace-root root
+          :worker-count 2
+          :profile "main"
+          :read-profile-fn
+          (fn [_ profile-name]
+            {:schema-version 1
+             :profile profile-name
+             :gradle-project (str ":" profile-name)
+             :destination-config (str profile-name ".edn")
+             :dependency-profiles (when (= "main" profile-name) ["dependency-b" "dependency-a"])})
+          :verify-submodule-fn (fn [_] {:revision "tracked-revision"})
+          :discover-main-fn
+          (fn [{:keys [gradle-project]}]
+            (when-not (= ":main" gradle-project)
+              (swap! dependency-threads conj (.getName (Thread/currentThread)))
+              (Thread/sleep 30))
+            (assoc discovery :gradle-project gradle-project))
+          :read-destination-fn (fn [_ file] {:schema-version 1 :file file})
+          :build-resolved-model-fn
+          (fn [_ _]
+            (spoon/map->ResolvedJavaModel
+             {:totals {:compilation-units 2 :project-types 0 :type-references 0
+                       :executable-references 0 :constructor-references 0
+                       :field-references 0 :annotations 0 :symbols 0
+                       :shadow-symbols 0 :unresolved-symbols 0
+                       :ambiguous-symbols 0 :fallback-symbols 0}}))
+          :emit-project-fn
+          (fn [{:keys [target configuration]}]
+            {:project-file (paths/resolve-path target (str (:file configuration) ".csproj"))
+             :summary {:compilation-units 2}})})]
+    (is (= ["dependency-b" "dependency-a"]
+           (mapv :profile (:dependency-emissions result))))
+    (is (= 2 (count @dependency-threads)))))

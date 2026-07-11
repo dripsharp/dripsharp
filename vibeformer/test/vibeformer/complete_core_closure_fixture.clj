@@ -1,5 +1,6 @@
 (ns vibeformer.complete-core-closure-fixture
   (:require [clojure.edn :as edn]
+            [vibeformer.concurrency :as concurrency]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
             [vibeformer.project :as project]
@@ -29,10 +30,14 @@
                     :manifest manifest
                     :gradle-project (:gradle-project configuration)})
         frontend (spoon/build-frontend-model! root discovery)
-        first-closure (spoon/select-resolved-closure!
-                       frontend (:seeds configuration))
-        second-closure (spoon/select-resolved-closure!
-                        frontend (:seeds configuration))
+        first-closure (concurrency/call-with-executor
+                       {:worker-count 1}
+                       #(spoon/select-resolved-closure!
+                         frontend (:seeds configuration)))
+        second-closure (concurrency/call-with-executor
+                        {:worker-count 4}
+                        #(spoon/select-resolved-closure!
+                          frontend (:seeds configuration)))
         status-after (research-status root)]
     {:root root
      :configuration configuration

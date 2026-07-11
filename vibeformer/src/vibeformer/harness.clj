@@ -1,6 +1,7 @@
 (ns vibeformer.harness
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
+            [vibeformer.concurrency :as concurrency]
             [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths]
             [vibeformer.project :as project]
@@ -88,10 +89,9 @@
                            :classpath (render-many (:classpath discovery))}}
        destination (assoc :destination destination)))))
 
-(defn generate!
+(defn- generate-with-executor!
   "Cleans disposable output, resolves pkl-parser, and emits disposable project inputs."
-  ([] (generate! {}))
-  ([{:keys [workspace-root profile generate-dependencies? verify-submodule-fn discover-main-fn
+  [{:keys [workspace-root profile generate-dependencies? verify-submodule-fn discover-main-fn
             build-resolved-model-fn build-resolved-closure-fn
             read-profile-fn read-destination-fn emit-project-fn]
      :or {verify-submodule-fn project/verify-submodule!
@@ -118,7 +118,13 @@
                       (build-resolved-model-fn root discovery))
          dependency-emissions
          (when (not= false generate-dependencies?)
-           (mapv
+           (when-not (= (count (:dependency-profiles generation-profile))
+                        (count (distinct (:dependency-profiles generation-profile))))
+             (throw (ex-info "Generation dependency profiles must be unique"
+                             {:kind :duplicate-dependency-profile
+                              :profiles (:dependency-profiles generation-profile)})))
+           (concurrency/mapv-ordered
+            :dependency-profile-generation
             (fn [dependency-name]
               (let [dependency-profile (read-profile-fn root dependency-name)
                     dependency-manifest (paths/resolve-path
@@ -133,11 +139,12 @@
                     (if-let [dependency-seeds (:seeds dependency-profile)]
                       (build-resolved-closure-fn root dependency-discovery dependency-seeds)
                       (build-resolved-model-fn root dependency-discovery))]
-                (emit-project-fn {:workspace-root root
-                                  :target target
-                                  :discovery dependency-discovery
-                                  :resolved-model dependency-model
-                                  :configuration dependency-destination})))
+                (assoc (emit-project-fn {:workspace-root root
+                                         :target target
+                                         :discovery dependency-discovery
+                                         :resolved-model dependency-model
+                                         :configuration dependency-destination})
+                       :profile dependency-name)))
             (:dependency-profiles generation-profile)))
          emission (emit-project-fn {:workspace-root root
                                     :target target
@@ -162,4 +169,14 @@
      (assoc config
             :java-model java-model
             :dependency-emissions dependency-emissions
-            :emission emission))))
+            :emission emission)))
+
+(defn generate!
+  "Cleans disposable output, resolves a profile, and emits it through the shared
+  bounded executor. Set :worker-count, VIBEFORMER_WORKERS, or
+  -Dvibeformer.workers; one worker provides the deterministic debug mode."
+  ([] (generate! {}))
+  ([options]
+   (concurrency/call-with-executor
+    {:worker-count (:worker-count options)}
+    #(generate-with-executor! options))))

@@ -61,6 +61,13 @@ clojure -M:test
 clojure -M:test --namespace vibeformer.harness-test
 ```
 
+Generation and differential validation use one bounded executor. The default
+worker count is the JVM's available-processor count. Set `VIBEFORMER_WORKERS=1`
+for sequential debugging or deterministic comparison; the equivalent JVM
+property is `-Dvibeformer.workers=1`. Positive values greater than one enable
+multicore declaration translation, semantic-reference resolution, independent
+dependency profiles, and independent differential probes without nested pools.
+
 `generate` removes and recreates `target`, verifies the tracked `research/pkl`
 gitlink, and obtains the pkl-parser production sources, resources, compile
 classpath, and Java toolchain from its Gradle project. Generated files under

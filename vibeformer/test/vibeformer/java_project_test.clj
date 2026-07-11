@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.complete-parser-fixture :as fixture]
+            [vibeformer.concurrency :as concurrency]
             [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths])
   (:import [java.nio.file FileVisitOption Files Path]
@@ -20,18 +21,20 @@
                 [(str (.relativize root file)) (vec (Files/readAllBytes file))]))
          (into (sorted-map)))))
 
-(defn- emit! [target]
+(defn- emit! [target worker-count]
   (let [{:keys [root discovery first]} (fixture/models)]
-    (java-project/emit-project!
-     {:workspace-root root
-      :target target
-      :discovery discovery
-      :resolved-model first
-      :configuration (java-project/read-configuration root)})))
+    (concurrency/call-with-executor
+     {:worker-count worker-count}
+     #(java-project/emit-project!
+       {:workspace-root root
+        :target target
+        :discovery discovery
+        :resolved-model first
+        :configuration (java-project/read-configuration root)}))))
 
 (deftest complete-parser-declarations-and-project-are-zero-skip-and-stable
-  (let [first-emission (emit! (temp-directory))
-        second-emission (emit! (temp-directory))
+  (let [first-emission (emit! (temp-directory) 1)
+        second-emission (emit! (temp-directory) 4)
         first-root (:project-root first-emission)
         second-root (:project-root second-emission)
         summary (:summary first-emission)
