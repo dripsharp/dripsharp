@@ -67,6 +67,42 @@
     (with-open [input (.getInputStream archive entry)]
       (String. (.readAllBytes input) StandardCharsets/UTF_8))))
 
+(defn- validate-entry-layout!
+  "Rejects archive paths whose identity changes across ZIP consumers or when
+  normalized onto a filesystem. NuGet identities and paths are
+  case-insensitive, so a release artifact must have one unambiguous spelling
+  for every payload entry."
+  [entry-names stage]
+  (let [unsafe
+        (->> entry-names
+             (keep (fn [name]
+                     (let [segments (str/split name #"/" -1)]
+                       (when (or (str/blank? name)
+                                 (str/starts-with? name "/")
+                                 (str/includes? name "\\")
+                                 (some #{"." ".."} segments))
+                         name))))
+             distinct
+             sort
+             vec)
+        duplicates (->> entry-names frequencies
+                        (keep (fn [[name count]] (when (> count 1) name)))
+                        sort
+                        vec)
+        case-collisions
+        (->> entry-names
+             (group-by str/lower-case)
+             vals
+             (map #(vec (sort (distinct %))))
+             (filter #(< 1 (count %)))
+             (sort-by first)
+             vec)]
+    (when (or (seq unsafe) (seq duplicates) (seq case-collisions))
+      (fail! "NuGet package contains ambiguous or unsafe archive paths"
+             {:stage stage :unsafe unsafe :duplicates duplicates
+              :case-collisions case-collisions}))
+    entry-names))
+
 (defn- parse-xml! [xml]
   (try
     (let [factory (doto (DocumentBuilderFactory/newInstance)
@@ -127,20 +163,26 @@
   bytes and declared package metadata are otherwise preserved."
   [source ^Path destination]
   (with-open [archive (ZipFile. (str source))]
-    (let [entries
-          (->> (enumeration-seq (.entries archive))
-               (remove #(.isDirectory ^java.util.zip.ZipEntry %))
-               (map (fn [^java.util.zip.ZipEntry entry]
-                      (let [name (.getName entry)
-                            bytes (with-open [input (.getInputStream archive entry)]
-                                    (.readAllBytes input))]
-                        [(if (str/starts-with? name core-properties-prefix)
-                           canonical-core-properties
-                           name)
-                         (if (= "_rels/.rels" name)
-                           (canonical-relationships bytes)
-                           bytes)])))
-               (into (sorted-map)))]
+    (let [source-entries (->> (enumeration-seq (.entries archive))
+                              (remove #(.isDirectory ^java.util.zip.ZipEntry %))
+                              vec)
+          _ (validate-entry-layout! (mapv #(.getName ^ZipEntry %) source-entries)
+                                    :raw-package)
+          canonical-entries
+          (mapv (fn [^ZipEntry entry]
+                  (let [name (.getName entry)
+                        bytes (with-open [input (.getInputStream archive entry)]
+                                (.readAllBytes input))]
+                    [(if (str/starts-with? name core-properties-prefix)
+                       canonical-core-properties
+                       name)
+                     (if (= "_rels/.rels" name)
+                       (canonical-relationships bytes)
+                       bytes)]))
+                source-entries)
+          _ (validate-entry-layout! (mapv first canonical-entries)
+                                    :canonical-package)
+          entries (into (sorted-map) canonical-entries)]
       (Files/createDirectories (.getParent destination)
                                (make-array java.nio.file.attribute.FileAttribute 0))
       (with-open [output (ZipOutputStream. (Files/newOutputStream
@@ -217,6 +259,7 @@
                         (map #(.getName %))
                         sort
                         vec)
+           _ (validate-entry-layout! entries :inspected-package)
            nuspec-name (str id ".nuspec")
            assembly-entry (str "lib/" target-framework "/" assembly-name ".dll")
            package-assemblies (filterv #(re-find #"(?i)\.dll$" %) entries)

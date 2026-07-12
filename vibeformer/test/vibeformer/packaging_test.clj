@@ -101,6 +101,21 @@
       (is (= :package-consumption-failed (:kind (ex-data error))))
       (is (= ["src/Parser.cs"] (:forbidden (ex-data error)))))))
 
+(deftest package-inspection-rejects-ambiguous-or-unsafe-archive-paths
+  (doseq [[shadow-path expected-key]
+          [["pkl.parser.nuspec" :case-collisions]
+           ["metadata/../Pkl.Parser.nuspec" :unsafe]]]
+    (let [artifact (archive! {"Pkl.Parser.nuspec" (nuspec)
+                              shadow-path "shadow metadata"
+                              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          error (try
+                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (testing (str "archive entry " shadow-path " cannot shadow package metadata")
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (seq (expected-key (ex-data error))))))))
+
 (deftest package-inspection-pins-dependency-closure-without-bundling-it
   (let [artifact (archive! {"Pkl.Core.nuspec" (core-nuspec)
                             "lib/net8.0/Pkl.Core.dll" "assembly"})
