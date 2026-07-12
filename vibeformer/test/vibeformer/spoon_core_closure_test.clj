@@ -13,6 +13,9 @@
   [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
     :expand :body}
    {:key "initializer:org.pkl.core.runtime.BaseModule#static@26:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.RefModule#static@24:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.MathModule#static@23:10" :expand :body}
+   {:key "initializer:org.pkl.core.util.json.JsonEscaper#static@38:10" :expand :body}
    {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpression(org.pkl.core.ModuleSource,java.lang.String)"
     :expand :body}
    {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpressionPklBinary(org.pkl.core.ModuleSource,java.lang.String)"
@@ -96,27 +99,27 @@
 
     (testing "the recursively resolved project declaration and source sets are exact"
       (is (= {:ambiguous-symbols 0
-              :executable-references 29201
-              :seeds 26
+              :executable-references 29207
+              :seeds 29
               :constructor-references 4457
               :shadow-symbols 0
               :public-api-declarations 7134
-              :type-references 441227
+              :type-references 441392
               :fallback-symbols 0
               :guessed-symbols 0
               :source-inputs 603
-              :intrinsic-occurrences 90410
+              :intrinsic-occurrences 90457
               :dependency-occurrences 57147
               :type-parameter-occurrences 4391
               :annotations 10561
-              :jdk-occurrences 97473
+              :jdk-occurrences 97548
               :unresolved-symbols 0
-              :declarations 16117
-              :project-occurrences 252193
-              :symbols 15776
-              :field-references 16168}
+              :declarations 16120
+              :project-occurrences 252260
+              :symbols 15777
+              :field-references 16186}
              (:totals first)))
-      (is (= "03b0f4d7dc35f9241bbfb7a8fe4ce58271dff3413d0de030b58ed09ce8ce00e8"
+      (is (= "976056ad7952e245abe115bd0c7fa493e059b274ec087e2f6c8f3970b45042ef"
              (sha-256 declaration-keys)))
       (is (= "49b2a9892cce1436adf2d6aadc086fc97501e677bbbd4b222d1b6cef8a50647f"
              (sha-256 source-paths)))
@@ -159,7 +162,7 @@
     (is (= (keys (:public-api-declarations first))
            (keys (:public-api-declarations second))))
     (is (= first-occurrences second-occurrences))
-    (is (= "e3a912d3b0f7423653ae7254c51c9cdb5dab819e5b00f7360604a96203a020a4"
+    (is (= "9f8cf0ed86b9e9dc016f31a4c05087bca16e93a82c600b34b35a88b429ba55d0"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))

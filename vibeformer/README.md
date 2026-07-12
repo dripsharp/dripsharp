@@ -100,10 +100,14 @@ runs the pinned upstream JVM parser as an oracle, then runs a package-only .NET
 probe over all 940 LanguageSnippetTests inputs and the upstream lexer/span edge
 cases. It retains that complete parser proof, then independently compares the
 packaged Pkl.Core evaluator and value model with a separate JVM oracle across
-module and nested-object export, expression evaluation, output-value export,
-normalized syntax/type/evaluation errors, `Duration`, `DataSize`, `Pair`,
-`PNull`, and `ModuleSource` behavior. Neither probe loads generated sources or
-shares runtime state with its oracle. Both comparisons deliberately perturb an
-oracle result to prove mismatches are detected. Proof outputs are retained under
+25 normalized observations: module and nested-object export; object, path, and
+string expression evaluation; text, JSON, bytes, and multi-file output;
+untyped and typed output-value export; local and standard-library imports;
+local text/byte resources; module security denial; collection, bytes, and regex
+runtime values; four normalized error classes; and `Duration`, `DataSize`,
+`Pair`, `PNull`, `PClassInfo`, and `ModuleSource` behavior. Each core case gets a
+fresh evaluator, and neither package probe loads generated sources or shares
+runtime state with its oracle. Both comparisons deliberately perturb an oracle
+result to prove mismatches are detected. Proof outputs are retained under
 `validation-output/differential-proof` even while later generation cleans the
 disposable `target` tree.

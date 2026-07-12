@@ -4,8 +4,10 @@
 #nullable enable
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 
 namespace Pkl.Core.Runtime
 {
@@ -900,7 +902,50 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
             while (current is not null && current is not RootNode) current = current.parent;
             return current as RootNode;
         }
-        internal void AdoptChildren() { }
+        internal void AdoptChildren() =>
+            AdoptChildren(new HashSet<Node>(ReferenceEqualityComparer.Instance));
+
+        private void AdoptChildren(ISet<Node> visited)
+        {
+            if (!visited.Add(this)) return;
+            for (Type? type = GetType(); type is not null && type != typeof(object); type = type.BaseType)
+            {
+                foreach (var field in type.GetFields(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.DeclaredOnly))
+                {
+                    if (field.DeclaringType == typeof(Node) && field.Name == nameof(parent)) continue;
+                    var value = field.GetValue(this);
+                    if (value is Node child)
+                    {
+                        AdoptChild(child, visited);
+                    }
+                    else if (value is IEnumerable children && ContainsNodes(field.FieldType))
+                    {
+                        foreach (var item in children)
+                            if (item is Node itemNode) AdoptChild(itemNode, visited);
+                    }
+                }
+            }
+        }
+
+        private void AdoptChild(Node child, ISet<Node> visited)
+        {
+            if (ReferenceEquals(child, this)) return;
+            child.parent ??= this;
+            child.AdoptChildren(visited);
+        }
+
+        private static bool ContainsNodes(Type type)
+        {
+            if (type.IsArray)
+                return type.GetElementType() is { } elementType &&
+                       typeof(Node).IsAssignableFrom(elementType);
+            return type.GetInterfaces().Concat(new[] { type }).Any(candidate =>
+                candidate.IsGenericType &&
+                candidate.GetGenericTypeDefinition() == typeof(IEnumerable<>) &&
+                typeof(Node).IsAssignableFrom(candidate.GetGenericArguments()[0]));
+        }
         internal Node DeepCopy() => (Node)MemberwiseClone();
         internal T Replace<T>(T replacement) where T : Node
         {
@@ -1127,7 +1172,11 @@ namespace Pkl.Core.Runtime.Truffle.api
     public class CallTarget
     {
         private readonly RootNode? root;
-        internal CallTarget(RootNode? root = null) => this.root = root;
+        internal CallTarget(RootNode? root = null)
+        {
+            this.root = root;
+            root?.AdoptChildren();
+        }
         internal virtual object? Call(params object?[] arguments) =>
             root?.Execute(new VirtualFrame(arguments));
         internal RootNode? GetRootNode() => root;

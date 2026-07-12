@@ -120,7 +120,7 @@
     (is (= ":pkl-core" (get-in @captured [:discovery-options :gradle-project])))
     (is (= "vibeformer/config/pkl-core-value-model-destination.edn"
            (:destination-file @captured)))
-    (is (= 26 (count (:seeds @captured))))
+    (is (= 29 (count (:seeds @captured))))
     (is (instance? vibeformer.spoon.ResolvedJavaClosure (:resolved-model @captured)))
     (is (= "pkl-core-value-model" (get-in result [:generation-profile :profile])))
     (let [written (edn/read-string

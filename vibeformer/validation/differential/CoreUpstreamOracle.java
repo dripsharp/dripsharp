@@ -9,10 +9,14 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.pkl.core.DataSize;
 import org.pkl.core.Duration;
 import org.pkl.core.Evaluator;
+import org.pkl.core.EvaluatorBuilder;
+import org.pkl.core.FileOutput;
 import org.pkl.core.ModuleSource;
+import org.pkl.core.PClassInfo;
 import org.pkl.core.PModule;
 import org.pkl.core.PNull;
 import org.pkl.core.PObject;
@@ -33,8 +37,7 @@ public final class CoreUpstreamOracle {
     var work = output.toAbsolutePath().getParent().resolve("upstream-work");
     Files.createDirectories(work);
 
-    try (BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8);
-        Evaluator evaluator = Evaluator.preconfigured()) {
+    try (BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8)) {
       writeValueModelObservations(writer);
       for (String line : Files.readAllLines(manifest, StandardCharsets.UTF_8)) {
         if (line.isEmpty()) continue;
@@ -44,9 +47,12 @@ public final class CoreUpstreamOracle {
         String operation = fields[1];
         String source = decode(fields[2]);
         String argument = decode(fields[3]);
+        prepareFixtures(work, operation, argument);
         Path module = work.resolve(safeName(id) + ".pkl");
         Files.writeString(module, source, StandardCharsets.UTF_8);
-        write(writer, id, operation, observe(evaluator, operation, module, argument));
+        try (Evaluator evaluator = Evaluator.preconfigured()) {
+          write(writer, id, operation, observe(evaluator, operation, module, argument));
+        }
       }
     }
   }
@@ -97,16 +103,37 @@ public final class CoreUpstreamOracle {
             + encode(uri.getUri().toString())
             + ",contents-null="
             + (uri.getContents() == null));
+
+    var classInfo = PClassInfo.get("pkl.base", "String", URI.create("pkl:base"));
+    write(
+        writer,
+        "@class-info",
+        "VALUE",
+        "qualified="
+            + encode(classInfo.getQualifiedName())
+            + ",display="
+            + encode(classInfo.getDisplayName())
+            + ",equal="
+            + PClassInfo.String.equals(classInfo));
   }
 
   private static String observe(Evaluator evaluator, String operation, Path module, String argument) {
     try {
       ModuleSource source = ModuleSource.uri(module.toUri());
+      if (operation.equals("OUTPUT_FILES")) {
+        return "OK|" + normalizeFileOutputs(evaluator.evaluateOutputFiles(source));
+      }
       Object result =
           switch (operation) {
-            case "EVALUATE" -> evaluator.evaluate(source);
+            case "EVALUATE", "LOCAL_IMPORT", "FILE_RESOURCE" -> evaluator.evaluate(source);
             case "EXPRESSION" -> evaluator.evaluateExpression(source, argument);
+            case "EXPRESSION_STRING" -> evaluator.evaluateExpressionString(source, argument);
+            case "OUTPUT_TEXT" -> evaluator.evaluateOutputText(source);
+            case "OUTPUT_BYTES" -> evaluator.evaluateOutputBytes(source);
             case "OUTPUT_VALUE" -> evaluator.evaluateOutputValue(source);
+            case "OUTPUT_VALUE_AS_STRING" ->
+                evaluator.evaluateOutputValueAs(source, PClassInfo.String);
+            case "SECURITY_DENIED" -> evaluateWithDeniedModules(source);
             default -> throw new IllegalArgumentException("unknown operation: " + operation);
           };
       return "OK|" + normalize(result);
@@ -114,6 +141,40 @@ public final class CoreUpstreamOracle {
       if (System.getenv("VIBEFORMER_DIFFERENTIAL_DEBUG") != null) error.printStackTrace(System.err);
       return "ERROR|" + normalizeError(error.getMessage());
     }
+  }
+
+  private static Object evaluateWithDeniedModules(ModuleSource source) {
+    try (Evaluator evaluator =
+        EvaluatorBuilder.preconfigured().setAllowedModules(List.<Pattern>of()).build()) {
+      return evaluator.evaluate(source);
+    }
+  }
+
+  private static void prepareFixtures(Path work, String operation, String argument) throws Exception {
+    switch (operation) {
+      case "LOCAL_IMPORT" ->
+          Files.writeString(work.resolve("dependency.pkl"), argument, StandardCharsets.UTF_8);
+      case "FILE_RESOURCE" ->
+          Files.writeString(work.resolve("resource.txt"), argument, StandardCharsets.UTF_8);
+      default -> {
+        // No auxiliary fixture is needed for this operation.
+      }
+    }
+  }
+
+  private static String normalizeFileOutputs(Map<String, FileOutput> outputs) {
+    var entries = new ArrayList<String>();
+    outputs.entrySet().stream()
+        .sorted(Map.Entry.comparingByKey())
+        .forEach(
+            entry ->
+                entries.add(
+                    encode(entry.getKey())
+                        + "=text:"
+                        + encode(entry.getValue().getText())
+                        + ","
+                        + normalize(entry.getValue().getBytes())));
+    return "files{" + String.join(",", entries) + "}";
   }
 
   private static String normalize(Object value) {
@@ -126,6 +187,8 @@ public final class CoreUpstreamOracle {
     if (value instanceof Float || value instanceof Double) {
       return "float:" + doubleBits(((Number) value).doubleValue());
     }
+    if (value instanceof byte[] bytes) return "bytes:" + hexBytes(bytes);
+    if (value instanceof Pattern pattern) return "regex:" + encode(pattern.pattern());
     if (value instanceof Duration duration) {
       return "duration:" + doubleBits(duration.getValue()) + "@" + duration.getUnit().getSymbol();
     }
@@ -179,7 +242,19 @@ public final class CoreUpstreamOracle {
       return "type:expected-string-got-int";
     }
     if (message.contains("Cannot find property `missing`")) return "evaluation:missing-property";
+    if (message.contains("output.value") && message.contains("String") && message.contains("Int")) {
+      return "output-value-type:expected-string-got-int";
+    }
+    if (message.contains("does not match any entry in the module allowlist")) {
+      return "security:module-not-allowed";
+    }
     return "other:" + encode(message.lines().findFirst().orElse(""));
+  }
+
+  private static String hexBytes(byte[] bytes) {
+    var result = new StringBuilder(bytes.length * 2);
+    for (byte value : bytes) result.append(String.format("%02x", value & 0xff));
+    return result.toString();
   }
 
   private static String doubleBits(double value) {

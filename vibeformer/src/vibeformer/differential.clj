@@ -44,7 +44,48 @@
     "output { value = Pair(\"done\", 42) }\n" ""]
    ["error/expression-syntax" "EXPRESSION" "foo = 1\n" "<>!!!"]
    ["error/expression-type" "EXPRESSION" "foo = 1\n" "foo as String"]
-   ["error/evaluation-missing-property" "EVALUATE" "result = missing\n" ""]])
+   ["error/evaluation-missing-property" "EVALUATE" "result = missing\n" ""]
+   ["output/default-pcf-text" "OUTPUT_TEXT"
+    "name = \"Pigeon\"\nage = 3\n" ""]
+   ["output/json-renderer-text" "OUTPUT_TEXT"
+    (str "name = \"Pigeon\"\n"
+         "age = 3\n"
+         "output { renderer = new JsonRenderer {} }\n")
+    ""]
+   ["output/bytes" "OUTPUT_BYTES"
+    "output { bytes = Bytes(0, 1, 127, 128, 255) }\n" ""]
+   ["output/multiple-files" "OUTPUT_FILES"
+    (str "output {\n"
+         "  files {\n"
+         "    [\"alpha.txt\"] { text = \"alpha\\n\" }\n"
+         "    [\"nested/beta.txt\"] { text = \"βeta\" }\n"
+         "  }\n"
+         "}\n")
+    ""]
+   ["value-export/typed-string" "OUTPUT_VALUE_AS_STRING"
+    "output { value = \"typed output\" }\n" ""]
+   ["error/typed-output-mismatch" "OUTPUT_VALUE_AS_STRING"
+    "output { value = 42 }\n" ""]
+   ["evaluation/expression-string" "EXPRESSION_STRING"
+    "value = 41\n" "value + 1"]
+   ["loading/stdlib-import-expression" "EXPRESSION" ""
+    "import(\"pkl:math\").gcd(54, 24)"]
+   ["loading/local-module-import" "LOCAL_IMPORT"
+    "imported = import(\"dependency.pkl\").answer\n"
+    "answer = 40 + 2\n"]
+   ["loading/local-file-resource" "FILE_RESOURCE"
+    (str "resourceText = read(\"resource.txt\").text\n"
+         "resourceBytes = read(\"resource.txt\").bytes\n")
+    "resource payload\n"]
+   ["security/denied-module" "SECURITY_DENIED" "value = 1\n" ""]
+   ["runtime/collections-bytes-regex" "EVALUATE"
+    (str "list = List(3, 1, 2)\n"
+         "set = Set(\"b\", \"a\", \"b\")\n"
+         "map = Map(\"two\", 2, \"one\", 1)\n"
+         "bytes = Bytes(0, 127, 128, 255)\n"
+         "regex = Regex(#\"a.+b\"#)\n"
+         "computed = List(1, 2, 3).map((it) -> it * 2)\n")
+    ""]])
 
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind :differential-validation-failed))))
@@ -264,9 +305,9 @@
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "vibeformer" "validation" "differential"
                                          "CorePackageProbe.cs")]
-    (when-not (= 7 (count core-cases))
+    (when-not (= 19 (count core-cases))
       (fail! "The pinned Pkl.Core differential case count changed; review the oracle selection"
-             {:expected 7 :actual (count core-cases)}))
+             {:expected 19 :actual (count core-cases)}))
     (run-command! {:command ["./gradlew" ":pkl-core:classes" "--console=plain"]
                    :directory upstream-root})
     (run-command! {:command [(str javac) "--release" (str java-release)
@@ -297,10 +338,12 @@
           summary {:upstream-revision revision
                    :package (:identity package-proof)
                    :cases (count core-cases)
-                   :value-model-observations 5
-                   :evaluation-cases 3
-                   :value-export-cases 1
-                   :error-cases 3
+                   :value-model-observations 6
+                   :evaluation-cases 7
+                   :output-cases 4
+                   :value-export-cases 2
+                   :loading-security-cases 3
+                   :error-cases 4
                    :observations (:matched comparison)
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
       (println "Independent upstream/package Pkl.Core differential passed:" (pr-str summary))

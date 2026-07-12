@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Pkl.Core;
 
 /** Package-only .NET probe for independently normalized Pkl.Core observations. */
@@ -18,7 +19,6 @@ static class CorePackageProbe
         Directory.CreateDirectory(work);
 
         using var writer = new StreamWriter(output, false, new UTF8Encoding(false));
-        using Evaluator evaluator = Evaluator.Preconfigured();
         WriteValueModelObservations(writer);
         foreach (string line in File.ReadLines(args[0], Encoding.UTF8))
         {
@@ -29,8 +29,10 @@ static class CorePackageProbe
             string operation = fields[1];
             string source = Decode(fields[2]);
             string argument = Decode(fields[3]);
+            PrepareFixtures(work, operation, argument);
             string module = Path.Combine(work, SafeName(id) + ".pkl");
             File.WriteAllText(module, source, new UTF8Encoding(false));
+            using Evaluator evaluator = Evaluator.Preconfigured();
             Write(writer, id, operation, Observe(evaluator, operation, module, argument));
         }
     }
@@ -53,6 +55,11 @@ static class CorePackageProbe
         ModuleSource uri = ModuleSource.Uri(new Uri("file:///independent-core-oracle.pkl"));
         Write(writer, "@module-source", "RUNTIME",
             $"uri={Encode(uri.GetUri().AbsoluteUri)},contents-null={Lower(uri.GetContents() is null)}");
+
+        PClassInfo<object> classInfo = PClassInfo<object>.Get(
+            "pkl.base", "String", new Uri("pkl:base"));
+        Write(writer, "@class-info", "VALUE",
+            $"qualified={Encode(classInfo.GetQualifiedName())},display={Encode(classInfo.GetDisplayName())},equal={Lower(PClassInfo<object>.String.Equals(classInfo))}");
     }
 
     static string Observe(Evaluator evaluator, string operation, string module, string argument)
@@ -60,11 +67,18 @@ static class CorePackageProbe
         try
         {
             ModuleSource source = ModuleSource.Uri(new Uri(Path.GetFullPath(module)));
+            if (operation == "OUTPUT_FILES")
+                return "OK|" + NormalizeFileOutputs(evaluator.EvaluateOutputFiles(source));
             object result = operation switch
             {
-                "EVALUATE" => evaluator.Evaluate(source),
+                "EVALUATE" or "LOCAL_IMPORT" or "FILE_RESOURCE" => evaluator.Evaluate(source),
                 "EXPRESSION" => evaluator.EvaluateExpression(source, argument),
+                "EXPRESSION_STRING" => evaluator.EvaluateExpressionString(source, argument),
+                "OUTPUT_TEXT" => evaluator.EvaluateOutputText(source),
+                "OUTPUT_BYTES" => evaluator.EvaluateOutputBytes(source),
                 "OUTPUT_VALUE" => evaluator.EvaluateOutputValue(source),
+                "OUTPUT_VALUE_AS_STRING" => evaluator.EvaluateOutputValueAs(source, PClassInfo<object>.String),
+                "SECURITY_DENIED" => EvaluateWithDeniedModules(source),
                 _ => throw new ArgumentException("unknown operation: " + operation),
             };
             return "OK|" + Normalize(result);
@@ -77,6 +91,31 @@ static class CorePackageProbe
         }
     }
 
+    static object EvaluateWithDeniedModules(ModuleSource source)
+    {
+        using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetAllowedModules(new List<Regex>()).Build();
+        return evaluator.Evaluate(source);
+    }
+
+    static void PrepareFixtures(string work, string operation, string argument)
+    {
+        switch (operation)
+        {
+            case "LOCAL_IMPORT":
+                File.WriteAllText(Path.Combine(work, "dependency.pkl"), argument, new UTF8Encoding(false));
+                break;
+            case "FILE_RESOURCE":
+                File.WriteAllText(Path.Combine(work, "resource.txt"), argument, new UTF8Encoding(false));
+                break;
+        }
+    }
+
+    static string NormalizeFileOutputs(IDictionary<string, FileOutput> outputs) =>
+        "files{" + string.Join(",", outputs.OrderBy(entry => entry.Key, StringComparer.Ordinal)
+            .Select(entry => Encode(entry.Key) + "=text:" + Encode(entry.Value.GetText()) + "," +
+                Normalize(entry.Value.GetBytes()))) + "}";
+
     static string Normalize(object? value)
     {
         if (value is null || ReferenceEquals(value, PNull.GetInstance())) return "null";
@@ -86,6 +125,8 @@ static class CorePackageProbe
             return "int:" + Convert.ToInt64(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
         if (value is float or double)
             return "float:" + DoubleBits(Convert.ToDouble(value, CultureInfo.InvariantCulture));
+        if (value is sbyte[] bytes) return "bytes:" + HexBytes(bytes);
+        if (value is Regex regex) return "regex:" + Encode(regex.ToString());
         if (value is Duration duration)
             return $"duration:{DoubleBits(duration.GetValue())}@{duration.GetUnit().GetSymbol()}";
         if (value is DataSize size)
@@ -97,6 +138,11 @@ static class CorePackageProbe
         if (value is PObject obj)
             return "object:" + Encode(obj.GetClassInfo().GetQualifiedName()) + NormalizeProperties(obj.GetProperties());
         if (value is IDictionary dictionary) return NormalizeMap(dictionary);
+        if (value is ISet<object> set)
+        {
+            var values = set.Select(Normalize).OrderBy(item => item, StringComparer.Ordinal);
+            return "set[" + string.Join(",", values) + "]";
+        }
         if (value is IEnumerable enumerable)
         {
             var values = new List<string>();
@@ -125,8 +171,17 @@ static class CorePackageProbe
         if (message.Contains("Expected value of type `String`, but got type `Int`", StringComparison.Ordinal))
             return "type:expected-string-got-int";
         if (message.Contains("Cannot find property `missing`", StringComparison.Ordinal)) return "evaluation:missing-property";
+        if (message.Contains("output.value", StringComparison.Ordinal) &&
+            message.Contains("String", StringComparison.Ordinal) &&
+            message.Contains("Int", StringComparison.Ordinal))
+            return "output-value-type:expected-string-got-int";
+        if (message.Contains("does not match any entry in the module allowlist", StringComparison.Ordinal))
+            return "security:module-not-allowed";
         return "other:" + Encode(message.Split('\n')[0].TrimEnd('\r'));
     }
+
+    static string HexBytes(sbyte[] bytes) =>
+        string.Concat(bytes.Select(value => unchecked((byte)value).ToString("x2", CultureInfo.InvariantCulture)));
 
     static string DoubleBits(double value) =>
         unchecked((ulong)BitConverter.DoubleToInt64Bits(value)).ToString("x16", CultureInfo.InvariantCulture);

@@ -764,9 +764,12 @@
           "executable:java.lang.Long#numberOfLeadingZeros(long)" (compat-call "LongLeadingZeros" args)
           "executable:java.lang.Long#numberOfTrailingZeros(long)" (compat-call "LongTrailingZeros" args)
           "executable:java.lang.Long#toUnsignedString(long,int)" (compat-call "ToUnsignedString" args)
-          "executable:java.lang.Long#intValue()" (sequence-node [(raw "(int)") target])
-          "executable:java.lang.Long#byteValue()" (sequence-node [(raw "(sbyte)") target])
-          "executable:java.lang.Long#shortValue()" (sequence-node [(raw "(short)") target])
+          "executable:java.lang.Long#intValue()"
+          (sequence-node [(raw "unchecked((int)(") target (raw "))")])
+          "executable:java.lang.Long#byteValue()"
+          (sequence-node [(raw "unchecked((sbyte)(") target (raw "))")])
+          "executable:java.lang.Long#shortValue()"
+          (sequence-node [(raw "unchecked((short)(") target (raw "))")])
           "executable:java.lang.Long#toString(long)" (compat-call "StringValueOf" args)
           "executable:java.lang.Long#toString(long,int)" (compat-call "ToStringRadix" args)
           "executable:java.lang.Integer#toString(int)" (compat-call "StringValueOf" args)
@@ -1212,6 +1215,11 @@
               (compat-call "CopyOfRange" args)
               (str/starts-with? key "executable:java.util.Arrays#fill(")
               (compat-call "Fill" args)
+              (and (= "clone" (.getSimpleName (.getExecutable element)))
+                   (zero? argc)
+                   (some-> target-element .getType .isArray))
+              (sequence-node [(raw "((") ((:type-node services) (.getType element))
+                              (raw ")") (invoke (member target "Clone") []) (raw ")")])
               (and (str/starts-with? key "executable:java.")
                    (str/ends-with? key "#getCause()"))
               (member target "InnerException")
@@ -1301,6 +1309,12 @@
               (and (str/starts-with? key "executable:org.organicdesign.fp.collections.")
                    (str/includes? key "#immutable()"))
               target
+              (and (str/starts-with? key "executable:org.organicdesign.fp.collections.")
+                   (str/includes? key "#assoc(")
+                   (let [target-type (some-> target-element .getType .getQualifiedName)]
+                     (or (= "org.organicdesign.fp.collections.MutMap" target-type)
+                         (str/includes? (or target-type "") "MutHashMap"))))
+              (compat-call "OrganicPut" (into [target] args))
               (and (str/starts-with? key "executable:org.organicdesign.fp.collections.")
                    (str/includes? key "#assoc("))
               (compat-call "Assoc" (into [target] args))
@@ -1431,6 +1445,10 @@
                    (= 4 argc))
               (invoke (member target "ModuleOutputValueTypeMismatch")
                       [(arg 0) (invoke (member (arg 1) "AsObject") []) (arg 2) (arg 3)])
+              (and (= "equals" (.getSimpleName (.getExecutable element)))
+                   (not (instance? CtSuperAccess target-element))
+                   (= 1 argc))
+              (compat-call "Equals" [target (arg 0)])
               (known-record-property-name services element target-element target)
               (member target (known-record-property-name services element target-element target))
               (and (= 1 argc)
@@ -1684,7 +1702,11 @@
              (let [parameter (.getParameter element)
                    multi-types (vec (.getMultiTypes ^CtCatchVariable parameter))
                    used? (some (fn [^CtVariableRead read]
-                                 (identical? parameter (some-> read .getVariable .getDeclaration)))
+                                 (and (identical? parameter
+                                                  (some-> read .getVariable .getDeclaration))
+                                      (not (instance? CtThrow
+                                                      (when (.isParentInitialized read)
+                                                        (.getParent read))))))
                                (.getElements (.getBody element) (TypeFilter. CtVariableRead)))
                    parameter-name (identifier services (.getSimpleName parameter))
                    multi? (> (count multi-types) 1)
@@ -2090,7 +2112,13 @@
                        (raw "this")))})}
     {:id :java.statement/throw :class CtThrow
      :emit (fn [{:keys [^CtThrow element children]}]
-             {:node (sequence-node [(raw "throw ") (child-node children (.getThrownExpression element)) (raw ";")])})}
+             (let [expression (.getThrownExpression element)
+                   variable (when (instance? CtVariableRead expression)
+                              (.getVariable ^CtVariableRead expression))
+                   rethrow? (instance? CtCatchVariable (some-> variable .getDeclaration))]
+               {:node (if rethrow?
+                        (raw "throw;")
+                        (sequence-node [(raw "throw ") (child-node children expression) (raw ";")]))}))}
     {:id :java.statement/try :class CtTry
      :emit (fn [{:keys [^CtTry element children]}]
              (let [resources (if (instance? CtTryWithResource element)

@@ -73,11 +73,11 @@
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 29091 (:declarations summary)))
+      (is (= 29094 (:declarations summary)))
       (is (= {:constructor 1123
               :enum-value 77
               :field 3427
-              :initializer 4
+              :initializer 7
               :method 8666
               :parameter 13420
               :record-component 131
@@ -89,17 +89,17 @@
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 10396 (:executable-roots summary)))
+      (is (= 10399 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 425312
+      (is (= {:semantic 425501
               :fallback 0
-              :visited 985691
+              :visited 986121
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 560379
+              :structural 560620
               :blocked 0
-              :covered 985691}
+              :covered 986121}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
@@ -107,7 +107,14 @@
                          (filter #(str/ends-with? % ".cs"))
                          (map #(slurp (str (paths/resolve-path project-root %)))))]
         (is (not-any? #(re-find #"#error VIBEFORMER_|NotImplementedException" %)
-                      sources))))
+                      sources))
+        (is (some #(str/includes? % "unchecked((sbyte)(") sources))
+        (is (some #(str/includes? % "JavaCompat.OrganicPut") sources))
+        (is (some #(str/includes? % "((string[])JsonEscaper.REPLACEMENTS.Clone())")
+                  sources))
+        (is (some #(str/includes? %
+                                 "LoadModule(global::Vibeformer.Runtime.JavaCompat.CreateUri(\"pkl:math\")")
+                  sources))))
 
     (testing "two independent closures emit byte-for-byte identical projects"
       (is (= (directory-bytes (:project-root first-emission))

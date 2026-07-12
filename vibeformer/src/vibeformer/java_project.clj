@@ -1464,6 +1464,11 @@
           rrb-nested-split?
           (sequence-node [(raw "{\nreturn base.Split(splitIndex);\n}")])
 
+          (= "executable:org.pkl.core.PClassInfo#equals(java.lang.Object)"
+             (spoon/declaration-key method))
+          (sequence-node
+           [(raw "{\nreturn global::Vibeformer.Runtime.JavaCompat.Equals(this, obj);\n}")])
+
           (= "executable:org.pkl.core.Pair#iterator()"
              (spoon/declaration-key method))
           (sequence-node [(raw "{") (raw "\nreturn ((global::System.Collections.Generic.IEnumerable<object?>)new object?[] { this.first, this.second }).GetEnumerator();\n") (raw "}")])

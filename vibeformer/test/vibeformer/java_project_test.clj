@@ -119,6 +119,8 @@
                   sources))
         (is (some #(str/includes? % "public override string ToString()")
                   sources))
+        (is (some #(str/includes? % "if (!base.Equals(o))") sources))
+        (is (not-any? #(str/includes? % "JavaCompat.Equals(base,") sources))
         (is (some #(re-find #"case var __case_\d+_\d+_\d+ when __case_\d+_\d+_\d+ == '=':"
                             %)
                   sources))

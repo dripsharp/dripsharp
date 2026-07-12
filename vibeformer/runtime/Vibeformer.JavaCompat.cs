@@ -247,7 +247,15 @@ internal static class JavaCompat
     internal static long ParseLong(string value, int radix) => Convert.ToInt64(value, radix);
     internal static long ParseLong(string value, int beginIndex, int endIndex, int radix) =>
         Convert.ToInt64(value.Substring(beginIndex, endIndex - beginIndex), radix);
-    internal static sbyte ParseByte(string value, int radix) => checked((sbyte)Convert.ToInt32(value, radix));
+    internal static sbyte ParseByte(string value, int radix)
+    {
+        var parsed = Convert.ToInt32(value, radix);
+        if (parsed < sbyte.MinValue || parsed > sbyte.MaxValue)
+        {
+            throw new FormatException($"Value '{value}' is outside the Java byte range.");
+        }
+        return (sbyte)parsed;
+    }
     internal static double ParseDouble(string value) => double.Parse(value, CultureInfo.InvariantCulture);
     internal static int CompareLong(long left, long right) => left.CompareTo(right);
     internal static int CompareInt(int left, int right) => left.CompareTo(right);
@@ -494,6 +502,12 @@ internal static class JavaCompat
         new(cause.GetType().FullName, cause);
     internal static Uri NewUri(string? scheme, string? host, string? path, string? fragment)
     {
+        if (scheme is null && host is null)
+        {
+            var relative = path ?? string.Empty;
+            if (fragment is not null) relative += "#" + fragment;
+            return CreateUri(relative);
+        }
         var builder = new UriBuilder(scheme ?? string.Empty, host ?? string.Empty) { Path = path ?? string.Empty };
         if (fragment is not null) builder.Fragment = fragment;
         return builder.Uri;
@@ -902,7 +916,11 @@ internal static class JavaCompat
     {
         if (ReferenceEquals(left, right)) return true;
         if (left is null || right is null) return false;
+        if (IsPClassInfo(left))
+            return IsPClassInfo(right) &&
+                   string.Equals(PClassInfoName(left), PClassInfoName(right), StringComparison.Ordinal);
         if (IsJavaList(left)) return IsJavaList(right) && ListsEqual((IEnumerable)left, (IEnumerable)right);
+        if (IsJavaSet(left)) return IsJavaSet(right) && SetsEqual((IEnumerable)left, (IEnumerable)right);
         return left.Equals(right);
     }
 
@@ -942,6 +960,21 @@ internal static class JavaCompat
         (value is IList || value.GetType().GetInterfaces().Any(type =>
             type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IList<>)));
 
+    private static bool IsJavaSet(object value) =>
+        value is IEnumerable && value.GetType().GetInterfaces().Any(type =>
+            type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ISet<>));
+
+    private static bool IsPClassInfo(object value)
+    {
+        var type = value.GetType();
+        return type.IsGenericType &&
+               type.GetGenericTypeDefinition().FullName == "Pkl.Core.PClassInfo`1";
+    }
+
+    private static string? PClassInfoName(object value) =>
+        value.GetType().GetMethod("GetQualifiedName", BindingFlags.Instance | BindingFlags.Public)!
+            .Invoke(value, null) as string;
+
     private static bool ListsEqual(IEnumerable left, IEnumerable right)
     {
         var leftEnumerator = left.GetEnumerator();
@@ -962,6 +995,14 @@ internal static class JavaCompat
             (leftEnumerator as IDisposable)?.Dispose();
             (rightEnumerator as IDisposable)?.Dispose();
         }
+    }
+
+    private static bool SetsEqual(IEnumerable left, IEnumerable right)
+    {
+        var leftValues = left.Cast<object?>().ToList();
+        var rightValues = right.Cast<object?>().ToList();
+        return leftValues.Count == rightValues.Count &&
+               leftValues.All(leftValue => rightValues.Any(rightValue => Equals(leftValue, rightValue)));
     }
 
     private static int JavaHashCode(object? value)
@@ -1090,7 +1131,10 @@ internal static class JavaCompat
         path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .Where(segment => !string.IsNullOrEmpty(segment)).ElementAt(index);
     internal static int CompareUri(Uri left, Uri right) => string.CompareOrdinal(left.OriginalString, right.OriginalString);
-    internal static Stream OpenStream(Uri uri) => new System.Net.Http.HttpClient().GetStreamAsync(uri).GetAwaiter().GetResult();
+    internal static Stream OpenStream(Uri uri) =>
+        uri.IsFile
+            ? File.OpenRead(uri.LocalPath)
+            : new System.Net.Http.HttpClient().GetStreamAsync(uri).GetAwaiter().GetResult();
     internal static sbyte[] ReadAllBytes(string path) => File.ReadAllBytes(path).Select(value => unchecked((sbyte)value)).ToArray();
     internal static sbyte[] ReadAllBytes(Stream stream)
     {
