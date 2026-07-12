@@ -5,6 +5,7 @@
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
+           [java.security MessageDigest]
            [java.util.zip ZipEntry ZipOutputStream]))
 
 (def package
@@ -74,6 +75,11 @@
   (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
   (Files/writeString file contents (make-array OpenOption 0))
   file)
+
+(defn- sha256 [^Path file]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (.update digest (Files/readAllBytes file))
+    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
 
 (deftest package-inspection-requires-assembly-and-metadata-without-source-internals
   (let [artifact (archive! {"Pkl.Parser.nuspec" (nuspec)
@@ -168,13 +174,20 @@
                 (.resolve root "obj/project.assets.json")
                 "{\"libraries\":{\"Pkl.Core/0.0.0-development\":{\"type\":\"package\"},\"Pkl.Parser/0.0.0-development\":{\"type\":\"package\"}}}")
         packages (.resolve root "packages")
-        identities [{:id "Pkl.Parser" :version "0.0.0-development" :sha256 "parser"}
-                    {:id "Pkl.Core" :version "0.0.0-development" :sha256 "core"}]
-        _ (doseq [{:keys [id version]} identities]
-            (let [lower (.toLowerCase ^String id)]
-              (write-file! (.resolve packages
-                                     (str lower "/" version "/" lower "." version ".nupkg"))
-                           "package")))
+        package-files (into {}
+                            (for [id ["Pkl.Parser" "Pkl.Core"]
+                                  :let [version "0.0.0-development"
+                                        lower (.toLowerCase ^String id)
+                                        file (write-file!
+                                              (.resolve packages
+                                                        (str lower "/" version "/" lower "."
+                                                             version ".nupkg"))
+                                              (str id " package"))]]
+                              [id file]))
+        identities (mapv (fn [id]
+                           {:id id :version "0.0.0-development"
+                            :sha256 (sha256 (get package-files id))})
+                         ["Pkl.Parser" "Pkl.Core"])
         proof (packaging/inspect-consumer-dependencies!
                project assets packages (second identities) identities)]
     (is (= ["Pkl.Core" "0.0.0-development"] (:package-reference proof)))
@@ -197,3 +210,43 @@
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :package-consumption-failed (:kind (ex-data error))))
     (is (seq (:forbidden (ex-data error))))))
+
+(deftest independent-consumer-dependency-proof-rejects-wrong-artifact-or-extra-version
+  (let [root (Files/createTempDirectory "vibeformer-consumer-identity"
+                                         (make-array FileAttribute 0))
+        project (write-file!
+                 (.resolve root "Consumer.csproj")
+                 (str "<Project><ItemGroup>"
+                      "<PackageReference Include=\"Pkl.Core\" Version=\"0.0.0-development\" />"
+                      "</ItemGroup></Project>"))
+        assets (write-file!
+                (.resolve root "obj/project.assets.json")
+                "{\"libraries\":{\"Pkl.Core/0.0.0-development\":{\"type\":\"package\"}}}")
+        packages (.resolve root "packages")
+        artifact (write-file!
+                  (.resolve packages
+                            "pkl.core/0.0.0-development/pkl.core.0.0.0-development.nupkg")
+                  "restored package")
+        identity {:id "Pkl.Core" :version "0.0.0-development"
+                  :sha256 (sha256 artifact)}]
+    (write-file! (.resolve packages "pkl.core/0.0.1/pkl.core.0.0.1.nupkg")
+                 "unexpected version")
+    (let [version-error (try
+                          (packaging/inspect-consumer-dependencies!
+                           project assets packages identity [identity])
+                          nil
+                          (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :package-consumption-failed (:kind (ex-data version-error))))
+      (is (= ["0.0.0-development"] (:expected (ex-data version-error))))
+      (is (= ["0.0.0-development" "0.0.1"] (:actual (ex-data version-error)))))
+    (Files/delete (.resolve packages "pkl.core/0.0.1/pkl.core.0.0.1.nupkg"))
+    (Files/delete (.resolve packages "pkl.core/0.0.1"))
+    (let [hash-error (try
+                       (packaging/inspect-consumer-dependencies!
+                        project assets packages (assoc identity :sha256 "wrong")
+                        [(assoc identity :sha256 "wrong")])
+                       nil
+                       (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :package-consumption-failed (:kind (ex-data hash-error))))
+      (is (= "wrong" (:expected (ex-data hash-error))))
+      (is (= (:sha256 identity) (:actual (ex-data hash-error)))))))

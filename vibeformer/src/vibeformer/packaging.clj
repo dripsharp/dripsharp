@@ -250,16 +250,32 @@
       (when (seq project-libraries)
         (fail! "Restored package graph leaked a project dependency"
                {:assets-file (str assets-file) :project-library-count (count project-libraries)}))
-      (doseq [{:keys [id version]} identities]
-        (let [key (str id "/" version)
-              artifact (paths/resolve-path packages (str/lower-case id) version
+      (doseq [{:keys [id version] :as identity} identities]
+        (let [package-root (paths/resolve-path packages (str/lower-case id))
+              actual-versions (->> (child-directories package-root)
+                                   (map #(str (.getFileName ^Path %)))
+                                   sort
+                                   vec)
+              key (str id "/" version)
+              artifact (paths/resolve-path package-root version
                                            (str (str/lower-case id) "." version ".nupkg"))]
           (when-not (str/includes? assets (str "\"" key "\""))
             (fail! "Restored package graph is missing an exact package identity"
                    {:identity key :assets-file (str assets-file)}))
+          (when-not (= [version] actual-versions)
+            (fail! "Isolated package cache contains versions outside the packed dependency closure"
+                   {:identity key :expected [version] :actual actual-versions
+                    :package-root (str package-root)}))
           (when-not (paths/regular-file? artifact)
             (fail! "Isolated package cache is missing an exact package artifact"
-                   {:identity key :artifact (str artifact)}))))
+                   {:identity key :artifact (str artifact)}))
+          (let [actual-hash (sha256 artifact)]
+            (when-not (= (:sha256 identity) actual-hash)
+              (fail! "Restored package artifact does not match the deterministic packed artifact"
+                     {:identity key
+                      :expected (:sha256 identity)
+                      :actual actual-hash
+                      :artifact (str artifact)})))))
       (when-not (= expected-cache-roots actual-cache-roots)
         (fail! "Isolated package cache contains packages outside the packed dependency closure"
                {:expected expected-cache-roots :actual actual-cache-roots
