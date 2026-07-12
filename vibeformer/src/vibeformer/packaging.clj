@@ -5,10 +5,13 @@
             [vibeformer.harness :as harness]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [java.io ByteArrayInputStream]
+           [java.nio.charset StandardCharsets]
            [java.nio.file Files Path StandardCopyOption]
            [java.security MessageDigest]
-           [java.util.zip ZipEntry ZipFile ZipOutputStream]))
+           [java.util.zip ZipEntry ZipFile ZipOutputStream]
+           [javax.xml.parsers DocumentBuilderFactory]
+           [org.w3c.dom Element Node]))
 
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind :package-consumption-failed))))
@@ -64,10 +67,44 @@
     (with-open [input (.getInputStream archive entry)]
       (String. (.readAllBytes input) StandardCharsets/UTF_8))))
 
-(defn- xml-attributes [attributes]
-  (->> (re-seq #"([A-Za-z_:][A-Za-z0-9_.:-]*)=\"([^\"]*)\"" attributes)
-       (map (fn [[_ key value]] [key value]))
-       (into {})))
+(defn- parse-xml! [xml]
+  (try
+    (let [factory (doto (DocumentBuilderFactory/newInstance)
+                    (.setNamespaceAware true)
+                    (.setXIncludeAware false)
+                    (.setExpandEntityReferences false))]
+      (.setFeature factory "http://apache.org/xml/features/disallow-doctype-decl" true)
+      (.setFeature factory "http://xml.org/sax/features/external-general-entities" false)
+      (.setFeature factory "http://xml.org/sax/features/external-parameter-entities" false)
+      (with-open [input (ByteArrayInputStream.
+                         (.getBytes ^String xml StandardCharsets/UTF_8))]
+        (.parse (.newDocumentBuilder factory) input)))
+    (catch Exception error
+      (fail! "NuGet package contains invalid nuspec XML"
+             {:cause (.getMessage error)}))))
+
+(defn- element-name [^Element element]
+  (or (.getLocalName element) (.getNodeName element)))
+
+(defn- child-elements
+  ([^Node parent]
+   (let [children (.getChildNodes parent)]
+     (->> (range (.getLength children))
+          (map #(.item children %))
+          (filter #(instance? Element %))
+          vec)))
+  ([^Node parent name]
+   (filterv #(= name (element-name %)) (child-elements parent))))
+
+(defn- exactly-one-child! [^Node parent name path]
+  (let [elements (child-elements parent name)]
+    (when-not (= 1 (count elements))
+      (fail! "NuGet metadata does not contain exactly one required element"
+             {:element name :path path :count (count elements)}))
+    (first elements)))
+
+(defn- element-attributes [^Element element names]
+  (into {} (map (fn [name] [name (.getAttribute element name)]) names)))
 
 (def ^:private core-properties-prefix
   "package/services/metadata/core-properties/")
@@ -116,6 +153,57 @@
             (.closeEntry output))))
       destination)))
 
+(defn- inspect-nuspec!
+  [nuspec package target-framework expected-dependencies]
+  (let [document (parse-xml! nuspec)
+        root (.getDocumentElement document)]
+    (when-not (= "package" (element-name root))
+      (fail! "NuGet nuspec root element is not package"
+             {:expected "package" :actual (element-name root)}))
+    (let [metadata (exactly-one-child! root "metadata" "package")
+          configured-elements
+          [["id" (:id package)]
+           ["version" (:version package)]
+           ["title" (:title package)]
+           ["description" (:description package)]
+           ["authors" (:authors package)]
+           ["tags" (:tags package)]
+           ["projectUrl" (:project-url package)]]]
+      (doseq [[name expected] configured-elements]
+        (let [element (exactly-one-child! metadata name "package/metadata")
+              actual (.getTextContent element)]
+          (when-not (= expected actual)
+            (fail! (str "NuGet metadata does not match configured " name)
+                   {:element name :expected expected :actual actual}))))
+      (let [repository (exactly-one-child! metadata "repository" "package/metadata")
+            expected-repository {"type" (:repository-type package)
+                                 "url" (:repository-url package)}
+            actual-repository (element-attributes repository ["type" "url"])]
+        (when-not (= expected-repository actual-repository)
+          (fail! "NuGet repository metadata does not match the configured repository"
+                 {:expected expected-repository :actual actual-repository})))
+      (let [dependency-container
+            (exactly-one-child! metadata "dependencies" "package/metadata")
+            groups (child-elements dependency-container "group")]
+        (when-not (= 1 (count groups))
+          (fail! "NuGet dependencies do not contain exactly one target-framework group"
+                 {:expected target-framework :groups (count groups)}))
+        (let [group (first groups)
+              actual-framework (.getAttribute ^Element group "targetFramework")
+              dependencies (mapv (fn [^Element dependency]
+                                   {:id (.getAttribute dependency "id")
+                                    :version (.getAttribute dependency "version")})
+                                 (child-elements group "dependency"))
+              expected-dependencies
+              (mapv #(select-keys % [:id :version]) expected-dependencies)]
+          (when-not (= target-framework actual-framework)
+            (fail! "NuGet dependency group does not match the configured target framework"
+                   {:expected target-framework :actual actual-framework}))
+          (when-not (= expected-dependencies dependencies)
+            (fail! "NuGet package dependencies do not match the generated project dependency closure"
+                   {:expected expected-dependencies :actual dependencies}))
+          dependencies)))))
+
 (defn inspect-package!
   "Checks the package payload and metadata without extracting generated sources."
   ([artifact package target-framework assembly-name]
@@ -133,15 +221,6 @@
            assembly-entry (str "lib/" target-framework "/" assembly-name ".dll")
            package-assemblies (filterv #(re-find #"(?i)\.dll$" %) entries)
            nuspec (zip-text archive nuspec-name)
-           repositories (when nuspec
-                          (->> (re-seq #"(?s)<repository\b([^>]*)/?>" nuspec)
-                               (mapv (comp xml-attributes second))))
-           dependencies (when nuspec
-                          (->> (re-seq #"<dependency id=\"([^\"]+)\" version=\"([^\"]+)\"[^>]*/>"
-                                       nuspec)
-                               (mapv (fn [[_ dependency-id dependency-version]]
-                                       {:id dependency-id :version dependency-version}))))
-           expected-dependencies (mapv #(select-keys % [:id :version]) expected-dependencies)
            forbidden (filterv #(or (re-find #"(?i)(^|/)(src|test|translator)(/|$)" %)
                                    (re-find #"(?i)\.(cs|clj|edn|java|kt|csproj)$" %)
                                    (re-find #"(?i)(source-map|diagnostics|generation-manifest)" %))
@@ -152,32 +231,18 @@
        (when-not nuspec
          (fail! "NuGet package does not contain its nuspec metadata"
                 {:required nuspec-name :entries entries}))
-       (doseq [[element value] (remove (comp nil? second)
-                                       [["id" id]
-                                        ["version" version]
-                                        ["title" title]
-                                        ["description" description]
-                                        ["authors" authors]
-                                        ["tags" tags]
-                                        ["projectUrl" project-url]])]
-         (when-not (str/includes? nuspec (str "<" element ">" (xml-escape value)
-                                             "</" element ">"))
-           (fail! (str "NuGet metadata is missing configured " element)
-                  {:element element :value value :nuspec nuspec})))
-       (let [expected-repository {"type" (xml-escape repository-type)
-                                  "url" (xml-escape repository-url)}]
-         (when-not (= [expected-repository]
-                      (mapv #(select-keys % ["type" "url"]) repositories))
-           (fail! "NuGet repository metadata does not match the configured repository"
-                  {:expected expected-repository :actual repositories :nuspec nuspec})))
-       (when-not (= expected-dependencies dependencies)
-         (fail! "NuGet package dependencies do not match the generated project dependency closure"
-                {:expected expected-dependencies :actual dependencies :nuspec nuspec}))
-       (when (seq forbidden)
-         (fail! "NuGet package contains translator, test, or generated-source internals"
-                {:forbidden forbidden :entries entries}))
-       {:entries entries :assembly-entry assembly-entry :nuspec nuspec
-        :dependencies dependencies}))))
+       (let [dependencies (inspect-nuspec!
+                           nuspec
+                           {:id id :version version :title title :description description
+                            :authors authors :tags tags :project-url project-url
+                            :repository-url repository-url
+                            :repository-type repository-type}
+                           target-framework expected-dependencies)]
+         (when (seq forbidden)
+           (fail! "NuGet package contains translator, test, or generated-source internals"
+                  {:forbidden forbidden :entries entries}))
+         {:entries entries :assembly-entry assembly-entry :nuspec nuspec
+          :dependencies dependencies})))))
 
 (defn- hex [bytes]
   (apply str (map #(format "%02x" (bit-and 0xff %)) bytes)))

@@ -41,6 +41,7 @@
        "<projectUrl>" (:project-url package) "</projectUrl>"
        "<repository type=\"" (:repository-type package) "\" url=\""
        (:repository-url package) "\" />"
+       "<dependencies><group targetFramework=\"net8.0\" /></dependencies>"
        "</metadata></package>"))
 
 (defn- core-nuspec []
@@ -161,6 +162,36 @@
     (is (= {"type" (:repository-type package)
             "url" (:repository-url package)}
            (:expected (ex-data error))))))
+
+(deftest package-inspection-requires-exact-scalar-metadata-and-dependency-group
+  (testing "duplicate scalar metadata cannot hide behind a matching value"
+    (let [duplicate-title (str/replace
+                           (nuspec)
+                           (str "<title>" (:title package) "</title>")
+                           (str "<title>" (:title package) "</title>"
+                                "<title>misleading duplicate</title>"))
+          artifact (archive! {"Pkl.Parser.nuspec" duplicate-title
+                              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          error (try
+                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :package-consumption-failed (:kind (ex-data error))))
+      (is (= "title" (:element (ex-data error))))
+      (is (= 2 (:count (ex-data error))))))
+  (testing "dependencies must be scoped to the configured target framework"
+    (let [wrong-framework (str/replace (nuspec)
+                                       "targetFramework=\"net8.0\""
+                                       "targetFramework=\"net9.0\"")
+          artifact (archive! {"Pkl.Parser.nuspec" wrong-framework
+                              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          error (try
+                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :package-consumption-failed (:kind (ex-data error))))
+      (is (= "net8.0" (:expected (ex-data error))))
+      (is (= "net9.0" (:actual (ex-data error)))))))
 
 (deftest independent-consumer-dependency-proof-pins-package-only-closure
   (let [root (Files/createTempDirectory "vibeformer-consumer-proof"
