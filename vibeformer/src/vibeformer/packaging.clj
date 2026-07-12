@@ -122,6 +122,21 @@
 (defn- element-name [^Element element]
   (or (.getLocalName element) (.getNodeName element)))
 
+(def ^:private base-nuspec-namespace
+  "http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd")
+
+(def ^:private dependency-nuspec-namespace
+  "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd")
+
+(defn- require-nuspec-namespace! [^Element element path]
+  (let [root (.getDocumentElement (.getOwnerDocument element))
+        expected (.getNamespaceURI root)
+        actual (.getNamespaceURI element)]
+    (when-not (= expected actual)
+      (fail! "NuGet metadata element is outside the required nuspec namespace"
+             {:path path :element (element-name element)
+              :expected expected :actual actual}))))
+
 (defn- child-elements
   ([^Node parent]
    (let [children (.getChildNodes parent)]
@@ -147,7 +162,11 @@
             [(.getNodeName attribute) (.getNodeValue attribute)]))))
 
 (defn- require-exact-children! [^Node parent expected path]
-  (let [actual (mapv element-name (child-elements parent))]
+  (let [elements (child-elements parent)
+        _ (doseq [^Element element elements]
+            (require-nuspec-namespace!
+             element (str path "/" (element-name element))))
+        actual (mapv element-name elements)]
     (when-not (= (frequencies expected) (frequencies actual))
       (fail! "NuGet metadata contains missing, duplicate, or unexpected elements"
              {:path path :expected (vec expected) :actual actual}))))
@@ -214,10 +233,17 @@
 (defn- inspect-nuspec!
   [nuspec package target-framework expected-dependencies]
   (let [document (parse-xml! nuspec)
-        root (.getDocumentElement document)]
+        root (.getDocumentElement document)
+        expected-namespace (if (seq expected-dependencies)
+                             dependency-nuspec-namespace
+                             base-nuspec-namespace)]
     (when-not (= "package" (element-name root))
       (fail! "NuGet nuspec root element is not package"
              {:expected "package" :actual (element-name root)}))
+    (when-not (= expected-namespace (.getNamespaceURI root))
+      (fail! "NuGet package uses the wrong nuspec schema namespace"
+             {:expected expected-namespace :actual (.getNamespaceURI root)}))
+    (require-exact-attributes! root {"xmlns" expected-namespace} "package")
     (require-exact-children! root ["metadata"] "package")
     (let [metadata (exactly-one-child! root "metadata" "package")
           configured-elements
@@ -333,6 +359,16 @@
          (when (seq forbidden)
            (fail! "NuGet package contains translator, test, or generated-source internals"
                   {:forbidden forbidden :entries entries}))
+         (let [expected-entries (->> ["[Content_Types].xml"
+                                      "_rels/.rels"
+                                      nuspec-name
+                                      assembly-entry
+                                      canonical-core-properties]
+                                     sort
+                                     vec)]
+           (when-not (= expected-entries entries)
+             (fail! "NuGet package layout differs from the exact release payload"
+                    {:expected expected-entries :actual entries})))
          {:entries entries :assembly-entry assembly-entry :nuspec nuspec
           :dependencies dependencies})))))
 

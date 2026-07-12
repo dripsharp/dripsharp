@@ -30,8 +30,14 @@
    :repository-url "https://example.test/pkl.git"
    :repository-type "git"})
 
+(def nuspec-namespace
+  "http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd")
+
+(def dependency-nuspec-namespace
+  "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd")
+
 (defn- nuspec []
-  (str "<package><metadata>"
+  (str "<package xmlns=\"" nuspec-namespace "\"><metadata>"
        "<id>" (:id package) "</id>"
        "<version>" (:version package) "</version>"
        "<title>" (:title package) "</title>"
@@ -45,7 +51,7 @@
        "</metadata></package>"))
 
 (defn- core-nuspec []
-  (str "<package><metadata>"
+  (str "<package xmlns=\"" dependency-nuspec-namespace "\"><metadata>"
        "<id>" (:id core-package) "</id>"
        "<version>" (:version core-package) "</version>"
        "<title>" (:title core-package) "</title>"
@@ -72,6 +78,13 @@
         (.closeEntry output)))
     archive))
 
+(defn- package-archive! [entries]
+  (archive! (merge {"[Content_Types].xml" "content types"
+                    "_rels/.rels" "relationships"
+                    "package/services/metadata/core-properties/core-properties.psmdcp"
+                    "core properties"}
+                   entries)))
+
 (defn- write-file! [^Path file contents]
   (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
   (Files/writeString file contents (make-array OpenOption 0))
@@ -82,17 +95,51 @@
     (.update digest (Files/readAllBytes file))
     (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
 
-(deftest package-inspection-requires-assembly-and-metadata-without-source-internals
-  (let [artifact (archive! {"Pkl.Parser.nuspec" (nuspec)
-                            "lib/net8.0/Pkl.Parser.dll" "assembly"})
+(deftest package-inspection-requires-exact-release-layout
+  (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
+                                    "lib/net8.0/Pkl.Parser.dll" "assembly"})
         inspection (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")]
     (is (= "lib/net8.0/Pkl.Parser.dll" (:assembly-entry inspection)))
-    (is (= 2 (count (:entries inspection))))))
+    (is (= 5 (count (:entries inspection)))))
+  (doseq [[label entries]
+          [["missing OPC envelope"
+            {"Pkl.Parser.nuspec" (nuspec)
+             "lib/net8.0/Pkl.Parser.dll" "assembly"}]
+           ["unexpected package payload"
+            {"Pkl.Parser.nuspec" (nuspec)
+             "lib/net8.0/Pkl.Parser.dll" "assembly"
+             "tools/install.ps1" "unexpected"}]]]
+    (let [artifact ((if (= label "missing OPC envelope") archive! package-archive!) entries)
+          error (try
+                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (testing label
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (vector? (:expected (ex-data error))))))))
+
+(deftest package-inspection-requires-the-nuspec-namespace
+  (doseq [[label wrong-namespace]
+          [["wrong root schema"
+            (str/replace (nuspec) nuspec-namespace "https://example.test/shadow")]
+           ["namespace-shadowed metadata"
+            (str/replace (nuspec) "<metadata>"
+                         "<metadata xmlns=\"https://example.test/shadow\">")]]]
+    (let [artifact (package-archive! {"Pkl.Parser.nuspec" wrong-namespace
+                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          error (try
+                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (testing label
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (= nuspec-namespace (:expected (ex-data error))))
+        (is (= "https://example.test/shadow" (:actual (ex-data error))))))))
 
 (deftest package-inspection-rejects-generated-source
-  (let [artifact (archive! {"Pkl.Parser.nuspec" (nuspec)
-                            "lib/net8.0/Pkl.Parser.dll" "assembly"
-                            "src/Parser.cs" "generated source"})
+  (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
+                                    "lib/net8.0/Pkl.Parser.dll" "assembly"
+                                    "src/Parser.cs" "generated source"})
         error (try
                 (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
                 nil
@@ -105,9 +152,9 @@
   (doseq [[shadow-path expected-key]
           [["pkl.parser.nuspec" :case-collisions]
            ["metadata/../Pkl.Parser.nuspec" :unsafe]]]
-    (let [artifact (archive! {"Pkl.Parser.nuspec" (nuspec)
-                              shadow-path "shadow metadata"
-                              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+    (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
+                                      shadow-path "shadow metadata"
+                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
           error (try
                   (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
                   nil
@@ -117,8 +164,8 @@
         (is (seq (expected-key (ex-data error))))))))
 
 (deftest package-inspection-pins-dependency-closure-without-bundling-it
-  (let [artifact (archive! {"Pkl.Core.nuspec" (core-nuspec)
-                            "lib/net8.0/Pkl.Core.dll" "assembly"})
+  (let [artifact (package-archive! {"Pkl.Core.nuspec" (core-nuspec)
+                                    "lib/net8.0/Pkl.Core.dll" "assembly"})
         renamed (.resolve (.getParent artifact) "Pkl.Core.0.0.0-development.nupkg")
         _ (Files/move artifact renamed (make-array java.nio.file.CopyOption 0))
         inspection (packaging/inspect-package!
@@ -128,9 +175,9 @@
            (:dependencies inspection)))))
 
 (deftest package-inspection-rejects-a-bundled-project-dependency-assembly
-  (let [artifact (archive! {"Pkl.Core.nuspec" (core-nuspec)
-                            "lib/net8.0/Pkl.Core.dll" "assembly"
-                            "lib/net8.0/Pkl.Parser.dll" "leaked dependency"})
+  (let [artifact (package-archive! {"Pkl.Core.nuspec" (core-nuspec)
+                                    "lib/net8.0/Pkl.Core.dll" "assembly"
+                                    "lib/net8.0/Pkl.Parser.dll" "leaked dependency"})
         renamed (.resolve (.getParent artifact) "Pkl.Core.0.0.0-development.nupkg")
         _ (Files/move artifact renamed (make-array java.nio.file.CopyOption 0))
         error (try
@@ -144,10 +191,10 @@
            (:assemblies (ex-data error))))))
 
 (deftest package-inspection-rejects-assemblies-outside-the-configured-library-path
-  (let [artifact (archive! {"Pkl.Parser.nuspec" (nuspec)
-                            "lib/net8.0/Pkl.Parser.dll" "assembly"
-                            "lib/net9.0/Pkl.Parser.dll" "other target"
-                            "ref/net8.0/Pkl.Parser.dll" "reference assembly"})
+  (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
+                                    "lib/net8.0/Pkl.Parser.dll" "assembly"
+                                    "lib/net9.0/Pkl.Parser.dll" "other target"
+                                    "ref/net8.0/Pkl.Parser.dll" "reference assembly"})
         error (try
                 (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
                 nil
@@ -169,8 +216,8 @@
                                                 "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />")
                                            (str "<repository type=\"svn\" url=\"https://wrong.test/repo\" "
                                                 "commit=\"0123456789abcdef0123456789abcdef01234567\" />")))
-        artifact (archive! {"Pkl.Parser.nuspec" misleading-nuspec
-                            "lib/net8.0/Pkl.Parser.dll" "assembly"})
+        artifact (package-archive! {"Pkl.Parser.nuspec" misleading-nuspec
+                                    "lib/net8.0/Pkl.Parser.dll" "assembly"})
         error (try
                 (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
                 nil
@@ -188,8 +235,8 @@
                            (str "<title>" (:title package) "</title>")
                            (str "<title>" (:title package) "</title>"
                                 "<title>misleading duplicate</title>"))
-          artifact (archive! {"Pkl.Parser.nuspec" duplicate-title
-                              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          artifact (package-archive! {"Pkl.Parser.nuspec" duplicate-title
+                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
           error (try
                   (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
                   nil
@@ -201,8 +248,8 @@
     (let [wrong-framework (str/replace (nuspec)
                                        "targetFramework=\"net8.0\""
                                        "targetFramework=\"net9.0\"")
-          artifact (archive! {"Pkl.Parser.nuspec" wrong-framework
-                              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          artifact (package-archive! {"Pkl.Parser.nuspec" wrong-framework
+                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
           error (try
                   (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
                   nil
@@ -215,6 +262,10 @@
   (doseq [[label altered]
           [["unexpected metadata element"
             (str/replace (nuspec) "</metadata>" "<owners>shadow owner</owners></metadata>")]
+           ["unexpected package attribute"
+            (str/replace (nuspec)
+                         (str "xmlns=\"" nuspec-namespace "\"")
+                         (str "xmlns=\"" nuspec-namespace "\" shadow=\"true\""))]
            ["unverifiable repository commit"
             (str/replace (nuspec)
                          "commit=\"0123456789abcdef0123456789abcdef01234567\""
@@ -224,10 +275,10 @@
                          "exclude=\"Build,Analyzers\""
                          "exclude=\"Build\" include=\"All\"")]]]
     (let [core? (= label "dependency asset override")
-          artifact (archive! {(if core? "Pkl.Core.nuspec" "Pkl.Parser.nuspec") altered
-                              (if core?
-                                "lib/net8.0/Pkl.Core.dll"
-                                "lib/net8.0/Pkl.Parser.dll") "assembly"})
+          artifact (package-archive! {(if core? "Pkl.Core.nuspec" "Pkl.Parser.nuspec") altered
+                                      (if core?
+                                        "lib/net8.0/Pkl.Core.dll"
+                                        "lib/net8.0/Pkl.Parser.dll") "assembly"})
           artifact (if core?
                      (let [renamed (.resolve (.getParent artifact)
                                              "Pkl.Core.0.0.0-development.nupkg")]
