@@ -64,6 +64,11 @@
     (with-open [input (.getInputStream archive entry)]
       (String. (.readAllBytes input) StandardCharsets/UTF_8))))
 
+(defn- xml-attributes [attributes]
+  (->> (re-seq #"([A-Za-z_:][A-Za-z0-9_.:-]*)=\"([^\"]*)\"" attributes)
+       (map (fn [[_ key value]] [key value]))
+       (into {})))
+
 (def ^:private core-properties-prefix
   "package/services/metadata/core-properties/")
 
@@ -126,13 +131,11 @@
                         vec)
            nuspec-name (str id ".nuspec")
            assembly-entry (str "lib/" target-framework "/" assembly-name ".dll")
-           library-assemblies (filterv #(re-matches
-                                         (re-pattern
-                                          (str "lib/" (java.util.regex.Pattern/quote target-framework)
-                                               "/[^/]+\\.dll"))
-                                         %)
-                                       entries)
+           package-assemblies (filterv #(re-find #"(?i)\.dll$" %) entries)
            nuspec (zip-text archive nuspec-name)
+           repositories (when nuspec
+                          (->> (re-seq #"(?s)<repository\b([^>]*)/?>" nuspec)
+                               (mapv (comp xml-attributes second))))
            dependencies (when nuspec
                           (->> (re-seq #"<dependency id=\"([^\"]+)\" version=\"([^\"]+)\"[^>]*/>"
                                        nuspec)
@@ -143,9 +146,9 @@
                                    (re-find #"(?i)\.(cs|clj|edn|java|kt|csproj)$" %)
                                    (re-find #"(?i)(source-map|diagnostics|generation-manifest)" %))
                               entries)]
-       (when-not (= [assembly-entry] library-assemblies)
+       (when-not (= [assembly-entry] package-assemblies)
          (fail! "NuGet package library payload does not contain exactly its configured assembly"
-                {:required assembly-entry :assemblies library-assemblies :entries entries}))
+                {:required assembly-entry :assemblies package-assemblies :entries entries}))
        (when-not nuspec
          (fail! "NuGet package does not contain its nuspec metadata"
                 {:required nuspec-name :entries entries}))
@@ -161,12 +164,12 @@
                                              "</" element ">"))
            (fail! (str "NuGet metadata is missing configured " element)
                   {:element element :value value :nuspec nuspec})))
-       (doseq [[attribute value] (remove (comp nil? second)
-                                         [["type" repository-type]
-                                          ["url" repository-url]])]
-         (when-not (str/includes? nuspec (str attribute "=\"" (xml-escape value) "\""))
-           (fail! (str "NuGet repository metadata is missing configured " attribute)
-                  {:attribute attribute :value value :nuspec nuspec})))
+       (let [expected-repository {"type" (xml-escape repository-type)
+                                  "url" (xml-escape repository-url)}]
+         (when-not (= [expected-repository]
+                      (mapv #(select-keys % ["type" "url"]) repositories))
+           (fail! "NuGet repository metadata does not match the configured repository"
+                  {:expected expected-repository :actual repositories :nuspec nuspec})))
        (when-not (= expected-dependencies dependencies)
          (fail! "NuGet package dependencies do not match the generated project dependency closure"
                 {:expected expected-dependencies :actual dependencies :nuspec nuspec}))

@@ -32,6 +32,17 @@
         :resolved-model first
         :configuration (java-project/read-configuration root)}))))
 
+(deftest destination-package-metadata-must-be-non-blank
+  (let [configuration (java-project/read-configuration (paths/workspace-root))
+        error (try
+                (java-project/validate-configuration!
+                 (assoc-in configuration [:package :title] " \t"))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :invalid-destination-configuration (:kind (ex-data error))))
+    (is (= :package (:section (ex-data error))))
+    (is (= :title (:setting (ex-data error))))))
+
 (deftest complete-parser-declarations-and-project-are-zero-skip-and-stable
   (let [first-emission (emit! (temp-directory) 1)
         second-emission (emit! (temp-directory) 4)

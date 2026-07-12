@@ -81,6 +81,12 @@
       (when-not (contains? (get configuration section) key)
         (destination-error (str "Missing destination setting " section "/" key)
                            {:section section :setting key}))))
+  (doseq [key [:id :version :title :description :authors :tags
+               :project-url :repository-url :repository-type]]
+    (let [value (get-in configuration [:package key])]
+      (when-not (and (string? value) (not (str/blank? value)))
+        (destination-error "Destination package metadata must be a non-blank string"
+                           {:section :package :setting key :value value}))))
   (doseq [key [:project-directory :source-directory :resource-directory
                :project-file :source-map-file :diagnostics-file :manifest-file
                :annotation-decisions-file]]

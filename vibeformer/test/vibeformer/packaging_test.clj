@@ -1,5 +1,6 @@
 (ns vibeformer.packaging-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [vibeformer.packaging :as packaging])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path]
@@ -119,6 +120,41 @@
     (is (= :package-consumption-failed (:kind (ex-data error))))
     (is (= ["lib/net8.0/Pkl.Core.dll" "lib/net8.0/Pkl.Parser.dll"]
            (:assemblies (ex-data error))))))
+
+(deftest package-inspection-rejects-assemblies-outside-the-configured-library-path
+  (let [artifact (archive! {"Pkl.Parser.nuspec" (nuspec)
+                            "lib/net8.0/Pkl.Parser.dll" "assembly"
+                            "lib/net9.0/Pkl.Parser.dll" "other target"
+                            "ref/net8.0/Pkl.Parser.dll" "reference assembly"})
+        error (try
+                (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :package-consumption-failed (:kind (ex-data error))))
+    (is (= ["lib/net8.0/Pkl.Parser.dll"
+            "lib/net9.0/Pkl.Parser.dll"
+            "ref/net8.0/Pkl.Parser.dll"]
+           (:assemblies (ex-data error))))))
+
+(deftest package-inspection-requires-one-exact-repository-element
+  (let [misleading-nuspec (-> (nuspec)
+                              (str/replace "<package>"
+                                           (str "<package type=\"" (:repository-type package)
+                                                "\" url=\"" (:repository-url package) "\">"))
+                              (str/replace (str "<repository type=\""
+                                                (:repository-type package) "\" url=\""
+                                                (:repository-url package) "\" />")
+                                           "<repository type=\"svn\" url=\"https://wrong.test/repo\" />"))
+        artifact (archive! {"Pkl.Parser.nuspec" misleading-nuspec
+                            "lib/net8.0/Pkl.Parser.dll" "assembly"})
+        error (try
+                (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :package-consumption-failed (:kind (ex-data error))))
+    (is (= {"type" (:repository-type package)
+            "url" (:repository-url package)}
+           (:expected (ex-data error))))))
 
 (deftest independent-consumer-dependency-proof-pins-package-only-closure
   (let [root (Files/createTempDirectory "vibeformer-consumer-proof"
