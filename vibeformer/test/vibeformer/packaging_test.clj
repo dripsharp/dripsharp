@@ -40,7 +40,7 @@
        "<tags>" (:tags package) "</tags>"
        "<projectUrl>" (:project-url package) "</projectUrl>"
        "<repository type=\"" (:repository-type package) "\" url=\""
-       (:repository-url package) "\" />"
+       (:repository-url package) "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />"
        "<dependencies><group targetFramework=\"net8.0\" /></dependencies>"
        "</metadata></package>"))
 
@@ -54,7 +54,7 @@
        "<tags>" (:tags core-package) "</tags>"
        "<projectUrl>" (:project-url core-package) "</projectUrl>"
        "<repository type=\"" (:repository-type core-package) "\" url=\""
-       (:repository-url core-package) "\" />"
+       (:repository-url core-package) "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />"
        "<dependencies><group targetFramework=\"net8.0\">"
        "<dependency id=\"Pkl.Parser\" version=\"0.0.0-development\" exclude=\"Build,Analyzers\" />"
        "</group></dependencies>"
@@ -165,8 +165,10 @@
                                                 "\" url=\"" (:repository-url package) "\">"))
                               (str/replace (str "<repository type=\""
                                                 (:repository-type package) "\" url=\""
-                                                (:repository-url package) "\" />")
-                                           "<repository type=\"svn\" url=\"https://wrong.test/repo\" />"))
+                                                (:repository-url package)
+                                                "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />")
+                                           (str "<repository type=\"svn\" url=\"https://wrong.test/repo\" "
+                                                "commit=\"0123456789abcdef0123456789abcdef01234567\" />")))
         artifact (archive! {"Pkl.Parser.nuspec" misleading-nuspec
                             "lib/net8.0/Pkl.Parser.dll" "assembly"})
         error (try
@@ -175,7 +177,8 @@
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :package-consumption-failed (:kind (ex-data error))))
     (is (= {"type" (:repository-type package)
-            "url" (:repository-url package)}
+            "url" (:repository-url package)
+            "commit" "<40-or-64-character-lowercase-hex>"}
            (:expected (ex-data error))))))
 
 (deftest package-inspection-requires-exact-scalar-metadata-and-dependency-group
@@ -207,6 +210,42 @@
       (is (= :package-consumption-failed (:kind (ex-data error))))
       (is (= "net8.0" (:expected (ex-data error))))
       (is (= "net9.0" (:actual (ex-data error)))))))
+
+(deftest package-inspection-rejects-unexpected-metadata-and-attributes
+  (doseq [[label altered]
+          [["unexpected metadata element"
+            (str/replace (nuspec) "</metadata>" "<owners>shadow owner</owners></metadata>")]
+           ["unverifiable repository commit"
+            (str/replace (nuspec)
+                         "commit=\"0123456789abcdef0123456789abcdef01234567\""
+                         "commit=\"not-a-commit\"")]
+           ["dependency asset override"
+            (str/replace (core-nuspec)
+                         "exclude=\"Build,Analyzers\""
+                         "exclude=\"Build\" include=\"All\"")]]]
+    (let [core? (= label "dependency asset override")
+          artifact (archive! {(if core? "Pkl.Core.nuspec" "Pkl.Parser.nuspec") altered
+                              (if core?
+                                "lib/net8.0/Pkl.Core.dll"
+                                "lib/net8.0/Pkl.Parser.dll") "assembly"})
+          artifact (if core?
+                     (let [renamed (.resolve (.getParent artifact)
+                                             "Pkl.Core.0.0.0-development.nupkg")]
+                       (Files/move artifact renamed
+                                   (make-array java.nio.file.CopyOption 0))
+                       renamed)
+                     artifact)
+          error (try
+                  (packaging/inspect-package!
+                   artifact (if core? core-package package) "net8.0"
+                   (if core? "Pkl.Core" "Pkl.Parser")
+                   (if core?
+                     [{:id "Pkl.Parser" :version "0.0.0-development"}]
+                     []))
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (testing label
+        (is (= :package-consumption-failed (:kind (ex-data error))))))))
 
 (deftest independent-consumer-dependency-proof-pins-package-only-closure
   (let [root (Files/createTempDirectory "vibeformer-consumer-proof"

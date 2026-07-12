@@ -139,8 +139,24 @@
              {:element name :path path :count (count elements)}))
     (first elements)))
 
-(defn- element-attributes [^Element element names]
-  (into {} (map (fn [name] [name (.getAttribute element name)]) names)))
+(defn- element-attributes [^Element element]
+  (let [attributes (.getAttributes element)]
+    (into (sorted-map)
+          (for [index (range (.getLength attributes))
+                :let [attribute (.item attributes index)]]
+            [(.getNodeName attribute) (.getNodeValue attribute)]))))
+
+(defn- require-exact-children! [^Node parent expected path]
+  (let [actual (mapv element-name (child-elements parent))]
+    (when-not (= (frequencies expected) (frequencies actual))
+      (fail! "NuGet metadata contains missing, duplicate, or unexpected elements"
+             {:path path :expected (vec expected) :actual actual}))))
+
+(defn- require-exact-attributes! [^Element element expected path]
+  (let [actual (element-attributes element)]
+    (when-not (= expected actual)
+      (fail! "NuGet metadata attributes do not match the required package contract"
+             {:path path :expected expected :actual actual}))))
 
 (def ^:private core-properties-prefix
   "package/services/metadata/core-properties/")
@@ -202,6 +218,7 @@
     (when-not (= "package" (element-name root))
       (fail! "NuGet nuspec root element is not package"
              {:expected "package" :actual (element-name root)}))
+    (require-exact-children! root ["metadata"] "package")
     (let [metadata (exactly-one-child! root "metadata" "package")
           configured-elements
           [["id" (:id package)]
@@ -211,28 +228,55 @@
            ["authors" (:authors package)]
            ["tags" (:tags package)]
            ["projectUrl" (:project-url package)]]]
+      (require-exact-attributes! metadata {} "package/metadata")
       (doseq [[name expected] configured-elements]
         (let [element (exactly-one-child! metadata name "package/metadata")
               actual (.getTextContent element)]
+          (require-exact-attributes! element {} (str "package/metadata/" name))
+          (require-exact-children! element [] (str "package/metadata/" name))
           (when-not (= expected actual)
             (fail! (str "NuGet metadata does not match configured " name)
                    {:element name :expected expected :actual actual}))))
+      (require-exact-children!
+       metadata
+       (concat (map first configured-elements) ["repository" "dependencies"])
+       "package/metadata")
       (let [repository (exactly-one-child! metadata "repository" "package/metadata")
             expected-repository {"type" (:repository-type package)
                                  "url" (:repository-url package)}
-            actual-repository (element-attributes repository ["type" "url"])]
-        (when-not (= expected-repository actual-repository)
+            actual-repository (element-attributes repository)
+            commit (get actual-repository "commit")]
+        (require-exact-children! repository [] "package/metadata/repository")
+        (when-not (and (= expected-repository
+                          (select-keys actual-repository ["type" "url"]))
+                       (= #{"type" "url" "commit"} (set (keys actual-repository)))
+                       (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" (or commit ""))))
           (fail! "NuGet repository metadata does not match the configured repository"
-                 {:expected expected-repository :actual actual-repository})))
+                 {:expected (assoc expected-repository
+                                   "commit" "<40-or-64-character-lowercase-hex>")
+                  :actual actual-repository})))
       (let [dependency-container
             (exactly-one-child! metadata "dependencies" "package/metadata")
             groups (child-elements dependency-container "group")]
+        (require-exact-attributes! dependency-container {}
+                                   "package/metadata/dependencies")
+        (require-exact-children! dependency-container ["group"]
+                                 "package/metadata/dependencies")
         (when-not (= 1 (count groups))
           (fail! "NuGet dependencies do not contain exactly one target-framework group"
                  {:expected target-framework :groups (count groups)}))
         (let [group (first groups)
               actual-framework (.getAttribute ^Element group "targetFramework")
               dependencies (mapv (fn [^Element dependency]
+                                   (require-exact-children!
+                                    dependency []
+                                    "package/metadata/dependencies/group/dependency")
+                                   (require-exact-attributes!
+                                    dependency
+                                    {"id" (.getAttribute dependency "id")
+                                     "version" (.getAttribute dependency "version")
+                                     "exclude" "Build,Analyzers"}
+                                    "package/metadata/dependencies/group/dependency")
                                    {:id (.getAttribute dependency "id")
                                     :version (.getAttribute dependency "version")})
                                  (child-elements group "dependency"))
@@ -241,6 +285,11 @@
           (when-not (= target-framework actual-framework)
             (fail! "NuGet dependency group does not match the configured target framework"
                    {:expected target-framework :actual actual-framework}))
+          (require-exact-attributes! group {"targetFramework" target-framework}
+                                     "package/metadata/dependencies/group")
+          (require-exact-children!
+           group (repeat (count expected-dependencies) "dependency")
+           "package/metadata/dependencies/group")
           (when-not (= expected-dependencies dependencies)
             (fail! "NuGet package dependencies do not match the generated project dependency closure"
                    {:expected expected-dependencies :actual dependencies}))
