@@ -3,7 +3,7 @@
 ## Clojure
 
 Clojure is the orchestration and transformation language. It provides direct
-JVM interop with Java and Kotlin frontends and works well for recursive visitor
+JVM interop with the Java frontend and works well for recursive visitor
 dispatch, immutable translation results, mapping registries, and diagnostics.
 
 ## Java Frontend: Spoon
@@ -25,11 +25,17 @@ semantic information includes:
 Spoon no-classpath mode may support diagnostics over incomplete inputs, but it
 is not an accepted product-emission path.
 
-## Kotlin Frontend
+## Kotlin Source Policy
 
-Kotlin uses PSI for syntax and the Kotlin Analysis API for resolved types and
-symbols. Kotlin has its own recursive translator; it must not be treated as
-Java with alternate syntax.
+Vibeformer does not require a Kotlin PSI or Analysis API frontend and does not
+translate Kotlin to C#. Kotlin source and tests may be inspected as behavior
+references when they describe an in-scope Pkl capability. The destination
+behavior is then implemented through translated Java or an idiomatic .NET
+implementation.
+
+This is a language-scope decision, not a reduction in Vibeformer's generality:
+the Java frontend, recursive translator, symbol mappings, and compatibility
+capabilities remain reusable for non-Pkl Java projects.
 
 ## C# Representation
 
@@ -55,7 +61,6 @@ translator is not sufficient product evidence.
 ```text
 Clojure orchestration and recursive translators
 Spoon typed semantic model for Java
-Kotlin PSI and Analysis API for Kotlin
 resolved-symbol mapping registries
 ordinary C# compatibility/destination-runtime projects
 dotnet build and independent behavior tests

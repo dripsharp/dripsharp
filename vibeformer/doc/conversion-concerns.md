@@ -67,12 +67,14 @@ Areas requiring deliberate translation include:
 These are localized semantic translation problems. They do not justify a
 parallel Java runtime for ordinary constructs that .NET already supports.
 
-## Kotlin Semantic Differences
+## Kotlin Source Policy
 
-Kotlin additionally requires explicit handling for nullability, smart casts,
-extension members, default and named arguments, data/sealed classes, objects and
-companions, top-level declarations, delegated properties, function types,
-coroutines, and collection mutability.
+Kotlin-to-C# translation is out of scope, so Kotlin-specific language semantics
+do not require translation rules or compatibility mappings. Kotlin source and
+tests may still be used as behavior evidence for an in-scope Pkl capability.
+That capability should be expressed through the reusable Java translation path
+or an idiomatic .NET implementation, without preserving Kotlin-specific API
+shapes.
 
 ## Dependency Decisions
 

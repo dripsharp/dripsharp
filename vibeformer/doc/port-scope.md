@@ -10,12 +10,12 @@ The target library should provide the Pkl behavior needed by .NET consumers:
 
 * Core Pkl parsing, evaluation, value model, module loading, and runtime
   behavior.
-* Public .NET library APIs equivalent to the useful Java/Kotlin library entry
-  points.
+* Idiomatic public .NET APIs that provide the useful Pkl library capabilities
+  available to upstream consumers.
 * C# code generation for Pkl schemas and APIs.
 
 Pkl is the first product target, not the definition of the translator. The
-Java/Kotlin-to-C# pipeline, resolved-symbol mappings, and compatibility layer
+Java-to-C# pipeline, resolved-symbol mappings, and compatibility layer
 should remain reusable by future projects. Pkl evaluation and language
 semantics belong in the generated/product implementation rather than in a
 generic Vibeformer runtime. The generic runtime should contain only facilities
@@ -35,10 +35,15 @@ port:
 * MessagePack support is out of scope.
 * C# code generation is in scope.
 * Java, Kotlin, and other non-C# code generation are out of scope.
+* Kotlin-to-C# source translation and a Kotlin frontend are out of scope.
 * Server support is out of scope.
 * CLI support is out of scope unless a small command-line harness is needed only
   to validate the library.
 * Documentation-generation support is out of scope.
+
+The non-C# code-generation exclusion concerns Pkl schema-generator outputs, not
+the Java source accepted by Vibeformer. Reusable general Java-to-C# translation
+remains an architectural requirement.
 
 If a source feature exists only to support an out-of-scope product surface, the
 transpiler should record it as deliberately excluded instead of trying to map it
@@ -81,9 +86,10 @@ These are relevant when they support public .NET library behavior:
 * GeAnTyRef exists to model Java generic reflection. Replace it with .NET
   reflection and generic type metadata where equivalent binding behavior is in
   scope.
-* Kotlin reflection is not itself a .NET target dependency. If Kotlin-specific
-  binding behavior matters, expose it through native .NET API design rather than
-  preserving Kotlin reflection APIs.
+* Kotlin source, reflection, and convenience APIs are not .NET target
+  dependencies. When they provide evidence for useful Pkl binding behavior,
+  expose that behavior through idiomatic .NET APIs rather than translating the
+  Kotlin implementation or preserving Kotlin conventions.
 
 ### C# Code Generation
 
@@ -93,8 +99,13 @@ useful source examples, but their target products are out of scope.
 * JavaPoet and KotlinPoet should not be ported as runtime dependencies.
 * Existing Java/Kotlin codegen behavior should be mined for concepts and tests
   that matter to C# output.
-* The durable implementation should be a C# generator driven directly by
-  resolved frontend models and deterministic symbol mappings.
+* The durable implementation should be a C# generator driven by the Pkl schema
+  and value-model capabilities exposed to .NET plus deterministic C# symbol
+  mappings.
+
+The Kotlin implementation language of an upstream helper or generator is not a
+reason to add Kotlin translation to Vibeformer. Required behavior should be
+implemented directly for the C# product.
 
 ### Excluded Product Surfaces
 

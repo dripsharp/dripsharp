@@ -2,7 +2,7 @@
 
 ## Goal
 
-Vibeformer is a reusable Java/Kotlin-to-C# source translator. Pkl is its first
+Vibeformer is a reusable Java-to-C# source translator. Pkl is its first
 product target and requirements driver, not a reason to make the translator
 Pkl-specific. The Pkl source is in `../research/pkl`; do not modify it.
 
@@ -29,15 +29,17 @@ model directly. Vibeformer must not reconstruct a second partial AST in a
 database or reparse source text to translate constructs already represented by
 Spoon.
 
-For Kotlin, the same principle applies using PSI plus the Kotlin Analysis API:
-syntax and resolved semantics come from the language frontend, then a recursive
-translator emits C#.
+Kotlin-to-C# translation is not part of the product goal. Kotlin source or tests
+may be consulted as behavior evidence for an in-scope Pkl capability, but the
+capability is implemented through Java translation or directly for .NET rather
+than through a Kotlin frontend.
 
 ## Durable Assets
 
 Generated C# is disposable. Durable assets are:
 
-1. Original Java/Kotlin source.
+1. Original Java source used for translation and any upstream sources or tests
+   used as behavior references.
 2. Project and semantic-resolution configuration.
 3. Recursive translators.
 4. Resolved-symbol mapping registries.
@@ -78,7 +80,7 @@ Children are translated recursively from the frontend model.
 
 ## Reusable Translation and Runtime Boundary
 
-Ordinary Java/Kotlin language behavior and standard-library APIs should map to
+Ordinary Java language behavior and standard-library APIs should map to
 normal C# and existing .NET facilities. Do not introduce a parallel JVM runtime
 when .NET already provides suitable semantics.
 
@@ -92,7 +94,7 @@ cannot faithfully provide the required behavior. Native replacements must be:
 * Generalized when the capability is useful to other migrations.
 
 Pkl-specific evaluator semantics belong in the Pkl destination runtime, not in
-the reusable Java/Kotlin analyzer or emitter. The Pkl execution substrate will
+the reusable Java analyzer or emitter. The Pkl execution substrate will
 need a focused .NET replacement for behavior supplied by Truffle, while normal
 collections, I/O, URIs, reflection, concurrency, and similar platform APIs
 should use .NET wherever practical.

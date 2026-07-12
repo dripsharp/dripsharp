@@ -1,9 +1,9 @@
 # Vibeformer
 
-Vibeformer is a Clojure-based Java/Kotlin-to-C# source translator. Its first
+Vibeformer is a Clojure-based Java-to-C# source translator. Its first
 product use is producing a complete, independently usable .NET implementation
 of the in-scope Pkl library behavior, but the translator architecture is meant
-to remain useful for other Java and Kotlin projects.
+to remain useful for other Java projects.
 
 The central Java path is deliberately direct:
 
@@ -16,11 +16,17 @@ resolved project and classpath
   -> independent behavior comparison
 ```
 
-Kotlin follows the same contract using Kotlin's semantic frontend. Translation
-rules map ordinary JVM library types and methods to their .NET equivalents.
-Compatibility helpers belong in the translator only when .NET lacks the
-required JVM facility. Pkl evaluation or language behavior is product code,
-not a generic translator runtime.
+Translation rules map ordinary JVM library types and methods to their .NET
+equivalents. Compatibility helpers belong in the translator only when .NET
+lacks the required JVM facility. Pkl evaluation or language behavior is product
+code, not a generic translator runtime.
+
+Kotlin-to-C# translation is out of scope. Kotlin source and tests may provide
+behavior evidence for an in-scope Pkl capability, but that behavior is
+implemented through translated Java or directly through an idiomatic .NET
+implementation. This does not make Vibeformer Pkl-specific: its Java frontend,
+recursive translator, mappings, and general compatibility capabilities remain
+reusable for future Java projects.
 
 Generated C# is disposable. Compilation or behavior failures must be fixed in
 the frontend configuration, recursive translation, symbol mappings, or a

@@ -28,12 +28,19 @@ the user-approved exclusion list below.
 The first product target is a .NET library, not a full replacement for the Pkl
 JVM distribution.
 
+Vibeformer remains a reusable Java-to-C# source translator. Pkl is its first
+product target and requirements driver, not the definition of the translator.
+The recursive Java translator, resolved-symbol mappings, and general
+compatibility capabilities must remain useful for future non-Pkl Java projects.
+Pkl-specific evaluation and language semantics must remain outside those
+generic layers.
+
 The target library must provide the Pkl behavior needed by .NET consumers:
 
 * Core Pkl parsing, evaluation, value model, module loading, and runtime
   behavior.
-* Public .NET library APIs equivalent to the useful Java/Kotlin library entry
-  points.
+* Idiomatic public .NET APIs that provide the useful Pkl library capabilities
+  available to upstream consumers.
 * C# code generation for Pkl schemas and APIs.
 
 Equivalent behavior may be implemented through generated C#, native .NET
@@ -51,14 +58,25 @@ Only these product surfaces are excluded:
 * Gradle product integration.
 * Documentation-site generation.
 * Java, Kotlin, and other non-C# code-generation products.
+* Kotlin-to-C# translation and a Kotlin PSI or Analysis API frontend.
 * Native-image and JVM distribution packaging.
 * Build, benchmark, and test infrastructure as shipped product surface.
 * Manual patches to generated C# as durable implementation.
+
+The exclusion of non-C# code-generation products concerns the languages emitted
+by Pkl schema generators. It does not exclude general Java source input to
+Vibeformer or reduce the requirement that the Java-to-C# translator remain
+reusable beyond Pkl.
 
 Test infrastructure is excluded from what is shipped, not from the evidence
 used to prove behavior. Upstream Pkl tests and fixtures are authoritative
 behavior specifications and should be ported, adapted, or used for differential
 validation where they cover the .NET library goal.
+
+Kotlin source and tests may also provide behavior evidence for an in-scope .NET
+capability, but their presence does not require Kotlin translation. Such
+behavior should be implemented through the reusable Java path when available or
+directly through an idiomatic .NET implementation.
 
 ## In-Scope Pending Areas
 
@@ -68,8 +86,10 @@ when a bounded milestone does not implement them:
 * Complete parser behavior needed by the library runtime.
 * Complete evaluator and runtime semantics.
 * The complete value model and useful object/config binding behavior.
-* Local, HTTP, classpath, modulepath, package, project, and custom
-  module/resource loading needed by normal .NET consumers.
+* Local, HTTP, package, project, assembly or embedded-resource, directory, and
+  custom module/resource loading needed by normal .NET consumers. JVM
+  classpath or modulepath behavior should be represented through suitable .NET
+  capabilities rather than literal Java APIs.
 * Project, package, and evaluator settings needed by the public library API.
 * Security-policy behavior required to expose module and resource loading
   safely.
@@ -82,7 +102,10 @@ when a bounded milestone does not implement them:
 Project completion requires every required capability above to be complete, all
 remaining exclusions to match the user-approved list, clean from-scratch
 generation, zero public implementation stubs, successful package consumption,
-and independent behavior evidence representative of the full goal.
+and independent behavior evidence representative of the full goal. The Java
+translation and compatibility work used to reach that result must preserve the
+reusable translator boundary and must not move Pkl-specific semantics into the
+generic Java-to-C# layers.
 
 A bounded milestone may report milestone readiness. It must never report
 project completion.
