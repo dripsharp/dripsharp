@@ -287,17 +287,18 @@
        "package/metadata")
       (let [repository (exactly-one-child! metadata "repository" "package/metadata")
             expected-repository {"type" (:repository-type package)
-                                 "url" (:repository-url package)}
-            actual-repository (element-attributes repository)
-            commit (get actual-repository "commit")]
+                                 "url" (:repository-url package)
+                                 "commit" (:repository-commit package)}
+            actual-repository (element-attributes repository)]
         (require-exact-children! repository [] "package/metadata/repository")
-        (when-not (and (= expected-repository
-                          (select-keys actual-repository ["type" "url"]))
-                       (= #{"type" "url" "commit"} (set (keys actual-repository)))
-                       (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" (or commit ""))))
+        (when-not (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}"
+                                       (or (:repository-commit package) "")))
+          (fail! "Configured repository commit is not an exact Git object identity"
+                 {:expected "<40-or-64-character-lowercase-hex>"
+                  :actual (:repository-commit package)}))
+        (when-not (= expected-repository actual-repository)
           (fail! "NuGet repository metadata does not match the configured repository"
-                 {:expected (assoc expected-repository
-                                   "commit" "<40-or-64-character-lowercase-hex>")
+                 {:expected expected-repository
                   :actual actual-repository})))
       (let [dependency-container
             (exactly-one-child! metadata "dependencies" "package/metadata")
@@ -468,7 +469,7 @@
   ([artifact package target-framework assembly-name]
    (inspect-package! artifact package target-framework assembly-name []))
   ([artifact {:keys [id version title description authors tags project-url
-                     repository-url repository-type]}
+                     repository-url repository-type repository-commit]}
     target-framework assembly-name
     expected-dependencies]
    (with-open [archive (ZipFile. (str artifact))]
@@ -496,7 +497,8 @@
                            {:id id :version version :title title :description description
                             :authors authors :tags tags :project-url project-url
                             :repository-url repository-url
-                            :repository-type repository-type}
+                            :repository-type repository-type
+                            :repository-commit repository-commit}
                            target-framework expected-dependencies)]
          (when (seq forbidden)
            (fail! "NuGet package contains translator, test, or generated-source internals"
@@ -676,6 +678,16 @@
            :expected-dependencies expected-dependencies
            :primary? true})))
 
+(defn- repository-commit! [run-command! root]
+  (let [result (run-command! {:command ["git" "rev-parse" "--verify" "HEAD"]
+                              :directory root})
+        commit (str/trim (:output result))]
+    (when-not (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" commit))
+      (fail! "Could not determine the exact Git commit for NuGet repository metadata"
+             {:expected "<40-or-64-character-lowercase-hex>"
+              :actual commit :output (:output result)}))
+    commit))
+
 (defn- pack-project! [run-command! build-configuration ^Path output
                       {:keys [emission]}]
   (let [project-root (:project-root emission)
@@ -727,6 +739,7 @@
          generation (:generation verification)
          build-configuration (:build-configuration verification)
          specs (package-specs generation)
+         repository-commit (repository-commit! run-command! root)
          proof-root (harness/clean-directory!
                      (paths/resolve-path root "vibeformer" "target" "package-proof"))
          first-output (doto (paths/resolve-path proof-root "first-pack")
@@ -769,8 +782,12 @@
                       _ (Files/copy first-artifact artifact
                                     (into-array StandardCopyOption
                                                 [StandardCopyOption/REPLACE_EXISTING]))
-                      inspection (inspect-package! artifact package target-framework
-                                                   assembly-name expected-dependencies)
+                      inspection (inspect-package! artifact
+                                                   (assoc package
+                                                          :repository-commit
+                                                          repository-commit)
+                                                   target-framework assembly-name
+                                                   expected-dependencies)
                       expected-resources (->> (:resource-artifacts emission)
                                               (map :logical-name) sort vec)
                       resource-proof (inspect-resources-fn
@@ -785,6 +802,7 @@
             specs)
            primary (first (filter :primary? packages))
            summary {:profile profile
+                    :repository-commit repository-commit
                     :packages (mapv :identity packages)
                     :resource-counts (into (sorted-map)
                                            (map (juxt #(get-in % [:identity :id])

@@ -17,7 +17,8 @@
    :tags "pkl parser vibeformer"
    :project-url "https://example.test/pkl"
    :repository-url "https://example.test/pkl.git"
-   :repository-type "git"})
+   :repository-type "git"
+   :repository-commit "0123456789abcdef0123456789abcdef01234567"})
 
 (def core-package
   {:id "Pkl.Core"
@@ -28,7 +29,8 @@
    :tags "pkl core vibeformer"
    :project-url "https://example.test/pkl"
    :repository-url "https://example.test/pkl.git"
-   :repository-type "git"})
+   :repository-type "git"
+   :repository-commit "0123456789abcdef0123456789abcdef01234567"})
 
 (def nuspec-namespace
   "http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd")
@@ -284,7 +286,7 @@
     (is (= :package-consumption-failed (:kind (ex-data error))))
     (is (= {"type" (:repository-type package)
             "url" (:repository-url package)
-            "commit" "<40-or-64-character-lowercase-hex>"}
+            "commit" (:repository-commit package)}
            (:expected (ex-data error))))))
 
 (deftest package-inspection-requires-exact-scalar-metadata-and-dependency-group
@@ -329,6 +331,10 @@
             (str/replace (nuspec)
                          "commit=\"0123456789abcdef0123456789abcdef01234567\""
                          "commit=\"not-a-commit\"")]
+           ["different valid repository commit"
+            (str/replace (nuspec)
+                         "commit=\"0123456789abcdef0123456789abcdef01234567\""
+                         "commit=\"abcdef0123456789abcdef0123456789abcdef01\"")]
            ["dependency asset override"
             (str/replace (core-nuspec)
                          "exclude=\"Build,Analyzers\""
