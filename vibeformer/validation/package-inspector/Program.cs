@@ -65,7 +65,7 @@ internal static class Program
         foreach (var handle in metadata.TypeDefinitions)
         {
             var type = metadata.GetTypeDefinition(handle);
-            if (!IsPublic(metadata, type))
+            if (!IsExternallyVisible(metadata, type))
             {
                 continue;
             }
@@ -77,7 +77,7 @@ internal static class Program
             foreach (var fieldHandle in type.GetFields())
             {
                 var field = metadata.GetFieldDefinition(fieldHandle);
-                if ((field.Attributes & FieldAttributes.FieldAccessMask) != FieldAttributes.Public)
+                if (!IsExternallyAccessible(field.Attributes))
                 {
                     continue;
                 }
@@ -91,7 +91,7 @@ internal static class Program
             foreach (var methodHandle in type.GetMethods())
             {
                 var method = metadata.GetMethodDefinition(methodHandle);
-                if ((method.Attributes & MethodAttributes.MemberAccessMask) != MethodAttributes.Public)
+                if (!IsExternallyAccessible(method.Attributes))
                 {
                     continue;
                 }
@@ -106,7 +106,8 @@ internal static class Program
             {
                 var property = metadata.GetPropertyDefinition(propertyHandle);
                 var accessors = property.GetAccessors();
-                if (!IsPublic(metadata, accessors.Getter) && !IsPublic(metadata, accessors.Setter))
+                if (!IsExternallyAccessible(metadata, accessors.Getter) &&
+                    !IsExternallyAccessible(metadata, accessors.Setter))
                 {
                     continue;
                 }
@@ -121,8 +122,9 @@ internal static class Program
             {
                 var eventDefinition = metadata.GetEventDefinition(eventHandle);
                 var accessors = eventDefinition.GetAccessors();
-                if (!IsPublic(metadata, accessors.Adder) && !IsPublic(metadata, accessors.Remover) &&
-                    !IsPublic(metadata, accessors.Raiser))
+                if (!IsExternallyAccessible(metadata, accessors.Adder) &&
+                    !IsExternallyAccessible(metadata, accessors.Remover) &&
+                    !IsExternallyAccessible(metadata, accessors.Raiser))
                 {
                     continue;
                 }
@@ -140,7 +142,7 @@ internal static class Program
         return (typeCount, memberCount, fingerprint);
     }
 
-    private static bool IsPublic(MetadataReader metadata, TypeDefinition type)
+    private static bool IsExternallyVisible(MetadataReader metadata, TypeDefinition type)
     {
         var visibility = type.Attributes & TypeAttributes.VisibilityMask;
         if (visibility == TypeAttributes.Public)
@@ -148,16 +150,37 @@ internal static class Program
             return true;
         }
 
-        if (visibility != TypeAttributes.NestedPublic)
+        if (visibility != TypeAttributes.NestedPublic &&
+            visibility != TypeAttributes.NestedFamily &&
+            visibility != TypeAttributes.NestedFamORAssem)
         {
             return false;
         }
 
         var declaringType = type.GetDeclaringType();
-        return !declaringType.IsNil && IsPublic(metadata, metadata.GetTypeDefinition(declaringType));
+        return !declaringType.IsNil &&
+            IsExternallyVisible(metadata, metadata.GetTypeDefinition(declaringType));
     }
 
-    private static bool IsPublic(MetadataReader metadata, MethodDefinitionHandle handle)
+    private static bool IsExternallyAccessible(FieldAttributes attributes)
+    {
+        var access = attributes & FieldAttributes.FieldAccessMask;
+        return access == FieldAttributes.Public ||
+            access == FieldAttributes.Family ||
+            access == FieldAttributes.FamORAssem;
+    }
+
+    private static bool IsExternallyAccessible(MethodAttributes attributes)
+    {
+        var access = attributes & MethodAttributes.MemberAccessMask;
+        return access == MethodAttributes.Public ||
+            access == MethodAttributes.Family ||
+            access == MethodAttributes.FamORAssem;
+    }
+
+    private static bool IsExternallyAccessible(
+        MetadataReader metadata,
+        MethodDefinitionHandle handle)
     {
         if (handle.IsNil)
         {
@@ -165,7 +188,7 @@ internal static class Program
         }
 
         var method = metadata.GetMethodDefinition(handle);
-        return (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Public;
+        return IsExternallyAccessible(method.Attributes);
     }
 
     private static string QualifiedName(MetadataReader metadata, TypeDefinition type)
