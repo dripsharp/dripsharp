@@ -27,10 +27,6 @@ br create --title="..." --description="..." --type=task --priority=2
 br update <id> --status=in_progress
 br close <id> --reason="Completed"
 br close <id1> <id2>
-
-# Sync with git
-br sync --flush-only
-br sync --status
 ```
 
 ## Workflow
@@ -39,7 +35,7 @@ br sync --status
 2. **Claim**: Use `br update <id> --status=in_progress`
 3. **Work**: Implement the task
 4. **Complete**: Use `br close <id>`
-5. **Sync**: Run `br sync --flush-only` then manually commit
+5. Manually commit
 
 ## Concepts
 
@@ -54,7 +50,6 @@ br sync --status
 - Update status as work progresses: `in_progress` to `closed`.
 - Create new issues with `br create` when discovering follow-up work.
 - Use descriptive titles and set an appropriate numeric priority and type.
-- Always run `br sync --flush-only` before ending a session where Beads data changed.
 
 ## Session Protocol
 
@@ -63,6 +58,5 @@ Before ending a session, run this checklist:
 ```bash
 git status
 git add <files>
-br sync --flush-only
 git commit -m "..."
 ```
