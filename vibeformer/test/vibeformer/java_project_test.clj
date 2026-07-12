@@ -154,7 +154,13 @@
         (is (str/includes? project "<TargetFramework>net8.0</TargetFramework>"))
         (is (str/includes? project "<Nullable>enable</Nullable>"))
         (is (str/includes? project "<Authors>Vibeformer</Authors>"))
-        (is (str/includes? project "<PackageTags>pkl parser vibeformer</PackageTags>"))
+        (is (str/includes? project "<Title>Pkl parser for .NET</Title>"))
+        (is (str/includes? project "<PackageTags>pkl parser dotnet vibeformer</PackageTags>"))
+        (is (str/includes? project
+                           "<PackageProjectUrl>https://github.com/isaksky/pkl-net</PackageProjectUrl>"))
+        (is (str/includes? project
+                           "<RepositoryUrl>https://github.com/isaksky/pkl-net.git</RepositoryUrl>"))
+        (is (str/includes? project "<RepositoryType>git</RepositoryType>"))
         (is (str/includes? project
                            "LogicalName=\"org.pkl.parser.errorMessages.properties\""))
         (is (= (vec (Files/readAllBytes ^Path upstream))

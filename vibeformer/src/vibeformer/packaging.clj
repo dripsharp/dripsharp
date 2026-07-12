@@ -115,7 +115,9 @@
   "Checks the package payload and metadata without extracting generated sources."
   ([artifact package target-framework assembly-name]
    (inspect-package! artifact package target-framework assembly-name []))
-  ([artifact {:keys [id version description authors tags]} target-framework assembly-name
+  ([artifact {:keys [id version title description authors tags project-url
+                     repository-url repository-type]}
+    target-framework assembly-name
     expected-dependencies]
    (with-open [archive (ZipFile. (str artifact))]
      (let [entries (->> (enumeration-seq (.entries archive))
@@ -147,15 +149,24 @@
        (when-not nuspec
          (fail! "NuGet package does not contain its nuspec metadata"
                 {:required nuspec-name :entries entries}))
-       (doseq [[element value] [["id" id]
-                                ["version" version]
-                                ["description" description]
-                                ["authors" authors]
-                                ["tags" tags]]]
+       (doseq [[element value] (remove (comp nil? second)
+                                       [["id" id]
+                                        ["version" version]
+                                        ["title" title]
+                                        ["description" description]
+                                        ["authors" authors]
+                                        ["tags" tags]
+                                        ["projectUrl" project-url]])]
          (when-not (str/includes? nuspec (str "<" element ">" (xml-escape value)
                                              "</" element ">"))
            (fail! (str "NuGet metadata is missing configured " element)
                   {:element element :value value :nuspec nuspec})))
+       (doseq [[attribute value] (remove (comp nil? second)
+                                         [["type" repository-type]
+                                          ["url" repository-url]])]
+         (when-not (str/includes? nuspec (str attribute "=\"" (xml-escape value) "\""))
+           (fail! (str "NuGet repository metadata is missing configured " attribute)
+                  {:attribute attribute :value value :nuspec nuspec})))
        (when-not (= expected-dependencies dependencies)
          (fail! "NuGet package dependencies do not match the generated project dependency closure"
                 {:expected expected-dependencies :actual dependencies :nuspec nuspec}))
@@ -318,7 +329,7 @@
                              "--no-build" "--no-restore" "--output" (str output)]
                    :directory project-root})))
 
-(defn- inspect-embedded-resources!
+(defn- inspect-package-assembly!
   [run-command! root artifact assembly-entry expected]
   (let [inspector (paths/resolve-path root "vibeformer" "validation"
                                       "package-inspector" "PackageInspector.csproj")
@@ -332,7 +343,17 @@
                              (str "Embedded resource inspection passed: " (count expected)))
       (fail! "Package resource inspector did not report the expected manifest"
              {:artifact (str artifact) :expected expected :output (:output result)}))
-    result))
+    (let [[_ types members fingerprint]
+          (re-find #"Public surface inspection passed: (\d+) types, (\d+) members, SHA-256 ([0-9a-f]{64})"
+                   (:output result))]
+      (when-not fingerprint
+        (fail! "Package assembly inspector did not report a public-surface fingerprint"
+               {:artifact (str artifact) :output (:output result)}))
+      {:resources (count expected)
+       :public-surface {:types (parse-long types)
+                        :members (parse-long members)
+                        :sha256 fingerprint}
+       :run result})))
 
 (defn pack-verified-profile!
   "Cleanly generates and verifies a profile, then packs its complete declared
@@ -342,7 +363,7 @@
   ([{:keys [workspace-root profile verify-fn run-command! inspect-resources-fn]
      :or {verify-fn compiler/verify-clean-build!
           run-command! process/run!
-          inspect-resources-fn inspect-embedded-resources!}}]
+          inspect-resources-fn inspect-package-assembly!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          profile (or profile "pkl-parser")
          verification (verify-fn {:profile profile :build-configuration "Release"})
@@ -402,6 +423,7 @@
                    :identity {:id id :version version :sha256 first-hash
                               :file (str (.getFileName ^Path artifact))}
                    :inspection inspection :resource-proof resource-proof
+                   :public-surface (:public-surface resource-proof)
                    :resources expected-resources})))
             specs)
            primary (first (filter :primary? packages))
@@ -409,7 +431,10 @@
                     :packages (mapv :identity packages)
                     :resource-counts (into (sorted-map)
                                            (map (juxt #(get-in % [:identity :id])
-                                                      #(count (:resources %))) packages))}]
+                                                      #(count (:resources %))) packages))
+                    :public-surfaces (into (sorted-map)
+                                           (map (juxt #(get-in % [:identity :id])
+                                                      :public-surface) packages))}]
        (println "Deterministic dependency-closed NuGet packing passed:" (pr-str summary))
        {:verification verification :proof-root proof-root :feed feed :packages packages
         :artifact (:artifact primary) :identity (:identity primary)

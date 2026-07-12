@@ -68,7 +68,8 @@
                        {:schema-version (:schema-version configuration)}))
   (doseq [[section keys] [[:project [:assembly-name :root-namespace
                                     :target-framework :nullable :implicit-usings]]
-                          [:package [:id :version :description :authors :tags]]
+                          [:package [:id :version :title :description :authors :tags
+                                     :project-url :repository-url :repository-type]]
                           [:output [:project-directory :source-directory
                                     :resource-directory :project-file
                                     :source-map-file :diagnostics-file
@@ -2349,11 +2350,17 @@
          "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
          "    <AssemblyName>" (xml-escape (:assembly-name project)) "</AssemblyName>\n"
          "    <RootNamespace>" (xml-escape (:root-namespace project)) "</RootNamespace>\n"
+         "    <Deterministic>true</Deterministic>\n"
+         "    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>\n"
          "    <PackageId>" (xml-escape (:id package)) "</PackageId>\n"
          "    <Version>" (xml-escape (:version package)) "</Version>\n"
+         "    <Title>" (xml-escape (:title package)) "</Title>\n"
          "    <Description>" (xml-escape (:description package)) "</Description>\n"
          "    <Authors>" (xml-escape (:authors package)) "</Authors>\n"
          "    <PackageTags>" (xml-escape (:tags package)) "</PackageTags>\n"
+         "    <PackageProjectUrl>" (xml-escape (:project-url package)) "</PackageProjectUrl>\n"
+         "    <RepositoryUrl>" (xml-escape (:repository-url package)) "</RepositoryUrl>\n"
+         "    <RepositoryType>" (xml-escape (:repository-type package)) "</RepositoryType>\n"
          "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
          "    <IsPackable>true</IsPackable>\n"
          "  </PropertyGroup>\n"

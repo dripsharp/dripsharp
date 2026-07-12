@@ -9,33 +9,49 @@
 (def package
   {:id "Pkl.Parser"
    :version "0.0.0-development"
+   :title "Pkl parser for .NET"
    :description "Disposable parser package."
    :authors "Vibeformer"
-   :tags "pkl parser vibeformer"})
+   :tags "pkl parser vibeformer"
+   :project-url "https://example.test/pkl"
+   :repository-url "https://example.test/pkl.git"
+   :repository-type "git"})
 
 (def core-package
   {:id "Pkl.Core"
    :version "0.0.0-development"
+   :title "Pkl for .NET"
    :description "Disposable core package."
    :authors "Vibeformer"
-   :tags "pkl core vibeformer"})
+   :tags "pkl core vibeformer"
+   :project-url "https://example.test/pkl"
+   :repository-url "https://example.test/pkl.git"
+   :repository-type "git"})
 
 (defn- nuspec []
   (str "<package><metadata>"
        "<id>" (:id package) "</id>"
        "<version>" (:version package) "</version>"
+       "<title>" (:title package) "</title>"
        "<description>" (:description package) "</description>"
        "<authors>" (:authors package) "</authors>"
        "<tags>" (:tags package) "</tags>"
+       "<projectUrl>" (:project-url package) "</projectUrl>"
+       "<repository type=\"" (:repository-type package) "\" url=\""
+       (:repository-url package) "\" />"
        "</metadata></package>"))
 
 (defn- core-nuspec []
   (str "<package><metadata>"
        "<id>" (:id core-package) "</id>"
        "<version>" (:version core-package) "</version>"
+       "<title>" (:title core-package) "</title>"
        "<description>" (:description core-package) "</description>"
        "<authors>" (:authors core-package) "</authors>"
        "<tags>" (:tags core-package) "</tags>"
+       "<projectUrl>" (:project-url core-package) "</projectUrl>"
+       "<repository type=\"" (:repository-type core-package) "\" url=\""
+       (:repository-url core-package) "\" />"
        "<dependencies><group targetFramework=\"net8.0\">"
        "<dependency id=\"Pkl.Parser\" version=\"0.0.0-development\" exclude=\"Build,Analyzers\" />"
        "</group></dependencies>"
