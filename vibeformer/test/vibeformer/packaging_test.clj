@@ -78,12 +78,43 @@
         (.closeEntry output)))
     archive))
 
+(defn- content-types []
+  (str "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+       "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\" />"
+       "<Default Extension=\"psmdcp\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\" />"
+       "<Default Extension=\"dll\" ContentType=\"application/octet\" />"
+       "<Default Extension=\"nuspec\" ContentType=\"application/octet\" />"
+       "</Types>"))
+
+(defn- relationships [nuspec-name]
+  (str "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+       "<Relationship Type=\"http://schemas.microsoft.com/packaging/2010/07/manifest\" Target=\"/"
+       nuspec-name "\" Id=\"R1\" />"
+       "<Relationship Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" "
+       "Target=\"/package/services/metadata/core-properties/core-properties.psmdcp\" Id=\"R2\" />"
+       "</Relationships>"))
+
+(defn- core-properties [metadata]
+  (str "<coreProperties xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+       "xmlns:dcterms=\"http://purl.org/dc/terms/\" "
+       "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+       "xmlns=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\">"
+       "<dc:creator>" (:authors metadata) "</dc:creator>"
+       "<dc:description>" (:description metadata) "</dc:description>"
+       "<dc:identifier>" (:id metadata) "</dc:identifier>"
+       "<version>" (:version metadata) "</version>"
+       "<keywords>" (:tags metadata) "</keywords>"
+       "<lastModifiedBy>NuGet test writer</lastModifiedBy>"
+       "</coreProperties>"))
+
 (defn- package-archive! [entries]
-  (archive! (merge {"[Content_Types].xml" "content types"
-                    "_rels/.rels" "relationships"
+  (let [nuspec-name (first (filter #(str/ends-with? % ".nuspec") (keys entries)))
+        metadata (if (= "Pkl.Core.nuspec" nuspec-name) core-package package)]
+    (archive! (merge {"[Content_Types].xml" (content-types)
+                    "_rels/.rels" (relationships nuspec-name)
                     "package/services/metadata/core-properties/core-properties.psmdcp"
-                    "core properties"}
-                   entries)))
+                    (core-properties metadata)}
+                   entries))))
 
 (defn- write-file! [^Path file contents]
   (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
@@ -135,6 +166,34 @@
         (is (= :package-consumption-failed (:kind (ex-data error))))
         (is (= nuspec-namespace (:expected (ex-data error))))
         (is (= "https://example.test/shadow" (:actual (ex-data error))))))))
+
+(deftest package-inspection-requires-an-exact-opc-envelope
+  (doseq [[label entry alter]
+          [["content-type declaration"
+            "[Content_Types].xml"
+            #(str/replace % "application/octet" "application/x-shadow")]
+           ["nuspec relationship"
+            "_rels/.rels"
+            #(str/replace % "/Pkl.Parser.nuspec" "/Shadow.nuspec")]
+           ["mirrored core metadata"
+            "package/services/metadata/core-properties/core-properties.psmdcp"
+            #(str/replace % (:description package) "misleading description")]]]
+    (let [base {"Pkl.Parser.nuspec" (nuspec)
+                "lib/net8.0/Pkl.Parser.dll" "assembly"}
+          artifact (package-archive!
+                    (assoc base entry
+                           (alter (get (merge {"[Content_Types].xml" (content-types)
+                                              "_rels/.rels" (relationships "Pkl.Parser.nuspec")
+                                              "package/services/metadata/core-properties/core-properties.psmdcp"
+                                              (core-properties package)}
+                                             base)
+                                       entry))))
+          error (try
+                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (testing label
+        (is (= :package-consumption-failed (:kind (ex-data error))))))))
 
 (deftest package-inspection-rejects-generated-source
   (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)

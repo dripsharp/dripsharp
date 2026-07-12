@@ -103,7 +103,7 @@
               :case-collisions case-collisions}))
     entry-names))
 
-(defn- parse-xml! [xml]
+(defn- parse-xml! [xml part]
   (try
     (let [factory (doto (DocumentBuilderFactory/newInstance)
                     (.setNamespaceAware true)
@@ -116,8 +116,8 @@
                          (.getBytes ^String xml StandardCharsets/UTF_8))]
         (.parse (.newDocumentBuilder factory) input)))
     (catch Exception error
-      (fail! "NuGet package contains invalid nuspec XML"
-             {:cause (.getMessage error)}))))
+      (fail! "NuGet package contains invalid XML metadata"
+             {:part part :cause (.getMessage error)}))))
 
 (defn- element-name [^Element element]
   (or (.getLocalName element) (.getNodeName element)))
@@ -127,6 +127,24 @@
 
 (def ^:private dependency-nuspec-namespace
   "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd")
+
+(def ^:private content-types-namespace
+  "http://schemas.openxmlformats.org/package/2006/content-types")
+
+(def ^:private relationships-namespace
+  "http://schemas.openxmlformats.org/package/2006/relationships")
+
+(def ^:private core-properties-namespace
+  "http://schemas.openxmlformats.org/package/2006/metadata/core-properties")
+
+(def ^:private dc-namespace
+  "http://purl.org/dc/elements/1.1/")
+
+(def ^:private dcterms-namespace
+  "http://purl.org/dc/terms/")
+
+(def ^:private xsi-namespace
+  "http://www.w3.org/2001/XMLSchema-instance")
 
 (defn- require-nuspec-namespace! [^Element element path]
   (let [root (.getDocumentElement (.getOwnerDocument element))
@@ -232,7 +250,7 @@
 
 (defn- inspect-nuspec!
   [nuspec package target-framework expected-dependencies]
-  (let [document (parse-xml! nuspec)
+  (let [document (parse-xml! nuspec :nuspec)
         root (.getDocumentElement document)
         expected-namespace (if (seq expected-dependencies)
                              dependency-nuspec-namespace
@@ -321,6 +339,130 @@
                    {:expected expected-dependencies :actual dependencies}))
           dependencies)))))
 
+(defn- inspect-content-types! [xml]
+  (let [document (parse-xml! xml :content-types)
+        root (.getDocumentElement document)
+        defaults (child-elements root "Default")
+        expected {"rels" "application/vnd.openxmlformats-package.relationships+xml"
+                  "psmdcp" "application/vnd.openxmlformats-package.core-properties+xml"
+                  "dll" "application/octet"
+                  "nuspec" "application/octet"}]
+    (when-not (and (= "Types" (element-name root))
+                   (= content-types-namespace (.getNamespaceURI root)))
+      (fail! "NuGet content-types metadata has the wrong root"
+             {:expected [content-types-namespace "Types"]
+              :actual [(.getNamespaceURI root) (element-name root)]}))
+    (require-exact-attributes! root {"xmlns" content-types-namespace}
+                               "[Content_Types].xml/Types")
+    (require-exact-children! root (repeat (count expected) "Default")
+                             "[Content_Types].xml/Types")
+    (let [actual
+          (into {}
+                (for [^Element default defaults
+                      :let [attributes (element-attributes default)]]
+                  (do
+                    (require-exact-children! default []
+                                             "[Content_Types].xml/Types/Default")
+                    (when-not (= #{"Extension" "ContentType"}
+                                 (set (keys attributes)))
+                      (fail! "NuGet content-type declaration has unexpected attributes"
+                             {:expected #{"Extension" "ContentType"}
+                              :actual attributes}))
+                    [(get attributes "Extension") (get attributes "ContentType")])))]
+      (when-not (and (= (count expected) (count actual)) (= expected actual))
+        (fail! "NuGet content-type declarations differ from the exact package payload"
+               {:expected expected :actual actual})))))
+
+(defn- inspect-relationships! [xml nuspec-name]
+  (let [document (parse-xml! xml :relationships)
+        root (.getDocumentElement document)
+        expected #{{"Type" "http://schemas.microsoft.com/packaging/2010/07/manifest"
+                    "Target" (str "/" nuspec-name) "Id" "R1"}
+                   {"Type" (str relationships-namespace "/metadata/core-properties")
+                    "Target" (str "/" canonical-core-properties) "Id" "R2"}}]
+    (when-not (and (= "Relationships" (element-name root))
+                   (= relationships-namespace (.getNamespaceURI root)))
+      (fail! "NuGet relationship metadata has the wrong root"
+             {:expected [relationships-namespace "Relationships"]
+              :actual [(.getNamespaceURI root) (element-name root)]}))
+    (require-exact-attributes! root {"xmlns" relationships-namespace}
+                               "_rels/.rels/Relationships")
+    (require-exact-children! root (repeat (count expected) "Relationship")
+                             "_rels/.rels/Relationships")
+    (let [actual
+          (set
+           (for [^Element relationship (child-elements root "Relationship")]
+             (do
+               (require-exact-children! relationship []
+                                        "_rels/.rels/Relationships/Relationship")
+               (element-attributes relationship))))]
+      (when-not (and (= (count expected) (count actual)) (= expected actual))
+        (fail! "NuGet package relationships do not target the exact release metadata"
+               {:expected expected :actual actual})))))
+
+(defn- inspect-core-properties! [xml package]
+  (let [document (parse-xml! xml :core-properties)
+        root (.getDocumentElement document)
+        expected-elements
+        {[dc-namespace "creator"] (:authors package)
+         [dc-namespace "description"] (:description package)
+         [dc-namespace "identifier"] (:id package)
+         [core-properties-namespace "version"] (:version package)
+         [core-properties-namespace "keywords"] (:tags package)}]
+    (when-not (and (= "coreProperties" (element-name root))
+                   (= core-properties-namespace (.getNamespaceURI root)))
+      (fail! "NuGet core-properties metadata has the wrong root"
+             {:expected [core-properties-namespace "coreProperties"]
+              :actual [(.getNamespaceURI root) (element-name root)]}))
+    (require-exact-attributes!
+     root
+     {"xmlns" core-properties-namespace
+      "xmlns:dc" dc-namespace
+      "xmlns:dcterms" dcterms-namespace
+      "xmlns:xsi" xsi-namespace}
+     "core-properties/coreProperties")
+    (let [children (child-elements root)
+          actual-elements
+          (into {}
+                (for [^Element element children
+                      :let [identity [(.getNamespaceURI element)
+                                      (element-name element)]]
+                      :when (not= [core-properties-namespace "lastModifiedBy"] identity)]
+                  (do
+                    (require-exact-attributes! element {}
+                                               "core-properties/coreProperties/value")
+                    (require-exact-children! element []
+                                             "core-properties/coreProperties/value")
+                    [identity (.getTextContent element)])))
+          last-modified (filterv #(and (= core-properties-namespace
+                                          (.getNamespaceURI ^Element %))
+                                       (= "lastModifiedBy" (element-name %)))
+                                 children)]
+      (when-not (= (inc (count expected-elements)) (count children))
+        (fail! "NuGet core properties contain missing, duplicate, or unexpected elements"
+               {:expected (inc (count expected-elements))
+                :actual (count children)}))
+      (when-not (and (= (count expected-elements) (count actual-elements))
+                     (= expected-elements actual-elements))
+        (fail! "NuGet core properties do not mirror the configured package metadata"
+               {:expected expected-elements :actual actual-elements}))
+      (when-not (= 1 (count last-modified))
+        (fail! "NuGet core properties do not contain exactly one package-writer identity"
+               {:expected 1 :actual (count last-modified)}))
+      (let [^Element element (first last-modified)]
+        (require-exact-attributes! element {}
+                                   "core-properties/coreProperties/lastModifiedBy")
+        (require-exact-children! element []
+                                 "core-properties/coreProperties/lastModifiedBy")
+        (when (str/blank? (.getTextContent element))
+          (fail! "NuGet core-properties package-writer identity is blank"
+                 {:actual (.getTextContent element)}))))))
+
+(defn- inspect-opc-envelope! [archive nuspec-name package]
+  (inspect-content-types! (zip-text archive "[Content_Types].xml"))
+  (inspect-relationships! (zip-text archive "_rels/.rels") nuspec-name)
+  (inspect-core-properties! (zip-text archive canonical-core-properties) package))
+
 (defn inspect-package!
   "Checks the package payload and metadata without extracting generated sources."
   ([artifact package target-framework assembly-name]
@@ -369,6 +511,9 @@
            (when-not (= expected-entries entries)
              (fail! "NuGet package layout differs from the exact release payload"
                     {:expected expected-entries :actual entries})))
+         (inspect-opc-envelope! archive nuspec-name
+                                {:id id :version version :description description
+                                 :authors authors :tags tags})
          {:entries entries :assembly-entry assembly-entry :nuspec nuspec
           :dependencies dependencies})))))
 
