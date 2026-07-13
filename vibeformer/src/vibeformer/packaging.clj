@@ -670,12 +670,15 @@
                 {:profile profile :emission emission :destination destination
                  :expected-dependencies []})
               (:dependency-emissions generation))
-        expected-dependencies (mapv #(get-in % [:destination :package]) dependency-specs)]
+        expected-dependencies (mapv #(get-in % [:destination :package]) dependency-specs)
+        expected-assembly-dependencies
+        (mapv #(get-in % [:destination :project :assembly-name]) dependency-specs)]
     (conj dependency-specs
           {:profile (get-in generation [:generation-profile :profile])
            :emission (:emission generation)
            :destination (:destination generation)
            :expected-dependencies expected-dependencies
+           :expected-assembly-dependencies expected-assembly-dependencies
            :primary? true})))
 
 (defn- repository-commit! [run-command! root]
@@ -699,26 +702,44 @@
                    :directory project-root})))
 
 (defn- inspect-package-assembly!
-  [run-command! root artifact assembly-entry expected]
+  [run-command! root artifact assembly-entry assembly-name package-assembly-names
+   expected-dependency-assemblies expected-resources]
   (let [inspector (paths/resolve-path root "vibeformer" "validation"
                                       "package-inspector" "PackageInspector.csproj")
         result (run-command!
-                {:command (into ["dotnet" "run" "--project" (str inspector)
-                                 "--configuration" "Release" "--verbosity" "quiet"
-                                 "--" (str artifact) assembly-entry]
-                                expected)
+                {:command (into
+                           ["dotnet" "run" "--project" (str inspector)
+                            "--configuration" "Release" "--verbosity" "quiet"
+                            "--" (str artifact) assembly-entry assembly-name
+                            (str (count package-assembly-names))]
+                           (concat package-assembly-names
+                                   [(str (count expected-dependency-assemblies))]
+                                   expected-dependency-assemblies
+                                   expected-resources))
                  :directory root})]
     (when-not (str/includes? (:output result)
-                             (str "Embedded resource inspection passed: " (count expected)))
+                             (str "Embedded resource inspection passed: "
+                                  (count expected-resources)))
       (fail! "Package resource inspector did not report the expected manifest"
-             {:artifact (str artifact) :expected expected :output (:output result)}))
-    (let [[_ types members fingerprint]
+             {:artifact (str artifact) :expected expected-resources
+              :output (:output result)}))
+    (let [[_ inspected-assembly assembly-version]
+          (re-find #"Assembly identity inspection passed: ([^,\r\n]+), Version=([0-9.]+)"
+                   (:output result))
+          [_ types members fingerprint]
           (re-find #"Public surface inspection passed: (\d+) types, (\d+) members, SHA-256 ([0-9a-f]{64})"
                    (:output result))]
+      (when-not (= assembly-name inspected-assembly)
+        (fail! "Package assembly inspector did not report the expected assembly identity"
+               {:artifact (str artifact) :expected assembly-name
+                :actual inspected-assembly :output (:output result)}))
       (when-not fingerprint
         (fail! "Package assembly inspector did not report a public-surface fingerprint"
                {:artifact (str artifact) :output (:output result)}))
-      {:resources (count expected)
+      {:resources (count expected-resources)
+       :assembly-identity {:name inspected-assembly :version assembly-version
+                           :dependency-assemblies
+                           (vec expected-dependency-assemblies)}
        :public-surface {:types (parse-long types)
                         :members (parse-long members)
                         :sha256 fingerprint}
@@ -739,6 +760,8 @@
          generation (:generation verification)
          build-configuration (:build-configuration verification)
          specs (package-specs generation)
+         package-assembly-names
+         (mapv #(get-in % [:destination :project :assembly-name]) specs)
          repository-commit (repository-commit! run-command! root)
          proof-root (harness/clean-directory!
                      (paths/resolve-path root "vibeformer" "target" "package-proof"))
@@ -762,7 +785,8 @@
        (pack-project! run-command! build-configuration second-output spec))
      (let [packages
            (mapv
-            (fn [{:keys [profile emission destination expected-dependencies primary?]}]
+            (fn [{:keys [profile emission destination expected-dependencies
+                         expected-assembly-dependencies primary?]}]
               (let [{:keys [id version] :as package} (:package destination)
                     target-framework (get-in destination [:project :target-framework])
                     assembly-name (get-in destination [:project :assembly-name])
@@ -792,7 +816,10 @@
                                               (map :logical-name) sort vec)
                       resource-proof (inspect-resources-fn
                                       run-command! root artifact
-                                      (:assembly-entry inspection) expected-resources)]
+                                      (:assembly-entry inspection) assembly-name
+                                      package-assembly-names
+                                      (or expected-assembly-dependencies [])
+                                      expected-resources)]
                   {:profile profile :primary? primary? :artifact artifact
                    :identity {:id id :version version :sha256 first-hash
                               :file (str (.getFileName ^Path artifact))}

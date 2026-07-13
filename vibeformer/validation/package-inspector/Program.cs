@@ -13,10 +13,21 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
-        if (args.Length < 2)
+        if (args.Length < 5)
         {
-            throw new ArgumentException("package path, assembly entry, and expected resources are required");
+            throw new ArgumentException(
+                "package path, assembly entry, expected assembly name, generated package " +
+                "assembly count, and expected dependency count are required");
         }
+
+        var argumentIndex = 3;
+        var generatedPackageAssemblies = ReadCountedArguments(
+            args, ref argumentIndex, "generated package assembly");
+        var expectedDependencyAssemblies = ReadCountedArguments(
+            args, ref argumentIndex, "expected dependency assembly");
+        var expectedResources = args.Skip(argumentIndex)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
 
         using var package = ZipFile.OpenRead(args[0]);
         var assemblyEntry = package.GetEntry(args[1])
@@ -27,16 +38,17 @@ internal static class Program
         assembly.Position = 0;
         using var portableExecutable = new PEReader(assembly);
         var metadata = portableExecutable.GetMetadataReader();
+        InspectAssemblyIdentity(
+            metadata, args[2], generatedPackageAssemblies, expectedDependencyAssemblies);
         var actual = metadata.ManifestResources
             .Select(handle => metadata.GetString(metadata.GetManifestResource(handle).Name))
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
-        var expected = args.Skip(2).OrderBy(name => name, StringComparer.Ordinal).ToArray();
 
-        if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
+        if (!actual.SequenceEqual(expectedResources, StringComparer.Ordinal))
         {
             throw new InvalidDataException(
-                $"Embedded resources differ. Expected [{string.Join(", ", expected)}], " +
+                $"Embedded resources differ. Expected [{string.Join(", ", expectedResources)}], " +
                 $"actual [{string.Join(", ", actual)}].");
         }
 
@@ -53,6 +65,90 @@ internal static class Program
             $"Public surface inspection passed: {surface.Types} types, " +
             $"{surface.Members} members, SHA-256 {surface.Fingerprint}");
         return 0;
+    }
+
+    private static string[] ReadCountedArguments(
+        string[] args,
+        ref int argumentIndex,
+        string label)
+    {
+        if (argumentIndex >= args.Length ||
+            !int.TryParse(args[argumentIndex], out var count) ||
+            count < 0)
+        {
+            throw new ArgumentException($"Invalid {label} count.");
+        }
+
+        argumentIndex++;
+        if (count > args.Length - argumentIndex)
+        {
+            throw new ArgumentException($"{label} count exceeds the supplied arguments.");
+        }
+
+        var values = args.Skip(argumentIndex).Take(count).ToArray();
+        argumentIndex += count;
+        if (values.Any(string.IsNullOrWhiteSpace) ||
+            values.Distinct(StringComparer.Ordinal).Count() != values.Length)
+        {
+            throw new ArgumentException($"{label} names must be nonblank and unique.");
+        }
+
+        return values;
+    }
+
+    private static void InspectAssemblyIdentity(
+        MetadataReader metadata,
+        string expectedAssemblyName,
+        string[] generatedPackageAssemblies,
+        string[] expectedDependencyAssemblies)
+    {
+        var definition = metadata.GetAssemblyDefinition();
+        var actualAssemblyName = metadata.GetString(definition.Name);
+        if (!string.Equals(actualAssemblyName, expectedAssemblyName, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Packaged assembly identity differs. Expected {expectedAssemblyName}, " +
+                $"actual {actualAssemblyName}.");
+        }
+
+        var packageAssemblySet = generatedPackageAssemblies.ToHashSet(StringComparer.Ordinal);
+        if (!packageAssemblySet.Contains(expectedAssemblyName))
+        {
+            throw new InvalidDataException(
+                $"Packaged assembly {expectedAssemblyName} is outside the generated package closure.");
+        }
+
+        var unknownExpected = expectedDependencyAssemblies
+            .Where(name => !packageAssemblySet.Contains(name))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (unknownExpected.Length != 0)
+        {
+            throw new InvalidDataException(
+                "Expected dependency assemblies are outside the generated package closure: " +
+                $"[{string.Join(", ", unknownExpected)}].");
+        }
+
+        var actualDependencyAssemblies = metadata.AssemblyReferences
+            .Select(handle => metadata.GetString(metadata.GetAssemblyReference(handle).Name))
+            .Where(packageAssemblySet.Contains)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        var expected = expectedDependencyAssemblies
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (!actualDependencyAssemblies.SequenceEqual(expected, StringComparer.Ordinal))
+        {
+            throw new InvalidDataException(
+                "Generated-package assembly references differ. " +
+                $"Expected [{string.Join(", ", expected)}], " +
+                $"actual [{string.Join(", ", actualDependencyAssemblies)}].");
+        }
+
+        Console.WriteLine(
+            $"Assembly identity inspection passed: {actualAssemblyName}, " +
+            $"Version={definition.Version}; dependency references " +
+            $"[{string.Join(", ", actualDependencyAssemblies)}]");
     }
 
     private static (int Types, int Members, string Fingerprint) PublicSurface(

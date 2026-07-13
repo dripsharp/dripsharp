@@ -451,3 +451,29 @@
       (is (= :package-consumption-failed (:kind (ex-data hash-error))))
       (is (= "wrong" (:expected (ex-data hash-error))))
       (is (= (:sha256 identity) (:actual (ex-data hash-error)))))))
+
+(deftest package-assembly-inspection-binds-generated-package-identities
+  (let [root (Files/createTempDirectory "vibeformer-assembly-inspection"
+                                         (make-array FileAttribute 0))
+        artifact (.resolve root "Pkl.Core.0.0.0-development.nupkg")
+        request (atom nil)
+        run-command! (fn [value]
+                       (reset! request value)
+                       {:output (str "Assembly identity inspection passed: Pkl.Core, "
+                                     "Version=0.0.0.0; dependency references [Pkl.Parser]\n"
+                                     "Embedded resource inspection passed: 1\n"
+                                     "Public surface inspection passed: 3 types, 7 members, "
+                                     "SHA-256 " (apply str (repeat 64 "a")) "\n")})
+        proof (#'packaging/inspect-package-assembly!
+               run-command! root artifact "lib/net8.0/Pkl.Core.dll" "Pkl.Core"
+               ["Pkl.Parser" "Pkl.Core"] ["Pkl.Parser"] ["org.pkl.core.Release.properties"])
+        inspector-arguments (vec (drop-while #(not= "--" %) (:command @request)))]
+    (is (= ["--" (str artifact) "lib/net8.0/Pkl.Core.dll" "Pkl.Core"
+            "2" "Pkl.Parser" "Pkl.Core" "1" "Pkl.Parser"
+            "org.pkl.core.Release.properties"]
+           inspector-arguments))
+    (is (= {:name "Pkl.Core" :version "0.0.0.0"
+            :dependency-assemblies ["Pkl.Parser"]}
+           (:assembly-identity proof)))
+    (is (= {:types 3 :members 7 :sha256 (apply str (repeat 64 "a"))}
+           (:public-surface proof)))))
