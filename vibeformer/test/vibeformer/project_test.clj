@@ -17,6 +17,13 @@
     (Files/writeString file "test" (make-array OpenOption 0))
     file))
 
+(defn- write-file!
+  [^Path root relative content]
+  (let [file (paths/resolve-path root relative)]
+    (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
+    (Files/writeString file content (make-array OpenOption 0))
+    file))
+
 (defn- write-manifest!
   [^Path root records]
   (let [manifest (paths/resolve-path root "manifest.tsv")
@@ -81,6 +88,23 @@
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :input-missing (:kind (ex-data error))))
     (is (= :classpath (:input-kind (ex-data error))))))
+
+(deftest standalone-project-may-have-an-empty-classpath
+  (let [root (temp-directory)
+        java-home (doto (paths/resolve-path root "jdk")
+                    (Files/createDirectories (make-array FileAttribute 0)))
+        source (create-file! root "src/Main.java")
+        discovery (project/read-discovery-manifest
+                   (write-manifest!
+                    root
+                    [["project-path" ":"]
+                     ["java-home" java-home]
+                     ["java-release" "17"]
+                     ["preview-features" "false"]
+                     ["source" source]]))]
+    (is (= ":" (:gradle-project discovery)))
+    (is (= [] (:classpath discovery)))
+    (is (= [source] (:java-sources discovery)))))
 
 (deftest mismatched-submodule-is-explicit
   (let [root (temp-directory)
@@ -174,6 +198,53 @@
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :invalid-gradle-project (:kind (ex-data error))))))
+
+(deftest configurable-non-pkl-gradle-project-discovers-complete-inputs
+  (let [workspace (paths/workspace-root)
+        root (temp-directory)
+        wrapper (paths/resolve-path workspace "research" "pkl" "gradlew")
+        _ (write-file! root "settings.gradle"
+                       "rootProject.name = 'generic-fixture'\ninclude 'library', 'application'\n")
+        _ (write-file! root "library/build.gradle"
+                       (str "plugins { id 'java-library' }\n"
+                            "java { sourceCompatibility = JavaVersion.VERSION_17 }\n"))
+        _ (write-file! root "library/src/main/java/example/Dependency.java"
+                       (str "package example;\n"
+                            "public final class Dependency { public static String value() { return \"ok\"; } }\n"))
+        _ (write-file! root "application/build.gradle"
+                       (str "plugins { id 'java' }\n"
+                            "java { sourceCompatibility = JavaVersion.VERSION_17 }\n"
+                            "def generated = layout.buildDirectory.dir('generated/sources/fixture/main')\n"
+                            "tasks.register('generateFixtureJava') {\n"
+                            "  outputs.dir(generated)\n"
+                            "  doLast {\n"
+                            "    def file = generated.get().file('example/Generated.java').asFile\n"
+                            "    file.parentFile.mkdirs()\n"
+                            "    file.text = 'package example; public final class Generated {}\\n'\n"
+                            "  }\n"
+                            "}\n"
+                            "sourceSets.main.java.srcDir(generated)\n"
+                            "tasks.named('compileJava') { dependsOn('generateFixtureJava') }\n"
+                            "dependencies { implementation project(':library') }\n"))
+        _ (write-file! root "application/src/main/java/example/Application.java"
+                       (str "package example;\n"
+                            "public final class Application { String value() { return Dependency.value(); } }\n"))
+        _ (write-file! root "application/src/main/resources/example/message.txt" "resource\n")
+        discovery (project/discover-main!
+                   {:workspace-root workspace
+                    :project-root root
+                    :gradle-wrapper wrapper
+                    :gradle-project ":application"
+                    :manifest (paths/resolve-path root "build/vibeformer-inputs.tsv")})
+        sources (mapv str (:java-sources discovery))
+        resources (mapv str (:resources discovery))
+        classpath (mapv str (:classpath discovery))]
+    (is (= root (:project-root discovery)))
+    (is (= ":application" (:gradle-project discovery)))
+    (is (some #(str/ends-with? % "/Application.java") sources))
+    (is (some #(str/ends-with? % "/Generated.java") sources))
+    (is (some #(str/ends-with? % "/example/message.txt") resources))
+    (is (some #(str/ends-with? % "/library/build/classes/java/main") classpath))))
 
 (deftest complete-pkl-core-main-discovery
   (let [workspace (paths/workspace-root)

@@ -84,6 +84,14 @@ Ordinary Java language behavior and standard-library APIs should map to
 normal C# and existing .NET facilities. Do not introduce a parallel JVM runtime
 when .NET already provides suitable semantics.
 
+The product-neutral recursive dispatch and resolved-symbol registry live in
+`vibeformer.java-translate`. Product rule bundles depend inward on that kernel;
+the Pkl body, declaration, destination, and runtime-bridge rules live under
+`vibeformer.pkl.*`. Generic namespaces must not depend on a product bundle.
+Future Java targets supply their own structural and semantic registries to the
+same kernel instead of inheriting Pkl source identities or `Pkl.Core`
+destinations.
+
 Native .NET code is appropriate only when generated C# and existing .NET APIs
 cannot faithfully provide the required behavior. Native replacements must be:
 

@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.JavaVersion
 
 gradle.projectsEvaluated {
   def projectPath = providers.gradleProperty("vibeformer.project").orElse(":pkl-parser").get()
@@ -24,7 +25,7 @@ gradle.projectsEvaluated {
         def javaHome = compileJava.javaCompiler.get().metadata.installationPath.asFile
         def javaRelease = compileJava.options.release.orNull
         if (javaRelease == null) {
-          throw new GradleException("${projectPath} compileJava does not declare a Java release")
+          javaRelease = Integer.parseInt(JavaVersion.toVersion(compileJava.sourceCompatibility).majorVersion)
         }
         def previewFeatures = compileJava.options.compilerArgs.contains("--enable-preview")
         def records = []
@@ -34,7 +35,12 @@ gradle.projectsEvaluated {
         records.add(["java-release", javaRelease])
         records.add(["preview-features", previewFeatures])
         records.add(["resource-root", processResources.destinationDir])
-        main.allJava.files.each { records.add(["source", it]) }
+        // `allJava` includes configured generated-source directories. The
+        // compiler task is included as well because plugins may add generated
+        // inputs directly to compileJava without registering a source set.
+        (main.allJava.files + compileJava.source.files).each {
+          if (it.isFile() && it.name.endsWith(".java")) records.add(["source", it])
+        }
         if (compileJava.options.generatedSourceOutputDirectory.present) {
           compileJava.options.generatedSourceOutputDirectory.get().asFileTree
             .matching { include("**/*.java") }

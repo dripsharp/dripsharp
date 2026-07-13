@@ -1,5 +1,6 @@
 {:schema-version 1
  :profile "pkl-core-value-model"
+ :project-root "research/pkl"
  :gradle-project ":pkl-core"
  :destination-config "vibeformer/config/pkl-core-value-model-destination.edn"
  :dependency-profiles ["pkl-parser"]
@@ -39,4 +40,27 @@
   {:key "type:org.pkl.core.PNull" :expand :public-api}
   {:key "type:org.pkl.core.Duration" :expand :public-api}
   {:key "type:org.pkl.core.DataSize" :expand :public-api}
-  {:key "type:org.pkl.core.Pair" :expand :public-api}]}
+  {:key "type:org.pkl.core.Pair" :expand :public-api}
+  {:key "type:org.pkl.core.Analyzer" :expand :public-api}
+  {:key "type:org.pkl.core.Closeables" :expand :public-api}
+  {:key "type:org.pkl.core.OutputFormat" :expand :public-api}
+  {:key "type:org.pkl.core.PklInfo" :expand :public-api}
+  {:key "type:org.pkl.core.RendererException" :expand :public-api}
+  {:key "type:org.pkl.core.ValueRenderers" :expand :shell}
+  {:key "executable:org.pkl.core.ValueRenderers#pcf(java.io.Writer,java.lang.String,boolean,boolean)"
+   :expand :body}
+  {:key "executable:org.pkl.core.ValueRenderers#json(java.io.Writer,java.lang.String,boolean)"
+   :expand :body}
+  {:key "executable:org.pkl.core.ValueRenderers#plist(java.io.Writer,java.lang.String)"
+   :expand :body}
+  {:key "executable:org.pkl.core.ValueRenderers#properties(java.io.Writer,boolean,boolean)"
+   :expand :body}
+  {:key "type:org.pkl.core.ast.expression.primary.GetEnclosingOwnerNode" :expand :public-api}
+  {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode" :expand :public-api}
+  {:key "executable:org.pkl.core.evaluatorSettings.Color#hasColor()" :expand :body}
+  {:key "type:org.pkl.core.evaluatorSettings.PklEvaluatorSettings" :expand :public-api}
+  {:key "type:org.pkl.core.project.Package" :expand :public-api}
+  {:key "type:org.pkl.core.project.Project" :expand :public-api}
+  {:key "type:org.pkl.core.project.ProjectDependenciesResolver" :expand :public-api}
+  {:key "type:org.pkl.core.project.ProjectPackager" :expand :public-api}
+  {:key "type:org.pkl.core.settings.PklSettings" :expand :public-api}]}

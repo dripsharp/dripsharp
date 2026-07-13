@@ -2,7 +2,7 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [vibeformer.concurrency :as concurrency]
-            [vibeformer.java-project :as java-project]
+            [vibeformer.pkl.java-project :as java-project]
             [vibeformer.paths :as paths]
             [vibeformer.project :as project]
             [vibeformer.spoon :as spoon])
@@ -12,6 +12,7 @@
   {"pkl-parser"
    {:schema-version 1
     :profile "pkl-parser"
+    :project-root "research/pkl"
     :gradle-project ":pkl-parser"
     :destination-config "vibeformer/config/pkl-parser.edn"}
    "pkl-core-value-model"
@@ -22,14 +23,18 @@
   selects the real Gradle project, destination policy, and optional resolved
   closure seeds; it is not a source-file allowlist."
   [workspace-root profile-name]
-  (let [entry (get profiles profile-name)]
+  (let [root (paths/absolute workspace-root)
+        configured-file (paths/resolve-path root profile-name)
+        entry (or (get profiles profile-name)
+                  (when (paths/regular-file? configured-file)
+                    {:configuration-file profile-name}))]
     (when-not entry
       (throw (ex-info (str "Unknown Vibeformer generation profile " profile-name)
                       {:kind :unknown-generation-profile
                        :profile profile-name
                        :available (vec (sort (keys profiles)))})))
     (let [profile (if-let [file (:configuration-file entry)]
-                    (let [path (paths/resolve-path (paths/absolute workspace-root) file)]
+                    (let [path (paths/resolve-path root file)]
                       (when-not (paths/regular-file? path)
                         (throw (ex-info "Generation profile configuration is missing"
                                         {:kind :missing-generation-profile
@@ -37,8 +42,21 @@
                       (edn/read-string (slurp (str path))))
                     entry)]
       (when-not (and (= 1 (:schema-version profile))
-                     (= profile-name (:profile profile))
-                     (re-matches #":[A-Za-z0-9_.-]+" (or (:gradle-project profile) ""))
+                     (or (not (contains? profiles profile-name))
+                         (= profile-name (:profile profile)))
+                     (string? (:profile profile))
+                     (not (str/blank? (:profile profile)))
+                     (re-matches #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$"
+                                 (or (:gradle-project profile) ""))
+                     (or (nil? (:project-root profile))
+                         (and (string? (:project-root profile))
+                              (not (str/blank? (:project-root profile)))))
+                     (or (nil? (:gradle-wrapper profile))
+                         (and (string? (:gradle-wrapper profile))
+                              (not (str/blank? (:gradle-wrapper profile)))))
+                     (or (nil? (:revision profile))
+                         (and (string? (:revision profile))
+                              (not (str/blank? (:revision profile)))))
                      (string? (:destination-config profile))
                      (or (nil? (:dependency-profiles profile))
                          (and (vector? (:dependency-profiles profile))
@@ -76,10 +94,21 @@
    (configuration workspace-root revision discovery nil))
   ([workspace-root revision discovery destination]
    (let [root (paths/absolute workspace-root)
+         source-project (if (map? revision)
+                          revision
+                          {:path (or (:project-root discovery) "research/pkl")
+                           :revision revision})
+         source-path (let [path (paths/path (:path source-project))]
+                       (paths/absolute
+                        (if (.isAbsolute path) path (paths/resolve-path root path))))
+         rendered-source {:path (portable-path root source-path)
+                          :revision (:revision source-project)}
          render-many #(->> % (map (partial portable-path root)) sort vec)]
      (cond-> {:schema-version 1
-              :project (keyword (subs (or (:gradle-project discovery) ":pkl-parser") 1))
-              :submodule {:path "research/pkl" :revision revision}
+              :project (keyword (or (not-empty (subs (or (:gradle-project discovery)
+                                                         ":pkl-parser") 1))
+                                    "root"))
+              :source-project rendered-source
               :toolchain {:java-home (portable-path root (:java-home discovery))
                           :java-release (:java-release discovery)
                           :preview-features (:preview-features discovery)}
@@ -87,7 +116,27 @@
                            :resource-root (portable-path root (:resource-root discovery))
                            :resources (render-many (:resources discovery))
                            :classpath (render-many (:classpath discovery))}}
+       (= "research/pkl" (:path rendered-source))
+       (assoc :submodule {:path "research/pkl" :revision (:revision source-project)})
        destination (assoc :destination destination)))))
+
+(defn- project-options
+  [profile]
+  (select-keys profile [:project-root :gradle-wrapper :gradle-project]))
+
+(defn- manifest-name
+  [prefix profile-name]
+  (str prefix (str/replace profile-name #"[^A-Za-z0-9_.-]" "_") ".tsv"))
+
+(defn- source-project!
+  [root profile verify-submodule-fn]
+  (let [configured-root (or (:project-root profile) "research/pkl")
+        project-root (let [path (paths/path configured-root)]
+                       (paths/absolute
+                        (if (.isAbsolute path) path (paths/resolve-path root path))))]
+    (if (= (paths/resolve-path root "research" "pkl") project-root)
+      (verify-submodule-fn {:workspace-root root})
+      {:path project-root :revision (:revision profile)})))
 
 (defn- generate-with-executor!
   "Cleans disposable output, resolves pkl-parser, and emits disposable project inputs."
@@ -105,13 +154,12 @@
          profile-name (or profile "pkl-parser")
          generation-profile (read-profile-fn root profile-name)
          target (clean-directory! (paths/resolve-path root "vibeformer" "target"))
-         submodule (verify-submodule-fn {:workspace-root root})
+         source-project (source-project! root generation-profile verify-submodule-fn)
          manifest (paths/resolve-path target "gradle-main-inputs.tsv")
-         discovery (discover-main-fn {:workspace-root root
-                                      :manifest manifest
-                                      :gradle-project (:gradle-project generation-profile)})
+         discovery (discover-main-fn (merge {:workspace-root root :manifest manifest}
+                                            (project-options generation-profile)))
          destination (read-destination-fn root (:destination-config generation-profile))
-         config (assoc (configuration root (:revision submodule) discovery destination)
+         config (assoc (configuration root source-project discovery destination)
                        :generation-profile generation-profile)
          java-model (if-let [seeds (:seeds generation-profile)]
                       (build-resolved-closure-fn root discovery seeds)
@@ -127,12 +175,15 @@
             :dependency-profile-generation
             (fn [dependency-name]
               (let [dependency-profile (read-profile-fn root dependency-name)
+                    dependency-source-project
+                    (source-project! root dependency-profile verify-submodule-fn)
                     dependency-manifest (paths/resolve-path
-                                         target (str "gradle-main-inputs-" dependency-name ".tsv"))
+                                         target (manifest-name "gradle-main-inputs-"
+                                                               dependency-name))
                     dependency-discovery
-                    (discover-main-fn {:workspace-root root
-                                       :manifest dependency-manifest
-                                       :gradle-project (:gradle-project dependency-profile)})
+                    (discover-main-fn
+                     (merge {:workspace-root root :manifest dependency-manifest}
+                            (project-options dependency-profile)))
                     dependency-destination
                     (read-destination-fn root (:destination-config dependency-profile))
                     dependency-model
@@ -145,6 +196,7 @@
                                          :resolved-model dependency-model
                                          :configuration dependency-destination})
                        :profile dependency-name
+                       :source-project dependency-source-project
                        :destination dependency-destination)))
             (:dependency-profiles generation-profile)))
          emission (emit-project-fn {:workspace-root root

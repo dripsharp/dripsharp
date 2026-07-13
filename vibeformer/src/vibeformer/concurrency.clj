@@ -97,7 +97,8 @@
                                  (f input)
                                  (catch Throwable error
                                    (throw (ex-info
-                                           (str "Concurrent Vibeformer phase failed: " (name phase))
+                                           (str "Concurrent Vibeformer phase failed: " (name phase)
+                                                ": " (.getMessage error))
                                            {:kind :concurrent-phase-failed
                                             :phase phase :item-index index}
                                            error)))))

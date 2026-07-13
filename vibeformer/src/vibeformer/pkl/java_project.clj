@@ -1,14 +1,16 @@
-(ns vibeformer.java-project
-  "Direct declaration and disposable project emission from live Spoon objects.
+(ns vibeformer.pkl.java-project
+  "Pkl-target declaration and disposable project emission from live Spoon objects.
 
-  The emitted fragments are destination C# structure, not a reconstructed Java
-  AST. Every declaration is reached recursively through its live Spoon owner,
-  and every type is selected through the resolver's exact occurrence identity."
+  This namespace owns Pkl-specific declaration shapes, destination mappings,
+  and runtime bridges. The emitted fragments are destination C# structure, not
+  a reconstructed Java AST. Every declaration is reached recursively through
+  its live Spoon owner, and every type is selected through the resolver's exact
+  occurrence identity."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [vibeformer.concurrency :as concurrency]
             [vibeformer.csharp :as csharp]
-            [vibeformer.java-body :as java-body]
+            [vibeformer.pkl.java-body :as java-body]
             [vibeformer.java-translate :as java]
             [vibeformer.paths :as paths]
             [vibeformer.spoon :as spoon])
@@ -313,6 +315,7 @@
    "java.lang.Short" ["short" :dotnet.type/int16]
    "java.lang.Integer" ["int" :dotnet.type/int32]
    "java.lang.Long" ["long" :dotnet.type/int64]
+   "java.lang.Number" ["global::System.IConvertible" :dotnet.type/number]
    "java.lang.Character" ["char" :dotnet.type/char]
    "java.lang.Class" ["global::System.Type" :dotnet.type/type]
    "java.lang.ClassLoader" ["global::System.Reflection.Assembly" :dotnet.type/assembly]
@@ -468,6 +471,8 @@
    "java.nio.file.spi.FileTypeDetector" ["global::Pkl.Core.Runtime.JavaFileTypeDetector" :pkl-core.type/file-type-detector]
    "java.nio.file.NoSuchFileException" ["global::System.IO.FileNotFoundException" :dotnet.type/file-not-found-exception]
    "java.time.Duration" ["global::System.TimeSpan" :dotnet.type/time-span]
+   "java.time.LocalDateTime" ["global::System.DateTime" :dotnet.type/date-time]
+   "java.time.Month" ["int" :dotnet.type/month-number]
    "java.time.temporal.TemporalUnit" ["global::Pkl.Core.Runtime.JavaTemporalUnit" :pkl-core.type/temporal-unit]
    "java.time.temporal.ChronoUnit" ["global::Pkl.Core.Runtime.JavaTemporalUnit" :pkl-core.type/temporal-unit]
    "java.lang.Iterable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
@@ -2059,6 +2064,12 @@
         [(raw "public override global::System.Text.Encoding Encoding => global::System.Text.Encoding.Unicode;")])
       (when (= "org.pkl.core.runtime.VmValue" (.getQualifiedName type))
         [(raw "public override int GetHashCode() => base.GetHashCode();")])
+      (when (instance? CtEnum type)
+        (let [name (identifier (.getSimpleName type))]
+          [(raw (str "public static " name " ValueOf(string name) => "
+                     "global::Vibeformer.Runtime.JavaCompat.EnumValueOf<" name ">(name);\n"
+                     "public static " name "[] Values() => "
+                     "global::Vibeformer.Runtime.JavaCompat.EnumValues<" name ">();"))]))
       (when (= "org.pkl.core.runtime.VmLanguage" (.getQualifiedName type))
         [(raw "public VmLanguage() { this.localContext = this.locals.CreateContextThreadLocal<VmLocalContext>((ignoredCtx, ignoredThread) => new VmLocalContext()); }")])
       (when (or (contains? #{"org.pkl.core.stdlib.base.AnyNodes$GetClass"

@@ -169,6 +169,19 @@
                 [(:source-element first-result)
                  (:source-element second-result)]))))
 
+(deftest recursive-translation-renders-only-the-completed-root
+  (let [render csharp/render
+        render-count (atom 0)
+        translation (with-redefs [csharp/render (fn [node]
+                                                  (swap! render-count inc)
+                                                  (render node))]
+                      (translate-method (translation-context)))]
+    (is (= 1 @render-count))
+    (is (= 28 (:visited (java/coverage-totals translation))))
+    (is (= "public int StopIndexExclusive() {\n  return CharIndex + Length;\n}"
+           (:text translation)))
+    (is (seq (:source-mappings translation)))))
+
 (deftest removing-structural-rule-fails-at-originating-live-element
   (let [rules (vec (remove #(= :java.expression/binary (:id %)) parser-rules))
         translation (translate-method

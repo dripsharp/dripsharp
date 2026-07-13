@@ -4,7 +4,7 @@
             [clojure.test :refer [deftest is testing]]
             [vibeformer.complete-core-closure-fixture :as fixture]
             [vibeformer.concurrency :as concurrency]
-            [vibeformer.java-project :as java-project]
+            [vibeformer.pkl.java-project :as java-project]
             [vibeformer.paths :as paths])
   (:import [java.nio.file FileVisitOption Files Path]
            [java.nio.file.attribute FileAttribute]))

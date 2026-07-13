@@ -18,6 +18,13 @@
     (Files/writeString file "test" (make-array OpenOption 0))
     file))
 
+(defn- write-file!
+  [^Path root relative content]
+  (let [file (paths/resolve-path root relative)]
+    (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
+    (Files/writeString file content (make-array OpenOption 0))
+    file))
+
 (defn- fixture-discovery
   [root]
   (let [java-home (doto (paths/resolve-path root "toolchain")
@@ -137,6 +144,54 @@
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :unknown-generation-profile (:kind (ex-data error))))
     (is (paths/regular-file? stale))))
+
+(deftest external-profile-configures-a-non-pkl-project
+  (let [root (temp-directory)
+        project-root (doto (paths/resolve-path root "examples/acme")
+                       (Files/createDirectories (make-array FileAttribute 0)))
+        _ (write-file!
+           root "profiles/acme.edn"
+           (str "{:schema-version 1\n"
+                " :profile \"acme\"\n"
+                " :project-root \"examples/acme\"\n"
+                " :gradle-wrapper \"tools/gradlew\"\n"
+                " :gradle-project \":library\"\n"
+                " :destination-config \"config/acme.edn\"\n"
+                " :dependency-profiles [\"profiles/dependency.edn\"]}\n"))
+        discovery (fixture-discovery root)
+        captured (atom nil)
+        result (harness/generate!
+                {:workspace-root root
+                 :profile "profiles/acme.edn"
+                 :generate-dependencies? false
+                 :verify-submodule-fn
+                 (fn [_] (throw (ex-info "Pkl verification must not run" {})))
+                 :discover-main-fn
+                 (fn [options]
+                   (reset! captured options)
+                   (assoc discovery
+                          :project-root project-root
+                          :gradle-project (:gradle-project options)))
+                 :read-destination-fn (fn [_ file] {:schema-version 1 :file file})
+                 :build-resolved-model-fn
+                 (fn [_ _]
+                   (spoon/map->ResolvedJavaModel
+                    {:totals {:compilation-units 2 :project-types 0
+                              :type-references 0 :executable-references 0
+                              :constructor-references 0 :field-references 0
+                              :annotations 0 :symbols 0 :shadow-symbols 0
+                              :unresolved-symbols 0 :ambiguous-symbols 0
+                              :fallback-symbols 0}}))
+                 :emit-project-fn
+                 (fn [{:keys [target]}]
+                   {:project-file (paths/resolve-path target "acme.csproj")
+                    :summary {:compilation-units 2}})})]
+    (is (= project-root (paths/resolve-path root (:project-root @captured))))
+    (is (= "tools/gradlew" (:gradle-wrapper @captured)))
+    (is (= ":library" (:gradle-project @captured)))
+    (is (= "acme" (get-in result [:generation-profile :profile])))
+    (is (= {:path "examples/acme" :revision nil} (:source-project result)))
+    (is (not (contains? result :submodule)))))
 
 (deftest configuration-is-deterministic
   (let [root (temp-directory)

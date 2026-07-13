@@ -1,10 +1,11 @@
-(ns vibeformer.java-body
-  "Resolved, fail-closed translation of Java executable Spoon trees.
+(ns vibeformer.pkl.java-body
+  "Pkl-target resolved, fail-closed translation of Java executable Spoon trees.
 
-  Structural rules consume only live Spoon objects and their already translated
-  live children.  Semantic rules are installed for each exact resolved symbol
-  identity in the model; project symbols and the deliberately supported JDK
-  surface are never recovered from rendered Java text."
+  This namespace is the Pkl product rule bundle. It may contain Pkl semantics
+  and Pkl.Core destination mappings, while the reusable recursive kernel in
+  vibeformer.java-translate remains product-neutral. Structural rules consume
+  only live Spoon objects and their already translated live children. Semantic
+  rules are installed for each exact resolved symbol identity in the model."
   (:require [clojure.string :as str]
             [vibeformer.csharp :as csharp]
             [vibeformer.java-translate :as java]
@@ -756,6 +757,8 @@
           "executable:java.lang.Class#cast(java.lang.Object)" (result-value-generic-compat-call services element "ClassCast" (into [target] args))
           "executable:java.lang.Enum#name()" (compat-call "EnumName" [target])
           "executable:java.lang.Enum#ordinal()" (compat-call "EnumOrdinal" [target])
+          "executable:java.time.LocalDateTime#of(int,java.time.Month,int,int,int)"
+          (invoke (raw "new global::System.DateTime") args)
           "executable:java.lang.Integer#parseInt(java.lang.String)" (compat-call "ParseInt" args)
           "executable:java.lang.Integer#parseInt(java.lang.String,int)" (compat-call "ParseInt" args)
           "executable:java.lang.Long#parseLong(java.lang.String)" (compat-call "ParseLong" args)
@@ -1877,6 +1880,7 @@
                               "field:java.lang.Boolean#FALSE" (raw "false")
                               "field:java.lang.Integer#SIZE" (raw "32")
                               "field:java.lang.Long#SIZE" (raw "64")
+                              "field:java.time.Month#FEBRUARY" (raw "2")
                               "field:java.util.regex.Pattern#UNICODE_CASE" (raw "((int)global::System.Text.RegularExpressions.RegexOptions.IgnoreCase)")
                               "field:java.util.regex.Pattern#UNICODE_CHARACTER_CLASS" (raw "0")
                               "field:java.util.regex.Pattern#LITERAL" (raw "0")

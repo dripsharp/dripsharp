@@ -254,18 +254,15 @@
   [children key own]
   (into (vec own) (mapcat key children)))
 
-(declare translate-element)
+(declare translate-element*)
 
-(defn translate-element
-  "Recursively translates one live Spoon tree.  Children are translated before
-  the selected rule emits its destination node, but visits are reported in
-  deterministic parent-first order."
+(defn- translate-element*
   [translation-context ^CtElement element]
   (when-not (instance? CtElement element)
     (throw (ex-info "Java translation requires a live Spoon CtElement"
                     {:kind :invalid-java-translation-root :root element})))
   (let [plan (plan-for translation-context element)
-        children (mapv #(translate-element translation-context %)
+        children (mapv #(translate-element* translation-context %)
                        (direct-children element))
         fragment (normalize-fragment
                   (emit-plan translation-context plan element children))
@@ -276,7 +273,6 @@
                 :rule (:rule plan)
                 :mapping (:mapping plan)}
         node (some-> (:node fragment) (csharp/with-source source))
-        rendered (when node (csharp/render node))
         visit {:source-element element
                :source-identity (:identity source)
                :source-location (:location source)
@@ -296,7 +292,6 @@
                :fallback? (boolean (:fallback? fragment))
                :status (if own-blocked? :blocked :covered)}]
     {:node node
-     :text (:text rendered)
      :source-element element
      :source-identity (:identity source)
      :source-location (:location source)
@@ -307,7 +302,6 @@
      :required-helpers (combined-set children :required-helpers
                                      (:required-helpers fragment))
      :diagnostics (combined-vector children :diagnostics own-diagnostics)
-     :source-mappings (vec (or (:mappings rendered) []))
      :mapping-identities (combined-vector
                           children :mapping-identities
                           (if-let [mapping (:mapping plan)] [mapping] []))
@@ -315,6 +309,19 @@
      :fallback? (or (boolean (:fallback? fragment))
                     (boolean (some :fallback? children)))
      :mode (:mode translation-context)}))
+
+(defn translate-element
+  "Recursively translates one live Spoon tree.  Children are translated before
+  the selected rule emits its destination node, but visits are reported in
+  deterministic parent-first order.  The completed destination tree is
+  rendered exactly once so text and source ranges remain derived from the
+  structured C# tree without repeatedly rendering descendants at each parent."
+  [translation-context ^CtElement element]
+  (let [translation (translate-element* translation-context element)
+        rendered (when-let [node (:node translation)] (csharp/render node))]
+    (assoc translation
+           :text (:text rendered)
+           :source-mappings (vec (or (:mappings rendered) [])))))
 
 (defn coverage-totals
   [translation]

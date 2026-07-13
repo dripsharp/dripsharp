@@ -18,7 +18,7 @@
                          (vec args))
               (and (= 2 (count args))
                    (contains? #{"generate" "verify" "pack" "package"} (first args))))
-    (fail! "Usage: clojure -M:run generate|verify|pack|package [pkl-parser|pkl-core-value-model]|differential" 2)
+    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential" 2)
     (try
       (case (first args)
         "generate" (harness/generate! {:profile (or (second args) "pkl-parser")})

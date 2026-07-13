@@ -9,13 +9,16 @@
   (:import [java.io File]
            [java.lang.reflect Constructor Field]
            [java.nio.file Path]
-           [java.util IdentityHashMap]
+           [java.util Collections IdentityHashMap WeakHashMap]
+           [java.util.concurrent ConcurrentHashMap]
+           [java.util.concurrent.atomic AtomicLong]
+           [java.util.function Function]
            [spoon Launcher]
            [spoon.reflect CtModel]
            [spoon.reflect.code CtInvocation CtThisAccess CtTypeAccess]
            [spoon.reflect.cu SourcePosition]
-           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtElement CtExecutable
-            CtField CtInterface CtMethod CtModifiable CtRecord CtRecordComponent CtType CtTypeMember
+           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtElement CtEnum
+            CtExecutable CtField CtInterface CtMethod CtModifiable CtRecord CtRecordComponent CtType CtTypeMember
             CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtExecutableReference
             CtFieldReference CtIntersectionTypeReference CtTypeParameterReference
@@ -49,9 +52,44 @@
    occurrences
    totals])
 
+(defrecord CanonicalSourceCache
+  [^ConcurrentHashMap paths
+   ^AtomicLong canonical-requests
+   ^AtomicLong canonical-computations
+   ^AtomicLong source-location-calls])
+
+(def ^:private frontend-source-caches
+  ;; A cache belongs to one Spoon factory/frontend lifecycle. Weak keys keep a
+  ;; completed frontend collectible without imposing an explicit close API.
+  (Collections/synchronizedMap (WeakHashMap.)))
+
+(defn- new-canonical-source-cache []
+  (->CanonicalSourceCache (ConcurrentHashMap.)
+                          (AtomicLong.) (AtomicLong.) (AtomicLong.)))
+
+(defn- register-source-cache!
+  [^Launcher launcher cache]
+  (.put frontend-source-caches (.getFactory launcher) cache)
+  cache)
+
+(defn- source-cache-for-element
+  [^CtElement element]
+  (when-let [factory (.getFactory element)]
+    (.get frontend-source-caches factory)))
+
 (defn- canonical-file
-  ^String [^File file]
-  (.getCanonicalPath file))
+  (^String [^File file]
+   (.getCanonicalPath file))
+  (^String [^CanonicalSourceCache cache ^File file]
+   (.incrementAndGet (:canonical-requests cache))
+   (let [key (-> file .getAbsoluteFile .toPath .normalize str)]
+     (.computeIfAbsent
+      (:paths cache)
+      key
+      (reify Function
+        (apply [_ _]
+          (.incrementAndGet (:canonical-computations cache))
+          (.getCanonicalPath file)))))))
 
 (defn- effective-position
   ^SourcePosition [^CtElement element]
@@ -67,10 +105,25 @@
   "Returns a stable source location for a Spoon object, using its closest
   positioned frontend parent for references whose own position is implicit."
   [^CtElement element]
-  (when-let [position (effective-position element)]
-    {:file (canonical-file (.getFile position))
-     :line (.getLine position)
-     :column (.getColumn position)}))
+  (let [cache (source-cache-for-element element)]
+    (when cache
+      (.incrementAndGet (:source-location-calls cache)))
+    (when-let [position (effective-position element)]
+      {:file (if cache
+               (canonical-file cache (.getFile position))
+               (canonical-file (.getFile position)))
+       :line (.getLine position)
+       :column (.getColumn position)})))
+
+(defn source-location-cache-stats
+  "Returns instrumentation for the frontend-scoped canonical source cache."
+  [frontend-or-resolved-model]
+  (when-let [cache (some-> frontend-or-resolved-model :launcher .getFactory
+                           (#(.get frontend-source-caches %)))]
+    {:source-location-calls (.get (:source-location-calls cache))
+     :canonical-requests (.get (:canonical-requests cache))
+     :canonical-computations (.get (:canonical-computations cache))
+     :cached-source-identities (.size (:paths cache))}))
 
 (defn frontend-identity
   "Identifies the exact frontend object used by a resolution diagnostic."
@@ -293,6 +346,31 @@
 
 (declare record-component)
 
+(defn- same-executable-signature?
+  [^CtExecutableReference left ^CtExecutableReference right]
+  (and (= (.getSimpleName left) (.getSimpleName right))
+       (= (mapv type-name (.getParameters left))
+          (mapv type-name (.getParameters right)))))
+
+(defn- inherited-executable-resolution
+  [^CtType owner ^CtExecutableReference reference]
+  (when-let [^CtExecutableReference inherited
+             (some #(when (same-executable-signature? reference %) %)
+                   (.getAllExecutables owner))]
+    (let [declaration (.getExecutableDeclaration inherited)]
+      (if (and declaration
+               (not (.isShadow ^CtType (.getDeclaringType ^CtExecutable declaration))))
+        (resolved (if (.isConstructor reference) :constructor :executable)
+                  (executable-key reference) :project reference declaration
+                  :inherited-source-declaration)
+        (let [member (if (.isConstructor inherited)
+                       (.getActualConstructor inherited)
+                       (.getActualMethod inherited))
+              ^Class declaring-class (.getDeclaringClass member)]
+          (resolved (if (instance? Constructor member) :constructor :executable)
+                    (executable-key reference) (class-origin declaring-class)
+                    reference member :inherited-runtime-member))))))
+
 (defn- resolve-executable
   [project-types ^CtExecutableReference reference]
   (try
@@ -310,22 +388,27 @@
               (resolved :executable (executable-key reference) :project reference
                         component :record-component-accessor)
               (if-let [declaration (.getExecutableDeclaration reference)]
-                (resolved (if (.isConstructor reference) :constructor :executable)
-                          (executable-key reference) :project reference declaration
-                          :source-declaration)
-                (if-let [implicit-resolution
-                         (when (.isConstructor reference)
-                           (implicit-constructor-resolution owner reference))]
-                  ;; Java records and ordinary classes may have an implicit canonical
-                  ;; or default constructor.  The resolved constructor reference and
-                  ;; its live CtType declaration are the frontend identity; no
-                  ;; constructor AST is reconstructed here.
-                  (resolved :constructor (executable-key reference) :project
-                            reference owner implicit-resolution)
-                  {:failure (diagnostic
-                             :unresolved-executable reference
-                             (str "Cannot resolve project executable "
-                                  (executable-key reference)))})))
+                (if (and (instance? CtEnum owner)
+                         (.isImplicit ^CtElement declaration))
+                  (resolved :executable (executable-key reference) :intrinsic
+                            reference owner :enum-synthetic-method)
+                  (resolved (if (.isConstructor reference) :constructor :executable)
+                            (executable-key reference) :project reference declaration
+                            :source-declaration))
+                (or (inherited-executable-resolution owner reference)
+                    (if-let [implicit-resolution
+                             (when (.isConstructor reference)
+                               (implicit-constructor-resolution owner reference))]
+                      ;; Java records and ordinary classes may have an implicit canonical
+                      ;; or default constructor.  The resolved constructor reference and
+                      ;; its live CtType declaration are the frontend identity; no
+                      ;; constructor AST is reconstructed here.
+                      (resolved :constructor (executable-key reference) :project
+                                reference owner implicit-resolution)
+                      {:failure (diagnostic
+                                 :unresolved-executable reference
+                                 (str "Cannot resolve project executable "
+                                      (executable-key reference)))}))))
             (let [member (if (.isConstructor reference)
                            (.getActualConstructor reference)
                            (.getActualMethod reference))
@@ -492,9 +575,9 @@
        (into (sorted-map))))
 
 (defn- compilation-unit-files
-  [^Launcher launcher]
+  [^Launcher launcher cache]
   (->> (.values (.getMap (.CompilationUnit (.getFactory launcher))))
-       (keep #(some-> % .getFile canonical-file))
+       (keep #(some->> % .getFile (canonical-file cache)))
        set))
 
 (defn- build-launcher
@@ -512,8 +595,8 @@
     launcher))
 
 (defn- validate-compilation-units!
-  [^Launcher launcher source-files]
-  (let [actual (compilation-unit-files launcher)
+  [^Launcher launcher source-files cache]
+  (let [actual (compilation-unit-files launcher cache)
         missing (sort (remove actual source-files))
         unexpected (sort (remove source-files actual))]
     (when (or (seq missing) (seq unexpected))
@@ -626,6 +709,7 @@
 (defn- direct-public-members
   [^CtType type]
   (->> (.getTypeMembers type)
+       (remove #(.isImplicit ^CtElement %))
        (filter public-api-declaration?)
        (sort-by declaration-key)))
 
@@ -739,8 +823,6 @@
   [^CtType declaration]
   (->> (.getMethods declaration)
        (remove #(.isImplicit ^CtMethod %))
-       (remove #(= "executable:org.pkl.core.EvaluatorImpl#evaluateExpressionPklBinary(org.pkl.core.ModuleSource,java.lang.String)"
-                   (declaration-key ^CtMethod %)))
        (mapcat
         (fn [^CtMethod method]
           (let [all-definitions (.getTopDefinitions method)
@@ -907,14 +989,14 @@
                                  public-api symbols occurrences totals))))))
 
 (defn- compiler-failure-diagnostic
-  [error]
+  [cache error]
   (let [message (.getMessage ^Throwable error)
         [_ file line] (when message
                         (re-find #" at (.+):(\d+)$" message))]
     {:kind :frontend-compilation-failed
      :message message
      :location (when file
-                 {:file (canonical-file (File. file))
+                 {:file (canonical-file cache (File. file))
                   :line (Integer/parseInt line)})
      :frontend {:frontend-class (.getName (class error))
                 :role "model-builder"}}))
@@ -924,13 +1006,14 @@
   classpath resolution enabled. Semantic acceptance is performed separately so
   callers may validate either the whole project or an exact declaration closure."
   [_workspace-root discovery]
-  (let [source-files (set (map #(canonical-file (.toFile ^Path %))
+  (let [launcher (build-launcher discovery)
+        cache (register-source-cache! launcher (new-canonical-source-cache))
+        source-files (set (map #(canonical-file cache (.toFile ^Path %))
                                (:java-sources discovery)))
-        launcher (build-launcher discovery)
         model (try
                 (.buildModel launcher)
                 (catch Throwable error
-                  (let [failure (compiler-failure-diagnostic error)]
+                  (let [failure (compiler-failure-diagnostic cache error)]
                     (throw (ex-info
                             (str "Spoon could not build the resolved production model: "
                                  (.getMessage error))
@@ -947,7 +1030,7 @@
               {:kind :invalid-spoon-environment
                :no-classpath (.getNoClasspath environment)
                :error-count (.getErrorCount environment)})))
-    (let [compilation-units (validate-compilation-units! launcher source-files)
+    (let [compilation-units (validate-compilation-units! launcher source-files cache)
           project-types (project-type-index model source-files)
           totals {:compilation-units (count compilation-units)
                   :project-types (count project-types)}]

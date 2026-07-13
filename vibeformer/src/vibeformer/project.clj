@@ -7,8 +7,9 @@
 
 (def ^:private manifest-header "VIBEFORMER_GRADLE_INPUTS_V3")
 (def ^:private default-gradle-project ":pkl-parser")
+(def ^:private default-project-root "research/pkl")
 (def ^:private gradle-project-pattern
-  #"^:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*$")
+  #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$")
 (def ^:private gitlink-pattern
   #"(?m)^160000 commit ([0-9a-f]{40})\s+research/pkl\s*$")
 
@@ -83,6 +84,23 @@
             {:kind :invalid-gradle-project :gradle-project gradle-project})))
   gradle-project)
 
+(defn- resolve-configured-path
+  [^Path project-root value default]
+  (let [value (or value default)
+        path (paths/path value)]
+    (paths/absolute
+     (if (.isAbsolute path)
+       path
+       (paths/resolve-path project-root path)))))
+
+(defn- resolve-project-root
+  [^Path workspace-root project-root]
+  (let [path (paths/path (or project-root default-project-root))]
+    (paths/absolute
+     (if (.isAbsolute path)
+       path
+       (paths/resolve-path workspace-root path)))))
+
 (defn read-discovery-manifest
   "Reads and validates the Gradle-derived production input manifest."
   [manifest]
@@ -147,10 +165,6 @@
         (throw (ex-info
                 (str "Gradle reported no production Java sources for " gradle-project)
                 {:kind :production-sources-missing :gradle-project gradle-project})))
-      (when-not (seq (:classpath discovery))
-        (throw (ex-info
-                (str "Gradle reported an empty compile classpath for " gradle-project)
-                {:kind :classpath-missing :gradle-project gradle-project})))
       (doseq [[kind inputs] [[:source (:java-sources discovery)]
                              [:resource (:resources discovery)]
                              [:classpath (:classpath discovery)]]
@@ -165,14 +179,30 @@
       discovery)))
 
 (defn discover-main!
-  "Asks the tracked Gradle project for its resolved production inputs."
-  [{:keys [workspace-root manifest gradle-project run-command!]
+  "Asks a Gradle Java project for its resolved production inputs.
+
+  `project-root` may be absolute or workspace-relative. `gradle-wrapper` is
+  project-relative by default and may also be absolute. The defaults retain
+  the tracked Pkl project, while callers can point the same ingestion boundary
+  at an unrelated Gradle build."
+  [{:keys [workspace-root manifest project-root gradle-wrapper init-script
+           gradle-project run-command!]
     :or {gradle-project default-gradle-project run-command! process/run!}}]
   (let [gradle-project (validate-gradle-project! gradle-project)
         root (paths/absolute workspace-root)
-        pkl-root (paths/resolve-path root "research" "pkl")
-        init-script (paths/resolve-path root "vibeformer" "gradle" "discover-main.gradle")
-        gradlew (paths/resolve-path pkl-root "gradlew")]
+        project-root (resolve-project-root root project-root)
+        init-script (let [configured (some-> init-script paths/path)]
+                      (paths/absolute
+                       (if (and configured (.isAbsolute configured))
+                         configured
+                         (paths/resolve-path root
+                                             (or configured
+                                                 (paths/path "vibeformer/gradle/discover-main.gradle"))))))
+        gradlew (resolve-configured-path project-root gradle-wrapper "gradlew")]
+    (when-not (paths/directory? project-root)
+      (throw (ex-info
+              (str "Configured Gradle project root is missing: " project-root)
+              {:kind :project-root-missing :path (str project-root)})))
     (doseq [[kind input] [[:gradle-wrapper gradlew] [:init-script init-script]]]
       (when-not (paths/regular-file? input)
         (throw (ex-info
@@ -185,10 +215,11 @@
                   "--console=plain"
                   "--no-daemon"
                   "-I" (str init-script)
-                  (str gradle-project ":vibeformerDescribeMain")
+                  (str (when-not (= ":" gradle-project) gradle-project)
+                       ":vibeformerDescribeMain")
                   (str "-Pvibeformer.project=" gradle-project)
                   (str "-Pvibeformer.output=" (paths/absolute manifest))]
-        :directory pkl-root})
+        :directory project-root})
       (catch ExceptionInfo error
         (throw (ex-info
                 (str "Gradle source/classpath/toolchain discovery failed: " (.getMessage error))
@@ -202,4 +233,4 @@
                 {:kind :gradle-project-mismatch
                  :requested gradle-project
                  :reported (:gradle-project discovery)})))
-      discovery)))
+      (assoc discovery :project-root project-root))))

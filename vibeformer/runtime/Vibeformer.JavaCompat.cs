@@ -239,6 +239,25 @@ internal static class JavaCompat
         return ordinal >= 0 ? ordinal : throw new ArgumentException("Value is not a declared enum constant", nameof(value));
     }
 
+    internal static T EnumValueOf<T>(string name)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+        var field = typeof(T).GetField(name, flags);
+        return field?.GetValue(null) is T value
+            ? value
+            : throw new ArgumentException($"No enum constant {typeof(T).FullName}.{name}", nameof(name));
+    }
+
+    internal static T[] EnumValues<T>()
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+        return typeof(T).GetFields(flags)
+            .Where(field => typeof(T).IsAssignableFrom(field.FieldType))
+            .OrderBy(field => field.MetadataToken)
+            .Select(field => (T)field.GetValue(null)!)
+            .ToArray();
+    }
+
     internal static int ParseInt(string value) => int.Parse(value, CultureInfo.InvariantCulture);
 
     internal static int ParseInt(string value, int radix) => Convert.ToInt32(value, radix);

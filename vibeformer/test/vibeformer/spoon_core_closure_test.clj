@@ -45,7 +45,30 @@
    {:key "type:org.pkl.core.PNull" :expand :public-api}
    {:key "type:org.pkl.core.Duration" :expand :public-api}
    {:key "type:org.pkl.core.DataSize" :expand :public-api}
-   {:key "type:org.pkl.core.Pair" :expand :public-api}])
+   {:key "type:org.pkl.core.Pair" :expand :public-api}
+   {:key "type:org.pkl.core.Analyzer" :expand :public-api}
+   {:key "type:org.pkl.core.Closeables" :expand :public-api}
+   {:key "type:org.pkl.core.OutputFormat" :expand :public-api}
+   {:key "type:org.pkl.core.PklInfo" :expand :public-api}
+   {:key "type:org.pkl.core.RendererException" :expand :public-api}
+   {:key "type:org.pkl.core.ValueRenderers" :expand :shell}
+   {:key "executable:org.pkl.core.ValueRenderers#pcf(java.io.Writer,java.lang.String,boolean,boolean)"
+    :expand :body}
+   {:key "executable:org.pkl.core.ValueRenderers#json(java.io.Writer,java.lang.String,boolean)"
+    :expand :body}
+   {:key "executable:org.pkl.core.ValueRenderers#plist(java.io.Writer,java.lang.String)"
+    :expand :body}
+   {:key "executable:org.pkl.core.ValueRenderers#properties(java.io.Writer,boolean,boolean)"
+    :expand :body}
+   {:key "type:org.pkl.core.ast.expression.primary.GetEnclosingOwnerNode" :expand :public-api}
+   {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode" :expand :public-api}
+   {:key "executable:org.pkl.core.evaluatorSettings.Color#hasColor()" :expand :body}
+   {:key "type:org.pkl.core.evaluatorSettings.PklEvaluatorSettings" :expand :public-api}
+   {:key "type:org.pkl.core.project.Package" :expand :public-api}
+   {:key "type:org.pkl.core.project.Project" :expand :public-api}
+   {:key "type:org.pkl.core.project.ProjectDependenciesResolver" :expand :public-api}
+   {:key "type:org.pkl.core.project.ProjectPackager" :expand :public-api}
+   {:key "type:org.pkl.core.settings.PklSettings" :expand :public-api}])
 
 (defn- sha-256
   [values]
@@ -78,6 +101,12 @@
     (is (= 13 (count (:classpath discovery))))
     (is (= {:compilation-units 723 :project-types 2250}
            (:totals frontend)))
+    (is (= {:canonical-computations 723
+            :cached-source-identities 723}
+           (select-keys (spoon/source-location-cache-stats frontend)
+                        [:canonical-computations :cached-source-identities])))
+    (is (< 723 (:canonical-requests
+                (spoon/source-location-cache-stats frontend))))
     (is (false? (-> frontend :launcher .getEnvironment .getNoClasspath)))
     (is (zero? (-> frontend :launcher .getEnvironment .getErrorCount)))
     (is (= status-before status-after))))

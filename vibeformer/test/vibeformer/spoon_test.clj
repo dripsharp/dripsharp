@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.complete-parser-fixture :as fixture]
+            [vibeformer.concurrency :as concurrency]
             [vibeformer.paths :as paths]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files OpenOption Path]
@@ -23,7 +24,51 @@
     (is (= (set (map #(-> ^Path % .toFile .getCanonicalPath)
                     (:java-sources discovery)))
            (:compilation-units first-model)))
+    (is (= {:canonical-computations 50
+            :cached-source-identities 50}
+           (select-keys (spoon/source-location-cache-stats first-model)
+                        [:canonical-computations :cached-source-identities])))
     (is (= status-before status-after))))
+
+(deftest source-location-cache-is-shared-by-multicore-callers
+  (let [{first-model :first} (fixture/models)
+        element (-> first-model :occurrences first :reference)
+        expected (spoon/source-location element)
+        before (spoon/source-location-cache-stats first-model)
+        locations (concurrency/call-with-executor
+                   {:worker-count 8}
+                   #(concurrency/mapv-ordered
+                     :source-location-cache-test
+                     (fn [_] (spoon/source-location element))
+                     (range 4096)))
+        after (spoon/source-location-cache-stats first-model)]
+    (is (every? #(= expected %) locations))
+    (is (= (:canonical-computations before)
+           (:canonical-computations after)))
+    (is (= 4096 (- (:canonical-requests after)
+                   (:canonical-requests before))))
+    (is (= 4096 (- (:source-location-calls after)
+                   (:source-location-calls before))))))
+
+(deftest implicit-reference-location-still-uses-closest-positioned-parent
+  (let [{first-model :first} (fixture/models)
+        implicit (some (fn [{:keys [^CtElement reference]}]
+                         (let [position (.getPosition reference)]
+                           (when-not (and position (.isValidPosition position))
+                             reference)))
+                       (:occurrences first-model))
+        positioned-parent
+        (loop [^CtElement current implicit]
+          (when (and current (.isParentInitialized current))
+            (let [^CtElement parent (.getParent current)
+                  position (.getPosition parent)]
+              (if (and position (.isValidPosition position))
+                parent
+                (recur parent)))))]
+    (is (some? implicit))
+    (is (some? positioned-parent))
+    (is (= (spoon/source-location positioned-parent)
+           (spoon/source-location implicit)))))
 
 (deftest complete-parser-resolution-is-exact-and-live
   (let [{first-model :first} (fixture/models)
