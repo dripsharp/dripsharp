@@ -23,8 +23,7 @@ internal static class Program
         var argumentIndex = 3;
         var generatedPackageAssemblies = ReadCountedArguments(
             args, ref argumentIndex, "generated package assembly");
-        var expectedDependencyAssemblies = ReadCountedArguments(
-            args, ref argumentIndex, "expected dependency assembly");
+        var expectedDependencyAssemblies = ReadDependencyArguments(args, ref argumentIndex);
         var expectedResources = args.Skip(argumentIndex)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
@@ -96,11 +95,56 @@ internal static class Program
         return values;
     }
 
+    private static DependencyAssembly[] ReadDependencyArguments(
+        string[] args,
+        ref int argumentIndex)
+    {
+        if (argumentIndex >= args.Length ||
+            !int.TryParse(args[argumentIndex], out var count) ||
+            count < 0)
+        {
+            throw new ArgumentException("Invalid expected dependency assembly count.");
+        }
+
+        argumentIndex++;
+        const int valuesPerDependency = 3;
+        if (count > (args.Length - argumentIndex) / valuesPerDependency)
+        {
+            throw new ArgumentException(
+                "Expected dependency assembly count exceeds the supplied arguments.");
+        }
+
+        var dependencies = new DependencyAssembly[count];
+        for (var index = 0; index < count; index++)
+        {
+            var name = args[argumentIndex++];
+            var packagePath = args[argumentIndex++];
+            var assemblyEntry = args[argumentIndex++];
+            if (string.IsNullOrWhiteSpace(name) ||
+                string.IsNullOrWhiteSpace(packagePath) ||
+                string.IsNullOrWhiteSpace(assemblyEntry))
+            {
+                throw new ArgumentException(
+                    "Expected dependency assembly descriptors must be nonblank.");
+            }
+
+            dependencies[index] = new DependencyAssembly(name, packagePath, assemblyEntry);
+        }
+
+        if (dependencies.Select(dependency => dependency.Name)
+            .Distinct(StringComparer.Ordinal).Count() != dependencies.Length)
+        {
+            throw new ArgumentException("Expected dependency assembly names must be unique.");
+        }
+
+        return dependencies;
+    }
+
     private static void InspectAssemblyIdentity(
         MetadataReader metadata,
         string expectedAssemblyName,
         string[] generatedPackageAssemblies,
-        string[] expectedDependencyAssemblies)
+        DependencyAssembly[] expectedDependencyAssemblies)
     {
         var definition = metadata.GetAssemblyDefinition();
         var actualAssemblyName = metadata.GetString(definition.Name);
@@ -119,6 +163,7 @@ internal static class Program
         }
 
         var unknownExpected = expectedDependencyAssemblies
+            .Select(dependency => dependency.Name)
             .Where(name => !packageAssemblySet.Contains(name))
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
@@ -130,26 +175,114 @@ internal static class Program
         }
 
         var actualDependencyAssemblies = metadata.AssemblyReferences
-            .Select(handle => metadata.GetString(metadata.GetAssemblyReference(handle).Name))
-            .Where(packageAssemblySet.Contains)
-            .OrderBy(name => name, StringComparer.Ordinal)
+            .Select(handle => AssemblyReferenceIdentity(metadata, handle))
+            .Where(identity => packageAssemblySet.Contains(identity.Name))
+            .OrderBy(identity => identity.Name, StringComparer.Ordinal)
             .ToArray();
         var expected = expectedDependencyAssemblies
-            .OrderBy(name => name, StringComparer.Ordinal)
+            .Select(DependencyAssemblyIdentity)
+            .OrderBy(identity => identity.Name, StringComparer.Ordinal)
             .ToArray();
-        if (!actualDependencyAssemblies.SequenceEqual(expected, StringComparer.Ordinal))
+        if (!actualDependencyAssemblies.SequenceEqual(expected))
         {
             throw new InvalidDataException(
-                "Generated-package assembly references differ. " +
-                $"Expected [{string.Join(", ", expected)}], " +
-                $"actual [{string.Join(", ", actualDependencyAssemblies)}].");
+                "Generated-package assembly reference identities differ. " +
+                $"Expected [{string.Join("; ", expected.Select(FormatIdentity))}], " +
+                $"actual [{string.Join("; ", actualDependencyAssemblies.Select(FormatIdentity))}].");
         }
 
+        var definitionIdentity = AssemblyDefinitionIdentity(metadata);
         Console.WriteLine(
-            $"Assembly identity inspection passed: {actualAssemblyName}, " +
-            $"Version={definition.Version}; dependency references " +
-            $"[{string.Join(", ", actualDependencyAssemblies)}]");
+            $"Assembly identity inspection passed: {FormatIdentity(definitionIdentity)}; " +
+            "dependency references " +
+            $"[{string.Join("; ", actualDependencyAssemblies.Select(FormatIdentity))}]");
     }
+
+    private static AssemblyIdentity DependencyAssemblyIdentity(DependencyAssembly dependency)
+    {
+        using var package = ZipFile.OpenRead(dependency.PackagePath);
+        var assemblyEntry = package.GetEntry(dependency.AssemblyEntry)
+            ?? throw new InvalidDataException(
+                $"Dependency package assembly entry is missing: {dependency.AssemblyEntry}");
+        using var packageAssembly = assemblyEntry.Open();
+        using var assembly = new MemoryStream();
+        packageAssembly.CopyTo(assembly);
+        assembly.Position = 0;
+        using var portableExecutable = new PEReader(assembly);
+        var identity = AssemblyDefinitionIdentity(portableExecutable.GetMetadataReader());
+        if (!string.Equals(identity.Name, dependency.Name, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Dependency package assembly identity differs. Expected {dependency.Name}, " +
+                $"actual {identity.Name}.");
+        }
+
+        return identity;
+    }
+
+    private static AssemblyIdentity AssemblyDefinitionIdentity(MetadataReader metadata)
+    {
+        var definition = metadata.GetAssemblyDefinition();
+        return new AssemblyIdentity(
+            metadata.GetString(definition.Name),
+            definition.Version,
+            Culture(metadata, definition.Culture),
+            PublicKeyToken(metadata.GetBlobBytes(definition.PublicKey), hasFullPublicKey: true));
+    }
+
+    private static AssemblyIdentity AssemblyReferenceIdentity(
+        MetadataReader metadata,
+        AssemblyReferenceHandle handle)
+    {
+        var reference = metadata.GetAssemblyReference(handle);
+        return new AssemblyIdentity(
+            metadata.GetString(reference.Name),
+            reference.Version,
+            Culture(metadata, reference.Culture),
+            PublicKeyToken(
+                metadata.GetBlobBytes(reference.PublicKeyOrToken),
+                (reference.Flags & AssemblyFlags.PublicKey) != 0));
+    }
+
+    private static string Culture(MetadataReader metadata, StringHandle handle)
+    {
+        var culture = metadata.GetString(handle);
+        return string.IsNullOrEmpty(culture) ? "neutral" : culture;
+    }
+
+    private static string PublicKeyToken(byte[] keyOrToken, bool hasFullPublicKey)
+    {
+        if (keyOrToken.Length == 0)
+        {
+            return "null";
+        }
+
+        var token = keyOrToken;
+        if (hasFullPublicKey)
+        {
+            var hash = SHA1.HashData(keyOrToken);
+            token = hash.Skip(hash.Length - 8).Reverse().ToArray();
+        }
+
+        return Convert.ToHexString(token).ToLowerInvariant();
+    }
+
+    private static string FormatIdentity(AssemblyIdentity identity)
+    {
+        return $"{identity.Name}, Version={identity.Version}, Culture={identity.Culture}, " +
+            $"PublicKeyToken={identity.PublicKeyToken}";
+    }
+
+    private readonly record struct DependencyAssembly(
+        string Name,
+        string PackagePath,
+        string AssemblyEntry);
+
+    private readonly record struct AssemblyIdentity(
+        string Name,
+        Version Version,
+        string Culture,
+        string PublicKeyToken);
 
     private static (int Types, int Members, string Fingerprint) PublicSurface(
         MetadataReader metadata)

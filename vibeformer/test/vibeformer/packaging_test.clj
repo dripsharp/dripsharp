@@ -456,20 +456,31 @@
   (let [root (Files/createTempDirectory "vibeformer-assembly-inspection"
                                          (make-array FileAttribute 0))
         artifact (.resolve root "Pkl.Core.0.0.0-development.nupkg")
+        dependency-artifact
+        (write-file! (.resolve root "Pkl.Parser.0.0.0-development.nupkg")
+                     "dependency package")
         request (atom nil)
         run-command! (fn [value]
                        (reset! request value)
                        {:output (str "Assembly identity inspection passed: Pkl.Core, "
-                                     "Version=0.0.0.0; dependency references [Pkl.Parser]\n"
+                                     "Version=0.0.0.0, Culture=neutral, PublicKeyToken=null; "
+                                     "dependency references [Pkl.Parser, Version=0.0.0.0, "
+                                     "Culture=neutral, PublicKeyToken=null]\n"
                                      "Embedded resource inspection passed: 1\n"
                                      "Public surface inspection passed: 3 types, 7 members, "
                                      "SHA-256 " (apply str (repeat 64 "a")) "\n")})
         proof (#'packaging/inspect-package-assembly!
                run-command! root artifact "lib/net8.0/Pkl.Core.dll" "Pkl.Core"
-               ["Pkl.Parser" "Pkl.Core"] ["Pkl.Parser"] ["org.pkl.core.Release.properties"])
+               ["Pkl.Parser" "Pkl.Core"]
+               [{:assembly-name "Pkl.Parser"
+                 :package-id "Pkl.Parser"
+                 :version "0.0.0-development"
+                 :target-framework "net8.0"}]
+               ["org.pkl.core.Release.properties"])
         inspector-arguments (vec (drop-while #(not= "--" %) (:command @request)))]
     (is (= ["--" (str artifact) "lib/net8.0/Pkl.Core.dll" "Pkl.Core"
             "2" "Pkl.Parser" "Pkl.Core" "1" "Pkl.Parser"
+            (str dependency-artifact) "lib/net8.0/Pkl.Parser.dll"
             "org.pkl.core.Release.properties"]
            inspector-arguments))
     (is (= {:name "Pkl.Core" :version "0.0.0.0"

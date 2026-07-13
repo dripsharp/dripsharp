@@ -672,7 +672,12 @@
               (:dependency-emissions generation))
         expected-dependencies (mapv #(get-in % [:destination :package]) dependency-specs)
         expected-assembly-dependencies
-        (mapv #(get-in % [:destination :project :assembly-name]) dependency-specs)]
+        (mapv (fn [{:keys [destination]}]
+                {:assembly-name (get-in destination [:project :assembly-name])
+                 :package-id (get-in destination [:package :id])
+                 :version (get-in destination [:package :version])
+                 :target-framework (get-in destination [:project :target-framework])})
+              dependency-specs)]
     (conj dependency-specs
           {:profile (get-in generation [:generation-profile :profile])
            :emission (:emission generation)
@@ -704,7 +709,14 @@
 (defn- inspect-package-assembly!
   [run-command! root artifact assembly-entry assembly-name package-assembly-names
    expected-dependency-assemblies expected-resources]
-  (let [inspector (paths/resolve-path root "vibeformer" "validation"
+  (let [dependency-arguments
+        (mapcat (fn [{:keys [assembly-name package-id version target-framework]}]
+                  [assembly-name
+                   (str (package-artifact! (.getParent ^Path artifact)
+                                           package-id version))
+                   (str "lib/" target-framework "/" assembly-name ".dll")])
+                expected-dependency-assemblies)
+        inspector (paths/resolve-path root "vibeformer" "validation"
                                       "package-inspector" "PackageInspector.csproj")
         result (run-command!
                 {:command (into
@@ -714,7 +726,7 @@
                             (str (count package-assembly-names))]
                            (concat package-assembly-names
                                    [(str (count expected-dependency-assemblies))]
-                                   expected-dependency-assemblies
+                                   dependency-arguments
                                    expected-resources))
                  :directory root})]
     (when-not (str/includes? (:output result)
@@ -739,7 +751,7 @@
       {:resources (count expected-resources)
        :assembly-identity {:name inspected-assembly :version assembly-version
                            :dependency-assemblies
-                           (vec expected-dependency-assemblies)}
+                           (mapv :assembly-name expected-dependency-assemblies)}
        :public-surface {:types (parse-long types)
                         :members (parse-long members)
                         :sha256 fingerprint}
