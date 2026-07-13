@@ -14,15 +14,14 @@ or project-completion semantics require explicit user approval. Upstream Pkl
 tests are behavior evidence even when their test infrastructure is not shipped
 as part of the .NET product.
 
-Use Ork, not `vibeformer/doc/`, for temporary planning, current status,
-next-slice selection, progress logs, and deferred follow-up work. The imported
-`.beads` data is a read-only historical archive; do not run `br` or modify
-`.beads`. Documentation should contain only durable product goals,
-architecture, contracts, and reference material.
+Use Beads, not `vibeformer/doc/`, for temporary planning, current status,
+next-slice selection, progress logs, and deferred follow-up work. Documentation
+should contain only durable product goals, architecture, contracts, and
+reference material.
 
-Work only on the exact Ork task supplied for the execution. When a worker
-discovers additional in-scope work, report a deduplicated follow-up through the
-structured Ork completion report with concrete evidence and acceptance
-criteria under the appropriate parent task. If it blocks the current task,
-report the blocker and do not claim completion prematurely. Ork tasks must not
-narrow the product goal or introduce new exclusions.
+When a worker discovers additional in-scope work, search Beads first. If it is
+not required to complete the current issue, file a deduplicated follow-up with
+concrete evidence and acceptance criteria under the appropriate epic. If it
+blocks the current issue, record the dependency and do not close the current
+issue prematurely. Beads issues must not narrow the product goal or introduce
+new exclusions.
