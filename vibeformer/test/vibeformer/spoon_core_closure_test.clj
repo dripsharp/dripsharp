@@ -62,13 +62,23 @@
     :expand :body}
    {:key "type:org.pkl.core.ast.expression.primary.GetEnclosingOwnerNode" :expand :public-api}
    {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode" :expand :public-api}
+   {:key "executable:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode#<init>(com.oracle.truffle.api.source.SourceSection,org.pkl.core.module.ModuleKey)"
+    :expand :body}
+   {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNodeGen" :expand :public-api}
    {:key "executable:org.pkl.core.evaluatorSettings.Color#hasColor()" :expand :body}
    {:key "type:org.pkl.core.evaluatorSettings.PklEvaluatorSettings" :expand :public-api}
    {:key "type:org.pkl.core.project.Package" :expand :public-api}
    {:key "type:org.pkl.core.project.Project" :expand :public-api}
    {:key "type:org.pkl.core.project.ProjectDependenciesResolver" :expand :public-api}
    {:key "type:org.pkl.core.project.ProjectPackager" :expand :public-api}
-   {:key "type:org.pkl.core.settings.PklSettings" :expand :public-api}])
+   {:key "type:org.pkl.core.settings.PklSettings" :expand :public-api}
+   {:key "type:org.pkl.core.runtime.VmFileDetector" :expand :public-api}
+   {:key "type:org.pkl.core.stdlib.test.report.TestReporter" :expand :public-api}
+   {:key "type:org.pkl.core.stdlib.test.report.BaseReporter" :expand :public-api}
+   {:key "type:org.pkl.core.stdlib.test.report.JUnitReporter" :expand :public-api}
+   {:key "type:org.pkl.core.stdlib.test.report.MinimalReporter" :expand :public-api}
+   {:key "type:org.pkl.core.stdlib.test.report.SpecReporter" :expand :public-api}
+   {:key "type:org.pkl.core.util.CodeGeneratorUtils" :expand :public-api}])
 
 (defn- sha-256
   [values]
@@ -128,37 +138,37 @@
 
     (testing "the recursively resolved project declaration and source sets are exact"
       (is (= {:ambiguous-symbols 0
-              :executable-references 29207
-              :seeds 29
-              :constructor-references 4457
+              :executable-references 30743
+              :seeds 57
+              :constructor-references 4686
               :shadow-symbols 0
-              :public-api-declarations 7134
-              :type-references 441392
+              :public-api-declarations 7398
+              :type-references 457953
               :fallback-symbols 0
               :guessed-symbols 0
-              :source-inputs 603
-              :intrinsic-occurrences 90457
-              :dependency-occurrences 57147
-              :type-parameter-occurrences 4391
-              :annotations 10561
-              :jdk-occurrences 97548
+              :source-inputs 633
+              :intrinsic-occurrences 92434
+              :dependency-occurrences 57641
+              :type-parameter-occurrences 4812
+              :annotations 10817
+              :jdk-occurrences 104588
               :unresolved-symbols 0
-              :declarations 16120
-              :project-occurrences 252260
-              :symbols 15777
-              :field-references 16186}
+              :declarations 16659
+              :project-occurrences 261570
+              :symbols 16330
+              :field-references 16846}
              (:totals first)))
-      (is (= "976056ad7952e245abe115bd0c7fa493e059b274ec087e2f6c8f3970b45042ef"
+      (is (= "5eb727eb09907b147a86484145250cb8c58ea6fde51e3fd3a3b08dbe10c6f6de"
              (sha-256 declaration-keys)))
-      (is (= "49b2a9892cce1436adf2d6aadc086fc97501e677bbbd4b222d1b6cef8a50647f"
+      (is (= "4d503bd65b81caf786dbf0c83f8bf321e741637bef1076c6350913ef4ea506ff"
              (sha-256 source-paths)))
-      (is (= "fd434343e2cbc249ed340e1f4c4f09be0e29a4f54e5eb50e4053e0684c8a88ef"
+      (is (= "a50f4b0f7ca3be1e51f8705302f1f4f38468cdbfa139ae98c0e65c80357239a0"
              (sha-256 public-api-keys)))
       (is (= discovery-sources (set (:compilation-units (:frontend first)))))
       (is (every? discovery-sources (keys (:source-inputs first))))
       (is (every? #(instance? CtElement (:declaration %))
                   (vals (:declarations first))))
-      (is (= 603 (count project-roots)))
+      (is (= 633 (count project-roots)))
       (is (every? #(.isTopLevel ^CtType %) project-roots))
       (is (every? #(contains? (:declarations first)
                               (str "type:" (.getQualifiedName ^CtType %)))
@@ -191,7 +201,7 @@
     (is (= (keys (:public-api-declarations first))
            (keys (:public-api-declarations second))))
     (is (= first-occurrences second-occurrences))
-    (is (= "9f8cf0ed86b9e9dc016f31a4c05087bca16e93a82c600b34b35a88b429ba55d0"
+    (is (= "25dffa0419b22b318e209583c6336f5cb9a9555844369031afbf94b94b4ba3f4"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))

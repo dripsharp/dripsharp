@@ -111,7 +111,7 @@
             children)
       (throw (ex-info "Translation rule requested a non-child Spoon element"
                       {:kind :non-child-translation-access
-                       :child (when child (spoon/frontend-identity child))}))))
+                       :child (when child (spoon/frontend-diagnostic child))}))))
 
 (defn- blocking-diagnostic
   ([kind ^CtElement element message]
@@ -122,7 +122,7 @@
             :kind kind
             :message message
             :location (spoon/source-location element)
-            :frontend (spoon/frontend-identity element)}
+            :frontend (spoon/frontend-diagnostic element)}
      resolved (assoc :resolved resolved))))
 
 (defn- reference-element?

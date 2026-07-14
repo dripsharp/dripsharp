@@ -14,6 +14,7 @@
            [java.util.concurrent.atomic AtomicLong]
            [java.util.function Function]
            [spoon Launcher]
+           [spoon.processing FactoryAccessor]
            [spoon.reflect CtModel]
            [spoon.reflect.code CtInvocation CtThisAccess CtTypeAccess]
            [spoon.reflect.cu SourcePosition]
@@ -56,16 +57,17 @@
   [^ConcurrentHashMap paths
    ^AtomicLong canonical-requests
    ^AtomicLong canonical-computations
-   ^AtomicLong source-location-calls])
+   ^AtomicLong source-location-calls
+   ^AtomicLong frontend-renderings])
 
-(def ^:private frontend-source-caches
+(def ^{:private true :tag java.util.Map} frontend-source-caches
   ;; A cache belongs to one Spoon factory/frontend lifecycle. Weak keys keep a
   ;; completed frontend collectible without imposing an explicit close API.
   (Collections/synchronizedMap (WeakHashMap.)))
 
 (defn- new-canonical-source-cache []
   (->CanonicalSourceCache (ConcurrentHashMap.)
-                          (AtomicLong.) (AtomicLong.) (AtomicLong.)))
+                          (AtomicLong.) (AtomicLong.) (AtomicLong.) (AtomicLong.)))
 
 (defn- register-source-cache!
   [^Launcher launcher cache]
@@ -74,21 +76,23 @@
 
 (defn- source-cache-for-element
   [^CtElement element]
-  (when-let [factory (.getFactory element)]
+  (when-let [factory (.getFactory ^FactoryAccessor element)]
     (.get frontend-source-caches factory)))
 
 (defn- canonical-file
   (^String [^File file]
    (.getCanonicalPath file))
   (^String [^CanonicalSourceCache cache ^File file]
-   (.incrementAndGet (:canonical-requests cache))
+   (let [^AtomicLong requests (:canonical-requests cache)]
+     (.incrementAndGet requests))
    (let [key (-> file .getAbsoluteFile .toPath .normalize str)]
      (.computeIfAbsent
-      (:paths cache)
+      ^ConcurrentHashMap (:paths cache)
       key
       (reify Function
         (apply [_ _]
-          (.incrementAndGet (:canonical-computations cache))
+          (let [^AtomicLong computations (:canonical-computations cache)]
+            (.incrementAndGet computations))
           (.getCanonicalPath file)))))))
 
 (defn- effective-position
@@ -107,7 +111,8 @@
   [^CtElement element]
   (let [cache (source-cache-for-element element)]
     (when cache
-      (.incrementAndGet (:source-location-calls cache)))
+      (let [^AtomicLong calls (:source-location-calls cache)]
+        (.incrementAndGet calls)))
     (when-let [position (effective-position element)]
       {:file (if cache
                (canonical-file cache (.getFile position))
@@ -118,29 +123,45 @@
 (defn source-location-cache-stats
   "Returns instrumentation for the frontend-scoped canonical source cache."
   [frontend-or-resolved-model]
-  (when-let [cache (some-> frontend-or-resolved-model :launcher .getFactory
-                           (#(.get frontend-source-caches %)))]
-    {:source-location-calls (.get (:source-location-calls cache))
-     :canonical-requests (.get (:canonical-requests cache))
-     :canonical-computations (.get (:canonical-computations cache))
-     :cached-source-identities (.size (:paths cache))}))
+  (when-let [^CanonicalSourceCache cache
+             (when-let [^Launcher launcher (:launcher frontend-or-resolved-model)]
+               (.get frontend-source-caches (.getFactory launcher)))]
+    (let [^AtomicLong location-calls (:source-location-calls cache)
+          ^AtomicLong canonical-requests (:canonical-requests cache)
+          ^AtomicLong canonical-computations (:canonical-computations cache)
+          ^AtomicLong frontend-renderings (:frontend-renderings cache)]
+      {:source-location-calls (.get location-calls)
+       :canonical-requests (.get canonical-requests)
+       :canonical-computations (.get canonical-computations)
+       :cached-source-identities (.size ^ConcurrentHashMap (:paths cache))
+       :frontend-renderings (.get frontend-renderings)})))
 
 (defn frontend-identity
-  "Identifies the exact frontend object used by a resolution diagnostic."
+  "Returns stable, cheap identity metadata for a live Spoon element. Full
+  Spoon pretty-printing is deliberately excluded because accepted translation
+  records this metadata for every visited element."
   [^CtElement element]
   {:frontend-class (.getName (class element))
    :role (when (.isParentInitialized element)
-           (str (.getRoleInParent element)))
-   :rendered (try
-               (str element)
-               (catch Throwable _ "<frontend rendering failed>"))})
+           (str (.getRoleInParent element)))})
+
+(defn frontend-diagnostic
+  "Adds the expensive Spoon rendering used only when reporting a failure."
+  [^CtElement element]
+  (when-let [^CanonicalSourceCache cache (source-cache-for-element element)]
+    (let [^AtomicLong renderings (:frontend-renderings cache)]
+      (.incrementAndGet renderings)))
+  (assoc (frontend-identity element)
+         :rendered (try
+                     (str element)
+                     (catch Throwable _ "<frontend rendering failed>"))))
 
 (defn- diagnostic
   [kind ^CtElement element message]
   {:kind kind
    :message message
    :location (source-location element)
-   :frontend (frontend-identity element)})
+   :frontend (frontend-diagnostic element)})
 
 (defn- parent-of-type
   [^CtElement element klass]
@@ -390,8 +411,13 @@
               (if-let [declaration (.getExecutableDeclaration reference)]
                 (if (and (instance? CtEnum owner)
                          (.isImplicit ^CtElement declaration))
-                  (resolved :executable (executable-key reference) :intrinsic
-                            reference owner :enum-synthetic-method)
+                  (resolved (if (.isConstructor reference)
+                              :constructor
+                              :executable)
+                            (executable-key reference) :intrinsic reference owner
+                            (if (.isConstructor reference)
+                              :enum-synthetic-constructor
+                              :enum-synthetic-method))
                   (resolved (if (.isConstructor reference) :constructor :executable)
                             (executable-key reference) :project reference declaration
                             :source-declaration))
@@ -494,7 +520,7 @@
           (if-let [failure (:failure type-result)]
             {:failure (assoc failure
                              :kind :unresolved-class-literal
-                             :frontend (frontend-identity reference)
+                             :frontend (frontend-diagnostic reference)
                              :location (source-location reference))}
             (resolved :field (field-key reference)
                       (:origin type-result) reference (:declaration type-result)
@@ -534,7 +560,7 @@
     (if-let [failure (:failure type-result)]
       {:failure (assoc failure
                        :kind :unresolved-annotation
-                       :frontend (frontend-identity annotation)
+                       :frontend (frontend-diagnostic annotation)
                        :location (source-location annotation))}
       (resolved :annotation
                 (str "annotation:" (subs (:key type-result) (count "type:")))
@@ -799,7 +825,7 @@
                   "Resolved project occurrence points to an unindexable Spoon declaration"
                   {:kind :unindexable-project-declaration
                    :occurrence (dissoc occurrence :reference :declaration)
-                   :declaration (frontend-identity declaration)})))
+                   :declaration (frontend-diagnostic declaration)})))
         (into [{:key key
                 :declaration declaration
                 :expand (if (instance? CtType declaration) :shell :body)}]

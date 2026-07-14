@@ -57,10 +57,20 @@
    :expand :body}
   {:key "type:org.pkl.core.ast.expression.primary.GetEnclosingOwnerNode" :expand :public-api}
   {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode" :expand :public-api}
+  {:key "executable:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode#<init>(com.oracle.truffle.api.source.SourceSection,org.pkl.core.module.ModuleKey)"
+   :expand :body}
+  {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNodeGen" :expand :public-api}
   {:key "executable:org.pkl.core.evaluatorSettings.Color#hasColor()" :expand :body}
   {:key "type:org.pkl.core.evaluatorSettings.PklEvaluatorSettings" :expand :public-api}
   {:key "type:org.pkl.core.project.Package" :expand :public-api}
   {:key "type:org.pkl.core.project.Project" :expand :public-api}
   {:key "type:org.pkl.core.project.ProjectDependenciesResolver" :expand :public-api}
   {:key "type:org.pkl.core.project.ProjectPackager" :expand :public-api}
-  {:key "type:org.pkl.core.settings.PklSettings" :expand :public-api}]}
+  {:key "type:org.pkl.core.settings.PklSettings" :expand :public-api}
+  {:key "type:org.pkl.core.runtime.VmFileDetector" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.TestReporter" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.BaseReporter" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.JUnitReporter" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.MinimalReporter" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.SpecReporter" :expand :public-api}
+  {:key "type:org.pkl.core.util.CodeGeneratorUtils" :expand :public-api}]}

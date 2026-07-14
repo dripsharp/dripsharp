@@ -11,6 +11,17 @@ using System.Reflection;
 
 namespace Pkl.Core.Runtime
 {
+    public readonly struct JavaAppendable
+    {
+        private readonly object value;
+        private JavaAppendable(object value) => this.value = value;
+        public static implicit operator JavaAppendable(System.IO.TextWriter value) => new(value);
+        public static implicit operator JavaAppendable(System.Text.StringBuilder value) => new(value);
+        public JavaAppendable Append(char item) { if (value is System.IO.TextWriter writer) writer.Write(item); else ((System.Text.StringBuilder)value).Append(item); return this; }
+        public JavaAppendable Append(string? item) { if (value is System.IO.TextWriter writer) writer.Write(item); else ((System.Text.StringBuilder)value).Append(item); return this; }
+        public JavaAppendable Append(object? item) => Append(item?.ToString());
+    }
+
     public delegate T JavaBinaryOperator<T>(T left, T right);
     public delegate T JavaLongFunction<T>(long value);
     public sealed partial class VmList
@@ -330,10 +341,12 @@ namespace Pkl.Core.Runtime
     public sealed class JavaZipEntry
     {
         private readonly string name;
+        internal DateTime? TimeLocal { get; private set; }
         public JavaZipEntry(string name) => this.name = name;
         public JavaZipEntry(System.IO.Compression.ZipArchiveEntry entry) => name = entry.FullName;
         public string GetName() => name;
         public bool IsDirectory() => name.EndsWith("/", StringComparison.Ordinal);
+        public void SetTimeLocal(DateTime value) => TimeLocal = value;
     }
     public sealed class JavaZipInputStream : IDisposable
     {
@@ -345,15 +358,23 @@ namespace Pkl.Core.Runtime
         public void CloseEntry() { current?.Dispose(); current = null; }
         public void Dispose() => archive.Dispose();
     }
-    public sealed class JavaZipOutputStream : IDisposable
+    public sealed class JavaZipOutputStream : System.IO.Stream
     {
         private readonly System.IO.Compression.ZipArchive archive; private System.IO.Stream? current;
         public JavaZipOutputStream(System.IO.Stream stream) => archive = new(stream, System.IO.Compression.ZipArchiveMode.Create, true);
-        public void PutNextEntry(JavaZipEntry entry) { current?.Dispose(); current = archive.CreateEntry(entry.GetName()).Open(); }
+        public void PutNextEntry(JavaZipEntry entry) { current?.Dispose(); var created = archive.CreateEntry(entry.GetName()); if (entry.TimeLocal is DateTime value) created.LastWriteTime = value; current = created.Open(); }
         public void Write(byte[] bytes) => current!.Write(bytes);
         public void CloseEntry() { current?.Dispose(); current = null; }
         public void Finish() => Dispose();
-        public void Dispose() => archive.Dispose();
+        public override bool CanRead => false; public override bool CanSeek => false; public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => current?.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, System.IO.SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => current!.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => current!.Write(buffer, offset, count);
+        protected override void Dispose(bool disposing) { if (disposing) { current?.Dispose(); archive.Dispose(); } base.Dispose(disposing); }
     }
 
     public sealed class JavaMessageDigest
@@ -394,6 +415,7 @@ namespace Pkl.Core.Runtime
         private readonly System.IO.Stream stream; private readonly JavaMessageDigest digest;
         public JavaDigestOutputStream(System.IO.Stream stream, JavaMessageDigest digest) { this.stream = stream; this.digest = digest; }
         public override void Write(byte[] buffer, int offset, int count) { stream.Write(buffer, offset, count); digest.Update(buffer[offset..(offset + count)]); }
+        public JavaMessageDigest GetMessageDigest() => digest;
         public override bool CanRead => false; public override bool CanSeek => false; public override bool CanWrite => stream.CanWrite;
         public override long Length => stream.Length; public override long Position { get => stream.Position; set => throw new NotSupportedException(); }
         public override void Flush() => stream.Flush(); public override int Read(byte[] b, int o, int c) => throw new NotSupportedException();

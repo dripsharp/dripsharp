@@ -20,6 +20,7 @@ namespace Vibeformer.Runtime;
 
 internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
+internal delegate long JavaToLongFunction<in TValue>(TValue value);
 internal enum JavaTimeUnit { MILLISECONDS }
 
 internal sealed class JavaProperties
@@ -172,6 +173,42 @@ internal static class JavaCompat
     }
 
     internal static int CodePointAt(string value, int index) => char.ConvertToUtf32(value, index);
+    internal static int CharacterType(int codePoint) => Rune.GetUnicodeCategory(new Rune(codePoint)) switch
+    {
+        UnicodeCategory.UppercaseLetter => 1,
+        UnicodeCategory.LowercaseLetter => 2,
+        UnicodeCategory.TitlecaseLetter => 3,
+        UnicodeCategory.ModifierLetter => 4,
+        UnicodeCategory.OtherLetter => 5,
+        UnicodeCategory.NonSpacingMark => 6,
+        UnicodeCategory.EnclosingMark => 7,
+        UnicodeCategory.SpacingCombiningMark => 8,
+        UnicodeCategory.DecimalDigitNumber => 9,
+        UnicodeCategory.LetterNumber => 10,
+        UnicodeCategory.OtherNumber => 11,
+        UnicodeCategory.SpaceSeparator => 12,
+        UnicodeCategory.LineSeparator => 13,
+        UnicodeCategory.ParagraphSeparator => 14,
+        UnicodeCategory.Control => 15,
+        UnicodeCategory.Format => 16,
+        UnicodeCategory.PrivateUse => 18,
+        UnicodeCategory.Surrogate => 19,
+        UnicodeCategory.DashPunctuation => 20,
+        UnicodeCategory.OpenPunctuation => 21,
+        UnicodeCategory.ClosePunctuation => 22,
+        UnicodeCategory.ConnectorPunctuation => 23,
+        UnicodeCategory.OtherPunctuation => 24,
+        UnicodeCategory.MathSymbol => 25,
+        UnicodeCategory.CurrencySymbol => 26,
+        UnicodeCategory.ModifierSymbol => 27,
+        UnicodeCategory.OtherSymbol => 28,
+        UnicodeCategory.InitialQuotePunctuation => 29,
+        UnicodeCategory.FinalQuotePunctuation => 30,
+        _ => 0
+    };
+    internal static int ToUpperCase(int codePoint) => Rune.ToUpperInvariant(new Rune(codePoint)).Value;
+    internal static StringBuilder AppendCodePoint(StringBuilder builder, int codePoint) =>
+        builder.Append(CodePointToString(codePoint));
 
     internal static int CodePointCount(string value, int beginIndex, int endIndex)
     {
@@ -501,6 +538,11 @@ internal static class JavaCompat
         new($"{reason}: {input}");
     internal static UriFormatException NewUriSyntaxException(string input, string reason, int index) =>
         new($"{reason} at index {index}: {input}");
+    internal static string UriSyntaxInput(UriFormatException error)
+    {
+        var separator = error.Message.LastIndexOf(": ", StringComparison.Ordinal);
+        return separator >= 0 ? error.Message[(separator + 2)..] : error.Message;
+    }
     internal static IOException NewIOException() => new();
     internal static IOException NewIOException(string? message) => new(message);
     internal static IOException NewIOException(Exception cause) => new(cause.Message, cause);
@@ -1049,7 +1091,18 @@ internal static class JavaCompat
 
     internal static dynamic Collect<T>(IEnumerable<T> values, JavaCollector collector) => collector.Collect(values.Cast<object?>());
 
+    internal static JavaCollector ToMap<T, K, V>(Func<T, K> keySelector, Func<T, V> valueSelector)
+        where K : notnull =>
+        new(values => values.Cast<T>().ToDictionary(keySelector, valueSelector));
+
     internal static IEnumerable<TResult> Map<T, TResult>(IEnumerable<T> values, Func<T, TResult> mapper) => values.Select(mapper);
+    internal static IEnumerable<long> MapToLong<T>(IEnumerable<T> values, JavaToLongFunction<T> mapper) =>
+        values.Select(value => mapper(value));
+    internal static long Sum(IEnumerable<long> values) => values.Sum();
+    internal static decimal DecimalDivide(decimal left, decimal right, int scale, object rounding) =>
+        decimal.Round(left / right, scale, string.Equals(rounding.ToString(), "DOWN", StringComparison.Ordinal)
+            ? MidpointRounding.ToZero
+            : MidpointRounding.ToEven);
     internal static IEnumerable<T> Filter<T>(IEnumerable<T> values, Func<T, bool> predicate) => values.Where(predicate);
     internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values) => values.OrderBy(value => value);
     internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values, IComparer<T> comparer) => values.OrderBy(value => value, comparer);
@@ -1141,6 +1194,9 @@ internal static class JavaCompat
     internal static string PathOf(string first, params string[] more) =>
         more.Length == 0 ? first : Path.Combine(new[] { first }.Concat(more).ToArray());
     internal static string PathOfUri(Uri uri) => uri.IsFile ? uri.LocalPath : uri.OriginalString;
+    internal static bool PathIsAbsolute(string path) => Path.IsPathRooted(path);
+    internal static string? PathRoot(string path) => Path.GetPathRoot(path);
+    internal static string PathRelativize(string basis, string path) => Path.GetRelativePath(basis, path);
     internal static string PathResolve(string basis, string value) => Path.Combine(basis, value);
     internal static string PathResolveSibling(string basis, string value) =>
         Path.Combine(Path.GetDirectoryName(basis) ?? string.Empty, value);
@@ -1186,6 +1242,28 @@ internal static class JavaCompat
         source.CopyTo(output);
         return destination;
     }
+    internal static long Copy(string source, Stream destination)
+    {
+        using var input = File.OpenRead(source);
+        input.CopyTo(destination);
+        return input.Length;
+    }
+    internal static FileStream NewOutputStream(string path, params object?[] _) => File.Create(path);
+    internal static StreamWriter NewFileWriter(string path, Encoding encoding) => new(path, false, encoding);
+    internal static JavaStream<string> Walk(string path, params object?[] _) =>
+        new(Directory.EnumerateFileSystemEntries(path, "*", SearchOption.AllDirectories).Prepend(path));
+    internal static bool PathIsRegularFile(string path) => File.Exists(path);
+    internal static ICollection<object> ObjectCollection(IEnumerable<object> values) => values.ToList();
+    internal static IDictionary<object, object> ObjectMap(IDictionary values)
+    {
+        var result = new Dictionary<object, object>();
+        foreach (DictionaryEntry entry in values) result[entry.Key] = entry.Value!;
+        return result;
+    }
+    internal static IDictionary<object, object> ObjectMap<K, V>(IDictionary<K, V> values)
+        where K : notnull => values.ToDictionary(entry => (object)entry.Key, entry => (object?)entry.Value!);
+    internal static void WriterAppend(TextWriter writer, object? value, int start, int end) =>
+        writer.Write(StringValueOf(value).AsSpan(start, end - start));
     internal static void SetPosixFilePermissions(string path, ISet<UnixFileMode> permissions)
     {
         if (!OperatingSystem.IsWindows())
@@ -1539,6 +1617,15 @@ internal sealed class JavaCollector
 internal sealed class JavaArrayList<T> : Collection<T>
 {
     internal JavaArrayList(IList<T> values) : base(values) { }
+}
+
+internal sealed class JavaStream<T> : IEnumerable<T>, IDisposable
+{
+    private readonly IEnumerable<T> source;
+    internal JavaStream(IEnumerable<T> source) => this.source = source;
+    public IEnumerator<T> GetEnumerator() => source.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    public void Dispose() { }
 }
 
 internal sealed class JavaSubList<T> : IList<T>

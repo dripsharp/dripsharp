@@ -457,7 +457,10 @@
 
 (defn- inferred-method-type-arguments [services ^CtInvocation element]
   (when-let [declaration (.getExecutableDeclaration (.getExecutable element))]
-    (when (instance? CtMethod declaration)
+    (when (and (instance? CtMethod declaration)
+               (not (and (= "accept" (.getSimpleName ^CtMethod declaration))
+                         (= "org.pkl.core.Value"
+                            (some-> ^CtMethod declaration .getDeclaringType .getQualifiedName)))))
       (let [arity (count (.getFormalCtTypeParameters ^CtMethod declaration))
             explicit (vec (.getActualTypeArguments (.getExecutable element)))
             returned (vec (.getActualTypeArguments (.getType element)))
@@ -678,6 +681,17 @@
                  (mapv str (.getActualTypeArguments parameter-type))))
       (invoke (member node "AsObject") [])
 
+      (and (= "java.util.List" (some-> parameter-type .getQualifiedName))
+           (= "java.util.List" (some-> source-type .getQualifiedName))
+           (= 1 (count (.getActualTypeArguments parameter-type)))
+           (= 1 (count (.getActualTypeArguments ^CtTypeReference source-type)))
+           (not= (mapv str (.getActualTypeArguments ^CtTypeReference source-type))
+                 (mapv str (.getActualTypeArguments parameter-type))))
+      (invoke (csharp/generic-name
+               (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
+               [((:type-node services) (first (.getActualTypeArguments parameter-type)))])
+              [node])
+
       (and (= "org.pkl.core.util.json.JsonHandler"
               (some-> parameter-type .getQualifiedName))
            (str/ends-with? (or (some-> source-type .getQualifiedName) "") "Handler"))
@@ -746,6 +760,8 @@
           "executable:java.lang.Character#isUnicodeIdentifierPart(int)" (compat-call "IsUnicodeIdentifierPart" args)
           "executable:java.lang.Character#isUnicodeIdentifierStart(int)" (compat-call "IsUnicodeIdentifierStart" args)
           "executable:java.lang.Character#toString(int)" (compat-call "CodePointToString" args)
+          "executable:java.lang.Character#getType(int)" (compat-call "CharacterType" args)
+          "executable:java.lang.Character#toUpperCase(int)" (compat-call "ToUpperCase" args)
           "executable:java.lang.Class#getSimpleName()" (member target "Name")
           "executable:java.lang.Class#getName()" (member target "FullName")
           "executable:java.lang.Class#getTypeName()" (member target "FullName")
@@ -757,8 +773,9 @@
           "executable:java.lang.Class#cast(java.lang.Object)" (result-value-generic-compat-call services element "ClassCast" (into [target] args))
           "executable:java.lang.Enum#name()" (compat-call "EnumName" [target])
           "executable:java.lang.Enum#ordinal()" (compat-call "EnumOrdinal" [target])
+          "executable:java.lang.Boolean#booleanValue()" (member target "Value")
           "executable:java.time.LocalDateTime#of(int,java.time.Month,int,int,int)"
-          (invoke (raw "new global::System.DateTime") args)
+          (invoke (raw "new global::System.DateTime") (conj args (raw "0")))
           "executable:java.lang.Integer#parseInt(java.lang.String)" (compat-call "ParseInt" args)
           "executable:java.lang.Integer#parseInt(java.lang.String,int)" (compat-call "ParseInt" args)
           "executable:java.lang.Long#parseLong(java.lang.String)" (compat-call "ParseLong" args)
@@ -888,6 +905,8 @@
           "executable:java.lang.AbstractStringBuilder#setLength(int)" (csharp/binary "=" 10 (member target "Length") (arg 0))
           "executable:java.lang.StringBuilder#setLength(int)" (csharp/binary "=" 10 (member target "Length") (arg 0))
           "executable:java.lang.StringBuilder#toString()" (call-member "ToString")
+          "executable:java.lang.StringBuilder#appendCodePoint(int)"
+          (compat-call "AppendCodePoint" (into [target] args))
           "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)" (compat-call "ArrayCopy" args)
           "executable:java.lang.System#getenv()" (compat-call "GetEnvironment" [])
           "executable:java.lang.System#getProperties()" (compat-call "GetProperties" [])
@@ -916,6 +935,7 @@
           "executable:java.net.URI#resolve(java.net.URI)" (compat-call "ResolveUri" (into [target] args))
           "executable:java.net.URISyntaxException#getReason()" (member target "Message")
           "executable:java.net.URISyntaxException#getMessage()" (member target "Message")
+          "executable:java.net.URISyntaxException#getInput()" (compat-call "UriSyntaxInput" [target])
           "executable:java.nio.charset.Charset#forName(java.lang.String)" (invoke (raw "global::System.Text.Encoding.GetEncoding") args)
           "executable:java.nio.charset.Charset#newDecoder()" (invoke (raw "new global::Pkl.Core.Runtime.JavaCharsetDecoder") [target])
           "executable:java.nio.charset.Charset#newEncoder()" (invoke (raw "new global::Pkl.Core.Runtime.JavaCharsetEncoder") [target])
@@ -1034,6 +1054,8 @@
           "executable:java.util.ListIterator#previous()" (compat-call "IteratorNext" [target])
           "executable:java.util.PrimitiveIterator$OfLong#hasNext()" (compat-call "IteratorHasNext" [target])
           "executable:java.util.PrimitiveIterator$OfLong#nextLong()" (compat-call "IteratorNextLong" [target])
+          "executable:java.util.PrimitiveIterator$OfInt#hasNext()" (compat-call "IteratorHasNext" [target])
+          "executable:java.util.PrimitiveIterator$OfInt#nextInt()" (compat-call "IteratorNext" [target])
           "executable:java.util.Locale#getDefault()" (raw "global::System.Globalization.CultureInfo.CurrentCulture")
           "executable:java.util.Objects#deepEquals(java.lang.Object,java.lang.Object)" (compat-call "DeepEquals" args)
           "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)" (compat-call "Equals" args)
@@ -1149,8 +1171,12 @@
           "executable:java.util.stream.Collectors#joining(java.lang.CharSequence)" (compat-call "Joining" args)
           "executable:java.util.stream.Collectors#toCollection(java.util.function.Supplier)" (compat-call "ToCollection" args)
           "executable:java.util.stream.IntStream#allMatch(java.util.function.IntPredicate)" (compat-call "All" (into [target] args))
+          "executable:java.util.stream.IntStream#iterator()" (invoke (member target "GetEnumerator") [])
           "executable:java.util.stream.IntStream#skip(long)" (compat-call "Skip" (into [target] args))
-          "executable:java.util.stream.Stream#collect(java.util.stream.Collector)" (compat-call "Collect" (into [target] args))
+          "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
+          (if (= "java.util.List" (some-> element .getType .getQualifiedName))
+            (compat-call "ToListValues" [target])
+            (compat-call "Collect" (into [target] args)))
           "executable:java.util.stream.Stream#map(java.util.function.Function)" (compat-call "Map" (into [target] args))
           "executable:java.util.stream.Stream#filter(java.util.function.Predicate)" (compat-call "Filter" (into [target] args))
           "executable:java.util.stream.Stream#sorted()" (compat-call "Sorted" [target])
@@ -1165,9 +1191,15 @@
           "executable:java.util.stream.Stream#allMatch(java.util.function.Predicate)" (compat-call "AllValues" (into [target] args))
           "executable:java.util.stream.Stream#concat(java.util.stream.Stream,java.util.stream.Stream)" (compat-call "ConcatValues" args)
           "executable:java.util.stream.Stream#mapToInt(java.util.function.ToIntFunction)" (compat-call "Map" (into [target] args))
+          "executable:java.util.stream.Stream#mapToLong(java.util.function.ToLongFunction)" (compat-call "MapToLong" (into [target] args))
           "executable:java.util.stream.Stream#spliterator()" target
           "executable:java.util.stream.Stream#skip(long)" (compat-call "DropValues" (into [target] args))
           "executable:java.util.stream.IntStream#max()" (compat-call "MaxOptional" [target])
+          "executable:java.util.stream.LongStream#sum()" (compat-call "Sum" [target])
+          "executable:java.math.BigDecimal#multiply(java.math.BigDecimal)"
+          (csharp/binary "*" 70 target (arg 0))
+          "executable:java.math.BigDecimal#divide(java.math.BigDecimal,int,java.math.RoundingMode)"
+          (compat-call "DecimalDivide" (into [target] args))
           "executable:java.util.Spliterator#reduce(java.util.function.BinaryOperator)" (compat-call "ReduceOptional" (into [target] args))
           "executable:java.util.stream.Stream#reduce(java.util.function.BinaryOperator)" (compat-call "ReduceOptional" (into [target] args))
           "executable:java.util.function.Function#andThen(java.util.function.Function)" (compat-call "AndThen" (into [target] args))
@@ -1180,6 +1212,25 @@
           "executable:java.lang.ClassLoader#getResource(java.lang.String)" (compat-call "ClassGetResource" (into [target] args))
           "executable:java.lang.ClassLoader#getResourceAsStream(java.lang.String)" (compat-call "ClassGetResourceAsStream" (into [target] args))
           "executable:java.nio.file.Path#getName(int)" (compat-call "PathName" (into [target] args))
+          "executable:java.nio.file.Path#toFile()" target
+          "executable:java.nio.file.Path#isAbsolute()" (compat-call "PathIsAbsolute" [target])
+          "executable:java.nio.file.Path#getRoot()" (compat-call "PathRoot" [target])
+          "executable:java.nio.file.Path#relativize(java.nio.file.Path)"
+          (compat-call "PathRelativize" (into [target] args))
+          "executable:java.nio.file.Files#newOutputStream(java.nio.file.Path,java.nio.file.OpenOption[])"
+          (compat-call "NewOutputStream" args)
+          "executable:java.nio.file.Files#copy(java.nio.file.Path,java.io.OutputStream)"
+          (compat-call "Copy" args)
+          "executable:java.nio.file.Files#walk(java.nio.file.Path,java.nio.file.FileVisitOption[])"
+          (compat-call "Walk" args)
+          "executable:java.io.Writer#append(char)" (invoke (member target "Write") args)
+          "executable:java.io.Writer#append(java.lang.CharSequence)" (invoke (member target "Write") args)
+          "executable:java.io.Writer#append(java.lang.CharSequence,int,int)"
+          (compat-call "WriterAppend" (into [target] args))
+          "executable:java.io.PrintWriter#println(java.lang.String)"
+          (invoke (member target "WriteLine") args)
+          "executable:java.io.PrintStream#println(java.lang.String)"
+          (invoke (member target "WriteLine") args)
           "executable:java.lang.invoke.MethodHandle#invoke(java.lang.Object[])" (invoke (member target "DynamicInvoke") args)
           "executable:java.net.InetAddress#getAddress()" (call-member "GetAddressBytes")
           "executable:java.util.Iterator#forEachRemaining(java.util.function.Consumer)" (compat-call "ForEachRemaining" (into [target] args))
@@ -1443,6 +1494,17 @@
                            (or (enclosing-method-return-type element)
                                (.getType element))))])
                       args)
+              (and (= "doVisitCollection" (.getSimpleName (.getExecutable element)))
+                   (str/includes? (or (some-> element enclosing-type .getQualifiedName) "")
+                                  "JsonRenderer"))
+              (invoke (member target "DoVisitCollection")
+                      [(compat-call "ObjectCollection" [(arg 0)])])
+              (and (= "doVisitMap" (.getSimpleName (.getExecutable element)))
+                   (str/includes? (or (some-> element enclosing-type .getQualifiedName) "")
+                                  "PropertiesRenderer")
+                   (= 2 argc))
+              (invoke (member target "DoVisitMap")
+                      [(arg 0) (compat-call "ObjectMap" [(arg 1)])])
               (and (= "moduleOutputValueTypeMismatch"
                       (.getSimpleName (.getExecutable element)))
                    (= 4 argc))
@@ -1467,6 +1529,8 @@
               (raw "")
               (= :record-component-accessor (:resolution resolved))
               (member target ((:pascal services) (.getSimpleName (.getExecutable element))))
+              (= :enum-synthetic-method (:resolution resolved))
+              (normal-invocation services element children)
               (= :project (:origin resolved))
               (if (and (instance? CtMethod (:declaration resolved))
                        (when-let [functional-interface-method?
@@ -1567,9 +1631,18 @@
                          (sequence-node [(raw "new ") type (raw "(") (first args) (raw ")")])
                          "java.math.BigInteger" (compat-call "NewBigInteger" args)
                          "java.io.ByteArrayInputStream" (compat-call "NewMemoryStream" args)
+                         "java.io.FileWriter" (compat-call "NewFileWriter" args)
                          "java.net.InetSocketAddress" (compat-call "NewIpEndPoint" args)
                          "java.net.Proxy" (compat-call "NewWebProxy" args)
                          "java.net.URI" (compat-call "NewUri" args)
+                         "org.pkl.core.PType$Union"
+                         (sequence-node
+                          [(raw "new ") type (raw "(")
+                           (invoke (csharp/generic-name
+                                    (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
+                                    [(raw "global::Pkl.Core.PType")])
+                                   [(first args)])
+                           (raw ")")])
                          "java.lang.String" (compat-call "NewString" args)
                          "java.net.URISyntaxException" (compat-call "NewUriSyntaxException" args)
                          "java.io.IOException" (compat-call "NewIOException" args)
@@ -1787,7 +1860,12 @@
                                                 (raw ")((object)(") node (raw ")))!")])
                                 node)))]
                {:node (finish-expression services children element
-                        (sequence-node [(raw "(") (child-node children (.getCondition element))
+                        (sequence-node [(raw "(")
+                                        (let [condition (.getCondition element)
+                                              node (child-node children condition)]
+                                          (if (nullable-expression? condition)
+                                            (non-null-node condition node)
+                                            node))
                                         (raw " ? ") (branch (.getThenExpression element))
                                         (raw " : ") (branch (.getElseExpression element)) (raw ")")]))}))}
     {:id :java.expression/constructor-call :class CtConstructorCall
@@ -1826,6 +1904,25 @@
                                           (some-> element .getType .getQualifiedName))
                                    (first (.getActualTypeArguments (.getType element))))
                    node (cond
+                          (and (= resolved-key "executable:java.util.regex.Pattern#compile(java.lang.String)")
+                               (= 1 parameter-count))
+                          (sequence-node
+                           [(raw "value => ") (compat-call "CompileRegex" [(raw "value")])])
+
+                          (str/starts-with? resolved-key "executable:java.nio.file.Path#of(")
+                          (sequence-node
+                           [(raw "value => ") (compat-call "PathOf" [(raw "value")])])
+
+                          (= resolved-key "executable:java.util.Map$Entry#getKey()")
+                          (raw "value => value.Key")
+
+                          (= resolved-key "executable:java.util.Map$Entry#getValue()")
+                          (raw "value => value.Value")
+
+                          (str/starts-with? resolved-key "executable:java.nio.file.Files#isRegularFile(")
+                          (sequence-node
+                           [(raw "value => ") (compat-call "PathIsRegularFile" [(raw "value")])])
+
                           (and (= resolved-key "executable:java.net.URI#create(java.lang.String)")
                                (= 1 parameter-count))
                           (sequence-node
@@ -1891,6 +1988,23 @@
                               "field:java.nio.file.attribute.PosixFilePermission#OTHERS_READ" (raw "global::System.IO.UnixFileMode.OtherRead")
                               "field:java.lang.Character#MIN_SURROGATE" (raw "'\\uD800'")
                               "field:java.lang.Character#MIN_VALUE" (raw "char.MinValue")
+                              "field:java.lang.Character#UPPERCASE_LETTER" (raw "1")
+                              "field:java.lang.Character#LOWERCASE_LETTER" (raw "2")
+                              "field:java.lang.Character#TITLECASE_LETTER" (raw "3")
+                              "field:java.lang.Character#MODIFIER_LETTER" (raw "4")
+                              "field:java.lang.Character#OTHER_LETTER" (raw "5")
+                              "field:java.lang.Character#DECIMAL_DIGIT_NUMBER" (raw "9")
+                              "field:java.lang.Character#LETTER_NUMBER" (raw "10")
+                              "field:java.lang.Character#SPACE_SEPARATOR" (raw "12")
+                              "field:java.lang.Character#LINE_SEPARATOR" (raw "13")
+                              "field:java.lang.Character#PARAGRAPH_SEPARATOR" (raw "14")
+                              "field:java.lang.Character#DASH_PUNCTUATION" (raw "20")
+                              "field:java.lang.Character#START_PUNCTUATION" (raw "21")
+                              "field:java.lang.Character#END_PUNCTUATION" (raw "22")
+                              "field:java.lang.Character#CONNECTOR_PUNCTUATION" (raw "23")
+                              "field:java.lang.Character#OTHER_PUNCTUATION" (raw "24")
+                              "field:java.lang.Character#INITIAL_QUOTE_PUNCTUATION" (raw "29")
+                              "field:java.lang.Character#FINAL_QUOTE_PUNCTUATION" (raw "30")
                               "field:java.io.File#separatorChar" (raw "global::System.IO.Path.DirectorySeparatorChar")
                               "field:org.pkl.core.runtime.VmValueConverter#WILDCARD_PROPERTY" (raw "global::Pkl.Core.Runtime.VmValueConverter<object>.WILDCARD_PROPERTY")
                               "field:org.pkl.core.runtime.VmValueConverter#WILDCARD_ELEMENT" (raw "global::Pkl.Core.Runtime.VmValueConverter<object>.WILDCARD_ELEMENT")
@@ -2204,11 +2318,14 @@
     {:id :java.reference/parameter :class CtParameterReference
      :emit (fn [{:keys [^CtParameterReference element]}]
              (let [declaration (.getDeclaration element)
-                   lambda-parameter? (and declaration
-                                          (.isParentInitialized ^CtElement declaration)
-                                          (instance? CtLambda (.getParent ^CtElement declaration)))]
-               {:node (raw (if lambda-parameter?
-                             (local-name services declaration)
+                   local (when declaration (local-name services declaration))
+                   locally-renamed?
+                   (and declaration
+                        (or (and (.isParentInitialized ^CtElement declaration)
+                                 (instance? CtLambda (.getParent ^CtElement declaration)))
+                            (str/starts-with? local "this.__capture_")))]
+               {:node (raw (if locally-renamed?
+                             local
                              (identifier services (.getSimpleName element))))}))}
     {:id :java.reference/package :class CtPackageReference
      :emit (fn [_] {:node (raw "")})}]))

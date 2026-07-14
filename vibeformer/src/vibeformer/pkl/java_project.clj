@@ -16,7 +16,7 @@
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
-           [spoon.reflect.code CtConstructorCall CtExpression CtLocalVariable CtThisAccess
+           [spoon.reflect.code CtConstructorCall CtExpression CtLambda CtLocalVariable CtThisAccess
             CtVariableAccess]
            [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass
             CtConstructor CtElement CtEnum CtEnumValue CtExecutable CtField
@@ -326,7 +326,7 @@
    "java.lang.NumberFormatException" ["global::System.FormatException" :dotnet.type/format-exception]
    "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
-   "java.lang.Appendable" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
+   "java.lang.Appendable" ["global::Pkl.Core.Runtime.JavaAppendable" :pkl-core.type/appendable]
    "java.lang.Math" ["global::System.Math" :dotnet.type/math]
    "java.lang.StrictMath" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
@@ -503,6 +503,7 @@
    "java.util.Iterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
    "java.util.ListIterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
    "java.util.PrimitiveIterator" ["global::System.Collections.IEnumerator" :dotnet.type/enumerator]
+   "java.util.PrimitiveIterator$OfInt" ["global::System.Collections.Generic.IEnumerator<int>" :dotnet.type/int-enumerator]
    "java.util.PrimitiveIterator$OfLong" ["global::System.Collections.Generic.IEnumerator<long>" :dotnet.type/long-enumerator]
    "java.util.ServiceLoader" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/service-loader]
    "java.util.Spliterator" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
@@ -531,10 +532,12 @@
    "java.util.function.LongConsumer" ["global::System.Action<long>" :dotnet.type/long-consumer]
    "java.util.function.LongPredicate" ["global::System.Predicate<long>" :dotnet.type/long-predicate]
    "java.util.function.ToIntFunction" ["global::Vibeformer.Runtime.JavaToIntFunction" :dotnet.type/to-int-function]
+   "java.util.function.ToLongFunction" ["global::Vibeformer.Runtime.JavaToLongFunction" :dotnet.type/to-long-function]
    "java.util.function.IntPredicate" ["global::System.Predicate<int>" :dotnet.type/int-predicate]
    "java.util.stream.Stream" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.stream.StreamSupport" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.stream.IntStream" ["global::System.Collections.Generic.IEnumerable<int>" :dotnet.type/int-enumerable]
+   "java.util.stream.LongStream" ["global::System.Collections.Generic.IEnumerable<long>" :dotnet.type/long-enumerable]
    "java.util.stream.Collector" ["global::Vibeformer.Runtime.JavaCollector" :dotnet.type/collector]
    "java.util.stream.Collectors" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.text.Format" ["global::Vibeformer.Runtime.JavaFormat" :dotnet.type/format]
@@ -893,13 +896,15 @@
 (defn- join-words [words]
   (str (str/join " " (remove str/blank? words)) " "))
 
-(defn- parameter-node [ctx owner ^CtParameter parameter]
+(defn- parameter-node
+  ([ctx owner parameter] (parameter-node ctx owner parameter nil))
+  ([ctx owner ^CtParameter parameter forced-type]
   (let [name (identifier (.getSimpleName parameter))
-        type (type-node ctx (.getType parameter))
+        type (or forced-type (type-node ctx (.getType parameter)))
         prefix (when (.isVarArgs parameter) "params ")
         node (sequence-node [(raw (or prefix "")) type (raw (str " " name))])]
     (attach-declaration ctx node parameter :parameter owner name nil
-                        :java.declaration/parameter)))
+                        :java.declaration/parameter))))
 
 (defn- formal-node [ctx owner ^CtTypeParameter parameter]
   (let [name (type-parameter-name parameter)
@@ -998,12 +1003,14 @@
 (defn- direct-methods [^CtType type]
   (filter #(instance? CtMethod %) (.getTypeMembers type)))
 
-(defn- destination-overload-collision? [^CtMethod method]
+(declare top-definitions)
+
+(defn- destination-overload-collision? [ctx ^CtMethod method]
   (let [simple-name (.getSimpleName method)
         destination-key (destination-parameter-key method)
         owners (distinct
                 (keep #(.getDeclaringType ^CtMethod %)
-                      (cons method (.getTopDefinitions method))))]
+                      (cons method (top-definitions ctx method))))]
     (boolean
      (some (fn [^CtType owner]
              (< 1 (count (filter #(and (= simple-name (.getSimpleName ^CtMethod %))
@@ -1021,7 +1028,7 @@
                    (.getParameters method))]
     (str "From" (str/join "And" parts))))
 
-(defn- method-name [^CtMethod method]
+(defn- method-name [ctx ^CtMethod method]
   (let [simple-name (.getSimpleName method)
         owner (.getDeclaringType method)
         owner-name (some-> owner .getQualifiedName)
@@ -1045,20 +1052,25 @@
     (let [base-name (if (contains? nested-type-names base-name)
                       (str "Create" base-name)
                       base-name)]
-      (if (destination-overload-collision? method)
+      (if (destination-overload-collision? ctx method)
         (str base-name (overload-source-suffix method))
         base-name))))
 
-(defn- top-definitions [^CtMethod method]
-  (vec (.getTopDefinitions method)))
+(defn- top-definitions [ctx ^CtMethod method]
+  (let [^IdentityHashMap cache (:top-definitions-cache ctx)]
+    (if (.containsKey cache method)
+      (.get cache method)
+      (let [definitions (vec (.getTopDefinitions method))]
+        (.put cache method definitions)
+        definitions))))
 
-(defn- class-definition [^CtMethod method]
+(defn- class-definition [ctx ^CtMethod method]
   (some #(when-not (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
-        (top-definitions method)))
+        (top-definitions ctx method)))
 
-(defn- interface-definition [^CtMethod method]
+(defn- interface-definition [ctx ^CtMethod method]
   (some #(when (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
-        (top-definitions method)))
+        (top-definitions ctx method)))
 
 (defn- superclass-method-definition [^CtType owner-type ^CtMethod method]
   (loop [superclass (when (instance? CtClass owner-type)
@@ -1085,14 +1097,14 @@
 
 (declare destination-overridable-definition?)
 
-(defn- inherited-interface-contract? [^CtType owner-type ^CtMethod method]
+(defn- inherited-interface-contract? [ctx ^CtType owner-type ^CtMethod method]
   (let [interface-types
         (keep (fn [^CtMethod definition]
                 (let [owner (.getDeclaringType definition)]
                   (when (and (instance? CtInterface owner)
                              (destination-overridable-definition? definition))
                     (.getReference owner))))
-              (top-definitions method))]
+              (top-definitions ctx method))]
     (boolean
      (when (seq interface-types)
        (loop [superclass (when (instance? CtClass owner-type)
@@ -1150,9 +1162,9 @@
 (defn- method-modifiers [ctx ^CtType owner-type ^CtMethod method body name]
   (let [interface? (instance? CtInterface owner-type)
         superclass-definition (superclass-method-definition owner-type method)
-        interface-contract-definition (interface-definition method)
+        interface-contract-definition (interface-definition ctx method)
         base-definition (or superclass-definition
-                            (class-definition method))
+                            (class-definition ctx method))
         overridable-base (when (and base-definition
                                     (destination-overridable-definition? base-definition))
                            base-definition)
@@ -1169,7 +1181,7 @@
                        (not (false-destination-override? owner-type method))
                        (or (java-object-override? method)
                            overridable-base
-                           (inherited-interface-contract? owner-type method)
+                           (inherited-interface-contract? ctx owner-type method)
                            (forced-anonymous-override? owner-type method)))
         base-owner (some-> overridable-base .getDeclaringType .getQualifiedName)
         base-member-visibility
@@ -1178,7 +1190,7 @@
             (cond
               ;; Apply the same interface-contract promotion used when the
               ;; base declaration itself is emitted.
-              (and base-type (interface-definition overridable-base))
+              (and base-type (interface-definition ctx overridable-base))
               "public"
 
               (and base-type
@@ -1294,7 +1306,7 @@
 
 (defn- deferred-interface-method-node [ctx ^CtType owner-type ^CtMethod method]
   (let [owner (executable-owner method)
-        name (method-name method)
+        name (method-name ctx method)
         {:keys [parameters node]} (synthetic-formals-node method)
         body (.getBody method)
         return-reference (or (substituted-interface-return owner-type method)
@@ -1379,9 +1391,20 @@
 
 (defn- method-node [ctx owner-type ^CtMethod method]
   (let [owner (executable-owner method)
-        name (method-name method)
+        name (method-name ctx method)
+        record-object-equals?
+        (and (instance? CtRecord owner-type)
+             (= "equals" (.getSimpleName method))
+             (= ["java.lang.Object"]
+                (mapv #(.getQualifiedName (.getType ^CtParameter %))
+                      (.getParameters method))))
         {:keys [parameters node]} (formals ctx owner method)
-        params (mapv #(parameter-node ctx owner %) (.getParameters method))
+        params (mapv #(parameter-node
+                       ctx owner %
+                       (when record-object-equals?
+                         (sequence-node [(raw (identifier (.getSimpleName owner-type)))
+                                         (raw "?")])))
+                     (.getParameters method))
         body (.getBody method)
         words (method-modifiers ctx owner-type method body name)
         signature (str name "(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
@@ -1392,7 +1415,7 @@
         ;; retain the interface's unsubstituted parameter name and therefore
         ;; cannot be emitted directly in the implementing owner.
         base-definition (or (superclass-method-definition owner-type method)
-                            (class-definition method))
+                            (class-definition ctx method))
         covariant-class-return?
         (when base-definition
           (let [method-return (.getType method)
@@ -1430,7 +1453,7 @@
                                            (not= (destination-type-key (.getType method))
                                                  (destination-type-key (.getType definition))))
                                   definition))
-                                (cons base-definition (top-definitions method))))
+                                (cons base-definition (top-definitions ctx method))))
         external-object-interface-contract?
         (some (fn [^CtMethod definition]
                 (let [declaring-type (.getDeclaringType definition)]
@@ -1438,7 +1461,7 @@
                        (.isInterface declaring-type)
                        (= "java.lang.Object"
                           (.getQualifiedName (.getType definition))))))
-              (top-definitions method))
+              (top-definitions ctx method))
         return-reference (cond
                            substituted-return substituted-return
                            return-contract (.getType ^CtMethod return-contract)
@@ -1496,6 +1519,11 @@
           (sequence-node
            [(raw "/* Java equals(") (sequence-node params ", ")
             (raw ") is supplied by C# positional-record value equality. */")])
+
+          record-object-equals?
+          (sequence-node
+           [(raw "public bool Equals(") (sequence-node params ", ")
+            (raw ") ") translated-body])
 
           (record-component-contract? ctx method)
           (sequence-node [(raw "public ") return-type
@@ -1932,7 +1960,11 @@
      (concat
       (when outer? [(raw "this")])
       (map (fn [{:keys [declaration]}]
-             (raw ((:local-name services) declaration)))
+             (raw (if (and (instance? CtParameter declaration)
+                           (not (and (.isParentInitialized ^CtElement declaration)
+                                     (instance? CtLambda (.getParent ^CtElement declaration)))))
+                    (identifier (.getSimpleName ^CtParameter declaration))
+                    ((:local-name services) declaration))))
            captures)))))
 
 (defn- iterator-element-from-reference [^CtTypeReference reference]
@@ -2268,7 +2300,7 @@
         declaration
         (if functional-method
           (let [method-owner (executable-owner functional-method)
-                method-name (method-name functional-method)
+                method-name (method-name ctx functional-method)
                 signature (.getSignature functional-method)
                 params (mapv #(parameter-node ctx method-owner %)
                              (.getParameters functional-method))
@@ -2454,9 +2486,10 @@
 (defn- emission-template
   [resolved-model]
   (let [ctx-holder (atom nil)
+        top-definitions-cache (IdentityHashMap.)
         base-services {:identifier identifier
                        :pascal pascal
-                       :method-name method-name
+                       :method-name (fn [method] (method-name @ctx-holder method))
                        :anonymous-class-name anonymous-class-name
                        :record-component-name record-component-name
                        :local-name (fn [^CtElement element]
@@ -2506,13 +2539,17 @@
                            (same-type? current-outer call-owner) (raw "this.__outer")
                            :else nil)))))))
         body-context (java-body/context resolved-model services)]
-    {:ctx-holder ctx-holder :services services :body-context body-context}))
+    {:ctx-holder ctx-holder
+     :top-definitions-cache top-definitions-cache
+     :services services
+     :body-context body-context}))
 
 (defn- root-emission-context
   [template configuration resolved-model occurrence-index selected-declarations blocker-start]
   (let [ctx {:configuration configuration
              :resolved-model resolved-model
              :ctx-holder (:ctx-holder template)
+             :top-definitions-cache (:top-definitions-cache template)
              :occurrence-index occurrence-index
              :selected-declarations selected-declarations
              :emitted (IdentityHashMap.)

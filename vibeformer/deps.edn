@@ -1,7 +1,6 @@
 {:paths ["src"]
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
-        fr.inria.gforge.spoon/spoon-core {:mvn/version "11.4.0"}
-        org.jetbrains.kotlin/kotlin-compiler-embeddable {:mvn/version "2.2.21"}}
+        fr.inria.gforge.spoon/spoon-core {:mvn/version "11.4.0"}}
  :aliases
  {:run
   {:jvm-opts ["-Xmx8g"]

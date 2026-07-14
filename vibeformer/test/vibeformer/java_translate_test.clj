@@ -3,7 +3,8 @@
             [clojure.test :refer [deftest is]]
             [vibeformer.complete-parser-fixture :as fixture]
             [vibeformer.csharp :as csharp]
-            [vibeformer.java-translate :as java])
+            [vibeformer.java-translate :as java]
+            [vibeformer.spoon :as spoon])
   (:import [spoon.reflect.code CtBinaryOperator CtBlock CtFieldRead CtReturn
             CtThisAccess CtTypeAccess]
            [spoon.reflect.declaration CtMethod]
@@ -170,17 +171,26 @@
                  (:source-element second-result)]))))
 
 (deftest recursive-translation-renders-only-the-completed-root
-  (let [render csharp/render
+  (let [context (translation-context)
+        model (:resolved-model context)
+        frontend-renders-before (:frontend-renderings
+                                 (spoon/source-location-cache-stats model))
+        render csharp/render
         render-count (atom 0)
         translation (with-redefs [csharp/render (fn [node]
                                                   (swap! render-count inc)
                                                   (render node))]
-                      (translate-method (translation-context)))]
+                      (translate-method context))
+        frontend-renders-after (:frontend-renderings
+                                (spoon/source-location-cache-stats model))]
     (is (= 1 @render-count))
+    (is (= frontend-renders-before frontend-renders-after))
     (is (= 28 (:visited (java/coverage-totals translation))))
     (is (= "public int StopIndexExclusive() {\n  return CharIndex + Length;\n}"
            (:text translation)))
-    (is (seq (:source-mappings translation)))))
+    (is (seq (:source-mappings translation)))
+    (is (not-any? #(contains? (get-in % [:source :identity]) :rendered)
+                  (:source-mappings translation)))))
 
 (deftest removing-structural-rule-fails-at-originating-live-element
   (let [rules (vec (remove #(= :java.expression/binary (:id %)) parser-rules))
@@ -194,6 +204,7 @@
     (is (= :unsupported-java-element (:kind diagnostic)))
     (is (= "spoon.support.reflect.code.CtBinaryOperatorImpl"
            (get-in diagnostic [:frontend :frontend-class])))
+    (is (string? (get-in diagnostic [:frontend :rendered])))
     (is (pos? (get-in diagnostic [:location :line])))
     (is (some #(= :java.expression/field-read (:rule %))
               (:visits translation)))))
