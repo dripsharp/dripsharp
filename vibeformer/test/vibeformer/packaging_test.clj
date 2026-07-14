@@ -3,7 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [vibeformer.packaging :as packaging])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file Files OpenOption Path]
+           [java.nio.file Files OpenOption Path Paths StandardCopyOption]
            [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]
            [java.util.zip ZipEntry ZipOutputStream]))
@@ -127,6 +127,93 @@
   (let [digest (MessageDigest/getInstance "SHA-256")]
     (.update digest (Files/readAllBytes file))
     (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+
+(defn- reproducibility-fixture [^Path root divergent?]
+  (let [verification-count (atom 0)
+        project-root (.resolve root "generated/pkl-parser")
+        project-file (.resolve project-root "Pkl.Parser.csproj")
+        assembly (.resolve project-root "bin/Release/net8.0/Pkl.Parser.dll")
+        destination {:project {:assembly-name "Pkl.Parser"
+                               :target-framework "net8.0"}
+                     :package package}
+        verify-fn
+        (fn [_]
+          (let [build (swap! verification-count inc)]
+            (write-file! project-file "<Project />")
+            (write-file! assembly
+                         (if (and divergent? (= 2 build))
+                           "different second clean build"
+                           "reproducible clean build"))
+            {:generation
+             {:generation-profile {:profile "pkl-parser"}
+              :dependency-emissions []
+              :emission {:project-root project-root
+                         :project-file project-file
+                         :resource-artifacts []}
+              :destination destination}
+             :build-configuration "Release"}))
+        run-command!
+        (fn [{:keys [command]}]
+          (cond
+            (= ["git" "rev-parse" "--verify" "HEAD"] command)
+            {:output (str (:repository-commit package) "\n")}
+
+            (= "dotnet" (first command))
+            (let [output-index (.indexOf ^java.util.List command "--output")
+                  output (Paths/get (nth command (inc output-index))
+                                    (make-array String 0))
+                  packed (package-archive!
+                          {"Pkl.Parser.nuspec" (nuspec)
+                           "lib/net8.0/Pkl.Parser.dll" (Files/readString assembly)})
+                  artifact (.resolve output
+                                     "Pkl.Parser.0.0.0-development.nupkg")]
+              (Files/createDirectories output (make-array FileAttribute 0))
+              (Files/move packed artifact
+                          (into-array StandardCopyOption
+                                      [StandardCopyOption/REPLACE_EXISTING]))
+              {:output "packed"})
+
+            :else
+            (throw (ex-info "Unexpected reproducibility fixture command"
+                            {:command command}))))]
+    {:verification-count verification-count
+     :verify-fn verify-fn
+     :run-command! run-command!}))
+
+(deftest package-reproducibility-requires-two-independent-clean-builds
+  (let [root (Files/createTempDirectory "vibeformer-clean-build-reproducibility"
+                                         (make-array FileAttribute 0))
+        {:keys [verification-count verify-fn run-command!]}
+        (reproducibility-fixture root false)
+        proof (packaging/pack-verified-profile!
+               {:workspace-root root
+                :verify-fn verify-fn
+                :run-command! run-command!
+                :inspect-resources-fn
+                (fn [& _]
+                  {:public-surface {:types 1 :members 1
+                                    :sha256 (apply str (repeat 64 "a"))}})})]
+    (is (= 2 @verification-count))
+    (is (= 2 (get-in proof [:summary :clean-builds])))
+    (is (Files/isRegularFile ^Path (:artifact proof)
+                             (make-array java.nio.file.LinkOption 0)))))
+
+(deftest package-reproducibility-rejects-divergent-clean-builds
+  (let [root (Files/createTempDirectory "vibeformer-clean-build-divergence"
+                                         (make-array FileAttribute 0))
+        {:keys [verification-count verify-fn run-command!]}
+        (reproducibility-fixture root true)
+        error (try
+                (packaging/pack-verified-profile!
+                 {:workspace-root root
+                  :verify-fn verify-fn
+                  :run-command! run-command!
+                  :inspect-resources-fn (fn [& _] {})})
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= 2 @verification-count))
+    (is (= :package-consumption-failed (:kind (ex-data error))))
+    (is (not= (:first (ex-data error)) (:second (ex-data error))))))
 
 (deftest package-inspection-requires-exact-release-layout
   (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)

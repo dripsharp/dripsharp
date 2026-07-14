@@ -7,7 +7,7 @@
             [vibeformer.process :as process])
   (:import [java.io ByteArrayInputStream]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files Path StandardCopyOption]
+           [java.nio.file FileVisitOption Files Path StandardCopyOption]
            [java.security MessageDigest]
            [java.util.zip ZipEntry ZipFile ZipOutputStream]
            [javax.xml.parsers DocumentBuilderFactory]
@@ -49,6 +49,14 @@
            (filter paths/directory?)
            (sort-by str)
            vec))))
+
+(defn- delete-tree! [^Path directory]
+  (when (paths/exists? directory)
+    (with-open [entries (Files/walk directory (make-array FileVisitOption 0))]
+      (doseq [^Path entry (->> (.toArray entries)
+                               (map #(cast Path %))
+                               (sort-by #(.getNameCount ^Path %) >))]
+        (Files/deleteIfExists entry)))))
 
 (defn- package-artifact! [^Path feed package-id version]
   (let [packages (filter #(and (str/ends-with? (str %) ".nupkg")
@@ -711,6 +719,17 @@
            :expected-assembly-dependencies expected-assembly-dependencies
            :primary? true})))
 
+(defn- package-reproducibility-plan [specs]
+  (mapv (fn [{:keys [profile destination expected-dependencies
+                     expected-assembly-dependencies primary?]}]
+          {:profile profile
+           :destination destination
+           :expected-dependencies
+           (mapv #(select-keys % [:id :version]) expected-dependencies)
+           :expected-assembly-dependencies expected-assembly-dependencies
+           :primary? (boolean primary?)})
+        specs))
+
 (defn- repository-commit! [run-command! root]
   (let [result (run-command! {:command ["git" "rev-parse" "--verify" "HEAD"]
                               :directory root})
@@ -786,9 +805,9 @@
        :run result})))
 
 (defn pack-verified-profile!
-  "Cleanly generates and verifies a profile, then packs its complete declared
-  dependency closure twice and publishes byte-identical inspected artifacts to
-  a fresh local feed. This does not perform independent package consumption."
+  "Cleanly generates, compiles, and packs a profile twice, then publishes the
+  byte-identical inspected dependency closure to a fresh local feed. This does
+  not perform independent package consumption."
   ([] (pack-verified-profile! {}))
   ([{:keys [workspace-root profile verify-fn run-command! inspect-resources-fn]
      :or {verify-fn compiler/verify-clean-build!
@@ -796,96 +815,128 @@
           inspect-resources-fn inspect-package-assembly!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          profile (or profile "pkl-parser")
-         verification (verify-fn {:profile profile :build-configuration "Release"})
-         generation (:generation verification)
-         build-configuration (:build-configuration verification)
-         specs (package-specs generation)
-         package-assembly-names
-         (mapv #(get-in % [:destination :project :assembly-name]) specs)
-         repository-commit (repository-commit! run-command! root)
-         proof-root (harness/clean-directory!
-                     (paths/resolve-path root "vibeformer" "target" "package-proof"))
-         first-output (doto (paths/resolve-path proof-root "first-pack")
-                        (Files/createDirectories
-                         (make-array java.nio.file.attribute.FileAttribute 0)))
-         second-output (doto (paths/resolve-path proof-root "second-pack")
-                         (Files/createDirectories
-                          (make-array java.nio.file.attribute.FileAttribute 0)))
-         first-canonical (doto (paths/resolve-path proof-root "first-canonical")
-                           (Files/createDirectories
-                            (make-array java.nio.file.attribute.FileAttribute 0)))
-         second-canonical (doto (paths/resolve-path proof-root "second-canonical")
-                            (Files/createDirectories
-                             (make-array java.nio.file.attribute.FileAttribute 0)))
-         feed (doto (paths/resolve-path proof-root "feed")
-                (Files/createDirectories
-                 (make-array java.nio.file.attribute.FileAttribute 0)))]
-     (doseq [spec specs]
-       (pack-project! run-command! build-configuration first-output spec)
-       (pack-project! run-command! build-configuration second-output spec))
-     (let [packages
-           (mapv
-            (fn [{:keys [profile emission destination expected-dependencies
-                         expected-assembly-dependencies primary?]}]
-              (let [{:keys [id version] :as package} (:package destination)
-                    target-framework (get-in destination [:project :target-framework])
-                    assembly-name (get-in destination [:project :assembly-name])
-                    verified-assembly
-                    (paths/resolve-path (:project-root emission) "bin"
-                                        build-configuration target-framework
-                                        (str assembly-name ".dll"))
-                    raw-first (package-artifact! first-output id version)
-                    raw-second (package-artifact! second-output id version)
-                    filename (str (.getFileName ^Path raw-first))
-                    first-artifact (canonicalize-package!
-                                    raw-first (paths/resolve-path first-canonical filename))
-                    second-artifact (canonicalize-package!
-                                     raw-second (paths/resolve-path second-canonical filename))
-                    first-hash (sha256 first-artifact)
-                    second-hash (sha256 second-artifact)]
-                (when-not (= first-hash second-hash)
-                  (fail! "Repeated packing of the same verified build was not byte deterministic"
-                         {:profile profile :first first-hash :second second-hash}))
-                (let [artifact (paths/resolve-path feed (str (.getFileName ^Path first-artifact)))
-                      _ (Files/copy first-artifact artifact
-                                    (into-array StandardCopyOption
-                                                [StandardCopyOption/REPLACE_EXISTING]))
-                      inspection (inspect-package! artifact
-                                                   (assoc package
-                                                          :repository-commit
-                                                          repository-commit)
-                                                   target-framework assembly-name
-                                                   expected-dependencies)
-                      expected-resources (->> (:resource-artifacts emission)
-                                              (map :logical-name) sort vec)
-                      resource-proof (inspect-resources-fn
-                                      run-command! root artifact
-                                      (:assembly-entry inspection) assembly-name
-                                      verified-assembly
-                                      package-assembly-names
-                                      (or expected-assembly-dependencies [])
-                                      expected-resources)]
-                  {:profile profile :primary? primary? :artifact artifact
-                   :identity {:id id :version version :sha256 first-hash
-                              :file (str (.getFileName ^Path artifact))}
-                   :inspection inspection :resource-proof resource-proof
-                   :public-surface (:public-surface resource-proof)
-                   :resources expected-resources})))
-            specs)
-           primary (first (filter :primary? packages))
-           summary {:profile profile
-                    :repository-commit repository-commit
-                    :packages (mapv :identity packages)
-                    :resource-counts (into (sorted-map)
-                                           (map (juxt #(get-in % [:identity :id])
-                                                      #(count (:resources %))) packages))
-                    :public-surfaces (into (sorted-map)
-                                           (map (juxt #(get-in % [:identity :id])
-                                                      :public-surface) packages))}]
-       (println "Deterministic dependency-closed NuGet packing passed:" (pr-str summary))
-       {:verification verification :proof-root proof-root :feed feed :packages packages
-        :artifact (:artifact primary) :identity (:identity primary)
-        :inspection (:inspection primary) :summary summary}))))
+         first-verification
+         (verify-fn {:profile profile :build-configuration "Release"})
+         first-build-configuration (:build-configuration first-verification)
+         first-specs (package-specs (:generation first-verification))
+         first-output (Files/createTempDirectory
+                       "vibeformer-first-clean-pack-"
+                       (make-array java.nio.file.attribute.FileAttribute 0))]
+     (try
+       (doseq [spec first-specs]
+         (pack-project! run-command! first-build-configuration first-output spec))
+       (let [verification
+             (verify-fn {:profile profile :build-configuration "Release"})
+             generation (:generation verification)
+             build-configuration (:build-configuration verification)
+             specs (package-specs generation)
+             first-plan (package-reproducibility-plan first-specs)
+             second-plan (package-reproducibility-plan specs)]
+         (when-not (and (= first-build-configuration build-configuration)
+                        (= first-plan second-plan))
+           (fail! "Independent clean builds produced different NuGet package plans"
+                  {:profile profile
+                   :first-build-configuration first-build-configuration
+                   :second-build-configuration build-configuration
+                   :first first-plan :second second-plan}))
+         (let [package-assembly-names
+               (mapv #(get-in % [:destination :project :assembly-name]) specs)
+               repository-commit (repository-commit! run-command! root)
+               proof-root (harness/clean-directory!
+                           (paths/resolve-path root "vibeformer" "target" "package-proof"))
+               second-output (doto (paths/resolve-path proof-root "second-pack")
+                               (Files/createDirectories
+                                (make-array java.nio.file.attribute.FileAttribute 0)))
+               first-canonical (doto (paths/resolve-path proof-root "first-canonical")
+                                 (Files/createDirectories
+                                  (make-array java.nio.file.attribute.FileAttribute 0)))
+               second-canonical (doto (paths/resolve-path proof-root "second-canonical")
+                                  (Files/createDirectories
+                                   (make-array java.nio.file.attribute.FileAttribute 0)))
+               feed (doto (paths/resolve-path proof-root "feed")
+                      (Files/createDirectories
+                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+           (doseq [spec specs]
+             (pack-project! run-command! build-configuration second-output spec))
+           (let [packages
+                 (mapv
+                  (fn [{:keys [profile emission destination expected-dependencies
+                               expected-assembly-dependencies primary?]}]
+                    (let [{:keys [id version] :as package} (:package destination)
+                          target-framework
+                          (get-in destination [:project :target-framework])
+                          assembly-name
+                          (get-in destination [:project :assembly-name])
+                          verified-assembly
+                          (paths/resolve-path (:project-root emission) "bin"
+                                              build-configuration target-framework
+                                              (str assembly-name ".dll"))
+                          raw-first (package-artifact! first-output id version)
+                          raw-second (package-artifact! second-output id version)
+                          filename (str (.getFileName ^Path raw-first))
+                          first-artifact
+                          (canonicalize-package!
+                           raw-first (paths/resolve-path first-canonical filename))
+                          second-artifact
+                          (canonicalize-package!
+                           raw-second (paths/resolve-path second-canonical filename))
+                          first-hash (sha256 first-artifact)
+                          second-hash (sha256 second-artifact)]
+                      (when-not (= first-hash second-hash)
+                        (fail! "Independent clean builds did not produce byte-identical NuGet packages"
+                               {:profile profile :first first-hash :second second-hash}))
+                      (let [artifact
+                            (paths/resolve-path
+                             feed (str (.getFileName ^Path first-artifact)))
+                            _ (Files/copy
+                               first-artifact artifact
+                               (into-array
+                                StandardCopyOption
+                                [StandardCopyOption/REPLACE_EXISTING]))
+                            inspection
+                            (inspect-package!
+                             artifact
+                             (assoc package :repository-commit repository-commit)
+                             target-framework assembly-name expected-dependencies)
+                            expected-resources
+                            (->> (:resource-artifacts emission)
+                                 (map :logical-name) sort vec)
+                            resource-proof
+                            (inspect-resources-fn
+                             run-command! root artifact
+                             (:assembly-entry inspection) assembly-name
+                             verified-assembly package-assembly-names
+                             (or expected-assembly-dependencies [])
+                             expected-resources)]
+                        {:profile profile :primary? primary? :artifact artifact
+                         :identity {:id id :version version :sha256 first-hash
+                                    :file (str (.getFileName ^Path artifact))}
+                         :inspection inspection :resource-proof resource-proof
+                         :public-surface (:public-surface resource-proof)
+                         :resources expected-resources})))
+                  specs)
+                 primary (first (filter :primary? packages))
+                 summary
+                 {:profile profile
+                  :clean-builds 2
+                  :repository-commit repository-commit
+                  :packages (mapv :identity packages)
+                  :resource-counts
+                  (into (sorted-map)
+                        (map (juxt #(get-in % [:identity :id])
+                                   #(count (:resources %))) packages))
+                  :public-surfaces
+                  (into (sorted-map)
+                        (map (juxt #(get-in % [:identity :id])
+                                   :public-surface) packages))}]
+             (println "Reproducible dependency-closed NuGet packing passed:"
+                      (pr-str summary))
+             {:verification verification :proof-root proof-root :feed feed
+              :packages packages :artifact (:artifact primary)
+              :identity (:identity primary) :inspection (:inspection primary)
+              :summary summary})))
+       (finally
+         (delete-tree! first-output))))))
 
 (defn verify-package-consumption!
   "Runs clean generation/compilation, packs it, and proves isolated consumption."
