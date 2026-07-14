@@ -455,7 +455,11 @@
 (deftest package-assembly-inspection-binds-generated-package-identities
   (let [root (Files/createTempDirectory "vibeformer-assembly-inspection"
                                          (make-array FileAttribute 0))
+        packed (archive! {"lib/net8.0/Pkl.Core.dll" "verified assembly"})
         artifact (.resolve root "Pkl.Core.0.0.0-development.nupkg")
+        _ (Files/move packed artifact (make-array java.nio.file.CopyOption 0))
+        verified-assembly (write-file! (.resolve root "bin/Pkl.Core.dll")
+                                       "verified assembly")
         dependency-artifact
         (write-file! (.resolve root "Pkl.Parser.0.0.0-development.nupkg")
                      "dependency package")
@@ -471,6 +475,7 @@
                                      "SHA-256 " (apply str (repeat 64 "a")) "\n")})
         proof (#'packaging/inspect-package-assembly!
                run-command! root artifact "lib/net8.0/Pkl.Core.dll" "Pkl.Core"
+               verified-assembly
                ["Pkl.Parser" "Pkl.Core"]
                [{:assembly-name "Pkl.Parser"
                  :package-id "Pkl.Parser"
@@ -486,5 +491,25 @@
     (is (= {:name "Pkl.Core" :version "0.0.0.0"
             :dependency-assemblies ["Pkl.Parser"]}
            (:assembly-identity proof)))
+    (is (= {:sha256 (sha256 verified-assembly)
+            :verified-assembly (str verified-assembly)}
+           (:assembly-artifact proof)))
     (is (= {:types 3 :members 7 :sha256 (apply str (repeat 64 "a"))}
            (:public-surface proof)))))
+
+(deftest package-assembly-inspection-rejects-substituted-build-output
+  (let [root (Files/createTempDirectory "vibeformer-assembly-substitution"
+                                         (make-array FileAttribute 0))
+        packed (archive! {"lib/net8.0/Pkl.Core.dll" "substituted assembly"})
+        artifact (.resolve root "Pkl.Core.0.0.0-development.nupkg")
+        _ (Files/move packed artifact (make-array java.nio.file.CopyOption 0))
+        verified-assembly (write-file! (.resolve root "bin/Pkl.Core.dll")
+                                       "verified assembly")
+        error (try
+                (#'packaging/verify-packaged-assembly!
+                 artifact "lib/net8.0/Pkl.Core.dll" verified-assembly)
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :package-consumption-failed (:kind (ex-data error))))
+    (is (= (sha256 verified-assembly) (:expected (ex-data error))))
+    (is (not= (:expected (ex-data error)) (:actual (ex-data error))))))

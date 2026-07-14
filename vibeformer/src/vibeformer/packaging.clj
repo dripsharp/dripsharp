@@ -67,6 +67,45 @@
     (with-open [input (.getInputStream archive entry)]
       (String. (.readAllBytes input) StandardCharsets/UTF_8))))
 
+(defn- hex [bytes]
+  (apply str (map #(format "%02x" (bit-and 0xff %)) bytes)))
+
+(defn- sha256-input [input]
+  (let [digest (MessageDigest/getInstance "SHA-256")
+        buffer (byte-array 8192)]
+    (loop []
+      (let [read (.read input buffer)]
+        (when (pos? read)
+          (.update digest buffer 0 read)
+          (recur))))
+    (hex (.digest digest))))
+
+(defn- sha256 [^Path file]
+  (with-open [input (Files/newInputStream
+                     file (make-array java.nio.file.OpenOption 0))]
+    (sha256-input input)))
+
+(defn- verify-packaged-assembly!
+  [artifact assembly-entry ^Path verified-assembly]
+  (when-not (paths/regular-file? verified-assembly)
+    (fail! "Verified clean-build assembly is missing"
+           {:artifact (str artifact) :assembly-entry assembly-entry
+            :verified-assembly (str verified-assembly)}))
+  (with-open [archive (ZipFile. (str artifact))]
+    (let [entry (.getEntry archive assembly-entry)]
+      (when-not entry
+        (fail! "NuGet package assembly entry is missing during build-artifact verification"
+               {:artifact (str artifact) :assembly-entry assembly-entry}))
+      (let [expected (sha256 verified-assembly)
+            actual (with-open [input (.getInputStream archive entry)]
+                     (sha256-input input))]
+        (when-not (= expected actual)
+          (fail! "Packaged assembly does not match the verified clean-build artifact"
+                 {:artifact (str artifact) :assembly-entry assembly-entry
+                  :verified-assembly (str verified-assembly)
+                  :expected expected :actual actual}))
+        {:sha256 actual :verified-assembly (str verified-assembly)}))))
+
 (defn- validate-entry-layout!
   "Rejects archive paths whose identity changes across ZIP consumers or when
   normalized onto a filesystem. NuGet identities and paths are
@@ -519,20 +558,6 @@
          {:entries entries :assembly-entry assembly-entry :nuspec nuspec
           :dependencies dependencies})))))
 
-(defn- hex [bytes]
-  (apply str (map #(format "%02x" (bit-and 0xff %)) bytes)))
-
-(defn- sha256 [^Path file]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (with-open [input (Files/newInputStream file (make-array java.nio.file.OpenOption 0))]
-      (let [buffer (byte-array 8192)]
-        (loop []
-          (let [read (.read input buffer)]
-            (when (pos? read)
-              (.update digest buffer 0 read)
-              (recur))))))
-    (hex (.digest digest))))
-
 (defn- consumer-project [package-id version target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
        "  <PropertyGroup>\n"
@@ -707,9 +732,11 @@
                    :directory project-root})))
 
 (defn- inspect-package-assembly!
-  [run-command! root artifact assembly-entry assembly-name package-assembly-names
-   expected-dependency-assemblies expected-resources]
-  (let [dependency-arguments
+  [run-command! root artifact assembly-entry assembly-name verified-assembly
+   package-assembly-names expected-dependency-assemblies expected-resources]
+  (let [assembly-artifact
+        (verify-packaged-assembly! artifact assembly-entry verified-assembly)
+        dependency-arguments
         (mapcat (fn [{:keys [assembly-name package-id version target-framework]}]
                   [assembly-name
                    (str (package-artifact! (.getParent ^Path artifact)
@@ -749,6 +776,7 @@
         (fail! "Package assembly inspector did not report a public-surface fingerprint"
                {:artifact (str artifact) :output (:output result)}))
       {:resources (count expected-resources)
+       :assembly-artifact assembly-artifact
        :assembly-identity {:name inspected-assembly :version assembly-version
                            :dependency-assemblies
                            (mapv :assembly-name expected-dependency-assemblies)}
@@ -802,6 +830,10 @@
               (let [{:keys [id version] :as package} (:package destination)
                     target-framework (get-in destination [:project :target-framework])
                     assembly-name (get-in destination [:project :assembly-name])
+                    verified-assembly
+                    (paths/resolve-path (:project-root emission) "bin"
+                                        build-configuration target-framework
+                                        (str assembly-name ".dll"))
                     raw-first (package-artifact! first-output id version)
                     raw-second (package-artifact! second-output id version)
                     filename (str (.getFileName ^Path raw-first))
@@ -829,6 +861,7 @@
                       resource-proof (inspect-resources-fn
                                       run-command! root artifact
                                       (:assembly-entry inspection) assembly-name
+                                      verified-assembly
                                       package-assembly-names
                                       (or expected-assembly-dependencies [])
                                       expected-resources)]
