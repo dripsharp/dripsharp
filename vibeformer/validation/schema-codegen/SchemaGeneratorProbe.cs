@@ -23,6 +23,7 @@ static class SchemaGeneratorProbe
         foreach (string file in new[] { "ContractBase.pkl", "ContractImported.pkl", "ContractMain.pkl" })
         {
             var schema = evaluator.EvaluateSchema(ModuleSource.PathFromPath(Path.Combine(fixtures, file)));
+            if (file == "ContractMain.pkl") CheckRepresentativeContract(schema);
             string first = generator.Generate(schema);
             string second = generator.Generate(schema);
             Check(first == second, "repeated generation differs for " + file);
@@ -59,6 +60,7 @@ static class SchemaGeneratorProbe
             "public sealed partial class Service : global::Contract.Base.Entity",
             "public enum Direction",
             "public readonly partial record struct Email(string Value)",
+            "public readonly partial record struct Transform<Input, Output>(global::System.Delegate Value)",
             "global::System.Collections.Generic.IReadOnlyDictionary<string, long>",
             "global::Pkl.Core.Pair<string, long>",
             "[global::Pkl.Core.PklName(\"first-name\")]",
@@ -75,6 +77,7 @@ static class SchemaGeneratorProbe
             .Append(";extend=").Append(Lower(schema.IsExtend()))
             .Append(";super=").Append(Q(schema.GetSupermodule()?.GetModuleName() ?? ""))
             .Append(";doc=").Append(Q(schema.GetDocComment()))
+            .Append(";annotations=").Append(Annotations(schema.GetAnnotations()))
             .Append(";imports=[");
         foreach (var entry in schema.GetImports())
             result.Append(Q(entry.Key)).Append('=').Append(Q(Path.GetFileName(entry.Value.LocalPath))).Append(';');
@@ -92,8 +95,10 @@ static class SchemaGeneratorProbe
             .Append(";moduleClass=").Append(Lower(value.IsModuleClass()))
             .Append(";abstract=").Append(Lower(value.IsAbstract()))
             .Append(";open=").Append(Lower(value.IsOpen()))
+            .Append(";params=").Append(TypeParameters(value.GetTypeParameters()))
             .Append(";super=").Append(TypeValue(value.GetSupertype()))
             .Append(";doc=").Append(Q(value.GetDocComment()))
+            .Append(";annotations=").Append(Annotations(value.GetAnnotations()))
             .Append(";line=").Append(value.GetSourceLocation().StartLine).Append(':')
             .Append(value.GetSourceLocation().EndLine).Append(";properties=[");
         foreach (var entry in value.GetProperties())
@@ -104,16 +109,67 @@ static class SchemaGeneratorProbe
                 .Append(Q(property.GetInheritedDocComment())).Append(":line=")
                 .Append(property.GetSourceLocation().StartLine).Append(':')
                 .Append(property.GetSourceLocation().EndLine).Append(":mods=")
-                .Append(Modifiers(property)).Append(';');
+                .Append(Modifiers(property)).Append(":annotations=")
+                .Append(Annotations(property.GetAnnotations())).Append(';');
         }
         return result.Append("])").ToString();
     }
 
     static string Alias(TypeAlias value) =>
         "alias(" + Q(value.GetQualifiedName()) + ";doc=" + Q(value.GetDocComment()) +
+        ";annotations=" + Annotations(value.GetAnnotations()) +
         ";line=" + value.GetSourceLocation().StartLine + ":" + value.GetSourceLocation().EndLine +
-        ";params=" + List(value.GetTypeParameters().Select(item => Q(item.GetName()))) +
+        ";params=" + TypeParameters(value.GetTypeParameters()) +
         ";type=" + TypeValue(value.GetAliasedType()) + ")";
+
+    static string TypeParameters(IList<TypeParameter> values) => List(values.Select(value =>
+        "parameter(" + Q(value.GetName()) + ";variance=" + Variance(value.GetVariance()) +
+        ";index=" + value.GetIndex() + ";owner=" +
+        Q(value.GetOwner().GetModuleName() + "#" + value.GetOwner().GetSimpleName()) + ")"));
+
+    static string Variance(TypeParameter.Variance value) =>
+        ReferenceEquals(value, TypeParameter.Variance.INVARIANT) ? "INVARIANT" :
+        ReferenceEquals(value, TypeParameter.Variance.COVARIANT) ? "COVARIANT" :
+        ReferenceEquals(value, TypeParameter.Variance.CONTRAVARIANT) ? "CONTRAVARIANT" :
+        throw new ArgumentException("Unknown variance");
+
+    static string Annotations(IList<PObject> values) => List(values.Select(Annotation));
+
+    static string Annotation(PObject value) => "annotation(" + Q(value.GetClassInfo().GetQualifiedName()) + ";" +
+        List(value.GetProperties().OrderBy(entry => entry.Key, StringComparer.Ordinal)
+            .Select(entry => Q(entry.Key) + "=" + AnnotationValue(entry.Value))) + ")";
+
+    static string AnnotationValue(object value) => value switch
+    {
+        PNull => "null",
+        string text => "string(" + Q(text) + ")",
+        bool boolean => "boolean(" + Lower(boolean) + ")",
+        long integer => "int(" + integer.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")",
+        double floating => "float(" +
+            unchecked((ulong)BitConverter.DoubleToInt64Bits(floating)).ToString("x16", System.Globalization.CultureInfo.InvariantCulture) + ")",
+        PObject pObject => Annotation(pObject),
+        IEnumerable<object> collection => "collection(" + List(collection.Select(AnnotationValue)) + ")",
+        _ => throw new ArgumentException("Unsupported annotation value: " + value.GetType().FullName)
+    };
+
+    static void CheckRepresentativeContract(ModuleSchema schema)
+    {
+        Check(schema.GetAnnotations().Count == 1, "module annotation contract");
+        var direction = schema.GetTypeAliases()["Direction"];
+        Check(direction.GetAnnotations().Count == 1, "type-alias annotation contract");
+        var transform = schema.GetTypeAliases()["Transform"];
+        Check(transform.GetTypeParameters().Count == 2, "generic alias contract");
+        Check(ReferenceEquals(transform.GetTypeParameters()[0].GetVariance(), TypeParameter.Variance.CONTRAVARIANT),
+            "contravariant type parameter contract");
+        Check(ReferenceEquals(transform.GetTypeParameters()[1].GetVariance(), TypeParameter.Variance.COVARIANT),
+            "covariant type parameter contract");
+        Check(transform.GetTypeParameters().All(item => ReferenceEquals(item.GetOwner(), transform)),
+            "type parameter owner contract");
+        Check(transform.GetAliasedType() is PType.Function, "function type contract");
+        var service = schema.GetClasses()["Service"];
+        Check(service.GetAnnotations().Count == 1, "class annotation contract");
+        Check(service.GetProperties()["name"].GetAnnotations().Count == 1, "property annotation contract");
+    }
 
     static string Modifiers(Member value) =>
         List(value.GetModifiers().Select(item => item.ToString()).OrderBy(item => item, StringComparer.Ordinal));

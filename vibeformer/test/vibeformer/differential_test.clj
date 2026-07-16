@@ -1,7 +1,8 @@
 (ns vibeformer.differential-test
   (:require [clojure.test :refer [deftest is testing]]
             [vibeformer.concurrency :as concurrency]
-            [vibeformer.differential :as differential])
+            [vibeformer.differential :as differential]
+            [vibeformer.paths :as paths])
   (:import [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]))
 
@@ -44,3 +45,13 @@
     (is (= [:java :dotnet] (mapv :probe results)))
     (is (= [["java" "oracle"] ["dotnet" "probe"]] (mapv :command results)))
     (is (= 2 (count @threads)))))
+
+(deftest schema-contract-evidence-is-source-backed-and-keeps-broader-families-pending
+  (let [root (paths/workspace-root)
+        evidence (paths/resolve-path root "vibeformer" "validation" "schema-codegen"
+                                     "ContractEvidence.tsv")
+        summary (#'differential/verify-contract-evidence! root evidence)]
+    (is (= 9 (:selected summary)))
+    (is (= 4 (:pending-in-scope summary)))
+    (is (some #{"schema.collections-aliases-generics-functions"} (:families summary)))
+    (is (some #{"schema.methods-generic-classes"} (:families summary)))))

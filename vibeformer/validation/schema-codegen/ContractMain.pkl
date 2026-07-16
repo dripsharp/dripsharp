@@ -1,9 +1,15 @@
 /// Representative schema and binding contract.
+@Deprecated {
+  since = "1.0.0"
+  message = "Use contract.next."
+  replaceWith = "contract.next"
+}
 module contract.main extends "ContractBase.pkl"
 
 import "ContractImported.pkl" as imported
 
 /// String-literal enum candidate, including a keyword and punctuation.
+@Deprecated { message = "Use Compass." }
 typealias Direction = "north" | "south-east" | "class"
 
 /// Constrained scalar alias.
@@ -12,9 +18,14 @@ typealias Email = String(contains("@"))
 /// Parameterized collection alias.
 typealias StringBag = List<String>
 
+/// Generic type parameters and function types remain visible in the schema.
+typealias Transform<in Input, out Output> = (Input) -> Output
+
 /// A declared class with inherited, imported, aliased, nullable, constrained,
 /// union, collection, pair, and destination-runtime value shapes.
+@Deprecated { message = "Use ApplicationService." }
 class Service extends Entity {
+  @Deprecated { message = "Use displayName." }
   name: String
   endpoint: imported.Endpoint
   direction: Direction

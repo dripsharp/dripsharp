@@ -1,0 +1,15 @@
+# status	family	upstream-source	evidence
+# pending-in-scope rows are not product exclusions; this bounded contract is not a project-completion claim.
+selected	schema.modules-classes-inheritance	research/pkl/pkl-core/src/test/kotlin/org/pkl/core/EvaluateSchemaTest.kt	Module metadata, declarations, source locations, and supermodule relationships.
+selected	schema.properties-docs-annotations	research/pkl/pkl-codegen-java/src/test/kotlin/org/pkl/codegen/java/JavaCodeGeneratorTest.kt	Properties, documentation, and module/class/property/type-alias annotations.
+selected	schema.nullable-constrained-unions	research/pkl/pkl-codegen-java/src/test/kotlin/org/pkl/codegen/java/JavaCodeGeneratorTest.kt	Nullable, constrained, and union-backed generated property shapes.
+selected	schema.collections-aliases-generics-functions	research/pkl/pkl-core/src/test/files/LanguageSnippetTests/input/types/typeAlias2.pkl	Collections, generic aliases, owned type variables, and function types.
+selected	schema.imports-identifiers-collisions-ordering	research/pkl/pkl-codegen-java/src/test/kotlin/org/pkl/codegen/java/JavaCodeGeneratorTest.kt	Imported types, symbol mapping, collision-sensitive declarations, and deterministic generation.
+selected	binding.constructors-settable-members	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/mapper/PObjectToDataObjectTest.java	Constructor parameters, nested data objects, and named members.
+selected	binding.nested-generics-nullability	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/JavaTypeTest.java	Nested generic type metadata and nullable generic arguments.
+selected	binding.custom-loaders	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/mapper/PMapToMapTest.java	Registered custom conversions and mapper extension points.
+selected	binding.unknown-incompatible-cycles	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/mapper/PObjectToDataObjectTest.java	Deterministic incompatible-member failures; the .NET contract also pins unknown-property and cycle diagnostics.
+pending-in-scope	schema.methods-generic-classes	research/pkl/pkl-core/src/test/kotlin/org/pkl/core/EvaluateSchemaTest.kt	Method schemas and user generic classes remain broader in-scope product work.
+pending-in-scope	schema.amends-recursive-aliases	research/pkl/pkl-core/src/test/files/LanguageSnippetTests/input/types/cyclicTypeAlias2.pkl	Amending modules and recursive alias graphs remain broader in-scope product work.
+pending-in-scope	codegen.polymorphism-overrides	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/mapper/PolymorphicTest.kt	Polymorphic and overridden generated models remain broader in-scope product work.
+pending-in-scope	binding.complete-conversion-matrix	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/mapper/ConversionsTest.java	The complete upstream conversion and failure matrix remains broader in-scope product work.

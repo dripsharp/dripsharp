@@ -23,6 +23,7 @@ import org.pkl.core.PObject;
 import org.pkl.core.PType;
 import org.pkl.core.Pair;
 import org.pkl.core.TypeAlias;
+import org.pkl.core.TypeParameter;
 
 /** Separately executed JVM oracle for the selected schema and binding contract. */
 public final class SchemaUpstreamOracle {
@@ -35,6 +36,7 @@ public final class SchemaUpstreamOracle {
         var writer = Files.newBufferedWriter(Path.of(args[1]), StandardCharsets.UTF_8)) {
       for (var file : List.of("ContractBase.pkl", "ContractImported.pkl", "ContractMain.pkl")) {
         var schema = evaluator.evaluateSchema(ModuleSource.path(fixtures.resolve(file)));
+        if (file.equals("ContractMain.pkl")) checkRepresentativeContract(schema);
         write(writer, "schema/" + file, "SCHEMA", schema(schema));
       }
       var module = evaluator.evaluate(ModuleSource.path(fixtures.resolve("ContractMain.pkl")));
@@ -50,6 +52,7 @@ public final class SchemaUpstreamOracle {
         .append(";extend=").append(schema.isExtend())
         .append(";super=").append(q(schema.getSupermodule() == null ? "" : schema.getSupermodule().getModuleName()))
         .append(";doc=").append(q(schema.getDocComment()))
+        .append(";annotations=").append(annotations(schema.getAnnotations()))
         .append(";imports=[");
     for (var entry : schema.getImports().entrySet()) {
       result.append(q(entry.getKey())).append("=")
@@ -68,8 +71,10 @@ public final class SchemaUpstreamOracle {
         .append(";moduleClass=").append(value.isModuleClass())
         .append(";abstract=").append(value.isAbstract())
         .append(";open=").append(value.isOpen())
+        .append(";params=").append(typeParameters(value.getTypeParameters()))
         .append(";super=").append(type(value.getSupertype()))
         .append(";doc=").append(q(value.getDocComment()))
+        .append(";annotations=").append(annotations(value.getAnnotations()))
         .append(";line=").append(value.getSourceLocation().startLine()).append(":")
         .append(value.getSourceLocation().endLine()).append(";properties=[");
     for (var entry : value.getProperties().entrySet()) {
@@ -79,16 +84,79 @@ public final class SchemaUpstreamOracle {
           .append(q(property.getInheritedDocComment())).append(":line=")
           .append(property.getSourceLocation().startLine()).append(":")
           .append(property.getSourceLocation().endLine()).append(":mods=")
-          .append(modifiers(property)).append(";");
+          .append(modifiers(property)).append(":annotations=")
+          .append(annotations(property.getAnnotations())).append(";");
     }
     return result.append("])").toString();
   }
 
   private static String alias(TypeAlias value) {
     return "alias(" + q(value.getQualifiedName()) + ";doc=" + q(value.getDocComment()) +
+        ";annotations=" + annotations(value.getAnnotations()) +
         ";line=" + value.getSourceLocation().startLine() + ":" + value.getSourceLocation().endLine() +
-        ";params=" + value.getTypeParameters().stream().map(item -> q(item.getName())).toList() +
+        ";params=" + typeParameters(value.getTypeParameters()) +
         ";type=" + type(value.getAliasedType()) + ")";
+  }
+
+  private static String typeParameters(List<TypeParameter> values) {
+    return values.stream().map(value ->
+        "parameter(" + q(value.getName()) + ";variance=" + value.getVariance().name() +
+            ";index=" + value.getIndex() + ";owner=" +
+            q(value.getOwner().getModuleName() + "#" + value.getOwner().getSimpleName()) + ")")
+        .toList().toString();
+  }
+
+  private static String annotations(List<PObject> values) {
+    return values.stream().map(SchemaUpstreamOracle::annotation).toList().toString();
+  }
+
+  private static String annotation(PObject value) {
+    var properties = value.getProperties().entrySet().stream()
+        .sorted(Map.Entry.comparingByKey())
+        .map(entry -> q(entry.getKey()) + "=" + annotationValue(entry.getValue()))
+        .toList();
+    return "annotation(" + q(value.getClassInfo().getQualifiedName()) + ";" + properties + ")";
+  }
+
+  private static String annotationValue(Object value) {
+    if (value == PNull.getInstance()) return "null";
+    if (value instanceof String text) return "string(" + q(text) + ")";
+    if (value instanceof Boolean bool) return "boolean(" + bool + ")";
+    if (value instanceof Long integer) return "int(" + integer + ")";
+    if (value instanceof Double floating) return "float(" + bits(floating) + ")";
+    if (value instanceof PObject object) return annotation(object);
+    if (value instanceof Collection<?> collection) {
+      return "collection(" + collection.stream().map(SchemaUpstreamOracle::annotationValue).toList() + ")";
+    }
+    if (value instanceof Map<?, ?> map) {
+      return "mapping(" + map.entrySet().stream()
+          .map(entry -> annotationValue(entry.getKey()) + "=" + annotationValue(entry.getValue()))
+          .sorted().toList() + ")";
+    }
+    throw new IllegalArgumentException("Unsupported annotation value: " + value.getClass());
+  }
+
+  private static void checkRepresentativeContract(ModuleSchema schema) {
+    check(schema.getAnnotations().size() == 1, "module annotation contract");
+    var direction = schema.getTypeAliases().get("Direction");
+    check(direction != null && direction.getAnnotations().size() == 1, "type-alias annotation contract");
+    var transform = schema.getTypeAliases().get("Transform");
+    check(transform != null && transform.getTypeParameters().size() == 2, "generic alias contract");
+    check(transform.getTypeParameters().get(0).getVariance() == TypeParameter.Variance.CONTRAVARIANT,
+        "contravariant type parameter contract");
+    check(transform.getTypeParameters().get(1).getVariance() == TypeParameter.Variance.COVARIANT,
+        "covariant type parameter contract");
+    check(transform.getTypeParameters().stream().allMatch(item -> item.getOwner() == transform),
+        "type parameter owner contract");
+    check(transform.getAliasedType() instanceof PType.Function, "function type contract");
+    var service = schema.getClasses().get("Service");
+    check(service != null && service.getAnnotations().size() == 1, "class annotation contract");
+    check(service.getProperties().get("name").getAnnotations().size() == 1,
+        "property annotation contract");
+  }
+
+  private static void check(boolean condition, String message) {
+    if (!condition) throw new IllegalStateException(message);
   }
 
   private static String modifiers(Member value) {

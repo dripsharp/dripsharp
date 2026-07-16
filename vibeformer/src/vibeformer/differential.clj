@@ -274,6 +274,63 @@
                      (paths/resolve-path upstream-root "pkl-parser" "build" "resources" "main")]
                     (:classpath discovery))}))
 
+(def ^:private required-contract-families
+  #{"schema.modules-classes-inheritance"
+    "schema.properties-docs-annotations"
+    "schema.nullable-constrained-unions"
+    "schema.collections-aliases-generics-functions"
+    "schema.imports-identifiers-collisions-ordering"
+    "binding.constructors-settable-members"
+    "binding.nested-generics-nullability"
+    "binding.custom-loaders"
+    "binding.unknown-incompatible-cycles"})
+
+(defn- verify-contract-evidence!
+  [root ^Path evidence]
+  (when-not (paths/regular-file? evidence)
+    (fail! "Schema/codegen/binding contract evidence is missing"
+           {:path (str evidence)}))
+  (let [entries
+        (->> (str/split-lines (Files/readString evidence StandardCharsets/UTF_8))
+             (map-indexed vector)
+             (remove (fn [[_ line]]
+                       (or (str/blank? line) (str/starts-with? line "#"))))
+             (mapv
+              (fn [[index line]]
+                (let [fields (str/split line #"\t" -1)]
+                  (when-not (= 4 (count fields))
+                    (fail! "Contract evidence row must have four tab-separated fields"
+                           {:path (str evidence) :line (inc index) :value line}))
+                  (let [[status family source detail] fields]
+                    (when-not (#{"selected" "pending-in-scope"} status)
+                      (fail! "Contract evidence row has an unsupported status"
+                             {:path (str evidence) :line (inc index) :status status}))
+                    (when (some str/blank? [family source detail])
+                      (fail! "Contract evidence row contains a blank required field"
+                             {:path (str evidence) :line (inc index) :value line}))
+                    (when-not (and (str/starts-with? source "research/pkl/")
+                                   (str/includes? source "/src/test/"))
+                      (fail! "Contract evidence must cite an upstream Pkl test or fixture"
+                             {:path (str evidence) :line (inc index) :source source}))
+                    (let [source-path (paths/resolve-path root source)]
+                      (when-not (paths/regular-file? source-path)
+                        (fail! "Contract evidence references a missing upstream source"
+                               {:path (str evidence) :line (inc index)
+                                :source (str source-path)})))
+                    {:status status :family family :source source :detail detail})))))
+        selected (filterv #(= "selected" (:status %)) entries)
+        pending (filterv #(= "pending-in-scope" (:status %)) entries)
+        missing (sort (remove (set (map :family selected)) required-contract-families))]
+    (when (seq missing)
+      (fail! "Contract evidence omits required selected behavior families"
+             {:path (str evidence) :missing missing}))
+    (when (empty? pending)
+      (fail! "Contract evidence must retain broader behavior as pending in-scope work"
+             {:path (str evidence)}))
+    {:selected (count selected)
+     :pending-in-scope (count pending)
+     :families (mapv :family entries)}))
+
 (defn- package-only-project [package-id version target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
        "  <PropertyGroup>\n"
@@ -306,6 +363,8 @@
                     (paths/resolve-path root "vibeformer" "validation-output"
                                         "differential-proof" "schema-codegen-binding"))
         fixtures (paths/resolve-path root "vibeformer" "validation" "schema-codegen")
+        contract-evidence (paths/resolve-path fixtures "ContractEvidence.tsv")
+        evidence-summary (verify-contract-evidence! root contract-evidence)
         oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
                          (Files/createDirectories (make-array FileAttribute 0)))
         oracle-source (paths/resolve-path fixtures "SchemaUpstreamOracle.java")
@@ -346,6 +405,7 @@
                  {:project (str installed-consumer-project)}))
         project-contents (package-only-project id version target-framework)]
     (doseq [required [oracle-source
+                      contract-evidence
                       (paths/resolve-path fixtures "SchemaGeneratorProbe.cs")
                       (paths/resolve-path fixtures "GeneratedConsumer.cs")
                       package-config]]
@@ -435,6 +495,7 @@
                            :generated-files (count generated-files)
                            :observations (:matched comparison)
                            :binding-failure-cases 6
+                           :contract-evidence evidence-summary
                            :perturbation-detected-at (get-in perturbation [:mismatch :line])}
                  :oracle-output oracle-output
                  :package-output package-output
