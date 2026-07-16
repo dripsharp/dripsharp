@@ -1,12 +1,18 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using Contract.Main;
 using Pkl.Core;
+using Poly = Com.Example.PolymorphicModuleTest;
+using PolyLib = Com.Example.Lib;
+using OverrideFixture = Com.Example.OverriddenProperty;
 
 /** Compiles with emitted C# and executes binding through package-only references. */
 static class GeneratedConsumer
@@ -78,6 +84,19 @@ static class GeneratedConsumer
         [PklName("pair"), PklRequired] public required Pair<string?, string?> Pair { get; init; }
     }
 
+    sealed class CustomConversionModel
+    {
+        [PklName("values"), PklRequired]
+        public required IReadOnlyDictionary<string, string> Values { get; init; }
+    }
+
+    abstract class ManualDessert { }
+
+    sealed class ManualStrudel : ManualDessert
+    {
+        [PklName("numberOfRolls"), PklRequired] public required long NumberOfRolls { get; init; }
+    }
+
     public static void Main(string[] args)
     {
         if (args.Length != 3)
@@ -86,6 +105,10 @@ static class GeneratedConsumer
         using var evaluator = Evaluator.Preconfigured();
         var source = ModuleSource.PathFromPath(sourceFile);
         var generated = global::Contract.Main.Main.Load(evaluator, source);
+        var polymorphic = Poly.PolymorphicModuleTest.Load(evaluator,
+            ModuleSource.PathFromPath(Path.Combine(Path.GetFullPath(args[0]), "PolymorphicModuleTest.pkl")));
+        var overridden = OverrideFixture.OverriddenProperty.Load(evaluator,
+            ModuleSource.PathFromPath(Path.Combine(Path.GetFullPath(args[0]), "OverriddenProperty.pkl")));
 
         Check(generated.BaseName == "base", "inherited module property");
         Check(generated.Service.Id == "svc-1", "inherited class property");
@@ -100,24 +123,41 @@ static class GeneratedConsumer
             "generic pair binding");
         Check(generated.Service.Bytes.SequenceEqual(new byte[] { 0, 127, 128, 255 }), "byte binding");
         Check(generated.Class.Event == "created" && generated.Class.FirstName == "Ada", "quoted identifiers");
+        Check(polymorphic.Desserts[0] is Poly.Strudel { NumberOfRolls: 3 } &&
+              polymorphic.Desserts[1] is Poly.TurkishDelight { IsOfferedToEdmund: true },
+            "local polymorphic generated binding");
+        Check(polymorphic.Planes[0] is PolyLib.Jet
+              { Name: "Concorde", NumSeats: 128, IsSuperSonic: true } &&
+              polymorphic.Planes[1] is PolyLib.Propeller
+              { Name: "Cessna 172", NumSeats: 4, IsTurboprop: true },
+            "imported polymorphic generated binding");
+        Check(overridden.TheClass.Bar.Count == 1 && overridden.TheClass.Bar[0].Prop1 == "hello" &&
+              overridden.TheClass.Bar[0].Prop2 == "hello again",
+            "narrowed overridden property binding");
+        OverrideFixture.BaseClass overriddenBase = overridden.TheClass;
+        Check(overriddenBase.Bar.Count == 1 && overriddenBase.Bar[0] is OverrideFixture.Bar &&
+              overriddenBase.Bar[0].Prop1 == "hello", "base view of overridden property binding");
 
         using (var writer = new StreamWriter(args[1], append: true, Utf8))
         {
             Write(writer, "generated/contract", "GENERATED_CONTRACT", GeneratedContract());
             Write(writer, "values/ContractMain.pkl", "VALUES", Values(generated));
+            Write(writer, "values/PolymorphicModuleTest.pkl", "VALUES", PolymorphicValues(polymorphic));
+            Write(writer, "values/OverriddenProperty.pkl", "VALUES", OverriddenValues(overridden));
+            Write(writer, "binding/conversion-matrix", "BINDING", ConversionMatrix());
+            Write(writer, "binding/collection-matrix", "BINDING", CollectionMatrix());
             WriteSelectedBindingFailures(writer);
         }
 
-        RunFocusedBindingFailures(evaluator, args[2]);
+        RunFocusedBindingFailures(evaluator, args[0], args[2]);
         Console.WriteLine("Independently compiled generated C# binding consumer passed.");
     }
 
     static string GeneratedContract()
     {
         var generatedTypes = typeof(global::Contract.Main.Main).Assembly.GetTypes()
-            .Where(type => type.IsPublic && type.Namespace is not null &&
-                type.Namespace.StartsWith("Contract.", StringComparison.Ordinal) &&
-                type.GetCustomAttribute<PklNameAttribute>() is not null)
+            .Where(type => type.IsPublic && type.GetCustomAttribute<PklNameAttribute>() is not null &&
+                type.GetCustomAttribute<PklQualifiedNameAttribute>() is not null)
             .OrderBy(type => CanonicalType(type, null), StringComparer.Ordinal);
         return "types=[" + string.Join(";", generatedTypes.Select(GeneratedType)) + "]";
     }
@@ -126,6 +166,7 @@ static class GeneratedConsumer
     {
         string clrName = CanonicalType(type, null);
         string pklName = type.GetCustomAttribute<PklNameAttribute>()!.Name;
+        string qualifiedName = type.GetCustomAttribute<PklQualifiedNameAttribute>()!.QualifiedName;
         bool alias = type.GetCustomAttribute<PklTypeAliasAttribute>() is not null;
         string kind = type.IsEnum ? "enum" : alias ? "alias" : "class";
         string parameters = "[" + string.Join(",", type.GetGenericArguments()
@@ -161,12 +202,13 @@ static class GeneratedConsumer
                 .OrderBy(item => item.Name!.Name, StringComparer.Ordinal)
                 .Select(item => item.Name!.Name + "=" + item.Property.Name + ":" +
                     CanonicalType(item.Property.PropertyType, nullability.Create(item.Property)) +
-                    ":required=" + Lower(item.Property.GetCustomAttribute<PklRequiredAttribute>() is not null))) + "]";
+                    ":required=" + Lower(item.Property.GetCustomAttribute<PklRequiredAttribute>() is not null) +
+                    ":override=" + Lower(IsPklOverride(type, item.Name!.Name)))) + "]";
             enumValues = "[]";
         }
 
         Type? baseType = type.IsValueType || type.BaseType == typeof(object) ? null : type.BaseType;
-        return "type(clr=" + clrName + ";pkl=" + pklName + ";kind=" + kind +
+        return "type(clr=" + clrName + ";pkl=" + pklName + ";qualified=" + qualifiedName + ";kind=" + kind +
             ";value=" + Lower(type.IsValueType && !type.IsEnum) +
             ";sealed=" + Lower(type.IsSealed) +
             ";abstract=" + Lower(type.IsAbstract && !type.IsSealed) +
@@ -177,6 +219,15 @@ static class GeneratedConsumer
             ";loader=" + Lower(HasGeneratedLoader(type)) +
             ";fromPkl=" + Lower(HasDeclaredStaticMethod(type, "FromPkl")) +
             ";load=" + Lower(HasDeclaredStaticMethod(type, "Load")) + ")";
+    }
+
+    static bool IsPklOverride(Type type, string pklName)
+    {
+        for (Type? current = type.BaseType; current is not null && current != typeof(object); current = current.BaseType)
+            if (current.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Any(property => property.GetCustomAttribute<PklNameAttribute>()?.Name == pklName))
+                return true;
+        return false;
     }
 
     static bool HasGeneratedLoader(Type type)
@@ -216,6 +267,129 @@ static class GeneratedConsumer
     static string NullableSuffix(Type type, NullabilityInfo? nullability) =>
         !type.IsValueType && nullability?.ReadState == NullabilityState.Nullable ? "?" : "";
 
+    static string PolymorphicValues(Poly.PolymorphicModuleTest module) =>
+        "polymorphic(desserts=[" + string.Join(",", module.Desserts.Select(item =>
+            QualifiedName(item.GetType()) + ":" + (item switch
+            {
+                Poly.Strudel strudel => strudel.NumberOfRolls.ToString(CultureInfo.InvariantCulture),
+                Poly.TurkishDelight delight => Lower(delight.IsOfferedToEdmund),
+                _ => "unexpected"
+            }))) + "];planes=[" + string.Join(",", module.Planes.Select(item =>
+            QualifiedName(item.GetType()) + ":" + item.Name + ":" +
+            item.NumSeats.ToString(CultureInfo.InvariantCulture) + ":" + (item switch
+            {
+                PolyLib.Jet jet => Lower(jet.IsSuperSonic),
+                PolyLib.Propeller propeller => Lower(propeller.IsTurboprop),
+                _ => "unexpected"
+            }))) + "])";
+
+    static string OverriddenValues(OverrideFixture.OverriddenProperty module)
+    {
+        OverrideFixture.BaseClass baseView = module.TheClass;
+        return "override(type=" + QualifiedName(module.TheClass.GetType()) + ";bar=[" +
+            string.Join(",", module.TheClass.Bar.Select(item => QualifiedName(item.GetType()) + ":" +
+                item.Prop1 + ":" + item.Prop2)) + "];base=[" +
+            string.Join(",", baseView.Bar.Select(item => QualifiedName(item.GetType()) + ":" + item.Prop1)) + "])";
+    }
+
+    static string QualifiedName(Type type) =>
+        type.GetCustomAttribute<PklQualifiedNameAttribute>()?.QualifiedName ??
+        throw new InvalidOperationException(type.FullName + " has no Pkl qualified-name metadata");
+
+    static PObject SemanticVersion(long major, long minor, long patch, object preRelease, object build) =>
+        new(PClassInfo<object>.Get("pkl.semver", "Version", new Uri("pkl:semver")),
+            new Dictionary<string, object>
+            {
+                ["major"] = major,
+                ["minor"] = minor,
+                ["patch"] = patch,
+                ["preRelease"] = preRelease,
+                ["build"] = build
+            });
+
+    static string ConversionMatrix()
+    {
+        var binder = new ConfigBinder(new ConfigBinderOptions { AllowLossyNumericConversions = true });
+        object semanticVersion = SemanticVersion(1, 2, 3, "rc.1", "456.789");
+        var duration = Duration.OfMinutes(100);
+        var regex = new Regex("(?i)\\w*");
+        var bytes = new byte[] { 0, 1, 127, 128, 255 };
+        var timeSpan = binder.Bind<TimeSpan>(duration);
+        long seconds = timeSpan.Ticks / TimeSpan.TicksPerSecond;
+        long nanos = timeSpan.Ticks % TimeSpan.TicksPerSecond * 100;
+        return "identity[pnull=" + Lower(ReferenceEquals(
+                   binder.Bind<PNull>(PNull.GetInstance()), PNull.GetInstance())) +
+               ";bool=" + Lower(binder.Bind<bool>(true)) +
+               ";string=" + binder.Bind<string>("value") +
+               ";int=" + binder.Bind<long>(42L).ToString(CultureInfo.InvariantCulture) +
+               ";float=" + DoubleBits(binder.Bind<double>(3.25d)) +
+               ";duration=" + binder.Bind<Duration>(duration).GetUnit().GetSymbol() +
+               ";bytes=" + Hex(binder.Bind<byte[]>(bytes)) + "]" +
+               ";numeric[int8=" + binder.Bind<sbyte>(42L).ToString(CultureInfo.InvariantCulture) +
+               ",int16=" + binder.Bind<short>(42L).ToString(CultureInfo.InvariantCulture) +
+               ",int32=" + binder.Bind<int>(42L).ToString(CultureInfo.InvariantCulture) +
+               ",int64=" + binder.Bind<long>(42L).ToString(CultureInfo.InvariantCulture) +
+               ",float32=" + FloatBits(binder.Bind<float>(42L)) +
+               ",float64=" + DoubleBits(binder.Bind<double>(42L)) +
+               ",bigint=" + binder.Bind<BigInteger>(42L).ToString(CultureInfo.InvariantCulture) +
+               ",decimal=" + binder.Bind<decimal>(42L).ToString(CultureInfo.InvariantCulture) +
+               ",from-float32=" + FloatBits(binder.Bind<float>(3.25d)) +
+               ",from-float-decimal=" + binder.Bind<decimal>(3.25d).ToString(CultureInfo.InvariantCulture) + "]" +
+               ";misc[char=" + binder.Bind<char>("x") +
+               ",uri=" + binder.Bind<Uri>("relative/path") +
+               ",url=" + binder.Bind<Uri>("https://example.test/path") +
+               ",file=" + binder.Bind<FileInfo>("relative/path") +
+               ",path=" + binder.Bind<FileInfo>("relative/path") +
+               ",regex=" + binder.Bind<Regex>("(?i)\\w*") +
+               ",regex-string=" + binder.Bind<string>(regex) +
+               ",duration=" + seconds.ToString(CultureInfo.InvariantCulture) + ":" +
+                   nanos.ToString(CultureInfo.InvariantCulture) +
+               ",version=" + binder.Bind<Pkl.Core.Version>(semanticVersion) +
+               ",version-string=" + binder.Bind<string>(semanticVersion) +
+               ",parsed-version=" + binder.Bind<Pkl.Core.Version>("2.3.4-beta+5") +
+               ",duration-unit=" + binder.Bind<DurationUnit>("min").GetSymbol() +
+               ",data-size-unit=" + binder.Bind<DataSizeUnit>("gb").GetSymbol() + "]";
+    }
+
+    static string CollectionMatrix()
+    {
+        var binder = new ConfigBinder(new ConfigBinderOptions { AllowLossyNumericConversions = true });
+        var array = binder.Bind<int[]>(new List<object?> { 1L, 2L, 3L });
+        var list = binder.Bind<IReadOnlyList<float>>(new List<object?> { 1.0d, 2.0d, 3.25d });
+        var set = binder.Bind<IReadOnlySet<string>>(new List<object?> { "beta", "alpha", "beta" });
+        var map = binder.Bind<IReadOnlyDictionary<int, double>>(new Dictionary<object, object?>
+        {
+            [1L] = 2L,
+            [2L] = 4.5d
+        });
+        var pair = binder.Bind<Pair<int, Duration>>(new Pair<object?, object?>(1L, Duration.OfSeconds(3)));
+        var nested = binder.Bind<IReadOnlyDictionary<string, IReadOnlyList<int>>>(
+            new Dictionary<string, object?> { ["items"] = new List<object?> { 4L, 5L } });
+        var nullable = binder.Bind<IReadOnlyList<string?>>(new List<object?> { "value", PNull.GetInstance() });
+        var customBinder = new ConfigBinder(new ConfigBinderOptions()
+            .AddConversion<long, string>((value, _) => value.ToString(CultureInfo.InvariantCulture)));
+        var custom = customBinder.Bind<IReadOnlyDictionary<string, string>>(
+            new Dictionary<string, object?> { ["answer"] = 42L });
+        return "collections[array=" + string.Join(",", array) +
+               ";list=" + string.Join(",", list.Select(FloatBits)) +
+               ";set=" + string.Join(",", set.OrderBy(item => item, StringComparer.Ordinal)) +
+               ";map=" + string.Join(",", map.Select(entry => entry.Key.ToString(CultureInfo.InvariantCulture) +
+                   "=" + DoubleBits(entry.Value)).OrderBy(item => item, StringComparer.Ordinal)) +
+               ";pair=" + pair.GetFirst().ToString(CultureInfo.InvariantCulture) + ":" +
+                   pair.GetSecond().GetValue().ToString("0.0###############", CultureInfo.InvariantCulture) + "@" +
+                   pair.GetSecond().GetUnit().GetSymbol() +
+               ";nested=" + string.Join(",", nested["items"]) +
+               ";nullable=" + nullable[0] + ":" + (nullable[1] is null ? "null" : "unexpected") +
+               ";custom=" + custom["answer"] + "]";
+    }
+
+    static string FloatBits(float value) =>
+        unchecked((uint)BitConverter.SingleToInt32Bits(value)).ToString("x8", CultureInfo.InvariantCulture);
+    static string DoubleBits(double value) =>
+        unchecked((ulong)BitConverter.DoubleToInt64Bits(value)).ToString("x16", CultureInfo.InvariantCulture);
+    static string Hex(IEnumerable<byte> values) =>
+        string.Concat(values.Select(value => value.ToString("x2", CultureInfo.InvariantCulture)));
+
     static void WriteSelectedBindingFailures(StreamWriter writer)
     {
         var binder = new ConfigBinder();
@@ -232,6 +406,25 @@ static class GeneratedConsumer
                 new Dictionary<string, object?> { ["bad"] = 1L }));
         ObserveBindingFailure(writer, "binding/nested-pair", "Pair<String,Int>->Pair<String,String>",
             () => binder.Bind<Pair<string, string>>(new Pair<object?, object?>("left", 1L)));
+        ObserveBindingFailure(writer, "binding/invalid-character", "String->Char",
+            () => binder.Bind<char>("too long"));
+        ObserveBindingFailure(writer, "binding/invalid-uri", "String->Uri",
+            () => binder.Bind<Uri>("http://[invalid"));
+        ObserveBindingFailure(writer, "binding/invalid-regex", "String->Regex",
+            () => binder.Bind<Regex>("["));
+        ObserveBindingFailure(writer, "binding/duration-overflow", "Duration->TimeSpan",
+            () => binder.Bind<TimeSpan>(Duration.OfSeconds(double.PositiveInfinity)));
+        ObserveBindingFailure(writer, "binding/version-overflow", "VersionObject->Version",
+            () => binder.Bind<Pkl.Core.Version>(SemanticVersion(999_999_999_999_999, 0, 0,
+                PNull.GetInstance(), PNull.GetInstance())));
+        ObserveBindingFailure(writer, "binding/invalid-version", "String->Version",
+            () => binder.Bind<Pkl.Core.Version>("not-a-version"));
+        ObserveBindingFailure(writer, "binding/invalid-unit", "String->DurationUnit",
+            () => binder.Bind<DurationUnit>("fortnight"));
+        var custom = new ConfigBinder(new ConfigBinderOptions().AddConversion<long, string>((_, _) =>
+            throw new InvalidOperationException("deliberate custom conversion failure")));
+        ObserveBindingFailure(writer, "binding/custom-conversion", "Int->CustomString",
+            () => custom.Bind<string>(42L));
     }
 
     static void ObserveBindingFailure(StreamWriter writer, string id, string contract, Action action)
@@ -249,7 +442,7 @@ static class GeneratedConsumer
 
     static string Lower(bool value) => value ? "true" : "false";
 
-    static void RunFocusedBindingFailures(Evaluator evaluator, string diagnosticsFile)
+    static void RunFocusedBindingFailures(Evaluator evaluator, string fixtureDirectory, string diagnosticsFile)
     {
         var binder = new ConfigBinder();
         var constructor = binder.Bind<ConstructorModel>(new Dictionary<string, object?>
@@ -274,6 +467,23 @@ static class GeneratedConsumer
         var custom = new ConfigBinder(new ConfigBinderOptions().AddGeneratedLoader(projectionLoader))
             .Bind<Projection>("value");
         Check(projectionLoader.Invoked && custom.Value == "custom:value", "registered generated loader");
+
+        var customConversion = new ConfigBinder(new ConfigBinderOptions()
+                .AddConversion<long, string>((value, _) => "number:" + value.ToString(CultureInfo.InvariantCulture)))
+            .Bind<CustomConversionModel>(new Dictionary<string, object?>
+            {
+                ["values"] = new Dictionary<string, object?> { ["answer"] = 42L }
+            });
+        Check(customConversion.Values["answer"] == "number:42", "registered recursive custom conversion");
+
+        var rawPolymorphic = evaluator.Evaluate(ModuleSource.PathFromPath(
+            Path.Combine(Path.GetFullPath(fixtureDirectory), "PolymorphicModuleTest.pkl")));
+        var rawDesserts = ((IEnumerable)rawPolymorphic.GetProperty("desserts")).Cast<object>().ToArray();
+        var mappedDessert = new ConfigBinder(new ConfigBinderOptions()
+                .AddTypeMapping<ManualDessert, ManualStrudel>(
+                    "com.example.PolymorphicModuleTest#Strudel"))
+            .Bind<ManualDessert>(rawDesserts[0]);
+        Check(mappedDessert is ManualStrudel { NumberOfRolls: 3 }, "explicit polymorphic type mapping");
 
         ExpectBindFailure(
             () => binder.Bind<KnownOnly>(new Dictionary<string, object?> { ["known"] = "yes", ["extra"] = 1L }),
@@ -342,6 +552,30 @@ static class GeneratedConsumer
         ExpectBindFailure(() => binder.Bind<long>(9_223_372_036_854_775_808d),
             "$", typeof(long), "numeric overflow");
 
+        ExpectBindFailure(() => binder.Bind<char>("too long"),
+            "$", typeof(char), "single-character");
+        ExpectBindFailure(() => binder.Bind<Uri>("http://[invalid"),
+            "$", typeof(Uri), "invalid URI");
+        ExpectBindFailure(() => binder.Bind<Regex>("["),
+            "$", typeof(Regex), "invalid regular expression");
+        ExpectBindFailure(() => binder.Bind<TimeSpan>(Duration.OfSeconds(double.PositiveInfinity)),
+            "$", typeof(TimeSpan), "outside the TimeSpan range");
+        ExpectBindFailure(() => binder.Bind<Pkl.Core.Version>(
+                SemanticVersion(999_999_999_999_999, 0, 0, PNull.GetInstance(), PNull.GetInstance())),
+            "$.major", typeof(int), "numeric overflow");
+        ExpectBindFailure(() => binder.Bind<Pkl.Core.Version>("not-a-version"),
+            "$", typeof(Pkl.Core.Version), "invalid semantic version");
+        ExpectBindFailure(() => binder.Bind<DurationUnit>("fortnight"),
+            "$", typeof(DurationUnit), "not a Pkl duration unit");
+        var failedCustom = new ConfigBinder(new ConfigBinderOptions().AddConversion<long, string>((_, _) =>
+            throw new InvalidOperationException("deliberate custom conversion failure")));
+        ExpectBindFailure(() => failedCustom.Bind<CustomConversionModel>(new Dictionary<string, object?>
+            {
+                ["values"] = new Dictionary<string, object?> { ["bad"] = 1L }
+            }), "$.values[\"bad\"]", typeof(string), "custom conversion failed");
+        ExpectBindFailure(() => binder.Bind<Poly.TurkishDelight>(rawDesserts[0]),
+            "$", typeof(Poly.TurkishDelight), "does not match generated target");
+
         var cycle = new Dictionary<string, object?>();
         cycle["next"] = cycle;
         ExpectBindFailure(() => binder.Bind<CycleModel>(cycle), "$.next", typeof(CycleModel), "cyclic object graphs");
@@ -359,6 +593,8 @@ static class GeneratedConsumer
             "constructor-and-members=passed\n" +
             "metadata-options=passed\n" +
             "custom-loader=passed\n" +
+            "custom-conversion=passed\n" +
+            "explicit-polymorphism=passed\n" +
             "unknown=$\n" +
             "incompatible=$.count\n" +
             "missing=$\n" +
@@ -369,6 +605,8 @@ static class GeneratedConsumer
             "nested-pair-nullability=$.pair.second\n" +
             "nullable-nested-generics=passed\n" +
             "numeric-exactness=passed\n" +
+            "conversion-failures=passed\n" +
+            "polymorphic-mismatch=$\n" +
             "cycle=$.next\n" +
             "disposed=passed\n", Utf8);
     }

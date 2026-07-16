@@ -4,6 +4,7 @@
 namespace Pinned.Generated;
 
 [global::Pkl.Core.PklName("contract.generatedMemberCollision")]
+[global::Pkl.Core.PklQualifiedName("contract.generatedMemberCollision#ModuleClass")]
 public sealed partial class GeneratedMemberCollision
 {
     [global::Pkl.Core.PklName("pklLoader")]
@@ -23,4 +24,3 @@ public sealed partial class GeneratedMemberCollision
     public required string Load { get; init; }
 
 }
-

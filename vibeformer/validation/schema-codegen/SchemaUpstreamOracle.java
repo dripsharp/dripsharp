@@ -1,7 +1,13 @@
 import java.io.BufferedWriter;
+import java.io.File;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -9,16 +15,21 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+import org.pkl.config.java.mapper.Conversion;
 import org.pkl.config.java.mapper.ConversionException;
 import org.pkl.config.java.mapper.Types;
 import org.pkl.config.java.mapper.ValueMapper;
+import org.pkl.config.java.mapper.ValueMapperBuilder;
 import org.pkl.core.DataSize;
+import org.pkl.core.DataSizeUnit;
 import org.pkl.core.Duration;
+import org.pkl.core.DurationUnit;
 import org.pkl.core.Evaluator;
 import org.pkl.core.Member;
 import org.pkl.core.ModuleSchema;
 import org.pkl.core.ModuleSource;
 import org.pkl.core.PClass;
+import org.pkl.core.PClassInfo;
 import org.pkl.core.PModule;
 import org.pkl.core.PNull;
 import org.pkl.core.PObject;
@@ -37,7 +48,9 @@ public final class SchemaUpstreamOracle {
     try (var evaluator = Evaluator.preconfigured();
         var writer = Files.newBufferedWriter(Path.of(args[1]), StandardCharsets.UTF_8)) {
       var schemas = new ArrayList<ModuleSchema>();
-      for (var file : List.of("ContractBase.pkl", "ContractImported.pkl", "ContractMain.pkl")) {
+      for (var file : List.of(
+          "ContractBase.pkl", "ContractImported.pkl", "ContractMain.pkl",
+          "PolymorphicLib.pkl", "PolymorphicModuleTest.pkl", "OverriddenProperty.pkl")) {
         var schema = evaluator.evaluateSchema(ModuleSource.path(fixtures.resolve(file)));
         schemas.add(schema);
         if (file.equals("ContractMain.pkl")) checkRepresentativeContract(schema);
@@ -47,7 +60,14 @@ public final class SchemaUpstreamOracle {
       write(writer, "generated/contract", "GENERATED_CONTRACT", generatedContract(schemas));
       var module = evaluator.evaluate(ModuleSource.path(fixtures.resolve("ContractMain.pkl")));
       write(writer, "values/ContractMain.pkl", "VALUES", values(module));
-      writeBindingFailures(writer);
+      var polymorphic = evaluator.evaluate(
+          ModuleSource.path(fixtures.resolve("PolymorphicModuleTest.pkl")));
+      write(writer, "values/PolymorphicModuleTest.pkl", "VALUES", polymorphicValues(polymorphic));
+      var overridden = evaluator.evaluate(ModuleSource.path(fixtures.resolve("OverriddenProperty.pkl")));
+      write(writer, "values/OverriddenProperty.pkl", "VALUES", overriddenValues(overridden));
+      write(writer, "binding/conversion-matrix", "BINDING", conversionMatrix(evaluator, fixtures));
+      write(writer, "binding/collection-matrix", "BINDING", collectionMatrix());
+      writeBindingFailures(writer, evaluator, fixtures);
     }
   }
 
@@ -146,10 +166,12 @@ public final class SchemaUpstreamOracle {
           .map(value -> symbol(value) + "=" + value)
           .toList();
       return generatedType(clrName, alias.getSimpleName(), "enum", false, true, false,
-          "System.Object", List.of(), List.of(), enumValues, false, false, false);
+          alias.getQualifiedName(), "System.Object", List.of(), List.of(), enumValues,
+          false, false, false);
     }
     return generatedType(clrName, alias.getSimpleName(), "alias", true, true, false,
-        "System.Object", alias.getTypeParameters().stream().map(TypeParameter::getName).toList(),
+        alias.getQualifiedName(), "System.Object",
+        alias.getTypeParameters().stream().map(TypeParameter::getName).toList(),
         List.of("Value:" + clrType(alias.getAliasedType())), List.of(), true, true, false);
   }
 
@@ -157,28 +179,41 @@ public final class SchemaUpstreamOracle {
     var properties = value.getProperties().values().stream()
         .sorted(Comparator.comparing(Member::getSimpleName))
         .map(property -> property.getSimpleName() + "=" + symbol(property.getSimpleName()) + ":" +
-            clrType(property.getType()) + ":required=true")
+            clrType(property.getType()) + ":required=true:override=" +
+            hasInheritedProperty(value, property.getSimpleName()))
         .toList();
     var supertype = value.getSupertype();
     var base = supertype instanceof PType.Class clazz &&
         !clazz.getPClass().getQualifiedName().startsWith("pkl.base#")
         ? clrClassName(clazz.getPClass()) : "System.Object";
     return generatedType(clrClassName(value), pklName, "class", false,
-        !value.isOpen() && !value.isAbstract(), value.isAbstract(), base,
+        !value.isOpen() && !value.isAbstract(), value.isAbstract(), value.getQualifiedName(), base,
         value.getTypeParameters().stream().map(TypeParameter::getName).toList(),
         properties, List.of(), true, true, value.isModuleClass());
   }
 
   private static String generatedType(
       String clrName, String pklName, String kind, boolean value, boolean sealed,
-      boolean abstractType, String base, List<String> parameters, List<String> properties,
+      boolean abstractType, String qualifiedName, String base, List<String> parameters,
+      List<String> properties,
       List<String> enumValues, boolean loader, boolean fromPkl, boolean load) {
-    return "type(clr=" + clrName + ";pkl=" + pklName + ";kind=" + kind +
+    return "type(clr=" + clrName + ";pkl=" + pklName + ";qualified=" + qualifiedName +
+        ";kind=" + kind +
         ";value=" + value + ";sealed=" + sealed + ";abstract=" + abstractType +
         ";base=" + base + ";parameters=[" + String.join(",", parameters) +
         "];properties=[" + String.join(",", properties) +
         "];enum=[" + String.join(",", enumValues) +
         "];loader=" + loader + ";fromPkl=" + fromPkl + ";load=" + load + ")";
+  }
+
+  private static boolean hasInheritedProperty(PClass value, String pklName) {
+    for (var superclass = value.getSuperclass();
+        superclass != null && !superclass.getInfo().isStandardLibraryClass();
+        superclass = superclass.getSuperclass()) {
+      if (superclass.getProperties().values().stream()
+          .anyMatch(property -> property.getSimpleName().equals(pklName))) return true;
+    }
+    return false;
   }
 
   private static List<String> stringLiterals(PType value) {
@@ -276,7 +311,129 @@ public final class SchemaUpstreamOracle {
     return result.toString();
   }
 
-  private static void writeBindingFailures(BufferedWriter writer) throws Exception {
+  private static String polymorphicValues(PModule module) {
+    var desserts = (Collection<?>) module.getProperty("desserts");
+    var planes = (Collection<?>) module.getProperty("planes");
+    return "polymorphic(desserts=[" + String.join(",", desserts.stream().map(item -> {
+      var value = (PObject) item;
+      var detail = value.getClassInfo().getQualifiedName().endsWith("#Strudel")
+          ? value.getProperty("numberOfRolls").toString()
+          : value.getProperty("isOfferedToEdmund").toString();
+      return value.getClassInfo().getQualifiedName() + ":" + detail;
+    }).toList()) + "];planes=[" + String.join(",", planes.stream().map(item -> {
+      var value = (PObject) item;
+      var detail = value.getClassInfo().getQualifiedName().endsWith("#Jet")
+          ? value.getProperty("isSuperSonic").toString()
+          : value.getProperty("isTurboprop").toString();
+      return value.getClassInfo().getQualifiedName() + ":" + value.getProperty("name") + ":" +
+          value.getProperty("numSeats") + ":" + detail;
+    }).toList()) + "])";
+  }
+
+  private static String overriddenValues(PModule module) {
+    var theClass = (PObject) module.getProperty("theClass");
+    var bar = (Collection<?>) theClass.getProperty("bar");
+    var derived = String.join(",", bar.stream().map(item -> {
+          var value = (PObject) item;
+          return value.getClassInfo().getQualifiedName() + ":" + value.getProperty("prop1") + ":" +
+              value.getProperty("prop2");
+        }).toList());
+    var base = String.join(",", bar.stream().map(item -> {
+          var value = (PObject) item;
+          return value.getClassInfo().getQualifiedName() + ":" + value.getProperty("prop1");
+        }).toList());
+    return "override(type=" + theClass.getClassInfo().getQualifiedName() + ";bar=[" + derived +
+        "];base=[" + base + "])";
+  }
+
+  private static String conversionMatrix(Evaluator evaluator, Path fixtures) {
+    var mapper = ValueMapper.preconfigured();
+    var versions = evaluator.evaluate(ModuleSource.path(fixtures.resolve("BindingConversions.pkl")));
+    var semanticVersion = versions.getProperty("semanticVersion");
+    var duration = new Duration(100, DurationUnit.MINUTES);
+    var regex = Pattern.compile("(?i)\\w*");
+    var bytes = new byte[] {0, 1, 127, (byte) 128, (byte) 255};
+    var javaDuration = mapper.map(duration, java.time.Duration.class);
+    return "identity[pnull=" + (mapper.map(PNull.getInstance(), PNull.class) == PNull.getInstance()) +
+        ";bool=" + mapper.map(true, boolean.class) +
+        ";string=" + mapper.map("value", String.class) +
+        ";int=" + mapper.map(42L, long.class) +
+        ";float=" + doubleBits(mapper.map(3.25d, double.class)) +
+        ";duration=" + mapper.map(duration, Duration.class).getUnit().getSymbol() +
+        ";bytes=" + bytes(mapper.map(bytes, byte[].class)) + "]" +
+        ";numeric[int8=" + mapper.map(42L, byte.class) +
+        ",int16=" + mapper.map(42L, short.class) +
+        ",int32=" + mapper.map(42L, int.class) +
+        ",int64=" + mapper.map(42L, long.class) +
+        ",float32=" + floatBits(mapper.map(42L, float.class)) +
+        ",float64=" + doubleBits(mapper.map(42L, double.class)) +
+        ",bigint=" + mapper.map(42L, BigInteger.class) +
+        ",decimal=" + mapper.map(42L, BigDecimal.class).toPlainString() +
+        ",from-float32=" + floatBits(mapper.map(3.25d, float.class)) +
+        ",from-float-decimal=" + mapper.map(3.25d, BigDecimal.class).toPlainString() + "]" +
+        ";misc[char=" + mapper.map("x", Character.class) +
+        ",uri=" + mapper.map("relative/path", URI.class) +
+        ",url=" + mapper.map("https://example.test/path", URL.class) +
+        ",file=" + mapper.map("relative/path", File.class) +
+        ",path=" + mapper.map("relative/path", Path.class) +
+        ",regex=" + mapper.map("(?i)\\w*", Pattern.class).pattern() +
+        ",regex-string=" + mapper.map(regex, String.class) +
+        ",duration=" + javaDuration.getSeconds() + ":" + javaDuration.getNano() +
+        ",version=" + mapper.map(semanticVersion, org.pkl.core.Version.class) +
+        ",version-string=" + mapper.map(semanticVersion, String.class) +
+        ",parsed-version=" + mapper.map("2.3.4-beta+5", org.pkl.core.Version.class) +
+        ",duration-unit=" + mapper.map("min", DurationUnit.class).getSymbol() +
+        ",data-size-unit=" + mapper.map("gb", DataSizeUnit.class).getSymbol() + "]";
+  }
+
+  private static String collectionMatrix() {
+    var mapper = ValueMapper.preconfigured();
+    int[] array = mapper.map(List.of(1L, 2L, 3L), int[].class);
+    List<Float> list = mapper.map(List.of(1.0d, 2.0d, 3.25d), Types.listOf(Float.class));
+    java.util.Set<String> set = mapper.map(List.of("beta", "alpha", "beta"), Types.setOf(String.class));
+    var sourceMap = new java.util.LinkedHashMap<Long, Object>();
+    sourceMap.put(1L, 2L);
+    sourceMap.put(2L, 4.5d);
+    Map<Integer, Double> map = mapper.map(sourceMap, Types.mapOf(Integer.class, Double.class));
+    Pair<Integer, Duration> pair = mapper.map(
+        new Pair<>(1L, new Duration(3, DurationUnit.SECONDS)),
+        Types.pairOf(Integer.class, Duration.class));
+    Map<String, List<Integer>> nested = mapper.map(
+        Map.of("items", List.of(4L, 5L)),
+        Types.mapOf(String.class, Types.listOf(Integer.class)));
+    List<String> nullable = mapper.map(
+        List.of("value", PNull.getInstance()), Types.listOf(String.class));
+    var customMapper = ValueMapperBuilder.preconfigured()
+        .addConversion(Conversion.of(PClassInfo.Int, String.class,
+            (value, ignored) -> value.toString()))
+        .build();
+    Map<String, String> custom = customMapper.map(
+        Map.of("answer", 42L), Types.mapOf(String.class, String.class));
+    return "collections[array=" + java.util.Arrays.stream(array).mapToObj(String::valueOf)
+        .collect(java.util.stream.Collectors.joining(",")) +
+        ";list=" + list.stream().map(SchemaUpstreamOracle::floatBits)
+            .collect(java.util.stream.Collectors.joining(",")) +
+        ";set=" + set.stream().sorted().collect(java.util.stream.Collectors.joining(",")) +
+        ";map=" + map.entrySet().stream().map(entry -> entry.getKey() + "=" + doubleBits(entry.getValue()))
+            .sorted().collect(java.util.stream.Collectors.joining(",")) +
+        ";pair=" + pair.getFirst() + ":" + pair.getSecond().getValue() + "@" +
+            pair.getSecond().getUnit().getSymbol() +
+        ";nested=" + nested.get("items").stream().map(String::valueOf)
+            .collect(java.util.stream.Collectors.joining(",")) +
+        ";nullable=" + nullable.get(0) + ":" + (nullable.get(1) == null ? "null" : "unexpected") +
+        ";custom=" + custom.get("answer") + "]";
+  }
+
+  private static String floatBits(float value) {
+    return String.format("%08x", Float.floatToIntBits(value));
+  }
+
+  private static String doubleBits(double value) {
+    return String.format("%016x", Double.doubleToLongBits(value));
+  }
+
+  private static void writeBindingFailures(
+      BufferedWriter writer, Evaluator evaluator, Path fixtures) throws Exception {
     var mapper = ValueMapper.preconfigured();
     observeBindingFailure(writer, "binding/incompatible-scalar", "String->Int32",
         () -> mapper.map("bad", Integer.class));
@@ -290,16 +447,40 @@ public final class SchemaUpstreamOracle {
         () -> mapper.map(Map.of("bad", 1L), Types.mapOf(String.class, String.class)));
     observeBindingFailure(writer, "binding/nested-pair", "Pair<String,Int>->Pair<String,String>",
         () -> mapper.map(new Pair<>("left", 1L), Types.pairOf(String.class, String.class)));
+    observeBindingFailure(writer, "binding/invalid-character", "String->Char",
+        () -> mapper.map("too long", Character.class));
+    observeBindingFailure(writer, "binding/invalid-uri", "String->Uri",
+        () -> mapper.map("http://[invalid", URI.class));
+    observeBindingFailure(writer, "binding/invalid-regex", "String->Regex",
+        () -> mapper.map("[", Pattern.class));
+    observeBindingFailure(writer, "binding/duration-overflow", "Duration->TimeSpan",
+        () -> mapper.map(new Duration(Double.POSITIVE_INFINITY, DurationUnit.SECONDS),
+            java.time.Duration.class));
+    var versions = evaluator.evaluate(ModuleSource.path(fixtures.resolve("BindingConversions.pkl")));
+    observeBindingFailure(writer, "binding/version-overflow", "VersionObject->Version",
+        () -> mapper.map(versions.getProperty("oversizedSemanticVersion"), org.pkl.core.Version.class));
+    observeBindingFailure(writer, "binding/invalid-version", "String->Version",
+        () -> mapper.map("not-a-version", org.pkl.core.Version.class));
+    observeBindingFailure(writer, "binding/invalid-unit", "String->DurationUnit",
+        () -> mapper.map("fortnight", DurationUnit.class));
+    var custom = ValueMapperBuilder.preconfigured()
+        .addConversion(Conversion.of(PClassInfo.Int, String.class, (value, ignored) -> {
+          throw new ConversionException("deliberate custom conversion failure");
+        })).build();
+    observeBindingFailure(writer, "binding/custom-conversion", "Int->CustomString",
+        () -> custom.map(42L, String.class));
   }
 
   private static void observeBindingFailure(
       BufferedWriter writer, String id, String contract, Runnable action) throws Exception {
+    var failed = false;
     try {
       action.run();
-      throw new IllegalStateException(id + " unexpectedly mapped successfully");
-    } catch (ConversionException expected) {
-      write(writer, id, "BINDING_FAILURE", "conversion-failed(" + contract + ")");
+    } catch (RuntimeException expected) {
+      failed = true;
     }
+    if (!failed) throw new IllegalStateException(id + " unexpectedly mapped successfully");
+    write(writer, id, "BINDING_FAILURE", "conversion-failed(" + contract + ")");
   }
 
   private static String schema(ModuleSchema schema) {

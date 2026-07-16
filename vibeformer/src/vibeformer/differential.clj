@@ -283,7 +283,13 @@
     "binding.constructors-settable-members"
     "binding.nested-generics-nullability"
     "binding.custom-loaders"
-    "binding.unknown-incompatible-cycles"})
+    "binding.unknown-incompatible-cycles"
+    "codegen.polymorphism-overrides"
+    "codegen.overridden-properties"
+    "binding.complete-conversion-matrix"
+    "binding.value-model-conversions"
+    "binding.collection-matrix"
+    "binding.nullable-matrix"})
 
 (defn- verify-contract-evidence!
   [root ^Path evidence]
@@ -471,7 +477,9 @@
                     (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
         (let [generated-files
               (mapv #(paths/resolve-path generated-root %)
-                    ["ContractBase.g.cs" "ContractImported.g.cs" "ContractMain.g.cs"])]
+                    ["ContractBase.g.cs" "ContractImported.g.cs" "ContractMain.g.cs"
+                     "PolymorphicLib.g.cs" "PolymorphicModuleTest.g.cs"
+                     "OverriddenProperty.g.cs"])]
           (doseq [^Path source generated-files]
             (when-not (paths/regular-file? source)
               (fail! "Package generator did not emit an expected C# source" {:path (str source)}))
@@ -500,13 +508,14 @@
                 (when (str/blank? binding-report)
                   (fail! "Generated consumer did not retain focused binding diagnostics"
                          {:path (str binding-diagnostics)}))
-                {:summary {:schemas 3
+                {:summary {:schemas 6
                            :generated-files (count generated-files)
                            :observations (:matched comparison)
                            :generated-contract-observations 1
                            :codegen-failure-observations 6
-                           :independent-binding-failure-observations 6
-                           :binding-failure-cases 12
+                           :binding-observations 2
+                           :independent-binding-failure-observations 14
+                           :binding-failure-cases 21
                            :contract-evidence evidence-summary
                            :perturbation-detected-at (get-in perturbation [:mismatch :line])}
                  :oracle-output oracle-output

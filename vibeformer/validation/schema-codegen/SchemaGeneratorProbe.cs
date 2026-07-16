@@ -20,16 +20,24 @@ static class SchemaGeneratorProbe
         using var evaluator = Evaluator.Preconfigured();
         using var writer = new StreamWriter(args[2], false, Utf8);
         var generator = new CSharpGenerator();
-        foreach (string file in new[] { "ContractBase.pkl", "ContractImported.pkl", "ContractMain.pkl" })
+        foreach (string file in new[]
+        {
+            "ContractBase.pkl", "ContractImported.pkl", "ContractMain.pkl",
+            "PolymorphicLib.pkl", "PolymorphicModuleTest.pkl", "OverriddenProperty.pkl"
+        })
         {
             var schema = evaluator.EvaluateSchema(ModuleSource.PathFromPath(Path.Combine(fixtures, file)));
             if (file == "ContractMain.pkl") CheckRepresentativeContract(schema);
+            if (file == "PolymorphicModuleTest.pkl") CheckPolymorphicContract(schema);
+            if (file == "OverriddenProperty.pkl") CheckOverriddenContract(schema);
             string first = generator.Generate(schema);
             string second = generator.Generate(schema);
             Check(first == second, "repeated generation differs for " + file);
             File.WriteAllText(Path.Combine(generated, Path.GetFileNameWithoutExtension(file) + ".g.cs"), first, Utf8);
             Write(writer, "schema/" + file, "SCHEMA", Schema(schema));
             if (file == "ContractMain.pkl") CheckRepresentativeOutput(first);
+            if (file == "PolymorphicModuleTest.pkl") CheckPolymorphicOutput(first);
+            if (file == "OverriddenProperty.pkl") CheckOverriddenOutput(first);
         }
 
         var diagnostics = new List<string>();
@@ -110,8 +118,34 @@ static class SchemaGeneratorProbe
             "global::System.Collections.Generic.IReadOnlyDictionary<string, long>",
             "global::Pkl.Core.Pair<string, long>",
             "[global::Pkl.Core.PklName(\"first-name\")]",
+            "[global::Pkl.Core.PklQualifiedName(\"contract.main#Service\")]",
             "IPklGeneratedLoader<Main>"
         }) Check(source.Contains(expected, StringComparison.Ordinal), "missing generated contract: " + expected);
+    }
+
+    static void CheckPolymorphicOutput(string source)
+    {
+        foreach (string expected in new[]
+        {
+            "namespace Com.Example.PolymorphicModuleTest;",
+            "public abstract partial class Dessert",
+            "[global::Pkl.Core.PklQualifiedName(\"com.example.PolymorphicModuleTest#Strudel\")]",
+            "public sealed partial class Strudel : Dessert",
+            "global::System.Collections.Generic.IReadOnlyList<Dessert> Desserts",
+            "global::System.Collections.Generic.IReadOnlyList<global::Com.Example.Lib.Airplane> Planes"
+        }) Check(source.Contains(expected, StringComparison.Ordinal), "missing polymorphic generated contract: " + expected);
+    }
+
+    static void CheckOverriddenOutput(string source)
+    {
+        foreach (string expected in new[]
+        {
+            "namespace Com.Example.OverriddenProperty;",
+            "public abstract partial class BaseClass",
+            "public sealed partial class TheClass : BaseClass",
+            "public new required global::System.Collections.Generic.IReadOnlyList<Bar> Bar",
+            "public sealed partial class Bar : BaseBar"
+        }) Check(source.Contains(expected, StringComparison.Ordinal), "missing overridden generated contract: " + expected);
     }
 
     static string Schema(ModuleSchema schema)
@@ -215,6 +249,30 @@ static class SchemaGeneratorProbe
         var service = schema.GetClasses()["Service"];
         Check(service.GetAnnotations().Count == 1, "class annotation contract");
         Check(service.GetProperties()["name"].GetAnnotations().Count == 1, "property annotation contract");
+    }
+
+    static void CheckPolymorphicContract(ModuleSchema schema)
+    {
+        var dessert = schema.GetClasses()["Dessert"];
+        Check(dessert.IsAbstract(), "abstract polymorphic base contract");
+        Check(schema.GetClasses()["Strudel"].GetSuperclass() == dessert,
+            "local concrete polymorphic subtype contract");
+        var planes = schema.GetModuleClass().GetProperties()["planes"].GetType() as PType.Class;
+        var airplane = planes?.GetTypeArguments().SingleOrDefault() as PType.Class;
+        Check(airplane?.GetPClass().GetQualifiedName() == "com.example.lib#Airplane",
+            "imported polymorphic base contract");
+    }
+
+    static void CheckOverriddenContract(ModuleSchema schema)
+    {
+        var baseClass = schema.GetClasses()["BaseClass"];
+        var derived = schema.GetClasses()["TheClass"];
+        Check(derived.GetSuperclass() == baseClass, "overridden property superclass contract");
+        Check(baseClass.GetProperties().ContainsKey("bar") && derived.GetProperties().ContainsKey("bar"),
+            "overridden property is declared in both schema classes");
+        Check(TypeValue(baseClass.GetProperties()["bar"].GetType()) !=
+              TypeValue(derived.GetProperties()["bar"].GetType()),
+            "overridden property narrows its schema type");
     }
 
     static string Modifiers(Member value) =>

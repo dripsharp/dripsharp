@@ -7,7 +7,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -21,6 +23,15 @@ public sealed class PklNameAttribute : Attribute
 {
     public PklNameAttribute(string name) => Name = name ?? throw new ArgumentNullException(nameof(name));
     public string Name { get; }
+}
+
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Enum,
+                Inherited = false)]
+public sealed class PklQualifiedNameAttribute : Attribute
+{
+    public PklQualifiedNameAttribute(string qualifiedName) =>
+        QualifiedName = qualifiedName ?? throw new ArgumentNullException(nameof(qualifiedName));
+    public string QualifiedName { get; }
 }
 
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, Inherited = true)]
@@ -46,10 +57,16 @@ public interface IPklGeneratedLoader<out T>
 public sealed class ConfigBinderOptions
 {
     private readonly Dictionary<Type, object> generatedLoaders = new();
+    private readonly List<CustomConversion> conversions = new();
+    private readonly Dictionary<(Type BaseType, string QualifiedName), Type> typeMappings = new();
+
+    private sealed record CustomConversion(
+        Type SourceType, Type TargetType, Func<object, ConfigBinder, object?> Convert);
 
     public bool IgnoreUnknownProperties { get; set; }
     public bool PropertyNamesCaseInsensitive { get; set; }
     public bool UseGeneratedLoaders { get; set; } = true;
+    public bool AllowLossyNumericConversions { get; set; }
 
     public ConfigBinderOptions AddGeneratedLoader<T>(IPklGeneratedLoader<T> loader)
     {
@@ -58,14 +75,50 @@ public sealed class ConfigBinderOptions
         return this;
     }
 
+    public ConfigBinderOptions AddConversion<TSource, TTarget>(
+        Func<TSource, ConfigBinder, TTarget> conversion)
+    {
+        ArgumentNullException.ThrowIfNull(conversion);
+        conversions.RemoveAll(item => item.SourceType == typeof(TSource) && item.TargetType == typeof(TTarget));
+        conversions.Add(new CustomConversion(typeof(TSource), typeof(TTarget),
+            (value, binder) => conversion((TSource)value, binder)));
+        return this;
+    }
+
+    public ConfigBinderOptions AddTypeMapping<TBase, TDerived>(string pklQualifiedName)
+        where TDerived : TBase
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pklQualifiedName);
+        var derived = typeof(TDerived);
+        if (derived.IsAbstract || derived.IsInterface || derived.ContainsGenericParameters)
+            throw new ArgumentException($"Mapped type {derived.FullName} must be a closed, constructible type.",
+                nameof(TDerived));
+        typeMappings[(typeof(TBase), pklQualifiedName)] = derived;
+        return this;
+    }
+
     internal bool TryGetGeneratedLoader(Type type, out object loader) =>
         generatedLoaders.TryGetValue(type, out loader!);
+
+    internal bool TryGetConversion(object value, Type targetType,
+        out Func<object, ConfigBinder, object?> conversion)
+    {
+        var sourceType = value.GetType();
+        var match = conversions.LastOrDefault(item => item.TargetType == targetType &&
+            item.SourceType.IsAssignableFrom(sourceType));
+        conversion = match?.Convert!;
+        return match is not null;
+    }
+
+    internal bool TryGetTypeMapping(Type baseType, string qualifiedName, out Type derivedType) =>
+        typeMappings.TryGetValue((baseType, qualifiedName), out derivedType!);
 }
 
 public sealed class ConfigBinder
 {
     private static readonly NullabilityInfoContext Nullability = new();
     private readonly ConfigBinderOptions options;
+    private readonly Dictionary<(Type BaseType, string QualifiedName), Type?> discoveredTypeMappings = new();
 
     private sealed class BindingNullability
     {
@@ -114,10 +167,33 @@ public sealed class ConfigBinder
     private object? BindCore(object? value, Type targetType, string path, ISet<object> active,
         bool allowsNull, bool skipGeneratedLoader = false, BindingNullability? nullability = null)
     {
+        if (value is not null && options.TryGetConversion(value, targetType, out var conversion))
+        {
+            try
+            {
+                var converted = conversion(value, this);
+                if (converted is null)
+                {
+                    if (Nullable.GetUnderlyingType(targetType) is not null || allowsNull) return null;
+                    throw Error(path, value, targetType, "the custom conversion returned null");
+                }
+                if (!targetType.IsInstanceOfType(converted) && Nullable.GetUnderlyingType(targetType) is null)
+                    throw Error(path, value, targetType,
+                        $"the custom conversion returned incompatible type {converted.GetType().FullName}");
+                return converted;
+            }
+            catch (PklBindException) { throw; }
+            catch (Exception error)
+            {
+                throw Error(path, value, targetType, "the custom conversion failed", error);
+            }
+        }
+
         if (!skipGeneratedLoader && TryGetGeneratedLoader(targetType, out var loader))
             return InvokeGeneratedLoader(loader, value, targetType, path);
 
         var nullableType = Nullable.GetUnderlyingType(targetType);
+        if (targetType == typeof(PNull) && ReferenceEquals(value, PNull.GetInstance())) return value;
         if (value is null || ReferenceEquals(value, PNull.GetInstance()))
         {
             if (nullableType is not null || allowsNull) return null;
@@ -127,19 +203,41 @@ public sealed class ConfigBinder
         if (nullableType is not null)
             return BindCore(value, nullableType, path, active, allowsNull: false,
                 nullability: nullability?.GenericArgument(0));
+
+        targetType = ResolvePolymorphicTarget(value, targetType, path);
         if (targetType == typeof(object) ||
             (targetType.IsInstanceOfType(value) && !RequiresRecursiveBinding(targetType))) return value;
 
         if (targetType.GetCustomAttribute<PklTypeAliasAttribute>() is not null)
             return BindAlias(value, targetType, path, active);
         if (targetType == typeof(string))
-            return value is string text ? text : throw Error(path, value, targetType, "the source is not a string");
+            return value switch
+            {
+                string text => text,
+                Regex regex => regex.ToString(),
+                PObject pklObject when IsSemanticVersion(pklObject) => SemanticVersionString(pklObject),
+                _ => throw Error(path, value, targetType, "the source is not a string, Regex, or semantic Version")
+            };
         if (targetType == typeof(Uri))
             return value is string uri ? CreateUri(uri, path, targetType) :
                 throw Error(path, value, targetType, "the source is not a string URI");
+        if (targetType == typeof(FileInfo))
+            return value is string file ? CreateFileInfo(file, path, targetType) :
+                throw Error(path, value, targetType, "the source is not a string path");
         if (targetType == typeof(Regex))
             return value is string pattern ? CreateRegex(pattern, path, targetType) :
                 throw Error(path, value, targetType, "the source is not a Regex or string pattern");
+        if (targetType == typeof(TimeSpan))
+            return value is Duration duration ? CreateTimeSpan(duration, path, targetType) :
+                throw Error(path, value, targetType, "the source is not a Pkl Duration");
+        if (targetType == typeof(Version) && value is string version)
+            return CreateVersion(version, path, targetType);
+        if (targetType == typeof(DurationUnit) && value is string durationUnit)
+            return DurationUnit.Parse(durationUnit) ??
+                throw Error(path, value, targetType, $"`{durationUnit}` is not a Pkl duration unit");
+        if (targetType == typeof(DataSizeUnit) && value is string dataSizeUnit)
+            return DataSizeUnit.Parse(dataSizeUnit) ??
+                throw Error(path, value, targetType, $"`{dataSizeUnit}` is not a Pkl data-size unit");
         if (targetType == typeof(byte[]) && value is sbyte[] signedBytes)
             return signedBytes.Select(item => unchecked((byte)item)).ToArray();
         if (targetType == typeof(sbyte[]) && value is byte[] bytes)
@@ -166,6 +264,36 @@ public sealed class ConfigBinder
             throw Error(path, value, targetType, "the source is not a Pkl object or string-keyed mapping");
         return Track(value, targetType, path, active,
             () => BindObject(properties, targetType, path, active));
+    }
+
+    private Type ResolvePolymorphicTarget(object value, Type targetType, string path)
+    {
+        if (value is not PObject pklObject) return targetType;
+        var qualifiedName = pklObject.GetClassInfo().GetQualifiedName();
+        if (options.TryGetTypeMapping(targetType, qualifiedName, out var configured)) return configured;
+
+        var key = (targetType, qualifiedName);
+        if (!discoveredTypeMappings.TryGetValue(key, out var discovered))
+        {
+            var candidates = targetType.Assembly.GetTypes()
+                .Where(type => !type.IsAbstract && !type.IsInterface && !type.ContainsGenericParameters &&
+                    targetType.IsAssignableFrom(type) &&
+                    string.Equals(type.GetCustomAttribute<PklQualifiedNameAttribute>()?.QualifiedName,
+                        qualifiedName, StringComparison.Ordinal))
+                .OrderBy(type => type.FullName, StringComparer.Ordinal).ToArray();
+            if (candidates.Length > 1)
+                throw Error(path, value, targetType, $"multiple generated types map Pkl class `{qualifiedName}`: " +
+                    string.Join(", ", candidates.Select(type => type.FullName)));
+            discovered = candidates.SingleOrDefault();
+            discoveredTypeMappings[key] = discovered;
+        }
+        if (discovered is not null) return discovered;
+
+        var declaredName = targetType.GetCustomAttribute<PklQualifiedNameAttribute>()?.QualifiedName;
+        if (declaredName is not null && !string.Equals(declaredName, qualifiedName, StringComparison.Ordinal))
+            throw Error(path, value, targetType,
+                $"Pkl class `{qualifiedName}` does not match generated target `{declaredName}`");
+        return targetType;
     }
 
     private bool TryGetGeneratedLoader(Type targetType, out object loader)
@@ -309,24 +437,21 @@ public sealed class ConfigBinder
 
     private static IReadOnlyList<MemberInfo> WritableMembers(Type targetType, string path)
     {
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;
-        var candidates = targetType.GetProperties(flags)
-            .Where(item => item.SetMethod is not null && item.GetIndexParameters().Length == 0 &&
-                           item.GetCustomAttribute<PklIgnoreAttribute>() is null)
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly;
+        var hierarchy = TypeHierarchy(targetType).ToArray();
+        var candidates = hierarchy.SelectMany(type => type.GetProperties(flags)
+                .Where(item => item.SetMethod is not null && item.GetIndexParameters().Length == 0 &&
+                               item.GetCustomAttribute<PklIgnoreAttribute>() is null))
             .Cast<MemberInfo>()
-            .Concat(targetType.GetFields(flags).Where(item => !item.IsInitOnly &&
-                item.GetCustomAttribute<PklIgnoreAttribute>() is null))
+            .Concat(hierarchy.SelectMany(type => type.GetFields(flags).Where(item => !item.IsInitOnly &&
+                item.GetCustomAttribute<PklIgnoreAttribute>() is null)))
             .OrderByDescending(item => InheritanceDepth(item.DeclaringType))
             .ThenBy(item => item.Name, StringComparer.Ordinal).ToArray();
-        var selected = new Dictionary<string, MemberInfo>(StringComparer.Ordinal);
-        foreach (var member in candidates)
-        {
-            var name = PklName(member);
-            if (!selected.TryGetValue(name, out var prior)) selected[name] = member;
-            else if (prior.DeclaringType == member.DeclaringType)
-                throw new PklBindException($"Cannot bind {path} to {targetType.FullName}: multiple writable members map to `{name}`.");
-        }
-        return selected.Values.OrderBy(PklName, StringComparer.Ordinal).ToArray();
+        foreach (var group in candidates.GroupBy(PklName, StringComparer.Ordinal))
+            if (group.GroupBy(item => item.DeclaringType).Any(items => items.Count() > 1))
+                throw new PklBindException($"Cannot bind {path} to {targetType.FullName}: multiple writable members map to `{group.Key}`.");
+        return candidates.OrderBy(PklName, StringComparer.Ordinal)
+            .ThenByDescending(item => InheritanceDepth(item.DeclaringType)).ToArray();
     }
 
     private object BindCollection(object value, Type targetType, Type elementType, string path,
@@ -421,7 +546,7 @@ public sealed class ConfigBinder
         throw Error(path, value, targetType, $"`{text}` is not a declared enum value");
     }
 
-    private static object BindNumber(object value, Type targetType, string path)
+    private object BindNumber(object value, Type targetType, string path)
     {
         try
         {
@@ -433,7 +558,7 @@ public sealed class ConfigBinder
         catch (ArithmeticException error) { throw Error(path, value, targetType, error.Message, error); }
     }
 
-    private static object ConvertInteger(long value, Type targetType)
+    private object ConvertInteger(long value, Type targetType)
     {
         checked
         {
@@ -446,30 +571,48 @@ public sealed class ConfigBinder
             if (targetType == typeof(long)) return value;
             if (targetType == typeof(ulong)) return (ulong)value;
             if (targetType == typeof(decimal)) return (decimal)value;
+            if (targetType == typeof(BigInteger)) return new BigInteger(value);
         }
         if (targetType == typeof(double))
         {
             var result = (double)value;
-            if ((long)result != value) throw new ArithmeticException("the conversion would lose integer precision");
+            if (!options.AllowLossyNumericConversions && (long)result != value)
+                throw new ArithmeticException("the conversion would lose integer precision");
             return result;
         }
         if (targetType == typeof(float))
         {
             var result = (float)value;
-            if ((long)result != value) throw new ArithmeticException("the conversion would lose integer precision");
+            if (!options.AllowLossyNumericConversions && (long)result != value)
+                throw new ArithmeticException("the conversion would lose integer precision");
             return result;
         }
         throw new InvalidOperationException("unsupported numeric target");
     }
 
-    private static object ConvertFloating(double value, Type targetType)
+    private object ConvertFloating(double value, Type targetType)
     {
         if (targetType == typeof(double)) return value;
         if (targetType == typeof(float))
         {
             var result = checked((float)value);
-            if ((double)result != value) throw new ArithmeticException("the conversion would lose floating-point precision");
+            if (!options.AllowLossyNumericConversions && (double)result != value)
+                throw new ArithmeticException("the conversion would lose floating-point precision");
             return result;
+        }
+        if (targetType == typeof(decimal))
+        {
+            if (!double.IsFinite(value)) throw new OverflowException();
+            var result = checked((decimal)value);
+            if (!options.AllowLossyNumericConversions && (double)result != value)
+                throw new ArithmeticException("the conversion would lose floating-point precision");
+            return result;
+        }
+        if (targetType == typeof(BigInteger))
+        {
+            if (!double.IsFinite(value) || Math.Truncate(value) != value)
+                throw new ArithmeticException("a non-integral Pkl Float cannot be converted to an integral target");
+            return new BigInteger(value);
         }
         if (!double.IsFinite(value) || Math.Truncate(value) != value)
             throw new ArithmeticException("a non-integral Pkl Float cannot be converted to an integral target");
@@ -484,10 +627,50 @@ public sealed class ConfigBinder
         catch (UriFormatException error) { throw Error(path, value, targetType, "invalid URI", error); }
     }
 
+    private static FileInfo CreateFileInfo(string value, string path, Type targetType)
+    {
+        try { return new FileInfo(value); }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
+        { throw Error(path, value, targetType, "invalid file path", error); }
+    }
+
     private static Regex CreateRegex(string value, string path, Type targetType)
     {
         try { return new Regex(value); }
         catch (ArgumentException error) { throw Error(path, value, targetType, "invalid regular expression", error); }
+    }
+
+    private static TimeSpan CreateTimeSpan(Duration value, string path, Type targetType)
+    {
+        try { return value.ToJavaDuration(); }
+        catch (ArithmeticException error)
+        { throw Error(path, value, targetType, "the Pkl Duration is outside the TimeSpan range", error); }
+    }
+
+    private static Version CreateVersion(string value, string path, Type targetType)
+    {
+        try { return Version.Parse(value); }
+        catch (ArgumentException error)
+        { throw Error(path, value, targetType, "invalid semantic version", error); }
+    }
+
+    private static bool IsSemanticVersion(PObject value) =>
+        string.Equals(value.GetClassInfo().GetQualifiedName(), "pkl.semver#Version", StringComparison.Ordinal);
+
+    private static string SemanticVersionString(PObject value)
+    {
+        var properties = value.GetProperties();
+        var result = new StringBuilder()
+            .Append(Convert.ToString(properties["major"], CultureInfo.InvariantCulture)).Append('.')
+            .Append(Convert.ToString(properties["minor"], CultureInfo.InvariantCulture)).Append('.')
+            .Append(Convert.ToString(properties["patch"], CultureInfo.InvariantCulture));
+        if (properties.TryGetValue("preRelease", out var preRelease) &&
+            preRelease is not null && !ReferenceEquals(preRelease, PNull.GetInstance()))
+            result.Append('-').Append((string)preRelease);
+        if (properties.TryGetValue("build", out var build) &&
+            build is not null && !ReferenceEquals(build, PNull.GetInstance()))
+            result.Append('+').Append((string)build);
+        return result.ToString();
     }
 
     private static bool TryGetProperties(object value, out IReadOnlyDictionary<string, object?> result)
@@ -550,7 +733,8 @@ public sealed class ConfigBinder
         type != typeof(byte[]) && type != typeof(sbyte[]) &&
         (TryGetPairTypes(type, out _, out _) || TryGetDictionaryTypes(type, out _, out _) ||
          TryGetCollectionElementType(type, out _));
-    private static bool IsNumeric(Type type) => Type.GetTypeCode(type) is >= TypeCode.SByte and <= TypeCode.Decimal;
+    private static bool IsNumeric(Type type) => type == typeof(BigInteger) ||
+        Type.GetTypeCode(type) is >= TypeCode.SByte and <= TypeCode.Decimal;
     private static string PklName(MemberInfo member) => member.GetCustomAttribute<PklNameAttribute>()?.Name ?? member.Name;
     private static string PklName(ParameterInfo parameter) => parameter.GetCustomAttribute<PklNameAttribute>()?.Name ?? parameter.Name!;
     private static bool IsRequired(MemberInfo member) => member.GetCustomAttribute<PklRequiredAttribute>() is not null ||
@@ -566,6 +750,11 @@ public sealed class ConfigBinder
             .Distinct(StringComparer.Ordinal);
     }
     private static int InheritanceDepth(Type? type) { var depth = 0; while (type is not null) { depth++; type = type.BaseType; } return depth; }
+    private static IEnumerable<Type> TypeHierarchy(Type type)
+    {
+        for (Type? current = type; current is not null && current != typeof(object); current = current.BaseType)
+            yield return current;
+    }
     private static string ConstructorSignature(ConstructorInfo constructor) =>
         string.Join("|", constructor.GetParameters().Select(item => item.ParameterType.FullName + ":" + PklName(item)));
     private static string FormatPathKey(object? value) => value is string text ? "\"" + text.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"" :
@@ -654,7 +843,7 @@ public sealed class CSharpGenerator
     private readonly HashSet<string> enumAliases = new(StringComparer.Ordinal);
 
     private readonly record struct MemberDeclaration(
-        string Symbol, string Description, bool IsInherited, bool HidesInherited);
+        string Symbol, string Description, bool IsInherited, string? PklName);
 
     public CSharpGenerator(CSharpGeneratorOptions? options = null) =>
         this.options = options ?? new CSharpGeneratorOptions();
@@ -693,7 +882,7 @@ public sealed class CSharpGenerator
         EmitClass(output, schema.GetModuleClass(), moduleSymbol, moduleClass: true);
         foreach (var pClass in Ordered(schema.GetClasses()))
             EmitClass(output, pClass.Value, LocalClassSymbol(pClass.Value), moduleClass: false);
-        return output.ToString();
+        return output.ToString().TrimEnd('\n') + "\n";
     }
 
     private void RegisterLocal(string key, string symbol) => localTypes[key] = symbol;
@@ -715,6 +904,8 @@ public sealed class CSharpGenerator
         var literals = StringLiteralValues(alias.GetAliasedType());
         ValidateAliasMemberCollisions(alias, name, literals);
         output.Append("[global::Pkl.Core.PklName(\"").Append(Escape(alias.GetSimpleName())).Append("\")]\n");
+        output.Append("[global::Pkl.Core.PklQualifiedName(\"").Append(Escape(alias.GetQualifiedName()))
+            .Append("\")]\n");
         if (literals is not null)
         {
             output.Append("public enum ").Append(name).Append("\n{\n");
@@ -738,16 +929,16 @@ public sealed class CSharpGenerator
     {
         var declarations = new List<MemberDeclaration>
         {
-            new(name, $"containing type `{name}`", IsInherited: false, HidesInherited: false)
+            new(name, $"containing type `{name}`", IsInherited: false, PklName: null)
         };
         if (literals is not null)
         {
             declarations.AddRange(literals.Select(value => new MemberDeclaration(
-                ToIdentifier(value), $"enum value `{value}`", IsInherited: false, HidesInherited: false)));
+                ToIdentifier(value), $"enum value `{value}`", IsInherited: false, PklName: value)));
         }
         else
         {
-            declarations.Add(new("Value", "generated property `Value`", IsInherited: false, HidesInherited: false));
+            declarations.Add(new("Value", "generated property `Value`", IsInherited: false, PklName: null));
             AddGeneratedLoaderDeclarations(declarations, moduleClass: false);
         }
         ThrowMemberCollisions($"type alias `{alias.GetQualifiedName()}`", declarations);
@@ -757,6 +948,8 @@ public sealed class CSharpGenerator
     {
         EmitDocs(output, pClass.GetDocComment());
         output.Append("[global::Pkl.Core.PklName(\"").Append(Escape(moduleClass ? moduleName : pClass.GetSimpleName()))
+            .Append("\")]\n");
+        output.Append("[global::Pkl.Core.PklQualifiedName(\"").Append(Escape(pClass.GetQualifiedName()))
             .Append("\")]\n");
         var typeParameters = moduleClass ? "" : TypeParameters(pClass.GetTypeParameters());
         output.Append("public ");
@@ -775,8 +968,14 @@ public sealed class CSharpGenerator
             EmitDocs(output, property.GetInheritedDocComment(), "    ");
             output.Append("    [global::Pkl.Core.PklName(\"").Append(Escape(property.GetSimpleName())).Append("\")]\n")
                 .Append("    [global::Pkl.Core.PklRequired]\n")
-                .Append("    public required ").Append(TypeName(property.GetType())).Append(' ')
-                .Append(ToIdentifier(property.GetSimpleName())).Append(" { get; init; }\n\n");
+                .Append("    public ");
+            if (HasInheritedProperty(pClass, property.GetSimpleName())) output.Append("new ");
+            var useRequiredKeyword = !pClass.IsOpen() && !pClass.IsAbstract();
+            if (useRequiredKeyword) output.Append("required ");
+            output.Append(TypeName(property.GetType())).Append(' ')
+                .Append(ToIdentifier(property.GetSimpleName())).Append(" { get; init; }");
+            if (!useRequiredKeyword) output.Append(" = default!;");
+            output.Append("\n\n");
         }
         EmitLoader(output, name + typeParameters, moduleClass, baseType is not null, "    ");
         output.Append("}\n\n");
@@ -787,11 +986,11 @@ public sealed class CSharpGenerator
     {
         var declarations = new List<MemberDeclaration>
         {
-            new(name, $"containing type `{name}`", IsInherited: false, HidesInherited: false)
+            new(name, $"containing type `{name}`", IsInherited: false, PklName: null)
         };
         declarations.AddRange(properties.Select(entry => new MemberDeclaration(
             ToIdentifier(entry.Value.GetSimpleName()), $"property `{entry.Value.GetSimpleName()}`",
-            IsInherited: false, HidesInherited: true)));
+            IsInherited: false, PklName: entry.Value.GetSimpleName())));
         AddGeneratedLoaderDeclarations(declarations, moduleClass);
 
         for (var superclass = owner.GetSuperclass();
@@ -804,20 +1003,31 @@ public sealed class CSharpGenerator
                 .Select(entry => new MemberDeclaration(
                     ToIdentifier(entry.Value.GetSimpleName()),
                     $"inherited property `{entry.Value.GetSimpleName()}` from `{inheritedOwner.GetQualifiedName()}`",
-                    IsInherited: true, HidesInherited: false)));
+                    IsInherited: true, PklName: entry.Value.GetSimpleName())));
         }
         ThrowMemberCollisions($"`{owner.GetQualifiedName()}`", declarations);
+    }
+
+    private static bool HasInheritedProperty(PClass owner, string pklName)
+    {
+        for (var superclass = owner.GetSuperclass();
+             superclass is not null && !superclass.GetInfo().IsStandardLibraryClass();
+             superclass = superclass.GetSuperclass())
+            if (superclass.GetProperties().Values.Any(property =>
+                    string.Equals(property.GetSimpleName(), pklName, StringComparison.Ordinal)))
+                return true;
+        return false;
     }
 
     private void AddGeneratedLoaderDeclarations(
         ICollection<MemberDeclaration> declarations, bool moduleClass)
     {
         if (!options.EmitGeneratedLoaders) return;
-        declarations.Add(new("PklLoader", "generated property `PklLoader`", IsInherited: false, HidesInherited: true));
-        declarations.Add(new("GeneratedLoader", "generated nested type `GeneratedLoader`", IsInherited: false, HidesInherited: true));
-        declarations.Add(new("FromPkl", "generated method `FromPkl`", IsInherited: false, HidesInherited: true));
+        declarations.Add(new("PklLoader", "generated property `PklLoader`", IsInherited: false, PklName: null));
+        declarations.Add(new("GeneratedLoader", "generated nested type `GeneratedLoader`", IsInherited: false, PklName: null));
+        declarations.Add(new("FromPkl", "generated method `FromPkl`", IsInherited: false, PklName: null));
         if (moduleClass)
-            declarations.Add(new("Load", "generated method `Load`", IsInherited: false, HidesInherited: true));
+            declarations.Add(new("Load", "generated method `Load`", IsInherited: false, PklName: null));
     }
 
     private static void ThrowMemberCollisions(
@@ -827,8 +1037,9 @@ public sealed class CSharpGenerator
             .Where(group =>
             {
                 var current = group.Where(item => !item.IsInherited).ToArray();
-                return current.Length > 1 ||
-                    group.Any(item => item.IsInherited) && current.Any(item => item.HidesInherited);
+                var inherited = group.Where(item => item.IsInherited).ToArray();
+                return current.Length > 1 || current.Any(candidate => inherited.Any(prior =>
+                    !string.Equals(candidate.PklName, prior.PklName, StringComparison.Ordinal)));
             })
             .Select(group => $"member collision in {owner} for `{group.Key}`: " +
                 string.Join(", ", group.Select(item => item.Description)
