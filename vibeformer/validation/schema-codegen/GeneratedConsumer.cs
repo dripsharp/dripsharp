@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using Contract.Main;
 using Pkl.Core;
@@ -101,11 +102,152 @@ static class GeneratedConsumer
         Check(generated.Class.Event == "created" && generated.Class.FirstName == "Ada", "quoted identifiers");
 
         using (var writer = new StreamWriter(args[1], append: true, Utf8))
+        {
+            Write(writer, "generated/contract", "GENERATED_CONTRACT", GeneratedContract());
             Write(writer, "values/ContractMain.pkl", "VALUES", Values(generated));
+            WriteSelectedBindingFailures(writer);
+        }
 
         RunFocusedBindingFailures(evaluator, args[2]);
         Console.WriteLine("Independently compiled generated C# binding consumer passed.");
     }
+
+    static string GeneratedContract()
+    {
+        var generatedTypes = typeof(global::Contract.Main.Main).Assembly.GetTypes()
+            .Where(type => type.IsPublic && type.Namespace is not null &&
+                type.Namespace.StartsWith("Contract.", StringComparison.Ordinal) &&
+                type.GetCustomAttribute<PklNameAttribute>() is not null)
+            .OrderBy(type => CanonicalType(type, null), StringComparer.Ordinal);
+        return "types=[" + string.Join(";", generatedTypes.Select(GeneratedType)) + "]";
+    }
+
+    static string GeneratedType(Type type)
+    {
+        string clrName = CanonicalType(type, null);
+        string pklName = type.GetCustomAttribute<PklNameAttribute>()!.Name;
+        bool alias = type.GetCustomAttribute<PklTypeAliasAttribute>() is not null;
+        string kind = type.IsEnum ? "enum" : alias ? "alias" : "class";
+        string parameters = "[" + string.Join(",", type.GetGenericArguments()
+            .Where(item => item.IsGenericParameter).Select(item => item.Name)) + "]";
+        string properties;
+        string enumValues;
+        if (type.IsEnum)
+        {
+            properties = "[]";
+            enumValues = "[" + string.Join(",", type.GetFields(BindingFlags.Public | BindingFlags.Static)
+                .OrderBy(field => field.MetadataToken)
+                .Select(field => field.Name + "=" + field.GetCustomAttribute<PklNameAttribute>()!.Name)) + "]";
+        }
+        else if (alias)
+        {
+            var value = type.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException(clrName + " has no alias Value property");
+            properties = "[Value:" + CanonicalType(value.PropertyType,
+                new NullabilityInfoContext().Create(value)) + "]";
+            enumValues = "[]";
+        }
+        else
+        {
+            var nullability = new NullabilityInfoContext();
+            properties = "[" + string.Join(",", type.GetProperties(
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Select(property => new
+                {
+                    Property = property,
+                    Name = property.GetCustomAttribute<PklNameAttribute>()
+                })
+                .Where(item => item.Name is not null)
+                .OrderBy(item => item.Name!.Name, StringComparer.Ordinal)
+                .Select(item => item.Name!.Name + "=" + item.Property.Name + ":" +
+                    CanonicalType(item.Property.PropertyType, nullability.Create(item.Property)) +
+                    ":required=" + Lower(item.Property.GetCustomAttribute<PklRequiredAttribute>() is not null))) + "]";
+            enumValues = "[]";
+        }
+
+        Type? baseType = type.IsValueType || type.BaseType == typeof(object) ? null : type.BaseType;
+        return "type(clr=" + clrName + ";pkl=" + pklName + ";kind=" + kind +
+            ";value=" + Lower(type.IsValueType && !type.IsEnum) +
+            ";sealed=" + Lower(type.IsSealed) +
+            ";abstract=" + Lower(type.IsAbstract && !type.IsSealed) +
+            ";base=" + (baseType is null ? "System.Object" : CanonicalType(baseType, null)) +
+            ";parameters=" + parameters +
+            ";properties=" + properties +
+            ";enum=" + enumValues +
+            ";loader=" + Lower(HasGeneratedLoader(type)) +
+            ";fromPkl=" + Lower(HasDeclaredStaticMethod(type, "FromPkl")) +
+            ";load=" + Lower(HasDeclaredStaticMethod(type, "Load")) + ")";
+    }
+
+    static bool HasGeneratedLoader(Type type)
+    {
+        var property = type.GetProperty("PklLoader", BindingFlags.Public | BindingFlags.Static |
+            BindingFlags.DeclaredOnly);
+        return property is not null && property.PropertyType.IsGenericType &&
+            property.PropertyType.GetGenericTypeDefinition() == typeof(IPklGeneratedLoader<>) &&
+            property.PropertyType.GetGenericArguments()[0] == type;
+    }
+
+    static bool HasDeclaredStaticMethod(Type type, string name) =>
+        type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Any(method => method.Name == name);
+
+    static string CanonicalType(Type type, NullabilityInfo? nullability)
+    {
+        if (type.IsArray)
+            return CanonicalType(type.GetElementType()!, nullability?.ElementType) + "[]";
+        if (type.IsGenericParameter)
+            return type.Name + NullableSuffix(type, nullability);
+        string name = type.IsGenericType
+            ? type.GetGenericTypeDefinition().FullName!.Split('`')[0]
+            : type.FullName!;
+        if (type.IsGenericType)
+        {
+            var arguments = type.GetGenericArguments();
+            var nullabilityArguments = nullability?.GenericTypeArguments ?? Array.Empty<NullabilityInfo>();
+            name += "<" + string.Join(",", arguments.Select((argument, index) =>
+                CanonicalType(argument, index < nullabilityArguments.Length
+                    ? nullabilityArguments[index]
+                    : null))) + ">";
+        }
+        return name + NullableSuffix(type, nullability);
+    }
+
+    static string NullableSuffix(Type type, NullabilityInfo? nullability) =>
+        !type.IsValueType && nullability?.ReadState == NullabilityState.Nullable ? "?" : "";
+
+    static void WriteSelectedBindingFailures(StreamWriter writer)
+    {
+        var binder = new ConfigBinder();
+        ObserveBindingFailure(writer, "binding/incompatible-scalar", "String->Int32",
+            () => binder.Bind<int>("bad"));
+        ObserveBindingFailure(writer, "binding/integer-overflow", "Int->Int32",
+            () => binder.Bind<int>(long.MaxValue));
+        ObserveBindingFailure(writer, "binding/non-nullable", "Null->Int32",
+            () => binder.Bind<int>(PNull.GetInstance()));
+        ObserveBindingFailure(writer, "binding/nested-list", "List<Int>->List<String>",
+            () => binder.Bind<IReadOnlyList<string>>(new List<object?> { 1L }));
+        ObserveBindingFailure(writer, "binding/nested-map", "Map<String,Int>->Map<String,String>",
+            () => binder.Bind<IReadOnlyDictionary<string, string>>(
+                new Dictionary<string, object?> { ["bad"] = 1L }));
+        ObserveBindingFailure(writer, "binding/nested-pair", "Pair<String,Int>->Pair<String,String>",
+            () => binder.Bind<Pair<string, string>>(new Pair<object?, object?>("left", 1L)));
+    }
+
+    static void ObserveBindingFailure(StreamWriter writer, string id, string contract, Action action)
+    {
+        try
+        {
+            action();
+            throw new InvalidOperationException(id + " unexpectedly bound successfully");
+        }
+        catch (PklBindException)
+        {
+            Write(writer, id, "BINDING_FAILURE", "conversion-failed(" + contract + ")");
+        }
+    }
+
+    static string Lower(bool value) => value ? "true" : "false";
 
     static void RunFocusedBindingFailures(Evaluator evaluator, string diagnosticsFile)
     {

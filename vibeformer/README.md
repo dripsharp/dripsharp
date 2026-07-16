@@ -138,7 +138,14 @@ local text/byte resources; module security denial; collection, bytes, and regex
 runtime values; four normalized error classes; and `Duration`, `DataSize`,
 `Pair`, `PNull`, `PClassInfo`, and `ModuleSource` behavior. Each core case gets a
 fresh evaluator, and neither package probe loads generated sources or shares
-runtime state with its oracle. Both comparisons deliberately perturb an oracle
-result to prove mismatches are detected. Proof outputs are retained under
+runtime state with its oracle. The core gate also compiles and runs separate
+package-reference-only generator and generated-consumer projects. A JVM oracle
+independently compares three normalized schemas, six code-generation failures,
+the reflected contract of the compiled generated types, representative bound
+values, and six binding failures. The generated consumer uses an isolated
+package cache, nullable analysis, and warnings as errors; it evaluates through
+the emitted loaders without project references or manual source edits. All
+comparisons deliberately perturb an oracle result to prove mismatches are
+detected. Proof outputs are retained under
 `validation-output/differential-proof` even while later generation cleans the
 disposable `target` tree.

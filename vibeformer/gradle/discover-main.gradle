@@ -30,6 +30,11 @@ gradle.projectsEvaluated {
         def previewFeatures = compileJava.options.compilerArgs.contains("--enable-preview")
         def records = []
 
+        // Gradle may leave this output absent when a project has no resources.
+        // The manifest still records a concrete resource root, so materialize
+        // the empty directory before validating it on the consumer side.
+        processResources.destinationDir.mkdirs()
+
         records.add(["project-path", projectPath])
         records.add(["java-home", javaHome])
         records.add(["java-release", javaRelease])
@@ -46,8 +51,10 @@ gradle.projectsEvaluated {
             .matching { include("**/*.java") }
             .files.each { records.add(["source", it]) }
         }
-        processResources.destinationDir.eachFileRecurse { resource ->
-          if (resource.isFile()) records.add(["resource", resource])
+        if (processResources.destinationDir.isDirectory()) {
+          processResources.destinationDir.eachFileRecurse { resource ->
+            if (resource.isFile()) records.add(["resource", resource])
+          }
         }
         main.compileClasspath.files.findAll { it.exists() }.each {
           records.add(["classpath", it])

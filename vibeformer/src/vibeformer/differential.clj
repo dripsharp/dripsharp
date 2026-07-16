@@ -371,8 +371,27 @@
         oracle-output (paths/resolve-path proof-root "upstream.tsv")
         package-output (paths/resolve-path proof-root "package.tsv")
         perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
-        compile-classpath (str/join File/pathSeparator (map str entries))
-        classpath (str/join File/pathSeparator (map str (cons oracle-classes entries)))
+        config-manifest (paths/resolve-path proof-root "pkl-config-java-main-inputs.tsv")
+        config-discovery (project/discover-main!
+                          {:workspace-root root
+                           :manifest config-manifest
+                           :project-root "research/pkl"
+                           :gradle-project ":pkl-config-java"
+                           :run-command! run-command!})
+        config-classes (paths/resolve-path root "research" "pkl" "pkl-config-java"
+                                           "build" "classes" "java" "main")
+        oracle-entries (vec (distinct (concat [config-classes] entries
+                                              (:classpath config-discovery))))
+        toolchain-check
+        (when-not (and (= java-release (:java-release config-discovery))
+                       (= (paths/absolute java-home)
+                          (paths/absolute (:java-home config-discovery))))
+          (fail! "Pkl.Core and pkl-config-java oracle toolchains differ"
+                 {:core {:java-release java-release :java-home (str java-home)}
+                  :config {:java-release (:java-release config-discovery)
+                           :java-home (str (:java-home config-discovery))}}))
+        compile-classpath (str/join File/pathSeparator (map str oracle-entries))
+        classpath (str/join File/pathSeparator (map str (cons oracle-classes oracle-entries)))
         javac (paths/resolve-path java-home "bin" "javac")
         java (paths/resolve-path java-home "bin" "java")
         generator-root (doto (paths/resolve-path proof-root "package-generator")
@@ -477,29 +496,16 @@
                        {:output (:output consumer-run)}))
               (let [comparison (assert-equal! "Pkl schema/codegen/binding" oracle-output package-output)
                     perturbation (prove-perturbation! oracle-output perturbed-output)
-                    expected-binding
-                    (str "constructor-and-members=passed\n"
-                         "metadata-options=passed\n"
-                         "custom-loader=passed\n"
-                         "unknown=$\n"
-                         "incompatible=$.count\n"
-                         "missing=$\n"
-                         "overflow=$.count\n"
-                         "nullability=$.name\n"
-                         "nested-list-nullability=$.values[1]\n"
-                         "nested-map-nullability=$.mapping[\"bad\"]\n"
-                         "nested-pair-nullability=$.pair.second\n"
-                         "nullable-nested-generics=passed\n"
-                         "numeric-exactness=passed\n"
-                         "cycle=$.next\n"
-                         "disposed=passed\n")]
-                (when-not (= expected-binding (Files/readString binding-diagnostics))
-                  (fail! "Binding failure proof differs from the pinned deterministic contract"
-                         {:expected expected-binding
-                          :actual (Files/readString binding-diagnostics)}))
+                    binding-report (Files/readString binding-diagnostics)]
+                (when (str/blank? binding-report)
+                  (fail! "Generated consumer did not retain focused binding diagnostics"
+                         {:path (str binding-diagnostics)}))
                 {:summary {:schemas 3
                            :generated-files (count generated-files)
                            :observations (:matched comparison)
+                           :generated-contract-observations 1
+                           :codegen-failure-observations 6
+                           :independent-binding-failure-observations 6
                            :binding-failure-cases 12
                            :contract-evidence evidence-summary
                            :perturbation-detected-at (get-in perturbation [:mismatch :line])}

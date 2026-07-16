@@ -33,15 +33,9 @@ static class SchemaGeneratorProbe
         }
 
         var diagnostics = new List<string>();
-        CheckDiagnostics(generator, evaluator, fixtures, "Collision.pkl", diagnostics,
-            "symbol collision `FooBar`: class:contract.collision#foo bar, class:contract.collision#foo-bar");
-        CheckDiagnostics(generator, evaluator, fixtures, "GeneratedMemberCollision.pkl", diagnostics,
-            "member collision in `contract.generatedMemberCollision#ModuleClass` for `FromPkl`: generated method `FromPkl`, property `fromPkl`",
-            "member collision in `contract.generatedMemberCollision#ModuleClass` for `GeneratedLoader`: generated nested type `GeneratedLoader`, property `generatedLoader`",
-            "member collision in `contract.generatedMemberCollision#ModuleClass` for `Load`: generated method `Load`, property `load`",
-            "member collision in `contract.generatedMemberCollision#ModuleClass` for `PklLoader`: generated property `PklLoader`, property `pklLoader`");
-        CheckDiagnostics(generator, evaluator, fixtures, "InheritedMemberCollision.pkl", diagnostics,
-            "member collision in `contract.inheritedMemberCollision#Derived` for `BaseValue`: inherited property `base-value` from `contract.inheritedMemberCollision#Base`, property `base value`");
+        CheckDiagnostics(generator, evaluator, fixtures, "Collision.pkl", diagnostics, writer);
+        CheckDiagnostics(generator, evaluator, fixtures, "GeneratedMemberCollision.pkl", diagnostics, writer);
+        CheckDiagnostics(generator, evaluator, fixtures, "InheritedMemberCollision.pkl", diagnostics, writer);
         File.WriteAllLines(args[3], diagnostics, Utf8);
 
         var generatedMemberSchema = evaluator.EvaluateSchema(
@@ -74,9 +68,24 @@ static class SchemaGeneratorProbe
     }
 
     static void CheckDiagnostics(CSharpGenerator generator, Evaluator evaluator, string fixtures,
-        string file, ICollection<string> output, params string[] expected)
+        string file, ICollection<string> output, StreamWriter observations)
     {
         var schema = evaluator.EvaluateSchema(ModuleSource.PathFromPath(Path.Combine(fixtures, file)));
+        var first = GenerateDiagnostics(generator, schema, file);
+        var second = GenerateDiagnostics(generator, schema, file);
+        Check(first.SequenceEqual(second), file + " diagnostics changed across repeated generation:\n" +
+            string.Join("\n", first) + "\n---\n" + string.Join("\n", second));
+        Check(first.Count > 0, file + " produced no collision diagnostics");
+        for (int index = 0; index < first.Count; index++)
+        {
+            string diagnostic = first[index];
+            output.Add(file + ": " + diagnostic);
+            Write(observations, "codegen/" + file + "/" + index, "CODEGEN_FAILURE", diagnostic);
+        }
+    }
+
+    static IReadOnlyList<string> GenerateDiagnostics(CSharpGenerator generator, ModuleSchema schema, string file)
+    {
         try
         {
             generator.Generate(schema);
@@ -84,9 +93,7 @@ static class SchemaGeneratorProbe
         }
         catch (CSharpGenerationException error)
         {
-            Check(error.Diagnostics.SequenceEqual(expected), file + " diagnostics differ:\n" +
-                string.Join("\n", error.Diagnostics));
-            foreach (string diagnostic in error.Diagnostics) output.Add(file + ": " + diagnostic);
+            return error.Diagnostics.ToArray();
         }
     }
 

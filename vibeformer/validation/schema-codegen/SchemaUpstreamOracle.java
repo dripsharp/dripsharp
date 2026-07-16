@@ -8,8 +8,10 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.regex.Pattern;
+import org.pkl.config.java.mapper.ConversionException;
+import org.pkl.config.java.mapper.Types;
+import org.pkl.config.java.mapper.ValueMapper;
 import org.pkl.core.DataSize;
 import org.pkl.core.Duration;
 import org.pkl.core.Evaluator;
@@ -34,13 +36,269 @@ public final class SchemaUpstreamOracle {
     var fixtures = Path.of(args[0]).toAbsolutePath();
     try (var evaluator = Evaluator.preconfigured();
         var writer = Files.newBufferedWriter(Path.of(args[1]), StandardCharsets.UTF_8)) {
+      var schemas = new ArrayList<ModuleSchema>();
       for (var file : List.of("ContractBase.pkl", "ContractImported.pkl", "ContractMain.pkl")) {
         var schema = evaluator.evaluateSchema(ModuleSource.path(fixtures.resolve(file)));
+        schemas.add(schema);
         if (file.equals("ContractMain.pkl")) checkRepresentativeContract(schema);
         write(writer, "schema/" + file, "SCHEMA", schema(schema));
       }
+      writeCodegenFailures(writer, evaluator, fixtures);
+      write(writer, "generated/contract", "GENERATED_CONTRACT", generatedContract(schemas));
       var module = evaluator.evaluate(ModuleSource.path(fixtures.resolve("ContractMain.pkl")));
       write(writer, "values/ContractMain.pkl", "VALUES", values(module));
+      writeBindingFailures(writer);
+    }
+  }
+
+  private static void writeCodegenFailures(
+      BufferedWriter writer, Evaluator evaluator, Path fixtures) throws Exception {
+    var collision = evaluator.evaluateSchema(ModuleSource.path(fixtures.resolve("Collision.pkl")));
+    var collisionGroups = new java.util.TreeMap<String, List<String>>();
+    for (var value : collision.getClasses().values()) {
+      collisionGroups.computeIfAbsent(symbol(value.getSimpleName()), ignored -> new ArrayList<>())
+          .add("class:" + value.getQualifiedName());
+    }
+    var collisionDiagnostics = new ArrayList<String>();
+    for (var entry : collisionGroups.entrySet()) {
+      if (entry.getValue().size() < 2) continue;
+      entry.getValue().sort(String::compareTo);
+      collisionDiagnostics.add("symbol collision `" + entry.getKey() + "`: " +
+          String.join(", ", entry.getValue()));
+    }
+    writeDiagnostics(writer, "Collision.pkl", collisionDiagnostics);
+
+    var generated = evaluator.evaluateSchema(
+        ModuleSource.path(fixtures.resolve("GeneratedMemberCollision.pkl")));
+    var generatedMembers = Map.of(
+        "FromPkl", "generated method `FromPkl`",
+        "GeneratedLoader", "generated nested type `GeneratedLoader`",
+        "Load", "generated method `Load`",
+        "PklLoader", "generated property `PklLoader`");
+    var generatedDiagnostics = new ArrayList<String>();
+    generated.getModuleClass().getProperties().values().stream()
+        .sorted(Comparator.comparing(property -> symbol(property.getSimpleName())))
+        .forEach(property -> {
+          var mapped = symbol(property.getSimpleName());
+          var generatedMember = generatedMembers.get(mapped);
+          if (generatedMember != null) {
+            generatedDiagnostics.add("member collision in `" +
+                generated.getModuleClass().getQualifiedName() + "` for `" + mapped + "`: " +
+                generatedMember + ", property `" + property.getSimpleName() + "`");
+          }
+        });
+    writeDiagnostics(writer, "GeneratedMemberCollision.pkl", generatedDiagnostics);
+
+    var inherited = evaluator.evaluateSchema(
+        ModuleSource.path(fixtures.resolve("InheritedMemberCollision.pkl")));
+    var inheritedDiagnostics = new ArrayList<String>();
+    for (var value : inherited.getClasses().values()) {
+      if (!(value.getSupertype() instanceof PType.Class supertype)) continue;
+      for (var property : value.getProperties().values()) {
+        for (var inheritedProperty : supertype.getPClass().getProperties().values()) {
+          var mapped = symbol(property.getSimpleName());
+          if (mapped.equals(symbol(inheritedProperty.getSimpleName()))) {
+            inheritedDiagnostics.add("member collision in `" + value.getQualifiedName() +
+                "` for `" + mapped + "`: inherited property `" +
+                inheritedProperty.getSimpleName() + "` from `" +
+                supertype.getPClass().getQualifiedName() + "`, property `" +
+                property.getSimpleName() + "`");
+          }
+        }
+      }
+    }
+    inheritedDiagnostics.sort(String::compareTo);
+    writeDiagnostics(writer, "InheritedMemberCollision.pkl", inheritedDiagnostics);
+  }
+
+  private static void writeDiagnostics(
+      BufferedWriter writer, String file, List<String> diagnostics) throws Exception {
+    check(!diagnostics.isEmpty(), file + " produced no independent codegen failure contract");
+    for (var index = 0; index < diagnostics.size(); index++) {
+      write(writer, "codegen/" + file + "/" + index, "CODEGEN_FAILURE", diagnostics.get(index));
+    }
+  }
+
+  private static String generatedContract(List<ModuleSchema> schemas) {
+    var types = new ArrayList<String>();
+    for (var schema : schemas) {
+      for (var alias : schema.getTypeAliases().values()) types.add(generatedAlias(alias));
+      types.add(generatedClass(schema.getModuleClass(), schema.getModuleName()));
+      for (var value : schema.getClasses().values()) {
+        types.add(generatedClass(value, value.getSimpleName()));
+      }
+    }
+    types.sort(Comparator.comparing(SchemaUpstreamOracle::contractClrName));
+    return "types=[" + String.join(";", types) + "]";
+  }
+
+  private static String contractClrName(String contract) {
+    var start = "type(clr=".length();
+    var end = contract.indexOf(';', start);
+    return contract.substring(start, end);
+  }
+
+  private static String generatedAlias(TypeAlias alias) {
+    var clrName = clrAliasName(alias);
+    var literals = stringLiterals(alias.getAliasedType());
+    if (literals != null) {
+      var enumValues = literals.stream()
+          .map(value -> symbol(value) + "=" + value)
+          .toList();
+      return generatedType(clrName, alias.getSimpleName(), "enum", false, true, false,
+          "System.Object", List.of(), List.of(), enumValues, false, false, false);
+    }
+    return generatedType(clrName, alias.getSimpleName(), "alias", true, true, false,
+        "System.Object", alias.getTypeParameters().stream().map(TypeParameter::getName).toList(),
+        List.of("Value:" + clrType(alias.getAliasedType())), List.of(), true, true, false);
+  }
+
+  private static String generatedClass(PClass value, String pklName) {
+    var properties = value.getProperties().values().stream()
+        .sorted(Comparator.comparing(Member::getSimpleName))
+        .map(property -> property.getSimpleName() + "=" + symbol(property.getSimpleName()) + ":" +
+            clrType(property.getType()) + ":required=true")
+        .toList();
+    var supertype = value.getSupertype();
+    var base = supertype instanceof PType.Class clazz &&
+        !clazz.getPClass().getQualifiedName().startsWith("pkl.base#")
+        ? clrClassName(clazz.getPClass()) : "System.Object";
+    return generatedType(clrClassName(value), pklName, "class", false,
+        !value.isOpen() && !value.isAbstract(), value.isAbstract(), base,
+        value.getTypeParameters().stream().map(TypeParameter::getName).toList(),
+        properties, List.of(), true, true, value.isModuleClass());
+  }
+
+  private static String generatedType(
+      String clrName, String pklName, String kind, boolean value, boolean sealed,
+      boolean abstractType, String base, List<String> parameters, List<String> properties,
+      List<String> enumValues, boolean loader, boolean fromPkl, boolean load) {
+    return "type(clr=" + clrName + ";pkl=" + pklName + ";kind=" + kind +
+        ";value=" + value + ";sealed=" + sealed + ";abstract=" + abstractType +
+        ";base=" + base + ";parameters=[" + String.join(",", parameters) +
+        "];properties=[" + String.join(",", properties) +
+        "];enum=[" + String.join(",", enumValues) +
+        "];loader=" + loader + ";fromPkl=" + fromPkl + ";load=" + load + ")";
+  }
+
+  private static List<String> stringLiterals(PType value) {
+    if (!(value instanceof PType.Union union)) return null;
+    var result = new ArrayList<String>();
+    for (var element : union.getElementTypes()) {
+      if (!(element instanceof PType.StringLiteral literal)) return null;
+      result.add(literal.getLiteral());
+    }
+    return result;
+  }
+
+  private static String clrType(PType value) {
+    if (value == null || value == PType.UNKNOWN || value == PType.NOTHING || value == PType.MODULE) {
+      return "System.Object";
+    }
+    if (value instanceof PType.StringLiteral) return "System.String";
+    if (value instanceof PType.Nullable nullable) return clrType(nullable.getBaseType()) + "?";
+    if (value instanceof PType.Constrained constrained) return clrType(constrained.getBaseType());
+    if (value instanceof PType.Alias alias) return clrAliasBaseName(alias.getTypeAlias()) +
+        clrTypeArguments(alias.getTypeArguments());
+    if (value instanceof PType.Function) return "System.Delegate";
+    if (value instanceof PType.Union) return "System.Object";
+    if (value instanceof PType.TypeVariable variable) return variable.getName();
+    if (!(value instanceof PType.Class clazz)) {
+      throw new IllegalArgumentException("Unsupported generated type contract: " + value.getClass());
+    }
+    var qualifiedName = clazz.getPClass().getQualifiedName();
+    var arguments = clazz.getTypeArguments();
+    return switch (qualifiedName) {
+      case "pkl.base#String" -> "System.String";
+      case "pkl.base#Int" -> "System.Int64";
+      case "pkl.base#Float" -> "System.Double";
+      case "pkl.base#Boolean" -> "System.Boolean";
+      case "pkl.base#List", "pkl.base#Listing" ->
+          "System.Collections.Generic.IReadOnlyList" + clrTypeArguments(arguments);
+      case "pkl.base#Set" ->
+          "System.Collections.Generic.IReadOnlySet" + clrTypeArguments(arguments);
+      case "pkl.base#Map", "pkl.base#Mapping" ->
+          "System.Collections.Generic.IReadOnlyDictionary" + clrTypeArguments(arguments);
+      case "pkl.base#Pair" -> "Pkl.Core.Pair" + clrTypeArguments(arguments);
+      case "pkl.base#Bytes" -> "System.Byte[]";
+      case "pkl.base#Regex" -> "System.Text.RegularExpressions.Regex";
+      case "pkl.base#Duration" -> "Pkl.Core.Duration";
+      case "pkl.base#DataSize" -> "Pkl.Core.DataSize";
+      default -> qualifiedName.startsWith("pkl.base#")
+          ? "System.Object" : clrClassName(clazz.getPClass()) + clrTypeArguments(arguments);
+    };
+  }
+
+  private static String clrTypeArguments(List<PType> arguments) {
+    return arguments.isEmpty() ? "" : "<" +
+        String.join(",", arguments.stream().map(SchemaUpstreamOracle::clrType).toList()) + ">";
+  }
+
+  private static String clrAliasName(TypeAlias alias) {
+    return clrAliasBaseName(alias) +
+        (alias.getTypeParameters().isEmpty() ? "" : "<" +
+            String.join(",", alias.getTypeParameters().stream().map(TypeParameter::getName).toList()) + ">");
+  }
+
+  private static String clrAliasBaseName(TypeAlias alias) {
+    return clrQualifiedName(alias.getModuleName(), alias.getSimpleName());
+  }
+
+  private static String clrClassName(PClass value) {
+    var simpleName = value.isModuleClass()
+        ? value.getModuleName().substring(value.getModuleName().lastIndexOf('.') + 1)
+        : value.getSimpleName();
+    return clrQualifiedName(value.getModuleName(), simpleName) +
+        (value.getTypeParameters().isEmpty() ? "" : "<" +
+            String.join(",", value.getTypeParameters().stream().map(TypeParameter::getName).toList()) + ">");
+  }
+
+  private static String clrQualifiedName(String moduleName, String simpleName) {
+    return java.util.Arrays.stream(moduleName.split("\\."))
+        .map(SchemaUpstreamOracle::symbol)
+        .collect(java.util.stream.Collectors.joining(".")) + "." + symbol(simpleName);
+  }
+
+  private static String symbol(String value) {
+    var result = new StringBuilder();
+    var capitalize = true;
+    for (var index = 0; index < value.length(); index++) {
+      var character = value.charAt(index);
+      if (!Character.isLetterOrDigit(character)) {
+        capitalize = true;
+      } else if (capitalize) {
+        result.append(Character.toUpperCase(character));
+        capitalize = false;
+      } else {
+        result.append(character);
+      }
+    }
+    return result.toString();
+  }
+
+  private static void writeBindingFailures(BufferedWriter writer) throws Exception {
+    var mapper = ValueMapper.preconfigured();
+    observeBindingFailure(writer, "binding/incompatible-scalar", "String->Int32",
+        () -> mapper.map("bad", Integer.class));
+    observeBindingFailure(writer, "binding/integer-overflow", "Int->Int32",
+        () -> mapper.map(Long.MAX_VALUE, Integer.class));
+    observeBindingFailure(writer, "binding/non-nullable", "Null->Int32",
+        () -> mapper.map(PNull.getInstance(), int.class));
+    observeBindingFailure(writer, "binding/nested-list", "List<Int>->List<String>",
+        () -> mapper.map(List.of(1L), Types.listOf(String.class)));
+    observeBindingFailure(writer, "binding/nested-map", "Map<String,Int>->Map<String,String>",
+        () -> mapper.map(Map.of("bad", 1L), Types.mapOf(String.class, String.class)));
+    observeBindingFailure(writer, "binding/nested-pair", "Pair<String,Int>->Pair<String,String>",
+        () -> mapper.map(new Pair<>("left", 1L), Types.pairOf(String.class, String.class)));
+  }
+
+  private static void observeBindingFailure(
+      BufferedWriter writer, String id, String contract, Runnable action) throws Exception {
+    try {
+      action.run();
+      throw new IllegalStateException(id + " unexpectedly mapped successfully");
+    } catch (ConversionException expected) {
+      write(writer, id, "BINDING_FAILURE", "conversion-failed(" + contract + ")");
     }
   }
 
