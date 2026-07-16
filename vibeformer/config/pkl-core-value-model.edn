@@ -73,4 +73,15 @@
   {:key "type:org.pkl.core.stdlib.test.report.JUnitReporter" :expand :public-api}
   {:key "type:org.pkl.core.stdlib.test.report.MinimalReporter" :expand :public-api}
   {:key "type:org.pkl.core.stdlib.test.report.SpecReporter" :expand :public-api}
-  {:key "type:org.pkl.core.util.CodeGeneratorUtils" :expand :public-api}]}
+  {:key "type:org.pkl.core.util.CodeGeneratorUtils" :expand :public-api}
+
+  ;; Schema traversal is a packaged product capability used by the tracked
+  ;; destination-side C# generator. Keep this seed set focused on the exact
+  ;; dependency-closed model rather than selecting unrelated library APIs.
+  {:key "type:org.pkl.core.ModuleSchema" :expand :public-api}
+  {:key "type:org.pkl.core.PClass" :expand :public-api}
+  {:key "type:org.pkl.core.PType" :expand :public-api}
+  {:key "type:org.pkl.core.TypeAlias" :expand :public-api}
+  {:key "type:org.pkl.core.TypeParameter" :expand :public-api}
+  {:key "type:org.pkl.core.Member" :expand :public-api}
+  {:key "type:org.pkl.core.Modifier" :expand :public-api}]}

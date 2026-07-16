@@ -1,0 +1,66 @@
+/// Representative schema and binding contract.
+module contract.main extends "ContractBase.pkl"
+
+import "ContractImported.pkl" as imported
+
+/// String-literal enum candidate, including a keyword and punctuation.
+typealias Direction = "north" | "south-east" | "class"
+
+/// Constrained scalar alias.
+typealias Email = String(contains("@"))
+
+/// Parameterized collection alias.
+typealias StringBag = List<String>
+
+/// A declared class with inherited, imported, aliased, nullable, constrained,
+/// union, collection, pair, and destination-runtime value shapes.
+class Service extends Entity {
+  name: String
+  endpoint: imported.Endpoint
+  direction: Direction
+  email: Email
+  maybe: String?
+  constrained: Int(isPositive)
+  choice: String | Int
+  tags: List<String>
+  listing: Listing<Int>
+  names: Set<String>
+  weights: Map<String, Int>
+  mapping: Mapping<String, String>
+  pair: Pair<String, Int>
+  bytes: Bytes
+  pattern: Regex
+  duration: Duration
+  size: DataSize
+}
+
+/// Quoted Pkl identifiers must map to deterministic valid C# symbols.
+class `HTTP service` {
+  `event`: String
+  `first-name`: String
+}
+
+service: Service = new {
+  id = "svc-1"
+  name = "orders"
+  endpoint = new imported.Endpoint { host = "localhost"; port = 8080 }
+  direction = "south-east"
+  email = "ops@example.test"
+  maybe = null
+  constrained = 7
+  choice = "ready"
+  tags = List("api", "stable")
+  listing = new { 2; 3; 5 }
+  names = Set("alpha", "beta")
+  weights = Map("primary", 10, "secondary", 5)
+  mapping = new { ["left"] = "right" }
+  pair = Pair("attempts", 3)
+  bytes = Bytes(0, 127, 128, 255)
+  pattern = Regex(#"^ord.+s$"#)
+  duration = 90.s
+  size = 2.kib
+}
+
+bag: StringBag = List("one", "two")
+
+`class`: `HTTP service` = new { `event` = "created"; `first-name` = "Ada" }

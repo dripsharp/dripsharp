@@ -1,0 +1,11 @@
+/// Base contract used to prove module and declared-class inheritance.
+open module contract.base
+
+/// A documented base entity.
+open class Entity {
+  /// Stable entity identifier.
+  id: String
+}
+
+/// A property inherited by the generated module class.
+baseName: String = "base"

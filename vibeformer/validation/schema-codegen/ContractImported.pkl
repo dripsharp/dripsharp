@@ -1,0 +1,8 @@
+/// Imported schema used by the main contract.
+module contract.imported
+
+/// Network endpoint declared in another module.
+class Endpoint {
+  host: String
+  port: Int
+}

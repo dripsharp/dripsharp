@@ -68,18 +68,18 @@
 
     (testing "the entire selected declaration and body closure is accounted for"
       (is (= 633 (:compilation-units summary)))
-      (is (= 635 (:generated-files summary)))
+      (is (= 636 (:generated-files summary)))
       (is (= 28 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 30037 (:declarations summary)))
+      (is (= 30081 (:declarations summary)))
       (is (= {:constructor 1144
               :enum-value 80
-              :field 3521
+              :field 3524
               :initializer 7
-              :method 8995
-              :parameter 13822
+              :method 9034
+              :parameter 13824
               :record-component 177
               :type 2141
               :type-parameter 150}
@@ -89,17 +89,17 @@
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 10787 (:executable-roots summary)))
+      (is (= 10826 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 442753
+      (is (= {:semantic 443418
               :fallback 0
-              :visited 1025104
+              :visited 1026612
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 582351
+              :structural 583194
               :blocked 0
-              :covered 1025104}
+              :covered 1026612}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))

@@ -30,5 +30,6 @@
  :namespace-prefixes {"org.pkl.core" "Pkl.Core"}
  :resources {}
  :project-references ["../pkl-parser/Pkl.Parser.csproj"]
- :runtime-sources ["vibeformer/runtime/Pkl.Core.Substrate.cs"]
+ :runtime-sources ["vibeformer/runtime/Pkl.Core.Substrate.cs"
+                   "vibeformer/runtime/Pkl.Core.DotNet.cs"]
  :resource-policy {:strategy :embedded-resource-preserve-path}}

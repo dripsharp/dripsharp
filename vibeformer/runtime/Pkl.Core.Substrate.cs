@@ -856,7 +856,7 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
     public class VirtualFrame : Frame
     {
         internal VirtualFrame(object?[]? arguments = null) : base(arguments) { }
-        protected VirtualFrame(object?[]? arguments, FrameDescriptor? descriptor) : base(arguments, descriptor) { }
+        internal VirtualFrame(object?[]? arguments, FrameDescriptor? descriptor) : base(arguments, descriptor) { }
         internal MaterializedFrame Materialize()
         {
             var result = new MaterializedFrame(Arguments, GetFrameDescriptor());
@@ -874,6 +874,7 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
     public sealed class FrameDescriptor
     {
         private readonly Dictionary<int, FrameSlotKind> slotKinds = new();
+        private readonly Dictionary<int, object?> slotNames = new();
         private readonly Dictionary<object, int> auxiliarySlots = new();
         private int slots;
 
@@ -885,7 +886,8 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
         internal IDictionary<object, int> GetAuxiliarySlots() => auxiliarySlots;
         internal int GetNumberOfSlots() => slots;
         internal int GetNumberOfAuxiliarySlots() => auxiliarySlots.Count;
-        internal object? GetSlotName(int slot) => auxiliarySlots.FirstOrDefault(entry => entry.Value == slot).Key;
+        internal object? GetSlotName(int slot) =>
+            slotNames.TryGetValue(slot, out var name) ? name : null;
         internal int FindOrAddAuxiliarySlot(object key)
         {
             if (auxiliarySlots.TryGetValue(key, out var slot)) return slot;
@@ -896,9 +898,23 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
         public sealed class Builder
         {
             private int slots;
+            private readonly Dictionary<int, FrameSlotKind> slotKinds = new();
+            private readonly Dictionary<int, object?> slotNames = new();
             internal Builder(int capacity) => slots = 0;
-            internal int AddSlot(FrameSlotKind kind, object identifier, object? info) => slots++;
-            internal FrameDescriptor Build() => new() { slots = slots };
+            internal int AddSlot(FrameSlotKind kind, object? identifier, object? info)
+            {
+                var slot = slots++;
+                slotKinds[slot] = kind;
+                slotNames[slot] = identifier;
+                return slot;
+            }
+            internal FrameDescriptor Build()
+            {
+                var result = new FrameDescriptor { slots = slots };
+                foreach (var entry in slotKinds) result.slotKinds[entry.Key] = entry.Value;
+                foreach (var entry in slotNames) result.slotNames[entry.Key] = entry.Value;
+                return result;
+            }
         }
     }
 }
@@ -1200,7 +1216,7 @@ namespace Pkl.Core.Runtime.Truffle.api
             root?.AdoptChildren();
         }
         internal virtual object? Call(params object?[] arguments) =>
-            root?.Execute(new VirtualFrame(arguments));
+            root?.Execute(new VirtualFrame(arguments, root.GetFrameDescriptor()));
         internal RootNode? GetRootNode() => root;
     }
 
@@ -1234,7 +1250,8 @@ namespace Pkl.Core.Runtime.Truffle.api
 
     public sealed class TruffleRuntime
     {
-        internal VirtualFrame CreateVirtualFrame(object?[] arguments, FrameDescriptor descriptor) => new(arguments);
+        internal VirtualFrame CreateVirtualFrame(object?[] arguments, FrameDescriptor descriptor) =>
+            new(arguments, descriptor);
         internal MaterializedFrame CreateMaterializedFrame(object?[] arguments) => new(arguments);
         internal IndirectCallNode CreateIndirectCallNode() => IndirectCallNode.GetUncached();
         internal RootCallTarget CreateCallTarget(RootNode root) => new(root);

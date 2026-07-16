@@ -1,0 +1,4 @@
+module contract.collision
+
+class `foo-bar` {}
+class `foo bar` {}

@@ -137,10 +137,18 @@
 
 (defn- wrap-casts [services children ^CtExpression expression node]
   (if (and (= 1 (count (.getTypeCasts expression)))
-           (= "java.util.List"
+           (= "java.lang.Appendable"
               (.getQualifiedName ^CtTypeReference (first (.getTypeCasts expression))))
-           (= 1 (count (.getActualTypeArguments ^CtTypeReference
-                                                (first (.getTypeCasts expression))))))
+           (= "java.lang.StringBuilder"
+              (some-> expression .getType .getQualifiedName)))
+    (sequence-node [(raw "((")
+                    (child-node children (first (.getTypeCasts expression)))
+                    (raw ")(") node (raw "))")])
+    (if (and (= 1 (count (.getTypeCasts expression)))
+             (= "java.util.List"
+                (.getQualifiedName ^CtTypeReference (first (.getTypeCasts expression))))
+             (= 1 (count (.getActualTypeArguments ^CtTypeReference
+                                                  (first (.getTypeCasts expression))))))
     (invoke
      (csharp/generic-name
       (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
@@ -163,7 +171,7 @@
                   (sequence-node [(raw "((") (child-node children cast)
                                   (raw ")((object)(") (null-forgiven value) (raw ")))")]))))
             node
-            (reverse (vec (.getTypeCasts expression)))))))
+            (reverse (vec (.getTypeCasts expression))))))))
 
 (defn- finish-expression [services children ^CtExpression expression node]
   (let [node (wrap-casts services children expression node)]
