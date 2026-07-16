@@ -1,0 +1,6 @@
+module contract.generatedMemberCollision
+
+pklLoader: String = "loader"
+generatedLoader: String = "nested"
+fromPkl: String = "factory"
+load: String = "module"

@@ -1,0 +1,9 @@
+module contract.inheritedMemberCollision
+
+open class Base {
+  `base-value`: String
+}
+
+class Derived extends Base {
+  `base value`: String
+}

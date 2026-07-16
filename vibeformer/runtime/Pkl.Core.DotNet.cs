@@ -653,6 +653,9 @@ public sealed class CSharpGenerator
     private readonly Dictionary<string, string> localTypes = new(StringComparer.Ordinal);
     private readonly HashSet<string> enumAliases = new(StringComparer.Ordinal);
 
+    private readonly record struct MemberDeclaration(
+        string Symbol, string Description, bool IsInherited, bool HidesInherited);
+
     public CSharpGenerator(CSharpGeneratorOptions? options = null) =>
         this.options = options ?? new CSharpGeneratorOptions();
 
@@ -710,20 +713,14 @@ public sealed class CSharpGenerator
         EmitDocs(output, alias.GetDocComment());
         var name = LocalAliasSymbol(alias);
         var literals = StringLiteralValues(alias.GetAliasedType());
+        ValidateAliasMemberCollisions(alias, name, literals);
         output.Append("[global::Pkl.Core.PklName(\"").Append(Escape(alias.GetSimpleName())).Append("\")]\n");
         if (literals is not null)
         {
             output.Append("public enum ").Append(name).Append("\n{\n");
-            var symbols = literals.Select(value => (Value: value, Symbol: ToIdentifier(value))).ToArray();
-            var collisions = symbols.GroupBy(item => item.Symbol, StringComparer.Ordinal)
-                .Where(group => group.Count() > 1)
-                .Select(group => $"enum `{alias.GetQualifiedName()}` value collision `{group.Key}`: " +
-                    string.Join(", ", group.Select(item => "`" + item.Value + "`").OrderBy(item => item, StringComparer.Ordinal)))
-                .ToArray();
-            if (collisions.Length != 0) throw new CSharpGenerationException(collisions);
-            foreach (var item in symbols)
-                output.Append("    [global::Pkl.Core.PklName(\"").Append(Escape(item.Value)).Append("\")]\n")
-                    .Append("    ").Append(item.Symbol).Append(",\n");
+            foreach (var value in literals)
+                output.Append("    [global::Pkl.Core.PklName(\"").Append(Escape(value)).Append("\")]\n")
+                    .Append("    ").Append(ToIdentifier(value)).Append(",\n");
             output.Append("}\n\n");
             return;
         }
@@ -734,6 +731,26 @@ public sealed class CSharpGenerator
         EmitLoader(output, name + TypeArguments(alias.GetTypeParameters()), moduleClass: false,
             hidesBaseMembers: false, indent: "    ");
         output.Append("}\n\n");
+    }
+
+    private void ValidateAliasMemberCollisions(
+        TypeAlias alias, string name, IReadOnlyList<string>? literals)
+    {
+        var declarations = new List<MemberDeclaration>
+        {
+            new(name, $"containing type `{name}`", IsInherited: false, HidesInherited: false)
+        };
+        if (literals is not null)
+        {
+            declarations.AddRange(literals.Select(value => new MemberDeclaration(
+                ToIdentifier(value), $"enum value `{value}`", IsInherited: false, HidesInherited: false)));
+        }
+        else
+        {
+            declarations.Add(new("Value", "generated property `Value`", IsInherited: false, HidesInherited: false));
+            AddGeneratedLoaderDeclarations(declarations, moduleClass: false);
+        }
+        ThrowMemberCollisions($"type alias `{alias.GetQualifiedName()}`", declarations);
     }
 
     private void EmitClass(StringBuilder output, PClass pClass, string name, bool moduleClass)
@@ -751,7 +768,7 @@ public sealed class CSharpGenerator
         output.Append("\n{\n");
 
         var properties = Ordered(pClass.GetProperties()).Where(entry => !entry.Value.IsHidden() && !entry.Value.IsExternal()).ToArray();
-        ValidatePropertyCollisions(pClass, properties);
+        ValidateMemberCollisions(pClass, name, properties, moduleClass);
         foreach (var entry in properties)
         {
             var property = entry.Value;
@@ -765,14 +782,58 @@ public sealed class CSharpGenerator
         output.Append("}\n\n");
     }
 
-    private void ValidatePropertyCollisions(PClass owner,
-        IReadOnlyList<KeyValuePair<string, PClass.Property>> properties)
+    private void ValidateMemberCollisions(PClass owner, string name,
+        IReadOnlyList<KeyValuePair<string, PClass.Property>> properties, bool moduleClass)
     {
-        var collisions = properties.GroupBy(entry => ToIdentifier(entry.Value.GetSimpleName()), StringComparer.Ordinal)
-            .Where(group => group.Count() > 1)
-            .Select(group => $"property collision in `{owner.GetQualifiedName()}` for `{group.Key}`: " +
-                string.Join(", ", group.Select(item => "`" + item.Value.GetSimpleName() + "`")
-                    .OrderBy(item => item, StringComparer.Ordinal))).ToArray();
+        var declarations = new List<MemberDeclaration>
+        {
+            new(name, $"containing type `{name}`", IsInherited: false, HidesInherited: false)
+        };
+        declarations.AddRange(properties.Select(entry => new MemberDeclaration(
+            ToIdentifier(entry.Value.GetSimpleName()), $"property `{entry.Value.GetSimpleName()}`",
+            IsInherited: false, HidesInherited: true)));
+        AddGeneratedLoaderDeclarations(declarations, moduleClass);
+
+        for (var superclass = owner.GetSuperclass();
+             superclass is not null && !superclass.GetInfo().IsStandardLibraryClass();
+             superclass = superclass.GetSuperclass())
+        {
+            var inheritedOwner = superclass;
+            declarations.AddRange(Ordered(inheritedOwner.GetProperties())
+                .Where(entry => !entry.Value.IsHidden() && !entry.Value.IsExternal())
+                .Select(entry => new MemberDeclaration(
+                    ToIdentifier(entry.Value.GetSimpleName()),
+                    $"inherited property `{entry.Value.GetSimpleName()}` from `{inheritedOwner.GetQualifiedName()}`",
+                    IsInherited: true, HidesInherited: false)));
+        }
+        ThrowMemberCollisions($"`{owner.GetQualifiedName()}`", declarations);
+    }
+
+    private void AddGeneratedLoaderDeclarations(
+        ICollection<MemberDeclaration> declarations, bool moduleClass)
+    {
+        if (!options.EmitGeneratedLoaders) return;
+        declarations.Add(new("PklLoader", "generated property `PklLoader`", IsInherited: false, HidesInherited: true));
+        declarations.Add(new("GeneratedLoader", "generated nested type `GeneratedLoader`", IsInherited: false, HidesInherited: true));
+        declarations.Add(new("FromPkl", "generated method `FromPkl`", IsInherited: false, HidesInherited: true));
+        if (moduleClass)
+            declarations.Add(new("Load", "generated method `Load`", IsInherited: false, HidesInherited: true));
+    }
+
+    private static void ThrowMemberCollisions(
+        string owner, IEnumerable<MemberDeclaration> declarations)
+    {
+        var collisions = declarations.GroupBy(item => item.Symbol, StringComparer.Ordinal)
+            .Where(group =>
+            {
+                var current = group.Where(item => !item.IsInherited).ToArray();
+                return current.Length > 1 ||
+                    group.Any(item => item.IsInherited) && current.Any(item => item.HidesInherited);
+            })
+            .Select(group => $"member collision in {owner} for `{group.Key}`: " +
+                string.Join(", ", group.Select(item => item.Description)
+                    .OrderBy(item => item, StringComparer.Ordinal)))
+            .ToArray();
         if (collisions.Length != 0) throw new CSharpGenerationException(collisions);
     }
 

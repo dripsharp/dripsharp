@@ -32,23 +32,62 @@ static class SchemaGeneratorProbe
             if (file == "ContractMain.pkl") CheckRepresentativeOutput(first);
         }
 
-        var collision = evaluator.EvaluateSchema(
-            ModuleSource.PathFromPath(Path.Combine(fixtures, "Collision.pkl")));
+        var diagnostics = new List<string>();
+        CheckDiagnostics(generator, evaluator, fixtures, "Collision.pkl", diagnostics,
+            "symbol collision `FooBar`: class:contract.collision#foo bar, class:contract.collision#foo-bar");
+        CheckDiagnostics(generator, evaluator, fixtures, "GeneratedMemberCollision.pkl", diagnostics,
+            "member collision in `contract.generatedMemberCollision#ModuleClass` for `FromPkl`: generated method `FromPkl`, property `fromPkl`",
+            "member collision in `contract.generatedMemberCollision#ModuleClass` for `GeneratedLoader`: generated nested type `GeneratedLoader`, property `generatedLoader`",
+            "member collision in `contract.generatedMemberCollision#ModuleClass` for `Load`: generated method `Load`, property `load`",
+            "member collision in `contract.generatedMemberCollision#ModuleClass` for `PklLoader`: generated property `PklLoader`, property `pklLoader`");
+        CheckDiagnostics(generator, evaluator, fixtures, "InheritedMemberCollision.pkl", diagnostics,
+            "member collision in `contract.inheritedMemberCollision#Derived` for `BaseValue`: inherited property `base-value` from `contract.inheritedMemberCollision#Base`, property `base value`");
+        File.WriteAllLines(args[3], diagnostics, Utf8);
+
+        var generatedMemberSchema = evaluator.EvaluateSchema(
+            ModuleSource.PathFromPath(Path.Combine(fixtures, "GeneratedMemberCollision.pkl")));
+        var exactGenerator = new CSharpGenerator(new CSharpGeneratorOptions
+        {
+            Namespace = "Pinned.Generated",
+            EmitDocComments = false,
+            EmitGeneratedLoaders = false
+        });
+        string exact = exactGenerator.Generate(generatedMemberSchema);
+        string expectedExact = File.ReadAllText(
+            Path.Combine(fixtures, "GeneratedMemberCollision.expected.cs.txt"), Utf8);
+        Check(exact == expectedExact, "exact configured generator output differs from the pinned contract");
+
+        var mainSchema = evaluator.EvaluateSchema(
+            ModuleSource.PathFromPath(Path.Combine(fixtures, "ContractMain.pkl")));
+        var mappedOptions = new CSharpGeneratorOptions { Namespace = "Pinned.Main" };
+        mappedOptions.NamespaceMappings["contract.base"] = "Pinned.Base";
+        mappedOptions.NamespaceMappings["contract.imported"] = "Pinned.Imported";
+        string mapped = new CSharpGenerator(mappedOptions).Generate(mainSchema);
+        foreach (string expected in new[]
+        {
+            "namespace Pinned.Main;",
+            "public sealed partial class Main : global::Pinned.Base.Base",
+            "public sealed partial class Service : global::Pinned.Base.Entity",
+            "public required global::Pinned.Imported.Endpoint Endpoint"
+        }) Check(mapped.Contains(expected, StringComparison.Ordinal), "missing configured namespace mapping: " + expected);
+        Console.WriteLine("Package-only schema traversal and deterministic C# generation passed.");
+    }
+
+    static void CheckDiagnostics(CSharpGenerator generator, Evaluator evaluator, string fixtures,
+        string file, ICollection<string> output, params string[] expected)
+    {
+        var schema = evaluator.EvaluateSchema(ModuleSource.PathFromPath(Path.Combine(fixtures, file)));
         try
         {
-            generator.Generate(collision);
-            throw new InvalidOperationException("collision fixture generated without a diagnostic");
+            generator.Generate(schema);
+            throw new InvalidOperationException(file + " generated without a collision diagnostic");
         }
         catch (CSharpGenerationException error)
         {
-            Check(error.Diagnostics.Count == 1, "collision fixture must produce one deterministic diagnostic");
-            string diagnostic = error.Diagnostics[0];
-            Check(diagnostic.Contains("symbol collision `FooBar`", StringComparison.Ordinal), "collision symbol");
-            Check(diagnostic.Contains("contract.collision#foo-bar", StringComparison.Ordinal), "hyphen collision source");
-            Check(diagnostic.Contains("contract.collision#foo bar", StringComparison.Ordinal), "space collision source");
-            File.WriteAllText(args[3], diagnostic + "\n", Utf8);
+            Check(error.Diagnostics.SequenceEqual(expected), file + " diagnostics differ:\n" +
+                string.Join("\n", error.Diagnostics));
+            foreach (string diagnostic in error.Diagnostics) output.Add(file + ": " + diagnostic);
         }
-        Console.WriteLine("Package-only schema traversal and deterministic C# generation passed.");
     }
 
     static void CheckRepresentativeOutput(string source)
