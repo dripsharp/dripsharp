@@ -46,14 +46,15 @@
     (is (= [["java" "oracle"] ["dotnet" "probe"]] (mapv :command results)))
     (is (= 2 (count @threads)))))
 
-(deftest schema-contract-evidence-is-source-backed-and-keeps-broader-families-pending
+(deftest schema-contract-evidence-is-source-backed-and-retains-product-scope
   (let [root (paths/workspace-root)
         evidence (paths/resolve-path root "vibeformer" "validation" "schema-codegen"
                                      "ContractEvidence.tsv")
         summary (#'differential/verify-contract-evidence! root evidence)]
-    (is (= 15 (:selected summary)))
-    (is (= 2 (:pending-in-scope summary)))
+    (is (= 20 (:selected summary)))
+    (is (zero? (:pending-in-scope summary)))
     (is (some #{"schema.collections-aliases-generics-functions"} (:families summary)))
     (is (some #{"codegen.polymorphism-overrides"} (:families summary)))
     (is (some #{"binding.complete-conversion-matrix"} (:families summary)))
-    (is (some #{"schema.methods-generic-classes"} (:families summary)))))
+    (is (some #{"schema.methods-generic-classes"} (:families summary)))
+    (is (some #{"schema.amends-recursive-aliases"} (:families summary)))))

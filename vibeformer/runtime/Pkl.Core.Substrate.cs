@@ -1026,12 +1026,19 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     public abstract class RootNode : Node
     {
         private readonly FrameDescriptor descriptor;
+        private Pkl.Core.Runtime.Truffle.api.RootCallTarget? callTarget;
         protected RootNode(object? language, FrameDescriptor descriptor) => this.descriptor = descriptor;
         public virtual object? Execute(VirtualFrame frame) => null;
         public virtual string GetName() => GetType().Name;
         public virtual bool IsInternal() => false;
         internal FrameDescriptor GetFrameDescriptor() => descriptor;
-        internal Pkl.Core.Runtime.Truffle.api.RootCallTarget GetCallTarget() => new(this);
+        internal Pkl.Core.Runtime.Truffle.api.RootCallTarget GetCallTarget()
+        {
+            lock (this)
+            {
+                return callTarget ??= new Pkl.Core.Runtime.Truffle.api.RootCallTarget(this);
+            }
+        }
     }
 
     public sealed class DirectCallNode : Node
@@ -1039,7 +1046,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         private readonly Pkl.Core.Runtime.Truffle.api.CallTarget target;
         private DirectCallNode(Pkl.Core.Runtime.Truffle.api.CallTarget target) => this.target = target;
         internal static DirectCallNode Create(Pkl.Core.Runtime.Truffle.api.CallTarget target) => new(target);
-        internal object? Call(params object?[] arguments) => target.Call(arguments);
+        internal object? Call(params object?[] arguments) => target.CallFrom(this, arguments);
     }
 
     public sealed class IndirectCallNode : Node
@@ -1047,7 +1054,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         internal static IndirectCallNode Create() => new();
         internal static IndirectCallNode GetUncached() => new();
         internal object? Call(Pkl.Core.Runtime.Truffle.api.CallTarget target, params object?[] arguments) =>
-            target.Call(arguments);
+            target.CallFrom(this, arguments);
     }
 }
 
@@ -1196,13 +1203,22 @@ namespace Pkl.Core.Runtime.Truffle.api.exception
     public class AbstractTruffleException : Exception
     {
         internal const int UNLIMITED_STACK_TRACE = -1;
+        private readonly Node? location;
+        private readonly List<Pkl.Core.Runtime.Truffle.api.TruffleStackTraceElement> truffleStackTrace = new();
         protected AbstractTruffleException(string? message, Exception? cause, int stackTraceLimit, Node? location)
-            : base(message, cause) { }
+            : base(message, cause) => this.location = location;
+
+        internal Node? GetLocation() => location;
+        internal void AddTruffleStackFrame(Pkl.Core.Runtime.Truffle.api.TruffleStackTraceElement frame) =>
+            truffleStackTrace.Add(frame);
+        internal IReadOnlyList<Pkl.Core.Runtime.Truffle.api.TruffleStackTraceElement> GetTruffleStackTrace() =>
+            truffleStackTrace;
     }
 }
 
 namespace Pkl.Core.Runtime.Truffle.api
 {
+    using Pkl.Core.Runtime.Truffle.api.exception;
     using Pkl.Core.Runtime.Truffle.api.frame;
     using Pkl.Core.Runtime.Truffle.api.nodes;
     using Pkl.Core.Runtime.Truffle.api.source;
@@ -1215,8 +1231,20 @@ namespace Pkl.Core.Runtime.Truffle.api
             this.root = root;
             root?.AdoptChildren();
         }
-        internal virtual object? Call(params object?[] arguments) =>
-            root?.Execute(new VirtualFrame(arguments, root.GetFrameDescriptor()));
+        internal virtual object? Call(params object?[] arguments) => CallFrom(null, arguments);
+        internal object? CallFrom(Node? location, params object?[] arguments)
+        {
+            try
+            {
+                return root?.Execute(new VirtualFrame(arguments, root.GetFrameDescriptor()));
+            }
+            catch (AbstractTruffleException exception)
+            {
+                exception.AddTruffleStackFrame(
+                    new TruffleStackTraceElement(location ?? exception.GetLocation(), this));
+                throw;
+            }
+        }
         internal RootNode? GetRootNode() => root;
     }
 
@@ -1254,7 +1282,7 @@ namespace Pkl.Core.Runtime.Truffle.api
             new(arguments, descriptor);
         internal MaterializedFrame CreateMaterializedFrame(object?[] arguments) => new(arguments);
         internal IndirectCallNode CreateIndirectCallNode() => IndirectCallNode.GetUncached();
-        internal RootCallTarget CreateCallTarget(RootNode root) => new(root);
+        internal RootCallTarget CreateCallTarget(RootNode root) => root.GetCallTarget();
     }
 
     public sealed class ContextThreadLocal<T> where T : class
@@ -1338,13 +1366,24 @@ namespace Pkl.Core.Runtime.Truffle.api
     public static class TruffleStackTrace
     {
         internal static IReadOnlyList<TruffleStackTraceElement> GetStackTrace(Exception exception) =>
-            Array.Empty<TruffleStackTraceElement>();
+            exception is AbstractTruffleException truffleException
+                ? truffleException.GetTruffleStackTrace()
+                : Array.Empty<TruffleStackTraceElement>();
     }
 
     public sealed class TruffleStackTraceElement
     {
-        internal Node? GetLocation() => null;
-        internal CallTarget? GetTarget() => null;
+        private readonly Node? location;
+        private readonly CallTarget target;
+
+        internal TruffleStackTraceElement(Node? location, CallTarget target)
+        {
+            this.location = location;
+            this.target = target;
+        }
+
+        internal Node? GetLocation() => location;
+        internal CallTarget GetTarget() => target;
     }
 }
 

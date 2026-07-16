@@ -1,5 +1,5 @@
 # status	family	upstream-source	evidence
-# pending-in-scope rows are not product exclusions; this bounded contract is not a project-completion claim.
+# This bounded contract is not a project-completion claim; product scope remains governed by product-goal.md and port-scope.md.
 selected	schema.modules-classes-inheritance	research/pkl/pkl-core/src/test/kotlin/org/pkl/core/EvaluateSchemaTest.kt	Module metadata, declarations, source locations, and supermodule relationships.
 selected	schema.properties-docs-annotations	research/pkl/pkl-codegen-java/src/test/kotlin/org/pkl/codegen/java/JavaCodeGeneratorTest.kt	Properties, documentation, and module/class/property/type-alias annotations.
 selected	schema.nullable-constrained-unions	research/pkl/pkl-codegen-java/src/test/kotlin/org/pkl/codegen/java/JavaCodeGeneratorTest.kt	Nullable, constrained, and union-backed generated property shapes.
@@ -15,5 +15,8 @@ selected	binding.complete-conversion-matrix	research/pkl/pkl-config-java/src/tes
 selected	binding.value-model-conversions	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/mapper/PVersionToVersionTest.java	Pkl semantic-version objects bind to the packaged Version value model with deterministic overflow paths.
 selected	binding.collection-matrix	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/mapper/PCollectionToCollectionTest.java	Arrays and list/set/map/pair shapes recursively apply scalar, object, nullable, and custom conversions.
 selected	binding.nullable-matrix	research/pkl/pkl-config-java/src/test/java/org/pkl/config/java/mapper/PAnyToOptionalTest.java	Pkl null and nested nullable values retain destination nullability behavior.
-pending-in-scope	schema.methods-generic-classes	research/pkl/pkl-core/src/test/kotlin/org/pkl/core/EvaluateSchemaTest.kt	Method schemas and user generic classes remain broader in-scope product work.
-pending-in-scope	schema.amends-recursive-aliases	research/pkl/pkl-core/src/test/files/LanguageSnippetTests/input/types/cyclicTypeAlias2.pkl	Amending modules and recursive alias graphs remain broader in-scope product work.
+selected	schema.methods-generic-classes	research/pkl/pkl-core/src/test/kotlin/org/pkl/core/EvaluateSchemaTest.kt	Module and class method schemas, constrained and unnamed parameters, standard generic classes and methods, and owned type parameters.
+selected	schema.user-defined-generic-class-rejection	research/pkl/pkl-core/src/test/files/LanguageSnippetTests/input/errors/userDefinedTypeParameter1.pkl	User-defined generic classes are rejected because type parameters are restricted to standard-library members.
+selected	schema.user-defined-generic-method-rejection	research/pkl/pkl-core/src/test/files/LanguageSnippetTests/input/errors/userDefinedTypeParameter2.pkl	User-defined generic methods are rejected because type parameters are restricted to standard-library members.
+selected	schema.amends-recursive-aliases	research/pkl/pkl-core/src/test/files/LanguageSnippetTests/input/types/cyclicTypeAlias2.pkl	Recursive alias graphs terminate with the stable Foo-Bar-Baz cycle diagnostic instead of exporting a partial graph.
+selected	schema.amended-module-relations	research/pkl/pkl-core/src/test/files/LanguageSnippetTests/input/modules/amendModule1.pkl	Amended schemas retain their supermodule, reuse the exported module-class identity, and expose inherited declarations.

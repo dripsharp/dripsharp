@@ -129,7 +129,8 @@ value-model surface plus its exact package dependency on `Pkl.Parser`.
 `differential` performs both complete package gates. It separately builds and
 runs the pinned upstream JVM parser as an oracle, then runs a package-only .NET
 probe over all 940 LanguageSnippetTests inputs and the upstream lexer/span edge
-cases. It retains that complete parser proof, then independently compares the
+cases (956 cases and 2,871 normalized observations in total). It retains that
+complete parser proof, then independently compares the
 packaged Pkl.Core evaluator and value model with a separate JVM oracle across
 25 normalized observations: module and nested-object export; object, path, and
 string expression evaluation; text, JSON, bytes, and multi-file output;
@@ -140,9 +141,13 @@ runtime values; four normalized error classes; and `Duration`, `DataSize`,
 fresh evaluator, and neither package probe loads generated sources or shares
 runtime state with its oracle. The core gate also compiles and runs separate
 package-reference-only generator and generated-consumer projects. A JVM oracle
-independently compares three normalized schemas, six code-generation failures,
-the reflected contract of the compiled generated types, representative bound
-values, and six binding failures. The generated consumer uses an isolated
+independently compares 40 observations across nine normalized schemas,
+including method and standard-library generic ownership, amended-module
+relationships, recursive alias identity and termination, and the upstream
+rejection of user-defined type parameters. It also compares six
+code-generation failures, the reflected contract of seven compiled generated
+types, representative bound values, and 14 independent binding failures across
+21 focused cases. The generated consumer uses an isolated
 package cache, nullable analysis, and warnings as errors; it evaluates through
 the emitted loaders without project references or manual source edits. All
 comparisons deliberately perturb an oracle result to prove mismatches are

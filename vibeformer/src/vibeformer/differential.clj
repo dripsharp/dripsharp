@@ -289,7 +289,12 @@
     "binding.complete-conversion-matrix"
     "binding.value-model-conversions"
     "binding.collection-matrix"
-    "binding.nullable-matrix"})
+    "binding.nullable-matrix"
+    "schema.methods-generic-classes"
+    "schema.user-defined-generic-class-rejection"
+    "schema.user-defined-generic-method-rejection"
+    "schema.amends-recursive-aliases"
+    "schema.amended-module-relations"})
 
 (defn- verify-contract-evidence!
   [root ^Path evidence]
@@ -330,9 +335,6 @@
     (when (seq missing)
       (fail! "Contract evidence omits required selected behavior families"
              {:path (str evidence) :missing missing}))
-    (when (empty? pending)
-      (fail! "Contract evidence must retain broader behavior as pending in-scope work"
-             {:path (str evidence)}))
     {:selected (count selected)
      :pending-in-scope (count pending)
      :families (mapv :family entries)}))
@@ -479,7 +481,7 @@
               (mapv #(paths/resolve-path generated-root %)
                     ["ContractBase.g.cs" "ContractImported.g.cs" "ContractMain.g.cs"
                      "PolymorphicLib.g.cs" "PolymorphicModuleTest.g.cs"
-                     "OverriddenProperty.g.cs"])]
+                     "OverriddenProperty.g.cs" "SchemaMethods.g.cs"])]
           (doseq [^Path source generated-files]
             (when-not (paths/regular-file? source)
               (fail! "Package generator did not emit an expected C# source" {:path (str source)}))
@@ -508,7 +510,7 @@
                 (when (str/blank? binding-report)
                   (fail! "Generated consumer did not retain focused binding diagnostics"
                          {:path (str binding-diagnostics)}))
-                {:summary {:schemas 6
+                {:summary {:schemas 9
                            :generated-files (count generated-files)
                            :observations (:matched comparison)
                            :generated-contract-observations 1

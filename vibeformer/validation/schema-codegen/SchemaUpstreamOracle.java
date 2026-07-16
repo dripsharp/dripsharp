@@ -33,6 +33,7 @@ import org.pkl.core.PClassInfo;
 import org.pkl.core.PModule;
 import org.pkl.core.PNull;
 import org.pkl.core.PObject;
+import org.pkl.core.PklException;
 import org.pkl.core.PType;
 import org.pkl.core.Pair;
 import org.pkl.core.TypeAlias;
@@ -50,12 +51,24 @@ public final class SchemaUpstreamOracle {
       var schemas = new ArrayList<ModuleSchema>();
       for (var file : List.of(
           "ContractBase.pkl", "ContractImported.pkl", "ContractMain.pkl",
-          "PolymorphicLib.pkl", "PolymorphicModuleTest.pkl", "OverriddenProperty.pkl")) {
+          "PolymorphicLib.pkl", "PolymorphicModuleTest.pkl", "OverriddenProperty.pkl",
+          "SchemaMethods.pkl")) {
         var schema = evaluator.evaluateSchema(ModuleSource.path(fixtures.resolve(file)));
         schemas.add(schema);
         if (file.equals("ContractMain.pkl")) checkRepresentativeContract(schema);
+        if (file.equals("SchemaMethods.pkl")) checkMethodsContract(schema);
         write(writer, "schema/" + file, "SCHEMA", schema(schema));
       }
+      var amendBase = evaluator.evaluateSchema(
+          ModuleSource.path(fixtures.resolve("SchemaAmendBase.pkl")));
+      var amend = evaluator.evaluateSchema(ModuleSource.path(fixtures.resolve("SchemaAmend.pkl")));
+      write(writer, "schema/SchemaAmendBase.pkl", "SCHEMA", schema(amendBase));
+      write(writer, "schema/SchemaAmend.pkl", "SCHEMA", schema(amend));
+      write(writer, "schema/pkl:base/generics", "SCHEMA_GENERICS",
+          genericContract(evaluator.evaluateSchema(ModuleSource.uri(URI.create("pkl:base")))));
+      write(writer, "schema/relationships", "SCHEMA_RELATIONSHIPS",
+          relationshipsContract(schemas.get(2), amendBase, amend));
+      writeSchemaFailures(writer, evaluator, fixtures);
       writeCodegenFailures(writer, evaluator, fixtures);
       write(writer, "generated/contract", "GENERATED_CONTRACT", generatedContract(schemas));
       var module = evaluator.evaluate(ModuleSource.path(fixtures.resolve("ContractMain.pkl")));
@@ -68,6 +81,64 @@ public final class SchemaUpstreamOracle {
       write(writer, "binding/conversion-matrix", "BINDING", conversionMatrix(evaluator, fixtures));
       write(writer, "binding/collection-matrix", "BINDING", collectionMatrix());
       writeBindingFailures(writer, evaluator, fixtures);
+    }
+  }
+
+  private static void writeSchemaFailures(
+      BufferedWriter writer, Evaluator evaluator, Path fixtures) throws Exception {
+    write(writer, "schema/failure/UserDefinedGenericClass.pkl", "SCHEMA_FAILURE",
+        stableSchemaFailure(evaluator, fixtures, "UserDefinedGenericClass.pkl",
+            "Only standard library members can have type parameters.", List.of()));
+    write(writer, "schema/failure/UserDefinedGenericMethod.pkl", "SCHEMA_FAILURE",
+        stableSchemaFailure(evaluator, fixtures, "UserDefinedGenericMethod.pkl",
+            "Only standard library members can have type parameters.", List.of("DoIt")));
+    write(writer, "schema/recursive/CyclicTypeAlias2.pkl", "SCHEMA_RECURSIVE_ALIAS",
+        recursiveAliasContract(evaluator, fixtures));
+  }
+
+  private static String recursiveAliasContract(Evaluator evaluator, Path fixtures) {
+    var first = schemaFailure(evaluator, fixtures, "CyclicTypeAlias2.pkl",
+        "Type alias definitions must not be cyclic.", List.of("Baz", "Bar", "Foo"));
+    var source = ModuleSource.path(fixtures.resolve("CyclicTypeAlias2.pkl"));
+    var second = evaluator.evaluateSchema(source);
+    var third = evaluator.evaluateSchema(source);
+    check(second == third && second.getModuleClass() == third.getModuleClass(),
+        "recursive alias schema cache identity contract");
+    check(second.getTypeAliases().keySet().equals(new java.util.LinkedHashSet<>(
+        List.of("Foo", "Bar", "Baz"))), "recursive alias declaration order contract");
+    for (var name : List.of("Foo", "Bar", "Baz")) {
+      check(second.getTypeAliases().get(name) == third.getTypeAliases().get(name),
+          "recursive alias identity contract for " + name);
+      check(second.getTypeAliases().get(name).getAliasedType() == PType.UNKNOWN,
+          "recursive alias fallback type contract for " + name);
+    }
+    return "recursive(first=" + first +
+        ";cachedSchema=true;aliases=[Foo:unknown, Bar:unknown, Baz:unknown])";
+  }
+
+  private static String stableSchemaFailure(
+      Evaluator evaluator, Path fixtures, String file, String expectedMessage, List<String> chain) {
+    var first = schemaFailure(evaluator, fixtures, file, expectedMessage, chain);
+    var second = schemaFailure(evaluator, fixtures, file, expectedMessage, chain);
+    check(first.equals(second), file + " schema failure changed across repeated evaluation");
+    return first;
+  }
+
+  private static String schemaFailure(
+      Evaluator evaluator, Path fixtures, String file, String expectedMessage, List<String> chain) {
+    try {
+      evaluator.evaluateSchema(ModuleSource.path(fixtures.resolve(file)));
+      throw new IllegalStateException(file + " unexpectedly exported a schema");
+    } catch (PklException expected) {
+      var message = expected.getMessage();
+      check(message.contains(expectedMessage), file + " produced an unexpected schema failure");
+      var previous = -1;
+      for (var member : chain) {
+        var index = message.indexOf("#" + member, previous + 1);
+        check(index > previous, file + " omitted or reordered cycle member " + member);
+        previous = index;
+      }
+      return "rejected(message=" + q(expectedMessage) + ";chain=" + chain + ")";
     }
   }
 
@@ -526,7 +597,28 @@ public final class SchemaUpstreamOracle {
           .append(modifiers(property)).append(":annotations=")
           .append(annotations(property.getAnnotations())).append(";");
     }
+    result.append("];methods=[");
+    for (var entry : value.getMethods().entrySet()) {
+      result.append(method(entry.getValue())).append(";");
+    }
     return result.append("])").toString();
+  }
+
+  private static String method(PClass.Method value) {
+    var result = new StringBuilder("method(")
+        .append(q(value.getSimpleName()))
+        .append(";params=").append(typeParameters(value.getTypeParameters()))
+        .append(";arguments=[");
+    for (var entry : value.getParameters().entrySet()) {
+      result.append(q(entry.getKey())).append(":").append(type(entry.getValue())).append(";");
+    }
+    return result.append("];return=").append(type(value.getReturnType()))
+        .append(";doc=").append(q(value.getInheritedDocComment()))
+        .append(";line=").append(value.getSourceLocation().startLine()).append(":")
+        .append(value.getSourceLocation().endLine())
+        .append(";mods=").append(modifiers(value))
+        .append(";annotations=").append(annotations(value.getAnnotations()))
+        .append(")").toString();
   }
 
   private static String alias(TypeAlias value) {
@@ -594,6 +686,79 @@ public final class SchemaUpstreamOracle {
         "property annotation contract");
   }
 
+  private static void checkMethodsContract(ModuleSchema schema) {
+    var methods = schema.getModuleClass().getMethods();
+    check(methods.keySet().equals(new java.util.LinkedHashSet<>(
+        List.of("methodb1", "methodb2", "methodb3"))), "module method declaration order");
+    check(methods.get("methodb1").getReturnType() == PType.UNKNOWN,
+        "untyped method return contract");
+    var methodb2 = methods.get("methodb2");
+    check(methodb2.getParameters().get("str") instanceof PType.Constrained,
+        "constrained method parameter contract");
+    check(methodb2.getReturnType() instanceof PType.Constrained,
+        "constrained method return contract");
+    check(methods.get("methodb3").getParameters().keySet().equals(new java.util.LinkedHashSet<>(
+        List.of("x", "_#1", "i", "_#3"))), "unnamed method parameter contract");
+    var record = schema.getClasses().get("Record");
+    var display = record.getMethods().get("display");
+    check(display != null && display.getOwner() == record, "class method owner identity contract");
+  }
+
+  private static String genericContract(ModuleSchema schema) {
+    var list = schema.getClasses().get("List");
+    var map = schema.getClasses().get("Map");
+    check(list != null && map != null, "pkl:base generic class contract");
+    check(list.getTypeParameters().stream().allMatch(parameter -> parameter.getOwner() == list),
+        "List type parameter owner identity contract");
+    check(map.getTypeParameters().stream().allMatch(parameter -> parameter.getOwner() == map),
+        "Map type parameter owner identity contract");
+    var method = list.getMethods().get("map");
+    check(method != null && method.getTypeParameters().size() == 1,
+        "List.map generic method contract");
+    var resultParameter = method.getTypeParameters().get(0);
+    check(resultParameter.getOwner() == method, "List.map type parameter owner identity contract");
+    var transform = (PType.Function) method.getParameters().get("transform");
+    var element = (PType.TypeVariable) transform.getParameterTypes().get(0);
+    var result = (PType.TypeVariable) transform.getReturnType();
+    var returnType = (PType.Class) method.getReturnType();
+    var returnElement = (PType.TypeVariable) returnType.getTypeArguments().get(0);
+    check(element.getTypeParameter() == list.getTypeParameters().get(0),
+        "List.map parameter retains class type-parameter identity");
+    check(result.getTypeParameter() == resultParameter &&
+        returnElement.getTypeParameter() == resultParameter,
+        "List.map result retains method type-parameter identity");
+    return "generics(list=" + typeParameters(list.getTypeParameters()) +
+        ";map=" + typeParameters(map.getTypeParameters()) +
+        ";method=" + method(method) + ")";
+  }
+
+  private static String relationshipsContract(
+      ModuleSchema extension, ModuleSchema amendBase, ModuleSchema amend) {
+    check(extension.isExtend() && !extension.isAmend(), "extended module relation contract");
+    check(extension.getSupermodule() != null &&
+        extension.getModuleClass().getSuperclass() == extension.getSupermodule().getModuleClass(),
+        "extended module class identity contract");
+    check(amend.isAmend() && !amend.isExtend() && amend.getSupermodule() != null,
+        "amended module relation contract");
+    check(amend.getModuleClass() == amend.getSupermodule().getModuleClass(),
+        "amended module class identity contract");
+    check(amend.getSupermodule().getModuleClass() == amendBase.getModuleClass(),
+        "amended module base identity contract");
+    check(amend.getAllClasses() == amend.getAllClasses() &&
+        amend.getAllTypeAliases() == amend.getAllTypeAliases(),
+        "amended aggregate maps are stable");
+    check(amend.getAllClasses().get("Item") == amendBase.getClasses().get("Item") &&
+        amend.getAllTypeAliases().get("Name") == amendBase.getTypeAliases().get("Name"),
+        "amended inherited declaration identity contract");
+    return "relations(extend=" + q(extension.getModuleName()) + "->" +
+        q(extension.getSupermodule().getModuleName()) +
+        ";extendClassSuper=true;extendClasses=" + extension.getAllClasses().keySet() +
+        ";extendAliases=" + extension.getAllTypeAliases().keySet() +
+        ";amend=" + q(amend.getModuleName()) + "->" + q(amend.getSupermodule().getModuleName()) +
+        ";sameModuleClass=true;amendClasses=" + amend.getAllClasses().keySet() +
+        ";amendAliases=" + amend.getAllTypeAliases().keySet() + ")";
+  }
+
   private static void check(boolean condition, String message) {
     if (!condition) throw new IllegalStateException(message);
   }
@@ -627,7 +792,12 @@ public final class SchemaUpstreamOracle {
     if (value instanceof PType.Union union) {
       return "union(" + union.getElementTypes().stream().map(SchemaUpstreamOracle::type).toList() + ")";
     }
-    if (value instanceof PType.TypeVariable variable) return "variable(" + q(variable.getName()) + ")";
+    if (value instanceof PType.TypeVariable variable) {
+      var parameter = variable.getTypeParameter();
+      return "variable(" + q(variable.getName()) + ";owner=" +
+          q(parameter.getOwner().getModuleName() + "#" + parameter.getOwner().getSimpleName()) +
+          ";index=" + parameter.getIndex() + ")";
+    }
     throw new IllegalArgumentException("Unknown PType: " + value.getClass());
   }
 

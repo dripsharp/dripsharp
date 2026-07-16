@@ -1,0 +1,6 @@
+/// An amending module reuses its supermodule class and declarations.
+module schema.amend.instance
+
+amends "SchemaAmendBase.pkl"
+
+name = "amended"

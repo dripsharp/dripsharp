@@ -1,0 +1,19 @@
+/// Method-schema fixture adapted from EvaluateSchemaTest.kt scenarios.
+module schema.methods
+
+/// An untyped method exposes an unknown return type.
+function methodb1() = "parrot"
+
+/// Constrained parameter and return types remain visible in the schema.
+function methodb2(str: String(!isEmpty, startsWith("a"))): Int(isPositive) =
+  str.length
+
+/// Unnamed parameters receive stable exported names.
+function methodb3(x: String, _, i: Int, _): Int = x.length + i
+
+/// Class methods are exported with their declaring class.
+class Record {
+  name: String
+
+  function display(prefix: String): String = prefix + name
+}

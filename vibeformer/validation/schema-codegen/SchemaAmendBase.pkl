@@ -1,0 +1,12 @@
+/// Base schema for amended-module identity and inherited declaration coverage.
+open module schema.amend.base
+
+typealias Name = String
+
+open class Item {
+  name: Name
+}
+
+name: Name = "base"
+
+function describe(value: String): String = value
