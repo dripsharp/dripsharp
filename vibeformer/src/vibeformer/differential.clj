@@ -479,12 +479,18 @@
                     perturbation (prove-perturbation! oracle-output perturbed-output)
                     expected-binding
                     (str "constructor-and-members=passed\n"
+                         "metadata-options=passed\n"
                          "custom-loader=passed\n"
                          "unknown=$\n"
                          "incompatible=$.count\n"
                          "missing=$\n"
                          "overflow=$.count\n"
                          "nullability=$.name\n"
+                         "nested-list-nullability=$.values[1]\n"
+                         "nested-map-nullability=$.mapping[\"bad\"]\n"
+                         "nested-pair-nullability=$.pair.second\n"
+                         "nullable-nested-generics=passed\n"
+                         "numeric-exactness=passed\n"
                          "cycle=$.next\n"
                          "disposed=passed\n")]
                 (when-not (= expected-binding (Files/readString binding-diagnostics))
@@ -494,7 +500,7 @@
                 {:summary {:schemas 3
                            :generated-files (count generated-files)
                            :observations (:matched comparison)
-                           :binding-failure-cases 6
+                           :binding-failure-cases 12
                            :contract-evidence evidence-summary
                            :perturbation-detected-at (get-in perturbation [:mismatch :line])}
                  :oracle-output oracle-output

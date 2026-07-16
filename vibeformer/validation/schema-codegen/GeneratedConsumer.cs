@@ -55,6 +55,28 @@ static class GeneratedConsumer
         [PklName("next"), PklRequired] public required CycleModel Next { get; init; }
     }
 
+    sealed class MetadataModel
+    {
+        [PklName("display-name"), PklRequired] public required string DisplayName { get; init; }
+        [PklIgnore] public string Ignored { get; set; } = "default";
+    }
+
+    sealed class NestedGenericModel
+    {
+        [PklName("values"), PklRequired] public required IReadOnlyList<string> Values { get; init; }
+        [PklName("mapping"), PklRequired]
+        public required IReadOnlyDictionary<string, string> Mapping { get; init; }
+        [PklName("pair"), PklRequired] public required Pair<string, string> Pair { get; init; }
+    }
+
+    sealed class NullableNestedGenericModel
+    {
+        [PklName("values"), PklRequired] public required IReadOnlyList<string?> Values { get; init; }
+        [PklName("mapping"), PklRequired]
+        public required IReadOnlyDictionary<string, string?> Mapping { get; init; }
+        [PklName("pair"), PklRequired] public required Pair<string?, string?> Pair { get; init; }
+    }
+
     public static void Main(string[] args)
     {
         if (args.Length != 3)
@@ -96,6 +118,16 @@ static class GeneratedConsumer
         Check(constructor.Name == "constructed" && constructor.Tags.SequenceEqual(new[] { "one", "two" }),
             "constructor and settable-member binding");
 
+        var metadata = binder.Bind<MetadataModel>(new Dictionary<string, object?>
+        {
+            ["display-name"] = "named",
+            ["Ignored"] = "must-not-bind"
+        });
+        Check(metadata.DisplayName == "named" && metadata.Ignored == "default", "name and ignore metadata");
+        var caseInsensitive = new ConfigBinder(new ConfigBinderOptions { PropertyNamesCaseInsensitive = true })
+            .Bind<MetadataModel>(new Dictionary<string, object?> { ["DISPLAY-NAME"] = "case-insensitive" });
+        Check(caseInsensitive.DisplayName == "case-insensitive", "case-insensitive name option");
+
         var projectionLoader = new ProjectionLoader();
         var custom = new ConfigBinder(new ConfigBinderOptions().AddGeneratedLoader(projectionLoader))
             .Bind<Projection>("value");
@@ -121,6 +153,53 @@ static class GeneratedConsumer
             () => binder.Bind<NonNullModel>(new Dictionary<string, object?> { ["name"] = PNull.GetInstance() }),
             "$.name", typeof(string), "null is not allowed");
 
+        var validMapping = new Dictionary<string, object?> { ["ok"] = "value" };
+        var validPair = new Pair<object?, object?>("left", "right");
+        ExpectBindFailure(
+            () => binder.Bind<NestedGenericModel>(new Dictionary<string, object?>
+            {
+                ["values"] = new List<object?> { "ok", PNull.GetInstance() },
+                ["mapping"] = validMapping,
+                ["pair"] = validPair
+            }),
+            "$.values[1]", typeof(string), "null is not allowed");
+        ExpectBindFailure(
+            () => binder.Bind<NestedGenericModel>(new Dictionary<string, object?>
+            {
+                ["values"] = new List<object?> { "ok" },
+                ["mapping"] = new Dictionary<string, object?> { ["bad"] = PNull.GetInstance() },
+                ["pair"] = validPair
+            }),
+            "$.mapping[\"bad\"]", typeof(string), "null is not allowed");
+        ExpectBindFailure(
+            () => binder.Bind<NestedGenericModel>(new Dictionary<string, object?>
+            {
+                ["values"] = new List<object?> { "ok" },
+                ["mapping"] = validMapping,
+                ["pair"] = new Pair<object?, object?>("left", PNull.GetInstance())
+            }),
+            "$.pair.second", typeof(string), "null is not allowed");
+        var nullableNested = binder.Bind<NullableNestedGenericModel>(new Dictionary<string, object?>
+        {
+            ["values"] = new List<object?> { "ok", PNull.GetInstance() },
+            ["mapping"] = new Dictionary<string, object?> { ["ok"] = PNull.GetInstance() },
+            ["pair"] = new Pair<object?, object?>(PNull.GetInstance(), PNull.GetInstance())
+        });
+        Check(nullableNested.Values[1] is null && nullableNested.Mapping["ok"] is null &&
+              nullableNested.Pair.GetFirst() is null && nullableNested.Pair.GetSecond() is null,
+            "nullable nested generic arguments");
+
+        const long largestExactDoubleInteger = 9_007_199_254_740_992L;
+        Check(binder.Bind<double>(largestExactDoubleInteger) == largestExactDoubleInteger,
+            "exact integer-to-double conversion");
+        Check(binder.Bind<int>(42.0d) == 42, "exact integral Float conversion");
+        ExpectBindFailure(() => binder.Bind<double>(largestExactDoubleInteger + 1),
+            "$", typeof(double), "lose integer precision");
+        ExpectBindFailure(() => binder.Bind<int>(42.5d),
+            "$", typeof(int), "non-integral Pkl Float");
+        ExpectBindFailure(() => binder.Bind<long>(9_223_372_036_854_775_808d),
+            "$", typeof(long), "numeric overflow");
+
         var cycle = new Dictionary<string, object?>();
         cycle["next"] = cycle;
         ExpectBindFailure(() => binder.Bind<CycleModel>(cycle), "$.next", typeof(CycleModel), "cyclic object graphs");
@@ -136,12 +215,18 @@ static class GeneratedConsumer
 
         File.WriteAllText(diagnosticsFile,
             "constructor-and-members=passed\n" +
+            "metadata-options=passed\n" +
             "custom-loader=passed\n" +
             "unknown=$\n" +
             "incompatible=$.count\n" +
             "missing=$\n" +
             "overflow=$.count\n" +
             "nullability=$.name\n" +
+            "nested-list-nullability=$.values[1]\n" +
+            "nested-map-nullability=$.mapping[\"bad\"]\n" +
+            "nested-pair-nullability=$.pair.second\n" +
+            "nullable-nested-generics=passed\n" +
+            "numeric-exactness=passed\n" +
             "cycle=$.next\n" +
             "disposed=passed\n", Utf8);
     }

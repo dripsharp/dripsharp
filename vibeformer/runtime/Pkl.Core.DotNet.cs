@@ -67,6 +67,30 @@ public sealed class ConfigBinder
     private static readonly NullabilityInfoContext Nullability = new();
     private readonly ConfigBinderOptions options;
 
+    private sealed class BindingNullability
+    {
+        private BindingNullability(NullabilityInfo info, Func<NullabilityInfo, NullabilityState> state)
+        {
+            AllowsNull = state(info) != NullabilityState.NotNull;
+            Element = info.ElementType is null ? null : new BindingNullability(info.ElementType, state);
+            GenericArguments = info.GenericTypeArguments
+                .Select(argument => new BindingNullability(argument, state)).ToArray();
+        }
+
+        public bool AllowsNull { get; }
+        public BindingNullability? Element { get; }
+        public IReadOnlyList<BindingNullability> GenericArguments { get; }
+
+        public BindingNullability? GenericArgument(int index) =>
+            index < GenericArguments.Count ? GenericArguments[index] : null;
+
+        public static BindingNullability ForRead(NullabilityInfo info) =>
+            new(info, item => item.ReadState);
+
+        public static BindingNullability ForWrite(NullabilityInfo info) =>
+            new(info, item => item.WriteState);
+    }
+
     public ConfigBinder(ConfigBinderOptions? options = null) =>
         this.options = options ?? new ConfigBinderOptions();
 
@@ -88,7 +112,7 @@ public sealed class ConfigBinder
     }
 
     private object? BindCore(object? value, Type targetType, string path, ISet<object> active,
-        bool allowsNull, bool skipGeneratedLoader = false)
+        bool allowsNull, bool skipGeneratedLoader = false, BindingNullability? nullability = null)
     {
         if (!skipGeneratedLoader && TryGetGeneratedLoader(targetType, out var loader))
             return InvokeGeneratedLoader(loader, value, targetType, path);
@@ -101,8 +125,10 @@ public sealed class ConfigBinder
         }
 
         if (nullableType is not null)
-            return BindCore(value, nullableType, path, active, allowsNull: false);
-        if (targetType == typeof(object) || targetType.IsInstanceOfType(value)) return value;
+            return BindCore(value, nullableType, path, active, allowsNull: false,
+                nullability: nullability?.GenericArgument(0));
+        if (targetType == typeof(object) ||
+            (targetType.IsInstanceOfType(value) && !RequiresRecursiveBinding(targetType))) return value;
 
         if (targetType.GetCustomAttribute<PklTypeAliasAttribute>() is not null)
             return BindAlias(value, targetType, path, active);
@@ -128,13 +154,13 @@ public sealed class ConfigBinder
 
         if (TryGetPairTypes(targetType, out var firstType, out var secondType))
             return Track(value, targetType, path, active,
-                () => BindPair(value, targetType, firstType, secondType, path, active));
+                () => BindPair(value, targetType, firstType, secondType, path, active, nullability));
         if (TryGetDictionaryTypes(targetType, out var keyType, out var valueType))
             return Track(value, targetType, path, active,
-                () => BindDictionary(value, targetType, keyType, valueType, path, active));
+                () => BindDictionary(value, targetType, keyType, valueType, path, active, nullability));
         if (TryGetCollectionElementType(targetType, out var elementType))
             return Track(value, targetType, path, active,
-                () => BindCollection(value, targetType, elementType, path, active));
+                () => BindCollection(value, targetType, elementType, path, active, nullability));
 
         if (!TryGetProperties(value, out var properties))
             throw Error(path, value, targetType, "the source is not a Pkl object or string-keyed mapping");
@@ -176,8 +202,9 @@ public sealed class ConfigBinder
         if (constructor is null)
             throw Error(path, value, targetType, "a Pkl type-alias target must have exactly one public single-argument constructor");
         var parameter = constructor.GetParameters()[0];
+        var nullability = BindingNullability.ForRead(Nullability.Create(parameter));
         var converted = BindCore(value, parameter.ParameterType, path, active,
-            AllowsNull(parameter), skipGeneratedLoader: false);
+            nullability.AllowsNull, skipGeneratedLoader: false, nullability: nullability);
         try { return constructor.Invoke(new[] { converted }); }
         catch (TargetInvocationException error) when (error.InnerException is not null)
         { throw Error(path, value, targetType, "the type-alias constructor failed", error.InnerException); }
@@ -191,6 +218,7 @@ public sealed class ConfigBinder
         var comparer = options.PropertyNamesCaseInsensitive ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         var source = CopyProperties(properties, comparer, path, targetType);
         var consumed = new HashSet<string>(comparer);
+        foreach (var name in IgnoredMemberNames(targetType)) consumed.Add(name);
         var instance = ConstructObject(source, consumed, targetType, path, active);
 
         var members = WritableMembers(targetType, path);
@@ -207,13 +235,19 @@ public sealed class ConfigBinder
             switch (member)
             {
                 case PropertyInfo property:
+                {
+                    var nullability = BindingNullability.ForWrite(Nullability.Create(property));
                     property.SetValue(instance, BindCore(item, property.PropertyType, path + "." + name,
-                        active, AllowsNull(property)));
+                        active, nullability.AllowsNull, nullability: nullability));
                     break;
+                }
                 case FieldInfo field:
+                {
+                    var nullability = BindingNullability.ForWrite(Nullability.Create(field));
                     field.SetValue(instance, BindCore(item, field.FieldType, path + "." + name,
-                        active, AllowsNull(field)));
+                        active, nullability.AllowsNull, nullability: nullability));
                     break;
+                }
             }
         }
 
@@ -257,8 +291,9 @@ public sealed class ConfigBinder
                     var name = PklName(parameter);
                     if (!source.TryGetValue(name, out var item)) return parameter.DefaultValue;
                     consumed.Add(name);
+                    var nullability = BindingNullability.ForRead(Nullability.Create(parameter));
                     return BindCore(item, parameter.ParameterType, path + "." + name, active,
-                        AllowsNull(parameter));
+                        nullability.AllowsNull, nullability: nullability);
                 }).ToArray();
                 return constructor.Invoke(arguments);
             }
@@ -294,12 +329,17 @@ public sealed class ConfigBinder
         return selected.Values.OrderBy(PklName, StringComparer.Ordinal).ToArray();
     }
 
-    private object BindCollection(object value, Type targetType, Type elementType, string path, ISet<object> active)
+    private object BindCollection(object value, Type targetType, Type elementType, string path,
+        ISet<object> active, BindingNullability? nullability)
     {
         if (value is not IEnumerable source || value is string || value is IDictionary)
             throw Error(path, value, targetType, "the source is not a collection");
+        var elementNullability = targetType.IsArray ? nullability?.Element : nullability?.GenericArgument(0);
         var items = source.Cast<object?>().Select((item, index) =>
-            BindCore(item, elementType, $"{path}[{index}]", active, !elementType.IsValueType)).ToArray();
+            BindCore(item, elementType, $"{path}[{index}]", active,
+                elementNullability?.AllowsNull ?? !elementType.IsValueType,
+                nullability: elementNullability)).ToArray();
+        if (targetType.IsInstanceOfType(value)) return value;
         if (targetType.IsArray)
         {
             var result = Array.CreateInstance(elementType, items.Length);
@@ -319,35 +359,49 @@ public sealed class ConfigBinder
     }
 
     private object BindDictionary(object value, Type targetType, Type keyType, Type valueType,
-        string path, ISet<object> active)
+        string path, ISet<object> active, BindingNullability? nullability)
     {
         if (value is not IDictionary source)
             throw Error(path, value, targetType, "the source is not a mapping");
-        var concrete = !targetType.IsInterface && !targetType.IsAbstract ? targetType :
-            typeof(Dictionary<,>).MakeGenericType(keyType, valueType);
-        if (Activator.CreateInstance(concrete) is not IDictionary result)
-            throw Error(path, value, targetType, "the target dictionary could not be created");
+        var keyNullability = nullability?.GenericArgument(0);
+        var valueNullability = nullability?.GenericArgument(1);
+        IDictionary? result = null;
+        if (!targetType.IsInstanceOfType(value))
+        {
+            var concrete = !targetType.IsInterface && !targetType.IsAbstract ? targetType :
+                typeof(Dictionary<,>).MakeGenericType(keyType, valueType);
+            result = Activator.CreateInstance(concrete) as IDictionary ??
+                throw Error(path, value, targetType, "the target dictionary could not be created");
+        }
         var index = 0;
         foreach (DictionaryEntry entry in source)
         {
-            var key = BindCore(entry.Key, keyType, $"{path}{{key:{index}}}", active, !keyType.IsValueType);
+            var key = BindCore(entry.Key, keyType, $"{path}{{key:{index}}}", active,
+                keyNullability?.AllowsNull ?? !keyType.IsValueType, nullability: keyNullability);
             var itemPath = path + "[" + FormatPathKey(entry.Key) + "]";
-            result.Add(key!, BindCore(entry.Value, valueType, itemPath, active, !valueType.IsValueType));
+            var item = BindCore(entry.Value, valueType, itemPath, active,
+                valueNullability?.AllowsNull ?? !valueType.IsValueType, nullability: valueNullability);
+            result?.Add(key!, item);
             index++;
         }
-        return result;
+        return result ?? value;
     }
 
     private object BindPair(object value, Type targetType, Type firstType, Type secondType,
-        string path, ISet<object> active)
+        string path, ISet<object> active, BindingNullability? nullability)
     {
         var valueType = value.GetType();
         var firstMethod = valueType.GetMethod("GetFirst", BindingFlags.Public | BindingFlags.Instance);
         var secondMethod = valueType.GetMethod("GetSecond", BindingFlags.Public | BindingFlags.Instance);
         if (firstMethod is null || secondMethod is null)
             throw Error(path, value, targetType, "the source is not a Pkl Pair");
-        var first = BindCore(firstMethod.Invoke(value, null), firstType, path + ".first", active, !firstType.IsValueType);
-        var second = BindCore(secondMethod.Invoke(value, null), secondType, path + ".second", active, !secondType.IsValueType);
+        var firstNullability = nullability?.GenericArgument(0);
+        var secondNullability = nullability?.GenericArgument(1);
+        var first = BindCore(firstMethod.Invoke(value, null), firstType, path + ".first", active,
+            firstNullability?.AllowsNull ?? !firstType.IsValueType, nullability: firstNullability);
+        var second = BindCore(secondMethod.Invoke(value, null), secondType, path + ".second", active,
+            secondNullability?.AllowsNull ?? !secondType.IsValueType, nullability: secondNullability);
+        if (targetType.IsInstanceOfType(value)) return value;
         var constructor = targetType.GetConstructor(new[] { firstType, secondType });
         if (constructor is null) throw Error(path, value, targetType, "the target Pair has no compatible constructor");
         return constructor.Invoke(new[] { first, second });
@@ -421,7 +475,7 @@ public sealed class ConfigBinder
             throw new ArithmeticException("a non-integral Pkl Float cannot be converted to an integral target");
         if (value < long.MinValue || value > long.MaxValue)
             throw new OverflowException();
-        return ConvertInteger((long)value, targetType);
+        return ConvertInteger(checked((long)value), targetType);
     }
 
     private static Uri CreateUri(string value, string path, Type targetType)
@@ -492,15 +546,25 @@ public sealed class ConfigBinder
     private static bool IsSetType(Type type) => type.GetInterfaces().Concat(new[] { type }).Any(candidate =>
         candidate.IsGenericType && candidate.GetGenericTypeDefinition() is var definition &&
         (definition == typeof(ISet<>) || definition == typeof(IReadOnlySet<>)));
+    private static bool RequiresRecursiveBinding(Type type) =>
+        type != typeof(byte[]) && type != typeof(sbyte[]) &&
+        (TryGetPairTypes(type, out _, out _) || TryGetDictionaryTypes(type, out _, out _) ||
+         TryGetCollectionElementType(type, out _));
     private static bool IsNumeric(Type type) => Type.GetTypeCode(type) is >= TypeCode.SByte and <= TypeCode.Decimal;
     private static string PklName(MemberInfo member) => member.GetCustomAttribute<PklNameAttribute>()?.Name ?? member.Name;
     private static string PklName(ParameterInfo parameter) => parameter.GetCustomAttribute<PklNameAttribute>()?.Name ?? parameter.Name!;
     private static bool IsRequired(MemberInfo member) => member.GetCustomAttribute<PklRequiredAttribute>() is not null ||
         member.GetCustomAttributes().Any(attribute => attribute.GetType().FullName ==
             "System.Runtime.CompilerServices.RequiredMemberAttribute");
-    private static bool AllowsNull(ParameterInfo parameter) => Nullability.Create(parameter).ReadState != NullabilityState.NotNull;
-    private static bool AllowsNull(PropertyInfo property) => Nullability.Create(property).WriteState != NullabilityState.NotNull;
-    private static bool AllowsNull(FieldInfo field) => Nullability.Create(field).WriteState != NullabilityState.NotNull;
+    private static IEnumerable<string> IgnoredMemberNames(Type targetType)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;
+        return targetType.GetProperties(flags).Cast<MemberInfo>()
+            .Concat(targetType.GetFields(flags))
+            .Where(member => member.GetCustomAttribute<PklIgnoreAttribute>() is not null)
+            .Select(PklName)
+            .Distinct(StringComparer.Ordinal);
+    }
     private static int InheritanceDepth(Type? type) { var depth = 0; while (type is not null) { depth++; type = type.BaseType; } return depth; }
     private static string ConstructorSignature(ConstructorInfo constructor) =>
         string.Join("|", constructor.GetParameters().Select(item => item.ParameterType.FullName + ":" + PklName(item)));
