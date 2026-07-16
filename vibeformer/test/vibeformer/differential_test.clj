@@ -58,3 +58,24 @@
     (is (some #{"binding.complete-conversion-matrix"} (:families summary)))
     (is (some #{"schema.methods-generic-classes"} (:families summary)))
     (is (some #{"schema.amends-recursive-aliases"} (:families summary)))))
+
+(deftest loading-contract-is-source-backed-executable-and-retains-pending-scope
+  (let [root (paths/workspace-root)
+        fixtures (paths/resolve-path root "vibeformer" "validation" "loading-contract")
+        contract (#'differential/verify-loading-contract-evidence!
+                  root
+                  (paths/resolve-path fixtures "ContractEvidence.tsv")
+                  (paths/resolve-path fixtures "ContractExpectations.tsv"))
+        summary (:summary contract)]
+    (is (= 52 (:families summary)))
+    (is (= 5 (:existing-evidence summary)))
+    (is (= 47 (:pending-in-scope summary)))
+    (is (= 48 (:jvm-shared-families summary)))
+    (is (= 4 (:dotnet-adaptation-families summary)))
+    (is (= 16 (:jvm-shared-observations summary)))
+    (is (= 4 (:dotnet-adaptation-observations summary)))
+    (is (some #(= "package.cache-offline" (:family %)) (:evidence contract)))
+    (is (some #(= "adaptation.assembly-modules" (:family %)) (:evidence contract)))
+    (is (every? #(#{"existing-evidence" "pending-in-scope"}
+                   (:implementation %))
+                (:evidence contract)))))

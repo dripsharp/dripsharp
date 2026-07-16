@@ -1,0 +1,3 @@
+The package-only .NET probe must normalize Windows drive, UNC, and POSIX paths
+without weakening root confinement, percent-encoded traversal rejection, or
+scheme checks. Platform-specific spellings normalize to the shared contract.

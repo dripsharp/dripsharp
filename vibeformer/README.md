@@ -139,7 +139,15 @@ local text/byte resources; module security denial; collection, bytes, and regex
 runtime values; four normalized error classes; and `Duration`, `DataSize`,
 `Pair`, `PNull`, `PClassInfo`, and `ModuleSource` behavior. Each core case gets a
 fresh evaluator, and neither package probe loads generated sources or shares
-runtime state with its oracle. The core gate also compiles and runs separate
+runtime state with its oracle. The core gate also executes a source-backed
+loading, security-policy, and evaluator-configuration contract against the
+upstream JVM. Its 52 behavior families distinguish 48 directly comparable JVM
+families from four .NET-specific assembly, embedded-resource, path, and disposal
+adaptations; 47 unimplemented families remain explicitly pending in scope. The
+16 normalized upstream observations cover local, directory, archive, custom,
+HTTP/TLS, package, and projectpackage loading; cache and integrity behavior;
+settings, policy, errors, and lifecycle, with deliberate mismatch detection. The
+core gate also compiles and runs separate
 package-reference-only generator and generated-consumer projects. A JVM oracle
 independently compares 40 observations across nine normalized schemas,
 including method and standard-library generic ownership, amended-module

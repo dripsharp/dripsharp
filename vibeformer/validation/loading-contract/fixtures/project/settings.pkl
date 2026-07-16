@@ -1,0 +1,13 @@
+amends "pkl:settings"
+
+editor = Sublime
+http {
+  proxy {
+    address = "http://localhost:8080"
+    noProxy { "example.test" }
+  }
+  rewrites { ["https://origin.test/"] = "https://mirror.test/" }
+  headers {
+    ["https://mirror.test/**"] { ["X-Contract"] { "one"; "two" } }
+  }
+}

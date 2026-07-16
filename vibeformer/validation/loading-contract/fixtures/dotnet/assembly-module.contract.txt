@@ -1,0 +1,3 @@
+The package-only .NET probe must load a module from a named Assembly resource,
+resolve relative imports within that assembly namespace, list/glob sibling
+modules deterministically, and report a stable missing-module diagnostic.

@@ -1,0 +1,21 @@
+# comparison	observation	kind	normalized expectation
+jvm-shared	module-source/forms	API	text=repl:text:value = 1|path=file:true|file=file:true|uri=https://example.test/main.pkl:true|modulepath=modulepath:/lib/main.pkl:true
+jvm-shared	local/import-resource	LOADING	imported=42|resource=contract payload\n
+jvm-shared	local/list-glob	LOADING	modules=[./modules/dependency.pkl, ./modules/second.pkl]|resources=[./resources/payload.txt, ./resources/second.txt]
+jvm-shared	modulepath/directory-archive	LOADING	directory=file:origin = "directory":directory resource|archive=jar:origin = "archive":archive resource
+jvm-shared	stdlib/import	LOADING	gcd=6
+jvm-shared	custom/module-resource-lifecycle	LOADING	dependency=42|resource=resource-value|creates=2|factory-closes=0|reader-closes=0
+jvm-shared	resources/environment-property	LOADING	environment=environment-value|property=property-value
+jvm-shared	evaluator/builder	API	color=true|stack=true|allowed=1:1|root=true|logger=true|http=true|readers=1:1|values=1:2|timeout=2|cache=true|format=json|trace=pretty|power=true|conflict=true
+jvm-shared	security/policy	POLICY	allowed=true|module-denied=true|resource-denied=true|trust-denied=true|root-denied=true|encoded-traversal=true|literal-traversal=true
+jvm-shared	https/rewrite-redirect-headers	HTTP	http=42:plain payload\n|https=42:secure payload\n|redirect=value = 42 payload = read("https://origin.test/data.txt").text|checked=2|headers=true
+jvm-shared	package/assets-cache-integrity	PACKAGE	bird=Swallow|modules=[package://localhost:0/birds@0.5.0#/catalog/Ostrich.pkl, package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl]|resources=[package://localhost:0/birds@0.5.0#/catalog/Ostrich.pkl, package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl]|offline=Swallow:true|downloads=true|metadata=birds:1|metadata-sha=true|asset=/foo/../Bird.pkl/./catalog.pkl|checksum-failure=true
+jvm-shared	project/projectpackage-dependencies	PROJECT	dependencies=1|bird=Swallow|resource=true
+jvm-shared	project/evaluator-user-settings	SETTINGS	env=project-env|property=project-property|allowed=3:4|paths=true:true:true|timeout=2.0|color=always|trace=pretty|external=true:true:true|http=http://localhost:8080:1:1|user=true:2|applied=true:pretty:project-env
+jvm-shared	errors/missing-invalid-io-type	ERROR	missing=true|relative=true|invalid-package=true|io=true|project-type=true|settings-type=true
+jvm-shared	project/dependency-cycles	ERROR	single=true|multiple=true
+jvm-shared	lifecycle/close	LIFECYCLE	evaluator-repeat=true|evaluator-after-close=true|http-repeat=true|http-after-close=true
+dotnet-adaptation	assembly/module-loading	DOTNET	module=42|relative=84|list=[dependency.pkl, main.pkl]|missing=assembly:module-not-found
+dotnet-adaptation	embedded/resource-loading	DOTNET	text=contract payload\n|bytes=636f6e7472616374207061796c6f61640a|list=[payload.txt, second.txt]|denied=security:resource-not-allowed
+dotnet-adaptation	platform/path-uri-policy	DOTNET	posix=true|windows-drive=true|unc=true|root-denied=true|encoded-traversal=true
+dotnet-adaptation	ownership/disposal	DOTNET	custom-owned-by-caller=true|owned-http-disposed=true|owned-archive-disposed=true|owned-external-process-disposed=true|repeat=true

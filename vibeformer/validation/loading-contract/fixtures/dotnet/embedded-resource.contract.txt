@@ -1,0 +1,3 @@
+The package-only .NET probe must expose embedded text and byte resources through
+an idiomatic resource reader, support deterministic listing/globbing, enforce
+the resource allowlist before access, and dispose owned streams/readers.

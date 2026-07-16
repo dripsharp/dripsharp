@@ -1,0 +1,4 @@
+imported = import("./modules/dependency.pkl").answer
+resource = read("./resources/payload.txt").text
+moduleKeys = import*("./modules/*.pkl").keys
+resourceKeys = read*("./resources/*.txt").keys

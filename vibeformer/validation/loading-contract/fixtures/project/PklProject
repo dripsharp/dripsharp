@@ -1,0 +1,39 @@
+amends "pkl:Project"
+
+evaluatorSettings {
+  timeout = 2.s
+  rootDir = "."
+  noCache = false
+  moduleCacheDir = "cache"
+  modulePath { "modules" }
+  color = "always"
+  traceMode = "pretty"
+  env { ["CONTRACT_ENV"] = "project-env" }
+  externalProperties { ["contract.property"] = "project-property" }
+  allowedModules { "pkl:"; "file:"; "projectpackage:" }
+  allowedResources { "file:"; "env:"; "prop:"; "projectpackage:" }
+  externalModuleReaders {
+    ["contractmod"] {
+      executable = "tools/module-reader"
+      arguments { "--contract" }
+      workingDir = "reader-work"
+    }
+  }
+  externalResourceReaders {
+    ["contractres"] {
+      executable = "contract-resource-reader"
+    }
+  }
+  http {
+    proxy {
+      address = "http://localhost:8080"
+      noProxy { "example.test" }
+    }
+    rewrites { ["https://origin.test/"] = "https://mirror.test/" }
+    headers {
+      ["https://mirror.test/**"] { ["X-Contract"] = "enabled" }
+    }
+  }
+}
+
+tests { "contractTest.pkl" }

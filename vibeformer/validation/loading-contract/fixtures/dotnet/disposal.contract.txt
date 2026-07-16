@@ -1,0 +1,4 @@
+AutoCloseable ownership maps to deterministic IDisposable ownership. Supplied
+custom module factories and resource readers remain caller-owned, while owned
+HTTP clients, archive file systems, and external-reader processes are disposed
+at their documented boundary. Repeated Dispose is safe.

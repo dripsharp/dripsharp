@@ -339,6 +339,229 @@
      :pending-in-scope (count pending)
      :families (mapv :family entries)}))
 
+(def ^:private required-loading-contract-families
+  #{"source.module-forms"
+    "loading.local-file-resolution"
+    "loading.local-relative-import"
+    "loading.local-resource"
+    "loading.directory-listing"
+    "loading.directory-globbing"
+    "loading.modulepath-directory"
+    "loading.modulepath-archive"
+    "loading.standard-library"
+    "loading.http-modules-resources"
+    "loading.https-modules-resources"
+    "http.redirects-policy-order"
+    "http.rewrites-headers"
+    "http.proxy-settings"
+    "package.assets"
+    "package.directory-listing-globbing"
+    "package.metadata"
+    "package.checksums"
+    "package.cache-offline"
+    "package.transitive-dependencies"
+    "project.declared-dependencies"
+    "project.projectpackage-imports-resources"
+    "readers.custom-module"
+    "readers.custom-resource"
+    "readers.configured-external-module"
+    "readers.configured-external-resource"
+    "resources.environment"
+    "resources.external-property"
+    "adaptation.assembly-modules"
+    "adaptation.embedded-resources"
+    "evaluator.builder-mutations-getters"
+    "evaluator.builder-invalid-combinations"
+    "settings.evaluator"
+    "settings.project"
+    "settings.user"
+    "settings.apply-from-project"
+    "security.root-confinement"
+    "security.module-allowlist"
+    "security.resource-resolve-read"
+    "security.import-trust"
+    "security.traversal-rejection"
+    "security.scheme-policy"
+    "adaptation.platform-path-uri"
+    "errors.missing-element"
+    "errors.invalid-uri-scheme"
+    "errors.io"
+    "errors.checksum"
+    "errors.dependency-cycle"
+    "errors.output-type"
+    "lifecycle.evaluator-http-close"
+    "lifecycle.custom-reader-ownership"
+    "adaptation.disposal-ownership"})
+
+(defn- contract-lines [^Path file]
+  (->> (str/split-lines (Files/readString file StandardCharsets/UTF_8))
+       (map-indexed vector)
+       (remove (fn [[_ line]]
+                 (or (str/blank? line) (str/starts-with? line "#"))))))
+
+(defn- verify-loading-contract-evidence!
+  [root ^Path evidence ^Path expectations]
+  (doseq [[kind path] [[:evidence evidence] [:expectations expectations]]]
+    (when-not (paths/regular-file? path)
+      (fail! "Loading/policy/configuration contract input is missing"
+             {:kind kind :path (str path)})))
+  (let [expectation-entries
+        (mapv
+         (fn [[index line]]
+           (let [fields (str/split line #"\t" -1)]
+             (when-not (= 4 (count fields))
+               (fail! "Loading contract expectation must have four tab-separated fields"
+                      {:path (str expectations) :line (inc index) :value line}))
+             (let [[comparison observation kind expectation] fields]
+               (when-not (#{"jvm-shared" "dotnet-adaptation"} comparison)
+                 (fail! "Loading contract expectation has an unsupported comparison class"
+                        {:path (str expectations) :line (inc index)
+                         :comparison comparison}))
+               (when (some str/blank? [observation kind expectation])
+                 (fail! "Loading contract expectation contains a blank required field"
+                        {:path (str expectations) :line (inc index) :value line}))
+               {:comparison comparison :observation observation
+                :kind kind :expectation expectation})))
+         (contract-lines expectations))
+        duplicate-expectations
+        (->> expectation-entries
+             (group-by :observation)
+             (keep (fn [[observation entries]]
+                     (when (> (count entries) 1) observation)))
+             sort vec)
+        expectation-index (into {} (map (juxt :observation identity) expectation-entries))
+        evidence-entries
+        (mapv
+         (fn [[index line]]
+           (let [fields (str/split line #"\t" -1)]
+             (when-not (= 7 (count fields))
+               (fail! "Loading contract evidence must have seven tab-separated fields"
+                      {:path (str evidence) :line (inc index) :value line}))
+             (let [[implementation comparison family observation source fixture detail] fields]
+               (when-not (#{"existing-evidence" "pending-in-scope"} implementation)
+                 (fail! "Loading contract evidence has an unsupported implementation status"
+                        {:path (str evidence) :line (inc index)
+                         :implementation implementation}))
+               (when-not (#{"jvm-shared" "dotnet-adaptation"} comparison)
+                 (fail! "Loading contract evidence has an unsupported comparison class"
+                        {:path (str evidence) :line (inc index)
+                         :comparison comparison}))
+               (when (some str/blank? [family observation source fixture detail])
+                 (fail! "Loading contract evidence contains a blank required field"
+                        {:path (str evidence) :line (inc index) :value line}))
+               (when-not (and (str/starts-with? source "research/pkl/")
+                              (str/includes? source "/src/test/"))
+                 (fail! "Loading contract evidence must cite an upstream Pkl test or fixture"
+                        {:path (str evidence) :line (inc index) :source source}))
+               (doseq [[input-kind input] [[:source source] [:fixture fixture]]]
+                 (let [input-path (paths/resolve-path root input)]
+                   (when-not (paths/regular-file? input-path)
+                     (fail! "Loading contract evidence references a missing input"
+                            {:path (str evidence) :line (inc index)
+                             :input-kind input-kind :input (str input-path)}))))
+               (let [expected (get expectation-index observation)]
+                 (when-not expected
+                   (fail! "Loading contract evidence references an unknown expectation"
+                          {:path (str evidence) :line (inc index)
+                           :observation observation}))
+                 (when-not (= comparison (:comparison expected))
+                   (fail! "Loading contract evidence and expectation comparison classes differ"
+                          {:path (str evidence) :line (inc index)
+                           :observation observation :evidence comparison
+                           :expectation (:comparison expected)})))
+               {:implementation implementation :comparison comparison :family family
+                :observation observation :source source :fixture fixture :detail detail})))
+         (contract-lines evidence))
+        missing-families
+        (sort (remove (set (map :family evidence-entries))
+                      required-loading-contract-families))
+        uncited-expectations
+        (sort (remove (set (map :observation evidence-entries))
+                      (map :observation expectation-entries)))
+        shared (filterv #(= "jvm-shared" (:comparison %)) expectation-entries)
+        adaptations (filterv #(= "dotnet-adaptation" (:comparison %)) expectation-entries)]
+    (when (seq duplicate-expectations)
+      (fail! "Loading contract contains duplicate observation expectations"
+             {:path (str expectations) :duplicates duplicate-expectations}))
+    (when (seq missing-families)
+      (fail! "Loading contract omits required in-scope behavior families"
+             {:path (str evidence) :missing missing-families}))
+    (when (seq uncited-expectations)
+      (fail! "Loading contract contains expectations without source-backed evidence"
+             {:path (str expectations) :uncited uncited-expectations}))
+    {:evidence evidence-entries
+     :expectations expectation-entries
+     :shared shared
+     :adaptations adaptations
+     :summary {:families (count evidence-entries)
+               :existing-evidence (count (filter #(= "existing-evidence"
+                                                     (:implementation %))
+                                                  evidence-entries))
+               :pending-in-scope (count (filter #(= "pending-in-scope"
+                                                     (:implementation %))
+                                                  evidence-entries))
+               :jvm-shared-families (count (filter #(= "jvm-shared" (:comparison %))
+                                                   evidence-entries))
+               :dotnet-adaptation-families (count (filter #(= "dotnet-adaptation"
+                                                               (:comparison %))
+                                                         evidence-entries))
+               :jvm-shared-observations (count shared)
+               :dotnet-adaptation-observations (count adaptations)}}))
+
+(defn- write-loading-expectations! [^Path output entries]
+  (write-text!
+   output
+   (apply str
+          (map (fn [{:keys [observation kind expectation]}]
+                 (str observation "\t" kind "\t" (b64 expectation) "\n"))
+               entries))))
+
+(defn- verify-loading-contract!
+  [{:keys [root run-command! java-release java-home entries]}]
+  (let [fixtures (paths/resolve-path root "vibeformer" "validation" "loading-contract")
+        evidence (paths/resolve-path fixtures "ContractEvidence.tsv")
+        expectations (paths/resolve-path fixtures "ContractExpectations.tsv")
+        oracle-source (paths/resolve-path fixtures "LoadingContractUpstreamOracle.java")
+        contract (verify-loading-contract-evidence! root evidence expectations)
+        proof-root (harness/clean-directory!
+                    (paths/resolve-path root "vibeformer" "validation-output"
+                                        "differential-proof" "loading-contract"))
+        oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
+                         (Files/createDirectories (make-array FileAttribute 0)))
+        oracle-output (paths/resolve-path proof-root "upstream.tsv")
+        expected-output (write-loading-expectations!
+                         (paths/resolve-path proof-root "expected.tsv")
+                         (:shared contract))
+        perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
+        work (doto (paths/resolve-path proof-root "upstream-work")
+               (Files/createDirectories (make-array FileAttribute 0)))
+        compile-classpath (str/join File/pathSeparator (map str entries))
+        classpath (str/join File/pathSeparator (map str (cons oracle-classes entries)))
+        javac (paths/resolve-path java-home "bin" "javac")
+        java (paths/resolve-path java-home "bin" "java")
+        upstream-root (paths/resolve-path root "research" "pkl")]
+    (when-not (paths/regular-file? oracle-source)
+      (fail! "Loading contract upstream oracle is missing" {:path (str oracle-source)}))
+    (run-command! {:command ["./gradlew" ":pkl-commons-test:processResources" "--console=plain"]
+                   :directory upstream-root})
+    (run-command! {:command [(str javac) "--release" (str java-release)
+                             "-cp" compile-classpath "-d" (str oracle-classes)
+                             (str oracle-source)]
+                   :directory root})
+    (run-command! {:command [(str java) "-cp" classpath "LoadingContractUpstreamOracle"
+                             (str root) (str oracle-output) (str work)]
+                   :directory root})
+    (let [comparison (assert-equal! "Pkl loading/policy/configuration contract"
+                                    expected-output oracle-output)
+          perturbation (prove-perturbation! expected-output perturbed-output)]
+      {:summary (assoc (:summary contract)
+                       :observations (:matched comparison)
+                       :perturbation-detected-at (get-in perturbation [:mismatch :line]))
+       :evidence evidence
+       :expectations expectations
+       :expected-output expected-output
+       :oracle-output oracle-output})))
+
 (defn- package-only-project [package-id version target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
        "  <PropertyGroup>\n"
@@ -585,7 +808,10 @@
                  "--no-build" "--no-restore" "--" (str manifest)
                  (str package-output)]
        :directory consumer-root}])
-    (let [schema-proof (verify-schema-codegen-binding!
+    (let [loading-contract (verify-loading-contract!
+                            {:root root :run-command! run-command!
+                             :java-release java-release :java-home java-home :entries entries})
+          schema-proof (verify-schema-codegen-binding!
                         {:root root :package-proof package-proof :run-command! run-command!
                          :java-release java-release :java-home java-home :entries entries})
           comparison (assert-equal! "Pkl.Core" oracle-output package-output)
@@ -602,10 +828,12 @@
                    :loading-security-cases 3
                    :error-cases 4
                    :observations (:matched comparison)
+                   :loading-policy-configuration-contract (:summary loading-contract)
                    :schema-codegen-binding (:summary schema-proof)
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
       (println "Independent upstream/package Pkl.Core differential passed:" (pr-str summary))
       {:package-proof package-proof
+       :loading-policy-configuration-contract loading-contract
        :schema-codegen-binding schema-proof
        :summary summary
        :manifest manifest
