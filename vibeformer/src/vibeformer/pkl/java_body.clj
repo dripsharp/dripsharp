@@ -85,25 +85,56 @@
        (or (nullable-annotation? reference)
            (some nullable-type? (.getActualTypeArguments reference)))))
 
+(def ^:private boxed-value-types
+  #{"java.lang.Boolean" "java.lang.Byte" "java.lang.Short"
+    "java.lang.Integer" "java.lang.Long" "java.lang.Character"
+    "java.lang.Float" "java.lang.Double" "java.time.Duration"})
+
+(defn- boxed-value-cast? [expression]
+  (boolean
+   (and (instance? CtExpression expression)
+        (some #(contains? boxed-value-types (.getQualifiedName ^CtTypeReference %))
+              (.getTypeCasts ^CtExpression expression)))))
+
+(defn- nullable-record-component? [component]
+  (boolean (and component
+                (or (nullable-annotation? component)
+                    (nullable-type? (.getType ^CtRecordComponent component))))))
+
+(defn- nullable-record-accessor? [declaration]
+  (boolean
+   (when (instance? CtMethod declaration)
+     (let [owner (.getDeclaringType ^CtMethod declaration)]
+       (when (instance? CtRecord owner)
+         (some (fn [component]
+                 (and (= (.getSimpleName ^CtMethod declaration)
+                         (.getSimpleName ^CtRecordComponent component))
+                      (nullable-record-component? component)))
+               (.getRecordComponents ^CtRecord owner)))))))
+
 (defn- nullable-expression? [expression]
   (cond
     (and (instance? CtLiteral expression)
          (nil? (.getValue ^CtLiteral expression))) true
     (nullable-annotation? expression) true
     (nullable-type? (.getType ^CtExpression expression)) true
+    (boxed-value-cast? expression) true
     (instance? CtVariableRead expression)
     (let [declaration (some-> ^CtVariableRead expression .getVariable .getDeclaration)]
       (boolean (and declaration
                     (or (nullable-annotation? declaration)
                         (nullable-type? (.getType declaration))
                         (when (instance? CtLocalVariable declaration)
-                          (some-> ^CtLocalVariable declaration .getDefaultExpression
-                                  nullable-expression?))))))
+                          (let [default (.getDefaultExpression ^CtLocalVariable declaration)]
+                            (and default
+                                 (not (boxed-value-cast? default))
+                                 (nullable-expression? default))))))))
     (instance? CtInvocation expression)
     (let [declaration (some-> ^CtInvocation expression .getExecutable .getExecutableDeclaration)]
       (boolean (and declaration
                     (or (nullable-annotation? declaration)
-                        (nullable-type? (.getType ^CtMethod declaration))))))
+                        (nullable-type? (.getType ^CtMethod declaration))
+                        (nullable-record-accessor? declaration)))))
     (instance? CtNewArray expression)
     (boolean (some nullable-expression? (.getElements ^CtNewArray expression)))
     :else false))
@@ -113,6 +144,17 @@
       (and parameter-declaration
            (or (nullable-annotation? parameter-declaration)
                (nullable-type? (.getType ^CtParameter parameter-declaration))))))
+
+(defn- nullable-enclosing-return? [^CtElement element]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (nil? current) false
+      (instance? CtLambda current) false
+      (instance? CtMethod current)
+      (or (nullable-annotation? current)
+          (nullable-type? (.getType ^CtMethod current)))
+      :else (recur (when (.isParentInitialized ^CtElement current)
+                     (.getParent ^CtElement current))))))
 
 (defn- member [target name]
   (if target
@@ -128,12 +170,37 @@
     (sequence-node [node (raw "!")])))
 
 (defn- non-null-node [^CtExpression expression node]
-  (if (contains? #{"java.lang.Boolean" "java.lang.Byte" "java.lang.Short"
-                   "java.lang.Integer" "java.lang.Long" "java.lang.Character"
-                   "java.lang.Float" "java.lang.Double" "java.time.Duration"}
-                 (some-> expression .getType .getQualifiedName))
-    (member node "Value")
+  (if (or (contains? boxed-value-types
+                     (some-> expression .getType .getQualifiedName))
+          (boxed-value-cast? expression))
+    (if (str/ends-with? (:text (csharp/render node)) ".Value")
+      node
+      (member node "Value"))
     (null-forgiven node)))
+
+(defn- primitive-argument-context? [^CtExpression expression]
+  (when (.isParentInitialized expression)
+    (let [parent (.getParent expression)
+          invocation? (instance? CtInvocation parent)
+          constructor? (instance? CtConstructorCall parent)]
+      (when (or invocation? constructor?)
+        (let [arguments (vec (.getArguments parent))
+              index (first (keep-indexed (fn [index argument]
+                                           (when (identical? expression argument) index))
+                                         arguments))
+              executable (.getExecutable parent)
+              referenced-parameters (vec (.getParameters executable))
+              declared-parameters (some-> executable .getExecutableDeclaration
+                                           .getParameters vec)]
+          (boolean
+           (and index
+                (or (some-> (when (< index (count referenced-parameters))
+                              (nth referenced-parameters index))
+                            .isPrimitive)
+                    (some-> (when (and declared-parameters
+                                       (< index (count declared-parameters)))
+                              (.getType ^CtParameter (nth declared-parameters index)))
+                            .isPrimitive)))))))))
 
 (defn- wrap-casts [services children ^CtExpression expression node]
   (let [casts (vec (.getTypeCasts expression))
@@ -182,11 +249,23 @@
                 (if (.isPrimitive current-cast)
                   (sequence-node [(raw "(") (child-node children current-cast)
                                   (raw ")(") value (raw ")")])
-                  (if (or (instance? CtLambda expression)
-                          (and (instance? CtConditional expression)
-                               (str/includes? (:text (csharp/render value)) "=>")))
+                  (cond
+                    (contains? boxed-value-types
+                               (.getQualifiedName current-cast))
+                    (let [cast-node
+                          (sequence-node [(raw "((") (child-node children current-cast)
+                                          (raw "?)((object)(") (null-forgiven value) (raw ")))")])]
+                      (if (primitive-argument-context? expression)
+                        (member cast-node "Value")
+                        cast-node))
+
+                    (or (instance? CtLambda expression)
+                        (and (instance? CtConditional expression)
+                             (str/includes? (:text (csharp/render value)) "=>")))
                     (sequence-node [(raw "((") (child-node children current-cast)
                                     (raw ")(") value (raw "))")])
+
+                    :else
                     (sequence-node [(raw "((") (child-node children current-cast)
                                     (raw ")((object)(") (null-forgiven value) (raw ")))")]))))
               node
@@ -377,6 +456,12 @@
 (defn- pclass-info-expression? [^CtExpression expression]
   (= "org.pkl.core.PClassInfo" (some-> expression .getType .getQualifiedName)))
 
+(defn- instanceof-type-reference [expression]
+  (cond
+    (instance? CtTypeAccess expression) (.getAccessedType ^CtTypeAccess expression)
+    (instance? CtTypePattern expression) (some-> ^CtTypePattern expression .getVariable .getType)
+    :else nil))
+
 (defn- binary-node [services ^CtBinaryOperator element children]
   (let [kind (str (.getKind element))
         left-expression (.getLeftHandOperand element)
@@ -387,6 +472,14 @@
                 (sequence-node [(raw "(int)(") right (raw ")")])
                 right)]
     (cond
+      (and (= kind "INSTANCEOF")
+           (let [reference (instanceof-type-reference right-expression)]
+             (and reference
+                  (= "java.util.Set" (.getQualifiedName ^CtTypeReference reference))
+                  (empty? (.getActualTypeArguments ^CtTypeReference reference))
+                  (not (instance? CtTypePattern right-expression)))))
+      (invoke (raw "global::Vibeformer.Runtime.JavaCompat.IsSet") [left])
+
       (= kind "INSTANCEOF")
       (csharp/binary "is" 40 left right)
 
@@ -684,6 +777,15 @@
     (if-not (pkl-core-element? source)
       node
       (cond
+      ;; A Java boxed-value cast can feed a primitive parameter directly. The
+      ;; cast is represented as Nullable<T> in C# so Java null is preserved,
+      ;; but the primitive call site has the same unboxing requirement as
+      ;; Java and therefore must read Value.
+      (and (.isPrimitive parameter-type)
+           (boxed-value-cast? source)
+           (not (str/ends-with? (:text (csharp/render node)) ".Value")))
+      (member node "Value")
+
       (and (= "java.lang.Iterable" (some-> parameter-type .getQualifiedName))
            (contains? #{"org.pkl.core.runtime.VmIntSeq" "org.pkl.core.runtime.VmBytes"}
                       (some-> source-type .getQualifiedName)))
@@ -1194,7 +1296,7 @@
           "executable:java.util.regex.Matcher#replaceFirst(java.lang.String)" (call-member "ReplaceFirst")
           "executable:java.util.regex.Matcher#start()" (call-member "Start")
           "executable:java.util.regex.Matcher#start(int)" (call-member "Start")
-          "executable:java.util.regex.Matcher#toMatchResult()" target
+          "executable:java.util.regex.Matcher#toMatchResult()" (call-member "ToMatchResult")
           "executable:java.util.regex.MatchResult#end()" (call-member "End")
           "executable:java.util.regex.MatchResult#end(int)" (call-member "End")
           "executable:java.util.regex.MatchResult#group()" (call-member "Group")
@@ -1213,6 +1315,8 @@
           "executable:java.util.ServiceLoader#spliterator()" target
           "executable:java.util.Collection#spliterator()" target
           "executable:java.util.function.Supplier#get()" (invoke target [])
+          "executable:java.util.function.Function#identity()" (raw "value => value")
+          "executable:org.pkl.core.stdlib.VmObjectFactory$Property#identity()" (raw "value => value")
           "executable:java.util.function.Function#apply(java.lang.Object)"
           (if (and (instance? CtThisAccess target-element)
                    (= "org.pkl.core.StackFrameTransformer"
@@ -1679,6 +1783,9 @@
         constructor-parameters (vec (.getParameters (.getExecutable element)))
         constructor-declarations (some-> (.getExecutableDeclaration (.getExecutable element))
                                          .getParameters vec)
+        record-components (let [declaration (some-> element .getType .getTypeDeclaration)]
+                            (when (instance? CtRecord declaration)
+                              (vec (.getRecordComponents ^CtRecord declaration))))
         args (into (vec (when-let [outer-argument (:named-inner-constructor-argument services)]
                           (when-let [argument (outer-argument element)] [argument])))
                    (mapv (fn [index source node]
@@ -1687,10 +1794,15 @@
                                  parameter-declaration (when (and constructor-declarations
                                                                   (< index (count constructor-declarations)))
                                                          (nth constructor-declarations index))
+                                 record-component (when (and record-components
+                                                             (< index (count record-components)))
+                                                    (nth record-components index))
                                  node (if (and (nullable-expression? source)
                                                (not (and parameter
-                                                         (nullable-parameter? parameter
-                                                                              parameter-declaration))))
+                                                         (or (nullable-parameter? parameter
+                                                                                  parameter-declaration)
+                                                             (nullable-record-component?
+                                                              record-component)))))
                                         (non-null-node source node)
                                         node)]
                              (if (and (not rrb-constructor?)
@@ -1722,6 +1834,18 @@
                          (sequence-node [(raw "new ") type (raw "(") (first args) (raw ")")])
                          "java.util.LinkedHashMap"
                          (sequence-node [(raw "new ") type (raw "(") (first args) (raw ")")])
+                         "java.util.TreeMap"
+                         (invoke
+                          (csharp/generic-name
+                           (raw "global::Vibeformer.Runtime.JavaCompat.NewSortedDictionary")
+                          (mapv (:type-node services) element-type-arguments))
+                          args)
+                         "java.util.TreeSet"
+                         (invoke
+                          (csharp/generic-name
+                           (raw "global::Vibeformer.Runtime.JavaCompat.NewSortedSet")
+                           (mapv (:type-node services) element-type-arguments))
+                          args)
                          "java.math.BigInteger" (compat-call "NewBigInteger" args)
                          "java.io.ByteArrayInputStream" (compat-call "NewMemoryStream" args)
                          "java.io.File" (first args)
@@ -2261,7 +2385,8 @@
                                       (sequence-node
                                        [(raw " ")
                                         (let [node (child-node children expression)
-                                              node (if (nullable-expression? expression)
+                                              node (if (and (nullable-expression? expression)
+                                                            (not (nullable-enclosing-return? element)))
                                                      (non-null-node expression node)
                                                      node)]
                                           (if-let [return-type (generic-invariant-return-type element)]

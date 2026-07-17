@@ -746,10 +746,13 @@ internal static class JavaCompat
         return marker < 0 ? null : text[(marker + 1)..];
     }
 
-    internal static string? UriAuthority(Uri uri) =>
-        uri.IsAbsoluteUri && uri.OriginalString.Contains("//", StringComparison.Ordinal)
-            ? uri.GetComponents(UriComponents.StrongAuthority, UriFormat.UriEscaped)
-            : null;
+    internal static string? UriAuthority(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri || !uri.OriginalString.Contains("//", StringComparison.Ordinal))
+            return null;
+        var authority = uri.GetComponents(UriComponents.StrongAuthority, UriFormat.UriEscaped);
+        return authority.Length == 0 ? null : authority;
+    }
 
     internal static string? UriHost(Uri uri) => uri.IsAbsoluteUri && !string.IsNullOrEmpty(uri.Host) ? uri.Host : null;
     internal static string? UriUserInfo(Uri uri) => uri.IsAbsoluteUri && !string.IsNullOrEmpty(uri.UserInfo) ? uri.UserInfo : null;
@@ -784,7 +787,7 @@ internal static class JavaCompat
             }
             var path = uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
             if (path.Length == 0) return path;
-            return uri.OriginalString.Contains("://", StringComparison.Ordinal) &&
+            return (uri.IsFile || uri.OriginalString.Contains("://", StringComparison.Ordinal)) &&
                    !path.StartsWith('/')
                 ? "/" + path
                 : path;
@@ -1018,11 +1021,17 @@ internal static class JavaCompat
 
     internal static IList<T> SubList<T>(IEnumerable<T> values, int fromIndex, int toIndex) =>
         new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
-    internal static IList<T> CastList<T>(object values) =>
-        ((IEnumerable)values).Cast<object?>().Select(value => (T)value!).ToList();
-    internal static IDictionary<TKey, TValue> CastDictionary<TKey, TValue>(object values)
+    // Java generic casts may legally carry null even when the declaration is
+    // not annotated. Keep that runtime behavior while presenting the helper's
+    // declared result as the Java target type; generated nullable APIs still
+    // surface their own explicit `?` contract.
+    internal static IList<T> CastList<T>(object? values) => values is null
+        ? null!
+        : ((IEnumerable)values).Cast<object?>().Select(value => (T)value!).ToList();
+    internal static IDictionary<TKey, TValue> CastDictionary<TKey, TValue>(object? values)
         where TKey : notnull
     {
+        if (values is null) return null!;
         if (values is IDictionary<TKey, TValue> typed) return typed;
         var result = new Dictionary<TKey, TValue>();
         foreach (var entry in (IEnumerable)values)
@@ -1030,9 +1039,23 @@ internal static class JavaCompat
             var type = entry!.GetType();
             var key = type.GetProperty("Key")!.GetValue(entry);
             var value = type.GetProperty("Value")!.GetValue(entry);
-            result.Add((TKey)key!, (TValue)value!);
+            result.Add((TKey)ConvertCastValue(typeof(TKey), key)!,
+                (TValue)ConvertCastValue(typeof(TValue), value)!);
         }
         return result;
+    }
+    private static object? ConvertCastValue(Type targetType, object? value)
+    {
+        if (value is null || targetType.IsInstanceOfType(value)) return value;
+        if (!targetType.IsGenericType) return value;
+        var definition = targetType.GetGenericTypeDefinition();
+        var methodName = definition == typeof(IDictionary<,>)
+            ? nameof(CastDictionary)
+            : definition == typeof(IList<>) ? nameof(CastList) : null;
+        if (methodName is null) return value;
+        var method = typeof(JavaCompat).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(candidate => candidate.Name == methodName && candidate.IsGenericMethodDefinition);
+        return method.MakeGenericMethod(targetType.GetGenericArguments()).Invoke(null, new[] { value });
     }
     internal static IDictionary<TKey, TValue> NewJavaDictionary<TKey, TValue>(params object?[] arguments)
         where TKey : notnull
@@ -1044,6 +1067,30 @@ internal static class JavaCompat
         if (arguments.Length == 1 && arguments[0] is IEnumerable<KeyValuePair<TKey, TValue>> values)
             return new Dictionary<TKey, TValue>(values, comparer);
         throw new ArgumentException("Unsupported Java HashMap constructor arguments.");
+    }
+
+    internal static SortedDictionary<TKey, TValue> NewSortedDictionary<TKey, TValue>()
+        where TKey : notnull
+    {
+        return new SortedDictionary<TKey, TValue>(Comparer<TKey>.Create(JavaCompare));
+    }
+
+    internal static SortedSet<T> NewSortedSet<T>() =>
+        new(Comparer<T>.Create(JavaCompare));
+
+    private static int JavaCompare<T>(T? left, T? right)
+    {
+        if (ReferenceEquals(left, right)) return 0;
+        if (left is null) return -1;
+        if (right is null) return 1;
+        if (left is Uri leftUri && right is Uri rightUri)
+            return string.Compare(leftUri.OriginalString, rightUri.OriginalString,
+                StringComparison.Ordinal);
+        if (left is IComparable<T> generic) return generic.CompareTo(right);
+        if (left is IComparable comparable) return comparable.CompareTo(right);
+        var method = left.GetType().GetMethod("CompareTo", new[] { right.GetType() });
+        if (method is not null) return (int)method.Invoke(left, new object?[] { right })!;
+        throw new ArgumentException($"{left.GetType()} does not implement Java Comparable semantics.");
     }
 
     private sealed class JavaEqualityComparer<T> : IEqualityComparer<T>
@@ -1222,6 +1269,8 @@ internal static class JavaCompat
     private static bool IsJavaSet(object value) =>
         value is IEnumerable && value.GetType().GetInterfaces().Any(type =>
             type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ISet<>));
+
+    internal static bool IsSet(object? value) => value is not null && IsJavaSet(value);
 
     private static bool IsPClassInfo(object value)
     {
@@ -1695,6 +1744,18 @@ sealed class JavaRegexMatcher
     internal int End(int index) => Current().Groups[index].Success
         ? Current().Groups[index].Index + Current().Groups[index].Length
         : -1;
+    internal JavaRegexMatcher ToMatchResult()
+    {
+        var result = new JavaRegexMatcher(regex, input)
+        {
+            regionStart = regionStart,
+            regionEnd = regionEnd,
+            nextIndex = nextIndex,
+            appendIndex = appendIndex,
+            current = Current()
+        };
+        return result;
+    }
     internal string ReplaceAll(string replacement) => regex.Replace(input, replacement);
     internal string ReplaceFirst(string replacement) => regex.Replace(input, replacement, 1);
     internal JavaRegexMatcher AppendReplacement(StringBuilder buffer, string replacement)

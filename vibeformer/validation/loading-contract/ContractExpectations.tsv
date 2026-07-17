@@ -12,7 +12,7 @@ jvm-shared	https/rewrite-redirect-headers	HTTP	http=42:plain payload\n|https=42:
 jvm-shared	package/assets-cache-integrity	PACKAGE	bird=Swallow|modules=[package://localhost:0/birds@0.5.0#/catalog/Ostrich.pkl, package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl]|resources=[package://localhost:0/birds@0.5.0#/catalog/Ostrich.pkl, package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl]|offline=Swallow:true|downloads=true|metadata=birds:1|metadata-sha=true|asset=/foo/../Bird.pkl/./catalog.pkl|checksum-failure=true
 jvm-shared	project/projectpackage-dependencies	PROJECT	dependencies=1|bird=Swallow|resource=true
 jvm-shared	network/package-errors	ERROR	http=true|missing=true|metadata=true|checksum=true|scheme=true|policy=true|cold-cache=true
-jvm-shared	project/evaluator-user-settings	SETTINGS	env=project-env|property=project-property|allowed=3:4|paths=true:true:true|timeout=2.0|color=always|trace=pretty|external=true:true:true|http=http://localhost:8080:1:1|user=true:2|applied=true:pretty:project-env
+jvm-shared	project/evaluator-user-settings	SETTINGS	env=project-env|property=project-property|allowed=3:4|paths=true:true:true|timeout=2.0|color=always|trace=pretty|external=true:true:true|http=http://localhost:8080:1:1|user=true:2|local=42:true|applied=true:pretty:project-env
 jvm-shared	errors/missing-invalid-io-type	ERROR	missing=true|relative=true|invalid-package=true|io=true|project-type=true|settings-type=true
 jvm-shared	project/dependency-cycles	ERROR	single=true|multiple=true
 jvm-shared	lifecycle/close	LIFECYCLE	evaluator-repeat=true|evaluator-after-close=true|http-repeat=true|http-after-close=true

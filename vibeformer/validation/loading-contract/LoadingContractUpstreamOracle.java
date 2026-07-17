@@ -503,11 +503,53 @@ public final class LoadingContractUpstreamOracle {
     Path projectDir = work.resolve("settings-project");
     copyTree(fixtures.resolve("project"), projectDir);
     Project project = Project.loadFromPath(projectDir.resolve("PklProject"));
+    Project fromSource = Project.load(ModuleSource.path(projectDir.resolve("PklProject")));
+    if (!project.equals(fromSource)) {
+      throw new IllegalStateException("path and ModuleSource project loading must agree");
+    }
+    var projectPackage = project.getPackage();
+    if (projectPackage == null
+        || !projectPackage.name().equals("contract-project")
+        || !projectPackage.version().toString().equals("1.2.3")
+        || projectPackage.authors().size() != 1
+        || projectPackage.apiTests().size() != 1
+        || projectPackage.exclude().size() < 3
+        || projectPackage.website() == null
+        || projectPackage.documentation() == null
+        || projectPackage.sourceCode() == null
+        || projectPackage.issueTracker() == null) {
+      throw new IllegalStateException("project package metadata must retain all configured fields");
+    }
+    if (project.getAnnotations().size() != 3
+        || project.getTests().size() != 1
+        || project.getDependencies().remoteDependencies().size() != 1
+        || project.getDependencies().localDependencies().size() != 1
+        || project.getLocalProjectDependencies().size() != 1) {
+      throw new IllegalStateException(
+          "project annotations, tests, and local/remote dependencies must be parsed");
+    }
     PklEvaluatorSettings settings = project.getResolvedEvaluatorSettings();
     PklSettings user = PklSettings.load(ModuleSource.path(projectDir.resolve("settings.pkl")));
     PklEvaluatorSettings.ExternalReader moduleReader = settings.externalModuleReaders().get("contractmod");
     PklEvaluatorSettings.ExternalReader resourceReader = settings.externalResourceReaders().get("contractres");
     EvaluatorBuilder applied = EvaluatorBuilder.preconfigured().applyFromProject(project);
+    PModule localModule;
+    try (Evaluator evaluator = applied.build()) {
+      localModule = evaluator.evaluate(ModuleSource.path(projectDir.resolve("local-main.pkl")));
+    }
+    if (!localModule.getProperty("localValue").equals(42L)
+        || !localModule.getProperty("localResource").equals(true)) {
+      throw new IllegalStateException(
+          "ApplyFromProject must resolve local dependency modules and resources");
+    }
+    EvaluatorBuilder overridden = EvaluatorBuilder.preconfigured()
+        .applyFromProject(project)
+        .setColor(false)
+        .addEnvironmentVariable("CONTRACT_ENV", "caller-env");
+    if (overridden.getColor()
+        || !overridden.getEnvironmentVariables().get("CONTRACT_ENV").equals("caller-env")) {
+      throw new IllegalStateException("caller settings applied after a project must take precedence");
+    }
     return "env=" + settings.env().get("CONTRACT_ENV")
         + "|property=" + settings.externalProperties().get("contract.property")
         + "|allowed=" + settings.allowedModules().size() + ":" + settings.allowedResources().size()
@@ -524,6 +566,8 @@ public final class LoadingContractUpstreamOracle {
         + settings.http().rewrites().size() + ":" + settings.http().headers().size()
         + "|user=" + user.editor().equals(PklSettings.Editor.SUBLIME) + ":"
         + user.http().headers().get("https://mirror.test/**").get("X-Contract").size()
+        + "|local=" + localModule.getProperty("localValue") + ":"
+        + localModule.getProperty("localResource")
         + "|applied=" + applied.getColor() + ":" + applied.getTraceMode().name().toLowerCase()
         + ":" + applied.getEnvironmentVariables().get("CONTRACT_ENV");
   }
@@ -558,6 +602,10 @@ public final class LoadingContractUpstreamOracle {
     } catch (RuntimeException expected) {
       settingsType = expected.getMessage().contains("pkl.settings");
     }
+    boolean malformedSettings = throwsPkl(() -> PklSettings.load(
+        ModuleSource.path(fixtures.resolve("project/malformed-settings.pkl"))));
+    boolean malformedProject = throwsPkl(() -> Project.loadFromPath(
+        fixtures.resolve("project/malformed-settings.pkl")));
     boolean invalidPackage = throwsUri(() -> new PackageUri("package:invalid"));
 
     ModuleKeyFactory failingFactory = uri -> {
@@ -576,6 +624,9 @@ public final class LoadingContractUpstreamOracle {
     } catch (PklException expected) {
       ioFailure = expected.getMessage().contains("I/O error")
           || expected.getMessage().contains("contract I/O failure");
+    }
+    if (!malformedSettings || !malformedProject) {
+      throw new IllegalStateException("malformed settings and project modules must fail");
     }
     return "missing=" + missing + "|relative=" + relative + "|invalid-package=" + invalidPackage
         + "|io=" + ioFailure + "|project-type=" + projectType + "|settings-type=" + settingsType;

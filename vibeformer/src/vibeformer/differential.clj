@@ -526,11 +526,15 @@
     "stdlib/import"
     "custom/module-resource-lifecycle"
     "resources/environment-property"
+    "evaluator/builder"
     "security/policy"
     "https/rewrite-redirect-headers"
     "package/assets-cache-integrity"
     "project/projectpackage-dependencies"
     "network/package-errors"
+    "project/evaluator-user-settings"
+    "errors/missing-invalid-io-type"
+    "project/dependency-cycles"
     "lifecycle/close"
     "assembly/module-loading"
     "embedded/resource-loading"
@@ -619,9 +623,9 @@
     (when-not target-framework
       (fail! "Could not determine the loading consumer target framework"
              {:project (str installed-consumer-project)}))
-    (when-not (= 17 (count package-entries))
+    (when-not (= 21 (count package-entries))
       (fail! "The package-only loading observation selection changed"
-             {:expected 17 :actual (count package-entries)
+             {:expected 21 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
     (run-command! {:command ["./gradlew" ":pkl-commons-test:processResources" "--console=plain"]
                    :directory upstream-root})

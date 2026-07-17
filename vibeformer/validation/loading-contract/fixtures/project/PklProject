@@ -1,3 +1,6 @@
+@Deprecated { since = "1.2"; message = "contract"; replaceWith = "replacement" }
+@Unlisted
+@ModuleInfo { minPklVersion = "0.26.0" }
 amends "pkl:Project"
 
 evaluatorSettings {
@@ -34,6 +37,29 @@ evaluatorSettings {
       ["https://mirror.test/**"] { ["X-Contract"] = "enabled" }
     }
   }
+}
+
+package {
+  name = "contract-project"
+  baseUri = "package://example.test/contract-project"
+  version = "1.2.3"
+  description = "Contract project"
+  packageZipUrl = "https://example.test/contract-project/\(version).zip"
+  authors { "Contract Author <contract@example.test>" }
+  website = "https://example.test/site"
+  documentation = "https://example.test/docs"
+  sourceCode = "https://example.test/source"
+  sourceCodeUrlScheme = "https://example.test/source/\(version)%{path}"
+  license = "Apache-2.0"
+  licenseText = "Contract license"
+  issueTracker = "https://example.test/issues"
+  apiTests { "apiTest.pkl" }
+  exclude { "*.tmp" }
+}
+
+dependencies {
+  ["remote"] { uri = "package://example.test/remote@1.0.0" }
+  ["local"] = import("local-dependency/PklProject")
 }
 
 tests { "contractTest.pkl" }

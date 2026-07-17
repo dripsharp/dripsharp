@@ -1,0 +1,2 @@
+localValue = import("@local/module.pkl").value
+localResource = read("@local/resource.txt").text == "local dependency payload\n"

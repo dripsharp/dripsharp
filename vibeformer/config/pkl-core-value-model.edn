@@ -11,6 +11,16 @@
   {:key "initializer:org.pkl.core.Release#static@52:10" :expand :body}
   {:key "initializer:org.pkl.core.runtime.RefModule#static@24:10" :expand :body}
   {:key "initializer:org.pkl.core.runtime.MathModule#static@23:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.MirrorFactories#static@109:10" :expand :body}
+  {:key "initializer:org.pkl.core.stdlib.base.RegexMatchFactory#static@36:10" :expand :body}
+  ;; Project and user-settings evaluation reaches these eagerly shared stdlib
+  ;; module singletons through ModuleCache. Their static bodies are observable
+  ;; runtime behavior: without them ModuleCache returns uninitialized modules.
+  {:key "initializer:org.pkl.core.runtime.PlatformModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.ProjectModule#static@23:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.ReflectModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.SemVerModule#static@25:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.SettingsModule#static@23:10" :expand :body}
   {:key "initializer:org.pkl.core.util.json.JsonEscaper#static@38:10" :expand :body}
   {:key "initializer:org.pkl.core.resource.ResourceReaders$FromServiceProviders#static@651:12"
    :expand :body}

@@ -25,6 +25,8 @@ using Pkl.Core.Packages;
 using Pkl.Core.Project;
 using Pkl.Core.Resource;
 using Pkl.Core.Runtime;
+using Pkl.Core.Settings;
+using PklHttpClient = Pkl.Core.Http.HttpClient;
 
 /** Package-only .NET probe for the loader, package, and policy contract. */
 static class LoadingContractDotNetProbe
@@ -49,18 +51,21 @@ static class LoadingContractDotNetProbe
         Write(writer, "stdlib/import", "LOADING", ObserveStandardLibrary());
         Write(writer, "custom/module-resource-lifecycle", "LOADING", ObserveCustomReaders());
         Write(writer, "resources/environment-property", "LOADING", ObserveEnvironmentAndProperties());
+        Write(writer, "evaluator/builder", "API", ObserveEvaluatorBuilder(work));
         Write(writer, "security/policy", "POLICY", ObserveSecurityPolicy(work));
         NetworkObservations network = ObserveNetworkAndPackages(packageBuild, work);
         Write(writer, "https/rewrite-redirect-headers", "HTTP", network.Http);
         Write(writer, "package/assets-cache-integrity", "PACKAGE", network.Packages);
         Write(writer, "project/projectpackage-dependencies", "PROJECT", network.ProjectPackage);
         Write(writer, "network/package-errors", "ERROR", network.Errors);
+        Write(writer, "project/evaluator-user-settings", "SETTINGS", ObserveSettings(fixtures, work));
+        Write(writer, "errors/missing-invalid-io-type", "ERROR", ObserveErrors(fixtures, work));
+        Write(writer, "project/dependency-cycles", "ERROR", ObserveProjectCycles(fixtures));
         Write(writer, "lifecycle/close", "LIFECYCLE", ObserveLifecycle());
         Write(writer, "assembly/module-loading", "DOTNET", ObserveAssemblyModules());
         Write(writer, "embedded/resource-loading", "DOTNET", ObserveEmbeddedResources());
         Write(writer, "platform/path-uri-policy", "DOTNET", ObservePlatformPolicy(work));
         Write(writer, "ownership/disposal", "DOTNET", ObserveOwnership(fixtures, work));
-        AssertMissingDiagnostics(work);
         Console.WriteLine("Package-only loading, package, and policy validation passed.");
     }
 
@@ -176,6 +181,59 @@ static class LoadingContractDotNetProbe
             $"|property={module.GetProperty("property")}";
     }
 
+    static string ObserveEvaluatorBuilder(string work)
+    {
+        var factory = new CountingModuleFactory();
+        var reader = new CountingResourceReader();
+        string cache = Path.Combine(work, "builder-cache");
+        EvaluatorBuilder builder = EvaluatorBuilder.Unconfigured()
+            .SetColor(true)
+            .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+            .SetAllowedModules(new List<Regex> { new("file:") })
+            .SetAllowedResources(new List<Regex> { new("env:") })
+            .SetRootDir(work)
+            .SetLogger(Loggers.Noop())
+            .SetHttpClient(PklHttpClient.DummyClient())
+            .SetModuleKeyFactories(new List<ModuleKeyFactory> { factory })
+            .SetResourceReaders(new List<ResourceReader> { reader })
+            .SetEnvironmentVariables(new Dictionary<string, string> { ["A"] = "1" })
+            .SetExternalProperties(new Dictionary<string, string> { ["B"] = "2" })
+            .SetTimeout(TimeSpan.FromSeconds(2))
+            .SetModuleCacheDir(cache)
+            .SetOutputFormat("json")
+            .SetTraceMode(TraceMode.PRETTY)
+            .SetPowerAssertionsEnabled(true);
+        bool conflict;
+        try
+        {
+            builder.SetSecurityManager(SecurityManagers.defaultManager)
+                .SetAllowedModules(Array.Empty<Regex>());
+            conflict = false;
+        }
+        catch (InvalidOperationException)
+        {
+            conflict = true;
+        }
+        finally
+        {
+            builder.UnsetSecurityManager();
+        }
+        return $"color={Lower(builder.GetColor())}" +
+            $"|stack={Lower(builder.GetStackFrameTransformer() is not null)}" +
+            $"|allowed={builder.GetAllowedModules().Count}:{builder.GetAllowedResources().Count}" +
+            $"|root={Lower(Path.GetFullPath(builder.GetRootDir()!) == Path.GetFullPath(work))}" +
+            $"|logger={Lower(builder.GetLogger() is not null)}" +
+            $"|http={Lower(builder.GetHttpClient() is not null)}" +
+            $"|readers={builder.GetModuleKeyFactories().Count}:{builder.GetResourceReaders().Count}" +
+            $"|values={builder.GetEnvironmentVariables()["A"]}:{builder.GetExternalProperties()["B"]}" +
+            $"|timeout={builder.GetTimeout()!.Value.TotalSeconds:0}" +
+            $"|cache={Lower(Path.GetFullPath(builder.GetModuleCacheDir()!) == Path.GetFullPath(cache))}" +
+            $"|format={builder.GetOutputFormat()}" +
+            $"|trace={builder.GetTraceMode().ToString()!.ToLowerInvariant()}" +
+            $"|power={Lower(builder.GetPowerAssertionsEnabled())}" +
+            $"|conflict={Lower(conflict)}";
+    }
+
     static string ObserveSecurityPolicy(string work)
     {
         string root = Path.Combine(work, "security-root");
@@ -276,7 +334,7 @@ static class LoadingContractDotNetProbe
         var httpModules = new List<Regex>(SecurityManagers.defaultAllowedModules) { new("http:") };
         var httpResources = new List<Regex>(SecurityManagers.defaultAllowedResources) { new("http:") };
         PModule httpModule;
-        using (HttpClient client = HttpClient.CreateBuilder()
+        using (PklHttpClient client = PklHttpClient.CreateBuilder()
             .AddHeaders("**", new Dictionary<string, IList<string>>
                 { ["X-Contract"] = new List<string> { "enabled" } })
             .Build())
@@ -290,7 +348,7 @@ static class LoadingContractDotNetProbe
         }
 
         PModule proxied;
-        using (HttpClient proxyClient = HttpClient.CreateBuilder()
+        using (PklHttpClient proxyClient = PklHttpClient.CreateBuilder()
             .SetProxy(server.ProxyUri, Array.Empty<string>())
             .AddHeaders("**", new Dictionary<string, IList<string>>
                 { ["X-Contract"] = new List<string> { "enabled" } })
@@ -304,7 +362,7 @@ static class LoadingContractDotNetProbe
             proxied = evaluator.Evaluate(ModuleSource.Uri("http://origin.test/proxy-main.pkl"));
         }
 
-        using HttpClient directClient = server.NewTlsClient()
+        using PklHttpClient directClient = server.NewTlsClient()
             .AddRewrite(new Uri("https://origin.test/"), new Uri("https://localhost:0/"))
             .AddHeaders("**", new Dictionary<string, IList<string>>
                 { ["X-Contract"] = new List<string> { "enabled" } })
@@ -338,7 +396,7 @@ static class LoadingContractDotNetProbe
             "resources = read*(\"package://localhost:0/birds@0.5.0#/catalog/*.pkl\").keys\n";
         int beforePackages = server.RequestCount;
         PModule first;
-        using (HttpClient packageClient = server.NewTlsClient().Build())
+        using (PklHttpClient packageClient = server.NewTlsClient().Build())
         using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
             .SetHttpClient(packageClient)
             .SetModuleCacheDir(cache)
@@ -360,7 +418,7 @@ static class LoadingContractDotNetProbe
         bool checksumFailure;
         try
         {
-            using HttpClient checksumClient = server.NewTlsClient().Build();
+            using PklHttpClient checksumClient = server.NewTlsClient().Build();
             using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
                 .SetHttpClient(checksumClient)
                 .SetModuleCacheDir(Path.Combine(work, "invalid-checksum-cache"))
@@ -378,7 +436,7 @@ static class LoadingContractDotNetProbe
         int beforeOffline = server.RequestCount;
         PModule offline;
         using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
-            .SetHttpClient(HttpClient.DummyClient())
+            .SetHttpClient(PklHttpClient.DummyClient())
             .SetModuleCacheDir(cache)
             .Build())
         {
@@ -424,23 +482,15 @@ static class LoadingContractDotNetProbe
         File.WriteAllText(main,
             "bird = import(\"@birds/catalog/Swallow.pkl\").name\n" +
             "resource = read(\"@birds/catalog/Ostrich.pkl\").text.contains(\"Ostrich\")\n");
-        var remote = new Dictionary<string, Dependency.RemoteDependency>
-        {
-            ["birds"] = new Dependency.RemoteDependency(
-                new PackageUri("package://localhost:0/birds@0.5.0"), null)
-        };
-        var declared = new DeclaredDependencies(
-            remote,
-            new Dictionary<string, DeclaredDependencies>(),
-            new Uri(projectFile),
-            null);
+        Project project = Project.LoadFromPath(projectFile);
         using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
-            .SetProjectDependencies(declared)
+            .ApplyFromProject(project)
             .SetModuleCacheDir(cache)
-            .SetHttpClient(HttpClient.DummyClient())
+            .SetHttpClient(PklHttpClient.DummyClient())
             .Build();
         PModule module = evaluator.Evaluate(ModuleSource.PathFromPath(main));
-        return $"dependencies={remote.Count}|bird={module.GetProperty("bird")}" +
+        return $"dependencies={project.GetDependencies().RemoteDependencies.Count}" +
+            $"|bird={module.GetProperty("bird")}" +
             $"|resource={Lower((bool)module.GetProperty("resource"))}";
     }
 
@@ -464,7 +514,7 @@ static class LoadingContractDotNetProbe
 
         bool missingAsset = ThrowsPkl(() =>
         {
-            using HttpClient client = server.NewTlsClient().Build();
+            using PklHttpClient client = server.NewTlsClient().Build();
             using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
                 .SetHttpClient(client)
                 .SetModuleCacheDir(Path.Combine(work, "missing-asset-cache"))
@@ -474,7 +524,7 @@ static class LoadingContractDotNetProbe
         });
         bool invalidMetadata = ThrowsPkl(() =>
         {
-            using HttpClient client = server.NewTlsClient().Build();
+            using PklHttpClient client = server.NewTlsClient().Build();
             using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
                 .SetHttpClient(client)
                 .SetModuleCacheDir(Path.Combine(work, "invalid-metadata-cache"))
@@ -492,7 +542,7 @@ static class LoadingContractDotNetProbe
         bool coldCache = ThrowsPkl(() =>
         {
             using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
-                .SetHttpClient(HttpClient.DummyClient())
+                .SetHttpClient(PklHttpClient.DummyClient())
                 .SetModuleCacheDir(Path.Combine(work, "cold-offline-cache"))
                 .Build();
             _ = evaluator.Evaluate(ModuleSource.Text(
@@ -506,6 +556,186 @@ static class LoadingContractDotNetProbe
             $"|cold-cache={Lower(coldCache)}";
     }
 
+    static string ObserveSettings(string fixtures, string work)
+    {
+        string projectDir = Path.Combine(work, "settings-project");
+        CopyTree(Path.Combine(fixtures, "project"), projectDir);
+        string projectFile = Path.Combine(projectDir, "PklProject");
+        Project project = Project.LoadFromPath(projectFile);
+        Project fromSource = Project.Load(ModuleSource.PathFromPath(projectFile));
+        Require(project.Equals(fromSource), "path and ModuleSource project loading must agree");
+        Pkl.Core.Project.Package package = project.GetPackage()!;
+        Require(package.Name == "contract-project" && package.Version.ToString() == "1.2.3" &&
+            package.Authors.Count == 1 && package.ApiTests.Count == 1 && package.Exclude.Count >= 3 &&
+            package.Website is not null && package.Documentation is not null &&
+            package.SourceCode is not null && package.IssueTracker is not null,
+            "project package metadata must retain all configured fields");
+        Require(project.GetAnnotations().Count == 3 && project.GetTests().Count == 1 &&
+            project.GetDependencies().RemoteDependencies.Count == 1 &&
+            project.GetDependencies().LocalDependencies.Count == 1 &&
+            project.GetLocalProjectDependencies().Count == 1,
+            "project annotations, tests, and local/remote dependencies must be parsed");
+        PklEvaluatorSettings settings = project.GetResolvedEvaluatorSettings();
+        PklSettings user = PklSettings.Load(ModuleSource.PathFromPath(
+            Path.Combine(projectDir, "settings.pkl")));
+        PklEvaluatorSettings.ExternalReader moduleReader =
+            settings.ExternalModuleReaders!["contractmod"];
+        PklEvaluatorSettings.ExternalReader resourceReader =
+            settings.ExternalResourceReaders!["contractres"];
+        EvaluatorBuilder applied = EvaluatorBuilder.Preconfigured().ApplyFromProject(project);
+        Require(ReferenceEquals(applied.GetProjectDependencies(), project.GetDependencies()),
+            "ApplyFromProject must retain declared dependencies");
+        PModule localModule;
+        using (Evaluator evaluator = applied.Build())
+        {
+            localModule = evaluator.Evaluate(ModuleSource.PathFromPath(
+                Path.Combine(projectDir, "local-main.pkl")));
+        }
+        Require(Equals(localModule.GetProperty("localValue"), 42L) &&
+            Equals(localModule.GetProperty("localResource"), true),
+            "ApplyFromProject must resolve local dependency modules and resources");
+        EvaluatorBuilder overridden = EvaluatorBuilder.Preconfigured()
+            .ApplyFromProject(project)
+            .SetColor(false)
+            .AddEnvironmentVariable("CONTRACT_ENV", "caller-env");
+        Require(!overridden.GetColor() &&
+            overridden.GetEnvironmentVariables()["CONTRACT_ENV"] == "caller-env",
+            "caller settings applied after a project must take precedence");
+        var httpSettings = settings.HttpValue!;
+        var proxyAddress = httpSettings.Proxy!.Address!;
+        return $"env={settings.Env!["CONTRACT_ENV"]}" +
+            $"|property={settings.ExternalProperties!["contract.property"]}" +
+            $"|allowed={settings.AllowedModules!.Count}:{settings.AllowedResources!.Count}" +
+            $"|paths={Lower(Path.GetFullPath(settings.RootDir!) == Path.GetFullPath(projectDir))}:" +
+            $"{Lower(Path.GetFullPath(settings.ModuleCacheDir!) == Path.GetFullPath(Path.Combine(projectDir, "cache")))}:" +
+            $"{Lower(Path.GetFullPath(settings.ModulePath![0]) == Path.GetFullPath(Path.Combine(projectDir, "modules")))}" +
+            $"|timeout={settings.Timeout!.GetValue():0.0}" +
+            $"|color={settings.Color!.ToString()!.ToLowerInvariant()}" +
+            $"|trace={settings.TraceMode!.ToString()!.ToLowerInvariant()}" +
+            $"|external={Lower(moduleReader.Executable.EndsWith(Path.Combine("tools", "module-reader"), StringComparison.Ordinal))}:" +
+            $"{Lower(moduleReader.WorkingDir!.EndsWith("reader-work", StringComparison.Ordinal))}:" +
+            $"{Lower(resourceReader.Executable == "contract-resource-reader")}" +
+            $"|http={proxyAddress.OriginalString}:" +
+            $"{httpSettings.Rewrites!.Count}:{httpSettings.Headers!.Count}" +
+            $"|user={Lower(user.GetEditor().Equals(PklSettings.Editor.SUBLIME))}:" +
+            $"{user.Http!.Headers!["https://mirror.test/**"]["X-Contract"].Count}" +
+            $"|local={localModule.GetProperty("localValue")}:" +
+            $"{Lower((bool)localModule.GetProperty("localResource"))}" +
+            $"|applied={Lower(applied.GetColor())}:" +
+            $"{applied.GetTraceMode().ToString()!.ToLowerInvariant()}:" +
+            $"{applied.GetEnvironmentVariables()["CONTRACT_ENV"]}";
+    }
+
+    static string ObserveErrors(string fixtures, string work)
+    {
+        bool missing;
+        using (Evaluator evaluator = Evaluator.Preconfigured())
+        {
+            try
+            {
+                _ = evaluator.Evaluate(ModuleSource.PathFromPath(Path.Combine(work, "does-not-exist.pkl")));
+                missing = false;
+            }
+            catch (PklException error)
+            {
+                missing = error.Message.Contains("Cannot find module", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        bool relative;
+        using (Evaluator evaluator = Evaluator.Preconfigured())
+        {
+            try
+            {
+                _ = evaluator.Evaluate(ModuleSource.Create(
+                    new Uri("relative.pkl", UriKind.Relative), "value = 1\n"));
+                relative = false;
+            }
+            catch (PklException error)
+            {
+                relative = error.Message.Contains("relative module URI", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        bool projectType;
+        try
+        {
+            _ = Project.LoadFromPath(Path.Combine(fixtures, "project", "not-a-project.pkl"));
+            projectType = false;
+        }
+        catch (PklException error)
+        {
+            projectType = error.Message.Contains("pkl.Project", StringComparison.Ordinal) &&
+                error.Message.Contains("contract.NotAProject", StringComparison.Ordinal);
+        }
+        bool settingsType;
+        try
+        {
+            _ = PklSettings.Load(ModuleSource.PathFromPath(
+                Path.Combine(fixtures, "project", "not-settings.pkl")));
+            settingsType = false;
+        }
+        catch (Exception error)
+        {
+            settingsType = error.Message.Contains("pkl.settings", StringComparison.OrdinalIgnoreCase);
+        }
+        bool malformedSettings = ThrowsPkl(() => _ = PklSettings.Load(ModuleSource.PathFromPath(
+            Path.Combine(fixtures, "project", "malformed-settings.pkl"))));
+        bool malformedProject = ThrowsPkl(() => _ = Project.LoadFromPath(
+            Path.Combine(fixtures, "project", "malformed-settings.pkl")));
+        bool invalidPackage = ThrowsUri(() => _ = new PackageUri("package:invalid"));
+        bool ioFailure;
+        try
+        {
+            using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
+                .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+                .SetAllowedModules(new List<Regex> { new("repl:"), new("iofail:") })
+                .SetAllowedResources(Array.Empty<Regex>())
+                .AddModuleKeyFactory(new FailingModuleFactory())
+                .Build();
+            _ = evaluator.Evaluate(ModuleSource.Text("value = import(\"iofail:module\")\n"));
+            ioFailure = false;
+        }
+        catch (PklException error)
+        {
+            ioFailure = error.Message.Contains("I/O", StringComparison.OrdinalIgnoreCase) ||
+                error.Message.Contains("contract I/O failure", StringComparison.OrdinalIgnoreCase);
+        }
+        Require(missing && relative && projectType && settingsType && malformedSettings && malformedProject &&
+            invalidPackage && ioFailure, "deterministic missing, malformed, I/O, and output-type errors");
+        return $"missing={Lower(missing)}|relative={Lower(relative)}" +
+            $"|invalid-package={Lower(invalidPackage)}|io={Lower(ioFailure)}" +
+            $"|project-type={Lower(projectType)}|settings-type={Lower(settingsType)}";
+    }
+
+    static string ObserveProjectCycles(string fixtures)
+    {
+        string root = Path.Combine(fixtures, "project");
+        bool single;
+        try
+        {
+            _ = Project.LoadFromPath(Path.Combine(root, "projectCycle1", "PklProject"));
+            single = false;
+        }
+        catch (PklException error)
+        {
+            single = error.Message.Contains("circular", StringComparison.OrdinalIgnoreCase) &&
+                error.Message.Contains("Cycle:", StringComparison.Ordinal);
+        }
+        bool multiple;
+        try
+        {
+            _ = Project.LoadFromPath(Path.Combine(root, "projectCycle4", "PklProject"));
+            multiple = false;
+        }
+        catch (PklException error)
+        {
+            multiple = error.Message.Contains("circular", StringComparison.OrdinalIgnoreCase) &&
+                error.Message.Contains("Cycle 1:", StringComparison.Ordinal) &&
+                error.Message.Contains("Cycle 2:", StringComparison.Ordinal);
+        }
+        Require(single && multiple, "single and multiple project cycles must be deterministic");
+        return $"single={Lower(single)}|multiple={Lower(multiple)}";
+    }
+
     static string ObserveLifecycle()
     {
         Evaluator evaluator = Evaluator.Preconfigured();
@@ -515,7 +745,7 @@ static class LoadingContractDotNetProbe
         try { _ = evaluator.Evaluate(ModuleSource.Text("value = 1\n")); evaluateAfterClose = false; }
         catch (Exception) { evaluateAfterClose = true; }
 
-        HttpClient client = HttpClient.CreateBuilder().Build();
+        PklHttpClient client = PklHttpClient.CreateBuilder().Build();
         client.Dispose();
         client.Dispose();
         bool httpAfterClose;
@@ -763,36 +993,32 @@ static class LoadingContractDotNetProbe
             "|owned-external-process-disposed=true|repeat=true";
     }
 
-    static void AssertMissingDiagnostics(string work)
+    sealed class FailingModuleFactory : ModuleKeyFactory
     {
-        bool missing;
-        using (Evaluator evaluator = Evaluator.Preconfigured())
+        public JavaOptional<ModuleKey> Create(Uri uri) => uri.Scheme == "iofail"
+            ? JavaOptional<ModuleKey>.Of(new FailingModuleKey(uri))
+            : JavaOptional<ModuleKey>.Empty();
+        public void Close() { }
+        public void Dispose() { }
+    }
+
+    sealed class FailingModuleKey(Uri uri) : ModuleKey
+    {
+        public Uri GetUri() => uri;
+        public bool HasHierarchicalUris() => false;
+        public bool IsGlobbable() => false;
+        public ResolvedModuleKey Resolve(SecurityManager securityManager)
         {
-            try
-            {
-                _ = evaluator.Evaluate(ModuleSource.PathFromPath(Path.Combine(work, "missing.pkl")));
-                missing = false;
-            }
-            catch (PklException error)
-            {
-                missing = error.Message.Contains("Cannot find module", StringComparison.OrdinalIgnoreCase);
-            }
+            securityManager.CheckResolveModule(uri);
+            return new FailingResolvedModuleKey(this, uri);
         }
-        bool relative;
-        using (Evaluator evaluator = Evaluator.Preconfigured())
-        {
-            try
-            {
-                _ = evaluator.Evaluate(ModuleSource.Create(
-                    new Uri("relative.pkl", UriKind.Relative), "value = 1\n"));
-                relative = false;
-            }
-            catch (PklException error)
-            {
-                relative = error.Message.Contains("relative module URI", StringComparison.OrdinalIgnoreCase);
-            }
-        }
-        Require(missing && relative, "stable missing and invalid module diagnostics");
+    }
+
+    sealed class FailingResolvedModuleKey(ModuleKey original, Uri uri) : ResolvedModuleKey
+    {
+        public ModuleKey GetOriginal() => original;
+        public Uri GetUri() => uri;
+        public string LoadSource() => throw new IOException("contract I/O failure");
     }
 
     sealed class CountingModuleFactory : ModuleKeyFactory
@@ -976,7 +1202,7 @@ static class LoadingContractDotNetProbe
         internal Uri ProxyUri => new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}");
         internal Uri PlainUri(string path) =>
             new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}{path}");
-        internal HttpClient.Builder NewTlsClient() => HttpClient.CreateBuilder()
+        internal PklHttpClient.Builder NewTlsClient() => PklHttpClient.CreateBuilder()
             .AddCertificates(Path.Combine(packageBuild, "keystore", "localhost.pem"))
             .SetTestPort(((IPEndPoint)tls.LocalEndpoint).Port);
 

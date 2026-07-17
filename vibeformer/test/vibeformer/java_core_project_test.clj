@@ -111,33 +111,33 @@
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 30727 (:declarations summary)))
-      (is (= {:constructor 1174
+      (is (= 30836 (:declarations summary)))
+      (is (= {:constructor 1175
               :enum-value 101
-              :field 3577
-              :initializer 7
-              :method 9240
-              :parameter 14048
+              :field 3590
+              :initializer 14
+              :method 9300
+              :parameter 14067
               :record-component 227
-              :type 2202
-              :type-parameter 151}
+              :type 2209
+              :type-parameter 153}
              (:declaration-kinds summary)))
       (is (= 657 (count (:sources manifest))))
       (is (= 28 (count (:resources manifest))))
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 11071 (:executable-roots summary)))
+      (is (= 11150 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 451593
+      (is (= {:semantic 455611
               :fallback 0
-              :visited 1044676
+              :visited 1053259
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 593083
+              :structural 597648
               :blocked 0
-              :covered 1044676}
+              :covered 1053259}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
@@ -154,6 +154,18 @@
         (is (some #(str/includes? %
                                  "LoadModule(global::Vibeformer.Runtime.JavaCompat.CreateUri(\"pkl:math\")")
                   sources))
+        (doseq [stdlib-module ["pkl:platform" "pkl:reflect"]]
+          (is (some #(str/includes? %
+                                   (str "LoadModule(global::Vibeformer.Runtime.JavaCompat.CreateUri(\""
+                                        stdlib-module "\")"))
+                    sources)))
+        (is (some #(str/includes? % "StdLibModule.LoadModule(global::Pkl.Core.PClassInfo<object>.pklProjectUri")
+                  sources))
+        (is (some #(str/includes? % "StdLibModule.LoadModule(global::Pkl.Core.PClassInfo<object>.pklSemverUri")
+                  sources))
+        (is (some #(str/includes? % "StdLibModule.LoadModule(global::Pkl.Core.PClassInfo<object>.pklSettingsUri")
+                  sources))
+        (is (not-any? #(str/includes? % "global::System.Func.Identity<") sources))
         (let [source-root (paths/resolve-path project-root "src" "Pkl" "Core")
               evaluator-builder (slurp (str (paths/resolve-path source-root
                                                                  "EvaluatorBuilder.cs")))
@@ -171,6 +183,10 @@
               evaluator-settings (slurp (str (paths/resolve-path
                                                source-root "EvaluatorSettings"
                                                "PklEvaluatorSettings.cs")))
+              project-settings (slurp (str (paths/resolve-path
+                                             source-root "Project" "Project.cs")))
+              import-analyzer (slurp (str (paths/resolve-path
+                                            source-root "Runtime" "VmImportAnalyzer.cs")))
               file-system-manager (slurp (str (paths/resolve-path
                                                 source-root "Runtime"
                                                 "FileSystemManager.cs")))
@@ -198,7 +214,7 @@
               module-cache (slurp (str (paths/resolve-path source-root
                                                             "Runtime" "ModuleCache.cs")))
               selected-api [evaluator-builder module-source security-managers
-                            evaluator-settings loading-runtime http-client
+                            evaluator-settings project-settings loading-runtime http-client
                             package-uri package-asset-uri checksums dependency
                             dependency-metadata]
               exact-stub #"(?ms)^public[^\n{]+ ([A-Z][A-Za-z0-9_]*)\([^)]*\) \{\nreturn (null!|default!);\n\}"]
@@ -238,6 +254,11 @@
             (is (= [["ResolveSecurePath" "null!"]]
                    (mapv #(vec (rest %)) (re-seq exact-stub security-manager))))
             (is (not (str/includes? evaluator-settings "NoCache.Value")))
+            (is (not (str/includes? project-settings "NoCache.Value")))
+            (is (str/includes? project-settings
+                               "var cycles = Project.FindImportCycle(moduleSource)"))
+            (is (str/includes? import-analyzer "JavaCompat.NewSortedDictionary<"))
+            (is (str/includes? import-analyzer "JavaCompat.NewSortedSet<"))
             (is (str/includes? security-managers "JavaCompat.RealPath"))
             (is (str/includes? security-managers "JavaCompat.NormalizePath"))
             (is (str/includes? security-managers "JavaCompat.PathStartsWith"))

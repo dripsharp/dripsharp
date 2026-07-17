@@ -1557,6 +1557,14 @@
           (sequence-node
            [(raw "{\nreturn global::Vibeformer.Runtime.JavaCompat.Equals(this, obj);\n}")])
 
+          (= "executable:org.pkl.core.project.Project#load(org.pkl.core.Evaluator,org.pkl.core.ModuleSource)"
+             (spoon/declaration-key method))
+          ;; A CLR stack overflow terminates the process and cannot serve as
+          ;; the catchable cycle signal used by the JVM implementation.
+          ;; Analyze first so project cycles retain the upstream diagnostics.
+          (raw
+           "{\nvar cycles = Project.FindImportCycle(moduleSource);\nif (!global::Vibeformer.Runtime.JavaCompat.ListIsEmpty(cycles)) {\nglobal::Pkl.Core.Runtime.VmException vmException;\nif (global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1) {\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesSingle\", Project.RenderCycle(global::Vibeformer.Runtime.JavaCompat.ListGet(global::Vibeformer.Runtime.JavaCompat.ToListValues(cycles), 0))).Build();\n} else {\nvar renderedCycles = Project.RenderMultipleCycles(cycles);\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesMultiple\", renderedCycles).Build();\n}\nthrow vmException.ToPklException(global::Pkl.Core.StackFrameTransformers.defaultTransformer, false);\n}\ntry {\nvar output = evaluator.EvaluateOutputValueAs<global::Pkl.Core.PObject>(moduleSource, global::Pkl.Core.PClassInfo<object>.Project);\nreturn Project.ParseProject(output);\n} catch (global::System.UriFormatException e) {\nthrow new global::Pkl.Core.PklException(e.Message, e);\n}\n}")
+
           (= "executable:org.pkl.core.Pair#iterator()"
              (spoon/declaration-key method))
           (sequence-node [(raw "{") (raw "\nreturn ((global::System.Collections.Generic.IEnumerable<object?>)new object?[] { this.first, this.second }).GetEnumerator();\n") (raw "}")])
@@ -2339,6 +2347,26 @@
         raw-members (concat (when (instance? CtEnum type)
                               (.getEnumValues ^CtEnum type))
                             (.getTypeMembers type))
+        record-components (when (instance? CtRecord type)
+                            (vec (.getRecordComponents ^CtRecord type)))
+        explicit-record-equals?
+        (and (instance? CtRecord type)
+             (some (fn [member]
+                     (and (instance? CtMethod member)
+                          (not (.isImplicit ^CtMethod member))
+                          (= "equals" (.getSimpleName ^CtMethod member))
+                          (= ["java.lang.Object"]
+                             (mapv #(.getQualifiedName (.getType ^CtParameter %))
+                                   (.getParameters ^CtMethod member)))))
+                   raw-members))
+        explicit-enum-to-string?
+        (and (instance? CtEnum type)
+             (some (fn [member]
+                     (and (instance? CtMethod member)
+                          (not (.isImplicit ^CtMethod member))
+                          (= "toString" (.getSimpleName ^CtMethod member))
+                          (empty? (.getParameters ^CtMethod member))))
+                   raw-members))
         selected-members (distinct-selected-members ctx type)
         members (if functional-method
                   []
@@ -2363,6 +2391,35 @@
         members (into (vec (destination-bridge-members member-ctx type)) members)
         members (into members (mapv #(anonymous-type-node member-ctx type %)
                                     (owner-anonymous-calls member-ctx type)))
+        record-value-semantics
+        (when (and (instance? CtRecord type) (not explicit-record-equals?))
+          (let [self-type (generic-node
+                           name
+                           (mapv #(raw (type-parameter-name ^CtTypeParameter %)) parameters))
+                component-names (mapv #(record-component-name type %) record-components)
+                comparisons
+                (mapv (fn [component-name]
+                        (csharp/invocation
+                         (raw "global::Vibeformer.Runtime.JavaCompat.Equals")
+                         [(csharp/member (raw "this") component-name)
+                          (csharp/member (raw "other") component-name)]))
+                      component-names)
+                equality (if (seq comparisons)
+                           (sequence-node comparisons " &&\n            ")
+                           (raw "true"))
+                values (mapv #(csharp/member (raw "this") %) component-names)]
+            (sequence-node
+             [(raw "public bool Equals(") self-type (raw "? other) {\n")
+              (raw "if (global::System.Object.ReferenceEquals(this, other)) return true;\n")
+              (raw "return other is not null &&\n            ") equality (raw ";\n}\n\n")
+              (raw "public override int GetHashCode() {\nreturn ")
+              (csharp/invocation (raw "global::Vibeformer.Runtime.JavaCompat.Hash") values)
+              (raw ";\n}")])))
+        members (cond-> members record-value-semantics (conj record-value-semantics))
+        enum-to-string
+        (when (and (instance? CtEnum type) (not explicit-enum-to-string?))
+          (raw "public override string ToString() {\nreturn global::Vibeformer.Runtime.JavaCompat.EnumName(this);\n}"))
+        members (cond-> members enum-to-string (conj enum-to-string))
         header (sequence-node
                 [(raw (join-words (type-words type))) (raw name) node
                  (when components
