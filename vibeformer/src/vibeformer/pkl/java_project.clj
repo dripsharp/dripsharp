@@ -1552,6 +1552,28 @@
           rrb-nested-split?
           (sequence-node [(raw "{\nreturn base.Split(splitIndex);\n}")])
 
+          (= "executable:org.pkl.core.EvaluatorImpl#doEvaluate(java.util.function.Supplier)"
+             (spoon/declaration-key method))
+          ;; Graal cancellation is an Error rather than an Exception and its
+          ;; context close waits for the active evaluation to leave. On .NET,
+          ;; capture the destination cancellation signal, leave the installed
+          ;; context first, and only then resolve the timeout race and surface
+          ;; the stable public Pkl diagnostic.
+          (raw
+           "{\nglobal::Pkl.Core.EvaluatorImpl.TimeoutTask? timeoutTask = null;\nthis.logger.Clear();\nif (this.timeout is not null) {\nif (this.timeoutExecutor is null) throw new global::System.Exception(\"Assertion failed\");\ntimeoutTask = new global::Pkl.Core.EvaluatorImpl.TimeoutTask(this);\nthis.timeoutExecutor.Schedule(timeoutTask, global::Vibeformer.Runtime.JavaCompat.DurationToMillis(this.timeout.Value), global::Vibeformer.Runtime.JavaTimeUnit.MILLISECONDS);\n}\nthis.polyglotContext.Enter();\nT? evalResult = default;\nglobal::System.Exception? failure = null;\ntry {\nevalResult = supplier();\n} catch (global::System.Exception error) {\nfailure = error;\n} finally {\ntry {\nthis.polyglotContext.Leave();\n} catch (global::System.InvalidOperationException) {\n}\n}\nif (failure is not null) {\nvar cancelled = this.polyglotContext.IsCancellationRequested && (failure is global::Vibeformer.Runtime.JavaCancellationException || failure is global::System.Threading.ThreadInterruptedException || failure is global::System.OperationCanceledException || failure is global::System.ObjectDisposedException || (failure is global::Pkl.Core.Runtime.Polyglot.PolyglotException polyglotFailure && polyglotFailure.IsCancelled()));\nif (cancelled) {\nthis.HandleTimeout(timeoutTask);\nthrow new global::Pkl.Core.PklException(\"Evaluation was cancelled because the evaluator was closed.\", failure);\n}\nif (failure is global::Pkl.Core.Runtime.VmStackOverflowException stackOverflow) {\nif (global::Pkl.Core.Runtime.VmUtils.IsPklBug(stackOverflow)) {\nthrow (new global::Pkl.Core.Runtime.VmExceptionBuilder()).Bug(\"Stack overflow\").WithCause(stackOverflow.InnerException).Build().ToPklException(this.frameTransformer, this.color);\n}\nthis.HandleTimeout(timeoutTask);\nthrow stackOverflow.ToPklException(this.frameTransformer, this.color);\n}\nif (failure is global::Pkl.Core.Runtime.VmException vmFailure) {\nthis.HandleTimeout(timeoutTask);\nthrow vmFailure.ToPklException(this.frameTransformer, this.color);\n}\nif (failure is global::Pkl.Core.PklException pklFailure) throw pklFailure;\nif (failure is global::System.TypeInitializationException initializationFailure) {\nif (initializationFailure.InnerException is not global::Pkl.Core.Runtime.VmException initializationVmFailure) throw new global::Pkl.Core.PklBugException(initializationFailure);\nvar pklException = initializationVmFailure.ToPklException(this.frameTransformer, this.color);\nvar error = global::Vibeformer.Runtime.JavaCompat.NewTypeInitializationException(pklException);\nglobal::Vibeformer.Runtime.JavaCompat.SetStackTrace(error, global::Vibeformer.Runtime.JavaCompat.GetStackTrace(initializationFailure));\nthrow new global::Pkl.Core.PklBugException(error);\n}\nthrow new global::Pkl.Core.PklBugException(failure);\n}\nthis.HandleTimeout(timeoutTask);\nreturn evalResult!;\n}")
+
+          (= "executable:org.pkl.core.EvaluatorImpl#handleTimeout(org.pkl.core.EvaluatorImpl$TimeoutTask)"
+             (spoon/declaration-key method))
+          (raw
+           "{\nif (timeoutTask is null || timeoutTask.Cancel()) return;\nif (this.timeout is null) throw new global::System.Exception(\"Assertion failed\");\nthis.timeoutExecutor?.WaitFor(timeoutTask);\nthrow new global::Pkl.Core.PklException(global::Pkl.Core.Util.ErrorMessages.Create(\"evaluationTimedOut\", global::Vibeformer.Runtime.JavaCompat.DurationGetSeconds(this.timeout.Value) + global::Vibeformer.Runtime.JavaCompat.DurationGetNano(this.timeout.Value) / 1.0E9D));\n}")
+
+          (= "executable:org.pkl.core.EvaluatorImpl$TimeoutTask#cancel()"
+             (spoon/declaration-key method))
+          ;; Java's synchronized method modifier is represented explicitly so
+          ;; cancellation cannot race the scheduled Run invocation.
+          (raw
+           "{\nlock (this) {\nif (this.started) return false;\nthis.cancelled = true;\n}\nreturn this.__outer.timeoutExecutor is null || this.__outer.timeoutExecutor.Cancel(this);\n}")
+
           (= "executable:org.pkl.core.PClassInfo#equals(java.lang.Object)"
              (spoon/declaration-key method))
           (sequence-node

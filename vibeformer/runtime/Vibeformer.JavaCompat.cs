@@ -16,6 +16,7 @@ using System.Resources;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Numerics;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Vibeformer.Runtime;
@@ -26,6 +27,50 @@ internal delegate long JavaToLongFunction<in TValue>(TValue value);
 internal delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight right);
 internal enum JavaTimeUnit { MILLISECONDS }
 internal enum JavaProcessRedirect { INHERIT }
+
+// Carries cancellation through ordinary translated Java blocking primitives.
+// Product runtimes install a token at their evaluation boundary; the generic
+// compatibility layer only observes that token and does not define product
+// timeout policy.
+internal sealed class JavaCancellationException : OperationCanceledException
+{
+    internal JavaCancellationException(CancellationToken token)
+        : base("The translated Java operation was cancelled.", token) { }
+}
+
+internal static class JavaCancellation
+{
+    private sealed record Binding(object Owner, CancellationToken Token);
+    private static readonly AsyncLocal<IReadOnlyList<Binding>?> Bindings = new();
+
+    internal static CancellationToken CurrentToken =>
+        Bindings.Value is { Count: > 0 } bindings
+            ? bindings[^1].Token
+            : CancellationToken.None;
+
+    internal static void Push(object owner, CancellationToken token)
+    {
+        var bindings = Bindings.Value is { } current
+            ? current.ToList()
+            : new List<Binding>();
+        bindings.Add(new Binding(owner, token));
+        Bindings.Value = bindings;
+    }
+
+    internal static void Pop(object owner)
+    {
+        if (Bindings.Value is not { Count: > 0 } current ||
+            !ReferenceEquals(current[^1].Owner, owner))
+            throw new InvalidOperationException("Java cancellation scopes must be left in enter order.");
+        Bindings.Value = current.Count == 1 ? null : current.Take(current.Count - 1).ToList();
+    }
+
+    internal static void ThrowIfCancellationRequested()
+    {
+        var token = CurrentToken;
+        if (token.IsCancellationRequested) throw new JavaCancellationException(token);
+    }
+}
 
 // Java's Future and CompletableFuture share one reference in APIs that cache
 // an asynchronously completed result. TaskCompletionSource is the matching
@@ -41,9 +86,16 @@ internal sealed class JavaFuture<T>
 
     internal T Get()
     {
+        var cancellation = JavaCancellation.CurrentToken;
         try
         {
-            return completion.Task.GetAwaiter().GetResult();
+            return cancellation.CanBeCanceled
+                ? completion.Task.WaitAsync(cancellation).GetAwaiter().GetResult()
+                : completion.Task.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            throw new JavaCancellationException(cancellation);
         }
         catch (Exception error)
         {
@@ -101,7 +153,14 @@ internal sealed class JavaProcessBuilder
 internal sealed class JavaProcess
 {
     private readonly Process process;
-    internal JavaProcess(Process process) => this.process = process;
+    internal JavaProcess(Process process)
+    {
+        this.process = process;
+        var cancellation = JavaCancellation.CurrentToken;
+        if (cancellation.CanBeCanceled)
+            _ = cancellation.Register(
+                static state => ((JavaProcess)state!).DestroyForcibly(), this);
+    }
     internal bool IsAlive() { try { return !process.HasExited; } catch (InvalidOperationException) { return false; } }
     internal Stream GetInputStream() => process.StandardOutput.BaseStream;
     internal Stream GetOutputStream() => process.StandardInput.BaseStream;
@@ -109,7 +168,11 @@ internal sealed class JavaProcess
         process.WaitForExit(checked((int)Math.Min(timeout, int.MaxValue)));
     internal JavaProcess DestroyForcibly()
     {
-        if (IsAlive()) process.Kill(entireProcessTree: true);
+        try
+        {
+            if (IsAlive()) process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException) { }
         return this;
     }
 }
@@ -1967,19 +2030,53 @@ internal sealed class JavaMessageFormat : JavaFormat
             if (!quoted && current == '{')
             {
                 var close = pattern.IndexOf('}', index + 1);
-                if (close < 0 || !int.TryParse(pattern.AsSpan(index + 1, close - index - 1),
-                                               NumberStyles.None, CultureInfo.InvariantCulture,
-                                               out var argumentIndex))
+                if (close < 0)
+                    throw new FormatException("Invalid Java MessageFormat placeholder");
+                var placeholder = pattern.Substring(index + 1, close - index - 1);
+                var fields = placeholder.Split(',', 3, StringSplitOptions.TrimEntries);
+                if (fields.Length == 0 ||
+                    !int.TryParse(fields[0], NumberStyles.None, CultureInfo.InvariantCulture,
+                                  out var argumentIndex))
                     throw new FormatException("Invalid Java MessageFormat placeholder");
                 if (argumentIndex < 0 || argumentIndex >= arguments.Length)
                     throw new FormatException("Java MessageFormat argument index is out of range");
-                result.Append(Convert.ToString(arguments[argumentIndex], locale) ?? "null");
+                result.Append(FormatArgument(arguments[argumentIndex], fields));
                 index = close;
                 continue;
             }
             result.Append(current);
         }
         return result.ToString();
+    }
+
+    private string FormatArgument(object? argument, string[] fields)
+    {
+        if (fields.Length == 1) return Convert.ToString(argument, locale) ?? "null";
+        if (!string.Equals(fields[1], "number", StringComparison.OrdinalIgnoreCase))
+            throw new FormatException($"Unsupported Java MessageFormat type `{fields[1]}`");
+        if (argument is null) return "null";
+        if (fields.Length == 2 || string.IsNullOrEmpty(fields[2]))
+            return Convert.ToString(argument, locale) ?? "null";
+
+        var style = fields[2];
+        var decimalIndex = style.IndexOf('.');
+        var integerPattern = decimalIndex < 0 ? style : style[..decimalIndex];
+        var fractionPattern = decimalIndex < 0 ? string.Empty : style[(decimalIndex + 1)..];
+        if (integerPattern.Any(character => character is not '#' and not '0' and not ',') ||
+            fractionPattern.Any(character => character is not '#' and not '0'))
+            throw new FormatException($"Unsupported Java DecimalFormat pattern `{style}`");
+
+        var minimumIntegerDigits = Math.Max(1, integerPattern.Count(character => character == '0'));
+        var minimumFractionDigits = fractionPattern.Count(character => character == '0');
+        var maximumFractionDigits = fractionPattern.Length;
+        var grouping = integerPattern.Contains(',');
+        var custom = (grouping ? "#,##" : string.Empty) + new string('0', minimumIntegerDigits);
+        if (maximumFractionDigits > 0)
+            custom += "." + new string('0', minimumFractionDigits) +
+                      new string('#', maximumFractionDigits - minimumFractionDigits);
+        return argument is IFormattable formattable
+            ? formattable.ToString(custom, locale)
+            : Convert.ToString(argument, locale) ?? "null";
     }
 }
 

@@ -323,22 +323,117 @@ namespace Pkl.Core.Runtime
 
     public sealed class JavaScheduledExecutor
     {
+        private sealed class ScheduledWork
+        {
+            internal readonly System.Threading.CancellationTokenSource Cancellation = new();
+            internal System.Threading.Tasks.Task Task = System.Threading.Tasks.Task.CompletedTask;
+        }
+
+        private readonly object lifecycleLock = new();
+        private readonly Dictionary<object, ScheduledWork> pending =
+            new(ReferenceEqualityComparer.Instance);
+        private bool shutdown;
+
         public System.Threading.Tasks.Task Schedule(Action action, long delay, object unit) =>
-            System.Threading.Tasks.Task.Run(async () =>
-            {
-                await System.Threading.Tasks.Task.Delay(TimeSpan.FromMilliseconds(delay));
-                action();
-            });
+            ScheduleCore(action, action, delay);
+
         public System.Threading.Tasks.Task Schedule(object runnable, long delay, object unit) =>
-            System.Threading.Tasks.Task.Run(async () =>
+            ScheduleCore(runnable, () =>
+                runnable.GetType().GetMethod(
+                    "Run",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic)!.Invoke(runnable, null), delay);
+
+        private System.Threading.Tasks.Task ScheduleCore(object key, Action action, long delay)
+        {
+            var work = new ScheduledWork();
+            lock (lifecycleLock)
             {
-                await System.Threading.Tasks.Task.Delay(TimeSpan.FromMilliseconds(delay));
-                runnable.GetType().GetMethod("Run", System.Reflection.BindingFlags.Instance |
-                                                   System.Reflection.BindingFlags.Public |
-                                                   System.Reflection.BindingFlags.NonPublic)!
-                        .Invoke(runnable, null);
-            });
-        public void Shutdown() { }
+                ObjectDisposedException.ThrowIf(shutdown, this);
+                pending[key] = work;
+                work.Task = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    try
+                    {
+                        await System.Threading.Tasks.Task.Delay(
+                            TimeSpan.FromMilliseconds(delay), work.Cancellation.Token);
+                        action();
+                    }
+                    catch (System.OperationCanceledException)
+                        when (work.Cancellation.IsCancellationRequested) { }
+                    finally
+                    {
+                        lock (lifecycleLock)
+                        {
+                            if (pending.TryGetValue(key, out var current) &&
+                                ReferenceEquals(current, work))
+                                pending.Remove(key);
+                        }
+                        work.Cancellation.Dispose();
+                    }
+                });
+                return work.Task;
+            }
+        }
+
+        public bool Cancel(object key)
+        {
+            ScheduledWork? work;
+            lock (lifecycleLock) pending.TryGetValue(key, out work);
+            if (work is null) return true;
+            try { work.Cancellation.Cancel(); }
+            catch (ObjectDisposedException) { }
+            WaitForTask(work.Task);
+            return true;
+        }
+
+        public void WaitFor(object key)
+        {
+            ScheduledWork? work;
+            lock (lifecycleLock) pending.TryGetValue(key, out work);
+            if (work is not null) WaitForTask(work.Task);
+            // The scheduler can finish and remove its bookkeeping before the
+            // evaluation thread observes it. Consume a concurrently delivered
+            // Thread.Interrupt even in that race so it cannot escape into the
+            // caller's next unrelated blocking operation.
+            try { System.Threading.Thread.Sleep(0); }
+            catch (System.Threading.ThreadInterruptedException) { }
+        }
+
+        public void Shutdown()
+        {
+            ScheduledWork[] work;
+            lock (lifecycleLock)
+            {
+                if (shutdown) return;
+                shutdown = true;
+                work = pending.Values.ToArray();
+            }
+            foreach (var item in work)
+            {
+                try { item.Cancellation.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+        }
+
+        private static void WaitForTask(System.Threading.Tasks.Task task)
+        {
+            while (true)
+            {
+                try
+                {
+                    task.GetAwaiter().GetResult();
+                    return;
+                }
+                // Context cancellation interrupts blocking translated work.
+                // If the interrupt is delivered while timeout cleanup is
+                // joining the scheduler task, consume it and re-observe the
+                // task so the public result remains the timeout diagnostic.
+                catch (System.Threading.ThreadInterruptedException) { }
+                catch (System.OperationCanceledException) { return; }
+            }
+        }
     }
 
     public sealed class JavaThread
@@ -430,7 +525,8 @@ namespace Pkl.Core.Runtime
         public virtual Uri GetURL() => uri ?? throw new InvalidOperationException("URL is unavailable");
         public virtual System.IO.Stream GetInputStream() =>
             uri is null ? throw new NotSupportedException() :
-            new System.Net.Http.HttpClient().GetStreamAsync(uri).GetAwaiter().GetResult();
+            new System.Net.Http.HttpClient().GetStreamAsync(
+                uri, global::Vibeformer.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult();
         public virtual void SetUseCaches(bool value) { }
     }
     public sealed class JavaJarConnection : JavaUrlConnection
@@ -857,7 +953,8 @@ namespace Pkl.Core.Runtime
         public static JavaHttpBodyHandler<System.IO.Stream> OfInputStream() =>
             response => new ResponseOwningStream(response.Content.ReadAsStream(), response);
         public static JavaHttpBodyHandler<sbyte[]> OfByteArray() =>
-            response => response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+            response => response.Content.ReadAsByteArrayAsync(
+                    global::Vibeformer.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult()
                 .Select(value => unchecked((sbyte)value)).ToArray();
 
         private sealed class ResponseOwningStream : System.IO.Stream
@@ -872,7 +969,10 @@ namespace Pkl.Core.Runtime
             public override long Length => stream.Length;
             public override long Position { get => stream.Position; set => stream.Position = value; }
             public override void Flush() => stream.Flush();
-            public override int Read(byte[] buffer, int offset, int count) => stream.Read(buffer, offset, count);
+            public override int Read(byte[] buffer, int offset, int count) =>
+                stream.ReadAsync(buffer.AsMemory(offset, count),
+                    global::Vibeformer.Runtime.JavaCancellation.CurrentToken).AsTask()
+                    .GetAwaiter().GetResult();
             public override long Seek(long offset, System.IO.SeekOrigin origin) => stream.Seek(offset, origin);
             public override void SetLength(long value) => throw new NotSupportedException();
             public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
@@ -921,9 +1021,11 @@ namespace Pkl.Core.Runtime
         public JavaHttpResponse<T> Send<T>(JavaHttpRequest request, JavaHttpBodyHandler<T> handler)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            using var cancellation = request.Timeout().IsPresent()
-                ? new System.Threading.CancellationTokenSource(request.Timeout().Get())
+            var evaluationCancellation = global::Vibeformer.Runtime.JavaCancellation.CurrentToken;
+            using var cancellation = evaluationCancellation.CanBeCanceled
+                ? System.Threading.CancellationTokenSource.CreateLinkedTokenSource(evaluationCancellation)
                 : new System.Threading.CancellationTokenSource();
+            if (request.Timeout().IsPresent()) cancellation.CancelAfter(request.Timeout().Get());
             System.Net.Http.HttpResponseMessage response;
             try
             {
@@ -931,6 +1033,11 @@ namespace Pkl.Core.Runtime
                     request.Message,
                     System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
                     cancellation.Token);
+            }
+            catch (OperationCanceledException) when (evaluationCancellation.IsCancellationRequested)
+            {
+                throw new global::Vibeformer.Runtime.JavaCancellationException(
+                    evaluationCancellation);
             }
             catch (OperationCanceledException error) when (cancellation.IsCancellationRequested)
             {
@@ -1034,6 +1141,9 @@ namespace Pkl.Core.Runtime.Polyglot
     public sealed class Context : IDisposable
     {
         private readonly object lifecycleLock = new();
+        private readonly System.Threading.CancellationTokenSource cancellation = new();
+        private readonly Dictionary<System.Threading.Thread, int> executingThreads = new();
+        private readonly System.Threading.ManualResetEventSlim noExecutions = new(true);
         private global::Pkl.Core.Runtime.VmContext? vmContext;
         private bool initialized;
         private bool closed;
@@ -1053,24 +1163,50 @@ namespace Pkl.Core.Runtime.Polyglot
         public void Enter()
         {
             global::Pkl.Core.Runtime.VmContext context;
+            var thread = System.Threading.Thread.CurrentThread;
+            var cancellationPushed = false;
             lock (lifecycleLock)
             {
                 ObjectDisposedException.ThrowIf(closed, this);
                 context = initialized && vmContext is not null
                     ? vmContext
                     : throw new InvalidOperationException("Pkl context has not been initialized.");
+                noExecutions.Reset();
+                executingThreads.TryGetValue(thread, out var depth);
+                executingThreads[thread] = depth + 1;
             }
-            global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.InstallContext(
-                typeof(global::Pkl.Core.Runtime.VmLanguage), context, this);
+            try
+            {
+                global::Vibeformer.Runtime.JavaCancellation.Push(this, cancellation.Token);
+                cancellationPushed = true;
+                global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.InstallContext(
+                    typeof(global::Pkl.Core.Runtime.VmLanguage), context, this);
+            }
+            catch
+            {
+                if (cancellationPushed)
+                    global::Vibeformer.Runtime.JavaCancellation.Pop(this);
+                UnregisterExecution(thread);
+                throw;
+            }
         }
         public void Leave()
         {
-            global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
-                typeof(global::Pkl.Core.Runtime.VmLanguage), this);
+            try
+            {
+                global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
+                    typeof(global::Pkl.Core.Runtime.VmLanguage), this);
+            }
+            finally
+            {
+                global::Vibeformer.Runtime.JavaCancellation.Pop(this);
+                UnregisterExecution(System.Threading.Thread.CurrentThread);
+            }
         }
         public void Close() => Close(false);
         public void Close(bool cancelIfExecuting)
         {
+            System.Threading.Thread[] activeThreads;
             lock (lifecycleLock)
             {
                 if (!closed)
@@ -1079,7 +1215,17 @@ namespace Pkl.Core.Runtime.Polyglot
                     initialized = false;
                     vmContext = null;
                 }
+                activeThreads = executingThreads.Keys.ToArray();
             }
+            cancellation.Cancel();
+            var currentThread = System.Threading.Thread.CurrentThread;
+            foreach (var thread in activeThreads)
+            {
+                if (ReferenceEquals(thread, currentThread)) continue;
+                try { thread.Interrupt(); }
+                catch (System.Threading.ThreadStateException) { }
+            }
+            if (cancelIfExecuting && !activeThreads.Contains(currentThread)) noExecutions.Wait();
             global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
                 typeof(global::Pkl.Core.Runtime.VmLanguage), this, removeAll: true);
         }
@@ -1087,7 +1233,19 @@ namespace Pkl.Core.Runtime.Polyglot
         {
             get { lock (lifecycleLock) return closed; }
         }
+        internal bool IsCancellationRequested => cancellation.IsCancellationRequested;
         public void Dispose() => Close(false);
+
+        private void UnregisterExecution(System.Threading.Thread thread)
+        {
+            lock (lifecycleLock)
+            {
+                if (!executingThreads.TryGetValue(thread, out var depth)) return;
+                if (depth == 1) executingThreads.Remove(thread);
+                else executingThreads[thread] = depth - 1;
+                if (executingThreads.Count == 0) noExecutions.Set();
+            }
+        }
 
         public sealed class Builder
         {
@@ -1716,6 +1874,7 @@ namespace Pkl.Core.Runtime.Truffle.api
         internal virtual object? Call(params object?[] arguments) => CallFrom(null, arguments);
         internal object? CallFrom(Node? location, params object?[] arguments)
         {
+            global::Vibeformer.Runtime.JavaCancellation.ThrowIfCancellationRequested();
             try
             {
                 return root?.Execute(new VirtualFrame(arguments, root.GetFrameDescriptor()));

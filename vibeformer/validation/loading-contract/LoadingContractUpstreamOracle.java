@@ -29,6 +29,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
@@ -102,6 +103,95 @@ public final class LoadingContractUpstreamOracle {
       write(writer, "errors/missing-invalid-io-type", "ERROR", observeErrors(fixtures, work));
       write(writer, "project/dependency-cycles", "ERROR", observeProjectCycles(root));
       write(writer, "lifecycle/close", "LIFECYCLE", observeLifecycle());
+      write(writer, "evaluator/timeout", "TIMEOUT", observeTimeout(work));
+    }
+  }
+
+  private static String observeTimeout(Path work) throws Exception {
+    var elapsed = new ArrayList<Duration>();
+    var timeout = Duration.ofMillis(100);
+    // Keep the deadline observations independent from one-time Truffle and standard-library
+    // initialization. Cancelling that initialization can poison the JVM's static state and
+    // obscure the evaluator timeout behavior that this contract is intended to measure.
+    try (Evaluator evaluator = Evaluator.preconfigured()) {
+      evaluator.evaluate(ModuleSource.text("value = 1\n"));
+    }
+    Path warmDir = work.resolve("timeout-warmup");
+    Files.createDirectories(warmDir);
+    Path warmProject = warmDir.resolve("PklProject");
+    Files.writeString(
+        warmProject,
+        "amends \"pkl:Project\"\n"
+            + "evaluatorSettings { timeout = 1.s }\n",
+        StandardCharsets.UTF_8);
+    Project.loadFromPath(warmProject).getResolvedEvaluatorSettings();
+    elapsed.add(expectTimeout(
+        "cpu",
+        timeout,
+        () -> {
+          try (Evaluator evaluator = EvaluatorBuilder.preconfigured().setTimeout(timeout).build()) {
+            evaluator.evaluate(ModuleSource.text(
+                "function fib(n) = if (n < 2) 0 else fib(n - 1) + fib(n - 2)\n"
+                    + "value = fib(100)\n"));
+          }
+        }));
+
+    Path loadDir = work.resolve("timeout-project-load");
+    Files.createDirectories(loadDir);
+    Path loadProject = loadDir.resolve("PklProject");
+    Files.writeString(
+        loadProject,
+        "amends \"pkl:Project\"\n"
+            + "local function fib(n) = if (n < 2) 0 else fib(n - 1) + fib(n - 2)\n"
+            + "evaluatorSettings { timeout = fib(100).s }\n",
+        StandardCharsets.UTF_8);
+    elapsed.add(expectTimeout(
+        "project load",
+        timeout,
+        () -> Project.loadFromPath(loadProject, SecurityManagers.defaultManager, timeout)));
+
+    Path settingsDir = work.resolve("timeout-project-settings");
+    Files.createDirectories(settingsDir);
+    Path settingsProject = settingsDir.resolve("PklProject");
+    Files.writeString(
+        settingsProject,
+        "amends \"pkl:Project\"\n"
+            + "evaluatorSettings { timeout = 0.1.s }\n",
+        StandardCharsets.UTF_8);
+    Project project = Project.loadFromPath(settingsProject);
+    var configured = project.getResolvedEvaluatorSettings().timeout().toJavaDuration();
+    elapsed.add(expectTimeout(
+        "project settings",
+        configured,
+        () -> {
+          try (Evaluator evaluator =
+              EvaluatorBuilder.preconfigured().applyFromProject(project).build()) {
+            evaluator.evaluate(ModuleSource.text(
+                "function fib(n) = if (n < 2) 0 else fib(n - 1) + fib(n - 2)\n"
+                    + "value = fib(100)\n"));
+          }
+        }));
+
+    if (elapsed.stream().anyMatch(value -> value.compareTo(Duration.ofSeconds(2)) >= 0)) {
+      throw new IllegalStateException("evaluation timeout exceeded the bounded deadline");
+    }
+    return "cpu=true|project-load=true|project-settings=true|diagnostic=true|deadline=true";
+  }
+
+  private static Duration expectTimeout(String name, Duration timeout, Runnable operation) {
+    long started = System.nanoTime();
+    try {
+      operation.run();
+      throw new IllegalStateException(name + " did not time out");
+    } catch (PklException error) {
+      var elapsed = Duration.ofNanos(System.nanoTime() - started);
+      var expected = "Evaluation timed out after "
+          + (timeout.toMillis() / 1000d)
+          + " second(s).";
+      if (!error.getMessage().equals(expected)) {
+        throw new IllegalStateException(name + " timeout diagnostic: " + error.getMessage());
+      }
+      return elapsed;
     }
   }
 

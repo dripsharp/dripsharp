@@ -373,10 +373,14 @@
     "adaptation.embedded-resources"
     "evaluator.builder-mutations-getters"
     "evaluator.builder-invalid-combinations"
+    "evaluator.timeout-deadline"
+    "evaluator.timeout-diagnostic"
+    "evaluator.timeout-cancellation"
     "settings.evaluator"
     "settings.project"
     "settings.user"
     "settings.apply-from-project"
+    "settings.timeout-application"
     "security.root-confinement"
     "security.module-allowlist"
     "security.resource-resolve-read"
@@ -391,6 +395,7 @@
     "errors.dependency-cycle"
     "errors.output-type"
     "lifecycle.evaluator-http-close"
+    "lifecycle.timeout-cleanup"
     "lifecycle.custom-reader-ownership"
     "adaptation.disposal-ownership"})
 
@@ -628,6 +633,8 @@
     "errors/missing-invalid-io-type"
     "project/dependency-cycles"
     "lifecycle/close"
+    "evaluator/timeout"
+    "evaluator/timeout-cleanup"
     "external/configured-process-loading"
     "assembly/module-loading"
     "embedded/resource-loading"
@@ -719,9 +726,9 @@
     (when-not target-framework
       (fail! "Could not determine the loading consumer target framework"
              {:project (str installed-consumer-project)}))
-    (when-not (= 22 (count package-entries))
+    (when-not (= 24 (count package-entries))
       (fail! "The package-only loading observation selection changed"
-             {:expected 22 :actual (count package-entries)
+             {:expected 24 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
     (when-not generated-project-root
       (fail! "Could not locate the clean generated Pkl.Core project for stub auditing"

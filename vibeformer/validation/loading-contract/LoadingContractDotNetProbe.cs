@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
@@ -38,6 +39,16 @@ static class LoadingContractDotNetProbe
             ExternalReaderFixture.Run(Console.OpenStandardInput(), Console.OpenStandardOutput());
             return;
         }
+        int blockingReader = Array.IndexOf(args, "--external-reader-block");
+        if (blockingReader >= 0)
+        {
+            if (blockingReader + 1 >= args.Length)
+                throw new ArgumentException("The blocking external reader requires a PID marker path.");
+            File.WriteAllText(args[blockingReader + 1], Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+            ExternalReaderFixture.Run(
+                Console.OpenStandardInput(), Console.OpenStandardOutput(), blockResponses: true);
+            return;
+        }
         if (args.Length != 5)
             throw new ArgumentException(
                 "fixture, output, work, upstream package-build, and packed-assembly manifest paths are required");
@@ -69,12 +80,15 @@ static class LoadingContractDotNetProbe
         Write(writer, "errors/missing-invalid-io-type", "ERROR", ObserveErrors(fixtures, work));
         Write(writer, "project/dependency-cycles", "ERROR", ObserveProjectCycles(fixtures));
         Write(writer, "lifecycle/close", "LIFECYCLE", ObserveLifecycle());
+        TimeoutObservations timeouts = ObserveTimeoutCancellation(packageBuild, work);
+        Write(writer, "evaluator/timeout", "TIMEOUT", timeouts.Shared);
         Write(writer, "assembly/module-loading", "DOTNET", ObserveAssemblyModules());
         Write(writer, "embedded/resource-loading", "DOTNET", ObserveEmbeddedResources());
         Write(writer, "platform/path-uri-policy", "DOTNET", ObservePlatformPolicy(work));
         Write(writer, "ownership/disposal", "DOTNET", ObserveOwnership(fixtures, work));
         Write(writer, "external/configured-process-loading", "DOTNET",
             ObserveConfiguredExternalReader(work));
+        Write(writer, "evaluator/timeout-cleanup", "DOTNET", timeouts.Cleanup);
         Console.WriteLine("Package-only loading, package, and policy validation passed.");
     }
 
@@ -840,6 +854,185 @@ static class LoadingContractDotNetProbe
         return $"value={value}|resource={Escape(resource)}";
     }
 
+    static TimeoutObservations ObserveTimeoutCancellation(string packageBuild, string work)
+    {
+        var elapsed = new List<TimeSpan>();
+        TimeSpan shortTimeout = TimeSpan.FromMilliseconds(100);
+
+        elapsed.Add(ExpectTimeout("cpu", shortTimeout,
+            () => EvaluatorBuilder.Preconfigured().SetTimeout(shortTimeout).Build(),
+            evaluator => _ = evaluator.Evaluate(ModuleSource.Text(
+                "function fib(n) = if (n < 2) 0 else fib(n - 1) + fib(n - 2)\n" +
+                "value = fib(100)\n"))));
+
+        var blockingFactory = new BlockingModuleFactory();
+        elapsed.Add(ExpectTimeout("module reader", shortTimeout,
+            () => TimeoutBuilder(shortTimeout).AddModuleKeyFactory(blockingFactory).Build(),
+            evaluator => _ = evaluator.Evaluate(ModuleSource.Uri("timeoutmod:main"))));
+        Require(blockingFactory.Exited.Wait(TimeSpan.FromSeconds(1)),
+            "blocking module reader did not unwind after timeout");
+
+        var blockingResource = new BlockingResourceReader();
+        elapsed.Add(ExpectTimeout("resource reader", shortTimeout,
+            () => TimeoutBuilder(shortTimeout).AddResourceReader(blockingResource).Build(),
+            evaluator => _ = evaluator.Evaluate(ModuleSource.Text(
+                "value = read(\"timeoutres:item\")\n"))));
+        Require(blockingResource.Exited.Wait(TimeSpan.FromSeconds(1)),
+            "blocking resource reader did not unwind after timeout");
+
+        using (var server = new BlockingTlsServer(packageBuild))
+        using (PklHttpClient client = server.NewClient())
+        {
+            elapsed.Add(ExpectTimeout("HTTP module", shortTimeout,
+                () => EvaluatorBuilder.Preconfigured()
+                    .SetHttpClient(client).SetTimeout(shortTimeout).Build(),
+                evaluator => _ = evaluator.Evaluate(
+                    ModuleSource.Uri("https://localhost:0/timeout.pkl"))));
+            Require(server.RequestReceived, "HTTP timeout probe did not reach the server");
+        }
+
+        string timeoutCache = Path.Combine(work, "timeout-package-cache");
+        ResetDirectory(timeoutCache);
+        using (var server = new BlockingTlsServer(packageBuild))
+        using (PklHttpClient client = server.NewClient())
+        {
+            elapsed.Add(ExpectTimeout("package", shortTimeout,
+                () => EvaluatorBuilder.Preconfigured()
+                    .SetHttpClient(client)
+                    .SetModuleCacheDir(timeoutCache)
+                    .SetTimeout(shortTimeout)
+                    .Build(),
+                evaluator => _ = evaluator.Evaluate(ModuleSource.Text(
+                    "value = import(\"package://localhost:0/timeout@1.0.0#/main.pkl\")\n"))));
+            Require(server.RequestReceived, "package timeout probe did not reach the server");
+        }
+        Directory.Delete(timeoutCache, recursive: true);
+        bool cacheClean = !Directory.Exists(timeoutCache);
+
+        string slowProjectDir = Path.Combine(work, "timeout-project-load");
+        Directory.CreateDirectory(slowProjectDir);
+        string slowProject = Path.Combine(slowProjectDir, "PklProject");
+        File.WriteAllText(slowProject,
+            "amends \"pkl:Project\"\n" +
+            "local function fib(n) = if (n < 2) 0 else fib(n - 1) + fib(n - 2)\n" +
+            "evaluatorSettings { timeout = fib(100).s }\n",
+            new UTF8Encoding(false));
+        elapsed.Add(ExpectPklTimeout("project load", shortTimeout,
+            () => _ = Project.LoadFromPath(
+                slowProject, SecurityManagers.defaultManager, shortTimeout)));
+
+        bool processClean = ObserveProjectSettingsExternalTimeout(work, elapsed);
+
+        bool successClean;
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetTimeout(TimeSpan.FromMilliseconds(250)).Build())
+        {
+            _ = evaluator.Evaluate(ModuleSource.Text("value = 1\n"));
+            Thread.Sleep(350);
+            successClean = (long)evaluator.Evaluate(ModuleSource.Text("value = 2\n"))
+                .GetProperty("value") == 2;
+        }
+
+        bool contextClean;
+        using (Evaluator evaluator = Evaluator.Preconfigured())
+            contextClean = (long)evaluator.Evaluate(ModuleSource.Text("value = 3\n"))
+                .GetProperty("value") == 3;
+
+        bool deadline = elapsed.All(duration => duration < TimeSpan.FromSeconds(2));
+        Require(deadline && successClean && contextClean && processClean && cacheClean,
+            "timeout deadline or cleanup contract");
+        return new TimeoutObservations(
+            "cpu=true|project-load=true|project-settings=true|diagnostic=true|deadline=true",
+            "module=true|resource=true|http=true|package=true|external=true" +
+            "|success-clean=true|context-clean=true|process-clean=true|cache-clean=true");
+    }
+
+    static EvaluatorBuilder TimeoutBuilder(TimeSpan timeout) =>
+        EvaluatorBuilder.Unconfigured()
+            .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+            .SetAllowedModules(new List<Regex>
+                { new("timeoutmod:"), new("repl:"), new("pkl:") })
+            .SetAllowedResources(new List<Regex> { new("timeoutres:") })
+            .AddModuleKeyFactory(ModuleKeyFactories.standardLibrary)
+            .SetTimeout(timeout);
+
+    static TimeSpan ExpectTimeout(
+        string name,
+        TimeSpan timeout,
+        Func<Evaluator> create,
+        Action<Evaluator> operation)
+    {
+        using Evaluator evaluator = create();
+        return ExpectPklTimeout(name, timeout, () => operation(evaluator));
+    }
+
+    static TimeSpan ExpectPklTimeout(string name, TimeSpan timeout, Action operation)
+    {
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            operation();
+            throw new InvalidOperationException($"{name} did not time out");
+        }
+        catch (PklException error)
+        {
+            watch.Stop();
+            string seconds = timeout.TotalSeconds.ToString("0.##", CultureInfo.CurrentCulture);
+            Require(error.Message == $"Evaluation timed out after {seconds} second(s).",
+                $"{name} timeout diagnostic: {error.Message}");
+            return watch.Elapsed;
+        }
+    }
+
+    static bool ObserveProjectSettingsExternalTimeout(string work, IList<TimeSpan> elapsed)
+    {
+        string projectDir = Path.Combine(work, "timeout-external-reader-project");
+        Directory.CreateDirectory(projectDir);
+        string marker = Path.Combine(projectDir, "reader.pid");
+        string executable = Environment.ProcessPath
+            ?? throw new InvalidOperationException("The package consumer process path is unavailable.");
+        string entryAssembly = Assembly.GetEntryAssembly()?.Location
+            ?? throw new InvalidOperationException("The package consumer entry assembly is unavailable.");
+        string projectFile = Path.Combine(projectDir, "PklProject");
+        File.WriteAllText(projectFile,
+            "amends \"pkl:Project\"\n\n" +
+            "evaluatorSettings {\n" +
+            "  timeout = 1.s\n" +
+            "  allowedModules { \"pkl:\"; \"file:\"; \"repl:\"; \"timeoutreader:\" }\n" +
+            "  externalModuleReaders {\n" +
+            "    [\"timeoutreader\"] {\n" +
+            $"      executable = \"{PklString(executable)}\"\n" +
+            $"      arguments {{ \"{PklString(entryAssembly)}\"; \"--external-reader-block\"; \"{PklString(marker)}\" }}\n" +
+            "    }\n" +
+            "  }\n" +
+            "}\n",
+            new UTF8Encoding(false));
+
+        Project project = Project.LoadFromPath(projectFile);
+        TimeSpan configured = project.GetResolvedEvaluatorSettings().Timeout!.ToJavaDuration();
+        elapsed.Add(ExpectTimeout("project external reader", configured,
+            () => EvaluatorBuilder.Preconfigured().ApplyFromProject(project).Build(),
+            evaluator => _ = evaluator.Evaluate(ModuleSource.Uri("timeoutreader:main"))));
+
+        Require(SpinWait.SpinUntil(() => File.Exists(marker), TimeSpan.FromSeconds(1)),
+            "blocking external reader did not record its PID");
+        int pid = int.Parse(File.ReadAllText(marker), CultureInfo.InvariantCulture);
+        return SpinWait.SpinUntil(() => !IsProcessAlive(pid), TimeSpan.FromSeconds(1));
+    }
+
+    static bool IsProcessAlive(int pid)
+    {
+        try
+        {
+            using Process process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
     static string PklString(string value) => value
         .Replace("\\", "\\\\", StringComparison.Ordinal)
         .Replace("\"", "\\\"", StringComparison.Ordinal);
@@ -1126,6 +1319,36 @@ static class LoadingContractDotNetProbe
         public void Dispose() => Close();
     }
 
+    sealed class BlockingModuleFactory : ModuleKeyFactory
+    {
+        internal ManualResetEventSlim Exited { get; } = new(false);
+        public JavaOptional<ModuleKey> Create(Uri uri)
+        {
+            if (uri.Scheme != "timeoutmod") return JavaOptional<ModuleKey>.Empty();
+            try { Thread.Sleep(TimeSpan.FromSeconds(5)); }
+            finally { Exited.Set(); }
+            return JavaOptional<ModuleKey>.Empty();
+        }
+        public void Close() { }
+        public void Dispose() { }
+    }
+
+    sealed class BlockingResourceReader : ResourceReader
+    {
+        internal ManualResetEventSlim Exited { get; } = new(false);
+        public string GetUriScheme() => "timeoutres";
+        public bool HasHierarchicalUris() => false;
+        public bool IsGlobbable() => false;
+        public JavaOptional<object> Read(Uri uri)
+        {
+            try { Thread.Sleep(TimeSpan.FromSeconds(5)); }
+            finally { Exited.Set(); }
+            return JavaOptional<object>.Empty();
+        }
+        public void Close() { }
+        public void Dispose() { }
+    }
+
     sealed class CountingModuleKey(Uri uri) : ModuleKey
     {
         public Uri GetUri() => uri;
@@ -1244,6 +1467,8 @@ static class LoadingContractDotNetProbe
         string Packages,
         string ProjectPackage,
         string Errors);
+
+    sealed record TimeoutObservations(string Shared, string Cleanup);
 
     sealed class ContractHttpServer : IDisposable
     {
@@ -1446,6 +1671,67 @@ static class LoadingContractDotNetProbe
             certificate.Dispose();
         }
     }
+
+    sealed class BlockingTlsServer : IDisposable
+    {
+        readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        readonly CancellationTokenSource cancellation = new();
+        readonly X509Certificate2 certificate;
+        readonly string certificatePath;
+        readonly Task serverTask;
+        int requestReceived;
+
+        internal BlockingTlsServer(string packageBuild)
+        {
+            string pfx = Path.Combine(packageBuild, "keystore", "localhost.p12");
+            certificatePath = Path.Combine(packageBuild, "keystore", "localhost.pem");
+#pragma warning disable SYSLIB0057 // net8-compatible certificate construction
+            certificate = new X509Certificate2(pfx, "password", X509KeyStorageFlags.Exportable);
+#pragma warning restore SYSLIB0057
+            listener.Start();
+            serverTask = Task.Run(Serve);
+        }
+
+        internal bool RequestReceived => Volatile.Read(ref requestReceived) != 0;
+
+        internal PklHttpClient NewClient() => PklHttpClient.CreateBuilder()
+            .AddCertificates(certificatePath)
+            .SetTestPort(((IPEndPoint)listener.LocalEndpoint).Port)
+            .Build();
+
+        void Serve()
+        {
+            try
+            {
+                using TcpClient client = listener.AcceptTcpClientAsync(cancellation.Token)
+                    .AsTask().GetAwaiter().GetResult();
+                using var ssl = new SslStream(client.GetStream());
+                ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = certificate,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+                }, cancellation.Token).GetAwaiter().GetResult();
+                using var reader = new StreamReader(ssl, Encoding.ASCII, false, 4096, leaveOpen: true);
+                _ = reader.ReadLine();
+                for (string? line = reader.ReadLine(); !string.IsNullOrEmpty(line); line = reader.ReadLine()) { }
+                Interlocked.Exchange(ref requestReceived, 1);
+                Task.Delay(TimeSpan.FromSeconds(5), cancellation.Token).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            catch (Exception error) when (cancellation.IsCancellationRequested &&
+                error is SocketException or ObjectDisposedException or IOException) { }
+        }
+
+        public void Dispose()
+        {
+            cancellation.Cancel();
+            listener.Stop();
+            try { serverTask.GetAwaiter().GetResult(); }
+            catch (Exception error) when (error is SocketException or ObjectDisposedException or IOException) { }
+            cancellation.Dispose();
+            certificate.Dispose();
+        }
+    }
 }
 
 /** Minimal validation-only external-reader protocol fixture. */
@@ -1465,7 +1751,7 @@ static class ExternalReaderFixture
     const int InitializeResourceReaderResponse = 49;
     const int CloseExternalProcess = 50;
 
-    public static void Run(Stream input, Stream output)
+    public static void Run(Stream input, Stream output, bool blockResponses = false)
     {
         var reader = new MessagePackReader(input);
         var writer = new MessagePackWriter(output);
@@ -1477,6 +1763,7 @@ static class ExternalReaderFixture
             int type = checked((int)RequireLong(message[0]));
             var body = RequireMap(message[1]);
             if (type == CloseExternalProcess) return;
+            if (blockResponses) Thread.Sleep(TimeSpan.FromSeconds(5));
             long requestId = RequireLong(body["requestId"]);
             switch (type)
             {
