@@ -146,34 +146,141 @@ internal sealed class JavaProcessBuilder
         return this;
     }
 
-    internal JavaProcess Start() => new(Process.Start(startInfo) ??
-        throw new IOException($"Could not start process `{startInfo.FileName}`."));
+    internal JavaProcess Start()
+    {
+        try
+        {
+            return new JavaProcess(Process.Start(startInfo) ??
+                throw new IOException($"Could not start process `{startInfo.FileName}`."));
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            throw new IOException($"Could not start process `{startInfo.FileName}`.", error);
+        }
+    }
 }
 
-internal sealed class JavaProcess
+internal sealed class JavaProcess : IDisposable
 {
     private readonly Process process;
+    private readonly Stream inputStream;
+    private readonly Stream outputStream;
+    private readonly CancellationTokenRegistration cancellationRegistration;
+    private int disposeStarted;
+
     internal JavaProcess(Process process)
     {
         this.process = process;
+        inputStream = process.StandardOutput.BaseStream;
+        outputStream = process.StandardInput.BaseStream;
         var cancellation = JavaCancellation.CurrentToken;
         if (cancellation.CanBeCanceled)
-            _ = cancellation.Register(
-                static state => ((JavaProcess)state!).DestroyForcibly(), this);
+            cancellationRegistration = cancellation.Register(
+                static state => ((JavaProcess)state!).CancelForEvaluation(), this);
     }
-    internal bool IsAlive() { try { return !process.HasExited; } catch (InvalidOperationException) { return false; } }
-    internal Stream GetInputStream() => process.StandardOutput.BaseStream;
-    internal Stream GetOutputStream() => process.StandardInput.BaseStream;
-    internal bool WaitFor(long timeout, JavaTimeUnit unit) =>
-        process.WaitForExit(checked((int)Math.Min(timeout, int.MaxValue)));
+
+    internal bool IsAlive()
+    {
+        try { return Volatile.Read(ref disposeStarted) == 0 && !process.HasExited; }
+        catch (Exception error) when (error is InvalidOperationException or ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    internal Stream GetInputStream()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposeStarted) != 0, this);
+        return inputStream;
+    }
+
+    internal Stream GetOutputStream()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposeStarted) != 0, this);
+        return outputStream;
+    }
+
+    internal bool WaitFor(long timeout, JavaTimeUnit unit)
+    {
+        try
+        {
+            return process.WaitForExit(checked((int)Math.Min(timeout, int.MaxValue)));
+        }
+        catch (Exception error) when (error is InvalidOperationException or ObjectDisposedException)
+        {
+            return true;
+        }
+    }
+
     internal JavaProcess DestroyForcibly()
     {
         try
         {
             if (IsAlive()) process.Kill(entireProcessTree: true);
         }
-        catch (InvalidOperationException) { }
+        catch (Exception error) when (error is InvalidOperationException or ObjectDisposedException or ThreadInterruptedException) { }
         return this;
+    }
+
+    private void CancelForEvaluation()
+    {
+        // CancellationToken callbacks run synchronously on the thread closing
+        // the evaluation context. Never let process teardown replace the
+        // product's stable timeout/cancellation diagnostic.
+        try { Terminate(); }
+        catch (Exception error) when (error is not StackOverflowException and not OutOfMemoryException) { }
+    }
+
+    // Killing the owned process tree and closing both redirected pipes are
+    // separate operations on .NET. Do both so a reader blocked in a pipe read
+    // is released even when process-exit notification races disposal.
+    internal JavaProcess Terminate()
+    {
+        DestroyForcibly();
+        ClosePipes();
+        return this;
+    }
+
+    internal void ClosePipes()
+    {
+        DisposePipe(outputStream);
+        DisposePipe(inputStream);
+    }
+
+    private static void DisposePipe(Stream stream)
+    {
+        while (true)
+        {
+            try
+            {
+                stream.Dispose();
+                return;
+            }
+            // Thread.Interrupt may race the SafePipeHandle spin wait used by
+            // Stream.Dispose. The exception clears the interrupt; retry so the
+            // redirected pipe is still deterministically released.
+            catch (ThreadInterruptedException) { }
+            catch (Exception error) when (error is IOException or ObjectDisposedException) { return; }
+        }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref disposeStarted, 1) != 0) return;
+        try
+        {
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+            }
+            catch (Exception error) when (error is InvalidOperationException or ObjectDisposedException or ThreadInterruptedException) { }
+            ClosePipes();
+        }
+        finally
+        {
+            cancellationRegistration.Dispose();
+            process.Dispose();
+        }
     }
 }
 

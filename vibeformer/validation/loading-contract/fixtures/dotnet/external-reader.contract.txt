@@ -6,3 +6,14 @@ globbing to the separately exercised local, module-path, assembly, embedded,
 and package readers. The reader process uses only the packaged public loading
 and settings API on its consumer side; its protocol fixture is validation
 infrastructure and is not a shipped MessagePack product surface.
+
+The failure/lifecycle probe must run inside a separate package-reference-only
+parent so an unhandled receive-thread exception is observed as a child crash,
+not as a successful in-process assertion. Across two repetitions it exercises
+EOF before initialization, EOF and truncation during module reads, malformed
+frames, an unknown response ID, a reader blocked until evaluator cancellation,
+and disposal racing a blocked read. Every pending evaluation must finish with a
+normal Pkl failure before its bound, every owned process tree must terminate,
+the receive thread must quiesce, and a second pass must not grow the parent's
+process-handle count. This remains validation of the private configured-reader
+framing boundary and does not expose general MessagePack product support.

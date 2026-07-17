@@ -49,6 +49,24 @@ static class LoadingContractDotNetProbe
                 Console.OpenStandardInput(), Console.OpenStandardOutput(), blockResponses: true);
             return;
         }
+        int faultReader = Array.IndexOf(args, "--external-reader-fault");
+        if (faultReader >= 0)
+        {
+            if (faultReader + 2 >= args.Length)
+                throw new ArgumentException("The faulting external reader requires a scenario and PID marker path.");
+            ExternalReaderFixture.RunFault(
+                Console.OpenStandardInput(), Console.OpenStandardOutput(),
+                args[faultReader + 1], args[faultReader + 2]);
+            return;
+        }
+        int failureParent = Array.IndexOf(args, "--external-reader-failure-parent");
+        if (failureParent >= 0)
+        {
+            if (failureParent + 1 >= args.Length)
+                throw new ArgumentException("The external-reader failure parent requires a work path.");
+            RunExternalReaderFailureParent(Path.GetFullPath(args[failureParent + 1]));
+            return;
+        }
         if (args.Length != 5)
             throw new ArgumentException(
                 "fixture, output, work, upstream package-build, and packed-assembly manifest paths are required");
@@ -88,6 +106,8 @@ static class LoadingContractDotNetProbe
         Write(writer, "ownership/disposal", "DOTNET", ObserveOwnership(fixtures, work));
         Write(writer, "external/configured-process-loading", "DOTNET",
             ObserveConfiguredExternalReader(work));
+        Write(writer, "external/failure-lifecycle", "DOTNET",
+            ObserveExternalReaderFailureLifecycle(work));
         Write(writer, "evaluator/timeout-cleanup", "DOTNET", timeouts.Cleanup);
         Console.WriteLine("Package-only loading, package, and policy validation passed.");
     }
@@ -852,6 +872,223 @@ static class LoadingContractDotNetProbe
         Require(value == 84 && resource == "external payload\n",
             $"configured external reader results: {value}, {Escape(resource)}");
         return $"value={value}|resource={Escape(resource)}";
+    }
+
+    static string ObserveExternalReaderFailureLifecycle(string work)
+    {
+        string parentWork = Path.Combine(work, "external-reader-failure-parent");
+        string executable = Environment.ProcessPath
+            ?? throw new InvalidOperationException("The package consumer process path is unavailable.");
+        string entryAssembly = Assembly.GetEntryAssembly()?.Location
+            ?? throw new InvalidOperationException("The package consumer entry assembly is unavailable.");
+        var start = new ProcessStartInfo(executable)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        start.ArgumentList.Add(entryAssembly);
+        start.ArgumentList.Add("--external-reader-failure-parent");
+        start.ArgumentList.Add(parentWork);
+        using Process parent = Process.Start(start)
+            ?? throw new InvalidOperationException("Could not start the external-reader failure parent.");
+        Task<string> stdoutTask = parent.StandardOutput.ReadToEndAsync();
+        Task<string> stderrTask = parent.StandardError.ReadToEndAsync();
+        if (!parent.WaitForExit(30_000))
+        {
+            parent.Kill(entireProcessTree: true);
+            parent.WaitForExit();
+            throw new InvalidOperationException("The external-reader failure parent hung.");
+        }
+        string stdout = stdoutTask.GetAwaiter().GetResult();
+        string stderr = stderrTask.GetAwaiter().GetResult();
+        Require(parent.ExitCode == 0,
+            $"external-reader failure parent crashed ({parent.ExitCode}): {stderr}");
+        const string prefix = "external-reader-failures=";
+        string? result = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .SingleOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
+        Require(result is not null,
+            $"external-reader failure parent omitted its result: {stdout} {stderr}");
+        return result![prefix.Length..];
+    }
+
+    static void RunExternalReaderFailureParent(string work)
+    {
+        ResetDirectory(work);
+        int baselineHandles = CurrentHandleCount();
+        IDictionary<string, string> first = RunExternalReaderFailurePass(
+            Path.Combine(work, "pass-1"));
+        CollectProcessFinalizers();
+        int firstHandles = CurrentHandleCount();
+        IDictionary<string, string> second = RunExternalReaderFailurePass(
+            Path.Combine(work, "pass-2"));
+        CollectProcessFinalizers();
+        int secondHandles = CurrentHandleCount();
+
+        Require(first.Count == second.Count &&
+                first.All(entry => second.TryGetValue(entry.Key, out string? value) &&
+                    value == entry.Value),
+            "external-reader failures were not deterministic across isolated repetitions");
+        Require(firstHandles <= baselineHandles + 12 && secondHandles <= firstHandles + 2,
+            $"external-reader process handles leaked: {baselineHandles}/{firstHandles}/{secondHandles}");
+        Console.WriteLine(
+            "external-reader-failures=" +
+            "exit-init=true|exit-read=true|malformed=true|truncated=true|protocol=true" +
+            "|blocked=true|close-race=true|processes=true|handles=true");
+    }
+
+    static IDictionary<string, string> RunExternalReaderFailurePass(string work)
+    {
+        Directory.CreateDirectory(work);
+        var results = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string scenario in new[]
+                 { "exit-init", "exit-read", "malformed-init", "truncated-read", "protocol-init", "blocked" })
+            results[scenario] = RunExternalReaderFailure(scenario, work);
+        results["close-race"] = RunExternalReaderCloseRace(work);
+        return results;
+    }
+
+    static string RunExternalReaderFailure(string scenario, string work)
+    {
+        string marker = Path.Combine(work, scenario + ".pid");
+        string projectFile = WriteExternalReaderFailureProject(work, scenario, marker,
+            scenario == "blocked" ? "100.ms" : "5.s");
+        Exception? failure = null;
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            Project project = Project.LoadFromPath(projectFile);
+            using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+                .ApplyFromProject(project)
+                .Build();
+            _ = evaluator.Evaluate(ModuleSource.Uri("faultmod:main"));
+        }
+        catch (Exception error)
+        {
+            failure = error;
+        }
+        watch.Stop();
+        Require(failure is PklException && failure is not PklBugException,
+            $"{scenario} did not surface a normal Pkl failure: {failure}");
+        Require(watch.Elapsed < TimeSpan.FromSeconds(2),
+            $"{scenario} did not fail within its bounded deadline: {watch.Elapsed}");
+        int pid = ReadExternalReaderPid(marker,
+            requireReadStage: scenario is "exit-read" or "truncated-read" or "blocked");
+        Require(SpinWait.SpinUntil(() => !IsProcessAlive(pid), TimeSpan.FromSeconds(2)),
+            $"{scenario} leaked external-reader process {pid}");
+        return NormalizeExternalReaderFailure(failure!);
+    }
+
+    static string RunExternalReaderCloseRace(string work)
+    {
+        const string scenario = "close-race";
+        string marker = Path.Combine(work, scenario + ".pid");
+        string projectFile = WriteExternalReaderFailureProject(work, scenario, marker, null);
+        Project project = Project.LoadFromPath(projectFile);
+        Evaluator evaluator = EvaluatorBuilder.Preconfigured().ApplyFromProject(project).Build();
+        Task<Exception?> evaluation = Task.Run(() =>
+        {
+            try
+            {
+                _ = evaluator.Evaluate(ModuleSource.Uri("faultmod:main"));
+                return null;
+            }
+            catch (Exception error)
+            {
+                return error;
+            }
+        });
+        int pid = ReadExternalReaderPid(marker, requireReadStage: true);
+        var watch = Stopwatch.StartNew();
+        evaluator.Dispose();
+        watch.Stop();
+        Require(watch.Elapsed < TimeSpan.FromSeconds(2),
+            $"evaluator close blocked on external reader: {watch.Elapsed}");
+        Require(evaluation.Wait(TimeSpan.FromSeconds(2)),
+            "external-reader evaluation remained blocked after evaluator close");
+        Exception? failure = evaluation.Result;
+        Require(failure is PklException && failure is not PklBugException,
+            $"close race did not surface a normal Pkl failure: {failure}");
+        Require(SpinWait.SpinUntil(() => !IsProcessAlive(pid), TimeSpan.FromSeconds(2)),
+            $"close race leaked external-reader process {pid}");
+        return NormalizeExternalReaderFailure(failure!);
+    }
+
+    static string WriteExternalReaderFailureProject(
+        string work, string scenario, string marker, string? timeout)
+    {
+        string projectDir = Path.Combine(work, scenario + "-project");
+        Directory.CreateDirectory(projectDir);
+        string executable = Environment.ProcessPath
+            ?? throw new InvalidOperationException("The package consumer process path is unavailable.");
+        string entryAssembly = Assembly.GetEntryAssembly()?.Location
+            ?? throw new InvalidOperationException("The package consumer entry assembly is unavailable.");
+        string projectFile = Path.Combine(projectDir, "PklProject");
+        File.WriteAllText(projectFile,
+            "amends \"pkl:Project\"\n\n" +
+            "evaluatorSettings {\n" +
+            (timeout is null ? "" : $"  timeout = {timeout}\n") +
+            "  allowedModules { \"pkl:\"; \"file:\"; \"repl:\"; \"faultmod:\" }\n" +
+            "  externalModuleReaders {\n" +
+            "    [\"faultmod\"] {\n" +
+            $"      executable = \"{PklString(executable)}\"\n" +
+            $"      arguments {{ \"{PklString(entryAssembly)}\"; \"--external-reader-fault\"; \"{scenario}\"; \"{PklString(marker)}\" }}\n" +
+            "    }\n" +
+            "  }\n" +
+            "}\n",
+            new UTF8Encoding(false));
+        return projectFile;
+    }
+
+    static int ReadExternalReaderPid(string marker, bool requireReadStage)
+    {
+        string? markerValue = null;
+        Require(SpinWait.SpinUntil(
+                () => TryReadExternalReaderMarker(marker, out markerValue) &&
+                    (!requireReadStage || markerValue!.Contains(":read", StringComparison.Ordinal)),
+                TimeSpan.FromSeconds(2)),
+            $"external reader did not reach the expected stage: {marker}");
+        string value = markerValue!.Split(':')[0];
+        return int.Parse(value, CultureInfo.InvariantCulture);
+    }
+
+    static bool TryReadExternalReaderMarker(string marker, out string? value)
+    {
+        try
+        {
+            if (!File.Exists(marker))
+            {
+                value = null;
+                return false;
+            }
+            value = File.ReadAllText(marker);
+            return value.Length > 0;
+        }
+        catch (IOException)
+        {
+            value = null;
+            return false;
+        }
+    }
+
+    static string NormalizeExternalReaderFailure(Exception failure)
+    {
+        string firstLine = failure.Message.Split('\n', StringSplitOptions.None)[0].Trim();
+        return failure.GetType().Name + ":" + firstLine;
+    }
+
+    static int CurrentHandleCount()
+    {
+        using Process current = Process.GetCurrentProcess();
+        return current.HandleCount;
+    }
+
+    static void CollectProcessFinalizers()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
     }
 
     static TimeoutObservations ObserveTimeoutCancellation(string packageBuild, string work)
@@ -1829,6 +2066,86 @@ static class ExternalReaderFixture
                 default:
                     throw new InvalidDataException($"Unexpected external-reader message type: {type}");
             }
+        }
+    }
+
+    public static void RunFault(Stream input, Stream output, string scenario, string marker)
+    {
+        File.WriteAllText(marker,
+            Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
+            new UTF8Encoding(false));
+        if (scenario == "exit-init") return;
+
+        var reader = new MessagePackReader(input);
+        var writer = new MessagePackWriter(output);
+        if (!reader.TryRead(out object? rawInitialize)) return;
+        var initialize = RequireList(rawInitialize);
+        if (initialize.Count != 2)
+            throw new InvalidDataException("External-reader initialize message must contain type and body.");
+        int initializeType = checked((int)RequireLong(initialize[0]));
+        if (initializeType != InitializeModuleReaderRequest)
+            throw new InvalidDataException($"Expected module-reader initialization, actual {initializeType}.");
+        long initializeRequestId = RequireLong(RequireMap(initialize[1])["requestId"]);
+
+        if (scenario == "malformed-init")
+        {
+            output.WriteByte(0xc1);
+            output.Flush();
+            return;
+        }
+        if (scenario == "protocol-init")
+        {
+            writer.WriteMessage(InitializeModuleReaderResponse, new()
+            {
+                ["requestId"] = initializeRequestId + 1,
+                ["spec"] = new Dictionary<string, object?>
+                {
+                    ["scheme"] = "faultmod",
+                    ["hasHierarchicalUris"] = false,
+                    ["isLocal"] = false,
+                    ["isGlobbable"] = false
+                }
+            });
+            return;
+        }
+
+        writer.WriteMessage(InitializeModuleReaderResponse, new()
+        {
+            ["requestId"] = initializeRequestId,
+            ["spec"] = new Dictionary<string, object?>
+            {
+                ["scheme"] = "faultmod",
+                ["hasHierarchicalUris"] = false,
+                ["isLocal"] = false,
+                ["isGlobbable"] = false
+            }
+        });
+        if (!reader.TryRead(out object? rawRead)) return;
+        var read = RequireList(rawRead);
+        if (read.Count != 2 || checked((int)RequireLong(read[0])) != ReadModuleRequest)
+            throw new InvalidDataException("Expected a module read after initialization.");
+        File.WriteAllText(marker,
+            Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + ":read",
+            new UTF8Encoding(false));
+
+        switch (scenario)
+        {
+            case "exit-read":
+                return;
+            case "truncated-read":
+                output.WriteByte(0x92); // response envelope array
+                output.WriteByte(ReadModuleResponse);
+                output.WriteByte(0x81); // map with a missing key/value payload
+                output.WriteByte(0xa9);
+                output.Write(Encoding.ASCII.GetBytes("requestId"));
+                output.Flush();
+                return;
+            case "blocked":
+            case "close-race":
+                Thread.Sleep(TimeSpan.FromSeconds(30));
+                return;
+            default:
+                throw new InvalidDataException($"Unknown external-reader fault scenario: {scenario}");
         }
     }
 

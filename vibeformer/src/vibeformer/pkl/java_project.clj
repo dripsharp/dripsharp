@@ -1552,6 +1552,38 @@
           rrb-nested-split?
           (sequence-node [(raw "{\nreturn base.Split(splitIndex);\n}")])
 
+          (= "executable:org.pkl.core.externalreader.ExternalReaderProcessImpl#getTransport()"
+             (spoon/declaration-key method))
+          ;; The JVM process/pipe lifecycle relies on daemon-thread and stream
+          ;; behavior that does not safely carry over to .NET. Keep process
+          ;; construction generated from the selected Java declaration, but
+          ;; retain the receive thread so close/failure can quiesce it.
+          (raw
+           "{\nlock (this.@lock) {\nif (this.closed) throw global::Vibeformer.Runtime.JavaCompat.NewInvalidOperationException(\"External reader process has already been closed.\");\nif (this.process is not null) {\nif (!this.process.IsAlive()) throw new global::Pkl.Core.Externalreader.ExternalReaderProcessException(global::Pkl.Core.Util.ErrorMessages.Create(\"externalReaderAlreadyTerminated\"));\nif (this.transport is null) throw new global::System.Exception(\"Assertion failed\");\nreturn this.transport;\n}\nvar command = new global::System.Collections.Generic.List<string> { this.spec.Executable };\nif (this.spec.Arguments is not null) command.AddRange(this.spec.Arguments);\nvar builder = new global::Vibeformer.Runtime.JavaProcessBuilder(command);\nif (this.spec.WorkingDir is not null) builder.Directory(this.spec.WorkingDir);\nbuilder.RedirectError(global::Vibeformer.Runtime.JavaProcessRedirect.INHERIT);\ntry {\nthis.process = builder.Start();\n} catch (global::System.IO.IOException error) {\nthrow new global::Pkl.Core.Externalreader.ExternalReaderProcessException(error);\n}\nthis.transport = global::Pkl.Core.Messaging.MessageTransports.Stream(new global::Pkl.Core.Externalreader.ExternalReaderMessagePackDecoder(this.process.GetInputStream()), new global::Pkl.Core.Externalreader.ExternalReaderMessagePackEncoder(this.process.GetOutputStream()), this.Log);\nthis.StartDestinationTransportThread(this.transport);\nreturn this.transport;\n}\n}")
+
+          (= "executable:org.pkl.core.externalreader.ExternalReaderProcessImpl#runTransport(org.pkl.core.messaging.MessageTransport)"
+             (spoon/declaration-key method))
+          (raw
+           "{\nglobal::System.Exception failure;\ntry {\ntransport.Start((message) => { throw new global::Pkl.Core.Messaging.ProtocolException(global::Vibeformer.Runtime.JavaCompat.Concat(\"Unexpected incoming one-way message: \", message)); }, (message) => { throw new global::Pkl.Core.Messaging.ProtocolException(global::Vibeformer.Runtime.JavaCompat.Concat(\"Unexpected incoming request message: \", message)); });\nfailure = new global::System.IO.EndOfStreamException(\"External reader process closed its output stream.\");\n} catch (global::System.Exception error) {\nfailure = error;\n}\nthis.FinishDestinationTransport(transport, failure);\n}")
+
+          (= "executable:org.pkl.core.externalreader.ExternalReaderProcessImpl#close()"
+             (spoon/declaration-key method))
+          (raw "{\nthis.CloseDestinationProcess();\n}")
+
+          (= "executable:org.pkl.core.messaging.MessageTransports$AbstractMessageTransport#accept(org.pkl.core.messaging.Message)"
+             (spoon/declaration-key method))
+          (raw
+           "{\nthis.Log(\"Received message: {0}\", message);\nif (message is global::Pkl.Core.Messaging.Message.OneWay oneWay) {\nthis.oneWayHandler(oneWay);\n} else if (message is global::Pkl.Core.Messaging.Message.Request request) {\nthis.requestHandler(request);\n} else if (message is global::Pkl.Core.Messaging.Message.Response response) {\nvar handler = this.TakeResponseHandler(response.RequestId);\nif (handler is null) throw new global::Pkl.Core.Messaging.ProtocolException(global::Pkl.Core.Util.ErrorMessages.Create(\"unknownRequestId\", message.GetType().Name, response.RequestId));\nhandler(response);\n}\n}")
+
+          (= "executable:org.pkl.core.messaging.MessageTransports$AbstractMessageTransport#close()"
+             (spoon/declaration-key method))
+          (raw "{\nthis.Log(\"Closing transport: {0}\", this);\nthis.CloseSafely();\n}")
+
+          (= "executable:org.pkl.core.messaging.MessageTransports$AbstractMessageTransport#send(org.pkl.core.messaging.Message$Request,org.pkl.core.messaging.MessageTransport$ResponseHandler)"
+             (spoon/declaration-key method))
+          (raw
+           "{\nthis.Log(\"Sending message: {0}\", message);\nthis.SendRequestSafely(message, responseHandler);\n}")
+
           (= "executable:org.pkl.core.EvaluatorImpl#doEvaluate(java.util.function.Supplier)"
              (spoon/declaration-key method))
           ;; Graal cancellation is an Error rather than an Exception and its

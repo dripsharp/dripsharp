@@ -22,4 +22,5 @@ dotnet-adaptation	embedded/resource-loading	DOTNET	text=contract payload\n|bytes
 dotnet-adaptation	platform/path-uri-policy	DOTNET	posix=true|windows-drive=true|unc=true|root-denied=true|encoded-traversal=true
 dotnet-adaptation	ownership/disposal	DOTNET	custom-owned-by-caller=true|owned-http-disposed=true|owned-archive-disposed=true|owned-external-process-disposed=true|repeat=true
 dotnet-adaptation	external/configured-process-loading	DOTNET	value=84|resource=external payload\n
+dotnet-adaptation	external/failure-lifecycle	DOTNET	exit-init=true|exit-read=true|malformed=true|truncated=true|protocol=true|blocked=true|close-race=true|processes=true|handles=true
 dotnet-adaptation	evaluator/timeout-cleanup	DOTNET	module=true|resource=true|http=true|package=true|external=true|success-clean=true|context-clean=true|process-clean=true|cache-clean=true

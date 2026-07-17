@@ -439,15 +439,33 @@ namespace Pkl.Core.Runtime
     public sealed class JavaThread
     {
         private readonly System.Threading.Thread thread;
+        private System.Exception? failure;
+
         public JavaThread(Action action, string name)
         {
-            thread = new System.Threading.Thread(() => action()) { Name = name };
+            thread = new System.Threading.Thread(() =>
+            {
+                try { action(); }
+                // An uncaught exception ends a Java thread without terminating
+                // the JVM. Capture the equivalent .NET failure so translated
+                // background workers cannot bring down the consumer process.
+                catch (System.Exception error) { failure = error; }
+            }) { Name = name };
         }
         private JavaThread(System.Threading.Thread thread) => this.thread = thread;
         public static JavaThread CurrentThread() => new(System.Threading.Thread.CurrentThread);
         public void Interrupt() => thread.Interrupt();
         public void SetDaemon(bool daemon) => thread.IsBackground = daemon;
         public void Start() => thread.Start();
+        private bool IsCurrentThread() => ReferenceEquals(thread, System.Threading.Thread.CurrentThread);
+        internal bool Join(TimeSpan timeout)
+        {
+            if (IsCurrentThread()) return true;
+            try { return thread.Join(timeout); }
+            catch (System.Threading.ThreadInterruptedException) { return !thread.IsAlive; }
+            catch (System.Threading.ThreadStateException) { return !thread.IsAlive; }
+        }
+        internal System.Exception? Failure => failure;
     }
 
     public static class JavaConcurrency
@@ -2232,5 +2250,179 @@ namespace Pkl.Core
             this is PClassInfo<object> exact
                 ? exact
                 : new PClassInfo<object>(this.moduleName, this.className, this.javaClass, this.moduleUri);
+    }
+}
+
+namespace Pkl.Core.Messaging
+{
+    internal partial interface MessageTransport
+    {
+        // Destination-only lifecycle hook. The upstream transport drops its
+        // response-handler map on EOF/close; .NET external readers instead use
+        // this hook to wake every caller before releasing the transport.
+        internal void Fail(System.Exception error);
+    }
+
+    internal sealed partial class MessageTransports
+    {
+        internal abstract partial class AbstractMessageTransport
+        {
+            private readonly object destinationLifecycleLock = new();
+            private System.Exception? destinationFailure;
+
+            private sealed class TransportFailureResponse : Message.Response
+            {
+                internal TransportFailureResponse(long requestId) => RequestId = requestId;
+                public long RequestId { get; }
+                public Message.Type CreateType() => Message.Type.READ_MODULE_RESPONSE;
+            }
+
+            internal void SendRequestSafely(
+                Message.Request message,
+                MessageTransport.ResponseHandler responseHandler)
+            {
+                System.Exception? failure;
+                lock (destinationLifecycleLock)
+                {
+                    failure = destinationFailure;
+                    if (failure is null)
+                    {
+                        responseHandlers[message.RequestId] = responseHandler;
+                        try
+                        {
+                            DoSend(message);
+                            return;
+                        }
+                        catch (System.Exception error)
+                        {
+                            responseHandlers.Remove(message.RequestId);
+                            destinationFailure = failure = NormalizeTransportFailure(error);
+                        }
+                    }
+                }
+                CompleteFailedResponse(message.RequestId, responseHandler, failure!);
+            }
+
+            internal MessageTransport.ResponseHandler? TakeResponseHandler(long requestId)
+            {
+                lock (destinationLifecycleLock)
+                {
+                    if (!responseHandlers.TryGetValue(requestId, out var handler)) return null;
+                    responseHandlers.Remove(requestId);
+                    return handler;
+                }
+            }
+
+            public void Fail(System.Exception error)
+            {
+                KeyValuePair<long, MessageTransport.ResponseHandler>[] pending;
+                System.Exception failure;
+                lock (destinationLifecycleLock)
+                {
+                    destinationFailure ??= NormalizeTransportFailure(error);
+                    failure = destinationFailure;
+                    pending = responseHandlers.ToArray();
+                    responseHandlers.Clear();
+                }
+                foreach (var entry in pending)
+                    CompleteFailedResponse(entry.Key, entry.Value, failure);
+            }
+
+            internal void CloseSafely()
+            {
+                Fail(new System.IO.IOException("External reader transport was closed."));
+                DoClose();
+            }
+
+            private static System.IO.IOException NormalizeTransportFailure(System.Exception error) =>
+                error as System.IO.IOException ??
+                new System.IO.IOException(
+                    "External reader transport failed (" + error.GetType().Name + ").", error);
+
+            private static void CompleteFailedResponse(
+                long requestId,
+                MessageTransport.ResponseHandler handler,
+                System.Exception failure)
+            {
+                try
+                {
+                    // Existing generated response callbacks turn an unexpected
+                    // response into a failed JavaFuture. MessageTransports then
+                    // exposes that as the public deterministic IOException.
+                    handler(new TransportFailureResponse(requestId));
+                }
+                catch (System.Exception callbackFailure)
+                {
+                    _ = new System.AggregateException(failure, callbackFailure);
+                }
+            }
+        }
+    }
+}
+
+namespace Pkl.Core.Externalreader
+{
+    internal sealed partial class ExternalReaderProcessImpl
+    {
+        private Pkl.Core.Runtime.JavaThread? destinationReaderThread;
+
+        private void StartDestinationTransportThread(Pkl.Core.Messaging.MessageTransport selectedTransport)
+        {
+            var thread = new Pkl.Core.Runtime.JavaThread(
+                () => RunTransport(selectedTransport),
+                "ExternalReaderProcessImpl rxThread for " + spec);
+            thread.SetDaemon(true);
+            destinationReaderThread = thread;
+            thread.Start();
+        }
+
+        private void FinishDestinationTransport(
+            Pkl.Core.Messaging.MessageTransport selectedTransport,
+            System.Exception failure)
+        {
+            selectedTransport.Fail(failure);
+            global::Vibeformer.Runtime.JavaProcess? ownedProcess;
+            lock (@lock) ownedProcess = process;
+            if (ownedProcess is null) return;
+            ownedProcess.Terminate();
+            ownedProcess.Dispose();
+        }
+
+        private void CloseDestinationProcess()
+        {
+            global::Vibeformer.Runtime.JavaProcess? ownedProcess;
+            Pkl.Core.Messaging.MessageTransport? ownedTransport;
+            Pkl.Core.Runtime.JavaThread? readerThread;
+            lock (@lock)
+            {
+                if (closed) return;
+                closed = true;
+                ownedProcess = process;
+                ownedTransport = transport;
+                readerThread = destinationReaderThread;
+            }
+
+            try
+            {
+                if (ownedTransport is not null && ownedProcess is not null && ownedProcess.IsAlive())
+                {
+                    ownedTransport.Send(new ExternalReaderMessages.CloseExternalProcess());
+                    ownedProcess.WaitFor(
+                        global::Vibeformer.Runtime.JavaCompat.DurationToMillis(CLOSE_TIMEOUT),
+                        global::Vibeformer.Runtime.JavaTimeUnit.MILLISECONDS);
+                }
+            }
+            catch (System.Exception) { }
+            finally
+            {
+                ownedTransport?.Fail(new System.IO.IOException("External reader process was closed."));
+                try { ownedTransport?.Close(); }
+                catch (System.Exception) { }
+                ownedProcess?.Terminate();
+                if (readerThread is not null)
+                    readerThread.Join(TimeSpan.FromSeconds(3));
+                ownedProcess?.Dispose();
+            }
+        }
     }
 }

@@ -389,6 +389,7 @@
     "readers.configured-external-module"
     "readers.configured-external-resource"
     "adaptation.configured-external-process"
+    "adaptation.external-reader-failure-lifecycle"
     "resources.environment"
     "resources.external-property"
     "adaptation.assembly-modules"
@@ -658,6 +659,7 @@
     "evaluator/timeout"
     "evaluator/timeout-cleanup"
     "external/configured-process-loading"
+    "external/failure-lifecycle"
     "assembly/module-loading"
     "embedded/resource-loading"
     "platform/path-uri-policy"
@@ -748,9 +750,9 @@
     (when-not target-framework
       (fail! "Could not determine the loading consumer target framework"
              {:project (str installed-consumer-project)}))
-    (when-not (= 24 (count package-entries))
+    (when-not (= 25 (count package-entries))
       (fail! "The package-only loading observation selection changed"
-             {:expected 24 :actual (count package-entries)
+             {:expected 25 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
     (when-not generated-project-root
       (fail! "Could not locate the clean generated Pkl.Core project for stub auditing"
