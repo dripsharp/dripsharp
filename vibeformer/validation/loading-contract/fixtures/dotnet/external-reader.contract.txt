@@ -1,0 +1,8 @@
+The package-reference-only .NET consumer must launch an isolated configured
+external reader process, load real Pkl modules through that process, resolve an
+absolute custom-scheme import, and read a text resource. The opaque custom URIs
+match the upstream external-reader contract and leave hierarchical listing and
+globbing to the separately exercised local, module-path, assembly, embedded,
+and package readers. The reader process uses only the packaged public loading
+and settings API on its consumer side; its protocol fixture is validation
+infrastructure and is not a shipped MessagePack product surface.

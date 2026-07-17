@@ -193,6 +193,12 @@
               loading-runtime (slurp (str (paths/resolve-path
                                             source-root "Runtime" "Substrate"
                                             "Pkl.Core.Loading.cs")))
+              java-compat (slurp (str (paths/resolve-path
+                                        project-root "src" "Vibeformer" "Runtime"
+                                        "JavaCompat.cs")))
+              substrate (slurp (str (paths/resolve-path
+                                      source-root "Runtime" "Substrate"
+                                      "Pkl.Core.Substrate.cs")))
               http-client (slurp (str (paths/resolve-path source-root
                                                            "Http" "HttpClient.cs")))
               package-uri (slurp (str (paths/resolve-path source-root
@@ -267,7 +273,15 @@
             (is (str/includes? loading-runtime "CreateAssembly"))
             (is (str/includes? loading-runtime "CreateEmbeddedResources"))
             (is (str/includes? loading-runtime "static Platform()"))
-            (is (str/includes? loading-runtime "static JdkHttpClient()"))))))
+            (is (str/includes? loading-runtime "static JdkHttpClient()"))
+            (is (str/includes? java-compat
+                               "colon + 1 == original.Length || original[colon + 1] != '/'"))
+            (is (str/includes? substrate
+                               "NewDefaultBufferPacker() => new();"))
+            (is (str/includes? substrate
+                               "NewDefaultPacker(System.IO.Stream stream) => new(stream);"))
+            (is (str/includes? substrate
+                               "stream ?? throw Excluded()"))))))
 
     (testing "two independent closures emit byte-for-byte identical projects"
       (is (= (directory-bytes (:project-root first-emission))

@@ -141,13 +141,17 @@ runtime values; four normalized error classes; and `Duration`, `DataSize`,
 fresh evaluator, and neither package probe loads generated sources or shares
 runtime state with its oracle. The core gate also executes a source-backed
 loading, security-policy, and evaluator-configuration contract against the
-upstream JVM. Its 53 behavior families distinguish 49 directly comparable JVM
-families from four .NET-specific assembly, embedded-resource, path, and disposal
-adaptations; 12 unimplemented families remain explicitly pending in scope. A
-package-reference-only .NET consumer independently exercises 17 normalized
+upstream JVM. Its 54 behavior families distinguish 49 directly comparable JVM
+families from five .NET-specific assembly, embedded-resource, path, disposal,
+and configured-external-process adaptations; every family in this contract has
+implementation evidence without redefining broader product completion. A
+package-reference-only .NET consumer independently exercises 22 normalized
 observations, including HTTP/TLS and proxy behavior, package and projectpackage
 resolution, verified cache/offline behavior, assembly-relative loading, embedded
-resources, canonical policy checks, errors, and ownership boundaries. The 17
+resources, configured external readers, canonical policy checks, errors, and
+ownership boundaries. It rejects project/source leakage, verifies the runtime
+locations and hashes of the exact packed assemblies, and audits the selected
+loading public surface for implementation stubs. The 17
 normalized upstream observations cover local, directory, archive, custom,
 HTTP/TLS, package, and projectpackage loading; cache and integrity behavior;
 settings, policy, errors, and lifecycle, with deliberate mismatch detection. The

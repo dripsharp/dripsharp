@@ -366,6 +366,7 @@
     "readers.custom-resource"
     "readers.configured-external-module"
     "readers.configured-external-resource"
+    "adaptation.configured-external-process"
     "resources.environment"
     "resources.external-property"
     "adaptation.assembly-modules"
@@ -516,6 +517,97 @@
                  (str observation "\t" kind "\t" (b64 expectation) "\n"))
                entries))))
 
+(def ^:private loading-public-surface-files
+  ["EvaluatorBuilder.cs"
+   "ModuleSource.cs"
+   "SecurityManagers.cs"
+   "EvaluatorSettings/PklEvaluatorSettings.cs"
+   "Project/Project.cs"
+   "Runtime/Substrate/Pkl.Core.Loading.cs"
+   "Http/HttpClient.cs"
+   "Packages/PackageUri.cs"
+   "Packages/PackageAssetUri.cs"
+   "Packages/Checksums.cs"
+   "Packages/Dependency.cs"
+   "Packages/DependencyMetadata.cs"
+   "Settings/PklSettings.cs"
+   "Externalreader/ExternalReaderProcess.cs"
+   "Externalreader/ExternalReaderProcessImpl.cs"])
+
+(def ^:private loading-public-stub-patterns
+  [[:translation-error #"#error VIBEFORMER_"]
+   [:not-implemented #"NotImplementedException"]
+   [:todo #"\bTODO\b"]
+   [:null-or-default-body
+    #"(?ms)^public[^\n{]+ [A-Z][A-Za-z0-9_]*\([^)]*\) \{\s*return (?:null!|default!);\s*\}"]
+   [:null-or-default-expression
+    #"(?m)^public[^\n=]+=>\s*(?:null!|default!);?"]])
+
+(defn- audit-loading-public-surface!
+  [^Path project-root]
+  (let [source-root (paths/resolve-path project-root "src" "Pkl" "Core")
+        files (mapv #(paths/resolve-path source-root %) loading-public-surface-files)
+        missing (->> files (remove paths/regular-file?) (mapv str))]
+    (when (seq missing)
+      (fail! "Selected loading public-surface source is missing"
+             {:project-root (str project-root) :missing missing}))
+    (let [findings
+          (->> files
+               (mapcat
+                (fn [^Path file]
+                  (let [source (Files/readString file StandardCharsets/UTF_8)]
+                    (keep (fn [[kind pattern]]
+                            (when (re-find pattern source)
+                              {:file (str (.relativize source-root file)) :kind kind}))
+                          loading-public-stub-patterns))))
+               vec)]
+      (when (seq findings)
+        (fail! "Selected loading public surface contains implementation stubs"
+               {:project-root (str project-root) :findings findings}))
+      {:files (count files)
+       :patterns (mapv first loading-public-stub-patterns)})))
+
+(defn- write-packed-assembly-manifest!
+  [^Path output packages]
+  (let [assemblies
+        (mapv (fn [package]
+                {:name (get-in package [:resource-proof :assembly-identity :name])
+                 :sha256 (get-in package [:resource-proof :assembly-artifact :sha256])})
+              packages)
+        invalid (filterv #(or (str/blank? (:name %))
+                              (not (re-matches #"[0-9a-f]{64}" (or (:sha256 %) ""))))
+                         assemblies)
+        duplicate-names (->> assemblies (map :name) frequencies
+                             (keep (fn [[name count]] (when (> count 1) name)))
+                             sort vec)]
+    (when (or (seq invalid) (seq duplicate-names))
+      (fail! "Packed assembly provenance is incomplete or ambiguous"
+             {:invalid invalid :duplicate-names duplicate-names}))
+    (write-text! output
+                 (apply str
+                        (for [{:keys [name sha256]} (sort-by :name assemblies)]
+                          (str name "\t" sha256 "\n"))))
+    {:path output :assemblies (vec (sort-by :name assemblies))}))
+
+(defn- verify-package-probe-source-isolation!
+  [^Path package-root ^Path project ^Path source]
+  (let [root (.toRealPath package-root (make-array java.nio.file.LinkOption 0))
+        source-path (.toRealPath source (make-array java.nio.file.LinkOption 0))
+        project-text (Files/readString project StandardCharsets/UTF_8)
+        source-text (Files/readString source StandardCharsets/UTF_8)
+        forbidden (->> ["target/generated" "ProjectReference" "Compile Include"
+                        "HintPath" "#line"]
+                       (filter #(or (str/includes? project-text %)
+                                    (str/includes? source-text %)))
+                       vec)]
+    (when-not (.startsWith source-path root)
+      (fail! "Package-only loading probe source escapes its isolated project"
+             {:root (str root) :source (str source-path)}))
+    (when (seq forbidden)
+      (fail! "Package-only loading probe contains a generated-source or reference escape hatch"
+             {:project (str project) :source (str source) :forbidden forbidden}))
+    {:project (str project) :source (str source) :forbidden []}))
+
 (declare package-only-project restore-package-only-project!)
 
 (def ^:private dotnet-loading-observations
@@ -536,6 +628,7 @@
     "errors/missing-invalid-io-type"
     "project/dependency-cycles"
     "lifecycle/close"
+    "external/configured-process-loading"
     "assembly/module-loading"
     "embedded/resource-loading"
     "platform/path-uri-policy"
@@ -589,6 +682,7 @@
         package-output (paths/resolve-path proof-root "package.tsv")
         package-perturbed-output (paths/resolve-path proof-root "package-perturbed.tsv")
         perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
+        assembly-manifest (paths/resolve-path proof-root "packed-assemblies.tsv")
         work (doto (paths/resolve-path proof-root "upstream-work")
                (Files/createDirectories (make-array FileAttribute 0)))
         compile-classpath (str/join File/pathSeparator (map str entries))
@@ -612,6 +706,8 @@
                               (Files/readString installed-consumer-project))
         target-framework (second target-match)
         identities (get-in package-proof [:dependency-proof :packages])
+        generated-project-root
+        (get-in package-proof [:verification :generation :emission :project-root])
         {:keys [id version]} (:identity package-proof)]
     (doseq [required [oracle-source package-probe-source source-package-config
                       (paths/resolve-path dotnet-fixtures "modules" "main.pkl")
@@ -623,10 +719,17 @@
     (when-not target-framework
       (fail! "Could not determine the loading consumer target framework"
              {:project (str installed-consumer-project)}))
-    (when-not (= 21 (count package-entries))
+    (when-not (= 22 (count package-entries))
       (fail! "The package-only loading observation selection changed"
-             {:expected 21 :actual (count package-entries)
+             {:expected 22 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
+    (when-not generated-project-root
+      (fail! "Could not locate the clean generated Pkl.Core project for stub auditing"
+             {:package-proof-keys (keys package-proof)}))
+    (let [public-surface-audit
+          (audit-loading-public-surface! generated-project-root)
+          runtime-assemblies
+          (write-packed-assembly-manifest! assembly-manifest (:packages package-proof))]
     (run-command! {:command ["./gradlew" ":pkl-commons-test:processResources" "--console=plain"]
                    :directory upstream-root})
     (run-command! {:command [(str javac) "--release" (str java-release)
@@ -654,7 +757,10 @@
                 (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
     (Files/copy source-package-config package-config
                 (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-    (let [package-dependencies
+    (let [source-isolation
+          (verify-package-probe-source-isolation!
+           package-root package-project package-source)
+          package-dependencies
           (restore-package-only-project! run-command! package-project package-config
                                          packages package-proof identities)]
       (run-command! {:command ["dotnet" "build" (str package-project) "--nologo"
@@ -666,7 +772,7 @@
                                      "--no-build" "--no-restore" "--"
                                      (str (paths/resolve-path fixtures "fixtures"))
                                      (str package-output) (str package-work)
-                                     (str package-build)]
+                                     (str package-build) (str assembly-manifest)]
                            :directory package-root})]
         (when-not (str/includes? (:output package-run)
                                  "Package-only loading, package, and policy validation passed.")
@@ -690,7 +796,10 @@
        :expected-output expected-output
        :oracle-output oracle-output
        :package-output package-output
-       :package-dependencies package-dependencies})))))
+       :package-dependencies package-dependencies
+       :source-isolation source-isolation
+       :public-surface-audit public-surface-audit
+       :runtime-assemblies runtime-assemblies}))))))
 
 (defn- package-only-project [package-id version target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"

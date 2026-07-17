@@ -35,65 +35,206 @@ namespace Pkl.Core.Runtime
     }
     public static class ExcludedMessagePack
     {
+        // General Pkl binary serialization remains excluded. The stream overloads
+        // implement only the private framing required by configured external readers.
         public static ExcludedMessagePackPacker NewDefaultBufferPacker() => new();
-        public static ExcludedMessagePackPacker NewDefaultPacker(System.IO.Stream stream) => new();
+        public static ExcludedMessagePackPacker NewDefaultPacker(System.IO.Stream stream) => new(stream);
         public static ExcludedMessagePackUnpacker NewDefaultUnpacker(byte[] bytes) => new();
-        public static ExcludedMessagePackUnpacker NewDefaultUnpacker(System.IO.Stream stream) => new();
+        public static ExcludedMessagePackUnpacker NewDefaultUnpacker(System.IO.Stream stream) => new(stream);
     }
     public sealed class ExcludedMessagePackPacker : IDisposable
     {
+        private readonly System.IO.Stream? stream;
         private static NotSupportedException Excluded() => new("MessagePack is excluded from the Vibeformer product target.");
+        public ExcludedMessagePackPacker() { }
+        internal ExcludedMessagePackPacker(System.IO.Stream stream) => this.stream = stream;
+        private System.IO.Stream ExternalReaderStream() => stream ?? throw Excluded();
         public void Clear() { }
         public sbyte[] ToByteArray() => throw Excluded();
-        public ExcludedMessagePackPacker PackNil() => throw Excluded();
-        public ExcludedMessagePackPacker PackBoolean(bool value) => throw Excluded();
-        public ExcludedMessagePackPacker PackInt(int value) => throw Excluded();
-        public ExcludedMessagePackPacker PackLong(long value) => throw Excluded();
-        public ExcludedMessagePackPacker PackLong(long? value) => throw Excluded();
-        public ExcludedMessagePackPacker PackByte(sbyte value) => throw Excluded();
-        public ExcludedMessagePackPacker PackBinaryHeader(int length) => throw Excluded();
-        public ExcludedMessagePackPacker WritePayload(sbyte[] value) => throw Excluded();
-        public ExcludedMessagePackPacker AddPayload(sbyte[] value) => throw Excluded();
-        public ExcludedMessagePackPacker PackDouble(double value) => throw Excluded();
-        public ExcludedMessagePackPacker PackString(string value) => throw Excluded();
-        public ExcludedMessagePackPacker PackArrayHeader(int size) => throw Excluded();
-        public ExcludedMessagePackPacker PackMapHeader(int size) => throw Excluded();
-        public void Flush() => throw Excluded();
+        public ExcludedMessagePackPacker PackNil() { ExternalReaderStream().WriteByte(0xc0); return this; }
+        public ExcludedMessagePackPacker PackBoolean(bool value) { ExternalReaderStream().WriteByte(value ? (byte)0xc3 : (byte)0xc2); return this; }
+        public ExcludedMessagePackPacker PackInt(int value) => PackLong(value);
+        public ExcludedMessagePackPacker PackLong(long value)
+        {
+            var output = ExternalReaderStream();
+            if (value >= 0 && value <= 0x7f) output.WriteByte((byte)value);
+            else if (value >= -32 && value < 0) output.WriteByte(unchecked((byte)value));
+            else { output.WriteByte(0xd3); WriteUnsigned(unchecked((ulong)value), 8); }
+            return this;
+        }
+        public ExcludedMessagePackPacker PackLong(long? value) => value.HasValue ? PackLong(value.Value) : PackNil();
+        public ExcludedMessagePackPacker PackByte(sbyte value) => PackLong(value);
+        public ExcludedMessagePackPacker PackBinaryHeader(int length) { ExternalReaderStream().WriteByte(0xc6); WriteUnsigned((uint)length, 4); return this; }
+        public ExcludedMessagePackPacker WritePayload(sbyte[] value)
+        {
+            var bytes = new byte[value.Length];
+            for (var index = 0; index < value.Length; index++) bytes[index] = unchecked((byte)value[index]);
+            ExternalReaderStream().Write(bytes);
+            return this;
+        }
+        public ExcludedMessagePackPacker AddPayload(sbyte[] value) => WritePayload(value);
+        public ExcludedMessagePackPacker PackDouble(double value)
+        {
+            ExternalReaderStream().WriteByte(0xcb);
+            WriteUnsigned(unchecked((ulong)BitConverter.DoubleToInt64Bits(value)), 8);
+            return this;
+        }
+        public ExcludedMessagePackPacker PackString(string value)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(value);
+            if (bytes.Length < 32) ExternalReaderStream().WriteByte((byte)(0xa0 | bytes.Length));
+            else { ExternalReaderStream().WriteByte(0xdb); WriteUnsigned((uint)bytes.Length, 4); }
+            ExternalReaderStream().Write(bytes);
+            return this;
+        }
+        public ExcludedMessagePackPacker PackArrayHeader(int size) { WriteHeader(size, 0x90, 0xdd); return this; }
+        public ExcludedMessagePackPacker PackMapHeader(int size) { WriteHeader(size, 0x80, 0xdf); return this; }
+        private void WriteHeader(int size, int fixedPrefix, byte extendedPrefix)
+        {
+            if (size < 0) throw new ArgumentOutOfRangeException(nameof(size));
+            if (size < 16) ExternalReaderStream().WriteByte((byte)(fixedPrefix | size));
+            else { ExternalReaderStream().WriteByte(extendedPrefix); WriteUnsigned((uint)size, 4); }
+        }
+        private void WriteUnsigned(ulong value, int count)
+        {
+            for (var shift = (count - 1) * 8; shift >= 0; shift -= 8)
+                ExternalReaderStream().WriteByte((byte)(value >> shift));
+        }
+        public void Flush() => ExternalReaderStream().Flush();
         public void Close() { }
         public void Dispose() { }
     }
     public sealed class ExcludedMessagePackUnpacker : IDisposable
     {
+        private readonly System.IO.Stream? stream;
+        private int lookahead = -2;
         private static NotSupportedException Excluded() => new("MessagePack is excluded from the Vibeformer product target.");
-        public bool HasNext() => throw Excluded();
-        public int UnpackArrayHeader() => throw Excluded();
-        public int UnpackInt() => throw Excluded();
-        internal ExcludedMessagePackValue UnpackValue() => throw Excluded();
+        public ExcludedMessagePackUnpacker() { }
+        internal ExcludedMessagePackUnpacker(System.IO.Stream stream) => this.stream = stream;
+        private System.IO.Stream ExternalReaderStream() => stream ?? throw Excluded();
+        public bool HasNext()
+        {
+            if (lookahead == -2) lookahead = ExternalReaderStream().ReadByte();
+            return lookahead >= 0;
+        }
+        private byte ReadPrefix()
+        {
+            int value;
+            if (lookahead != -2) { value = lookahead; lookahead = -2; }
+            else value = ExternalReaderStream().ReadByte();
+            if (value < 0) throw new System.IO.EndOfStreamException();
+            return (byte)value;
+        }
+        public int UnpackArrayHeader()
+        {
+            var prefix = ReadPrefix();
+            if ((prefix & 0xf0) == 0x90) return prefix & 0x0f;
+            if (prefix == 0xdc) return checked((int)ReadUnsigned(2));
+            if (prefix == 0xdd) return checked((int)ReadUnsigned(4));
+            throw new NotSupportedException("Expected a MessagePack array header.");
+        }
+        public int UnpackInt() => UnpackValue().AsIntegerValue().AsInt();
+        internal ExcludedMessagePackValue UnpackValue() => ReadValue(ReadPrefix());
+        private ExcludedMessagePackValue ReadValue(byte prefix)
+        {
+            if (prefix <= 0x7f) return new((long)prefix);
+            if (prefix >= 0xe0) return new((long)unchecked((sbyte)prefix));
+            if ((prefix & 0xf0) == 0x80) return ReadMap(prefix & 0x0f);
+            if ((prefix & 0xf0) == 0x90) return ReadArray(prefix & 0x0f);
+            if ((prefix & 0xe0) == 0xa0) return ReadString(prefix & 0x1f);
+            return prefix switch
+            {
+                0xc0 => new ExcludedMessagePackValue((object?)null),
+                0xc2 => new ExcludedMessagePackValue(false),
+                0xc3 => new ExcludedMessagePackValue(true),
+                0xc4 => ReadBinary(checked((int)ReadUnsigned(1))),
+                0xc5 => ReadBinary(checked((int)ReadUnsigned(2))),
+                0xc6 => ReadBinary(checked((int)ReadUnsigned(4))),
+                0xcc => new ExcludedMessagePackValue(checked((long)ReadUnsigned(1))),
+                0xcd => new ExcludedMessagePackValue(checked((long)ReadUnsigned(2))),
+                0xce => new ExcludedMessagePackValue(checked((long)ReadUnsigned(4))),
+                0xcf => new ExcludedMessagePackValue(unchecked((long)ReadUnsigned(8))),
+                0xd0 => new ExcludedMessagePackValue((long)unchecked((sbyte)ReadUnsigned(1))),
+                0xd1 => new ExcludedMessagePackValue((long)unchecked((short)ReadUnsigned(2))),
+                0xd2 => new ExcludedMessagePackValue((long)unchecked((int)ReadUnsigned(4))),
+                0xd3 => new ExcludedMessagePackValue(unchecked((long)ReadUnsigned(8))),
+                0xd9 => ReadString(checked((int)ReadUnsigned(1))),
+                0xda => ReadString(checked((int)ReadUnsigned(2))),
+                0xdb => ReadString(checked((int)ReadUnsigned(4))),
+                0xdc => ReadArray(checked((int)ReadUnsigned(2))),
+                0xdd => ReadArray(checked((int)ReadUnsigned(4))),
+                0xde => ReadMap(checked((int)ReadUnsigned(2))),
+                0xdf => ReadMap(checked((int)ReadUnsigned(4))),
+                _ => throw new NotSupportedException($"Unsupported MessagePack prefix: 0x{prefix:x2}")
+            };
+        }
+        private ulong ReadUnsigned(int count)
+        {
+            ulong result = 0;
+            for (var index = 0; index < count; index++)
+            {
+                var value = ExternalReaderStream().ReadByte();
+                if (value < 0) throw new System.IO.EndOfStreamException();
+                result = (result << 8) | (byte)value;
+            }
+            return result;
+        }
+        private byte[] ReadBytes(int length)
+        {
+            var result = new byte[length];
+            ExternalReaderStream().ReadExactly(result);
+            return result;
+        }
+        private ExcludedMessagePackValue ReadString(int length) => new(System.Text.Encoding.UTF8.GetString(ReadBytes(length)));
+        private ExcludedMessagePackValue ReadBinary(int length)
+        {
+            var bytes = ReadBytes(length);
+            var result = new sbyte[length];
+            for (var index = 0; index < length; index++) result[index] = unchecked((sbyte)bytes[index]);
+            return new(result);
+        }
+        private ExcludedMessagePackValue ReadArray(int count)
+        {
+            var result = new List<ExcludedMessagePackValue>(count);
+            for (var index = 0; index < count; index++) result.Add(UnpackValue());
+            return new(result);
+        }
+        private ExcludedMessagePackValue ReadMap(int count)
+        {
+            var result = new Dictionary<ExcludedMessagePackValue, ExcludedMessagePackValue>(count);
+            for (var index = 0; index < count; index++) result.Add(UnpackValue(), UnpackValue());
+            return new(result);
+        }
         public void Close() { }
         public void Dispose() { }
     }
     internal sealed class ExcludedMessagePackValue : IEnumerable<ExcludedMessagePackValue>
     {
-        private static NotSupportedException Excluded() => new("MessagePack is excluded from the Vibeformer product target.");
+        private readonly object? value;
         public ExcludedMessagePackValue() { }
-        public ExcludedMessagePackValue(string value) { }
-        public ExcludedMessagePackValue AsArrayValue() => throw Excluded();
-        public ExcludedMessagePackValue AsBinaryValue() => throw Excluded();
-        public ExcludedMessagePackValue AsBooleanValue() => throw Excluded();
-        public ExcludedMessagePackValue AsIntegerValue() => throw Excluded();
-        public ExcludedMessagePackValue AsMapValue() => throw Excluded();
-        public ExcludedMessagePackValue AsStringValue() => throw Excluded();
-        public sbyte[] AsByteArray() => throw Excluded();
-        public bool GetBoolean() => throw Excluded();
-        public int AsInt() => throw Excluded();
-        public long AsLong() => throw Excluded();
-        public string AsString() => throw Excluded();
-        public int Size() => throw Excluded();
-        public IList<ExcludedMessagePackValue> List() => throw Excluded();
-        public IDictionary<ExcludedMessagePackValue, ExcludedMessagePackValue> Map() => throw Excluded();
-        public ISet<KeyValuePair<ExcludedMessagePackValue, ExcludedMessagePackValue>> EntrySet() => throw Excluded();
-        public IEnumerator<ExcludedMessagePackValue> GetEnumerator() => throw Excluded();
+        public ExcludedMessagePackValue(string value) => this.value = value;
+        internal ExcludedMessagePackValue(object? value) => this.value = value;
+        private ExcludedMessagePackValue Require(Func<object?, bool> predicate, string kind) =>
+            predicate(value) ? this : throw new NotSupportedException($"Expected a MessagePack {kind} value.");
+        public ExcludedMessagePackValue AsArrayValue() => Require(item => item is IList<ExcludedMessagePackValue>, "array");
+        public ExcludedMessagePackValue AsBinaryValue() => Require(item => item is sbyte[], "binary");
+        public ExcludedMessagePackValue AsBooleanValue() => Require(item => item is bool, "boolean");
+        public ExcludedMessagePackValue AsIntegerValue() => Require(item => item is long, "integer");
+        public ExcludedMessagePackValue AsMapValue() => Require(item => item is IDictionary<ExcludedMessagePackValue, ExcludedMessagePackValue>, "map");
+        public ExcludedMessagePackValue AsStringValue() => Require(item => item is string, "string");
+        public sbyte[] AsByteArray() => (sbyte[])AsBinaryValue().value!;
+        public bool GetBoolean() => (bool)AsBooleanValue().value!;
+        public int AsInt() => checked((int)AsLong());
+        public long AsLong() => (long)AsIntegerValue().value!;
+        public string AsString() => (string)AsStringValue().value!;
+        public int Size() => value switch { IList<ExcludedMessagePackValue> list => list.Count, IDictionary<ExcludedMessagePackValue, ExcludedMessagePackValue> map => map.Count, _ => throw new NotSupportedException("Expected a MessagePack collection value.") };
+        public IList<ExcludedMessagePackValue> List() => (IList<ExcludedMessagePackValue>)AsArrayValue().value!;
+        public IDictionary<ExcludedMessagePackValue, ExcludedMessagePackValue> Map() => (IDictionary<ExcludedMessagePackValue, ExcludedMessagePackValue>)AsMapValue().value!;
+        public ISet<KeyValuePair<ExcludedMessagePackValue, ExcludedMessagePackValue>> EntrySet() => new HashSet<KeyValuePair<ExcludedMessagePackValue, ExcludedMessagePackValue>>(Map());
+        public IEnumerator<ExcludedMessagePackValue> GetEnumerator() => List().GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+        public override bool Equals(object? other) => other is ExcludedMessagePackValue item && Equals(value, item.value);
+        public override int GetHashCode() => value?.GetHashCode() ?? 0;
     }
     public class JavaTuple2<A, B>
     {

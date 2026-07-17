@@ -33,15 +33,22 @@ static class LoadingContractDotNetProbe
 {
     public static void Main(string[] args)
     {
-        if (args.Length != 4)
+        if (Array.IndexOf(args, "--external-reader") >= 0)
+        {
+            ExternalReaderFixture.Run(Console.OpenStandardInput(), Console.OpenStandardOutput());
+            return;
+        }
+        if (args.Length != 5)
             throw new ArgumentException(
-                "fixture, output, work, and upstream package-build paths are required");
+                "fixture, output, work, upstream package-build, and packed-assembly manifest paths are required");
         string fixtures = Path.GetFullPath(args[0]);
         string output = Path.GetFullPath(args[1]);
         string work = Path.GetFullPath(args[2]);
         string packageBuild = Path.GetFullPath(args[3]);
+        string assemblyManifest = Path.GetFullPath(args[4]);
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         ResetDirectory(work);
+        VerifyPackedAssemblies(assemblyManifest);
 
         using var writer = new StreamWriter(output, false, new UTF8Encoding(false));
         Write(writer, "module-source/forms", "API", ObserveModuleSourceForms(work));
@@ -66,7 +73,31 @@ static class LoadingContractDotNetProbe
         Write(writer, "embedded/resource-loading", "DOTNET", ObserveEmbeddedResources());
         Write(writer, "platform/path-uri-policy", "DOTNET", ObservePlatformPolicy(work));
         Write(writer, "ownership/disposal", "DOTNET", ObserveOwnership(fixtures, work));
+        Write(writer, "external/configured-process-loading", "DOTNET",
+            ObserveConfiguredExternalReader(work));
         Console.WriteLine("Package-only loading, package, and policy validation passed.");
+    }
+
+    static void VerifyPackedAssemblies(string manifest)
+    {
+        string baseDirectory = Path.GetFullPath(AppContext.BaseDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string[] lines = File.ReadAllLines(manifest);
+        Require(lines.Length == 2, "packed runtime assembly manifest must contain parser and core");
+        foreach (string line in lines)
+        {
+            string[] fields = line.Split('\t');
+            Require(fields.Length == 2 && fields[1].Length == 64,
+                "packed runtime assembly manifest row");
+            Assembly assembly = Assembly.Load(new AssemblyName(fields[0]));
+            string location = Path.GetFullPath(assembly.Location);
+            Require(location.StartsWith(baseDirectory, StringComparison.Ordinal),
+                $"runtime assembly escaped the isolated consumer output: {location}");
+            using FileStream stream = File.OpenRead(location);
+            string actual = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+            Require(actual == fields[1],
+                $"loaded {fields[0]} does not match its exact packed assembly");
+        }
     }
 
     static string ObserveModuleSourceForms(string work)
@@ -763,6 +794,56 @@ static class LoadingContractDotNetProbe
             $"|http-repeat=true|http-after-close={Lower(httpAfterClose)}";
     }
 
+    static string ObserveConfiguredExternalReader(string work)
+    {
+        string projectDir = Path.Combine(work, "external-reader-project");
+        Directory.CreateDirectory(projectDir);
+        string executable = Environment.ProcessPath
+            ?? throw new InvalidOperationException("The package consumer process path is unavailable.");
+        string entryAssembly = Assembly.GetEntryAssembly()?.Location
+            ?? throw new InvalidOperationException("The package consumer entry assembly is unavailable.");
+        string projectFile = Path.Combine(projectDir, "PklProject");
+        File.WriteAllText(projectFile,
+            "amends \"pkl:Project\"\n\n" +
+            "evaluatorSettings {\n" +
+            "  allowedModules { \"pkl:\"; \"file:\"; \"repl:\"; \"contractmod:\" }\n" +
+            "  allowedResources { \"file:\"; \"contractres:\" }\n" +
+            "  externalModuleReaders {\n" +
+            "    [\"contractmod\"] {\n" +
+            $"      executable = \"{PklString(executable)}\"\n" +
+            $"      arguments {{ \"{PklString(entryAssembly)}\"; \"--external-reader\" }}\n" +
+            "    }\n" +
+            "  }\n" +
+            "  externalResourceReaders {\n" +
+            "    [\"contractres\"] {\n" +
+            $"      executable = \"{PklString(executable)}\"\n" +
+            $"      arguments {{ \"{PklString(entryAssembly)}\"; \"--external-reader\" }}\n" +
+            "    }\n" +
+            "  }\n" +
+            "}\n",
+            new UTF8Encoding(false));
+
+        Project project = Project.LoadFromPath(projectFile);
+        PModule module;
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .ApplyFromProject(project)
+            .Build())
+        {
+            module = evaluator.Evaluate(ModuleSource.Text(
+                "value = import(\"contractmod:main\").value\n" +
+                "resource = read(\"contractres:payload\").text\n"));
+        }
+        long value = (long)module.GetProperty("value");
+        string resource = (string)module.GetProperty("resource");
+        Require(value == 84 && resource == "external payload\n",
+            $"configured external reader results: {value}, {Escape(resource)}");
+        return $"value={value}|resource={Escape(resource)}";
+    }
+
+    static string PklString(string value) => value
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("\"", "\\\"", StringComparison.Ordinal);
+
     static string ObserveAssemblyModules()
     {
         var factory = (AssemblyModuleKeyFactory)ModuleKeyFactories.CreateAssembly(
@@ -1363,6 +1444,346 @@ static class LoadingContractDotNetProbe
                 inner => inner is SocketException or ObjectDisposedException or IOException)) { }
             cancellation.Dispose();
             certificate.Dispose();
+        }
+    }
+}
+
+/** Minimal validation-only external-reader protocol fixture. */
+static class ExternalReaderFixture
+{
+    const int ReadResourceRequest = 38;
+    const int ReadResourceResponse = 39;
+    const int ReadModuleRequest = 40;
+    const int ReadModuleResponse = 41;
+    const int ListResourcesRequest = 42;
+    const int ListResourcesResponse = 43;
+    const int ListModulesRequest = 44;
+    const int ListModulesResponse = 45;
+    const int InitializeModuleReaderRequest = 46;
+    const int InitializeModuleReaderResponse = 47;
+    const int InitializeResourceReaderRequest = 48;
+    const int InitializeResourceReaderResponse = 49;
+    const int CloseExternalProcess = 50;
+
+    public static void Run(Stream input, Stream output)
+    {
+        var reader = new MessagePackReader(input);
+        var writer = new MessagePackWriter(output);
+        while (reader.TryRead(out object? raw))
+        {
+            var message = RequireList(raw);
+            if (message.Count != 2)
+                throw new InvalidDataException("External-reader message must contain type and body.");
+            int type = checked((int)RequireLong(message[0]));
+            var body = RequireMap(message[1]);
+            if (type == CloseExternalProcess) return;
+            long requestId = RequireLong(body["requestId"]);
+            switch (type)
+            {
+                case InitializeModuleReaderRequest:
+                    RequireString(body["scheme"], "contractmod");
+                    writer.WriteMessage(InitializeModuleReaderResponse, new()
+                    {
+                        ["requestId"] = requestId,
+                        ["spec"] = new Dictionary<string, object?>
+                        {
+                            ["scheme"] = "contractmod",
+                            ["hasHierarchicalUris"] = false,
+                            ["isLocal"] = false,
+                            ["isGlobbable"] = false
+                        }
+                    });
+                    break;
+                case InitializeResourceReaderRequest:
+                    RequireString(body["scheme"], "contractres");
+                    writer.WriteMessage(InitializeResourceReaderResponse, new()
+                    {
+                        ["requestId"] = requestId,
+                        ["spec"] = new Dictionary<string, object?>
+                        {
+                            ["scheme"] = "contractres",
+                            ["hasHierarchicalUris"] = false,
+                            ["isGlobbable"] = false
+                        }
+                    });
+                    break;
+                case ReadModuleRequest:
+                    writer.WriteMessage(ReadModuleResponse, new()
+                    {
+                        ["requestId"] = requestId,
+                        ["evaluatorId"] = RequireLong(body["evaluatorId"]),
+                        ["contents"] = Module(RequireString(body["uri"]))
+                    });
+                    break;
+                case ReadResourceRequest:
+                    writer.WriteMessage(ReadResourceResponse, new()
+                    {
+                        ["requestId"] = requestId,
+                        ["evaluatorId"] = RequireLong(body["evaluatorId"]),
+                        ["contents"] = Resource(RequireString(body["uri"]))
+                    });
+                    break;
+                case ListModulesRequest:
+                    writer.WriteMessage(ListModulesResponse, new()
+                    {
+                        ["requestId"] = requestId,
+                        ["evaluatorId"] = RequireLong(body["evaluatorId"]),
+                        ["pathElements"] = Elements("dependency.pkl", "main.pkl", "second.pkl")
+                    });
+                    break;
+                case ListResourcesRequest:
+                    writer.WriteMessage(ListResourcesResponse, new()
+                    {
+                        ["requestId"] = requestId,
+                        ["evaluatorId"] = RequireLong(body["evaluatorId"]),
+                        ["pathElements"] = Elements("payload.txt", "second.txt")
+                    });
+                    break;
+                default:
+                    throw new InvalidDataException($"Unexpected external-reader message type: {type}");
+            }
+        }
+    }
+
+    static string Module(string uri)
+    {
+        if (uri == "contractmod:main")
+            return "value = import(\"contractmod:dependency\").value * 2\n";
+        if (uri == "contractmod:dependency") return "value = 42\n";
+        throw new FileNotFoundException("External module is missing.", uri);
+    }
+
+    static byte[] Resource(string uri)
+    {
+        if (uri == "contractres:payload")
+            return Encoding.UTF8.GetBytes("external payload\n");
+        throw new FileNotFoundException("External resource is missing.", uri);
+    }
+
+    static List<object?> Elements(params string[] names) => names
+        .Select(name => (object?)new Dictionary<string, object?>
+        {
+            ["name"] = name,
+            ["isDirectory"] = false
+        })
+        .ToList();
+
+    static List<object?> RequireList(object? value) => value as List<object?>
+        ?? throw new InvalidDataException("Expected a MessagePack array.");
+
+    static Dictionary<string, object?> RequireMap(object? value) =>
+        value as Dictionary<string, object?>
+        ?? throw new InvalidDataException("Expected a MessagePack map.");
+
+    static long RequireLong(object? value) => value is long number
+        ? number
+        : throw new InvalidDataException("Expected a MessagePack integer.");
+
+    static string RequireString(object? value) => value as string
+        ?? throw new InvalidDataException("Expected a MessagePack string.");
+
+    static void RequireString(object? value, string expected)
+    {
+        string actual = RequireString(value);
+        if (actual != expected)
+            throw new InvalidDataException($"Expected scheme {expected}, actual {actual}.");
+    }
+
+    sealed class MessagePackReader(Stream input)
+    {
+        public bool TryRead(out object? value)
+        {
+            int prefix = input.ReadByte();
+            if (prefix < 0)
+            {
+                value = null;
+                return false;
+            }
+            value = ReadValue((byte)prefix);
+            return true;
+        }
+
+        object? Read()
+        {
+            int prefix = input.ReadByte();
+            if (prefix < 0) throw new EndOfStreamException();
+            return ReadValue((byte)prefix);
+        }
+
+        object? ReadValue(byte prefix)
+        {
+            if (prefix <= 0x7f) return (long)prefix;
+            if (prefix >= 0xe0) return (long)unchecked((sbyte)prefix);
+            if ((prefix & 0xf0) == 0x80) return ReadMap(prefix & 0x0f);
+            if ((prefix & 0xf0) == 0x90) return ReadArray(prefix & 0x0f);
+            if ((prefix & 0xe0) == 0xa0) return ReadString(prefix & 0x1f);
+            return prefix switch
+            {
+                0xc0 => null,
+                0xc2 => false,
+                0xc3 => true,
+                0xc4 => ReadBinary(checked((int)ReadUnsigned(1))),
+                0xc5 => ReadBinary(checked((int)ReadUnsigned(2))),
+                0xc6 => ReadBinary(checked((int)ReadUnsigned(4))),
+                0xcc => checked((long)ReadUnsigned(1)),
+                0xcd => checked((long)ReadUnsigned(2)),
+                0xce => checked((long)ReadUnsigned(4)),
+                0xcf => unchecked((long)ReadUnsigned(8)),
+                0xd0 => (long)unchecked((sbyte)ReadUnsigned(1)),
+                0xd1 => (long)unchecked((short)ReadUnsigned(2)),
+                0xd2 => (long)unchecked((int)ReadUnsigned(4)),
+                0xd3 => unchecked((long)ReadUnsigned(8)),
+                0xd9 => ReadString(checked((int)ReadUnsigned(1))),
+                0xda => ReadString(checked((int)ReadUnsigned(2))),
+                0xdb => ReadString(checked((int)ReadUnsigned(4))),
+                0xdc => ReadArray(checked((int)ReadUnsigned(2))),
+                0xdd => ReadArray(checked((int)ReadUnsigned(4))),
+                0xde => ReadMap(checked((int)ReadUnsigned(2))),
+                0xdf => ReadMap(checked((int)ReadUnsigned(4))),
+                _ => throw new InvalidDataException($"Unsupported MessagePack prefix: 0x{prefix:x2}")
+            };
+        }
+
+        ulong ReadUnsigned(int count)
+        {
+            ulong result = 0;
+            for (int index = 0; index < count; index++)
+            {
+                int value = input.ReadByte();
+                if (value < 0) throw new EndOfStreamException();
+                result = (result << 8) | (byte)value;
+            }
+            return result;
+        }
+
+        byte[] ReadBinary(int length)
+        {
+            byte[] bytes = new byte[length];
+            input.ReadExactly(bytes);
+            return bytes;
+        }
+
+        string ReadString(int length) => Encoding.UTF8.GetString(ReadBinary(length));
+
+        List<object?> ReadArray(int count)
+        {
+            var result = new List<object?>(count);
+            for (int index = 0; index < count; index++) result.Add(Read());
+            return result;
+        }
+
+        Dictionary<string, object?> ReadMap(int count)
+        {
+            var result = new Dictionary<string, object?>(count, StringComparer.Ordinal);
+            for (int index = 0; index < count; index++)
+                result.Add(RequireString(Read()), Read());
+            return result;
+        }
+    }
+
+    sealed class MessagePackWriter(Stream output)
+    {
+        public void WriteMessage(int type, Dictionary<string, object?> body)
+        {
+            WriteArrayHeader(2);
+            WriteLong(type);
+            WriteMap(body);
+            output.Flush();
+        }
+
+        void Write(object? value)
+        {
+            switch (value)
+            {
+                case null:
+                    output.WriteByte(0xc0);
+                    break;
+                case bool boolean:
+                    output.WriteByte(boolean ? (byte)0xc3 : (byte)0xc2);
+                    break;
+                case int integer:
+                    WriteLong(integer);
+                    break;
+                case long integer:
+                    WriteLong(integer);
+                    break;
+                case string text:
+                    WriteString(text);
+                    break;
+                case byte[] bytes:
+                    output.WriteByte(0xc6);
+                    WriteUnsigned((uint)bytes.Length, 4);
+                    output.Write(bytes);
+                    break;
+                case Dictionary<string, object?> map:
+                    WriteMap(map);
+                    break;
+                case List<object?> array:
+                    WriteArrayHeader(array.Count);
+                    foreach (object? item in array) Write(item);
+                    break;
+                default:
+                    throw new InvalidDataException($"Unsupported MessagePack value: {value.GetType()}");
+            }
+        }
+
+        void WriteMap(Dictionary<string, object?> map)
+        {
+            if (map.Count < 16) output.WriteByte((byte)(0x80 | map.Count));
+            else
+            {
+                output.WriteByte(0xdf);
+                WriteUnsigned((uint)map.Count, 4);
+            }
+            foreach ((string key, object? value) in map)
+            {
+                WriteString(key);
+                Write(value);
+            }
+        }
+
+        void WriteArrayHeader(int count)
+        {
+            if (count < 16) output.WriteByte((byte)(0x90 | count));
+            else
+            {
+                output.WriteByte(0xdd);
+                WriteUnsigned((uint)count, 4);
+            }
+        }
+
+        void WriteString(string value)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(value);
+            if (bytes.Length < 32) output.WriteByte((byte)(0xa0 | bytes.Length));
+            else
+            {
+                output.WriteByte(0xdb);
+                WriteUnsigned((uint)bytes.Length, 4);
+            }
+            output.Write(bytes);
+        }
+
+        void WriteLong(long value)
+        {
+            if (value >= 0 && value <= 0x7f)
+            {
+                output.WriteByte((byte)value);
+                return;
+            }
+            if (value >= -32 && value < 0)
+            {
+                output.WriteByte(unchecked((byte)value));
+                return;
+            }
+            output.WriteByte(0xd3);
+            WriteUnsigned(unchecked((ulong)value), 8);
+        }
+
+        void WriteUnsigned(ulong value, int count)
+        {
+            for (int shift = (count - 1) * 8; shift >= 0; shift -= 8)
+                output.WriteByte((byte)(value >> shift));
         }
     }
 }

@@ -813,7 +813,13 @@ internal static class JavaCompat
     internal static Uri NormalizeUri(Uri uri) => uri;
     internal static Uri RelativizeUri(Uri basis, Uri value) =>
         basis.IsAbsoluteUri && value.IsAbsoluteUri ? basis.MakeRelativeUri(value) : value;
-    internal static bool UriIsOpaque(Uri uri) => !uri.IsAbsoluteUri || string.IsNullOrEmpty(uri.AbsolutePath);
+    internal static bool UriIsOpaque(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri) return false;
+        var original = uri.OriginalString;
+        var colon = original.IndexOf(':');
+        return colon >= 0 && (colon + 1 == original.Length || original[colon + 1] != '/');
+    }
     internal static Exception InitCause(Exception exception, Exception cause) =>
         new Exception(exception.Message, cause);
 

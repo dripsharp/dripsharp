@@ -1012,6 +1012,9 @@
           :artifact artifact
           :identity identity
           :inspection inspection
+          :packages (:packages package-proof)
+          :feed feed
+          :packing-summary (:summary package-proof)
           :dependency-proof dependency-proof
           :consumer-root consumer
           :run run-result}))))))
