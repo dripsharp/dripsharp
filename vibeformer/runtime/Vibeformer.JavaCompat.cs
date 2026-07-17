@@ -829,10 +829,37 @@ internal static class JavaCompat
     internal static string NewString(byte[] value, Encoding encoding) => encoding.GetString(value);
     internal static string NewString(object value) => StringValueOf(value);
     internal static Uri NewUri(string value) => CreateUri(value);
+
+    private static bool IsUriUnreserved(char value) =>
+        value is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or
+            '-' or '.' or '_' or '~';
+
+    private static string QuoteUriComponent(string value, string allowedPunctuation)
+    {
+        StringBuilder? result = null;
+        for (var index = 0; index < value.Length; index++)
+        {
+            var current = value[index];
+            if (IsUriUnreserved(current) || allowedPunctuation.Contains(current) ||
+                (current > 0x7f && !char.IsControl(current) && !char.IsWhiteSpace(current)))
+            {
+                result?.Append(current);
+                continue;
+            }
+
+            result ??= new StringBuilder(value.Length + 8).Append(value, 0, index);
+            foreach (var octet in Encoding.UTF8.GetBytes(new[] { current }))
+                result.Append('%').Append(octet.ToString("X2", CultureInfo.InvariantCulture));
+        }
+        return result?.ToString() ?? value;
+    }
+
     internal static Uri NewUri(string? scheme, string? schemeSpecificPart, string? fragment)
     {
-        var text = (scheme is null ? string.Empty : scheme + ":") + (schemeSpecificPart ?? string.Empty);
-        if (fragment is not null) text += "#" + fragment;
+        var text = (scheme is null ? string.Empty : scheme + ":") +
+                   QuoteUriComponent(schemeSpecificPart ?? string.Empty, ":/?[]@!$&'()*+,;=");
+        if (fragment is not null)
+            text += "#" + QuoteUriComponent(fragment, ":@/?!$&'()*+,;=");
         return CreateUri(text);
     }
     internal static UriFormatException NewUriSyntaxException(string input, string reason) =>
@@ -863,27 +890,28 @@ internal static class JavaCompat
     internal static TypeInitializationException NewTypeInitializationException(Exception cause) =>
         new(cause.GetType().FullName, cause);
     internal static Uri NewUri(string? scheme, string? host, string? path, string? fragment)
-    {
-        if (scheme is null && host is null)
-        {
-            var relative = path ?? string.Empty;
-            if (fragment is not null) relative += "#" + fragment;
-            return CreateUri(relative);
-        }
-        var builder = new UriBuilder(scheme ?? string.Empty, host ?? string.Empty) { Path = path ?? string.Empty };
-        if (fragment is not null) builder.Fragment = fragment;
-        return builder.Uri;
-    }
+        => NewUri(scheme, null, host, -1, path, null, fragment);
+
     internal static Uri NewUri(string? scheme, string? userInfo, string? host, int port,
         string? path, string? query, string? fragment)
     {
-        var builder = new UriBuilder(scheme ?? string.Empty, host ?? string.Empty, port, path ?? string.Empty)
+        if (host is null && (userInfo is not null || port != -1))
+            throw new UriFormatException("User info and port require a URI host.");
+        var text = scheme is null ? string.Empty : scheme + ":";
+        if (host is not null)
         {
-            Query = query ?? string.Empty,
-            Fragment = fragment ?? string.Empty,
-            UserName = userInfo ?? string.Empty
-        };
-        return builder.Uri;
+            text += "//";
+            if (userInfo is not null)
+                text += QuoteUriComponent(userInfo, ":!$&'()*+,;=") + "@";
+            text += host;
+            if (port != -1) text += ":" + port.ToString(CultureInfo.InvariantCulture);
+        }
+        text += QuoteUriComponent(path ?? string.Empty, ":@/!$&'()*+,;=");
+        if (query is not null)
+            text += "?" + QuoteUriComponent(query, ":@/?!$&'()*+,;=");
+        if (fragment is not null)
+            text += "#" + QuoteUriComponent(fragment, ":@/?!$&'()*+,;=");
+        return CreateUri(text);
     }
 
     private static string UriTextBeforeFragment(Uri uri)
@@ -895,77 +923,94 @@ internal static class JavaCompat
 
     internal static string? UriScheme(Uri uri) => uri.IsAbsoluteUri ? uri.Scheme : null;
 
-    internal static string? UriSchemeSpecificPart(Uri uri)
+    private static string? DecodeUriComponent(string? value) =>
+        value is null ? null : Uri.UnescapeDataString(value);
+
+    internal static string? UriRawSchemeSpecificPart(Uri uri)
     {
         var text = UriTextBeforeFragment(uri);
         var colon = text.IndexOf(':');
         return colon < 0 ? text : text[(colon + 1)..];
     }
 
-    internal static string? UriFragment(Uri uri)
+    internal static string? UriSchemeSpecificPart(Uri uri) =>
+        DecodeUriComponent(UriRawSchemeSpecificPart(uri));
+
+    internal static string? UriRawFragment(Uri uri)
     {
         var text = uri.OriginalString;
         var marker = text.IndexOf('#');
         return marker < 0 ? null : text[(marker + 1)..];
     }
 
-    internal static string? UriQuery(Uri uri)
+    internal static string? UriFragment(Uri uri) => DecodeUriComponent(UriRawFragment(uri));
+
+    internal static string? UriRawQuery(Uri uri)
     {
-        var text = UriTextBeforeFragment(uri);
-        var marker = text.IndexOf('?');
-        return marker < 0 ? null : text[(marker + 1)..];
+        if (UriIsOpaque(uri)) return null;
+        var schemeSpecificPart = UriRawSchemeSpecificPart(uri) ?? string.Empty;
+        var marker = schemeSpecificPart.IndexOf('?');
+        return marker < 0 ? null : schemeSpecificPart[(marker + 1)..];
     }
 
-    internal static string? UriAuthority(Uri uri)
+    internal static string? UriQuery(Uri uri) => DecodeUriComponent(UriRawQuery(uri));
+
+    internal static string? UriRawAuthority(Uri uri)
     {
-        if (!uri.IsAbsoluteUri || !uri.OriginalString.Contains("//", StringComparison.Ordinal))
-            return null;
-        var authority = uri.GetComponents(UriComponents.StrongAuthority, UriFormat.UriEscaped);
-        return authority.Length == 0 ? null : authority;
+        if (UriIsOpaque(uri)) return null;
+        var schemeSpecificPart = UriRawSchemeSpecificPart(uri) ?? string.Empty;
+        if (!schemeSpecificPart.StartsWith("//", StringComparison.Ordinal)) return null;
+        var end = schemeSpecificPart.Length;
+        var slash = schemeSpecificPart.IndexOf('/', 2);
+        var query = schemeSpecificPart.IndexOf('?', 2);
+        if (slash >= 0) end = Math.Min(end, slash);
+        if (query >= 0) end = Math.Min(end, query);
+        return end == 2 ? null : schemeSpecificPart[2..end];
     }
+
+    internal static string? UriAuthority(Uri uri) => DecodeUriComponent(UriRawAuthority(uri));
 
     internal static string? UriHost(Uri uri) => uri.IsAbsoluteUri && !string.IsNullOrEmpty(uri.Host) ? uri.Host : null;
-    internal static string? UriUserInfo(Uri uri) => uri.IsAbsoluteUri && !string.IsNullOrEmpty(uri.UserInfo) ? uri.UserInfo : null;
+
+    internal static string? UriRawUserInfo(Uri uri)
+    {
+        var authority = UriRawAuthority(uri);
+        if (authority is null) return null;
+        var marker = authority.LastIndexOf('@');
+        return marker < 0 ? null : authority[..marker];
+    }
+
+    internal static string? UriUserInfo(Uri uri) => DecodeUriComponent(UriRawUserInfo(uri));
 
     internal static int UriPort(Uri uri)
     {
         if (!uri.IsAbsoluteUri) return -1;
-        var authority = UriAuthority(uri);
+        var authority = UriRawAuthority(uri);
         if (authority is null) return -1;
+        var userInfo = authority.LastIndexOf('@');
+        if (userInfo >= 0) authority = authority[(userInfo + 1)..];
         var closeBracket = authority.LastIndexOf(']');
         var colon = authority.LastIndexOf(':');
         return colon > closeBracket && int.TryParse(authority[(colon + 1)..], out var port) ? port : -1;
     }
 
-    internal static string? UriPath(Uri uri)
+    internal static string? UriRawPath(Uri uri)
     {
-        if (uri.IsAbsoluteUri)
+        if (UriIsOpaque(uri)) return null;
+        var schemeSpecificPart = UriRawSchemeSpecificPart(uri) ?? string.Empty;
+        var query = schemeSpecificPart.IndexOf('?');
+        var pathEnd = query < 0 ? schemeSpecificPart.Length : query;
+        if (schemeSpecificPart.StartsWith("//", StringComparison.Ordinal))
         {
-            var original = uri.OriginalString;
-            var authorityMarker = original.IndexOf("://", StringComparison.Ordinal);
-            if (authorityMarker >= 0)
-            {
-                var end = original.Length;
-                var queryIndex = original.IndexOf('?', authorityMarker + 3);
-                var fragmentIndex = original.IndexOf('#', authorityMarker + 3);
-                if (queryIndex >= 0) end = Math.Min(end, queryIndex);
-                if (fragmentIndex >= 0) end = Math.Min(end, fragmentIndex);
-                var start = original.IndexOf('/', authorityMarker + 3);
-                return start < 0 || start >= end
-                    ? ""
-                    : Uri.UnescapeDataString(original[start..end]);
-            }
-            var path = uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
-            if (path.Length == 0) return path;
-            return (uri.IsFile || uri.OriginalString.Contains("://", StringComparison.Ordinal)) &&
-                   !path.StartsWith('/')
-                ? "/" + path
-                : path;
+            var pathStart = schemeSpecificPart.IndexOf('/', 2);
+            return pathStart < 0 || pathStart >= pathEnd
+                ? string.Empty
+                : schemeSpecificPart[pathStart..pathEnd];
         }
-        var text = UriTextBeforeFragment(uri);
-        var query = text.IndexOf('?');
-        return query < 0 ? text : text[..query];
+        return schemeSpecificPart[..pathEnd];
     }
+
+    internal static string? UriPath(Uri uri) => DecodeUriComponent(UriRawPath(uri));
 
     internal static Uri ResolveUri(Uri basis, string value) => ResolveUri(basis, CreateUri(value));
     internal static Uri ResolveUri(Uri basis, Uri value)
@@ -1502,16 +1547,26 @@ internal static class JavaCompat
         if (value is null) return 0;
         if (value is Uri uri)
         {
-            if (!uri.IsAbsoluteUri)
-                return StringComparer.Ordinal.GetHashCode(uri.OriginalString);
+            var schemeHash = StringComparer.OrdinalIgnoreCase.GetHashCode(UriScheme(uri) ?? "");
+            var fragmentHash = UriEscapedHashCode(UriRawFragment(uri));
+            if (UriIsOpaque(uri))
+                return System.HashCode.Combine(
+                    schemeHash,
+                    UriEscapedHashCode(UriRawSchemeSpecificPart(uri)),
+                    fragmentHash);
+            var host = UriHost(uri);
+            var authorityHash = host is null
+                ? UriEscapedHashCode(UriRawAuthority(uri))
+                : System.HashCode.Combine(
+                    UriEscapedHashCode(UriRawUserInfo(uri)),
+                    StringComparer.OrdinalIgnoreCase.GetHashCode(host),
+                    UriPort(uri));
             return System.HashCode.Combine(
-                StringComparer.OrdinalIgnoreCase.GetHashCode(UriScheme(uri) ?? ""),
-                StringComparer.OrdinalIgnoreCase.GetHashCode(UriHost(uri) ?? ""),
-                UriPort(uri),
-                StringComparer.Ordinal.GetHashCode(UriUserInfo(uri) ?? ""),
-                StringComparer.Ordinal.GetHashCode(UriPath(uri) ?? ""),
-                StringComparer.Ordinal.GetHashCode(UriQuery(uri) ?? ""),
-                StringComparer.Ordinal.GetHashCode(UriFragment(uri) ?? ""));
+                schemeHash,
+                authorityHash,
+                UriEscapedHashCode(UriRawPath(uri)),
+                UriEscapedHashCode(UriRawQuery(uri)),
+                fragmentHash);
         }
         if (value is IDictionary map)
         {
@@ -1529,19 +1584,59 @@ internal static class JavaCompat
         }
     }
 
+    private static string? NormalizeUriEscapes(string? value)
+    {
+        if (value is null) return null;
+        StringBuilder? normalized = null;
+        for (var index = 0; index + 2 < value.Length; index++)
+        {
+            if (value[index] != '%' || !Uri.IsHexDigit(value[index + 1]) ||
+                !Uri.IsHexDigit(value[index + 2]))
+                continue;
+            var upperFirst = char.ToUpperInvariant(value[index + 1]);
+            var upperSecond = char.ToUpperInvariant(value[index + 2]);
+            if (upperFirst == value[index + 1] && upperSecond == value[index + 2])
+            {
+                index += 2;
+                continue;
+            }
+            normalized ??= new StringBuilder(value);
+            normalized[index + 1] = upperFirst;
+            normalized[index + 2] = upperSecond;
+            index += 2;
+        }
+        return normalized?.ToString() ?? value;
+    }
+
+    private static bool UriEscapedEquals(string? left, string? right) =>
+        string.Equals(NormalizeUriEscapes(left), NormalizeUriEscapes(right),
+                      StringComparison.Ordinal);
+
+    private static int UriEscapedHashCode(string? value) =>
+        StringComparer.Ordinal.GetHashCode(NormalizeUriEscapes(value) ?? "");
+
     private static bool UriEquals(Uri left, Uri right)
     {
-        if (left.IsAbsoluteUri != right.IsAbsoluteUri) return false;
-        if (!left.IsAbsoluteUri)
-            return string.Equals(left.OriginalString, right.OriginalString,
-                                 StringComparison.Ordinal);
-        return string.Equals(UriScheme(left), UriScheme(right), StringComparison.OrdinalIgnoreCase) &&
-               string.Equals(UriHost(left), UriHost(right), StringComparison.OrdinalIgnoreCase) &&
+        if (!string.Equals(UriScheme(left), UriScheme(right), StringComparison.OrdinalIgnoreCase) ||
+            !UriEscapedEquals(UriRawFragment(left), UriRawFragment(right)))
+            return false;
+        var leftOpaque = UriIsOpaque(left);
+        var rightOpaque = UriIsOpaque(right);
+        if (leftOpaque || rightOpaque)
+            return leftOpaque && rightOpaque &&
+                   UriEscapedEquals(UriRawSchemeSpecificPart(left),
+                                    UriRawSchemeSpecificPart(right));
+        if (!UriEscapedEquals(UriRawPath(left), UriRawPath(right)) ||
+            !UriEscapedEquals(UriRawQuery(left), UriRawQuery(right)))
+            return false;
+        var leftHost = UriHost(left);
+        var rightHost = UriHost(right);
+        if (leftHost is null || rightHost is null)
+            return leftHost is null && rightHost is null &&
+                   UriEscapedEquals(UriRawAuthority(left), UriRawAuthority(right));
+        return string.Equals(leftHost, rightHost, StringComparison.OrdinalIgnoreCase) &&
                UriPort(left) == UriPort(right) &&
-               string.Equals(UriUserInfo(left), UriUserInfo(right), StringComparison.Ordinal) &&
-               string.Equals(UriPath(left), UriPath(right), StringComparison.Ordinal) &&
-               string.Equals(UriQuery(left), UriQuery(right), StringComparison.Ordinal) &&
-               string.Equals(UriFragment(left), UriFragment(right), StringComparison.Ordinal);
+               UriEscapedEquals(UriRawUserInfo(left), UriRawUserInfo(right));
     }
 
     internal static JavaResourceBundle GetResourceBundle(string baseName, CultureInfo locale) => new(baseName, locale);

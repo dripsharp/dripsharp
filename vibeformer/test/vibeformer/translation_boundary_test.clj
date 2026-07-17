@@ -21,3 +21,37 @@
     (is (str/includes? project-rules "(ns vibeformer.pkl.java-project"))
     (is (str/includes? body-rules "[vibeformer.java-translate :as java]"))
     (is (str/includes? project-rules "[vibeformer.java-translate :as java]"))))
+
+(deftest java-uri-component-mappings-retain-decoded-and-raw-api-pairs
+  (let [body-rules (source "pkl/java_body")
+        runtime (slurp "runtime/Vibeformer.JavaCompat.cs")]
+    (doseq [[java-method helper]
+            [["getAuthority" "UriAuthority"]
+             ["getFragment" "UriFragment"]
+             ["getPath" "UriPath"]
+             ["getQuery" "UriQuery"]
+             ["getSchemeSpecificPart" "UriSchemeSpecificPart"]
+             ["getUserInfo" "UriUserInfo"]
+             ["getRawAuthority" "UriRawAuthority"]
+             ["getRawFragment" "UriRawFragment"]
+             ["getRawPath" "UriRawPath"]
+             ["getRawQuery" "UriRawQuery"]
+             ["getRawSchemeSpecificPart" "UriRawSchemeSpecificPart"]
+             ["getRawUserInfo" "UriRawUserInfo"]]]
+      (is (str/includes?
+           body-rules
+           (str "executable:java.net.URI#" java-method "()\" (compat-call \""
+                helper "\" [target])")))
+      (is (str/includes? runtime (str " " helper "(Uri uri)"))))
+    (is (str/includes?
+         runtime
+         "UriSchemeSpecificPart(Uri uri) =>\n        DecodeUriComponent(UriRawSchemeSpecificPart(uri))"))
+    (is (str/includes?
+         runtime
+         "UriFragment(Uri uri) => DecodeUriComponent(UriRawFragment(uri))"))
+    (is (str/includes?
+         runtime
+         "UriQuery(Uri uri) => DecodeUriComponent(UriRawQuery(uri))"))
+    (is (str/includes?
+         runtime
+         "UriPath(Uri uri) => DecodeUriComponent(UriRawPath(uri))"))))

@@ -96,6 +96,7 @@ public final class LoadingContractUpstreamOracle {
       NetworkObservations network = observeNetworkAndPackages(root, work);
       write(writer, "https/rewrite-redirect-headers", "HTTP", network.https());
       write(writer, "package/assets-cache-integrity", "PACKAGE", network.packages());
+      write(writer, "uri/decoded-components-package-assets", "URI", network.uriComponents());
       write(writer, "project/projectpackage-dependencies", "PROJECT", network.projectpackage());
       write(writer, "network/package-errors", "ERROR", network.errors());
 
@@ -370,6 +371,7 @@ public final class LoadingContractUpstreamOracle {
 
   private static NetworkObservations observeNetworkAndPackages(Path root, Path work) throws Exception {
     Path commonsBuild = root.resolve("research/pkl/pkl-commons-test/build");
+    prepareEncodedAssetPackage(commonsBuild);
     try (ContractHttpsServer server = new ContractHttpsServer(commonsBuild)) {
       server.start();
       List<Pattern> httpModules = new ArrayList<>(SecurityManagers.defaultAllowedModules);
@@ -476,10 +478,119 @@ public final class LoadingContractUpstreamOracle {
           + "|asset=" + normalizedAsset.getAssetPath()
           + "|checksum-failure=" + checksumFailure;
 
+      String uriComponents = observeUriComponentsAndEncodedAssets(server, work);
       String projectpackage = observeProjectPackage(work, cache);
       String errors = observeNetworkErrors(server, work, checksumFailure);
-      return new NetworkObservations(https, packages, projectpackage, errors);
+      return new NetworkObservations(https, packages, uriComponents, projectpackage, errors);
     }
+  }
+
+  private static String observeUriComponentsAndEncodedAssets(
+      ContractHttpsServer server, Path work) throws Exception {
+    URI components = URI.create(
+        "package://user%20name@example.test/pkg%20name@1.0.0"
+            + "?q%20x=%E2%98%83%26z#/hello%20world/%E2%98%83%2Ffile.pkl");
+    URI opaque = URI.create("env:snow%20man%2F%E2%98%83?literal%2Fquery#frag%2Fpart");
+    URI percentLower = URI.create("https://example.test/a%2fb?q%2fx#f%2fx");
+    URI percentUpper = URI.create("https://example.test/a%2Fb?q%2Fx#f%2Fx");
+    URI literalReserved = URI.create("https://example.test/a/b?q/x#f/x");
+    URI opaqueOther = URI.create("env:other");
+
+    String cache = work.resolve("encoded-asset-cache").toString();
+    String source =
+        "space = import(\"package://localhost:0/encoded-assets@1.0.0#/hello%20world.pkl\").name\n"
+            + "unicode = import(\"package://localhost:0/encoded-assets@1.0.0#/%E9%9B%AA.pkl\").name\n"
+            + "reserved = import(\"package://localhost:0/encoded-assets@1.0.0#/reserved%2Fslash.pkl\").name\n"
+            + "punctuation = import(\"package://localhost:0/encoded-assets@1.0.0#/hash%23query%3F.pkl\").name\n"
+            + "modules = import*(\"package://localhost:0/encoded-assets@1.0.0#/*.pkl\").keys\n";
+    int beforeOnline = server.requestCount.get();
+    PModule online;
+    try (Evaluator evaluator = EvaluatorBuilder.preconfigured()
+        .setHttpClient(server.newClient().build())
+        .setModuleCacheDir(Path.of(cache))
+        .build()) {
+      online = evaluator.evaluate(ModuleSource.text(source));
+    }
+    int onlineRequests = server.requestCount.get() - beforeOnline;
+    int beforeOffline = server.requestCount.get();
+    PModule offline;
+    try (Evaluator evaluator = EvaluatorBuilder.preconfigured()
+        .setHttpClient(HttpClient.dummyClient())
+        .setModuleCacheDir(Path.of(cache))
+        .build()) {
+      offline = evaluator.evaluate(ModuleSource.text(source));
+    }
+    boolean offlineNoNetwork = server.requestCount.get() == beforeOffline;
+
+    String environment;
+    try (Evaluator evaluator = EvaluatorBuilder.preconfigured()
+        .addEnvironmentVariable("snow man/☃?literal/query", "decoded-environment")
+        .build()) {
+      environment = (String) evaluator.evaluate(ModuleSource.text(
+          "value = read(\"env:snow%20man%2F%E2%98%83%3Fliteral%2Fquery\")\n"))
+          .getProperty("value");
+    }
+
+    PackageAssetUri decodedAsset = new PackageAssetUri(
+        "package://localhost:0/encoded-assets@1.0.0"
+            + "#/hello%20world/%E9%9B%AA%2Fhash%23query%3F.pkl");
+    PackageAssetUri resolvedAsset = new PackageAssetUri(
+        "package://localhost:0/encoded-assets@1.0.0#/directory/base.pkl")
+        .resolve("../next file/雪#?.pkl");
+
+    return "ssp=" + components.getSchemeSpecificPart()
+        + "|raw-ssp=" + components.getRawSchemeSpecificPart()
+        + "|authority=" + components.getAuthority()
+        + "|raw-authority=" + components.getRawAuthority()
+        + "|user=" + components.getUserInfo()
+        + "|raw-user=" + components.getRawUserInfo()
+        + "|path=" + components.getPath()
+        + "|raw-path=" + components.getRawPath()
+        + "|query=" + components.getQuery()
+        + "|raw-query=" + components.getRawQuery()
+        + "|fragment=" + components.getFragment()
+        + "|raw-fragment=" + components.getRawFragment()
+        + "|opaque-ssp=" + opaque.getSchemeSpecificPart()
+        + "|opaque-raw-ssp=" + opaque.getRawSchemeSpecificPart()
+        + "|opaque-query=" + opaque.getQuery()
+        + "|opaque-raw-query=" + opaque.getRawQuery()
+        + "|percent-case=" + percentLower.equals(percentUpper)
+        + ":" + (percentLower.hashCode() == percentUpper.hashCode())
+        + "|escaped-distinct=" + !percentUpper.equals(literalReserved)
+        + "|opaque-distinct=" + !opaque.equals(opaqueOther)
+        + "|asset=" + decodedAsset.getAssetPath()
+        + "|resolved=" + resolvedAsset.getAssetPath()
+        + "|environment=" + environment
+        + "|loaded=" + online.getProperty("space") + ":" + online.getProperty("unicode")
+        + ":" + online.getProperty("reserved") + ":" + online.getProperty("punctuation")
+        + "|listed=" + sorted(online.getProperty("modules"))
+        + "|offline=" + offline.getProperty("space") + ":" + offlineNoNetwork
+        + "|downloaded=" + (onlineRequests > 0);
+  }
+
+  private static void prepareEncodedAssetPackage(Path commonsBuild) throws IOException {
+    String identity = "encoded-assets@1.0.0";
+    Path packageDirectory = commonsBuild.resolve("test-packages").resolve(identity);
+    Path source = packageDirectory.resolve("encoded-source");
+    Files.createDirectories(source.resolve("reserved"));
+    Files.writeString(source.resolve("hello world.pkl"), "name = \"space\"\n", StandardCharsets.UTF_8);
+    Files.writeString(source.resolve("雪.pkl"), "name = \"unicode\"\n", StandardCharsets.UTF_8);
+    Files.writeString(source.resolve("reserved/slash.pkl"), "name = \"reserved\"\n", StandardCharsets.UTF_8);
+    Files.writeString(source.resolve("hash#query?.pkl"), "name = \"punctuation\"\n", StandardCharsets.UTF_8);
+    Path archive = packageDirectory.resolve(identity + ".zip");
+    zipTree(source, archive, "");
+    String metadata = """
+        {
+          "schemaVersion": 1,
+          "name": "encoded-assets",
+          "packageUri": "package://localhost:0/encoded-assets@1.0.0",
+          "packageZipUrl": "https://localhost:0/encoded-assets@1.0.0/encoded-assets@1.0.0.zip",
+          "dependencies": {},
+          "version": "1.0.0",
+          "packageZipChecksums": {"sha256": "%s"}
+        }
+        """.formatted(sha256(archive));
+    Files.writeString(packageDirectory.resolve(identity + ".json"), metadata, StandardCharsets.UTF_8);
   }
 
   private static String observeNetworkErrors(
@@ -891,7 +1002,7 @@ public final class LoadingContractUpstreamOracle {
   }
 
   private record NetworkObservations(
-      String https, String packages, String projectpackage, String errors) {}
+      String https, String packages, String uriComponents, String projectpackage, String errors) {}
 
   private static final class CountingModuleFactory implements ModuleKeyFactory {
     private final AtomicInteger creates = new AtomicInteger();

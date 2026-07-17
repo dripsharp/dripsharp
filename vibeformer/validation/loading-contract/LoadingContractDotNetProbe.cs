@@ -92,6 +92,7 @@ static class LoadingContractDotNetProbe
         NetworkObservations network = ObserveNetworkAndPackages(packageBuild, work);
         Write(writer, "https/rewrite-redirect-headers", "HTTP", network.Http);
         Write(writer, "package/assets-cache-integrity", "PACKAGE", network.Packages);
+        Write(writer, "uri/decoded-components-package-assets", "URI", network.UriComponents);
         Write(writer, "project/projectpackage-dependencies", "PROJECT", network.ProjectPackage);
         Write(writer, "network/package-errors", "ERROR", network.Errors);
         Write(writer, "project/evaluator-user-settings", "SETTINGS", ObserveSettings(fixtures, work));
@@ -395,6 +396,7 @@ static class LoadingContractDotNetProbe
 
     static NetworkObservations ObserveNetworkAndPackages(string packageBuild, string work)
     {
+        PrepareEncodedAssetPackage(packageBuild);
         using var server = new ContractHttpServer(packageBuild);
         var httpModules = new List<Regex>(SecurityManagers.defaultAllowedModules) { new("http:") };
         var httpResources = new List<Regex>(SecurityManagers.defaultAllowedResources) { new("http:") };
@@ -518,9 +520,147 @@ static class LoadingContractDotNetProbe
             $"|asset={normalizedAsset.GetAssetPath()}" +
             $"|checksum-failure={Lower(checksumFailure)}";
 
+        string uriComponents = ObserveUriComponentsAndEncodedAssets(server, work);
         string projectPackage = ObserveProjectPackage(packageBuild, work, cache);
         string errors = ObserveNetworkErrors(server, work, checksumFailure);
-        return new NetworkObservations(http, packages, projectPackage, errors);
+        return new NetworkObservations(http, packages, uriComponents, projectPackage, errors);
+    }
+
+    static string ObserveUriComponentsAndEncodedAssets(ContractHttpServer server, string work)
+    {
+        var components = new Uri(
+            "package://user%20name@example.test/pkg%20name@1.0.0" +
+            "?q%20x=%E2%98%83%26z#/hello%20world/%E2%98%83%2Ffile.pkl");
+        var opaque = new Uri("env:snow%20man%2F%E2%98%83?literal%2Fquery#frag%2Fpart");
+        var percentLower = new Uri("https://example.test/a%2fb?q%2fx#f%2fx");
+        var percentUpper = new Uri("https://example.test/a%2Fb?q%2Fx#f%2Fx");
+        var literalReserved = new Uri("https://example.test/a/b?q/x#f/x");
+        var opaqueOther = new Uri("env:other");
+
+        string cache = Path.Combine(work, "encoded-asset-cache");
+        string source =
+            "space = import(\"package://localhost:0/encoded-assets@1.0.0#/hello%20world.pkl\").name\n" +
+            "unicode = import(\"package://localhost:0/encoded-assets@1.0.0#/%E9%9B%AA.pkl\").name\n" +
+            "reserved = import(\"package://localhost:0/encoded-assets@1.0.0#/reserved%2Fslash.pkl\").name\n" +
+            "punctuation = import(\"package://localhost:0/encoded-assets@1.0.0#/hash%23query%3F.pkl\").name\n" +
+            "modules = import*(\"package://localhost:0/encoded-assets@1.0.0#/*.pkl\").keys\n";
+        int beforeOnline = server.RequestCount;
+        PModule online;
+        using (PklHttpClient client = server.NewTlsClient().Build())
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetHttpClient(client)
+            .SetModuleCacheDir(cache)
+            .Build())
+        {
+            online = evaluator.Evaluate(ModuleSource.Text(source));
+        }
+        int onlineRequests = server.RequestCount - beforeOnline;
+        int beforeOffline = server.RequestCount;
+        PModule offline;
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetHttpClient(PklHttpClient.DummyClient())
+            .SetModuleCacheDir(cache)
+            .Build())
+        {
+            offline = evaluator.Evaluate(ModuleSource.Text(source));
+        }
+        bool offlineNoNetwork = server.RequestCount == beforeOffline;
+
+        string environment;
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .AddEnvironmentVariable("snow man/☃?literal/query", "decoded-environment")
+            .Build())
+        {
+            environment = (string)evaluator.Evaluate(ModuleSource.Text(
+                "value = read(\"env:snow%20man%2F%E2%98%83%3Fliteral%2Fquery\")\n"))
+                .GetProperty("value");
+        }
+
+        var decodedAsset = new PackageAssetUri(new Uri(
+            "package://localhost:0/encoded-assets@1.0.0" +
+            "#/hello%20world/%E9%9B%AA%2Fhash%23query%3F.pkl"));
+        PackageAssetUri resolvedAsset = new PackageAssetUri(new Uri(
+            "package://localhost:0/encoded-assets@1.0.0#/directory/base.pkl"))
+            .Resolve("../next file/雪#?.pkl");
+
+        bool percentCaseEqual = InvokeJavaCompat<bool>("Equals", percentLower, percentUpper);
+        bool percentHashEqual =
+            InvokeJavaCompat<int>("HashCode", percentLower) ==
+            InvokeJavaCompat<int>("HashCode", percentUpper);
+        bool escapedDistinct = !InvokeJavaCompat<bool>("Equals", percentUpper, literalReserved);
+        bool opaqueDistinct = !InvokeJavaCompat<bool>("Equals", opaque, opaqueOther);
+
+        return "ssp=" + UriComponent("UriSchemeSpecificPart", components)
+            + "|raw-ssp=" + UriComponent("UriRawSchemeSpecificPart", components)
+            + "|authority=" + UriComponent("UriAuthority", components)
+            + "|raw-authority=" + UriComponent("UriRawAuthority", components)
+            + "|user=" + UriComponent("UriUserInfo", components)
+            + "|raw-user=" + UriComponent("UriRawUserInfo", components)
+            + "|path=" + UriComponent("UriPath", components)
+            + "|raw-path=" + UriComponent("UriRawPath", components)
+            + "|query=" + UriComponent("UriQuery", components)
+            + "|raw-query=" + UriComponent("UriRawQuery", components)
+            + "|fragment=" + UriComponent("UriFragment", components)
+            + "|raw-fragment=" + UriComponent("UriRawFragment", components)
+            + "|opaque-ssp=" + UriComponent("UriSchemeSpecificPart", opaque)
+            + "|opaque-raw-ssp=" + UriComponent("UriRawSchemeSpecificPart", opaque)
+            + "|opaque-query=" + UriComponent("UriQuery", opaque)
+            + "|opaque-raw-query=" + UriComponent("UriRawQuery", opaque)
+            + "|percent-case=" + Lower(percentCaseEqual) + ":" + Lower(percentHashEqual)
+            + "|escaped-distinct=" + Lower(escapedDistinct)
+            + "|opaque-distinct=" + Lower(opaqueDistinct)
+            + "|asset=" + decodedAsset.GetAssetPath()
+            + "|resolved=" + resolvedAsset.GetAssetPath()
+            + "|environment=" + environment
+            + $"|loaded={online.GetProperty("space")}:{online.GetProperty("unicode")}" +
+                $":{online.GetProperty("reserved")}:{online.GetProperty("punctuation")}" +
+            "|listed=" + Sorted(online.GetProperty("modules"))
+            + $"|offline={offline.GetProperty("space")}:{Lower(offlineNoNetwork)}"
+            + "|downloaded=" + Lower(onlineRequests > 0);
+    }
+
+    static string UriComponent(string method, Uri uri) =>
+        InvokeJavaCompat<string?>(method, uri) ?? "null";
+
+    static TResult InvokeJavaCompat<TResult>(string method, params object?[] arguments)
+    {
+        Type compatibility = typeof(Evaluator).Assembly.GetType("Vibeformer.Runtime.JavaCompat")
+            ?? throw new InvalidOperationException("The packaged Java compatibility type is missing.");
+        MethodInfo[] candidates = compatibility.GetMethods(
+            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+        MethodInfo selected = candidates.Single(candidate =>
+            candidate.Name == method && candidate.GetParameters().Length == arguments.Length &&
+            candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                .Zip(arguments, (type, argument) => argument is null || type.IsInstanceOfType(argument))
+                .All(matches => matches));
+        return (TResult)selected.Invoke(null, arguments)!;
+    }
+
+    static void PrepareEncodedAssetPackage(string packageBuild)
+    {
+        const string identity = "encoded-assets@1.0.0";
+        string packageDirectory = Path.Combine(packageBuild, "test-packages", identity);
+        string source = Path.Combine(packageDirectory, "encoded-source");
+        Directory.CreateDirectory(Path.Combine(source, "reserved"));
+        File.WriteAllText(Path.Combine(source, "hello world.pkl"), "name = \"space\"\n");
+        File.WriteAllText(Path.Combine(source, "雪.pkl"), "name = \"unicode\"\n");
+        File.WriteAllText(Path.Combine(source, "reserved", "slash.pkl"), "name = \"reserved\"\n");
+        File.WriteAllText(Path.Combine(source, "hash#query?.pkl"), "name = \"punctuation\"\n");
+        string archive = Path.Combine(packageDirectory, identity + ".zip");
+        ZipTree(source, archive, "");
+        string checksum = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archive)))
+            .ToLowerInvariant();
+        string metadata =
+            "{\n" +
+            "  \"schemaVersion\": 1,\n" +
+            "  \"name\": \"encoded-assets\",\n" +
+            "  \"packageUri\": \"package://localhost:0/encoded-assets@1.0.0\",\n" +
+            "  \"packageZipUrl\": \"https://localhost:0/encoded-assets@1.0.0/encoded-assets@1.0.0.zip\",\n" +
+            "  \"dependencies\": {},\n" +
+            "  \"version\": \"1.0.0\",\n" +
+            $"  \"packageZipChecksums\": {{\"sha256\": \"{checksum}\"}}\n" +
+            "}\n";
+        File.WriteAllText(Path.Combine(packageDirectory, identity + ".json"), metadata);
     }
 
     static string ObserveProjectPackage(string packageBuild, string work, string cache)
@@ -1652,7 +1792,10 @@ static class LoadingContractDotNetProbe
         foreach (string file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
         {
             string relative = Path.GetRelativePath(source, file).Replace('\\', '/');
-            zip.CreateEntryFromFile(file, prefix.Trim('/') + "/" + relative);
+            string entry = string.IsNullOrEmpty(prefix)
+                ? relative
+                : prefix.Trim('/') + "/" + relative;
+            zip.CreateEntryFromFile(file, entry);
         }
     }
 
@@ -1702,6 +1845,7 @@ static class LoadingContractDotNetProbe
     sealed record NetworkObservations(
         string Http,
         string Packages,
+        string UriComponents,
         string ProjectPackage,
         string Errors);
 
