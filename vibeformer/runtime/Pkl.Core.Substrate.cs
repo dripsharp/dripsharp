@@ -412,9 +412,20 @@ namespace Pkl.Core.Runtime
         public override IEnumerable<string> GetRootDirectories() => new[] { root };
         public override bool IsOpen() => open;
         public override bool IsReadOnly() => true;
-        public override string GetPath(string first, params string[] more) =>
-            System.IO.Path.Combine(new[] { root, first.TrimStart('/', '\\') }
-                .Concat(more).ToArray());
+        public override string GetPath(string first, params string[] more)
+        {
+            var candidate = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+                new[] { root, first.TrimStart('/', '\\') }.Concat(more).ToArray()));
+            var relative = System.IO.Path.GetRelativePath(root, candidate);
+            if (System.IO.Path.IsPathRooted(relative) || relative == ".." ||
+                relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar,
+                    StringComparison.Ordinal) ||
+                relative.StartsWith(".." + System.IO.Path.AltDirectorySeparatorChar,
+                    StringComparison.Ordinal))
+                throw new System.IO.IOException(
+                    $"Archive path `{first}` escapes its package root.");
+            return candidate;
+        }
         public override void Close()
         {
             if (!open) return;
@@ -463,7 +474,20 @@ namespace Pkl.Core.Runtime
         private readonly System.IO.Compression.ZipArchive archive; private int index = -1; private System.IO.Stream? current;
         public JavaZipInputStream(System.IO.Stream stream) => archive = new(stream, System.IO.Compression.ZipArchiveMode.Read);
         public JavaZipEntry? GetNextEntry()
-        { current?.Dispose(); index++; if (index >= archive.Entries.Count) return null; var entry = archive.Entries[index]; current = entry.Open(); return new(entry); }
+        {
+            current?.Dispose();
+            index++;
+            if (index >= archive.Entries.Count) return null;
+            var entry = archive.Entries[index];
+            var entryPath = entry.FullName.Replace('\\', '/');
+            var segments = entryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (entryPath.IndexOf('\0') >= 0 || System.IO.Path.IsPathRooted(entryPath) ||
+                segments.Any(segment => segment is "." or ".."))
+                throw new System.IO.IOException(
+                    $"Package archive contains unsafe entry `{entry.FullName}`.");
+            current = entry.Open();
+            return new(entry);
+        }
         public byte[] ReadAllBytes() { using var memory = new System.IO.MemoryStream(); current!.CopyTo(memory); return memory.ToArray(); }
         public void CloseEntry() { current?.Dispose(); current = null; }
         public void Dispose() => archive.Dispose();
@@ -518,6 +542,11 @@ namespace Pkl.Core.Runtime
         public override long Length => stream.Length; public override long Position { get => stream.Position; set => throw new NotSupportedException(); }
         public override void Flush() => stream.Flush(); public override long Seek(long o, System.IO.SeekOrigin so) => throw new NotSupportedException();
         public override void SetLength(long v) => throw new NotSupportedException(); public override void Write(byte[] b, int o, int c) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) stream.Dispose();
+            base.Dispose(disposing);
+        }
     }
 
     public sealed class JavaDigestOutputStream : System.IO.Stream
@@ -535,36 +564,64 @@ namespace Pkl.Core.Runtime
     public sealed class JavaSecureRandom { }
     public sealed class JavaKeyStore
     {
+        private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> certificates = new();
+        internal IReadOnlyList<System.Security.Cryptography.X509Certificates.X509Certificate2> Certificates => certificates;
         public static string GetDefaultType() => "X509";
         public static JavaKeyStore GetInstance(string type) => new();
         public void Load(object? parameter) { }
-        public void SetCertificateEntry(string alias, System.Security.Cryptography.X509Certificates.X509Certificate2 certificate) { }
+        public void SetCertificateEntry(string alias, System.Security.Cryptography.X509Certificates.X509Certificate2 certificate) =>
+            certificates.Add(certificate);
     }
     public sealed class JavaCertificateFactory
     {
         public static JavaCertificateFactory GetInstance(string type) => new();
         public System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateCertificate(System.IO.Stream stream)
         {
+            var certificates = GenerateCertificates(stream);
+            if (certificates.Count == 0)
+                throw new System.Security.Cryptography.CryptographicException(
+                    "The certificate input did not contain an X.509 certificate.");
+            return certificates.First();
+        }
+        public ICollection<System.Security.Cryptography.X509Certificates.X509Certificate2> GenerateCertificates(System.IO.Stream stream)
+        {
             using var bytes = new System.IO.MemoryStream();
             stream.CopyTo(bytes);
+            var encoded = bytes.ToArray();
+            var result = new System.Security.Cryptography.X509Certificates.X509Certificate2Collection();
+            var text = System.Text.Encoding.UTF8.GetString(encoded);
+            if (text.Contains("-----BEGIN CERTIFICATE-----", StringComparison.Ordinal))
+            {
+                result.ImportFromPem(text);
+            }
+            else
+            {
 #pragma warning disable SYSLIB0057 // net8-compatible certificate construction
-            return new System.Security.Cryptography.X509Certificates.X509Certificate2(bytes.ToArray());
+                result.Add(new System.Security.Cryptography.X509Certificates.X509Certificate2(encoded));
 #pragma warning restore SYSLIB0057
+            }
+            return result.Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>().ToList();
         }
-        public ICollection<System.Security.Cryptography.X509Certificates.X509Certificate2> GenerateCertificates(System.IO.Stream stream) =>
-            new[] { GenerateCertificate(stream) };
     }
     public sealed class JavaSslContext
     {
+        private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> trustAnchors = new();
+        internal IReadOnlyList<System.Security.Cryptography.X509Certificates.X509Certificate2> TrustAnchors => trustAnchors;
         public static JavaSslContext GetDefault() => new();
         public static JavaSslContext GetInstance(string protocol) => new();
-        public void Init(object? keyManagers, object? trustManagers, JavaSecureRandom random) { }
+        public void Init(object? keyManagers, object? trustManagers, JavaSecureRandom random)
+        {
+            trustAnchors.Clear();
+            if (trustManagers is not IEnumerable<object> managers) return;
+            trustAnchors.AddRange(managers.OfType<System.Security.Cryptography.X509Certificates.X509Certificate2>());
+        }
     }
     public sealed class JavaTrustManagerFactory
     {
+        private JavaKeyStore? keyStore;
         public static JavaTrustManagerFactory GetInstance(string algorithm) => new();
-        public void Init(JavaKeyStore keyStore) { }
-        public object[] GetTrustManagers() => Array.Empty<object>();
+        public void Init(JavaKeyStore keyStore) => this.keyStore = keyStore;
+        public object[] GetTrustManagers() => keyStore?.Certificates.Cast<object>().ToArray() ?? Array.Empty<object>();
     }
 
     public enum JavaHttpRedirect { NEVER, NORMAL, ALWAYS }
@@ -574,26 +631,39 @@ namespace Pkl.Core.Runtime
 
     public sealed class JavaHttpResponse<T>
     {
-        private readonly System.Net.Http.HttpResponseMessage response;
+        private readonly int statusCode;
+        private readonly JavaHttpRequest request;
+        private readonly Uri uri;
+        private readonly JavaHttpHeaders headers;
+        private readonly JavaHttpVersion version;
         private readonly T body;
         public JavaHttpResponse(System.Net.Http.HttpResponseMessage response, T body)
-        { this.response = response; this.body = body; }
-        public int StatusCode() => (int)response.StatusCode;
+        {
+            statusCode = (int)response.StatusCode;
+            request = new JavaHttpRequest(response.RequestMessage!);
+            uri = response.RequestMessage?.RequestUri ?? new Uri("about:blank");
+            headers = new JavaHttpHeaders(response.Headers.Concat(response.Content.Headers)
+                .ToDictionary(header => header.Key,
+                              header => (IReadOnlyList<string>)header.Value.ToList(),
+                              StringComparer.OrdinalIgnoreCase));
+            version = response.Version.Major >= 2 ? JavaHttpVersion.HTTP_2 : JavaHttpVersion.HTTP_1_1;
+            this.body = body;
+        }
+        public int StatusCode() => statusCode;
         public T Body() => body;
-        public JavaHttpRequest Request() => new(response.RequestMessage!);
+        public JavaHttpRequest Request() => request;
         public JavaOptional<JavaHttpResponse<T>> PreviousResponse() => JavaOptional<JavaHttpResponse<T>>.Empty();
-        public Uri Uri() => response.RequestMessage?.RequestUri ?? new Uri("about:blank");
-        public JavaHttpHeaders Headers() => new(response.Headers.Concat(response.Content.Headers)
-            .ToDictionary(header => header.Key,
-                          header => (IReadOnlyList<string>)header.Value.ToList(),
-                          StringComparer.OrdinalIgnoreCase));
-        public JavaHttpVersion Version() => response.Version.Major >= 2 ? JavaHttpVersion.HTTP_2 : JavaHttpVersion.HTTP_1_1;
+        public Uri Uri() => uri;
+        public JavaHttpHeaders Headers() => headers;
+        public JavaHttpVersion Version() => version;
     }
 
     public sealed class JavaHttpRequest
     {
         internal System.Net.Http.HttpRequestMessage Message { get; }
-        public JavaHttpRequest(System.Net.Http.HttpRequestMessage message) => Message = message;
+        private readonly TimeSpan? timeout;
+        public JavaHttpRequest(System.Net.Http.HttpRequestMessage message, TimeSpan? timeout = null)
+        { Message = message; this.timeout = timeout; }
         public static Builder NewBuilder() => new();
         public static Builder NewBuilder(Uri uri) => new Builder().Uri(uri);
         public Uri Uri() => Message.RequestUri!;
@@ -603,15 +673,18 @@ namespace Pkl.Core.Runtime
                           StringComparer.OrdinalIgnoreCase));
         public bool ExpectContinue() => Message.Headers.ExpectContinue ?? false;
         public string Method() => Message.Method.Method;
-        public JavaOptional<TimeSpan> Timeout() => JavaOptional<TimeSpan>.Empty();
+        public JavaOptional<TimeSpan> Timeout() => timeout.HasValue
+            ? JavaOptional<TimeSpan>.Of(timeout.Value)
+            : JavaOptional<TimeSpan>.Empty();
         public JavaOptional<JavaHttpVersion> Version() =>
             JavaOptional<JavaHttpVersion>.Of(Message.Version.Major >= 2 ? JavaHttpVersion.HTTP_2 : JavaHttpVersion.HTTP_1_1);
         public JavaOptional<object> BodyPublisher() => JavaOptional<object>.OfNullable(Message.Content);
         public sealed class Builder
         {
             private readonly System.Net.Http.HttpRequestMessage message = new();
+            private TimeSpan? timeout;
             public Builder Uri(Uri uri) { message.RequestUri = uri; return this; }
-            public Builder Timeout(TimeSpan timeout) { return this; }
+            public Builder Timeout(TimeSpan timeout) { this.timeout = timeout; return this; }
             public Builder Version(JavaHttpVersion version) { return this; }
             public Builder Header(string name, string value) { message.Headers.TryAddWithoutValidation(name, value); return this; }
             public Builder SetHeader(string name, string value) { message.Headers.Remove(name); return Header(name, value); }
@@ -619,7 +692,7 @@ namespace Pkl.Core.Runtime
             public Builder Method(string method, object? body) { message.Method = new System.Net.Http.HttpMethod(method); return this; }
             public Builder GET() { message.Method = System.Net.Http.HttpMethod.Get; return this; }
             public Builder DELETE() { message.Method = System.Net.Http.HttpMethod.Delete; return this; }
-            public JavaHttpRequest Build() => new(message);
+            public JavaHttpRequest Build() => new(message, timeout);
         }
     }
 
@@ -641,31 +714,157 @@ namespace Pkl.Core.Runtime
     public static class JavaHttpBodyHandlers
     {
         public static JavaHttpBodyHandler<System.IO.Stream> OfInputStream() =>
-            response => response.Content.ReadAsStream();
+            response => new ResponseOwningStream(response.Content.ReadAsStream(), response);
         public static JavaHttpBodyHandler<sbyte[]> OfByteArray() =>
             response => response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
                 .Select(value => unchecked((sbyte)value)).ToArray();
+
+        private sealed class ResponseOwningStream : System.IO.Stream
+        {
+            private readonly System.IO.Stream stream;
+            private readonly System.Net.Http.HttpResponseMessage response;
+            internal ResponseOwningStream(System.IO.Stream stream, System.Net.Http.HttpResponseMessage response)
+            { this.stream = stream; this.response = response; }
+            public override bool CanRead => stream.CanRead;
+            public override bool CanSeek => stream.CanSeek;
+            public override bool CanWrite => false;
+            public override long Length => stream.Length;
+            public override long Position { get => stream.Position; set => stream.Position = value; }
+            public override void Flush() => stream.Flush();
+            public override int Read(byte[] buffer, int offset, int count) => stream.Read(buffer, offset, count);
+            public override long Seek(long offset, System.IO.SeekOrigin origin) => stream.Seek(offset, origin);
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    stream.Dispose();
+                    response.Dispose();
+                }
+                base.Dispose(disposing);
+            }
+        }
     }
 
     public sealed class JavaHttpClient : IDisposable
     {
-        private readonly System.Net.Http.HttpClient client = new();
+        private readonly System.Net.Http.HttpClient client;
+        private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> trustAnchors;
+        private bool disposed;
+        private JavaHttpClient(
+            TimeSpan connectTimeout,
+            JavaSslContext sslContext,
+            JavaProxySelector proxySelector)
+        {
+#pragma warning disable SYSLIB0057 // net8-compatible certificate construction
+            trustAnchors = sslContext.TrustAnchors
+                .Select(certificate => new System.Security.Cryptography.X509Certificates.X509Certificate2(certificate.RawData))
+                .ToList();
+#pragma warning restore SYSLIB0057
+            var handler = new System.Net.Http.SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                ConnectTimeout = connectTimeout,
+                Proxy = new SelectorWebProxy(proxySelector),
+                UseProxy = true
+            };
+            if (trustAnchors.Count > 0)
+            {
+                handler.SslOptions.RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
+                    ValidateServerCertificate(certificate, errors);
+            }
+            client = new System.Net.Http.HttpClient(handler, disposeHandler: true);
+        }
         public static Builder NewBuilder() => new();
         public JavaHttpResponse<T> Send<T>(JavaHttpRequest request, JavaHttpBodyHandler<T> handler)
         {
-            var response = client.Send(request.Message);
-            return new JavaHttpResponse<T>(response, handler(response));
+            ObjectDisposedException.ThrowIf(disposed, this);
+            using var cancellation = request.Timeout().IsPresent()
+                ? new System.Threading.CancellationTokenSource(request.Timeout().Get())
+                : new System.Threading.CancellationTokenSource();
+            System.Net.Http.HttpResponseMessage response;
+            try
+            {
+                response = client.Send(
+                    request.Message,
+                    System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
+                    cancellation.Token);
+            }
+            catch (OperationCanceledException error) when (cancellation.IsCancellationRequested)
+            {
+                throw new System.IO.IOException(
+                    $"HTTP request to `{request.Uri()}` timed out.", error);
+            }
+            try
+            {
+                var body = handler(response);
+                var result = new JavaHttpResponse<T>(response, body);
+                if (body is not System.IO.Stream) response.Dispose();
+                return result;
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
         }
         public void Close() => Dispose();
-        public void Dispose() => client.Dispose();
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            client.Dispose();
+            foreach (var certificate in trustAnchors) certificate.Dispose();
+            trustAnchors.Clear();
+        }
+
+        private bool ValidateServerCertificate(
+            System.Security.Cryptography.X509Certificates.X509Certificate? certificate,
+            System.Net.Security.SslPolicyErrors errors)
+        {
+            if (certificate is null ||
+                (errors & (System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch |
+                           System.Net.Security.SslPolicyErrors.RemoteCertificateNotAvailable)) != 0)
+                return false;
+#pragma warning disable SYSLIB0057 // net8-compatible certificate construction
+            using var serverCertificate = new System.Security.Cryptography.X509Certificates.X509Certificate2(certificate);
+#pragma warning restore SYSLIB0057
+            using var chain = new System.Security.Cryptography.X509Certificates.X509Chain();
+            chain.ChainPolicy.TrustMode = System.Security.Cryptography.X509Certificates.X509ChainTrustMode.CustomRootTrust;
+            chain.ChainPolicy.RevocationMode = System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
+            foreach (var trustAnchor in trustAnchors) chain.ChainPolicy.CustomTrustStore.Add(trustAnchor);
+            return chain.Build(serverCertificate);
+        }
+
+        private sealed class SelectorWebProxy : System.Net.IWebProxy
+        {
+            private readonly JavaProxySelector selector;
+            internal SelectorWebProxy(JavaProxySelector selector) => this.selector = selector;
+            public System.Net.ICredentials? Credentials { get; set; }
+            public Uri GetProxy(Uri destination)
+            {
+                var selected = selector.Select(destination).FirstOrDefault();
+                if (selected is null || selected.Address is null || selected.IsBypassed(destination))
+                    return destination;
+                return selected.GetProxy(destination);
+            }
+            public bool IsBypassed(Uri host) => GetProxy(host) == host;
+        }
+
         public sealed class Builder
         {
-            public Builder ConnectTimeout(TimeSpan timeout) => this;
+            private TimeSpan connectTimeout = TimeSpan.FromSeconds(60);
+            private JavaSslContext sslContext = JavaSslContext.GetDefault();
+            private JavaProxySelector proxySelector = JavaProxySelector.GetDefault();
+            public Builder ConnectTimeout(TimeSpan timeout) { connectTimeout = timeout; return this; }
             public Builder FollowRedirects(JavaHttpRedirect redirect) => this;
             public Builder Version(JavaHttpVersion version) => this;
-            public Builder SslContext(object context) => this;
-            public Builder Proxy(object proxySelector) => this;
-            public JavaHttpClient Build() => new();
+            public Builder SslContext(object context)
+            { sslContext = (JavaSslContext)context; return this; }
+            public Builder Proxy(object proxySelector)
+            { this.proxySelector = (JavaProxySelector)proxySelector; return this; }
+            public JavaHttpClient Build() => new(connectTimeout, sslContext, proxySelector);
         }
     }
 }

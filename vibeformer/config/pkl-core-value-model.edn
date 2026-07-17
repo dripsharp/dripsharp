@@ -50,6 +50,15 @@
   {:key "type:org.pkl.core.SecurityManager" :expand :public-api}
   {:key "type:org.pkl.core.SecurityManagerBuilder" :expand :public-api}
   {:key "type:org.pkl.core.SecurityManagers" :expand :public-api}
+  ;; HTTP and package loading are normal independently consumable library
+  ;; capabilities. Keep their value/metadata APIs dependency-closed even when
+  ;; a particular evaluator path does not call every useful public member.
+  {:key "type:org.pkl.core.http.HttpClient" :expand :public-api}
+  {:key "type:org.pkl.core.packages.PackageUri" :expand :public-api}
+  {:key "type:org.pkl.core.packages.PackageAssetUri" :expand :public-api}
+  {:key "type:org.pkl.core.packages.Checksums" :expand :public-api}
+  {:key "type:org.pkl.core.packages.Dependency" :expand :public-api}
+  {:key "type:org.pkl.core.packages.DependencyMetadata" :expand :public-api}
   {:key "type:org.pkl.core.Analyzer" :expand :public-api}
   {:key "type:org.pkl.core.Closeables" :expand :public-api}
   {:key "type:org.pkl.core.OutputFormat" :expand :public-api}

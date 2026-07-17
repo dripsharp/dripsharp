@@ -136,42 +136,61 @@
     (null-forgiven node)))
 
 (defn- wrap-casts [services children ^CtExpression expression node]
-  (if (and (= 1 (count (.getTypeCasts expression)))
-           (= "java.lang.Appendable"
-              (.getQualifiedName ^CtTypeReference (first (.getTypeCasts expression))))
-           (= "java.lang.StringBuilder"
-              (some-> expression .getType .getQualifiedName)))
-    (sequence-node [(raw "((")
-                    (child-node children (first (.getTypeCasts expression)))
-                    (raw ")(") node (raw "))")])
-    (if (and (= 1 (count (.getTypeCasts expression)))
-             (= "java.util.List"
-                (.getQualifiedName ^CtTypeReference (first (.getTypeCasts expression))))
-             (= 1 (count (.getActualTypeArguments ^CtTypeReference
-                                                  (first (.getTypeCasts expression))))))
-    (invoke
-     (csharp/generic-name
-      (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
-      [((:type-node services)
-        (first (.getActualTypeArguments ^CtTypeReference
-                                        (first (.getTypeCasts expression)))))])
-     [node])
-    (if (and (instance? CtInvocation expression)
-             (= "getProperties" (some-> ^CtInvocation expression .getExecutable .getSimpleName))
-             (= "java.lang.System" (some-> ^CtInvocation expression .getExecutable .getDeclaringType
-                                            .getQualifiedName)))
-    node
-    (reduce (fn [value ^CtTypeReference cast]
-              (if (.isPrimitive cast)
-                (sequence-node [(raw "(") (child-node children cast) (raw ")(") value (raw ")")])
-                (if (or (instance? CtLambda expression)
-                        (and (instance? CtConditional expression)
-                             (str/includes? (:text (csharp/render value)) "=>")))
-                  (sequence-node [(raw "((") (child-node children cast) (raw ")(") value (raw "))")])
-                  (sequence-node [(raw "((") (child-node children cast)
-                                  (raw ")((object)(") (null-forgiven value) (raw ")))")]))))
-            node
-            (reverse (vec (.getTypeCasts expression))))))))
+  (let [casts (vec (.getTypeCasts expression))
+        ^CtTypeReference cast (when (= 1 (count casts)) (first casts))
+        cast-arguments (when cast (vec (.getActualTypeArguments cast)))]
+    (cond
+      (and cast
+           (= "java.lang.Appendable" (.getQualifiedName cast))
+           (= "java.lang.StringBuilder" (some-> expression .getType .getQualifiedName)))
+      (sequence-node [(raw "((") (child-node children cast)
+                      (raw ")(") node (raw "))")])
+
+      (and cast
+           (or (= "org.pkl.core.util.json.JsonHandler" (.getQualifiedName cast))
+               (str/includes?
+                (:text (csharp/render (child-node children cast)))
+                "Pkl.Core.Util.Json.JsonHandler")))
+      (invoke (raw "global::Pkl.Core.Util.Json.JsonHandlerBridge.Erase") [node])
+
+      (and cast
+           (= "java.util.List" (.getQualifiedName cast))
+           (= 1 (count cast-arguments)))
+      (invoke
+       (csharp/generic-name
+        (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
+        [((:type-node services) (first cast-arguments))])
+       [node])
+
+      (and cast
+           (= "java.util.Map" (.getQualifiedName cast))
+           (= 2 (count cast-arguments)))
+      (invoke
+       (csharp/generic-name
+        (raw "global::Vibeformer.Runtime.JavaCompat.CastDictionary")
+        (mapv (:type-node services) cast-arguments))
+       [node])
+
+      (and (instance? CtInvocation expression)
+           (= "getProperties" (some-> ^CtInvocation expression .getExecutable .getSimpleName))
+           (= "java.lang.System" (some-> ^CtInvocation expression .getExecutable .getDeclaringType
+                                          .getQualifiedName)))
+      node
+
+      :else
+      (reduce (fn [value ^CtTypeReference current-cast]
+                (if (.isPrimitive current-cast)
+                  (sequence-node [(raw "(") (child-node children current-cast)
+                                  (raw ")(") value (raw ")")])
+                  (if (or (instance? CtLambda expression)
+                          (and (instance? CtConditional expression)
+                               (str/includes? (:text (csharp/render value)) "=>")))
+                    (sequence-node [(raw "((") (child-node children current-cast)
+                                    (raw ")(") value (raw "))")])
+                    (sequence-node [(raw "((") (child-node children current-cast)
+                                    (raw ")((object)(") (null-forgiven value) (raw ")))")]))))
+              node
+              (reverse casts)))))
 
 (defn- finish-expression [services children ^CtExpression expression node]
   (let [node (wrap-casts services children expression node)]
@@ -703,8 +722,7 @@
       (and (= "org.pkl.core.util.json.JsonHandler"
               (some-> parameter-type .getQualifiedName))
            (str/ends-with? (or (some-> source-type .getQualifiedName) "") "Handler"))
-      (sequence-node [(raw "((") ((:type-node services) parameter-type)
-                      (raw ")((object)(") node (raw ")))!")])
+      (invoke (raw "global::Pkl.Core.Util.Json.JsonHandlerBridge.Erase") [node])
 
       (and (.isArray parameter-type)
            source-type (.isArray ^CtTypeReference source-type)
@@ -773,6 +791,10 @@
           "executable:java.lang.CharSequence#isEmpty()" (csharp/binary "==" 40 (member target "Length") (raw "0"))
           "executable:java.lang.CharSequence#charAt(int)" (sequence-node [target (raw "[") (arg 0) (raw "]")])
           "executable:java.lang.CharSequence#length()" (member target "Length")
+          "executable:java.lang.String#split(java.lang.String)"
+          (compat-call "StringSplit" [target (arg 0) (raw "0")])
+          "executable:java.lang.String#split(java.lang.String,int)"
+          (compat-call "StringSplit" (into [target] args))
           "executable:java.lang.Character#isDigit(int)" (compat-call "IsDigit" args)
           "executable:java.lang.Character#isLetterOrDigit(int)" (compat-call "IsLetterOrDigit" args)
           "executable:java.lang.Character#isUnicodeIdentifierPart(int)" (compat-call "IsUnicodeIdentifierPart" args)
@@ -1271,6 +1293,8 @@
           "executable:java.io.Writer#append(java.lang.CharSequence)" (invoke (member target "Write") args)
           "executable:java.io.Writer#append(java.lang.CharSequence,int,int)"
           (compat-call "WriterAppend" (into [target] args))
+          "executable:java.io.Reader#read(char[],int,int)"
+          (compat-call "ReaderRead" (into [target] args))
           "executable:java.io.PrintWriter#println(java.lang.String)"
           (invoke (member target "WriteLine") args)
           "executable:java.io.PrintStream#println(java.lang.String)"
@@ -1286,8 +1310,20 @@
           "executable:org.organicdesign.fp.function.Fn0#apply()" (invoke target [])
           "executable:org.pkl.core.stdlib.VmObjectFactory$Property#evaluate(java.lang.Object)" (invoke target args)
           "executable:org.pkl.core.module.ModuleKey#resolveUri(java.net.URI,java.net.URI)"
-          (if (instance? CtSuperAccess target-element)
-            (compat-call "ResolveUri" args)
+          (if (or (instance? CtSuperAccess target-element)
+                  (= "AbstractPackage"
+                     (some-> element enclosing-type .getSimpleName)))
+            (invoke (raw "global::Pkl.Core.Util.IoUtils.Resolve")
+                    (into [(raw "((global::Pkl.Core.Runtime.ReaderBase)(object)this)")]
+                          args))
+            (normal-invocation services element children))
+          "executable:org.pkl.core.runtime.ReaderBase#resolveUri(java.net.URI,java.net.URI)"
+          (if (or (instance? CtSuperAccess target-element)
+                  (= "AbstractPackage"
+                     (some-> element enclosing-type .getSimpleName)))
+            (invoke (raw "global::Pkl.Core.Util.IoUtils.Resolve")
+                    (into [(raw "((global::Pkl.Core.Runtime.ReaderBase)(object)this)")]
+                          args))
             (normal-invocation services element children))
           "executable:org.pkl.core.runtime.VmValueVisitor#visit(java.lang.Object)"
           (if (instance? CtSuperAccess target-element)
@@ -1627,6 +1663,10 @@
                          (when-let [namer (:anonymous-class-name services)]
                            (namer element)))
         element-type-name (some-> element .getType .getQualifiedName)
+        element-type-arguments (vec (.getActualTypeArguments (.getType element)))
+        uri-keyed-map? (and (= "java.util.HashMap" element-type-name)
+                            (= "java.net.URI"
+                               (some-> element-type-arguments first .getQualifiedName)))
         rrb-constructor? (str/starts-with? (or element-type-name "")
                                            "org.pkl.core.util.paguro.RrbTree")
         type (cond
@@ -1667,6 +1707,12 @@
         anonymous-body (when (and anonymous-class (not anonymous-name))
                          (:node (java/child-result children anonymous-class)))]
     (finish-expression services children element
+                       (if uri-keyed-map?
+                         (invoke
+                          (csharp/generic-name
+                           (raw "global::Vibeformer.Runtime.JavaCompat.NewJavaDictionary")
+                           (mapv (:type-node services) element-type-arguments))
+                          args)
                        (case (.getQualifiedName (.getType element))
                          "java.util.HashSet"
                          (sequence-node [(raw "new ") type (raw "(") (first args) (raw ")")])
@@ -1706,7 +1752,7 @@
                          (sequence-node [(raw "new ") type (raw "(")
                                          (sequence-node args ", ") (raw ")")
                                          (when anonymous-body
-                                           (sequence-node [(raw " ") anonymous-body]))])))))
+                                           (sequence-node [(raw " ") anonymous-body]))]))))))
 
 (defn- block-node [children ^CtBlock element]
   (sequence-node [(raw "{")
@@ -2238,6 +2284,16 @@
                                                 (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
                                                 [((:type-node services)
                                                   (first (.getActualTypeArguments return-type)))])
+                                               [node])
+
+                                              (and (= "java.util.Map"
+                                                      (.getQualifiedName ^CtTypeReference return-type))
+                                                   (= 2 (count (.getActualTypeArguments return-type))))
+                                              (invoke
+                                               (csharp/generic-name
+                                                (raw "global::Vibeformer.Runtime.JavaCompat.CastDictionary")
+                                                (mapv (:type-node services)
+                                                      (.getActualTypeArguments return-type)))
                                                [node])
 
                                               :else

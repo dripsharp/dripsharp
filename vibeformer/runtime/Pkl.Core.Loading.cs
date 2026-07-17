@@ -33,6 +33,58 @@ namespace Pkl.Core
 
 namespace Pkl.Core.Http
 {
+    internal sealed partial class RequestRewritingClient
+    {
+        static RequestRewritingClient()
+        {
+            var maxRedirects = 20;
+            if (int.TryParse(AppContext.GetData("http.maxRedirects")?.ToString(),
+                             out var configured))
+                maxRedirects = Math.Max(0, configured);
+            MAX_HTTP_REDIRECTS = maxRedirects;
+        }
+    }
+}
+
+namespace Pkl.Core.Util.Json
+{
+    internal static class JsonHandlerBridge
+    {
+        internal static JsonHandler<object, object> Erase<A, O>(JsonHandler<A, O> handler) =>
+            new Adapter<A, O>(handler);
+
+        private sealed class Adapter<A, O> : JsonHandler<object, object>
+        {
+            private readonly JsonHandler<A, O> inner;
+
+            internal Adapter(JsonHandler<A, O> inner) => this.inner = inner;
+
+            private void SyncParser() => inner.parser = parser;
+
+            public override void StartNull() { SyncParser(); inner.StartNull(); }
+            public override void EndNull() { SyncParser(); inner.EndNull(); }
+            public override void StartBoolean() { SyncParser(); inner.StartBoolean(); }
+            public override void EndBoolean(bool value) { SyncParser(); inner.EndBoolean(value); }
+            public override void StartString() { SyncParser(); inner.StartString(); }
+            public override void EndString(string value) { SyncParser(); inner.EndString(value); }
+            public override void StartNumber() { SyncParser(); inner.StartNumber(); }
+            public override void EndNumber(string value) { SyncParser(); inner.EndNumber(value); }
+            public override object? StartArray() { SyncParser(); return inner.StartArray(); }
+            public override void EndArray(object? array) { SyncParser(); inner.EndArray((A?)array); }
+            public override void StartArrayValue(object? array) { SyncParser(); inner.StartArrayValue((A?)array); }
+            public override void EndArrayValue(object? array) { SyncParser(); inner.EndArrayValue((A?)array); }
+            public override object? StartObject() { SyncParser(); return inner.StartObject(); }
+            public override void EndObject(object? value) { SyncParser(); inner.EndObject((O?)value); }
+            public override void StartObjectName(object? value) { SyncParser(); inner.StartObjectName((O?)value); }
+            public override void EndObjectName(object? value, string name) { SyncParser(); inner.EndObjectName((O?)value, name); }
+            public override void StartObjectValue(object? value, string name) { SyncParser(); inner.StartObjectValue((O?)value, name); }
+            public override void EndObjectValue(object? value, string name) { SyncParser(); inner.EndObjectValue((O?)value, name); }
+        }
+    }
+}
+
+namespace Pkl.Core.Http
+{
     internal sealed partial class JdkHttpClient
     {
         static JdkHttpClient()

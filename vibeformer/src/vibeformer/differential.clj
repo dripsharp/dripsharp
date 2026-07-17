@@ -518,7 +518,7 @@
 
 (declare package-only-project restore-package-only-project!)
 
-(def ^:private dotnet-non-network-loading-observations
+(def ^:private dotnet-loading-observations
   #{"module-source/forms"
     "local/import-resource"
     "local/list-glob"
@@ -527,6 +527,11 @@
     "custom/module-resource-lifecycle"
     "resources/environment-property"
     "security/policy"
+    "https/rewrite-redirect-headers"
+    "package/assets-cache-integrity"
+    "project/projectpackage-dependencies"
+    "network/package-errors"
+    "lifecycle/close"
     "assembly/module-loading"
     "embedded/resource-loading"
     "platform/path-uri-policy"
@@ -571,7 +576,7 @@
         expected-output (write-loading-expectations!
                          (paths/resolve-path proof-root "expected.tsv")
                          (:shared contract))
-        package-entries (filterv #(contains? dotnet-non-network-loading-observations
+        package-entries (filterv #(contains? dotnet-loading-observations
                                              (:observation %))
                                  (:expectations contract))
         package-expected-output (write-loading-expectations!
@@ -587,6 +592,7 @@
         javac (paths/resolve-path java-home "bin" "javac")
         java (paths/resolve-path java-home "bin" "java")
         upstream-root (paths/resolve-path root "research" "pkl")
+        package-build (paths/resolve-path upstream-root "pkl-commons-test" "build")
         package-root (doto (paths/resolve-path proof-root "package-consumer")
                        (Files/createDirectories (make-array FileAttribute 0)))
         package-work (paths/resolve-path package-root "work")
@@ -613,9 +619,9 @@
     (when-not target-framework
       (fail! "Could not determine the loading consumer target framework"
              {:project (str installed-consumer-project)}))
-    (when-not (= 12 (count package-entries))
-      (fail! "The package-only non-network loading observation selection changed"
-             {:expected 12 :actual (count package-entries)
+    (when-not (= 17 (count package-entries))
+      (fail! "The package-only loading observation selection changed"
+             {:expected 17 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
     (run-command! {:command ["./gradlew" ":pkl-commons-test:processResources" "--console=plain"]
                    :directory upstream-root})
@@ -655,15 +661,16 @@
             (run-command! {:command ["dotnet" "run" "--project" (str package-project)
                                      "--no-build" "--no-restore" "--"
                                      (str (paths/resolve-path fixtures "fixtures"))
-                                     (str package-output) (str package-work)]
+                                     (str package-output) (str package-work)
+                                     (str package-build)]
                            :directory package-root})]
         (when-not (str/includes? (:output package-run)
-                                 "Package-only non-network loading and policy validation passed.")
+                                 "Package-only loading, package, and policy validation passed.")
           (fail! "Package-only loading probe did not report successful validation"
                  {:output (:output package-run)}))
     (let [comparison (assert-equal! "Pkl loading/policy/configuration contract"
                                     expected-output oracle-output)
-          package-comparison (assert-equal! "Pkl non-network loading/policy contract"
+          package-comparison (assert-equal! "Pkl loading/package/policy contract"
                                             package-expected-output package-output)
           perturbation (prove-perturbation! expected-output perturbed-output)
           package-perturbation (prove-perturbation! package-expected-output

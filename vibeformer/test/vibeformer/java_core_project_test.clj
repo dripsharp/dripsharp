@@ -111,13 +111,13 @@
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 30709 (:declarations summary)))
-      (is (= {:constructor 1173
+      (is (= 30727 (:declarations summary)))
+      (is (= {:constructor 1174
               :enum-value 101
               :field 3577
               :initializer 7
-              :method 9226
-              :parameter 14045
+              :method 9240
+              :parameter 14048
               :record-component 227
               :type 2202
               :type-parameter 151}
@@ -127,17 +127,17 @@
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 11056 (:executable-roots summary)))
+      (is (= 11071 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 451472
+      (is (= {:semantic 451593
               :fallback 0
-              :visited 1044371
+              :visited 1044676
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 592899
+              :structural 593083
               :blocked 0
-              :covered 1044371}
+              :covered 1044676}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
@@ -177,8 +177,30 @@
               loading-runtime (slurp (str (paths/resolve-path
                                             source-root "Runtime" "Substrate"
                                             "Pkl.Core.Loading.cs")))
+              http-client (slurp (str (paths/resolve-path source-root
+                                                           "Http" "HttpClient.cs")))
+              package-uri (slurp (str (paths/resolve-path source-root
+                                                           "Packages" "PackageUri.cs")))
+              package-asset-uri (slurp (str (paths/resolve-path
+                                              source-root "Packages"
+                                              "PackageAssetUri.cs")))
+              checksums (slurp (str (paths/resolve-path source-root
+                                                         "Packages" "Checksums.cs")))
+              dependency (slurp (str (paths/resolve-path source-root
+                                                          "Packages" "Dependency.cs")))
+              dependency-metadata (slurp (str (paths/resolve-path
+                                                source-root "Packages"
+                                                "DependencyMetadata.cs")))
+              json (slurp (str (paths/resolve-path source-root
+                                                    "Util" "Json" "Json.cs")))
+              module-keys (slurp (str (paths/resolve-path source-root
+                                                           "Module" "ModuleKeys.cs")))
+              module-cache (slurp (str (paths/resolve-path source-root
+                                                            "Runtime" "ModuleCache.cs")))
               selected-api [evaluator-builder module-source security-managers
-                            evaluator-settings loading-runtime]
+                            evaluator-settings loading-runtime http-client
+                            package-uri package-asset-uri checksums dependency
+                            dependency-metadata]
               exact-stub #"(?ms)^public[^\n{]+ ([A-Z][A-Za-z0-9_]*)\([^)]*\) \{\nreturn (null!|default!);\n\}"]
           (testing "the evaluator, source, and standard-policy public closure is exact"
             (is (= evaluator-builder-methods
@@ -201,6 +223,16 @@
             (is (not-any? #(re-find #"#error VIBEFORMER_|NotImplementedException|TODO" %)
                           selected-api))
             (is (empty? (mapcat #(re-seq exact-stub %) selected-api)))
+            (is (str/includes? package-asset-uri
+                               "public PackageAssetUri Resolve(string path)"))
+            (is (str/includes? dependency-metadata
+                               "public static DependencyMetadata Parse(string input)"))
+            (is (str/includes? json "JsonHandlerBridge.Erase(handler"))
+            (is (str/includes? package-uri "JavaCompat.StringSplit(path"))
+            (is (str/includes? module-keys "JavaCompat.CastDictionary<string"))
+            (is (str/includes? module-keys
+                               "Pkl.Core.Util.IoUtils.Resolve(((global::Pkl.Core.Runtime.ReaderBase)(object)this)"))
+            (is (str/includes? module-cache "JavaCompat.NewJavaDictionary<global::System.Uri"))
             ;; The one exact null body is the intentional upstream default for
             ;; custom managers that do not configure root-path resolution.
             (is (= [["ResolveSecurePath" "null!"]]

@@ -352,6 +352,22 @@ internal static class JavaCompat
     internal static string StringValueOf(float value) => value.ToString(CultureInfo.InvariantCulture);
     internal static string StringValueOf(double value) => value.ToString(CultureInfo.InvariantCulture);
     internal static IEnumerable<string> StringLines(string value) => value.Replace("\r\n", "\n").Split('\n');
+    internal static int ReaderRead(TextReader reader, char[] buffer, int index, int count)
+    {
+        var read = reader.Read(buffer, index, count);
+        return read == 0 && count != 0 ? -1 : read;
+    }
+    internal static string[] StringSplit(string value, string pattern, int limit)
+    {
+        var pieces = new Regex(pattern).Split(value, limit > 0 ? limit : 0);
+        if (limit == 0)
+        {
+            var length = pieces.Length;
+            while (length > 0 && pieces[length - 1].Length == 0) length--;
+            if (length != pieces.Length) Array.Resize(ref pieces, length);
+        }
+        return pieces;
+    }
     internal static bool StringMatches(string value, string pattern) => Regex.IsMatch(value, "\\A(?:" + pattern + ")\\z");
     internal static string StringReplaceAll(string value, string pattern, string replacement) =>
         Regex.Replace(value, pattern, replacement);
@@ -750,16 +766,47 @@ internal static class JavaCompat
 
     internal static string? UriPath(Uri uri)
     {
-        if (uri.IsAbsoluteUri) return uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped) is { } path
-            ? (uri.OriginalString.Contains("://", StringComparison.Ordinal) && !path.StartsWith('/') ? "/" + path : path)
-            : null;
+        if (uri.IsAbsoluteUri)
+        {
+            var original = uri.OriginalString;
+            var authorityMarker = original.IndexOf("://", StringComparison.Ordinal);
+            if (authorityMarker >= 0)
+            {
+                var end = original.Length;
+                var queryIndex = original.IndexOf('?', authorityMarker + 3);
+                var fragmentIndex = original.IndexOf('#', authorityMarker + 3);
+                if (queryIndex >= 0) end = Math.Min(end, queryIndex);
+                if (fragmentIndex >= 0) end = Math.Min(end, fragmentIndex);
+                var start = original.IndexOf('/', authorityMarker + 3);
+                return start < 0 || start >= end
+                    ? ""
+                    : Uri.UnescapeDataString(original[start..end]);
+            }
+            var path = uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
+            if (path.Length == 0) return path;
+            return uri.OriginalString.Contains("://", StringComparison.Ordinal) &&
+                   !path.StartsWith('/')
+                ? "/" + path
+                : path;
+        }
         var text = UriTextBeforeFragment(uri);
         var query = text.IndexOf('?');
         return query < 0 ? text : text[..query];
     }
 
     internal static Uri ResolveUri(Uri basis, string value) => ResolveUri(basis, CreateUri(value));
-    internal static Uri ResolveUri(Uri basis, Uri value) => value.IsAbsoluteUri ? value : new Uri(basis, value);
+    internal static Uri ResolveUri(Uri basis, Uri value)
+    {
+        if (value.IsAbsoluteUri) return value;
+        if (basis.IsAbsoluteUri) return new Uri(basis, value);
+        var basisText = basis.OriginalString;
+        var rooted = basisText.StartsWith("/", StringComparison.Ordinal);
+        var dummyBasis = new Uri("https://vibeformer.invalid/" + basisText.TrimStart('/'));
+        var resolved = new Uri(dummyBasis, value);
+        var text = resolved.PathAndQuery + resolved.Fragment;
+        if (!rooted) text = text.TrimStart('/');
+        return new Uri(text, UriKind.Relative);
+    }
     internal static Uri NormalizeUri(Uri uri) => uri;
     internal static Uri RelativizeUri(Uri basis, Uri value) =>
         basis.IsAbsoluteUri && value.IsAbsoluteUri ? basis.MakeRelativeUri(value) : value;
@@ -855,7 +902,8 @@ internal static class JavaCompat
     internal static bool MapContainsKey<K, V>(IDictionary<K, V> map, object? key) where K : notnull =>
         key is K typed && map.ContainsKey(typed);
 
-    internal static IEnumerable<KeyValuePair<K, V>> MapEntrySet<K, V>(IDictionary<K, V> map) where K : notnull => map;
+    internal static ISet<KeyValuePair<K, V>> MapEntrySet<K, V>(IDictionary<K, V> map) where K : notnull =>
+        new HashSet<KeyValuePair<K, V>>(map);
 
     internal static bool MapIsEmpty<K, V>(IDictionary<K, V> map) where K : notnull => map.Count == 0;
     internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull => new HashSet<K>(map.Keys);
@@ -972,6 +1020,37 @@ internal static class JavaCompat
         new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
     internal static IList<T> CastList<T>(object values) =>
         ((IEnumerable)values).Cast<object?>().Select(value => (T)value!).ToList();
+    internal static IDictionary<TKey, TValue> CastDictionary<TKey, TValue>(object values)
+        where TKey : notnull
+    {
+        if (values is IDictionary<TKey, TValue> typed) return typed;
+        var result = new Dictionary<TKey, TValue>();
+        foreach (var entry in (IEnumerable)values)
+        {
+            var type = entry!.GetType();
+            var key = type.GetProperty("Key")!.GetValue(entry);
+            var value = type.GetProperty("Value")!.GetValue(entry);
+            result.Add((TKey)key!, (TValue)value!);
+        }
+        return result;
+    }
+    internal static IDictionary<TKey, TValue> NewJavaDictionary<TKey, TValue>(params object?[] arguments)
+        where TKey : notnull
+    {
+        var comparer = new JavaEqualityComparer<TKey>();
+        if (arguments.Length == 0) return new Dictionary<TKey, TValue>(comparer);
+        if (arguments.Length == 1 && arguments[0] is int capacity)
+            return new Dictionary<TKey, TValue>(capacity, comparer);
+        if (arguments.Length == 1 && arguments[0] is IEnumerable<KeyValuePair<TKey, TValue>> values)
+            return new Dictionary<TKey, TValue>(values, comparer);
+        throw new ArgumentException("Unsupported Java HashMap constructor arguments.");
+    }
+
+    private sealed class JavaEqualityComparer<T> : IEqualityComparer<T>
+    {
+        public bool Equals(T? left, T? right) => JavaCompat.Equals(left, right);
+        public int GetHashCode(T value) => JavaHashCode(value);
+    }
 
     internal static T[] CopyOf<T>(T[] source, int length)
     {
@@ -1092,6 +1171,8 @@ internal static class JavaCompat
     {
         if (ReferenceEquals(left, right)) return true;
         if (left is null || right is null) return false;
+        if (left is Uri leftUri)
+            return right is Uri rightUri && UriEquals(leftUri, rightUri);
         if (IsPClassInfo(left))
             return IsPClassInfo(right) &&
                    string.Equals(PClassInfoName(left), PClassInfoName(right), StringComparison.Ordinal);
@@ -1194,6 +1275,19 @@ internal static class JavaCompat
     private static int JavaHashCode(object? value)
     {
         if (value is null) return 0;
+        if (value is Uri uri)
+        {
+            if (!uri.IsAbsoluteUri)
+                return StringComparer.Ordinal.GetHashCode(uri.OriginalString);
+            return System.HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(UriScheme(uri) ?? ""),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(UriHost(uri) ?? ""),
+                UriPort(uri),
+                StringComparer.Ordinal.GetHashCode(UriUserInfo(uri) ?? ""),
+                StringComparer.Ordinal.GetHashCode(UriPath(uri) ?? ""),
+                StringComparer.Ordinal.GetHashCode(UriQuery(uri) ?? ""),
+                StringComparer.Ordinal.GetHashCode(UriFragment(uri) ?? ""));
+        }
         if (value is IDictionary map)
         {
             var result = 0;
@@ -1208,6 +1302,21 @@ internal static class JavaCompat
             foreach (var element in (IEnumerable)value) result = 31 * result + JavaHashCode(element);
             return result;
         }
+    }
+
+    private static bool UriEquals(Uri left, Uri right)
+    {
+        if (left.IsAbsoluteUri != right.IsAbsoluteUri) return false;
+        if (!left.IsAbsoluteUri)
+            return string.Equals(left.OriginalString, right.OriginalString,
+                                 StringComparison.Ordinal);
+        return string.Equals(UriScheme(left), UriScheme(right), StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(UriHost(left), UriHost(right), StringComparison.OrdinalIgnoreCase) &&
+               UriPort(left) == UriPort(right) &&
+               string.Equals(UriUserInfo(left), UriUserInfo(right), StringComparison.Ordinal) &&
+               string.Equals(UriPath(left), UriPath(right), StringComparison.Ordinal) &&
+               string.Equals(UriQuery(left), UriQuery(right), StringComparison.Ordinal) &&
+               string.Equals(UriFragment(left), UriFragment(right), StringComparison.Ordinal);
     }
 
     internal static JavaResourceBundle GetResourceBundle(string baseName, CultureInfo locale) => new(baseName, locale);
@@ -1323,8 +1432,18 @@ internal static class JavaCompat
     internal static void CreateDirectories(string path) => Directory.CreateDirectory(path);
     internal static FileStream NewInputStream(string path, params object?[] _) => File.OpenRead(path);
     internal static string ReadString(string path, Encoding encoding) => File.ReadAllText(path, encoding);
-    internal static string PathOf(string first, params string[] more) =>
-        more.Length == 0 ? first : Path.Combine(new[] { first }.Concat(more).ToArray());
+    internal static string PathOf(string first, params string[] more)
+    {
+        // Path.of(first, more...) joins name elements even when a later string
+        // begins with a platform separator. Path.Combine instead discards the
+        // prefix for such strings, which can move translated cache paths out of
+        // their intended root.
+        var result = first;
+        foreach (var value in more)
+            result = Path.Join(result, value.TrimStart(Path.DirectorySeparatorChar,
+                                                       Path.AltDirectorySeparatorChar));
+        return result;
+    }
     internal static string PathOfUri(Uri uri) => uri.IsFile ? uri.LocalPath : uri.OriginalString;
     internal static bool PathIsAbsolute(string path) => Path.IsPathRooted(path);
     internal static string? PathRoot(string path) => Path.GetPathRoot(path);

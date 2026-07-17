@@ -96,6 +96,7 @@ public final class LoadingContractUpstreamOracle {
       write(writer, "https/rewrite-redirect-headers", "HTTP", network.https());
       write(writer, "package/assets-cache-integrity", "PACKAGE", network.packages());
       write(writer, "project/projectpackage-dependencies", "PROJECT", network.projectpackage());
+      write(writer, "network/package-errors", "ERROR", network.errors());
 
       write(writer, "project/evaluator-user-settings", "SETTINGS", observeSettings(fixtures, work));
       write(writer, "errors/missing-invalid-io-type", "ERROR", observeErrors(fixtures, work));
@@ -295,6 +296,17 @@ public final class LoadingContractUpstreamOracle {
           .build()) {
         httpModule = evaluator.evaluate(ModuleSource.uri(server.plainUri("/plain-main.pkl")));
       }
+      PModule proxied;
+      try (Evaluator evaluator = EvaluatorBuilder.preconfigured()
+          .setAllowedModules(httpModules)
+          .setAllowedResources(httpResources)
+          .setHttpClient(HttpClient.builder()
+              .setProxy(server.plainUri(""), List.of())
+              .addHeaders("**", Map.of("X-Contract", List.of("enabled")))
+              .build())
+          .build()) {
+        proxied = evaluator.evaluate(ModuleSource.uri("http://origin.test/proxy-main.pkl"));
+      }
       HttpClient directClient = server.newClient()
           .addRewrite(URI.create("https://origin.test/"), URI.create("https://localhost:0/"))
           .addHeaders("**", Map.of("X-Contract", List.of("enabled")))
@@ -314,7 +326,8 @@ public final class LoadingContractUpstreamOracle {
           + escaped(httpsModule.getProperty("payload"))
           + "|redirect=" + compact(redirectResponse.body())
           + "|checked=" + checked.size()
-          + "|headers=" + server.allRequestsHadContractHeader.get();
+          + "|headers=" + server.allRequestsHadContractHeader.get()
+          + "|proxy=" + proxied.getProperty("value") + ":" + (server.proxyRequestCount.get() > 0);
 
       Path cache = work.resolve("package-cache");
       String packageSource =
@@ -374,8 +387,63 @@ public final class LoadingContractUpstreamOracle {
           + "|checksum-failure=" + checksumFailure;
 
       String projectpackage = observeProjectPackage(work, cache);
-      return new NetworkObservations(https, packages, projectpackage);
+      String errors = observeNetworkErrors(server, work, checksumFailure);
+      return new NetworkObservations(https, packages, projectpackage, errors);
     }
+  }
+
+  private static String observeNetworkErrors(
+      ContractHttpsServer server, Path work, boolean checksumFailure) {
+    List<Pattern> httpModules = new ArrayList<>(SecurityManagers.defaultAllowedModules);
+    httpModules.add(Pattern.compile("http:"));
+    boolean httpFailure = throwsPkl(() -> {
+      try (Evaluator evaluator = EvaluatorBuilder.preconfigured()
+          .setAllowedModules(httpModules)
+          .build()) {
+        evaluator.evaluate(ModuleSource.uri(server.plainUri("/missing.pkl")));
+      }
+    });
+    boolean missingAsset = throwsPkl(() -> {
+      try (Evaluator evaluator = EvaluatorBuilder.preconfigured()
+          .setHttpClient(server.newClient().build())
+          .setModuleCacheDir(work.resolve("missing-asset-cache"))
+          .build()) {
+        evaluator.evaluate(ModuleSource.text(
+            "value = import(\"package://localhost:0/birds@0.5.0#/missing.pkl\")\n"));
+      }
+    });
+    boolean invalidMetadata = throwsPkl(() -> {
+      try (Evaluator evaluator = EvaluatorBuilder.preconfigured()
+          .setHttpClient(server.newClient().build())
+          .setModuleCacheDir(work.resolve("invalid-metadata-cache"))
+          .build()) {
+        evaluator.evaluate(ModuleSource.text(
+            "value = import(\"package://localhost:0/badMetadataJson@1.0.0#/main.pkl\")\n"));
+      }
+    });
+    boolean invalidScheme = throwsUri(() -> new PackageUri("package:invalid"));
+    int beforePolicy = server.requestCount.get();
+    boolean policy = throwsPkl(() -> {
+      try (Evaluator evaluator = Evaluator.preconfigured()) {
+        evaluator.evaluate(ModuleSource.uri(server.plainUri("/plain-main.pkl")));
+      }
+    }) && server.requestCount.get() == beforePolicy;
+    boolean coldCache = throwsPklOrAssertion(() -> {
+      try (Evaluator evaluator = EvaluatorBuilder.preconfigured()
+          .setHttpClient(HttpClient.dummyClient())
+          .setModuleCacheDir(work.resolve("cold-offline-cache"))
+          .build()) {
+        evaluator.evaluate(ModuleSource.text(
+            "value = import(\"package://localhost:0/birds@0.5.0#/Bird.pkl\")\n"));
+      }
+    });
+    if (!(httpFailure && missingAsset && invalidMetadata && checksumFailure && invalidScheme
+        && policy && coldCache)) {
+      throw new IllegalStateException("deterministic HTTP/package failure matrix did not hold");
+    }
+    return "http=" + httpFailure + "|missing=" + missingAsset
+        + "|metadata=" + invalidMetadata + "|checksum=" + checksumFailure
+        + "|scheme=" + invalidScheme + "|policy=" + policy + "|cold-cache=" + coldCache;
   }
 
   private static String observeProjectPackage(Path work, Path cache) throws Exception {
@@ -644,6 +712,28 @@ public final class LoadingContractUpstreamOracle {
     }
   }
 
+  private static boolean throwsPkl(CheckedAction action) {
+    try {
+      action.run();
+      return false;
+    } catch (PklException expected) {
+      return true;
+    } catch (Exception unexpected) {
+      throw new RuntimeException(unexpected);
+    }
+  }
+
+  private static boolean throwsPklOrAssertion(CheckedAction action) {
+    try {
+      action.run();
+      return false;
+    } catch (PklException | AssertionError expected) {
+      return true;
+    } catch (Exception unexpected) {
+      throw new RuntimeException(unexpected);
+    }
+  }
+
   private static void write(BufferedWriter writer, String id, String kind, String observation)
       throws IOException {
     writer.write(id);
@@ -659,7 +749,8 @@ public final class LoadingContractUpstreamOracle {
     void run() throws Exception;
   }
 
-  private record NetworkObservations(String https, String packages, String projectpackage) {}
+  private record NetworkObservations(
+      String https, String packages, String projectpackage, String errors) {}
 
   private static final class CountingModuleFactory implements ModuleKeyFactory {
     private final AtomicInteger creates = new AtomicInteger();
@@ -743,6 +834,7 @@ public final class LoadingContractUpstreamOracle {
     private final HttpServer plainServer;
     private final ExecutorService executor = Executors.newFixedThreadPool(2);
     private final AtomicInteger requestCount = new AtomicInteger();
+    private final AtomicInteger proxyRequestCount = new AtomicInteger();
     private final AtomicBoolean allRequestsHadContractHeader = new AtomicBoolean(true);
 
     private ContractHttpsServer(Path buildRoot) throws Exception {
@@ -803,6 +895,7 @@ public final class LoadingContractUpstreamOracle {
           allRequestsHadContractHeader.set(false);
         }
         String path = exchange.getRequestURI().getPath();
+        if (exchange.getRequestURI().isAbsolute()) proxyRequestCount.incrementAndGet();
         if (path.equals("/redirect.pkl")) {
           exchange.getResponseHeaders().add("Location", "https://origin.test/main.pkl");
           exchange.sendResponseHeaders(302, -1);
@@ -827,6 +920,10 @@ public final class LoadingContractUpstreamOracle {
         }
         if (path.equals("/data.txt")) {
           send(exchange, 200, "secure payload\n".getBytes(StandardCharsets.UTF_8));
+          return;
+        }
+        if (path.equals("/proxy-main.pkl")) {
+          send(exchange, 200, "value = 17\n".getBytes(StandardCharsets.UTF_8));
           return;
         }
         String relative = path.substring(1);

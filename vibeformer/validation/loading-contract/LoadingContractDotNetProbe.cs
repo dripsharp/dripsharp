@@ -5,27 +5,39 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using Pkl.Core;
 using Pkl.Core.EvaluatorSettings;
 using Pkl.Core.Externalreader;
+using Pkl.Core.Http;
 using Pkl.Core.Module;
 using Pkl.Core.Packages;
+using Pkl.Core.Project;
 using Pkl.Core.Resource;
 using Pkl.Core.Runtime;
 
-/** Package-only .NET probe for the non-network loader and policy contract. */
+/** Package-only .NET probe for the loader, package, and policy contract. */
 static class LoadingContractDotNetProbe
 {
     public static void Main(string[] args)
     {
-        if (args.Length != 3)
-            throw new ArgumentException("fixture, output, and work paths are required");
+        if (args.Length != 4)
+            throw new ArgumentException(
+                "fixture, output, work, and upstream package-build paths are required");
         string fixtures = Path.GetFullPath(args[0]);
         string output = Path.GetFullPath(args[1]);
         string work = Path.GetFullPath(args[2]);
+        string packageBuild = Path.GetFullPath(args[3]);
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         ResetDirectory(work);
 
@@ -38,12 +50,18 @@ static class LoadingContractDotNetProbe
         Write(writer, "custom/module-resource-lifecycle", "LOADING", ObserveCustomReaders());
         Write(writer, "resources/environment-property", "LOADING", ObserveEnvironmentAndProperties());
         Write(writer, "security/policy", "POLICY", ObserveSecurityPolicy(work));
+        NetworkObservations network = ObserveNetworkAndPackages(packageBuild, work);
+        Write(writer, "https/rewrite-redirect-headers", "HTTP", network.Http);
+        Write(writer, "package/assets-cache-integrity", "PACKAGE", network.Packages);
+        Write(writer, "project/projectpackage-dependencies", "PROJECT", network.ProjectPackage);
+        Write(writer, "network/package-errors", "ERROR", network.Errors);
+        Write(writer, "lifecycle/close", "LIFECYCLE", ObserveLifecycle());
         Write(writer, "assembly/module-loading", "DOTNET", ObserveAssemblyModules());
         Write(writer, "embedded/resource-loading", "DOTNET", ObserveEmbeddedResources());
         Write(writer, "platform/path-uri-policy", "DOTNET", ObservePlatformPolicy(work));
         Write(writer, "ownership/disposal", "DOTNET", ObserveOwnership(fixtures, work));
         AssertMissingDiagnostics(work);
-        Console.WriteLine("Package-only non-network loading and policy validation passed.");
+        Console.WriteLine("Package-only loading, package, and policy validation passed.");
     }
 
     static string ObserveModuleSourceForms(string work)
@@ -250,6 +268,269 @@ static class LoadingContractDotNetProbe
             $"|root-denied={Lower(rootDenied)}" +
             $"|encoded-traversal={Lower(encodedTraversal)}" +
             $"|literal-traversal={Lower(literalTraversal)}";
+    }
+
+    static NetworkObservations ObserveNetworkAndPackages(string packageBuild, string work)
+    {
+        using var server = new ContractHttpServer(packageBuild);
+        var httpModules = new List<Regex>(SecurityManagers.defaultAllowedModules) { new("http:") };
+        var httpResources = new List<Regex>(SecurityManagers.defaultAllowedResources) { new("http:") };
+        PModule httpModule;
+        using (HttpClient client = HttpClient.CreateBuilder()
+            .AddHeaders("**", new Dictionary<string, IList<string>>
+                { ["X-Contract"] = new List<string> { "enabled" } })
+            .Build())
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetAllowedModules(httpModules)
+            .SetAllowedResources(httpResources)
+            .SetHttpClient(client)
+            .Build())
+        {
+            httpModule = evaluator.Evaluate(ModuleSource.Uri(server.PlainUri("/plain-main.pkl")));
+        }
+
+        PModule proxied;
+        using (HttpClient proxyClient = HttpClient.CreateBuilder()
+            .SetProxy(server.ProxyUri, Array.Empty<string>())
+            .AddHeaders("**", new Dictionary<string, IList<string>>
+                { ["X-Contract"] = new List<string> { "enabled" } })
+            .Build())
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetAllowedModules(httpModules)
+            .SetAllowedResources(httpResources)
+            .SetHttpClient(proxyClient)
+            .Build())
+        {
+            proxied = evaluator.Evaluate(ModuleSource.Uri("http://origin.test/proxy-main.pkl"));
+        }
+
+        using HttpClient directClient = server.NewTlsClient()
+            .AddRewrite(new Uri("https://origin.test/"), new Uri("https://localhost:0/"))
+            .AddHeaders("**", new Dictionary<string, IList<string>>
+                { ["X-Contract"] = new List<string> { "enabled" } })
+            .Build();
+        var checkedUris = new List<Uri>();
+        JavaHttpResponse<sbyte[]> redirectResponse = directClient.Send(
+            JavaHttpRequest.NewBuilder(new Uri("https://origin.test/redirect.pkl")).Build(),
+            JavaHttpBodyHandlers.OfByteArray(),
+            checkedUris.Add);
+        PModule httpsModule;
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetHttpClient(directClient)
+            .Build())
+        {
+            httpsModule = evaluator.Evaluate(ModuleSource.Uri("https://origin.test/main.pkl"));
+        }
+        string redirectBody = Encoding.UTF8.GetString(
+            redirectResponse.Body().Select(value => unchecked((byte)value)).ToArray());
+        string http = $"http={httpModule.GetProperty("value")}:" +
+            Escape((string)httpModule.GetProperty("payload")) +
+            $"|https={httpsModule.GetProperty("value")}:" +
+            Escape((string)httpsModule.GetProperty("payload")) +
+            $"|redirect={Compact(redirectBody)}|checked={checkedUris.Count}" +
+            $"|headers={Lower(server.AllRequestsHadContractHeader)}" +
+            $"|proxy={proxied.GetProperty("value")}:{Lower(server.ProxyRequestCount > 0)}";
+
+        string cache = Path.Combine(work, "package-cache");
+        string packageSource =
+            "bird = import(\"package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl\").name\n" +
+            "modules = import*(\"package://localhost:0/birds@0.5.0#/catalog/*.pkl\").keys\n" +
+            "resources = read*(\"package://localhost:0/birds@0.5.0#/catalog/*.pkl\").keys\n";
+        int beforePackages = server.RequestCount;
+        PModule first;
+        using (HttpClient packageClient = server.NewTlsClient().Build())
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetHttpClient(packageClient)
+            .SetModuleCacheDir(cache)
+            .Build())
+        {
+            first = evaluator.Evaluate(ModuleSource.Text(packageSource));
+        }
+        int downloads = server.RequestCount - beforePackages;
+
+        string metadataPath = Path.Combine(
+            packageBuild, "test-packages", "birds@0.5.0", "birds@0.5.0.json");
+        string metadataShaPath = metadataPath + ".sha256";
+        DependencyMetadata metadata = DependencyMetadata.Parse(File.ReadAllText(metadataPath));
+        string metadataSha = File.ReadAllText(metadataShaPath).Trim();
+        PackageAssetUri normalizedAsset = new PackageAssetUri(
+            new Uri("package://localhost:0/birds@0.5.0#/foo/../Bird.pkl"))
+            .Resolve("./catalog.pkl");
+
+        bool checksumFailure;
+        try
+        {
+            using HttpClient checksumClient = server.NewTlsClient().Build();
+            using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+                .SetHttpClient(checksumClient)
+                .SetModuleCacheDir(Path.Combine(work, "invalid-checksum-cache"))
+                .Build();
+            _ = evaluator.Evaluate(ModuleSource.Text(
+                "bad = import(\"package://localhost:0/birds@0.5.0::sha256:" +
+                "0000000000000000000000000000000000000000000000000000000000000000#/Bird.pkl\")\n"));
+            checksumFailure = false;
+        }
+        catch (PklException error)
+        {
+            checksumFailure = error.Message.Contains("checksum", StringComparison.OrdinalIgnoreCase);
+        }
+
+        int beforeOffline = server.RequestCount;
+        PModule offline;
+        using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetHttpClient(HttpClient.DummyClient())
+            .SetModuleCacheDir(cache)
+            .Build())
+        {
+            offline = evaluator.Evaluate(ModuleSource.Text(packageSource));
+        }
+        bool offlineNoNetwork = server.RequestCount == beforeOffline;
+        string packages = $"bird={first.GetProperty("bird")}" +
+            $"|modules={Sorted(first.GetProperty("modules"))}" +
+            $"|resources={Sorted(first.GetProperty("resources"))}" +
+            $"|offline={offline.GetProperty("bird")}:{Lower(offlineNoNetwork)}" +
+            $"|downloads={Lower(downloads > 0)}" +
+            $"|metadata={metadata.GetName()}:{metadata.GetDependencies().Count}" +
+            $"|metadata-sha={Lower(metadataSha.Length == 64)}" +
+            $"|asset={normalizedAsset.GetAssetPath()}" +
+            $"|checksum-failure={Lower(checksumFailure)}";
+
+        string projectPackage = ObserveProjectPackage(packageBuild, work, cache);
+        string errors = ObserveNetworkErrors(server, work, checksumFailure);
+        return new NetworkObservations(http, packages, projectPackage, errors);
+    }
+
+    static string ObserveProjectPackage(string packageBuild, string work, string cache)
+    {
+        string projectDir = Path.Combine(work, "projectpackage");
+        Directory.CreateDirectory(projectDir);
+        string projectFile = Path.Combine(projectDir, "PklProject");
+        File.WriteAllText(projectFile,
+            "amends \"pkl:Project\"\n" +
+            "dependencies { [\"birds\"] { uri = \"package://localhost:0/birds@0.5.0\" } }\n");
+        string birdsSha = File.ReadAllText(Path.Combine(packageBuild, "test-packages",
+            "birds@0.5.0", "birds@0.5.0.json.sha256")).Trim();
+        string fruitSha = File.ReadAllText(Path.Combine(packageBuild, "test-packages",
+            "fruit@1.0.5", "fruit@1.0.5.json.sha256")).Trim();
+        File.WriteAllText(Path.Combine(projectDir, "PklProject.deps.json"),
+            "{\n" +
+            "  \"schemaVersion\": 1,\n" +
+            "  \"resolvedDependencies\": {\n" +
+            "    \"package://localhost:0/birds@0\": {\"type\": \"remote\", \"uri\": \"projectpackage://localhost:0/birds@0.5.0\", \"checksums\": {\"sha256\": \"" + birdsSha + "\"}},\n" +
+            "    \"package://localhost:0/fruit@1\": {\"type\": \"remote\", \"uri\": \"projectpackage://localhost:0/fruit@1.0.5\", \"checksums\": {\"sha256\": \"" + fruitSha + "\"}}\n" +
+            "  }\n" +
+            "}\n");
+        string main = Path.Combine(projectDir, "main.pkl");
+        File.WriteAllText(main,
+            "bird = import(\"@birds/catalog/Swallow.pkl\").name\n" +
+            "resource = read(\"@birds/catalog/Ostrich.pkl\").text.contains(\"Ostrich\")\n");
+        var remote = new Dictionary<string, Dependency.RemoteDependency>
+        {
+            ["birds"] = new Dependency.RemoteDependency(
+                new PackageUri("package://localhost:0/birds@0.5.0"), null)
+        };
+        var declared = new DeclaredDependencies(
+            remote,
+            new Dictionary<string, DeclaredDependencies>(),
+            new Uri(projectFile),
+            null);
+        using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+            .SetProjectDependencies(declared)
+            .SetModuleCacheDir(cache)
+            .SetHttpClient(HttpClient.DummyClient())
+            .Build();
+        PModule module = evaluator.Evaluate(ModuleSource.PathFromPath(main));
+        return $"dependencies={remote.Count}|bird={module.GetProperty("bird")}" +
+            $"|resource={Lower((bool)module.GetProperty("resource"))}";
+    }
+
+    static string ObserveNetworkErrors(ContractHttpServer server, string work, bool checksumFailure)
+    {
+        var httpModules = new List<Regex>(SecurityManagers.defaultAllowedModules) { new("http:") };
+        bool httpFailure;
+        try
+        {
+            using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+                .SetAllowedModules(httpModules)
+                .Build();
+            _ = evaluator.Evaluate(ModuleSource.Uri(server.PlainUri("/missing.pkl")));
+            httpFailure = false;
+        }
+        catch (PklException error)
+        {
+            httpFailure = error.Message.Contains("404", StringComparison.OrdinalIgnoreCase) ||
+                error.Message.Contains("status", StringComparison.OrdinalIgnoreCase);
+        }
+
+        bool missingAsset = ThrowsPkl(() =>
+        {
+            using HttpClient client = server.NewTlsClient().Build();
+            using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+                .SetHttpClient(client)
+                .SetModuleCacheDir(Path.Combine(work, "missing-asset-cache"))
+                .Build();
+            _ = evaluator.Evaluate(ModuleSource.Text(
+                "value = import(\"package://localhost:0/birds@0.5.0#/missing.pkl\")\n"));
+        });
+        bool invalidMetadata = ThrowsPkl(() =>
+        {
+            using HttpClient client = server.NewTlsClient().Build();
+            using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+                .SetHttpClient(client)
+                .SetModuleCacheDir(Path.Combine(work, "invalid-metadata-cache"))
+                .Build();
+            _ = evaluator.Evaluate(ModuleSource.Text(
+                "value = import(\"package://localhost:0/badMetadataJson@1.0.0#/main.pkl\")\n"));
+        });
+        bool invalidScheme = ThrowsUri(() => _ = new PackageUri("package:invalid"));
+        int beforePolicy = server.RequestCount;
+        bool policy = ThrowsPkl(() =>
+        {
+            using Evaluator evaluator = Evaluator.Preconfigured();
+            _ = evaluator.Evaluate(ModuleSource.Uri(server.PlainUri("/plain-main.pkl")));
+        }) && server.RequestCount == beforePolicy;
+        bool coldCache = ThrowsPkl(() =>
+        {
+            using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+                .SetHttpClient(HttpClient.DummyClient())
+                .SetModuleCacheDir(Path.Combine(work, "cold-offline-cache"))
+                .Build();
+            _ = evaluator.Evaluate(ModuleSource.Text(
+                "value = import(\"package://localhost:0/birds@0.5.0#/Bird.pkl\")\n"));
+        });
+        Require(httpFailure && missingAsset && invalidMetadata && checksumFailure && invalidScheme &&
+            policy && coldCache, "deterministic HTTP/package failure matrix");
+        return $"http={Lower(httpFailure)}|missing={Lower(missingAsset)}" +
+            $"|metadata={Lower(invalidMetadata)}|checksum={Lower(checksumFailure)}" +
+            $"|scheme={Lower(invalidScheme)}|policy={Lower(policy)}" +
+            $"|cold-cache={Lower(coldCache)}";
+    }
+
+    static string ObserveLifecycle()
+    {
+        Evaluator evaluator = Evaluator.Preconfigured();
+        evaluator.Dispose();
+        evaluator.Dispose();
+        bool evaluateAfterClose;
+        try { _ = evaluator.Evaluate(ModuleSource.Text("value = 1\n")); evaluateAfterClose = false; }
+        catch (Exception) { evaluateAfterClose = true; }
+
+        HttpClient client = HttpClient.CreateBuilder().Build();
+        client.Dispose();
+        client.Dispose();
+        bool httpAfterClose;
+        try
+        {
+            _ = client.Send(
+                JavaHttpRequest.NewBuilder(new Uri("https://example.test/")).Build(),
+                JavaHttpBodyHandlers.OfByteArray(),
+                _ => { });
+            httpAfterClose = false;
+        }
+        catch (InvalidOperationException) { httpAfterClose = true; }
+        Require(evaluateAfterClose && httpAfterClose, "evaluator and HTTP close boundaries");
+        return $"evaluator-repeat=true|evaluator-after-close={Lower(evaluateAfterClose)}" +
+            $"|http-repeat=true|http-after-close={Lower(httpAfterClose)}";
     }
 
     static string ObserveAssemblyModules()
@@ -626,6 +907,12 @@ static class LoadingContractDotNetProbe
         catch (Exception error) when (error is ArgumentException or UriFormatException) { return true; }
     }
 
+    static bool ThrowsPkl(Action action)
+    {
+        try { action(); return false; }
+        catch (PklException) { return true; }
+    }
+
     static string Sorted(object value)
     {
         var values = new List<string>();
@@ -644,4 +931,212 @@ static class LoadingContractDotNetProbe
     static string Encode(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
     static void Write(StreamWriter writer, string id, string kind, string observation) =>
         writer.WriteLine($"{id}\t{kind}\t{Encode(observation)}");
+
+    sealed record NetworkObservations(
+        string Http,
+        string Packages,
+        string ProjectPackage,
+        string Errors);
+
+    sealed class ContractHttpServer : IDisposable
+    {
+        readonly string packageBuild;
+        readonly TcpListener plain = new(IPAddress.Loopback, 0);
+        readonly TcpListener tls = new(IPAddress.Loopback, 0);
+        readonly CancellationTokenSource cancellation = new();
+        readonly X509Certificate2 certificate;
+        readonly Task plainLoop;
+        readonly Task tlsLoop;
+        int requestCount;
+        int proxyRequestCount;
+        int disposed;
+        int allRequestsHadContractHeader = 1;
+
+        internal ContractHttpServer(string packageBuild)
+        {
+            this.packageBuild = packageBuild;
+            string pfx = Path.Combine(packageBuild, "keystore", "localhost.p12");
+            if (!File.Exists(pfx)) throw new FileNotFoundException("TLS fixture is missing.", pfx);
+#pragma warning disable SYSLIB0057 // net8-compatible certificate construction
+            certificate = new X509Certificate2(
+                pfx,
+                "password",
+                X509KeyStorageFlags.Exportable);
+#pragma warning restore SYSLIB0057
+            plain.Start();
+            tls.Start();
+            plainLoop = Task.Run(() => AcceptLoop(plain, secure: false));
+            tlsLoop = Task.Run(() => AcceptLoop(tls, secure: true));
+        }
+
+        internal int RequestCount => Volatile.Read(ref requestCount);
+        internal int ProxyRequestCount => Volatile.Read(ref proxyRequestCount);
+        internal bool AllRequestsHadContractHeader =>
+            Volatile.Read(ref allRequestsHadContractHeader) != 0;
+        internal Uri ProxyUri => new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}");
+        internal Uri PlainUri(string path) =>
+            new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}{path}");
+        internal HttpClient.Builder NewTlsClient() => HttpClient.CreateBuilder()
+            .AddCertificates(Path.Combine(packageBuild, "keystore", "localhost.pem"))
+            .SetTestPort(((IPEndPoint)tls.LocalEndpoint).Port);
+
+        void AcceptLoop(TcpListener listener, bool secure)
+        {
+            while (!cancellation.IsCancellationRequested)
+            {
+                TcpClient? client = null;
+                try
+                {
+                    client = listener.AcceptTcpClient();
+                    Handle(client, secure);
+                }
+                catch (Exception error) when (
+                    cancellation.IsCancellationRequested &&
+                    error is SocketException or ObjectDisposedException or IOException)
+                {
+                    client?.Dispose();
+                    return;
+                }
+                catch
+                {
+                    client?.Dispose();
+                    throw;
+                }
+            }
+        }
+
+        void Handle(TcpClient client, bool secure)
+        {
+            using (client)
+            using (Stream network = client.GetStream())
+            {
+                Stream transport = network;
+                SslStream? ssl = null;
+                if (secure)
+                {
+                    ssl = new SslStream(network, leaveInnerStreamOpen: true);
+                    ssl.AuthenticateAsServer(new SslServerAuthenticationOptions
+                    {
+                        ServerCertificate = certificate,
+                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+                    });
+                    transport = ssl;
+                }
+                try
+                {
+                    using var reader = new StreamReader(
+                        transport, Encoding.ASCII, false, 4096, leaveOpen: true);
+                    string requestLine = reader.ReadLine() ?? throw new IOException("Missing request line.");
+                    string[] requestParts = requestLine.Split(' ', 3);
+                    if (requestParts.Length < 2) throw new IOException("Malformed request line.");
+                    string target = requestParts[1];
+                    bool contractHeader = false;
+                    for (string? line = reader.ReadLine(); !string.IsNullOrEmpty(line); line = reader.ReadLine())
+                    {
+                        int colon = line!.IndexOf(':');
+                        if (colon > 0 && line[..colon].Equals("X-Contract", StringComparison.OrdinalIgnoreCase) &&
+                            line[(colon + 1)..].Trim().Equals("enabled", StringComparison.Ordinal))
+                            contractHeader = true;
+                    }
+                    bool proxied = Uri.TryCreate(target, UriKind.Absolute, out Uri? absoluteTarget);
+                    string path = proxied ? absoluteTarget!.AbsolutePath : target.Split('?', 2)[0];
+                    if (proxied) Interlocked.Increment(ref proxyRequestCount);
+                    if (!contractHeader && !path.Contains('@') && path != "/missing.pkl")
+                        Interlocked.Exchange(ref allRequestsHadContractHeader, 0);
+                    Interlocked.Increment(ref requestCount);
+                    Respond(transport, path);
+                }
+                finally
+                {
+                    ssl?.Dispose();
+                }
+            }
+        }
+
+        void Respond(Stream stream, string path)
+        {
+            if (path == "/redirect.pkl")
+            {
+                Send(stream, 302, Array.Empty<byte>(), "Location: https://origin.test/main.pkl\r\n");
+                return;
+            }
+            if (path == "/main.pkl")
+            {
+                Send(stream, 200, Encoding.UTF8.GetBytes(
+                    "value = 42\npayload = read(\"https://origin.test/data.txt\").text\n"));
+                return;
+            }
+            if (path == "/data.txt")
+            {
+                Send(stream, 200, Encoding.UTF8.GetBytes("secure payload\n"));
+                return;
+            }
+            if (path == "/plain-main.pkl")
+            {
+                Send(stream, 200, Encoding.UTF8.GetBytes(
+                    $"value = 42\npayload = read(\"{PlainUri("/plain-data.txt")}\").text\n"));
+                return;
+            }
+            if (path == "/plain-data.txt")
+            {
+                Send(stream, 200, Encoding.UTF8.GetBytes("plain payload\n"));
+                return;
+            }
+            if (path == "/proxy-main.pkl")
+            {
+                Send(stream, 200, Encoding.UTF8.GetBytes("value = 17\n"));
+                return;
+            }
+
+            string relative = Uri.UnescapeDataString(path.TrimStart('/'));
+            string? packageFile = null;
+            if (relative.EndsWith(".zip", StringComparison.Ordinal))
+            {
+                string packageDirectory = relative[..relative.IndexOf('/')];
+                packageFile = Path.Combine(
+                    packageBuild,
+                    "test-packages",
+                    packageDirectory,
+                    Path.GetFileName(relative));
+            }
+            else if (relative.Contains('@') && !relative.Contains('/'))
+            {
+                packageFile = Path.Combine(
+                    packageBuild,
+                    "test-packages",
+                    relative,
+                    relative + ".json");
+            }
+            if (packageFile is null || !File.Exists(packageFile))
+            {
+                Send(stream, 404, Array.Empty<byte>());
+                return;
+            }
+            Send(stream, 200, File.ReadAllBytes(packageFile));
+        }
+
+        static void Send(Stream stream, int status, byte[] body, string extraHeaders = "")
+        {
+            string reason = status switch { 200 => "OK", 302 => "Found", 404 => "Not Found", _ => "Error" };
+            byte[] headers = Encoding.ASCII.GetBytes(
+                $"HTTP/1.1 {status} {reason}\r\n" + extraHeaders +
+                $"Content-Length: {body.Length}\r\nConnection: close\r\n\r\n");
+            stream.Write(headers);
+            stream.Write(body);
+            stream.Flush();
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+            cancellation.Cancel();
+            plain.Stop();
+            tls.Stop();
+            try { Task.WaitAll(new[] { plainLoop, tlsLoop }, TimeSpan.FromSeconds(5)); }
+            catch (AggregateException error) when (error.InnerExceptions.All(
+                inner => inner is SocketException or ObjectDisposedException or IOException)) { }
+            cancellation.Dispose();
+            certificate.Dispose();
+        }
+    }
 }
