@@ -46,6 +46,11 @@
    {:key "type:org.pkl.core.Duration" :expand :public-api}
    {:key "type:org.pkl.core.DataSize" :expand :public-api}
    {:key "type:org.pkl.core.Pair" :expand :public-api}
+   {:key "type:org.pkl.core.EvaluatorBuilder" :expand :public-api}
+   {:key "type:org.pkl.core.ModuleSource" :expand :public-api}
+   {:key "type:org.pkl.core.SecurityManager" :expand :public-api}
+   {:key "type:org.pkl.core.SecurityManagerBuilder" :expand :public-api}
+   {:key "type:org.pkl.core.SecurityManagers" :expand :public-api}
    {:key "type:org.pkl.core.Analyzer" :expand :public-api}
    {:key "type:org.pkl.core.Closeables" :expand :public-api}
    {:key "type:org.pkl.core.OutputFormat" :expand :public-api}
@@ -145,37 +150,37 @@
 
     (testing "the recursively resolved project declaration and source sets are exact"
       (is (= {:ambiguous-symbols 0
-              :executable-references 30767
-              :seeds 64
-              :constructor-references 4689
+              :executable-references 31407
+              :seeds 69
+              :constructor-references 4855
               :shadow-symbols 0
-              :public-api-declarations 7438
-              :type-references 458618
+              :public-api-declarations 7662
+              :type-references 466767
               :fallback-symbols 0
               :guessed-symbols 0
-              :source-inputs 633
-              :intrinsic-occurrences 92487
-              :dependency-occurrences 57653
-              :type-parameter-occurrences 4834
-              :annotations 10825
-              :jdk-occurrences 104798
+              :source-inputs 657
+              :intrinsic-occurrences 93512
+              :dependency-occurrences 58358
+              :type-parameter-occurrences 4902
+              :annotations 10944
+              :jdk-occurrences 107512
               :unresolved-symbols 0
-              :declarations 16703
-              :project-occurrences 262044
-              :symbols 16339
-              :field-references 16917}
+              :declarations 17121
+              :project-occurrences 266903
+              :symbols 16778
+              :field-references 17214}
              (:totals first)))
-      (is (= "1ebc26f8de92e0f2164d45f4a41f099179c12f3ae0889d219a86c8095f342338"
+      (is (= "5aa376043695bf98b8d0d48ef393de40c5e389d53fd2f25e49c28345241c94f0"
              (sha-256 declaration-keys)))
-      (is (= "4d503bd65b81caf786dbf0c83f8bf321e741637bef1076c6350913ef4ea506ff"
+      (is (= "d7e0f8f71a71a88392d290867b50459f4737307ed1c6de2882bc6241a6332cf0"
              (sha-256 source-paths)))
-      (is (= "206eab04ad14ff9445681af21e34d2a4018d59f4d9fba3c2d6ea764f9fa72f35"
+      (is (= "92ef0235eaa03fe2e03111eb0a81c001bb7bbac175c5bb6529b1d2596fa1edf3"
              (sha-256 public-api-keys)))
       (is (= discovery-sources (set (:compilation-units (:frontend first)))))
       (is (every? discovery-sources (keys (:source-inputs first))))
       (is (every? #(instance? CtElement (:declaration %))
                   (vals (:declarations first))))
-      (is (= 633 (count project-roots)))
+      (is (= 657 (count project-roots)))
       (is (every? #(.isTopLevel ^CtType %) project-roots))
       (is (every? #(contains? (:declarations first)
                               (str "type:" (.getQualifiedName ^CtType %)))
@@ -192,9 +197,18 @@
                    "type:org.pkl.core.Duration"
                    "type:org.pkl.core.DataSize"
                    "type:org.pkl.core.Pair"
+                   "type:org.pkl.core.EvaluatorBuilder"
+                   "type:org.pkl.core.ModuleSource"
+                   "type:org.pkl.core.SecurityManager"
+                   "type:org.pkl.core.SecurityManagerBuilder"
+                   "type:org.pkl.core.SecurityManagers"
                    "executable:org.pkl.core.Duration#getValue()"
                    "executable:org.pkl.core.DataSize#getValue()"
-                   "executable:org.pkl.core.Pair#getFirst()"])))))
+                   "executable:org.pkl.core.Pair#getFirst()"
+                   "executable:org.pkl.core.EvaluatorBuilder#setColor(boolean)"
+                   "executable:org.pkl.core.ModuleSource#text(java.lang.String)"
+                   "executable:org.pkl.core.SecurityManagers#standardBuilder()"
+                   "field:org.pkl.core.OutputFormat#JSON"])))))
 
 (deftest closure-occurrences-are-resolved-located-and-deterministic
   (let [{:keys [root first second]} (fixture/models)
@@ -208,7 +222,7 @@
     (is (= (keys (:public-api-declarations first))
            (keys (:public-api-declarations second))))
     (is (= first-occurrences second-occurrences))
-    (is (= "0042a2580d4b43fb72adc3308d5c6e745268b8ac3107d0e3e2fa37a1ffaef7c3"
+    (is (= "59f7ac8d469e701fe725244b65aca496de2177359eeb2f96307bd70cfa365bd6"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))

@@ -7,6 +7,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -15,13 +16,103 @@ using System.Resources;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Numerics;
+using System.Threading.Tasks;
 
 namespace Vibeformer.Runtime;
 
 internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
 internal delegate long JavaToLongFunction<in TValue>(TValue value);
+internal delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight right);
 internal enum JavaTimeUnit { MILLISECONDS }
+internal enum JavaProcessRedirect { INHERIT }
+
+// Java's Future and CompletableFuture share one reference in APIs that cache
+// an asynchronously completed result. TaskCompletionSource is the matching
+// .NET primitive, while this small facade preserves Java's blocking get() and
+// ExecutionException wrapping for translated callers.
+internal sealed class JavaFuture<T>
+{
+    private readonly TaskCompletionSource<T> completion =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal bool Complete(T value) => completion.TrySetResult(value);
+    internal bool CompleteExceptionally(Exception error) => completion.TrySetException(error);
+
+    internal T Get()
+    {
+        try
+        {
+            return completion.Task.GetAwaiter().GetResult();
+        }
+        catch (Exception error)
+        {
+            throw new AggregateException(error);
+        }
+    }
+}
+
+internal sealed class JavaRandom
+{
+    private readonly Random random = new();
+    private readonly object sync = new();
+
+    internal long NextLong()
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(long)];
+        lock (sync) random.NextBytes(bytes);
+        return BitConverter.ToInt64(bytes);
+    }
+}
+
+internal sealed class JavaProcessBuilder
+{
+    private readonly ProcessStartInfo startInfo = new()
+    {
+        UseShellExecute = false,
+        RedirectStandardInput = true,
+        RedirectStandardOutput = true
+    };
+
+    internal JavaProcessBuilder(IEnumerable<string> command)
+    {
+        using var parts = command.GetEnumerator();
+        if (!parts.MoveNext()) throw new ArgumentException("Process command must not be empty.", nameof(command));
+        startInfo.FileName = parts.Current;
+        while (parts.MoveNext()) startInfo.ArgumentList.Add(parts.Current);
+    }
+
+    internal JavaProcessBuilder Directory(string directory)
+    {
+        startInfo.WorkingDirectory = directory;
+        return this;
+    }
+
+    internal JavaProcessBuilder RedirectError(JavaProcessRedirect redirect)
+    {
+        startInfo.RedirectStandardError = redirect != JavaProcessRedirect.INHERIT;
+        return this;
+    }
+
+    internal JavaProcess Start() => new(Process.Start(startInfo) ??
+        throw new IOException($"Could not start process `{startInfo.FileName}`."));
+}
+
+internal sealed class JavaProcess
+{
+    private readonly Process process;
+    internal JavaProcess(Process process) => this.process = process;
+    internal bool IsAlive() { try { return !process.HasExited; } catch (InvalidOperationException) { return false; } }
+    internal Stream GetInputStream() => process.StandardOutput.BaseStream;
+    internal Stream GetOutputStream() => process.StandardInput.BaseStream;
+    internal bool WaitFor(long timeout, JavaTimeUnit unit) =>
+        process.WaitForExit(checked((int)Math.Min(timeout, int.MaxValue)));
+    internal JavaProcess DestroyForcibly()
+    {
+        if (IsAlive()) process.Kill(entireProcessTree: true);
+        return this;
+    }
+}
 
 internal sealed class JavaProperties
 {
@@ -138,6 +229,30 @@ internal static class JavaCompat
 
     internal static T RequireNonNull<T>(T? value, string? message = null) =>
         value is null ? throw new NullReferenceException(message) : value;
+    internal static T RequireNonNullElseGet<T>(T? value, Func<T> supplier) =>
+        value is null ? RequireNonNull(supplier()) : value;
+    internal static string? Getenv(string name) => Environment.GetEnvironmentVariable(name);
+    internal static string? ExceptionMessage(Exception? cause) => cause?.ToString();
+
+    internal static JavaStream<string> FindFiles(
+        string basePath,
+        int maxDepth,
+        JavaBiPredicate<string, FileSystemInfo> predicate,
+        params object[] ignoredOptions)
+    {
+        if (!Directory.Exists(basePath)) return new JavaStream<string>(Enumerable.Empty<string>());
+        var root = Path.GetFullPath(basePath);
+        return new JavaStream<string>(Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
+            .Where(path => maxDepth == int.MaxValue ||
+                Path.GetRelativePath(root, path).Count(character =>
+                    character == Path.DirectorySeparatorChar || character == Path.AltDirectorySeparatorChar) < maxDepth)
+            .Where(path => predicate(path, Directory.Exists(path)
+                ? new DirectoryInfo(path)
+                : new FileInfo(path))));
+    }
+
+    internal static bool IsRegularFile(FileSystemInfo attributes) => attributes is FileInfo;
+    internal static bool IsRegularFile(string path) => File.Exists(path);
 
     internal static string Concat(object? left, object? right) =>
         JavaString(left) + JavaString(right);
@@ -982,6 +1097,8 @@ internal static class JavaCompat
                    string.Equals(PClassInfoName(left), PClassInfoName(right), StringComparison.Ordinal);
         if (IsJavaList(left)) return IsJavaList(right) && ListsEqual((IEnumerable)left, (IEnumerable)right);
         if (IsJavaSet(left)) return IsJavaSet(right) && SetsEqual((IEnumerable)left, (IEnumerable)right);
+        if (left is IDictionary leftMap)
+            return right is IDictionary rightMap && MapsEqual(leftMap, rightMap);
         return left.Equals(right);
     }
 
@@ -1066,9 +1183,24 @@ internal static class JavaCompat
                leftValues.All(leftValue => rightValues.Any(rightValue => Equals(leftValue, rightValue)));
     }
 
+    private static bool MapsEqual(IDictionary left, IDictionary right)
+    {
+        if (left.Count != right.Count) return false;
+        foreach (DictionaryEntry entry in left)
+            if (!right.Contains(entry.Key) || !Equals(entry.Value, right[entry.Key])) return false;
+        return true;
+    }
+
     private static int JavaHashCode(object? value)
     {
         if (value is null) return 0;
+        if (value is IDictionary map)
+        {
+            var result = 0;
+            foreach (DictionaryEntry entry in map)
+                result += JavaHashCode(entry.Key) ^ JavaHashCode(entry.Value);
+            return result;
+        }
         if (!IsJavaList(value)) return value.GetHashCode();
         unchecked
         {
@@ -1216,6 +1348,18 @@ internal static class JavaCompat
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
         return buffer.ToArray().Select(value => unchecked((sbyte)value)).ToArray();
+    }
+    internal static sbyte[] ReadNBytes(Stream stream, int count)
+    {
+        var bytes = new byte[count];
+        var offset = 0;
+        while (offset < count)
+        {
+            var read = stream.Read(bytes, offset, count - offset);
+            if (read == 0) break;
+            offset += read;
+        }
+        return bytes.Take(offset).Select(value => unchecked((sbyte)value)).ToArray();
     }
     internal static MemoryStream NewMemoryStream(sbyte[] bytes) =>
         new(bytes.Select(value => unchecked((byte)value)).ToArray());
@@ -1562,6 +1706,7 @@ internal sealed class JavaMessageFormat : JavaFormat
 {
     private readonly string pattern;
     private readonly CultureInfo locale;
+    internal JavaMessageFormat(string pattern) : this(pattern, CultureInfo.CurrentCulture) { }
     internal JavaMessageFormat(string pattern, CultureInfo locale)
     {
         this.pattern = pattern;

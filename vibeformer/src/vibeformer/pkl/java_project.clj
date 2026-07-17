@@ -263,7 +263,21 @@
   [ctx ^CtType declaration]
   (let [declarations (declaring-types declaration)
         current (some-> (:current-type ctx) declaring-types)
-        common (common-declaring-prefix declarations current)
+        current-type (last current)
+        ;; A nested base can have the same simple name as its derived nested
+        ;; subtype (Message.Response and Message.Client.Response). A relative
+        ;; `Response` reference binds to the subtype in C# and creates a cycle;
+        ;; force the resolved sibling declaration through its full owner path.
+        shadowed-by-current?
+        (and current-type
+             (not (same-type? declaration current-type))
+             (= (.getSimpleName declaration) (.getSimpleName ^CtType current-type)))
+        ;; C# resolves a base clause before the derived type's nested members
+        ;; enter scope, so nested type arguments there also need their full
+        ;; owner path.
+        common (if (or (:base-clause? ctx) shadowed-by-current?)
+                 []
+                 (common-declaring-prefix declarations current))
         relative (drop (count common) declarations)
         ;; A reference to the current type or one of its lexical ancestors has
         ;; no remaining relative segment. Keep its own declaration name.
@@ -331,6 +345,9 @@
    "java.lang.StrictMath" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.lang.Thread" ["global::Pkl.Core.Runtime.JavaThread" :pkl-core.type/thread]
+   "java.lang.Process" ["global::Vibeformer.Runtime.JavaProcess" :dotnet.type/process]
+   "java.lang.ProcessBuilder" ["global::Vibeformer.Runtime.JavaProcessBuilder" :dotnet.type/process-builder]
+   "java.lang.ProcessBuilder$Redirect" ["global::Vibeformer.Runtime.JavaProcessRedirect" :dotnet.type/process-redirect]
    "java.lang.invoke.MethodHandles" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.lang.invoke.MethodHandles$Lookup" ["object" :dotnet.type/method-lookup-marker]
    "java.lang.invoke.MethodHandle" ["global::System.Delegate" :dotnet.type/delegate]
@@ -509,6 +526,7 @@
    "java.util.Spliterator" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.Optional" ["global::Pkl.Core.Runtime.JavaOptional" :pkl-core.type/optional]
    "java.util.OptionalInt" ["int?" :dotnet.type/nullable-int]
+   "java.util.Random" ["global::Vibeformer.Runtime.JavaRandom" :dotnet.type/random]
    "java.util.Properties" ["global::Vibeformer.Runtime.JavaProperties" :dotnet.type/properties]
    "java.util.NoSuchElementException" ["global::System.InvalidOperationException" :dotnet.type/invalid-operation]
    "java.util.Arrays" ["global::Vibeformer.Runtime.JavaCompat" :dotnet.type/java-compat]
@@ -525,6 +543,7 @@
    "java.util.function.Predicate" ["global::System.Predicate" :dotnet.type/predicate]
    "java.util.function.BiConsumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.BiPredicate" ["global::Vibeformer.Runtime.JavaBiPredicate" :dotnet.type/bi-predicate]
    "java.util.function.BinaryOperator" ["global::Pkl.Core.Runtime.JavaBinaryOperator" :pkl-core.type/binary-operator]
    "java.util.function.IntFunction" ["global::Vibeformer.Runtime.JavaIntFunction" :dotnet.type/int-function]
    "java.util.function.IntConsumer" ["global::System.Action<int>" :dotnet.type/int-consumer]
@@ -553,6 +572,9 @@
    "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex" :dotnet.type/regex]
    "java.util.regex.PatternSyntaxException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
    "java.util.concurrent.ConcurrentHashMap" ["global::System.Collections.Concurrent.ConcurrentDictionary" :dotnet.type/concurrent-dictionary]
+   "java.util.concurrent.Future" ["global::Vibeformer.Runtime.JavaFuture" :dotnet.type/future]
+   "java.util.concurrent.CompletableFuture" ["global::Vibeformer.Runtime.JavaFuture" :dotnet.type/completable-future]
+   "java.util.concurrent.ExecutionException" ["global::System.AggregateException" :dotnet.type/execution-exception]
    "java.util.concurrent.Executors" ["global::Pkl.Core.Runtime.JavaConcurrency" :pkl-core.type/concurrency]
    "java.util.concurrent.ExecutorService" ["global::Pkl.Core.Runtime.JavaScheduledExecutor" :pkl-core.type/executor]
    "java.util.concurrent.ThreadFactory" ["global::System.Func<global::System.Action, global::Pkl.Core.Runtime.JavaThread>" :pkl-core.type/thread-factory]
@@ -602,8 +624,31 @@
    "org.msgpack.core.MessagePackException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
    "org.msgpack.core.MessageTypeException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
    "org.msgpack.core.MessageInsufficientBufferException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
-   "org.msgpack.value.Value" ["object" :excluded.messagepack/value]
-   "org.msgpack.value.impl.ImmutableStringValueImpl" ["object" :excluded.messagepack/value]
+   "org.msgpack.value.Value" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ExtensionValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.FloatValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.NilValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.NumberValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.RawValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.TimestampValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableArrayValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableBinaryValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableBooleanValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableFloatValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableIntegerValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableMapValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableNilValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableRawValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableStringValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableTimestampValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ArrayValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.BinaryValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.BooleanValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.IntegerValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.MapValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.StringValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.impl.ImmutableStringValueImpl" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
    "org.jspecify.annotations.Nullable" ["object" :dotnet.annotation/nullable]
    "org.jspecify.annotations.NonNull" ["object" :dotnet.annotation/non-null]
    "org.jspecify.annotations.NullMarked" ["object" :dotnet.annotation/null-marked]})
@@ -1043,9 +1088,13 @@
                     (= simple-name "hashCode") "GetHashCode"
                     (= simple-name "equals") "Equals"
                     :else (pascal simple-name))
-        nested-type-names (when owner
-                            (set (map #(pascal (.getSimpleName ^CtType %))
-                                      (.getNestedTypes ^CtType owner))))]
+        destination-contract-owners
+        (distinct (keep #(.getDeclaringType ^CtMethod %)
+                        (cons method (top-definitions ctx method))))
+        nested-type-names
+        (set (map #(pascal (.getSimpleName ^CtType %))
+                  (mapcat #(.getNestedTypes ^CtType %)
+                          destination-contract-owners)))]
     ;; Java permits a method and nested type to share a name; C# does not.
     ;; Derive the destination factory name from the live declaring type so the
     ;; declaration and all resolved project call sites take the same path.
@@ -1128,11 +1177,15 @@
 
 (defn- destination-internal-type? [^CtTypeReference reference]
   (when reference
-    (or (contains? #{"java.util.Deque" "java.util.ArrayDeque"}
-                   (.getQualifiedName reference))
-        (when (.isArray reference)
-          (destination-internal-type? (.getComponentType reference)))
-        (some destination-internal-type? (.getActualTypeArguments reference)))))
+    (let [qualified-name (.getQualifiedName reference)]
+      (or (contains? #{"java.util.Deque" "java.util.ArrayDeque"
+                       "org.pkl.core.externalreader.ExternalModuleResolver"
+                       "org.pkl.core.externalreader.ExternalResourceResolver"}
+                     qualified-name)
+          (str/starts-with? qualified-name "org.pkl.core.messaging.")
+          (when (.isArray reference)
+            (destination-internal-type? (.getComponentType reference)))
+          (some destination-internal-type? (.getActualTypeArguments reference))))))
 
 (defn- java-object-override? [^CtMethod method]
   (let [name (.getSimpleName method)
@@ -2208,9 +2261,24 @@
         ;; C# exposes the base type in the derived type's metadata and rejects
         ;; that shape. Promote the selected base declaration to the visibility
         ;; already exposed by its public subtype.
-        visibility (if (public-nested-subtype? type)
-                     "public"
-                     (visibility type "internal"))]
+        declaring-type (.getDeclaringType type)
+        visibility (cond
+                     ;; MessagePack transport is a user-approved exclusion.
+                     ;; The transport and configured-process resolver that
+                     ;; depends on it remain assembly-internal implementation
+                     ;; detail; the public evaluator settings stay selected.
+                     (or (str/starts-with? (.getQualifiedName type)
+                                           "org.pkl.core.messaging.")
+                         (contains? #{"org.pkl.core.externalreader.ExternalModuleResolver"
+                                      "org.pkl.core.externalreader.ExternalResourceResolver"}
+                                    (.getQualifiedName type)))
+                     "internal"
+                     (public-nested-subtype? type) "public"
+                     (and declaring-type
+                          (modifier? type ModifierKind/PROTECTED)
+                          (modifier? declaring-type ModifierKind/FINAL))
+                     "internal"
+                     :else (visibility type "internal"))]
     (cond
       (instance? CtInterface type) [visibility "partial" "interface"]
       (instance? CtRecord type) [visibility "sealed" "partial" "record" "class"]
@@ -2262,7 +2330,12 @@
         outer-capture (when outer-capture-type-node
                         (sequence-node [(raw "private readonly ") outer-capture-type-node
                                         (raw " __outer = default!;")]))
-        bases (mapv #(type-node ctx %) (base-types type))
+        ;; Base references are translated in the declaration's lexical type
+        ;; context just like member signatures. This is significant when a
+        ;; nested subtype shadows a sibling base name (for example an inner
+        ;; Response extending its owner's Response contract).
+        bases (mapv #(type-node (assoc member-ctx :base-clause? true) %)
+                    (base-types type))
         raw-members (concat (when (instance? CtEnum type)
                               (.getEnumValues ^CtEnum type))
                             (.getTypeMembers type))

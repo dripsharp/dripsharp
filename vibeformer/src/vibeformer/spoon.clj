@@ -18,7 +18,7 @@
            [spoon.reflect CtModel]
            [spoon.reflect.code CtInvocation CtThisAccess CtTypeAccess]
            [spoon.reflect.cu SourcePosition]
-           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtElement CtEnum
+           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtElement CtEnum CtEnumValue
             CtExecutable CtField CtInterface CtMethod CtModifiable CtRecord CtRecordComponent CtType CtTypeMember
             CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtExecutableReference
@@ -724,6 +724,9 @@
   (let [declared-public? (or (and (instance? CtModifiable declaration)
                                   (.hasModifier ^CtModifiable declaration
                                                 ModifierKind/PUBLIC))
+                             ;; Java enum constants are implicitly public even
+                             ;; when Spoon does not materialize a PUBLIC token.
+                             (instance? CtEnumValue declaration)
                              (instance? CtRecordComponent declaration))]
     (and declared-public?
          (loop [current declaration]
@@ -734,8 +737,11 @@
 
 (defn- direct-public-members
   [^CtType type]
-  (->> (.getTypeMembers type)
-       (remove #(.isImplicit ^CtElement %))
+  (->> (concat (when (instance? CtEnum type)
+                 (.getEnumValues ^CtEnum type))
+               (.getTypeMembers type))
+       (remove #(and (.isImplicit ^CtElement %)
+                     (not (instance? CtEnumValue %))))
        (filter public-api-declaration?)
        (sort-by declaration-key)))
 

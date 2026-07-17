@@ -41,6 +41,15 @@
   {:key "type:org.pkl.core.Duration" :expand :public-api}
   {:key "type:org.pkl.core.DataSize" :expand :public-api}
   {:key "type:org.pkl.core.Pair" :expand :public-api}
+  ;; Evaluator construction is a first-class package capability. Select the
+  ;; complete live public bodies instead of retaining only methods reached by
+  ;; EvaluatorImpl, so mutation/getter, source-factory, and policy contracts
+  ;; cannot silently disappear from the generated package.
+  {:key "type:org.pkl.core.EvaluatorBuilder" :expand :public-api}
+  {:key "type:org.pkl.core.ModuleSource" :expand :public-api}
+  {:key "type:org.pkl.core.SecurityManager" :expand :public-api}
+  {:key "type:org.pkl.core.SecurityManagerBuilder" :expand :public-api}
+  {:key "type:org.pkl.core.SecurityManagers" :expand :public-api}
   {:key "type:org.pkl.core.Analyzer" :expand :public-api}
   {:key "type:org.pkl.core.Closeables" :expand :public-api}
   {:key "type:org.pkl.core.OutputFormat" :expand :public-api}

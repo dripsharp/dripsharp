@@ -726,6 +726,15 @@
                       (raw ")((object)(") node (raw ")))!")])
         :else node))))
 
+(defn- null-tolerant-invocation-argument? [key]
+  (or (contains? #{"executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
+                   "executable:java.util.Objects#hash(java.lang.Object[])"
+                   "executable:java.util.Objects#hashCode(java.lang.Object)"}
+                 key)
+      ;; Object.equals(null) is defined and must not force nullable boxed
+      ;; primitives through Nullable<T>.Value before the call.
+      (str/ends-with? key "#equals(java.lang.Object)")))
+
 (defn- invocation-node [context services ^CtInvocation element children]
   (let [key (executable-key context element)
         target-element (.getTarget element)
@@ -744,6 +753,7 @@
                                                             (< index (count parameter-declarations)))
                                                    (nth parameter-declarations index))
                            node (if (and (nullable-expression? source)
+                                         (not (null-tolerant-invocation-argument? key))
                                          (not (and parameter
                                                    (nullable-parameter? parameter
                                                                         parameter-declaration))))
@@ -947,6 +957,12 @@
           "executable:java.nio.charset.Charset#forName(java.lang.String)" (invoke (raw "global::System.Text.Encoding.GetEncoding") args)
           "executable:java.nio.charset.Charset#newDecoder()" (invoke (raw "new global::Pkl.Core.Runtime.JavaCharsetDecoder") [target])
           "executable:java.nio.charset.Charset#newEncoder()" (invoke (raw "new global::Pkl.Core.Runtime.JavaCharsetEncoder") [target])
+          "executable:java.io.File#toPath()" target
+          "executable:java.nio.file.Paths#get(java.net.URI)" (compat-call "PathOfUri" args)
+          "executable:java.nio.file.Files#find(java.nio.file.Path,int,java.util.function.BiPredicate,java.nio.file.FileVisitOption[])"
+          (compat-call "FindFiles" args)
+          "executable:java.nio.file.attribute.BasicFileAttributes#isRegularFile()"
+          (compat-call "IsRegularFile" [target])
           "executable:java.lang.Throwable#getMessage()" (member target "Message")
           "executable:java.lang.Throwable#getCause()" (member target "InnerException")
           "executable:java.lang.Exception#getCause()" (member target "InnerException")
@@ -1072,6 +1088,21 @@
           "executable:java.util.Objects#hash(java.lang.Object[])" (compat-call "Hash" args)
           "executable:java.util.Objects#requireNonNull(java.lang.Object)" (compat-call "RequireNonNull" args)
           "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)" (compat-call "RequireNonNull" args)
+          "executable:java.util.Objects#requireNonNullElseGet(java.lang.Object,java.util.function.Supplier)"
+          (let [result-type (.getType element)
+                element-type (first (.getActualTypeArguments result-type))]
+            (if element-type
+              (compat-call
+               "RequireNonNullElseGet"
+               [(arg 0)
+                (sequence-node
+                 [(raw "() => ")
+                  (invoke
+                   (csharp/generic-name
+                    (raw "global::Vibeformer.Runtime.JavaCompat.ListOf")
+                    [((:type-node services) element-type)])
+                   [])])])
+              (compat-call "RequireNonNullElseGet" args)))
           "executable:java.util.Optional#empty()" (result-type-call services element "Empty" args)
           "executable:java.util.Optional#of(java.lang.Object)" (result-type-call services element "Of" args)
           "executable:java.util.Optional#ofNullable(java.lang.Object)" (result-type-call services element "OfNullable" args)
@@ -1317,6 +1348,9 @@
               (and (str/starts-with? key "executable:java.io.")
                    (str/includes? key "#readAllBytes()"))
               (compat-call "ReadAllBytes" [target])
+              (and (str/starts-with? key "executable:java.io.")
+                   (str/includes? key "#readNBytes(int)"))
+              (compat-call "ReadNBytes" (into [target] args))
               (and (str/starts-with? key "executable:java.util.")
                    (str/includes? key "#computeIfAbsent("))
               (compat-call "ComputeIfAbsent" (into [target] args))
@@ -1641,6 +1675,7 @@
                          (sequence-node [(raw "new ") type (raw "(") (first args) (raw ")")])
                          "java.math.BigInteger" (compat-call "NewBigInteger" args)
                          "java.io.ByteArrayInputStream" (compat-call "NewMemoryStream" args)
+                         "java.io.File" (first args)
                          "java.io.FileWriter" (compat-call "NewFileWriter" args)
                          "java.net.InetSocketAddress" (compat-call "NewIpEndPoint" args)
                          "java.net.Proxy" (compat-call "NewWebProxy" args)
@@ -1960,6 +1995,20 @@
                           (if supplier-type
                             (sequence-node [(raw "() => new ") ((:type-node services) supplier-type) (raw "()")])
                             (sequence-node [(raw "value => new ") target (raw "(value)")]))
+
+                          (and supplier-type
+                               (str/starts-with? resolved-key
+                                                 "executable:java.util.List#of("))
+                          (let [element-type (first (.getActualTypeArguments supplier-type))]
+                            (sequence-node
+                             [(raw "() => ")
+                              (invoke
+                               (csharp/generic-name
+                                (raw "global::Vibeformer.Runtime.JavaCompat.ListOf")
+                                [(if element-type
+                                   ((:type-node services) element-type)
+                                   (raw "object"))])
+                               [])]))
 
                           (and static? (instance? CtTypeAccess target-element))
                           (sequence-node
@@ -2479,7 +2528,23 @@
                 (some-> owner .getDeclaringType .getQualifiedName))
              (= 2 (count (.getParameters owner)))
              (= 5 (count (.getArguments invocation))))
-        node (if option-behavior-delegating?
+        exception-cause-initializer?
+        (and (= label "base")
+             (contains? #{"java.lang.Throwable" "java.lang.Exception"
+                          "java.lang.RuntimeException"}
+                        called-owner)
+             (= ["java.lang.Throwable"]
+                (mapv #(.getQualifiedName ^CtTypeReference %)
+                      (.getParameters (.getExecutable invocation)))))
+        node (cond
+               exception-cause-initializer?
+               (let [cause (:node (first arguments))]
+                 (sequence-node
+                  [(raw " : base(")
+                   (compat-call "ExceptionMessage" [cause])
+                   (raw ", ") cause (raw ")")]))
+
+               option-behavior-delegating?
                ;; C# cannot infer the delegate type after a lambda has been
                ;; widened through object.  Keep this constructor initializer
                ;; direct so both lambdas retain their target Func types.
@@ -2502,6 +2567,8 @@
                      "annotation is null ? null : hasMetavar ? "
                      "CommandSpecParser.ExportNullableString(annotation, global::Pkl.Core.Runtime.Identifier.METAVAR) : null, "
                      "annotation is null ? null : OptionBehavior.ExportCompletionCandidates(annotation))"))
+
+               :else
                (sequence-node [(raw (str " : " label "("))
                                (sequence-node (mapv :node arguments) ", ") (raw ")")]))]
     (-> node

@@ -36,7 +36,9 @@ namespace Pkl.Core.Runtime
     public static class ExcludedMessagePack
     {
         public static ExcludedMessagePackPacker NewDefaultBufferPacker() => new();
+        public static ExcludedMessagePackPacker NewDefaultPacker(System.IO.Stream stream) => new();
         public static ExcludedMessagePackUnpacker NewDefaultUnpacker(byte[] bytes) => new();
+        public static ExcludedMessagePackUnpacker NewDefaultUnpacker(System.IO.Stream stream) => new();
     }
     public sealed class ExcludedMessagePackPacker : IDisposable
     {
@@ -45,7 +47,9 @@ namespace Pkl.Core.Runtime
         public sbyte[] ToByteArray() => throw Excluded();
         public ExcludedMessagePackPacker PackNil() => throw Excluded();
         public ExcludedMessagePackPacker PackBoolean(bool value) => throw Excluded();
+        public ExcludedMessagePackPacker PackInt(int value) => throw Excluded();
         public ExcludedMessagePackPacker PackLong(long value) => throw Excluded();
+        public ExcludedMessagePackPacker PackLong(long? value) => throw Excluded();
         public ExcludedMessagePackPacker PackByte(sbyte value) => throw Excluded();
         public ExcludedMessagePackPacker PackBinaryHeader(int length) => throw Excluded();
         public ExcludedMessagePackPacker WritePayload(sbyte[] value) => throw Excluded();
@@ -54,6 +58,7 @@ namespace Pkl.Core.Runtime
         public ExcludedMessagePackPacker PackString(string value) => throw Excluded();
         public ExcludedMessagePackPacker PackArrayHeader(int size) => throw Excluded();
         public ExcludedMessagePackPacker PackMapHeader(int size) => throw Excluded();
+        public void Flush() => throw Excluded();
         public void Close() { }
         public void Dispose() { }
     }
@@ -61,9 +66,34 @@ namespace Pkl.Core.Runtime
     {
         private static NotSupportedException Excluded() => new("MessagePack is excluded from the Vibeformer product target.");
         public bool HasNext() => throw Excluded();
-        public object UnpackValue() => throw Excluded();
+        public int UnpackArrayHeader() => throw Excluded();
+        public int UnpackInt() => throw Excluded();
+        internal ExcludedMessagePackValue UnpackValue() => throw Excluded();
         public void Close() { }
         public void Dispose() { }
+    }
+    internal sealed class ExcludedMessagePackValue : IEnumerable<ExcludedMessagePackValue>
+    {
+        private static NotSupportedException Excluded() => new("MessagePack is excluded from the Vibeformer product target.");
+        public ExcludedMessagePackValue() { }
+        public ExcludedMessagePackValue(string value) { }
+        public ExcludedMessagePackValue AsArrayValue() => throw Excluded();
+        public ExcludedMessagePackValue AsBinaryValue() => throw Excluded();
+        public ExcludedMessagePackValue AsBooleanValue() => throw Excluded();
+        public ExcludedMessagePackValue AsIntegerValue() => throw Excluded();
+        public ExcludedMessagePackValue AsMapValue() => throw Excluded();
+        public ExcludedMessagePackValue AsStringValue() => throw Excluded();
+        public sbyte[] AsByteArray() => throw Excluded();
+        public bool GetBoolean() => throw Excluded();
+        public int AsInt() => throw Excluded();
+        public long AsLong() => throw Excluded();
+        public string AsString() => throw Excluded();
+        public int Size() => throw Excluded();
+        public IList<ExcludedMessagePackValue> List() => throw Excluded();
+        public IDictionary<ExcludedMessagePackValue, ExcludedMessagePackValue> Map() => throw Excluded();
+        public ISet<KeyValuePair<ExcludedMessagePackValue, ExcludedMessagePackValue>> EntrySet() => throw Excluded();
+        public IEnumerator<ExcludedMessagePackValue> GetEnumerator() => throw Excluded();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
     public class JavaTuple2<A, B>
     {
@@ -584,9 +614,11 @@ namespace Pkl.Core.Runtime.Polyglot
     public sealed class Context : IDisposable
     {
         private bool initialized;
+        private bool closed;
         public static Builder NewBuilder(params string[] languages) => new();
         public void Initialize(string language)
         {
+            ObjectDisposedException.ThrowIf(closed, this);
             if (language != "pkl" || initialized) return;
             var vmLanguage = new global::Pkl.Core.Runtime.VmLanguage();
             var vmContext = vmLanguage.CreateContext(
@@ -595,11 +627,13 @@ namespace Pkl.Core.Runtime.Polyglot
                 typeof(global::Pkl.Core.Runtime.VmLanguage), vmContext);
             initialized = true;
         }
-        public void Enter() { }
+        public void Enter() => ObjectDisposedException.ThrowIf(closed, this);
         public void Leave() { }
         public void Close() => Close(false);
         public void Close(bool cancelIfExecuting)
         {
+            if (closed) return;
+            closed = true;
             if (!initialized) return;
             global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
                 typeof(global::Pkl.Core.Runtime.VmLanguage));
