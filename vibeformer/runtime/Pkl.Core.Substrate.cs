@@ -1033,31 +1033,59 @@ namespace Pkl.Core.Runtime.Polyglot
 
     public sealed class Context : IDisposable
     {
+        private readonly object lifecycleLock = new();
+        private global::Pkl.Core.Runtime.VmContext? vmContext;
         private bool initialized;
         private bool closed;
         public static Builder NewBuilder(params string[] languages) => new();
         public void Initialize(string language)
         {
-            ObjectDisposedException.ThrowIf(closed, this);
-            if (language != "pkl" || initialized) return;
-            var vmLanguage = new global::Pkl.Core.Runtime.VmLanguage();
-            var vmContext = vmLanguage.CreateContext(
-                new global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.Env());
-            global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.InstallContext(
-                typeof(global::Pkl.Core.Runtime.VmLanguage), vmContext);
-            initialized = true;
+            lock (lifecycleLock)
+            {
+                ObjectDisposedException.ThrowIf(closed, this);
+                if (language != "pkl" || initialized) return;
+                var vmLanguage = new global::Pkl.Core.Runtime.VmLanguage();
+                vmContext = vmLanguage.CreateContext(
+                    new global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.Env());
+                initialized = true;
+            }
         }
-        public void Enter() => ObjectDisposedException.ThrowIf(closed, this);
-        public void Leave() { }
+        public void Enter()
+        {
+            global::Pkl.Core.Runtime.VmContext context;
+            lock (lifecycleLock)
+            {
+                ObjectDisposedException.ThrowIf(closed, this);
+                context = initialized && vmContext is not null
+                    ? vmContext
+                    : throw new InvalidOperationException("Pkl context has not been initialized.");
+            }
+            global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.InstallContext(
+                typeof(global::Pkl.Core.Runtime.VmLanguage), context, this);
+        }
+        public void Leave()
+        {
+            global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
+                typeof(global::Pkl.Core.Runtime.VmLanguage), this);
+        }
         public void Close() => Close(false);
         public void Close(bool cancelIfExecuting)
         {
-            if (closed) return;
-            closed = true;
-            if (!initialized) return;
+            lock (lifecycleLock)
+            {
+                if (!closed)
+                {
+                    closed = true;
+                    initialized = false;
+                    vmContext = null;
+                }
+            }
             global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
-                typeof(global::Pkl.Core.Runtime.VmLanguage));
-            initialized = false;
+                typeof(global::Pkl.Core.Runtime.VmLanguage), this, removeAll: true);
+        }
+        internal bool IsClosed
+        {
+            get { lock (lifecycleLock) return closed; }
         }
         public void Dispose() => Close(false);
 
@@ -1763,27 +1791,45 @@ namespace Pkl.Core.Runtime.Truffle.api
 
     public static class TruffleLanguage
     {
-        private static readonly System.Threading.AsyncLocal<Dictionary<Type, IReadOnlyList<object>>?> Contexts = new();
-        internal static void InstallContext(Type languageType, object context)
+        private sealed record InstalledContext(object Value, global::Pkl.Core.Runtime.Polyglot.Context Owner);
+
+        private static readonly System.Threading.AsyncLocal<Dictionary<Type, IReadOnlyList<InstalledContext>>?> Contexts = new();
+        internal static void InstallContext(
+            Type languageType,
+            object context,
+            global::Pkl.Core.Runtime.Polyglot.Context owner)
         {
             var contexts = Contexts.Value is { } existing
-                ? new Dictionary<Type, IReadOnlyList<object>>(existing)
-                : new Dictionary<Type, IReadOnlyList<object>>();
+                ? new Dictionary<Type, IReadOnlyList<InstalledContext>>(existing)
+                : new Dictionary<Type, IReadOnlyList<InstalledContext>>();
             var stack = contexts.TryGetValue(languageType, out var current)
                 ? current.ToList()
-                : new List<object>();
-            stack.Add(context);
+                : new List<InstalledContext>();
+            stack.Add(new InstalledContext(context, owner));
             contexts[languageType] = stack;
             Contexts.Value = contexts;
         }
-        internal static void RemoveContext(Type languageType)
+        internal static void RemoveContext(
+            Type languageType,
+            global::Pkl.Core.Runtime.Polyglot.Context owner,
+            bool removeAll = false)
         {
             if (Contexts.Value is not { } existing) return;
-            var contexts = new Dictionary<Type, IReadOnlyList<object>>(existing);
-            if (contexts.TryGetValue(languageType, out var current) && current.Count > 1)
-                contexts[languageType] = current.Take(current.Count - 1).ToList();
+            if (!existing.TryGetValue(languageType, out var current)) return;
+            IReadOnlyList<InstalledContext> remaining;
+            if (removeAll)
+            {
+                remaining = current.Where(entry => !ReferenceEquals(entry.Owner, owner)).ToList();
+            }
             else
-                contexts.Remove(languageType);
+            {
+                if (current.Count == 0 || !ReferenceEquals(current[^1].Owner, owner))
+                    throw new InvalidOperationException("Pkl contexts must be left in enter order.");
+                remaining = current.Take(current.Count - 1).ToList();
+            }
+            var contexts = new Dictionary<Type, IReadOnlyList<InstalledContext>>(existing);
+            if (remaining.Count == 0) contexts.Remove(languageType);
+            else contexts[languageType] = remaining;
             Contexts.Value = contexts;
         }
         public sealed class Env
@@ -1810,10 +1856,16 @@ namespace Pkl.Core.Runtime.Truffle.api
             private ContextReference(Type languageType) => this.languageType = languageType;
             internal static ContextReference<TContext> Create(Type languageType) => new(languageType);
             internal static ContextReference<T> Create<TLanguage, T>(Type languageType) where T : class => new(languageType);
-            internal TContext Get(Node? node) =>
-                Contexts.Value is { } contexts && contexts.TryGetValue(languageType, out var stack)
-                    ? (TContext)stack[^1]
-                    : throw new InvalidOperationException("Pkl context has not been installed for this execution.");
+            internal TContext Get(Node? node)
+            {
+                if (Contexts.Value is not { } contexts ||
+                    !contexts.TryGetValue(languageType, out var stack) ||
+                    stack.Count == 0)
+                    throw new InvalidOperationException("Pkl context has not been installed for this execution.");
+                var installed = stack[^1];
+                ObjectDisposedException.ThrowIf(installed.Owner.IsClosed, installed.Owner);
+                return (TContext)installed.Value;
+            }
         }
     }
 

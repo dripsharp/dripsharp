@@ -1,9 +1,21 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Pkl.Core;
 using Pkl.Core.EvaluatorSettings;
+using Pkl.Core.Module;
+using Pkl.Core.Packages;
+using Pkl.Core.Project;
+using Pkl.Core.Resource;
+using Pkl.Core.Runtime;
+using Pkl.Core.Settings;
+using PklHttpClient = Pkl.Core.Http.HttpClient;
 
 static class Check
 {
@@ -185,6 +197,8 @@ static class PackageConsumer
             () => disposable.Evaluate(ModuleSource.Text("value = 1")),
             "evaluation after disposal must fail deterministically");
 
+        VerifyEvaluatorContextIsolation();
+
         using Evaluator evaluator = Evaluator.Preconfigured();
         Func<ModuleSource, PModule> evaluate = evaluator.Evaluate;
         Func<ModuleSource, object> evaluateOutputValue = evaluator.EvaluateOutputValue;
@@ -194,5 +208,210 @@ static class PackageConsumer
         Check.That(evaluateExpression.Target is EvaluatorImpl, "expression evaluator entry target");
 
         Console.WriteLine("Independent Pkl.Core package consumer passed.");
+    }
+
+    static void VerifyEvaluatorContextIsolation()
+    {
+        string work = Path.Combine(Path.GetTempPath(), "vibeformer-context-" + Guid.NewGuid());
+        string firstRoot = Path.Combine(work, "first");
+        string secondRoot = Path.Combine(work, "second");
+        string outerRoot = Path.Combine(work, "outer");
+        string innerRoot = Path.Combine(work, "inner");
+        Directory.CreateDirectory(firstRoot);
+        Directory.CreateDirectory(secondRoot);
+        Directory.CreateDirectory(outerRoot);
+        Directory.CreateDirectory(innerRoot);
+        var firstHttp = new FixedHttpClient("first");
+        var secondHttp = new FixedHttpClient("second");
+        var outerHttp = new FixedHttpClient("outer");
+        var innerHttp = new FixedHttpClient("inner");
+        var firstReader = new ContextResourceReader("first");
+        var secondReader = new ContextResourceReader("second");
+        var outerReader = new ContextResourceReader("outer");
+        var innerReader = new ContextResourceReader("inner");
+        Evaluator? first = null;
+        Evaluator? second = null;
+        Evaluator? outer = null;
+        Evaluator? inner = null;
+        try
+        {
+            first = BuildContextEvaluator("first", firstRoot, firstHttp, firstReader);
+            second = BuildContextEvaluator("second", secondRoot, secondHttp, secondReader);
+
+            // Construction order must not choose the evaluator used by a later operation.
+            ObserveContextEvaluator(first, "first", firstRoot);
+            ObserveContextEvaluator(second, "second", secondRoot);
+            ObserveContextEvaluator(first, "first", firstRoot);
+
+            // Each evaluator runs on an independent flowed execution context at the same time.
+            Task firstTask = Task.Run(() =>
+            {
+                for (int i = 0; i < 4; i++) ObserveContextEvaluator(first, "first", firstRoot);
+            });
+            Task secondTask = Task.Run(() =>
+            {
+                for (int i = 0; i < 4; i++) ObserveContextEvaluator(second, "second", secondRoot);
+            });
+            Task.WaitAll(firstTask, secondTask);
+
+            // Closing one live evaluator must neither pop nor invalidate the other evaluator.
+            second.Dispose();
+            Check.Throws<InvalidOperationException>(
+                () => second.Evaluate(ModuleSource.Text("value = 1")),
+                "closed evaluator must reject later use");
+            ObserveContextEvaluator(first, "first", firstRoot);
+
+            inner = BuildContextEvaluator("inner", innerRoot, innerHttp, innerReader);
+            outer = BuildContextEvaluator("outer", outerRoot, outerHttp, outerReader);
+            bool nestedRan = false;
+            outerReader.NestedAction = () =>
+            {
+                Check.That(!nestedRan, "nested context callback must run exactly once");
+                nestedRan = true;
+                string settingsFile = Path.Combine(innerRoot, "settings.pkl");
+                File.WriteAllText(settingsFile,
+                    "amends \"pkl:settings\"\neditor = Sublime\n",
+                    new UTF8Encoding(false));
+                Project project = Project.LoadFromPath(Path.Combine(innerRoot, "PklProject"));
+                PklSettings settings = PklSettings.Load(ModuleSource.PathFromPath(settingsFile));
+                Check.That(project.GetDependencies().RemoteDependencies.Count == 0,
+                    "nested project load");
+                Check.That(settings.GetEditor().Equals(PklSettings.Editor.SUBLIME),
+                    "nested settings load");
+                ObserveContextEvaluator(inner, "inner", innerRoot);
+                inner.Dispose();
+                Check.Throws<InvalidOperationException>(
+                    () => inner.Evaluate(ModuleSource.Text("value = 1")),
+                    "nested evaluator must reject use after close");
+            };
+            ObserveContextEvaluator(outer, "outer", outerRoot);
+            Check.That(nestedRan, "nested project/settings and evaluator operations were not exercised");
+        }
+        finally
+        {
+            inner?.Dispose();
+            outer?.Dispose();
+            second?.Dispose();
+            first?.Dispose();
+            innerHttp.Dispose();
+            outerHttp.Dispose();
+            secondHttp.Dispose();
+            firstHttp.Dispose();
+            if (Directory.Exists(work)) Directory.Delete(work, true);
+        }
+    }
+
+    static Evaluator BuildContextEvaluator(
+        string identity,
+        string root,
+        FixedHttpClient httpClient,
+        ContextResourceReader reader)
+    {
+        string projectFile = Path.Combine(root, "PklProject");
+        File.WriteAllText(projectFile, "amends \"pkl:Project\"\n", new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(root, "value.pkl"),
+            $"value = \"{identity}\"\n", new UTF8Encoding(false));
+        var dependencies = new DeclaredDependencies(
+            new Dictionary<string, Dependency.RemoteDependency>(),
+            new Dictionary<string, DeclaredDependencies>(),
+            new Uri(projectFile),
+            null);
+        EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+        var resources = new List<Regex>(builder.GetAllowedResources()) { new("context:") };
+        Evaluator evaluator = builder
+            .SetAllowedResources(resources)
+            .SetRootDir(root)
+            .SetEnvironmentVariables(new Dictionary<string, string> { ["CONTEXT_ID"] = identity })
+            .SetExternalProperties(new Dictionary<string, string> { ["context.id"] = identity })
+            .SetHttpClient(httpClient)
+            .AddResourceReader(reader)
+            .SetProjectDependencies(dependencies)
+            .Build();
+        reader.ExpectedSecurityManager = builder.GetSecurityManager()
+            ?? throw new InvalidOperationException("context security manager was not built");
+        reader.ExpectedHttpClient = httpClient;
+        reader.ExpectedProjectFile = new Uri(projectFile);
+        return evaluator;
+    }
+
+    static void ObserveContextEvaluator(Evaluator evaluator, string identity, string root)
+    {
+        PModule configured = evaluator.Evaluate(ModuleSource.Text(
+            "reader = read(\"context:value\")\n" +
+            "environment = read(\"env:CONTEXT_ID\")\n" +
+            "property = read(\"prop:context.id\")\n"));
+        Check.That((string)configured.GetProperty("reader")! == identity,
+            $"{identity} reader context");
+        Check.That((string)configured.GetProperty("environment")! == identity,
+            $"{identity} environment context");
+        Check.That((string)configured.GetProperty("property")! == identity,
+            $"{identity} property context");
+
+        PModule local = evaluator.Evaluate(ModuleSource.PathFromPath(Path.Combine(root, "value.pkl")));
+        Check.That((string)local.GetProperty("value")! == identity,
+            $"{identity} root/security context");
+
+        PModule remote = evaluator.Evaluate(ModuleSource.Uri(
+            new Uri($"https://context.test/{identity}.pkl")));
+        Check.That((string)remote.GetProperty("value")! == identity,
+            $"{identity} HTTP context");
+    }
+
+    sealed class ContextResourceReader(string identity) : ResourceReader
+    {
+        public Pkl.Core.SecurityManager? ExpectedSecurityManager { get; set; }
+        public PklHttpClient? ExpectedHttpClient { get; set; }
+        public Uri? ExpectedProjectFile { get; set; }
+        public Action? NestedAction { get; set; }
+
+        public string GetUriScheme() => "context";
+        public bool HasHierarchicalUris() => false;
+        public bool IsGlobbable() => false;
+
+        public JavaOptional<object> Read(Uri uri)
+        {
+            NestedAction?.Invoke();
+            VmContext context = VmContext.Get(null!);
+            Check.That(ReferenceEquals(context.GetSecurityManager(), ExpectedSecurityManager),
+                $"{identity} security manager binding");
+            Check.That(ReferenceEquals(context.GetHttpClient(), ExpectedHttpClient),
+                $"{identity} HTTP client binding");
+            Check.That(context.GetEnvironmentVariables()["CONTEXT_ID"] == identity,
+                $"{identity} environment binding");
+            Check.That(context.GetExternalProperties()["context.id"] == identity,
+                $"{identity} property binding");
+            ProjectDependenciesManager? dependencies = context.GetProjectDependenciesManager();
+            Check.That(dependencies is not null &&
+                dependencies.GetProjectFileUri() == ExpectedProjectFile,
+                $"{identity} project dependency binding");
+            return JavaOptional<object>.Of(identity);
+        }
+
+        public void Close() { }
+        public void Dispose() { }
+    }
+
+    sealed class FixedHttpClient(string identity) : PklHttpClient
+    {
+        bool disposed;
+
+        public JavaHttpResponse<T> Send<T>(
+            JavaHttpRequest request,
+            JavaHttpBodyHandler<T> responseBodyHandler,
+            PklHttpClient.HttpRequestChecker httpRequestChecker)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            httpRequestChecker(request.Uri());
+            var message = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = new HttpRequestMessage(HttpMethod.Get, request.Uri()),
+                Content = new StringContent($"value = \"{identity}\"\n", Encoding.UTF8)
+            };
+            T body = responseBodyHandler(message);
+            return new JavaHttpResponse<T>(message, body);
+        }
+
+        public void Close() => Dispose();
+        public void Dispose() => disposed = true;
     }
 }
