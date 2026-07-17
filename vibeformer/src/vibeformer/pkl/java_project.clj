@@ -479,7 +479,7 @@
    "java.nio.file.WatchService" ["global::Pkl.Core.Runtime.JavaWatchService" :pkl-core.type/watch-service]
    "java.nio.file.AccessDeniedException" ["global::System.UnauthorizedAccessException" :dotnet.type/unauthorized]
    "java.nio.file.NotDirectoryException" ["global::System.IO.DirectoryNotFoundException" :dotnet.type/directory-not-found]
-   "java.nio.file.FileSystemAlreadyExistsException" ["global::System.IO.IOException" :dotnet.type/io-exception]
+   "java.nio.file.FileSystemAlreadyExistsException" ["global::Pkl.Core.Runtime.JavaFileSystemAlreadyExistsException" :dotnet.type/file-system-already-exists]
    "java.nio.file.FileSystemNotFoundException" ["global::System.IO.IOException" :dotnet.type/io-exception]
    "java.nio.file.attribute.BasicFileAttributes" ["global::System.IO.FileSystemInfo" :dotnet.type/file-info]
    "java.nio.file.attribute.PosixFilePermission" ["global::System.IO.UnixFileMode" :dotnet.type/unix-file-mode]

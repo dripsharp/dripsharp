@@ -1131,7 +1131,10 @@
           "executable:java.nio.file.Path#resolve(java.nio.file.Path)" (compat-call "PathResolve" (into [target] args))
           "executable:java.nio.file.Path#toUri()" (compat-call "PathToUri" [target])
           "executable:java.nio.file.Path#toAbsolutePath()" (invoke (raw "global::System.IO.Path.GetFullPath") [target])
-          "executable:java.nio.file.Path#toRealPath(java.nio.file.LinkOption[])" (invoke (raw "global::System.IO.Path.GetFullPath") [target])
+          "executable:java.nio.file.Path#toRealPath(java.nio.file.LinkOption[])" (compat-call "RealPath" [target])
+          "executable:java.nio.file.Path#normalize()" (compat-call "NormalizePath" [target])
+          "executable:java.nio.file.Path#startsWith(java.nio.file.Path)"
+          (compat-call "PathStartsWith" (into [target] args))
           "executable:java.nio.file.Path#getFileName()" (invoke (raw "global::System.IO.Path.GetFileName") [target])
           "executable:java.nio.file.Path#getParent()" (invoke (raw "global::System.IO.Path.GetDirectoryName") [target])
           "executable:java.nio.file.Path#resolveSibling(java.lang.String)" (compat-call "PathResolveSibling" (into [target] args))

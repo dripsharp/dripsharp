@@ -1,0 +1,2 @@
+value = import("dependency.pkl").value * 2
+siblings = import*("./*.pkl").keys

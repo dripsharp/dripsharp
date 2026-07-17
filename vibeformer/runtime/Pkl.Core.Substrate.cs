@@ -344,7 +344,84 @@ namespace Pkl.Core.Runtime
         public virtual bool IsReadOnly() => false;
         public virtual string GetSeparator() => System.IO.Path.DirectorySeparatorChar.ToString();
         public virtual void Close() { }
-        public void Dispose() { }
+        public void Dispose() => Close();
+    }
+
+    public sealed class JavaFileSystemAlreadyExistsException : System.IO.IOException
+    {
+        public JavaFileSystemAlreadyExistsException(string? message = null) : base(message) { }
+    }
+
+    public sealed class JavaZipFileSystem : JavaFileSystem
+    {
+        private readonly string root;
+        private bool open = true;
+
+        public JavaZipFileSystem(Uri uri)
+        {
+            var text = uri.OriginalString;
+            if (!text.StartsWith("jar:", StringComparison.OrdinalIgnoreCase))
+                throw new System.IO.IOException($"Expected a jar URI, got `{uri}`.");
+            var nested = text[4..];
+            var separator = nested.IndexOf("!/", StringComparison.Ordinal);
+            if (separator >= 0) nested = nested[..separator];
+            if (!Uri.TryCreate(nested, UriKind.Absolute, out var archiveUri) || !archiveUri.IsFile)
+                throw new System.IO.IOException($"JAR URI `{uri}` does not identify a local archive.");
+
+            root = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                "vibeformer-modulepath-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(root);
+            try
+            {
+                using var archive = System.IO.Compression.ZipFile.OpenRead(archiveUri.LocalPath);
+                foreach (var entry in archive.Entries)
+                {
+                    var entryPath = entry.FullName.Replace('\\', '/');
+                    var segments = entryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    if (System.IO.Path.IsPathRooted(entryPath) ||
+                        segments.Any(segment => segment is "." or ".."))
+                        throw new System.IO.IOException(
+                            $"Archive `{archiveUri.LocalPath}` contains unsafe entry `{entry.FullName}`.");
+                    if (segments.Length == 0) continue;
+                    var destination = System.IO.Path.GetFullPath(
+                        System.IO.Path.Combine(new[] { root }.Concat(segments).ToArray()));
+                    var relative = System.IO.Path.GetRelativePath(root, destination);
+                    if (System.IO.Path.IsPathRooted(relative) || relative == ".." ||
+                        relative.StartsWith(".." + System.IO.Path.DirectorySeparatorChar,
+                            StringComparison.Ordinal))
+                        throw new System.IO.IOException(
+                            $"Archive `{archiveUri.LocalPath}` entry `{entry.FullName}` escapes its root.");
+                    if (entryPath.EndsWith("/", StringComparison.Ordinal))
+                    {
+                        System.IO.Directory.CreateDirectory(destination);
+                        continue;
+                    }
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destination)!);
+                    System.IO.Compression.ZipFileExtensions.ExtractToFile(
+                        entry, destination, overwrite: false);
+                }
+            }
+            catch
+            {
+                try { System.IO.Directory.Delete(root, recursive: true); }
+                catch { }
+                throw;
+            }
+        }
+
+        public override IEnumerable<string> GetRootDirectories() => new[] { root };
+        public override bool IsOpen() => open;
+        public override bool IsReadOnly() => true;
+        public override string GetPath(string first, params string[] more) =>
+            System.IO.Path.Combine(new[] { root, first.TrimStart('/', '\\') }
+                .Concat(more).ToArray());
+        public override void Close()
+        {
+            if (!open) return;
+            open = false;
+            if (System.IO.Directory.Exists(root))
+                System.IO.Directory.Delete(root, recursive: true);
+        }
     }
 
     public class JavaProxySelector
@@ -357,7 +434,10 @@ namespace Pkl.Core.Runtime
     {
         public static JavaFileSystem GetDefault() => new();
         public static JavaFileSystem GetFileSystem(Uri uri) => new();
-        public static JavaFileSystem NewFileSystem(Uri uri, IDictionary<string, object> environment) => new();
+        public static JavaFileSystem NewFileSystem(Uri uri, IDictionary<string, object> environment) =>
+            string.Equals(uri.Scheme, "jar", StringComparison.OrdinalIgnoreCase)
+                ? new JavaZipFileSystem(uri)
+                : new JavaFileSystem();
     }
     public sealed class JavaFileSystemProvider
     {

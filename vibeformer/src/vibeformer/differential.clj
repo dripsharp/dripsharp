@@ -516,12 +516,51 @@
                  (str observation "\t" kind "\t" (b64 expectation) "\n"))
                entries))))
 
+(declare package-only-project restore-package-only-project!)
+
+(def ^:private dotnet-non-network-loading-observations
+  #{"module-source/forms"
+    "local/import-resource"
+    "local/list-glob"
+    "modulepath/directory-archive"
+    "stdlib/import"
+    "custom/module-resource-lifecycle"
+    "resources/environment-property"
+    "security/policy"
+    "assembly/module-loading"
+    "embedded/resource-loading"
+    "platform/path-uri-policy"
+    "ownership/disposal"})
+
+(defn- loading-package-project
+  [package-id version target-framework]
+  (str/replace
+   (package-only-project package-id version target-framework)
+   "</Project>"
+   (str "  <ItemGroup>\n"
+        "    <EmbeddedResource Include=\""
+        "fixtures/modules/main.pkl"
+        "\" LogicalName=\"Contract.Modules.main.pkl\" />\n"
+        "    <EmbeddedResource Include=\""
+        "fixtures/modules/dependency.pkl"
+        "\" LogicalName=\"Contract.Modules.dependency.pkl\" />\n"
+        "    <EmbeddedResource Include=\""
+        "fixtures/resources/payload.txt"
+        "\" LogicalName=\"Contract.Resources.payload.txt\" />\n"
+        "    <EmbeddedResource Include=\""
+        "fixtures/resources/second.txt"
+        "\" LogicalName=\"Contract.Resources.second.txt\" />\n"
+        "  </ItemGroup>\n"
+        "</Project>")))
+
 (defn- verify-loading-contract!
-  [{:keys [root run-command! java-release java-home entries]}]
+  [{:keys [root package-proof run-command! java-release java-home entries]}]
   (let [fixtures (paths/resolve-path root "vibeformer" "validation" "loading-contract")
+        dotnet-fixtures (paths/resolve-path fixtures "fixtures" "dotnet")
         evidence (paths/resolve-path fixtures "ContractEvidence.tsv")
         expectations (paths/resolve-path fixtures "ContractExpectations.tsv")
         oracle-source (paths/resolve-path fixtures "LoadingContractUpstreamOracle.java")
+        package-probe-source (paths/resolve-path fixtures "LoadingContractDotNetProbe.cs")
         contract (verify-loading-contract-evidence! root evidence expectations)
         proof-root (harness/clean-directory!
                     (paths/resolve-path root "vibeformer" "validation-output"
@@ -532,6 +571,14 @@
         expected-output (write-loading-expectations!
                          (paths/resolve-path proof-root "expected.tsv")
                          (:shared contract))
+        package-entries (filterv #(contains? dotnet-non-network-loading-observations
+                                             (:observation %))
+                                 (:expectations contract))
+        package-expected-output (write-loading-expectations!
+                                 (paths/resolve-path proof-root "package-expected.tsv")
+                                 package-entries)
+        package-output (paths/resolve-path proof-root "package.tsv")
+        package-perturbed-output (paths/resolve-path proof-root "package-perturbed.tsv")
         perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
         work (doto (paths/resolve-path proof-root "upstream-work")
                (Files/createDirectories (make-array FileAttribute 0)))
@@ -539,9 +586,37 @@
         classpath (str/join File/pathSeparator (map str (cons oracle-classes entries)))
         javac (paths/resolve-path java-home "bin" "javac")
         java (paths/resolve-path java-home "bin" "java")
-        upstream-root (paths/resolve-path root "research" "pkl")]
-    (when-not (paths/regular-file? oracle-source)
-      (fail! "Loading contract upstream oracle is missing" {:path (str oracle-source)}))
+        upstream-root (paths/resolve-path root "research" "pkl")
+        package-root (doto (paths/resolve-path proof-root "package-consumer")
+                       (Files/createDirectories (make-array FileAttribute 0)))
+        package-work (paths/resolve-path package-root "work")
+        package-project (paths/resolve-path package-root "LoadingContractConsumer.csproj")
+        package-source (paths/resolve-path package-root "Program.cs")
+        package-config (paths/resolve-path package-root "NuGet.Config")
+        packages (doto (paths/resolve-path proof-root "package-cache")
+                   (Files/createDirectories (make-array FileAttribute 0)))
+        source-package-config (paths/resolve-path (:consumer-root package-proof) "NuGet.Config")
+        installed-consumer-project
+        (paths/resolve-path (:consumer-root package-proof) "Pkl.Core.PackageConsumer.csproj")
+        target-match (re-find #"<TargetFramework>(net\d+\.\d+)</TargetFramework>"
+                              (Files/readString installed-consumer-project))
+        target-framework (second target-match)
+        identities (get-in package-proof [:dependency-proof :packages])
+        {:keys [id version]} (:identity package-proof)]
+    (doseq [required [oracle-source package-probe-source source-package-config
+                      (paths/resolve-path dotnet-fixtures "modules" "main.pkl")
+                      (paths/resolve-path dotnet-fixtures "modules" "dependency.pkl")
+                      (paths/resolve-path dotnet-fixtures "resources" "payload.txt")
+                      (paths/resolve-path dotnet-fixtures "resources" "second.txt")]]
+      (when-not (paths/regular-file? required)
+        (fail! "Loading contract proof input is missing" {:path (str required)})))
+    (when-not target-framework
+      (fail! "Could not determine the loading consumer target framework"
+             {:project (str installed-consumer-project)}))
+    (when-not (= 12 (count package-entries))
+      (fail! "The package-only non-network loading observation selection changed"
+             {:expected 12 :actual (count package-entries)
+              :observations (mapv :observation package-entries)}))
     (run-command! {:command ["./gradlew" ":pkl-commons-test:processResources" "--console=plain"]
                    :directory upstream-root})
     (run-command! {:command [(str javac) "--release" (str java-release)
@@ -551,16 +626,60 @@
     (run-command! {:command [(str java) "-cp" classpath "LoadingContractUpstreamOracle"
                              (str root) (str oracle-output) (str work)]
                    :directory root})
+    (doseq [[source relative]
+            [[(paths/resolve-path dotnet-fixtures "modules" "main.pkl")
+              ["fixtures" "modules" "main.pkl"]]
+             [(paths/resolve-path dotnet-fixtures "modules" "dependency.pkl")
+              ["fixtures" "modules" "dependency.pkl"]]
+             [(paths/resolve-path dotnet-fixtures "resources" "payload.txt")
+              ["fixtures" "resources" "payload.txt"]]
+             [(paths/resolve-path dotnet-fixtures "resources" "second.txt")
+              ["fixtures" "resources" "second.txt"]]]]
+      (let [destination (apply paths/resolve-path package-root relative)]
+        (Files/createDirectories (.getParent destination) (make-array FileAttribute 0))
+        (Files/copy source destination
+                    (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+    (write-text! package-project (loading-package-project id version target-framework))
+    (Files/copy package-probe-source package-source
+                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+    (Files/copy source-package-config package-config
+                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+    (let [package-dependencies
+          (restore-package-only-project! run-command! package-project package-config
+                                         packages package-proof identities)]
+      (run-command! {:command ["dotnet" "build" (str package-project) "--nologo"
+                               "--verbosity:minimal" "--no-restore" "--no-incremental"
+                               "-warnaserror"]
+                     :directory package-root})
+      (let [package-run
+            (run-command! {:command ["dotnet" "run" "--project" (str package-project)
+                                     "--no-build" "--no-restore" "--"
+                                     (str (paths/resolve-path fixtures "fixtures"))
+                                     (str package-output) (str package-work)]
+                           :directory package-root})]
+        (when-not (str/includes? (:output package-run)
+                                 "Package-only non-network loading and policy validation passed.")
+          (fail! "Package-only loading probe did not report successful validation"
+                 {:output (:output package-run)}))
     (let [comparison (assert-equal! "Pkl loading/policy/configuration contract"
                                     expected-output oracle-output)
-          perturbation (prove-perturbation! expected-output perturbed-output)]
+          package-comparison (assert-equal! "Pkl non-network loading/policy contract"
+                                            package-expected-output package-output)
+          perturbation (prove-perturbation! expected-output perturbed-output)
+          package-perturbation (prove-perturbation! package-expected-output
+                                                    package-perturbed-output)]
       {:summary (assoc (:summary contract)
                        :observations (:matched comparison)
+                       :package-observations (:matched package-comparison)
+                       :package-perturbation-detected-at
+                       (get-in package-perturbation [:mismatch :line])
                        :perturbation-detected-at (get-in perturbation [:mismatch :line]))
        :evidence evidence
        :expectations expectations
        :expected-output expected-output
-       :oracle-output oracle-output})))
+       :oracle-output oracle-output
+       :package-output package-output
+       :package-dependencies package-dependencies})))))
 
 (defn- package-only-project [package-id version target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
@@ -808,8 +927,9 @@
                  "--no-build" "--no-restore" "--" (str manifest)
                  (str package-output)]
        :directory consumer-root}])
-    (let [loading-contract (verify-loading-contract!
-                            {:root root :run-command! run-command!
+          (let [loading-contract (verify-loading-contract!
+                            {:root root :package-proof package-proof
+                             :run-command! run-command!
                              :java-release java-release :java-home java-home :entries entries})
           schema-proof (verify-schema-codegen-binding!
                         {:root root :package-proof package-proof :run-command! run-command!

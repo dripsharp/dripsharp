@@ -68,8 +68,8 @@
                   (paths/resolve-path fixtures "ContractExpectations.tsv"))
         summary (:summary contract)]
     (is (= 52 (:families summary)))
-    (is (= 5 (:existing-evidence summary)))
-    (is (= 47 (:pending-in-scope summary)))
+    (is (= 25 (:existing-evidence summary)))
+    (is (= 27 (:pending-in-scope summary)))
     (is (= 48 (:jvm-shared-families summary)))
     (is (= 4 (:dotnet-adaptation-families summary)))
     (is (= 16 (:jvm-shared-observations summary)))

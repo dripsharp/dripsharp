@@ -1332,6 +1332,51 @@ internal static class JavaCompat
     internal static string PathResolve(string basis, string value) => Path.Combine(basis, value);
     internal static string PathResolveSibling(string basis, string value) =>
         Path.Combine(Path.GetDirectoryName(basis) ?? string.Empty, value);
+    internal static string NormalizePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        return Path.IsPathRooted(path)
+            ? fullPath
+            : Path.GetRelativePath(Environment.CurrentDirectory, fullPath);
+    }
+    internal static string RealPath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(fullPath) ??
+            throw new IOException($"Path `{path}` has no filesystem root.");
+        var current = root;
+        var remainder = fullPath[root.Length..];
+        foreach (var segment in remainder.Split(
+                     new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            FileSystemInfo info = Directory.Exists(current)
+                ? new DirectoryInfo(current)
+                : new FileInfo(current);
+            if (!info.Exists)
+                throw new FileNotFoundException($"Cannot resolve missing path `{path}`.", current);
+            if ((info.Attributes & FileAttributes.ReparsePoint) == 0) continue;
+            var target = info.ResolveLinkTarget(returnFinalTarget: true) ??
+                throw new IOException($"Cannot resolve symbolic link `{current}`.");
+            current = Path.GetFullPath(target.FullName);
+        }
+        return Path.GetFullPath(current);
+    }
+    internal static bool PathStartsWith(string path, string basis)
+    {
+        var candidate = Path.GetFullPath(path);
+        var root = Path.GetFullPath(basis);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (string.Equals(candidate, root, comparison)) return true;
+        var relative = Path.GetRelativePath(root, candidate);
+        return !Path.IsPathRooted(relative) &&
+               !string.Equals(relative, "..", comparison) &&
+               !relative.StartsWith(".." + Path.DirectorySeparatorChar, comparison) &&
+               !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, comparison);
+    }
     internal static int PathNameCount(string path) => path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
         .Count(segment => !string.IsNullOrEmpty(segment));
     internal static string PathName(string path, int index) =>

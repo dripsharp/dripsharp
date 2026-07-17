@@ -106,7 +106,7 @@
 
     (testing "the entire selected declaration and body closure is accounted for"
       (is (= 657 (:compilation-units summary)))
-      (is (= 660 (:generated-files summary)))
+      (is (= 661 (:generated-files summary)))
       (is (= 28 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
@@ -171,8 +171,14 @@
               evaluator-settings (slurp (str (paths/resolve-path
                                                source-root "EvaluatorSettings"
                                                "PklEvaluatorSettings.cs")))
+              file-system-manager (slurp (str (paths/resolve-path
+                                                source-root "Runtime"
+                                                "FileSystemManager.cs")))
+              loading-runtime (slurp (str (paths/resolve-path
+                                            source-root "Runtime" "Substrate"
+                                            "Pkl.Core.Loading.cs")))
               selected-api [evaluator-builder module-source security-managers
-                            evaluator-settings]
+                            evaluator-settings loading-runtime]
               exact-stub #"(?ms)^public[^\n{]+ ([A-Z][A-Za-z0-9_]*)\([^)]*\) \{\nreturn (null!|default!);\n\}"]
           (testing "the evaluator, source, and standard-policy public closure is exact"
             (is (= evaluator-builder-methods
@@ -199,7 +205,16 @@
             ;; custom managers that do not configure root-path resolution.
             (is (= [["ResolveSecurePath" "null!"]]
                    (mapv #(vec (rest %)) (re-seq exact-stub security-manager))))
-            (is (not (str/includes? evaluator-settings "NoCache.Value")))))))
+            (is (not (str/includes? evaluator-settings "NoCache.Value")))
+            (is (str/includes? security-managers "JavaCompat.RealPath"))
+            (is (str/includes? security-managers "JavaCompat.NormalizePath"))
+            (is (str/includes? security-managers "JavaCompat.PathStartsWith"))
+            (is (str/includes? file-system-manager
+                               "JavaFileSystemAlreadyExistsException"))
+            (is (str/includes? loading-runtime "CreateAssembly"))
+            (is (str/includes? loading-runtime "CreateEmbeddedResources"))
+            (is (str/includes? loading-runtime "static Platform()"))
+            (is (str/includes? loading-runtime "static JdkHttpClient()"))))))
 
     (testing "two independent closures emit byte-for-byte identical projects"
       (is (= (directory-bytes (:project-root first-emission))
