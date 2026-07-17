@@ -242,6 +242,8 @@ public final class CoreUpstreamOracle {
       return "type:expected-string-got-int";
     }
     if (message.contains("Cannot find property `missing`")) return "evaluation:missing-property";
+    var missingMember = normalizeMissingMemberError(message);
+    if (missingMember != null) return missingMember;
     if (message.contains("output.value") && message.contains("String") && message.contains("Int")) {
       return "output-value-type:expected-string-got-int";
     }
@@ -249,6 +251,29 @@ public final class CoreUpstreamOracle {
       return "security:module-not-allowed";
     }
     return "other:" + encode(message.lines().findFirst().orElse(""));
+  }
+
+  private static String normalizeMissingMemberError(String message) {
+    var lines = message.lines().toList();
+    var diagnostic =
+        lines.stream()
+            .filter(
+                line ->
+                    line.startsWith("Cannot find property `")
+                        || line.startsWith("Cannot find method `"))
+            .findFirst()
+            .orElse(null);
+    if (diagnostic == null) return null;
+
+    int header = lines.indexOf("Did you mean any of the following?");
+    if (header < 0) return null;
+    var suggestions =
+        lines.subList(header + 1, lines.size()).stream().takeWhile(line -> !line.isEmpty()).toList();
+    if (suggestions.isEmpty()) return null;
+    return "missing-member:"
+        + encode(diagnostic)
+        + "|suggestions:"
+        + encode(String.join("\n", suggestions));
   }
 
   private static String hexBytes(byte[] bytes) {

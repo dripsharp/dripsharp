@@ -171,6 +171,8 @@ static class CorePackageProbe
         if (message.Contains("Expected value of type `String`, but got type `Int`", StringComparison.Ordinal))
             return "type:expected-string-got-int";
         if (message.Contains("Cannot find property `missing`", StringComparison.Ordinal)) return "evaluation:missing-property";
+        string? missingMember = NormalizeMissingMemberError(message);
+        if (missingMember is not null) return missingMember;
         if (message.Contains("output.value", StringComparison.Ordinal) &&
             message.Contains("String", StringComparison.Ordinal) &&
             message.Contains("Int", StringComparison.Ordinal))
@@ -178,6 +180,22 @@ static class CorePackageProbe
         if (message.Contains("does not match any entry in the module allowlist", StringComparison.Ordinal))
             return "security:module-not-allowed";
         return "other:" + Encode(message.Split('\n')[0].TrimEnd('\r'));
+    }
+
+    static string? NormalizeMissingMemberError(string message)
+    {
+        string[] lines = message.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        string? diagnostic = lines.FirstOrDefault(line =>
+            line.StartsWith("Cannot find property `", StringComparison.Ordinal) ||
+            line.StartsWith("Cannot find method `", StringComparison.Ordinal));
+        if (diagnostic is null) return null;
+
+        int header = Array.IndexOf(lines, "Did you mean any of the following?");
+        if (header < 0) return null;
+        var suggestions = lines.Skip(header + 1).TakeWhile(line => line.Length > 0).ToArray();
+        if (suggestions.Length == 0) return null;
+        return "missing-member:" + Encode(diagnostic) +
+            "|suggestions:" + Encode(string.Join("\n", suggestions));
     }
 
     static string HexBytes(sbyte[] bytes) =>

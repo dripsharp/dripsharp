@@ -196,6 +196,14 @@
               java-compat (slurp (str (paths/resolve-path
                                         project-root "src" "Vibeformer" "Runtime"
                                         "JavaCompat.cs")))
+              identifier (slurp (str (paths/resolve-path source-root
+                                                           "Runtime" "Identifier.cs")))
+              member-lookup-suggestions
+              (slurp (str (paths/resolve-path source-root
+                                               "Runtime" "MemberLookupSuggestions.cs")))
+              vm-exception-builder
+              (slurp (str (paths/resolve-path source-root
+                                               "Runtime" "VmExceptionBuilder.cs")))
               substrate (slurp (str (paths/resolve-path
                                       source-root "Runtime" "Substrate"
                                       "Pkl.Core.Substrate.cs")))
@@ -265,6 +273,25 @@
                                "var cycles = Project.FindImportCycle(moduleSource)"))
             (is (str/includes? import-analyzer "JavaCompat.NewSortedDictionary<"))
             (is (str/includes? import-analyzer "JavaCompat.NewSortedSet<"))
+            (is (str/includes?
+                 identifier
+                 (str "public sealed partial class Identifier : "
+                      "global::System.IComparable<global::Pkl.Core.Runtime.Identifier>")))
+            (is (str/includes?
+                 member-lookup-suggestions
+                 (str "public sealed partial class Candidate : "
+                      "global::System.IComparable<global::Pkl.Core.Runtime."
+                      "MemberLookupSuggestions.Candidate>")))
+            (is (str/includes? java-compat
+                               "values.OrderBy(value => value, Comparer<T>.Create(JavaCompare))"))
+            (is (str/includes? java-compat
+                               "internal static Comparison<T> NaturalOrder<T>() => JavaCompare;"))
+            (is (str/includes?
+                 vm-exception-builder
+                 "JavaCompat.Sorted(result"))
+            (is (str/includes?
+                 vm-exception-builder
+                 ".Sort(global::Vibeformer.Runtime.JavaCompat.NaturalOrder<global::Pkl.Core.Runtime.Identifier>())"))
             (is (str/includes? security-managers "JavaCompat.RealPath"))
             (is (str/includes? security-managers "JavaCompat.NormalizePath"))
             (is (str/includes? security-managers "JavaCompat.PathStartsWith"))

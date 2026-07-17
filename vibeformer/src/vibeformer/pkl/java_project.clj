@@ -1775,6 +1775,7 @@
                                    "java.util.ListIterator"
                                    "java.util.PrimitiveIterator$OfLong"
                                    "java.lang.Iterable"
+                                   "java.lang.Comparable"
                                    "java.lang.AutoCloseable"
                                    "java.io.Closeable"
                                    "com.oracle.truffle.api.instrumentation.InstrumentableNode$WrapperNode"}

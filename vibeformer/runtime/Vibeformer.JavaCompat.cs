@@ -1463,11 +1463,12 @@ internal static class JavaCompat
             ? MidpointRounding.ToZero
             : MidpointRounding.ToEven);
     internal static IEnumerable<T> Filter<T>(IEnumerable<T> values, Func<T, bool> predicate) => values.Where(predicate);
-    internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values) => values.OrderBy(value => value);
+    internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values) =>
+        values.OrderBy(value => value, Comparer<T>.Create(JavaCompare));
     internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values, IComparer<T> comparer) => values.OrderBy(value => value, comparer);
     internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values, Comparison<T> comparison) =>
         values.OrderBy(value => value, Comparer<T>.Create(comparison));
-    internal static Comparison<T> NaturalOrder<T>() => Comparer<T>.Default.Compare;
+    internal static Comparison<T> NaturalOrder<T>() => JavaCompare;
     internal static Comparison<T> ComparingInt<T>(Func<T, int> selector) =>
         (left, right) => selector(left).CompareTo(selector(right));
     internal static Comparison<T> Comparing<T>(Func<T, IComparable> selector) =>

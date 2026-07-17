@@ -45,6 +45,28 @@
    ["error/expression-syntax" "EXPRESSION" "foo = 1\n" "<>!!!"]
    ["error/expression-type" "EXPRESSION" "foo = 1\n" "foo as String"]
    ["error/evaluation-missing-property" "EVALUATE" "result = missing\n" ""]
+   ["error/missing-member-text" "EVALUATE"
+    "result = \"hello\".lenght\n" ""]
+   ["error/missing-member-object" "EVALUATE"
+    (str "result = (new Dynamic {\n"
+         "  firstName = \"Ada\"\n"
+         "  lastName = \"Lovelace\"\n"
+         "}).fristName\n")
+    ""]
+   ["error/missing-member-module" "EVALUATE"
+    "result = import(\"pkl:math\").getPropery(\"value\")\n" ""]
+   ["error/missing-member-typed" "EVALUATE"
+    (str "class Person {\n"
+         "  firstName: String\n"
+         "  lastName: String\n"
+         "  function displayName(): String = firstName\n"
+         "}\n"
+         "person = new Person {\n"
+         "  firstName = \"Ada\"\n"
+         "  lastName = \"Lovelace\"\n"
+         "}\n"
+         "result = person.dispayName()\n")
+    ""]
    ["output/default-pcf-text" "OUTPUT_TEXT"
     "name = \"Pigeon\"\nage = 3\n" ""]
    ["output/json-renderer-text" "OUTPUT_TEXT"
@@ -1028,9 +1050,9 @@
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "vibeformer" "validation" "differential"
                                          "CorePackageProbe.cs")]
-    (when-not (= 19 (count core-cases))
+    (when-not (= 23 (count core-cases))
       (fail! "The pinned Pkl.Core differential case count changed; review the oracle selection"
-             {:expected 19 :actual (count core-cases)}))
+             {:expected 23 :actual (count core-cases)}))
     (run-command! {:command ["./gradlew" ":pkl-core:classes" "--console=plain"]
                    :directory upstream-root})
     (run-command! {:command [(str javac) "--release" (str java-release)
@@ -1069,11 +1091,11 @@
                    :package (:identity package-proof)
                    :cases (count core-cases)
                    :value-model-observations 6
-                   :evaluation-cases 7
+                   :evaluation-cases 11
                    :output-cases 4
                    :value-export-cases 2
                    :loading-security-cases 3
-                   :error-cases 4
+                   :error-cases 8
                    :observations (:matched comparison)
                    :loading-policy-configuration-contract (:summary loading-contract)
                    :schema-codegen-binding (:summary schema-proof)
