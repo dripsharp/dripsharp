@@ -513,7 +513,7 @@
    "java.util.WeakHashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/weak-map]
    "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary" :dotnet.type/sorted-dictionary]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet" :dotnet.type/sorted-set]
-   "java.util.Map$Entry" ["global::System.Collections.Generic.KeyValuePair" :dotnet.type/map-entry]
+   "java.util.Map$Entry" ["global::Vibeformer.Runtime.JavaMapEntry" :dotnet.type/map-entry]
    "java.util.Comparator" ["global::System.Comparison" :dotnet.type/comparison]
    "java.util.Deque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.ArrayDeque" ["global::Vibeformer.Runtime.JavaDeque" :dotnet.type/deque]
@@ -770,7 +770,7 @@
                                 "java.util.Map" "global::System.Collections.Generic.IDictionary<object, object>"
                                 "java.util.HashMap" "global::System.Collections.Generic.Dictionary<object, object>"
                                 "java.util.LinkedHashMap" "global::System.Collections.Generic.Dictionary<object, object>"
-                                "java.util.Map$Entry" "global::System.Collections.Generic.KeyValuePair<object, object>"
+                                "java.util.Map$Entry" "global::Vibeformer.Runtime.JavaMapEntry<object, object>"
                                 "java.util.Iterator" "global::System.Collections.Generic.IEnumerator<object>"
                                 "java.util.Comparator" "global::System.Comparison<object>"
                                 "java.util.Spliterator" "global::System.Collections.Generic.IEnumerable<object>"

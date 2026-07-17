@@ -93,6 +93,7 @@ static class LoadingContractDotNetProbe
         Write(writer, "https/rewrite-redirect-headers", "HTTP", network.Http);
         Write(writer, "package/assets-cache-integrity", "PACKAGE", network.Packages);
         Write(writer, "uri/decoded-components-package-assets", "URI", network.UriComponents);
+        Write(writer, "collections/map-entry-set", "COLLECTION", network.Collections);
         Write(writer, "project/projectpackage-dependencies", "PROJECT", network.ProjectPackage);
         Write(writer, "network/package-errors", "ERROR", network.Errors);
         Write(writer, "project/evaluator-user-settings", "SETTINGS", ObserveSettings(fixtures, work));
@@ -456,6 +457,30 @@ static class LoadingContractDotNetProbe
             $"|headers={Lower(server.AllRequestsHadContractHeader)}" +
             $"|proxy={proxied.GetProperty("value")}:{Lower(server.ProxyRequestCount > 0)}";
 
+        var orderedHeaderRules = new Dictionary<string, IDictionary<string, IList<string>>>
+        {
+            ["**"] = new Dictionary<string, IList<string>>
+            {
+                ["X-Contract"] = new List<string> { "enabled" },
+                ["X-Rule-Order"] = new List<string> { "first" }
+            },
+            ["**/main.pkl"] = new Dictionary<string, IList<string>>
+            {
+                ["X-Rule-Order"] = new List<string> { "second" }
+            }
+        };
+        using (PklHttpClient orderedHeaderClient = server.NewTlsClient()
+            .AddRewrite(new Uri("https://origin.test/"), new Uri("https://localhost:0/"))
+            .SetHeaders(orderedHeaderRules)
+            .Build())
+        {
+            _ = orderedHeaderClient.Send(
+                JavaHttpRequest.NewBuilder(new Uri("https://origin.test/main.pkl")).Build(),
+                JavaHttpBodyHandlers.OfByteArray(),
+                _ => { });
+        }
+        string collections = ObserveMapEntrySet(server.HeaderRuleOrder);
+
         string cache = Path.Combine(work, "package-cache");
         string packageSource =
             "bird = import(\"package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl\").name\n" +
@@ -523,7 +548,57 @@ static class LoadingContractDotNetProbe
         string uriComponents = ObserveUriComponentsAndEncodedAssets(server, work);
         string projectPackage = ObserveProjectPackage(packageBuild, work, cache);
         string errors = ObserveNetworkErrors(server, work, checksumFailure);
-        return new NetworkObservations(http, packages, uriComponents, projectPackage, errors);
+        return new NetworkObservations(
+            http, packages, uriComponents, collections, projectPackage, errors);
+    }
+
+    static string ObserveMapEntrySet(string headerRuleOrder)
+    {
+        var lower = new Uri("https://example.test/a%2fb");
+        var upper = new Uri("https://example.test/a%2Fb");
+        var secondUri = new Uri("https://example.test/second");
+        var thirdUri = new Uri("https://example.test/third");
+        var source = new Dictionary<Uri, string>
+        {
+            [lower] = "one",
+            [secondUri] = "two"
+        };
+        object view = InvokeJavaCompatGeneric(
+            "MapEntrySet", new[] { typeof(Uri), typeof(string) }, source);
+        source[thirdUri] = "three";
+        bool live = (int)view.GetType().GetProperty("Count")!.GetValue(view)! == 3;
+
+        IEnumerator iterator = ((IEnumerable)view).GetEnumerator();
+        Type entryType = typeof(Evaluator).Assembly
+            .GetType("Vibeformer.Runtime.JavaMapEntry`2", throwOnError: true)!
+            .MakeGenericType(typeof(Uri), typeof(string));
+        object first = InvokeJavaCompatGeneric("IteratorNext", new[] { entryType }, iterator);
+        string previous = (string)entryType.GetMethod("SetValue")!
+            .Invoke(first, new object[] { "updated" })!;
+        object second = InvokeJavaCompatGeneric("IteratorNext", new[] { entryType }, iterator);
+        InvokeJavaCompat<object?>("IteratorRemove", iterator);
+        bool removed = !source.ContainsKey(secondUri) &&
+            Equals(entryType.GetProperty("Key")!.GetValue(second), secondUri);
+
+        object detached = InvokeJavaCompatGeneric(
+            "MapEntry", new[] { typeof(Uri), typeof(string) }, upper, "updated");
+        bool equal = first.Equals(detached);
+        bool entryHash = InvokeJavaCompat<int>("HashCode", first) ==
+            InvokeJavaCompat<int>("HashCode", detached);
+        var entries = ((IEnumerable)view).Cast<object>().ToList();
+        int expectedSetHash = 0;
+        foreach (object entry in entries)
+            expectedSetHash = unchecked(expectedSetHash + InvokeJavaCompat<int>("HashCode", entry));
+        bool setHash = InvokeJavaCompat<int>("HashCode", view) == expectedSetHash;
+        string order = "[" + string.Join(", ", entries.Select(entry =>
+            ((Uri)entryType.GetProperty("Key")!.GetValue(entry)!).OriginalString)) + "]";
+        string current = (string)entryType.GetProperty("Value")!.GetValue(first)!;
+        Require(live && previous == "one" && current == "updated" && removed && equal &&
+            entryHash && setHash && headerRuleOrder == "first,second",
+            "live Java map entry-set and configured header rule order");
+        return $"live={Lower(live)}|set={previous}:{current}|removed={Lower(removed)}" +
+            $"|order={order}|equals={Lower(equal)}|hash={Lower(entryHash && setHash)}" +
+            $"|headers={headerRuleOrder}";
     }
 
     static string ObserveUriComponentsAndEncodedAssets(ContractHttpServer server, string work)
@@ -634,6 +709,23 @@ static class LoadingContractDotNetProbe
                 .Zip(arguments, (type, argument) => argument is null || type.IsInstanceOfType(argument))
                 .All(matches => matches));
         return (TResult)selected.Invoke(null, arguments)!;
+    }
+
+    static object InvokeJavaCompatGeneric(
+        string method, Type[] typeArguments, params object?[] arguments)
+    {
+        Type compatibility = typeof(Evaluator).Assembly.GetType("Vibeformer.Runtime.JavaCompat")
+            ?? throw new InvalidOperationException("The packaged Java compatibility type is missing.");
+        MethodInfo selected = compatibility.GetMethods(
+                BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+            .Where(candidate => candidate.Name == method && candidate.IsGenericMethodDefinition &&
+                candidate.GetGenericArguments().Length == typeArguments.Length &&
+                candidate.GetParameters().Length == arguments.Length)
+            .Select(candidate => candidate.MakeGenericMethod(typeArguments))
+            .Single(candidate => candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                .Zip(arguments, (type, argument) => argument is null || type.IsInstanceOfType(argument))
+                .All(matches => matches));
+        return selected.Invoke(null, arguments)!;
     }
 
     static void PrepareEncodedAssetPackage(string packageBuild)
@@ -1846,6 +1938,7 @@ static class LoadingContractDotNetProbe
         string Http,
         string Packages,
         string UriComponents,
+        string Collections,
         string ProjectPackage,
         string Errors);
 
@@ -1864,6 +1957,8 @@ static class LoadingContractDotNetProbe
         int proxyRequestCount;
         int disposed;
         int allRequestsHadContractHeader = 1;
+        readonly object headerRuleOrderLock = new();
+        string headerRuleOrder = string.Empty;
 
         internal ContractHttpServer(string packageBuild)
         {
@@ -1886,6 +1981,10 @@ static class LoadingContractDotNetProbe
         internal int ProxyRequestCount => Volatile.Read(ref proxyRequestCount);
         internal bool AllRequestsHadContractHeader =>
             Volatile.Read(ref allRequestsHadContractHeader) != 0;
+        internal string HeaderRuleOrder
+        {
+            get { lock (headerRuleOrderLock) return headerRuleOrder; }
+        }
         internal Uri ProxyUri => new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}");
         internal Uri PlainUri(string path) =>
             new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}{path}");
@@ -1944,15 +2043,24 @@ static class LoadingContractDotNetProbe
                     if (requestParts.Length < 2) throw new IOException("Malformed request line.");
                     string target = requestParts[1];
                     bool contractHeader = false;
+                    var ruleOrder = new List<string>();
                     for (string? line = reader.ReadLine(); !string.IsNullOrEmpty(line); line = reader.ReadLine())
                     {
                         int colon = line!.IndexOf(':');
                         if (colon > 0 && line[..colon].Equals("X-Contract", StringComparison.OrdinalIgnoreCase) &&
                             line[(colon + 1)..].Trim().Equals("enabled", StringComparison.Ordinal))
                             contractHeader = true;
+                        if (colon > 0 && line[..colon].Equals("X-Rule-Order", StringComparison.OrdinalIgnoreCase))
+                            ruleOrder.AddRange(line[(colon + 1)..].Split(',')
+                                .Select(value => value.Trim()).Where(value => value.Length > 0));
                     }
                     bool proxied = Uri.TryCreate(target, UriKind.Absolute, out Uri? absoluteTarget);
                     string path = proxied ? absoluteTarget!.AbsolutePath : target.Split('?', 2)[0];
+                    if (path == "/main.pkl" && ruleOrder.Count > 0)
+                    {
+                        lock (headerRuleOrderLock)
+                            headerRuleOrder = string.Join(",", ruleOrder);
+                    }
                     if (proxied) Interlocked.Increment(ref proxyRequestCount);
                     if (!contractHeader && !path.Contains('@') && path != "/missing.pkl")
                         Interlocked.Exchange(ref allRequestsHadContractHeader, 0);

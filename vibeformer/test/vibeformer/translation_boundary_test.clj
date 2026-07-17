@@ -55,3 +55,28 @@
     (is (str/includes?
          runtime
          "UriPath(Uri uri) => DecodeUriComponent(UriRawPath(uri))"))))
+
+(deftest java-map-entry-sets-retain-live-view-contracts
+  (let [body-rules (source "pkl/java_body")
+        project-rules (source "pkl/java_project")
+        runtime (slurp "runtime/Vibeformer.JavaCompat.cs")]
+    (is (str/includes?
+         project-rules
+         "\"java.util.Map$Entry\" [\"global::Vibeformer.Runtime.JavaMapEntry\""))
+    (doseq [[java-method helper]
+            [["entrySet()" "MapEntrySet"]
+             ["Iterator#remove()" "IteratorRemove"]]]
+      (is (and (str/includes? body-rules java-method)
+               (str/includes? body-rules helper))))
+    (is (str/includes? body-rules
+                       "java.util.Map$Entry#setValue(java.lang.Object)"))
+    (is (str/includes? runtime
+                       "internal sealed class JavaMapEntrySet<K, V>"))
+    (is (str/includes? runtime
+                       "public V SetValue(V replacement)"))
+    (is (str/includes? runtime
+                       "internal static void IteratorRemove(IEnumerator iterator)"))
+    (is (not (re-find #"(?i)org\\.pkl|Pkl\\.Core|Pkl\\.Parser"
+                      (subs runtime
+                            (.indexOf runtime "public sealed class JavaMapEntry")
+                            (.indexOf runtime "internal static class JavaCompat")))))))

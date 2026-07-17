@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -97,6 +98,7 @@ public final class LoadingContractUpstreamOracle {
       write(writer, "https/rewrite-redirect-headers", "HTTP", network.https());
       write(writer, "package/assets-cache-integrity", "PACKAGE", network.packages());
       write(writer, "uri/decoded-components-package-assets", "URI", network.uriComponents());
+      write(writer, "collections/map-entry-set", "COLLECTION", network.collections());
       write(writer, "project/projectpackage-dependencies", "PROJECT", network.projectpackage());
       write(writer, "network/package-errors", "ERROR", network.errors());
 
@@ -421,6 +423,23 @@ public final class LoadingContractUpstreamOracle {
           + "|headers=" + server.allRequestsHadContractHeader.get()
           + "|proxy=" + proxied.getProperty("value") + ":" + (server.proxyRequestCount.get() > 0);
 
+      var orderedHeaderRules = new LinkedHashMap<String, Map<String, List<String>>>();
+      var firstHeaders = new LinkedHashMap<String, List<String>>();
+      firstHeaders.put("X-Contract", List.of("enabled"));
+      firstHeaders.put("X-Rule-Order", List.of("first"));
+      orderedHeaderRules.put("**", firstHeaders);
+      orderedHeaderRules.put("**/main.pkl", Map.of("X-Rule-Order", List.of("second")));
+      try (HttpClient orderedHeaderClient = server.newClient()
+          .addRewrite(URI.create("https://origin.test/"), URI.create("https://localhost:0/"))
+          .setHeaders(orderedHeaderRules)
+          .build()) {
+        orderedHeaderClient.send(
+            HttpRequest.newBuilder(URI.create("https://origin.test/main.pkl")).build(),
+            HttpResponse.BodyHandlers.ofString(),
+            ignored -> {});
+      }
+      String collections = observeMapEntrySet(server.headerRuleOrder);
+
       Path cache = work.resolve("package-cache");
       String packageSource =
           "bird = import(\"package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl\").name\n"
@@ -481,8 +500,43 @@ public final class LoadingContractUpstreamOracle {
       String uriComponents = observeUriComponentsAndEncodedAssets(server, work);
       String projectpackage = observeProjectPackage(work, cache);
       String errors = observeNetworkErrors(server, work, checksumFailure);
-      return new NetworkObservations(https, packages, uriComponents, projectpackage, errors);
+      return new NetworkObservations(
+          https, packages, uriComponents, collections, projectpackage, errors);
     }
+  }
+
+  private static String observeMapEntrySet(String headerRuleOrder) {
+    URI lower = URI.create("https://example.test/a%2fb");
+    URI upper = URI.create("https://example.test/a%2Fb");
+    URI secondUri = URI.create("https://example.test/second");
+    URI thirdUri = URI.create("https://example.test/third");
+    var source = new LinkedHashMap<URI, String>();
+    source.put(lower, "one");
+    source.put(secondUri, "two");
+    Set<Map.Entry<URI, String>> view = source.entrySet();
+    source.put(thirdUri, "three");
+    boolean live = view.size() == 3;
+
+    var iterator = view.iterator();
+    Map.Entry<URI, String> first = iterator.next();
+    String previous = first.setValue("updated");
+    Map.Entry<URI, String> second = iterator.next();
+    iterator.remove();
+    boolean removed = !source.containsKey(secondUri) && second.getKey().equals(secondUri);
+    Map.Entry<URI, String> detached = Map.entry(upper, "updated");
+    boolean equal = first.equals(detached);
+    boolean entryHash = first.hashCode() == detached.hashCode();
+    int expectedSetHash = view.stream().mapToInt(Map.Entry::hashCode).sum();
+    boolean setHash = view.hashCode() == expectedSetHash;
+    String order = view.stream().map(entry -> entry.getKey().toString()).toList().toString();
+    String current = first.getValue();
+    if (!live || !previous.equals("one") || !current.equals("updated") || !removed ||
+        !equal || !entryHash || !setHash || !headerRuleOrder.equals("first,second")) {
+      throw new AssertionError("live Java map entry-set and configured header rule order");
+    }
+    return "live=" + live + "|set=" + previous + ":" + current + "|removed=" + removed
+        + "|order=" + order + "|equals=" + equal + "|hash=" + (entryHash && setHash)
+        + "|headers=" + headerRuleOrder;
   }
 
   private static String observeUriComponentsAndEncodedAssets(
@@ -1002,7 +1056,12 @@ public final class LoadingContractUpstreamOracle {
   }
 
   private record NetworkObservations(
-      String https, String packages, String uriComponents, String projectpackage, String errors) {}
+      String https,
+      String packages,
+      String uriComponents,
+      String collections,
+      String projectpackage,
+      String errors) {}
 
   private static final class CountingModuleFactory implements ModuleKeyFactory {
     private final AtomicInteger creates = new AtomicInteger();
@@ -1088,6 +1147,7 @@ public final class LoadingContractUpstreamOracle {
     private final AtomicInteger requestCount = new AtomicInteger();
     private final AtomicInteger proxyRequestCount = new AtomicInteger();
     private final AtomicBoolean allRequestsHadContractHeader = new AtomicBoolean(true);
+    private volatile String headerRuleOrder = "";
 
     private ContractHttpsServer(Path buildRoot) throws Exception {
       this.buildRoot = buildRoot;
@@ -1147,6 +1207,10 @@ public final class LoadingContractUpstreamOracle {
           allRequestsHadContractHeader.set(false);
         }
         String path = exchange.getRequestURI().getPath();
+        List<String> ruleOrderValues = exchange.getRequestHeaders().get("X-Rule-Order");
+        if (path.equals("/main.pkl") && ruleOrderValues != null && !ruleOrderValues.isEmpty()) {
+          headerRuleOrder = String.join(",", ruleOrderValues).replace(" ", "");
+        }
         if (exchange.getRequestURI().isAbsolute()) proxyRequestCount.incrementAndGet();
         if (path.equals("/redirect.pkl")) {
           exchange.getResponseHeaders().add("Location", "https://origin.test/main.pkl");

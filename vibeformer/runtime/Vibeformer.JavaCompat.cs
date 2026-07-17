@@ -369,6 +369,198 @@ internal sealed class JavaOptional<T>
         present ? presentCase(value!) : emptyCase();
 }
 
+// A Java Map.Entry is a reference object whose value can remain backed by the
+// source map. KeyValuePair cannot model setValue(), so translated declarations
+// use this reusable compatibility type instead of taking an entry snapshot.
+#if VIBEFORMER_PKL_CORE
+public sealed class JavaMapEntry<K, V> where K : notnull
+#else
+internal sealed class JavaMapEntry<K, V> where K : notnull
+#endif
+{
+    private readonly IDictionary<K, V>? source;
+    private readonly K key;
+    private V value;
+
+    internal JavaMapEntry(IDictionary<K, V> source, K key)
+    {
+        this.source = source;
+        this.key = key;
+        value = source[key];
+    }
+
+    internal JavaMapEntry(K key, V value)
+    {
+        this.key = key;
+        this.value = value;
+    }
+
+    public K Key => key;
+    public V Value => source is not null && source.TryGetValue(key, out var current)
+        ? current
+        : value;
+
+    public V SetValue(V replacement)
+    {
+        if (source is null)
+            throw new NotSupportedException("This Java map entry is immutable.");
+        var previous = Value;
+        source[key] = replacement;
+        value = replacement;
+        return previous;
+    }
+
+    public override bool Equals(object? other)
+    {
+        if (other is null) return false;
+        var type = other.GetType();
+        if (!type.IsGenericType || type.GetGenericTypeDefinition() != typeof(JavaMapEntry<,>))
+            return false;
+        return JavaCompat.Equals(Key, type.GetProperty(nameof(Key))!.GetValue(other)) &&
+               JavaCompat.Equals(Value, type.GetProperty(nameof(Value))!.GetValue(other));
+    }
+
+    public override int GetHashCode() =>
+        JavaCompat.HashCode(Key) ^ JavaCompat.HashCode(Value);
+
+    public override string ToString() => $"{Key}={Value}";
+}
+
+internal interface JavaRemovableIterator
+{
+    void MarkReturned();
+    void Remove();
+}
+
+internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K : notnull
+{
+    private readonly IDictionary<K, V> source;
+
+    internal JavaMapEntrySet(IDictionary<K, V> source) => this.source = source;
+
+    public int Count => source.Count;
+    public bool IsReadOnly => false;
+
+    bool ISet<JavaMapEntry<K, V>>.Add(JavaMapEntry<K, V> item) =>
+        throw new NotSupportedException("Java Map.entrySet does not support add().");
+
+    void ICollection<JavaMapEntry<K, V>>.Add(JavaMapEntry<K, V> item) =>
+        throw new NotSupportedException("Java Map.entrySet does not support add().");
+
+    public void Clear() => source.Clear();
+
+    public bool Contains(JavaMapEntry<K, V> item) =>
+        source.TryGetValue(item.Key, out var value) && JavaCompat.Equals(value, item.Value);
+
+    public void CopyTo(JavaMapEntry<K, V>[] array, int arrayIndex)
+    {
+        foreach (var entry in this) array[arrayIndex++] = entry;
+    }
+
+    public bool Remove(JavaMapEntry<K, V> item)
+    {
+        if (!Contains(item)) return false;
+        return source.Remove(item.Key);
+    }
+
+    public IEnumerator<JavaMapEntry<K, V>> GetEnumerator() => new Enumerator(source);
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    public void ExceptWith(IEnumerable<JavaMapEntry<K, V>> other)
+    {
+        var removed = other.ToList();
+        foreach (var entry in removed) Remove(entry);
+    }
+
+    public void IntersectWith(IEnumerable<JavaMapEntry<K, V>> other)
+    {
+        var retained = new HashSet<JavaMapEntry<K, V>>(other);
+        foreach (var entry in this.Where(entry => !retained.Contains(entry)).ToList()) Remove(entry);
+    }
+
+    public bool IsProperSubsetOf(IEnumerable<JavaMapEntry<K, V>> other) =>
+        Snapshot().IsProperSubsetOf(other);
+
+    public bool IsProperSupersetOf(IEnumerable<JavaMapEntry<K, V>> other) =>
+        Snapshot().IsProperSupersetOf(other);
+
+    public bool IsSubsetOf(IEnumerable<JavaMapEntry<K, V>> other) =>
+        Snapshot().IsSubsetOf(other);
+
+    public bool IsSupersetOf(IEnumerable<JavaMapEntry<K, V>> other) =>
+        Snapshot().IsSupersetOf(other);
+
+    public bool Overlaps(IEnumerable<JavaMapEntry<K, V>> other) =>
+        Snapshot().Overlaps(other);
+
+    public bool SetEquals(IEnumerable<JavaMapEntry<K, V>> other) =>
+        Snapshot().SetEquals(other);
+
+    public void SymmetricExceptWith(IEnumerable<JavaMapEntry<K, V>> other) =>
+        throw new NotSupportedException("Java Map.entrySet does not support adding entries.");
+
+    public void UnionWith(IEnumerable<JavaMapEntry<K, V>> other) =>
+        throw new NotSupportedException("Java Map.entrySet does not support adding entries.");
+
+    private HashSet<JavaMapEntry<K, V>> Snapshot() => new(this);
+
+    private sealed class Enumerator : IEnumerator<JavaMapEntry<K, V>>, JavaRemovableIterator
+    {
+        private readonly IDictionary<K, V> source;
+        private readonly IList<K> keys;
+        private int index = -1;
+        private K? preparedKey;
+        private K? returnedKey;
+        private bool hasPreparedKey;
+        private bool canRemove;
+
+        internal Enumerator(IDictionary<K, V> source)
+        {
+            this.source = source;
+            keys = source.Keys.ToList();
+        }
+
+        public JavaMapEntry<K, V> Current { get; private set; } = default!;
+        object IEnumerator.Current => Current;
+
+        public bool MoveNext()
+        {
+            while (++index < keys.Count)
+            {
+                var key = keys[index];
+                if (!source.ContainsKey(key)) continue;
+                preparedKey = key;
+                hasPreparedKey = true;
+                Current = new JavaMapEntry<K, V>(source, key);
+                return true;
+            }
+            preparedKey = default;
+            hasPreparedKey = false;
+            Current = default!;
+            return false;
+        }
+
+        public void MarkReturned()
+        {
+            if (!hasPreparedKey)
+                throw new InvalidOperationException("Iterator has no current map entry.");
+            returnedKey = preparedKey;
+            canRemove = true;
+        }
+
+        public void Remove()
+        {
+            if (!canRemove)
+                throw new InvalidOperationException("Iterator.remove() requires one preceding next().");
+            source.Remove(returnedKey!);
+            canRemove = false;
+        }
+
+        public void Reset() => throw new NotSupportedException();
+        public void Dispose() { }
+    }
+}
+
 internal static class JavaCompat
 {
     internal static readonly TextWriter @out = Console.Out;
@@ -1126,8 +1318,8 @@ internal static class JavaCompat
     internal static bool MapContainsKey<K, V>(IDictionary<K, V> map, object? key) where K : notnull =>
         key is K typed && map.ContainsKey(typed);
 
-    internal static ISet<KeyValuePair<K, V>> MapEntrySet<K, V>(IDictionary<K, V> map) where K : notnull =>
-        new HashSet<KeyValuePair<K, V>>(map);
+    internal static ISet<JavaMapEntry<K, V>> MapEntrySet<K, V>(IDictionary<K, V> map) where K : notnull =>
+        new JavaMapEntrySet<K, V>(map);
 
     internal static bool MapIsEmpty<K, V>(IDictionary<K, V> map) where K : notnull => map.Count == 0;
     internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull => new HashSet<K>(map.Keys);
@@ -1170,9 +1362,9 @@ internal static class JavaCompat
         return previous;
     }
 
-    internal static KeyValuePair<K, V> MapEntry<K, V>(K key, V value) where K : notnull => new(key, value);
+    internal static JavaMapEntry<K, V> MapEntry<K, V>(K key, V value) where K : notnull => new(key, value);
 
-    internal static IDictionary<K, V> MapOfEntries<K, V>(params KeyValuePair<K, V>[] entries) where K : notnull =>
+    internal static IDictionary<K, V> MapOfEntries<K, V>(params JavaMapEntry<K, V>[] entries) where K : notnull =>
         entries.ToDictionary(entry => entry.Key, entry => entry.Value);
     internal static IDictionary<K, V> MapOfEntriesLoose<K, V>(params object[] entries) where K : notnull
     {
@@ -1425,10 +1617,17 @@ internal static class JavaCompat
             }
         }
         state.Prepared = false;
+        if (iterator is JavaRemovableIterator removable) removable.MarkReturned();
         return iterator.Current;
     }
 
     internal static long IteratorNextLong(IEnumerator<long> iterator) => IteratorNext(iterator);
+    internal static void IteratorRemove(IEnumerator iterator)
+    {
+        if (iterator is not JavaRemovableIterator removable)
+            throw new NotSupportedException("This translated Java iterator does not support remove().");
+        removable.Remove();
+    }
 
     internal static T DequeGetFirst<T>(JavaDeque<T> deque) => deque.GetFirst();
     internal static T? DequePeek<T>(JavaDeque<T> deque) => deque.Peek();
@@ -1574,6 +1773,15 @@ internal static class JavaCompat
             foreach (DictionaryEntry entry in map)
                 result += JavaHashCode(entry.Key) ^ JavaHashCode(entry.Value);
             return result;
+        }
+        if (IsJavaSet(value))
+        {
+            unchecked
+            {
+                var result = 0;
+                foreach (var element in (IEnumerable)value) result += JavaHashCode(element);
+                return result;
+            }
         }
         if (!IsJavaList(value)) return value.GetHashCode();
         unchecked

@@ -376,6 +376,7 @@
     "http.redirects-policy-order"
     "http.rewrites-headers"
     "http.proxy-settings"
+    "collections.map-entry-set"
     "uri.decoded-components-package-assets"
     "package.assets"
     "package.directory-listing-globbing"
@@ -652,6 +653,7 @@
     "https/rewrite-redirect-headers"
     "package/assets-cache-integrity"
     "uri/decoded-components-package-assets"
+    "collections/map-entry-set"
     "project/projectpackage-dependencies"
     "network/package-errors"
     "project/evaluator-user-settings"
@@ -752,9 +754,9 @@
     (when-not target-framework
       (fail! "Could not determine the loading consumer target framework"
              {:project (str installed-consumer-project)}))
-    (when-not (= 26 (count package-entries))
+    (when-not (= 27 (count package-entries))
       (fail! "The package-only loading observation selection changed"
-             {:expected 26 :actual (count package-entries)
+             {:expected 27 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
     (when-not generated-project-root
       (fail! "Could not locate the clean generated Pkl.Core project for stub auditing"

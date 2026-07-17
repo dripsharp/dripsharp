@@ -1102,9 +1102,11 @@
           (compat-call "SetStackTrace" (into [target] args))
           "executable:java.lang.Throwable#printStackTrace()" (compat-call "PrintStackTrace" [target])
           "executable:java.util.Map$Entry#getKey()"
-          (member (if (nullable-expression? target-element) (member target "Value") target) "Key")
+          (member target "Key")
           "executable:java.util.Map$Entry#getValue()"
-          (member (if (nullable-expression? target-element) (member target "Value") target) "Value")
+          (member target "Value")
+          "executable:java.util.Map$Entry#setValue(java.lang.Object)"
+          (invoke (member target "SetValue") args)
           "executable:java.text.Format#format(java.lang.Object)" (compat-call "Format" (into [target] args))
           "executable:java.util.ArrayList#add(java.lang.Object)" (compat-call "Add" (into [target] args))
           "executable:java.util.ArrayList#addAll(java.util.Collection)" (compat-call "AddAll" (into [target] args))
@@ -1204,6 +1206,7 @@
           "executable:java.util.Map#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" (result-generic-arguments-compat-call services element "MapOf" args)
           "executable:java.util.Iterator#hasNext()" (compat-call "IteratorHasNext" [target])
           "executable:java.util.Iterator#next()" (compat-call "IteratorNext" [target])
+          "executable:java.util.Iterator#remove()" (compat-call "IteratorRemove" [target])
           "executable:java.util.ListIterator#hasNext()" (compat-call "IteratorHasNext" [target])
           "executable:java.util.ListIterator#next()" (compat-call "IteratorNext" [target])
           "executable:java.util.ListIterator#hasPrevious()" (compat-call "IteratorHasNext" [target])
