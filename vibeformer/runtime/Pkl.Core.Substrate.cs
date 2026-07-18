@@ -1420,7 +1420,25 @@ namespace Pkl.Core.Runtime.Truffle.api.source
             throw new ArgumentOutOfRangeException(nameof(line));
         }
         internal SourceSection CreateSection(int start, int length) => new(this, start, length, false);
-        internal SourceSection CreateSection(int start) => CreateSection(start, characters.Length - start);
+        internal SourceSection CreateSection(int line)
+        {
+            if (line < 1) throw new ArgumentOutOfRangeException(nameof(line));
+            var currentLine = 1;
+            var lineStart = 0;
+            for (var index = 0; index <= characters.Length; index++)
+            {
+                if (index != characters.Length && characters[index] != '\n') continue;
+                if (currentLine == line)
+                {
+                    var lineEnd = index;
+                    if (lineEnd > lineStart && characters[lineEnd - 1] == '\r') lineEnd--;
+                    return CreateSection(lineStart, lineEnd - lineStart);
+                }
+                currentLine++;
+                lineStart = index + 1;
+            }
+            throw new ArgumentOutOfRangeException(nameof(line));
+        }
         internal SourceSection CreateSourceSection(int start, int length) => CreateSection(start, length);
         internal SourceSection CreateUnavailableSection() => new(this, 0, 0, true);
         internal Uri? GetUri() => uri;
@@ -1866,6 +1884,9 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
 
     public sealed class Instrumenter
     {
+        [ThreadStatic]
+        private static List<Instrumenter>? active;
+
         private sealed class Registration
         {
             private readonly Dictionary<Node, ExecutionEventNode> eventNodes =
@@ -1922,12 +1943,30 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
             SourceSectionFilter filter, ExecutionEventNodeFactory factory)
         {
             var registration = new Registration(filter, factory);
-            lock (registrations) registrations.Add(registration);
+            lock (registrations)
+            {
+                if (registrations.Count == 0)
+                {
+                    active ??= new List<Instrumenter>();
+                    active.Add(this);
+                }
+                registrations.Add(registration);
+            }
             InstrumentTree(Pkl.Core.Runtime.Truffle.api.CallTarget.GetCurrentRoot());
             return new EventBinding<ExecutionEventNodeFactory>(() =>
             {
-                lock (registrations) registrations.Remove(registration);
+                lock (registrations)
+                {
+                    registrations.Remove(registration);
+                    if (registrations.Count == 0) active?.Remove(this);
+                }
             });
+        }
+
+        internal static void InstrumentActive(RootNode? root)
+        {
+            if (root is null || active is null) return;
+            foreach (var instrumenter in active.ToArray()) instrumenter.InstrumentTree(root);
         }
 
         private void NotifyReturn(Node node, VirtualFrame frame, object? value)
@@ -2146,6 +2185,7 @@ namespace Pkl.Core.Runtime.Truffle.api
             current = this;
             try
             {
+                Pkl.Core.Runtime.Truffle.api.instrumentation.Instrumenter.InstrumentActive(root);
                 return root?.Execute(new VirtualFrame(arguments, root.GetFrameDescriptor()));
             }
             catch (AbstractTruffleException exception)
@@ -2160,8 +2200,12 @@ namespace Pkl.Core.Runtime.Truffle.api
                 }
                 else
                 {
-                    exception.AddTruffleStackFrame(
-                        new TruffleStackTraceElement(location ?? exception.GetLocation(), caller ?? this));
+                    // A top-level Call() has no caller location. Reusing the
+                    // original exception location here duplicates the import
+                    // frame already captured at the nested call boundary.
+                    if (location is not null || caller is not null)
+                        exception.AddTruffleStackFrame(
+                            new TruffleStackTraceElement(location ?? exception.GetLocation(), caller ?? this));
                 }
                 throw;
             }

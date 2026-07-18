@@ -277,6 +277,16 @@
             (is (not (str/includes? project-settings "NoCache.Value")))
             (is (str/includes? project-settings
                                "var cycles = Project.FindImportCycle(moduleSource)"))
+            (is (str/includes? project-settings
+                               "var hasDirectSelfCycle = global::Vibeformer.Runtime.JavaCompat.Any"))
+            (is (str/includes? dependency
+                               "JavaCompat.ResolveLocalDependencyUri(projectBaseUri"))
+            (is (str/includes? substrate
+                               "internal SourceSection CreateSection(int line)"))
+            (is (str/includes? substrate
+                               "Instrumenter.InstrumentActive(root)"))
+            (is (str/includes? substrate
+                               "if (location is not null || caller is not null)"))
             (is (str/includes? import-analyzer "JavaCompat.NewSortedDictionary<"))
             (is (str/includes? import-analyzer "JavaCompat.NewSortedSet<"))
             (is (str/includes?
@@ -303,7 +313,9 @@
             (is (str/includes? java-compat
                                "var pathUri = new Uri(Path.GetFullPath(path))"))
             (is (str/includes? java-compat
-                               "internal static string UriToString(Uri value) => value.OriginalString"))
+                               "SingleSlashFileUris.TryGetValue(value, out _)"))
+            (is (str/includes? java-compat
+                               "ResolveLocalDependencyUri(Uri basis, Uri value)"))
             (is (str/includes? java-compat
                                "private static string TranslateJavaRegex(string pattern)"))
             (is (str/includes? java-compat

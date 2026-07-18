@@ -486,7 +486,7 @@
    "java.nio.file.attribute.UserPrincipalLookupService" ["object" :pkl-core.type/user-principal-lookup]
    "java.nio.file.spi.FileSystemProvider" ["global::Pkl.Core.Runtime.JavaFileSystemProvider" :pkl-core.type/file-system-provider]
    "java.nio.file.spi.FileTypeDetector" ["global::Pkl.Core.Runtime.JavaFileTypeDetector" :pkl-core.type/file-type-detector]
-   "java.nio.file.NoSuchFileException" ["global::System.IO.FileNotFoundException" :dotnet.type/file-not-found-exception]
+   "java.nio.file.NoSuchFileException" ["global::Vibeformer.Runtime.NoSuchFileException" :dotnet.type/no-such-file-exception]
    "java.time.Duration" ["global::System.TimeSpan" :dotnet.type/time-span]
    "java.time.LocalDateTime" ["global::System.DateTime" :dotnet.type/date-time]
    "java.time.Month" ["int" :dotnet.type/month-number]
@@ -1628,13 +1628,21 @@
           (sequence-node
            [(raw "{\nreturn global::Vibeformer.Runtime.JavaCompat.Equals(this, obj);\n}")])
 
+          (= "executable:org.pkl.core.packages.Dependency$LocalDependency#resolveAssetUri(java.net.URI,org.pkl.core.packages.PackageAssetUri)"
+             (spoon/declaration-key method))
+          ;; System.Uri canonicalizes Java's file:/ spelling to file:///.
+          ;; Preserve that spelling only for local-dependency resource URIs,
+          ;; where Resource.uri makes the original Java form observable.
+          (raw
+           "{\nvar assetPath = packageAssetUri.GetAssetPath().Substring(1);\nvar resolvedPath = global::Vibeformer.Runtime.JavaCompat.PathResolve(this.path, assetPath);\nvar normalized = global::Pkl.Core.Util.IoUtils.ToNormalizedPathString(resolvedPath);\ntry {\nvar relativeUri = global::Vibeformer.Runtime.JavaCompat.NewUri(null, null, normalized, null);\nreturn global::Vibeformer.Runtime.JavaCompat.ResolveLocalDependencyUri(projectBaseUri, relativeUri);\n} catch (global::System.UriFormatException) {\nthrow global::Pkl.Core.PklBugException.UnreachableCode();\n}\n}")
+
           (= "executable:org.pkl.core.project.Project#load(org.pkl.core.Evaluator,org.pkl.core.ModuleSource)"
              (spoon/declaration-key method))
           ;; A CLR stack overflow terminates the process and cannot serve as
           ;; the catchable cycle signal used by the JVM implementation.
           ;; Analyze first so project cycles retain the upstream diagnostics.
           (raw
-           "{\nvar cycles = Project.FindImportCycle(moduleSource);\nif (!global::Vibeformer.Runtime.JavaCompat.ListIsEmpty(cycles)) {\nglobal::Pkl.Core.Runtime.VmException vmException;\nif (global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1) {\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesSingle\", Project.RenderCycle(global::Vibeformer.Runtime.JavaCompat.ListGet(global::Vibeformer.Runtime.JavaCompat.ToListValues(cycles), 0))).Build();\n} else {\nvar renderedCycles = Project.RenderMultipleCycles(cycles);\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesMultiple\", renderedCycles).Build();\n}\nthrow vmException.ToPklException(global::Pkl.Core.StackFrameTransformers.defaultTransformer, false);\n}\ntry {\nvar output = evaluator.EvaluateOutputValueAs<global::Pkl.Core.PObject>(moduleSource, global::Pkl.Core.PClassInfo<object>.Project);\nreturn Project.ParseProject(output);\n} catch (global::System.UriFormatException e) {\nthrow new global::Pkl.Core.PklException(e.Message, e);\n}\n}")
+           "{\nvar cycles = Project.FindImportCycle(moduleSource);\nvar hasDirectSelfCycle = global::Vibeformer.Runtime.JavaCompat.Any(cycles, cycle => global::Vibeformer.Runtime.JavaCompat.ListCount(cycle) == 1);\nif (!global::Vibeformer.Runtime.JavaCompat.ListIsEmpty(cycles) && !hasDirectSelfCycle) {\nglobal::Pkl.Core.Runtime.VmException vmException;\nif (global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1) {\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesSingle\", Project.RenderCycle(global::Vibeformer.Runtime.JavaCompat.ListGet(global::Vibeformer.Runtime.JavaCompat.ToListValues(cycles), 0))).Build();\n} else {\nvar renderedCycles = Project.RenderMultipleCycles(cycles);\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesMultiple\", renderedCycles).Build();\n}\nthrow vmException.ToPklException(global::Pkl.Core.StackFrameTransformers.defaultTransformer, false);\n}\ntry {\nvar output = evaluator.EvaluateOutputValueAs<global::Pkl.Core.PObject>(moduleSource, global::Pkl.Core.PClassInfo<object>.Project);\nreturn Project.ParseProject(output);\n} catch (global::System.UriFormatException e) {\nthrow new global::Pkl.Core.PklException(e.Message, e);\n}\n}")
 
           (= "executable:org.pkl.core.Pair#iterator()"
              (spoon/declaration-key method))

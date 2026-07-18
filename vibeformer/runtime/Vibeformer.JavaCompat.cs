@@ -38,6 +38,36 @@ internal sealed class JavaCancellationException : OperationCanceledException
         : base("The translated Java operation was cancelled.", token) { }
 }
 
+internal sealed class JavaUriSyntaxException : UriFormatException
+{
+    internal string InputText { get; }
+    internal string Reason { get; }
+
+    internal JavaUriSyntaxException(string input, string reason, int index = -1)
+        : base(index < 0 ? $"{reason}: {input}" : $"{reason} at index {index}: {input}")
+    {
+        InputText = input;
+        Reason = reason;
+    }
+}
+
+// java.nio.file.NoSuchFileException carries the missing path as its message.
+// System.IO.FileNotFoundException instead decorates Message and therefore
+// changes the evaluator diagnostic even when given the same path.
+internal sealed class NoSuchFileException : IOException
+{
+    internal NoSuchFileException(string path) : base(path) { }
+    internal NoSuchFileException(string path, Exception cause) : base(path, cause) { }
+}
+
+internal sealed class JavaFileNotFoundException : FileNotFoundException
+{
+    // Java's no-argument FileNotFoundException has a null message. The CLR
+    // supplies a generic fallback message, which would become a spurious Pkl
+    // cause line unless the Java contract is retained explicitly.
+    public override string Message => null!;
+}
+
 internal static class JavaCancellation
 {
     private sealed record Binding(object Owner, CancellationToken Token);
@@ -563,6 +593,8 @@ internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K :
 
 internal static class JavaCompat
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Uri, object>
+        SingleSlashFileUris = new();
     internal static readonly TextWriter @out = Console.Out;
     internal static readonly TextWriter err = Console.Error;
     private static readonly Dictionary<string, string> SystemProperties = new(StringComparer.Ordinal)
@@ -594,7 +626,12 @@ internal static class JavaCompat
     internal static T RequireNonNullElseGet<T>(T? value, Func<T> supplier) =>
         value is null ? RequireNonNull(supplier()) : value;
     internal static string? Getenv(string name) => Environment.GetEnvironmentVariable(name);
-    internal static string? ExceptionMessage(Exception? cause) => cause?.ToString();
+    internal static string? ExceptionMessage(Exception? exception)
+    {
+        if (exception is null) return null;
+        var method = exception.GetType().GetMethod("GetMessage", Type.EmptyTypes);
+        return method is null ? exception.Message : method.Invoke(exception, null) as string;
+    }
 
     internal static JavaStream<string> FindFiles(
         string basePath,
@@ -1244,10 +1281,17 @@ internal static class JavaCompat
         else Console.Error.WriteLine(exception);
     }
 
-    internal static string Formatted(string format, params object?[] arguments)
+    internal static string Formatted(string format, params object?[] arguments) =>
+        JavaStringFormat(CultureInfo.CurrentCulture, format, arguments);
+
+    internal static string JavaStringFormat(string format, params object?[] arguments) =>
+        JavaStringFormat(CultureInfo.CurrentCulture, format, arguments);
+
+    internal static string JavaStringFormat(CultureInfo locale, string format,
+        params object?[] arguments)
     {
         var result = new StringBuilder();
-        var argument = 0;
+        var nextArgument = 0;
         for (var index = 0; index < format.Length; index++)
         {
             if (format[index] != '%' || index + 1 >= format.Length)
@@ -1256,17 +1300,99 @@ internal static class JavaCompat
                 continue;
             }
 
-            var conversion = format[++index];
-            if (conversion == '%')
+            var cursor = index + 1;
+            if (format[cursor] == '%')
             {
                 result.Append('%');
+                index = cursor;
+                continue;
+            }
+            if (format[cursor] == 'n')
+            {
+                result.Append(Environment.NewLine);
+                index = cursor;
                 continue;
             }
 
-            if (argument >= arguments.Length) throw new FormatException("Missing Java format argument");
-            result.Append(JavaString(arguments[argument++]));
+            int? explicitArgument = null;
+            var digitsStart = cursor;
+            while (cursor < format.Length && char.IsDigit(format[cursor])) cursor++;
+            if (cursor < format.Length && cursor > digitsStart && format[cursor] == '$')
+            {
+                explicitArgument = int.Parse(format[digitsStart..cursor],
+                    CultureInfo.InvariantCulture) - 1;
+                cursor++;
+            }
+            else
+            {
+                cursor = digitsStart;
+            }
+
+            var flagsStart = cursor;
+            while (cursor < format.Length && "-#+ 0,(<".Contains(format[cursor])) cursor++;
+            var flags = format[flagsStart..cursor];
+            var widthStart = cursor;
+            while (cursor < format.Length && char.IsDigit(format[cursor])) cursor++;
+            var width = cursor > widthStart
+                ? int.Parse(format[widthStart..cursor], CultureInfo.InvariantCulture)
+                : 0;
+            int? precision = null;
+            if (cursor < format.Length && format[cursor] == '.')
+            {
+                cursor++;
+                var precisionStart = cursor;
+                while (cursor < format.Length && char.IsDigit(format[cursor])) cursor++;
+                if (precisionStart == cursor) throw new FormatException("Invalid Java format precision");
+                precision = int.Parse(format[precisionStart..cursor], CultureInfo.InvariantCulture);
+            }
+            if (cursor < format.Length && format[cursor] is 't' or 'T') cursor++;
+            if (cursor >= format.Length) throw new FormatException("Invalid Java format conversion");
+            var conversion = format[cursor];
+
+            var argumentIndex = explicitArgument ?? nextArgument++;
+            if (argumentIndex < 0 || argumentIndex >= arguments.Length)
+                throw new FormatException("Missing Java format argument");
+            var rendered = FormatJavaArgument(arguments[argumentIndex], conversion, precision, locale);
+            if (conversion is >= 'A' and <= 'Z') rendered = rendered.ToUpper(locale);
+            if (flags.Contains('+') && rendered.Length > 0 && rendered[0] != '-') rendered = "+" + rendered;
+            if (width > rendered.Length)
+            {
+                var padding = new string(flags.Contains('0') && !flags.Contains('-') ? '0' : ' ',
+                    width - rendered.Length);
+                rendered = flags.Contains('-') ? rendered + padding : padding + rendered;
+            }
+            result.Append(rendered);
+            index = cursor;
         }
         return result.ToString();
+    }
+
+    private static string FormatJavaArgument(object? value, char conversion, int? precision,
+        CultureInfo locale)
+    {
+        switch (char.ToLowerInvariant(conversion))
+        {
+            case 's':
+            {
+                var rendered = StringValueOf(value);
+                return precision is { } limit && rendered.Length > limit ? rendered[..limit] : rendered;
+            }
+            case 'b': return value is null ? "false" : value is bool boolean ? StringValueOf(boolean) : "true";
+            case 'c': return value is char character
+                ? character.ToString()
+                : char.ConvertFromUtf32(Convert.ToInt32(value, CultureInfo.InvariantCulture));
+            case 'd': return Convert.ToInt64(value, CultureInfo.InvariantCulture).ToString(locale);
+            case 'o': return Convert.ToString(Convert.ToInt64(value, CultureInfo.InvariantCulture), 8)!;
+            case 'x': return Convert.ToInt64(value, CultureInfo.InvariantCulture).ToString("x", locale);
+            case 'f': return Convert.ToDouble(value, CultureInfo.InvariantCulture)
+                .ToString("F" + (precision ?? 6), locale);
+            case 'e': return Convert.ToDouble(value, CultureInfo.InvariantCulture)
+                .ToString("E" + (precision ?? 6), locale);
+            case 'g': return Convert.ToDouble(value, CultureInfo.InvariantCulture)
+                .ToString("G" + (precision ?? 6), locale);
+            case 'h': return JavaHashCode(value).ToString("x", CultureInfo.InvariantCulture);
+            default: return StringValueOf(value);
+        }
     }
 
     internal static int IndexOfCodePoint(string value, int codePoint, int fromIndex) =>
@@ -1327,7 +1453,34 @@ internal static class JavaCompat
         return previous;
     }
 
-    internal static Uri CreateUri(string value) => new(value, UriKind.RelativeOrAbsolute);
+    private static void ValidateJavaUriText(string value)
+    {
+        for (var index = 0; index < value.Length; index++)
+        {
+            var current = value[index];
+            if (current <= 0x20 || current == 0x7f)
+                throw new JavaUriSyntaxException(value, "Illegal character in path", index);
+            if (current != '%') continue;
+            if (index + 2 >= value.Length ||
+                !Uri.IsHexDigit(value[index + 1]) || !Uri.IsHexDigit(value[index + 2]))
+                throw new JavaUriSyntaxException(value, "Malformed escape pair", index);
+            index += 2;
+        }
+    }
+
+    internal static Uri CreateUri(string value)
+    {
+        ValidateJavaUriText(value);
+        if (Regex.IsMatch(value, @"(?i)(?:^|/)%2e(?:%2e)?(?:/|$)"))
+        {
+            var options = new UriCreationOptions
+            {
+                DangerousDisablePathAndQueryCanonicalization = true
+            };
+            return new Uri(value, in options);
+        }
+        return new Uri(value, UriKind.RelativeOrAbsolute);
+    }
     internal static string NewString(char[] value) => new(value);
     internal static string NewString(char[] value, int offset, int count) => new(value, offset, count);
     internal static string NewString(int[] codePoints, int offset, int count) =>
@@ -1339,7 +1492,10 @@ internal static class JavaCompat
     internal static string NewString(byte[] value, Encoding encoding) => encoding.GetString(value);
     internal static string NewString(object value) => StringValueOf(value);
     internal static Uri NewUri(string value) => CreateUri(value);
-    internal static string UriToString(Uri value) => value.OriginalString;
+    internal static string UriToString(Uri value) =>
+        SingleSlashFileUris.TryGetValue(value, out _) && value.IsAbsoluteUri && value.IsFile
+            ? "file:" + value.AbsolutePath + value.Query + value.Fragment
+            : value.OriginalString;
 
     private static bool IsUriUnreserved(char value) =>
         value is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or
@@ -1374,11 +1530,14 @@ internal static class JavaCompat
         return CreateUri(text);
     }
     internal static UriFormatException NewUriSyntaxException(string input, string reason) =>
-        new($"{reason}: {input}");
+        new JavaUriSyntaxException(input, reason);
     internal static UriFormatException NewUriSyntaxException(string input, string reason, int index) =>
-        new($"{reason} at index {index}: {input}");
+        new JavaUriSyntaxException(input, reason, index);
+    internal static string UriSyntaxReason(UriFormatException error) =>
+        error is JavaUriSyntaxException syntax ? syntax.Reason : error.Message;
     internal static string UriSyntaxInput(UriFormatException error)
     {
+        if (error is JavaUriSyntaxException syntax) return syntax.InputText;
         var separator = error.Message.LastIndexOf(": ", StringComparison.Ordinal);
         return separator >= 0 ? error.Message[(separator + 2)..] : error.Message;
     }
@@ -1386,6 +1545,7 @@ internal static class JavaCompat
     internal static IOException NewIOException(string? message) => new(message);
     internal static IOException NewIOException(Exception cause) => new(cause.Message, cause);
     internal static IOException NewIOException(string? message, Exception? cause) => new(message, cause);
+    internal static FileNotFoundException NewFileNotFoundException() => new JavaFileNotFoundException();
     internal static Exception NewException() => new();
     internal static Exception NewException(string? message) => new(message);
     internal static Exception NewException(Exception cause) => new(cause.Message, cause);
@@ -1539,6 +1699,13 @@ internal static class JavaCompat
         if (!rooted) text = text.TrimStart('/');
         return new Uri(text, UriKind.Relative);
     }
+    internal static Uri ResolveLocalDependencyUri(Uri basis, Uri value)
+    {
+        var resolved = ResolveUri(basis, value);
+        if (resolved.IsAbsoluteUri && resolved.IsFile)
+            _ = SingleSlashFileUris.GetValue(resolved, _ => new object());
+        return resolved;
+    }
     internal static Uri NormalizeUri(Uri uri) => uri;
     internal static Uri RelativizeUri(Uri basis, Uri value) =>
         basis.IsAbsoluteUri && value.IsAbsoluteUri ? basis.MakeRelativeUri(value) : value;
@@ -1551,7 +1718,6 @@ internal static class JavaCompat
     }
     internal static Exception InitCause(Exception exception, Exception cause) =>
         new Exception(exception.Message, cause);
-
     internal static int IdentityHashCode(object value) =>
         System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value);
 
@@ -2356,7 +2522,7 @@ internal static class JavaCompat
                 ? new DirectoryInfo(current)
                 : new FileInfo(current);
             if (!info.Exists)
-                throw new FileNotFoundException($"Cannot resolve missing path `{path}`.", current);
+                throw new NoSuchFileException(path);
             if ((info.Attributes & FileAttributes.ReparsePoint) == 0) continue;
             var target = info.ResolveLinkTarget(returnFinalTarget: true) ??
                 throw new IOException($"Cannot resolve symbolic link `{current}`.");

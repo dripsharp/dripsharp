@@ -1007,6 +1007,10 @@
           "executable:java.lang.String#codePoints()" (compat-call "CodePoints" [target])
           "executable:java.lang.String#equalsIgnoreCase(java.lang.String)" (compat-call "EqualsIgnoreCase" (into [target] args))
           "executable:java.lang.String#formatted(java.lang.Object[])" (compat-call "Formatted" (into [target] args))
+          "executable:java.lang.String#format(java.lang.String,java.lang.Object[])"
+          (compat-call "JavaStringFormat" args)
+          "executable:java.lang.String#format(java.util.Locale,java.lang.String,java.lang.Object[])"
+          (compat-call "JavaStringFormat" args)
           "executable:java.lang.String#indexOf(int,int)" (compat-call "IndexOfCodePoint" (into [target] args))
           "executable:java.lang.String#isBlank()" (invoke (raw "global::System.String.IsNullOrWhiteSpace") [target])
           "executable:java.lang.String#isEmpty()" (csharp/binary "==" 40 (member target "Length") (raw "0"))
@@ -1091,8 +1095,8 @@
           "executable:java.net.URI#toURL()" target
           "executable:java.net.URI#resolve(java.lang.String)" (compat-call "ResolveUri" (into [target] args))
           "executable:java.net.URI#resolve(java.net.URI)" (compat-call "ResolveUri" (into [target] args))
-          "executable:java.net.URISyntaxException#getReason()" (member target "Message")
-          "executable:java.net.URISyntaxException#getMessage()" (member target "Message")
+          "executable:java.net.URISyntaxException#getReason()" (compat-call "UriSyntaxReason" [target])
+          "executable:java.net.URISyntaxException#getMessage()" (compat-call "ExceptionMessage" [target])
           "executable:java.net.URISyntaxException#getInput()" (compat-call "UriSyntaxInput" [target])
           "executable:java.nio.charset.Charset#forName(java.lang.String)" (invoke (raw "global::System.Text.Encoding.GetEncoding") args)
           "executable:java.nio.charset.Charset#newDecoder()" (invoke (raw "new global::Pkl.Core.Runtime.JavaCharsetDecoder") [target])
@@ -1103,7 +1107,7 @@
           (compat-call "FindFiles" args)
           "executable:java.nio.file.attribute.BasicFileAttributes#isRegularFile()"
           (compat-call "IsRegularFile" [target])
-          "executable:java.lang.Throwable#getMessage()" (member target "Message")
+          "executable:java.lang.Throwable#getMessage()" (compat-call "ExceptionMessage" [target])
           "executable:java.lang.Throwable#getCause()" (member target "InnerException")
           "executable:java.lang.Exception#getCause()" (member target "InnerException")
           "executable:java.lang.Throwable#initCause(java.lang.Throwable)" (compat-call "InitCause" (into [target] args))
@@ -1892,6 +1896,7 @@
                            (raw ")")])
                          "java.lang.String" (compat-call "NewString" args)
                          "java.net.URISyntaxException" (compat-call "NewUriSyntaxException" args)
+                         "java.io.FileNotFoundException" (compat-call "NewFileNotFoundException" args)
                          "java.io.IOException" (compat-call "NewIOException" args)
                          "java.io.UncheckedIOException" (compat-call "NewIOException" args)
                          "java.net.ConnectException" (compat-call "NewIOException" args)
