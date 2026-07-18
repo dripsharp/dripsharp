@@ -757,7 +757,7 @@
 
     :else
     (or (when (empty? (.getActualTypeArguments reference))
-          (when-let [base (get {"java.lang.Comparable" "global::System.IComparable<object>"
+          (when-let [base (get {"java.lang.Comparable" "object"
                                 "java.lang.Iterable" "global::System.Collections.Generic.IEnumerable<object>"
                                 "java.util.Collection" "global::System.Collections.Generic.ICollection<object>"
                                 "java.util.List" "global::System.Collections.Generic.IList<object>"
@@ -797,6 +797,15 @@
   (let [occurrence (occurrence! ctx reference :type)
         [node rule]
         (cond
+          ;; Comparable<?> is commonly used as an erased local carrier (for
+          ;; example, JSON parser member names may be String or Identifier).
+          ;; Keep declaration bases generic, but erase value-site occurrences
+          ;; to object so CLR generic invariance does not introduce casts that
+          ;; do not exist on the JVM.
+          (and (= "java.lang.Comparable" (.getQualifiedName reference))
+               (not (:base-clause? ctx)))
+          [(raw "object") :dotnet.type/comparable-erased-value]
+
           (= "org.pkl.core.stdlib.VmObjectFactory$Property" (.getQualifiedName reference))
           [(generic-node "global::System.Func"
                          (mapv #(type-node ctx %) (.getActualTypeArguments reference)))
@@ -1647,6 +1656,35 @@
           (= "executable:org.pkl.core.Pair#iterator()"
              (spoon/declaration-key method))
           (sequence-node [(raw "{") (raw "\nreturn ((global::System.Collections.Generic.IEnumerable<object?>)new object?[] { this.first, this.second }).GetEnumerator();\n") (raw "}")])
+
+          (= "executable:org.pkl.core.util.paguro.RrbTree#empty()"
+             (spoon/declaration-key method))
+          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<T>(global::System.Array.Empty<T>(), 0, new global::Pkl.Core.Util.Paguro.RrbTree<object>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
+
+          (= "executable:org.pkl.core.util.paguro.RrbTree#emptyMutable()"
+             (spoon/declaration-key method))
+          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<object>.MutRrbt<T>(global::System.Array.Empty<T>(), 0, 0, new global::Pkl.Core.Util.Paguro.RrbTree<object>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
+
+          (= "executable:org.pkl.core.util.paguro.RrbTree#emptyLeaf()"
+             (spoon/declaration-key method))
+          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<object>.Leaf<T>(global::System.Array.Empty<T>());\n}")
+
+          (= "executable:org.pkl.core.util.paguro.RrbTree#genericNodeArray(int)"
+             (spoon/declaration-key method))
+          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<object>.Node<T>[size];\n}")
+
+          (= "executable:org.pkl.core.stdlib.base.StringNodes#patternOf(java.lang.String)"
+             (spoon/declaration-key method))
+          (raw "{\nreturn global::Vibeformer.Runtime.JavaCompat.CompileLiteralRegex(regex);\n}")
+
+          (= "executable:org.pkl.core.PClassInfo#forValue(java.lang.Object)"
+             (spoon/declaration-key method))
+          (raw "{\nreturn global::Pkl.Core.PClassInfo<object>.ForValueCompat(value);\n}")
+
+          (= "executable:org.pkl.core.runtime.VmList#repeat(long)"
+             (spoon/declaration-key method))
+          (raw
+           "{\nif (n == 0) return global::Pkl.Core.Runtime.VmList.EMPTY;\nif (n == 1) return this;\nglobal::Pkl.Core.Runtime.VmCollection.CheckPositive(n);\nvar remaining = n;\nvar result = global::Pkl.Core.Util.Paguro.RrbTree<object>.Empty<object>();\nvar factor = this.rrbt;\nwhile (remaining > 0) {\nif ((remaining & 1L) != 0) result = result.Join(factor);\nremaining >>= 1;\nif (remaining > 0) factor = factor.Join(factor);\n}\nreturn global::Pkl.Core.Runtime.VmList.Create(result);\n}")
 
           :else translated-body)
         declaration

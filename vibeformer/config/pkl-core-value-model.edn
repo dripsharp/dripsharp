@@ -8,11 +8,23 @@
  [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
    :expand :body}
   {:key "initializer:org.pkl.core.runtime.BaseModule#static@26:10" :expand :body}
+  ;; ModuleCache returns every standard-library singleton directly. Preserve
+  ;; each Java static initializer so the corresponding module object receives
+  ;; its class and module metadata before any renderer or API reads it.
+  {:key "initializer:org.pkl.core.runtime.AnalyzeModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.BenchmarkModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.CommandModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.JsonnetModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.PklBinaryModule#static@23:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.ReleaseModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.XmlModule#static@24:10" :expand :body}
   {:key "initializer:org.pkl.core.Release#static@52:10" :expand :body}
   {:key "initializer:org.pkl.core.runtime.RefModule#static@24:10" :expand :body}
   {:key "initializer:org.pkl.core.runtime.MathModule#static@23:10" :expand :body}
   {:key "initializer:org.pkl.core.runtime.MirrorFactories#static@109:10" :expand :body}
   {:key "initializer:org.pkl.core.stdlib.base.RegexMatchFactory#static@36:10" :expand :body}
+  {:key "initializer:org.pkl.core.util.xml.Xml10Validator#static@28:10" :expand :body}
+  {:key "initializer:org.pkl.core.util.xml.Xml11Validator#static@28:10" :expand :body}
   ;; Project and user-settings evaluation reaches these eagerly shared stdlib
   ;; module singletons through ModuleCache. Their static bodies are observable
   ;; runtime behavior: without them ModuleCache returns uninitialized modules.

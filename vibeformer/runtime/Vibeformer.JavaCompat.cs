@@ -593,8 +593,17 @@ internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K :
 
 internal static class JavaCompat
 {
+    private sealed class JavaUriText(string value)
+    {
+        internal string Value { get; } = value;
+    }
+
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Uri, object>
         SingleSlashFileUris = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Uri, JavaUriText>
+        OriginalUriTexts = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Regex, JavaUriText>
+        OriginalRegexPatterns = new();
     internal static readonly TextWriter @out = Console.Out;
     internal static readonly TextWriter err = Console.Error;
     private static readonly Dictionary<string, string> SystemProperties = new(StringComparer.Ordinal)
@@ -656,7 +665,7 @@ internal static class JavaCompat
     internal static string Concat(object? left, object? right) =>
         JavaString(left) + JavaString(right);
 
-    private static string JavaString(object? value) => value?.ToString() ?? "null";
+    private static string JavaString(object? value) => StringValueOf(value);
 
     internal static bool IsDigit(int codePoint) => Rune.GetUnicodeCategory(new Rune(codePoint)) == UnicodeCategory.DecimalDigitNumber;
 
@@ -749,6 +758,7 @@ internal static class JavaCompat
         double number => JavaFloatingString(number),
         float number => JavaFloatingString(number),
         Uri uri => uri.OriginalString,
+        Regex regex => JavaCompat.RegexPattern(regex),
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
         _ => value.ToString() ?? "null"
     };
@@ -793,7 +803,29 @@ internal static class JavaCompat
         }
         return encoding.GetBytes(value).Select(item => unchecked((sbyte)item)).ToArray();
     }
-    internal static sbyte[] StringGetBytes(string value, string encoding) => StringGetBytes(value, Encoding.GetEncoding(encoding));
+    internal static sbyte[] StringGetBytes(string value, string encoding)
+    {
+        if (encoding.Equals("UTF-16", StringComparison.OrdinalIgnoreCase))
+        {
+            var payload = Encoding.BigEndianUnicode.GetBytes(value);
+            return new byte[] { 0xfe, 0xff }.Concat(payload)
+                .Select(item => unchecked((sbyte)item)).ToArray();
+        }
+        if (encoding.Equals("UTF-16BE", StringComparison.OrdinalIgnoreCase))
+            return Encoding.BigEndianUnicode.GetBytes(value)
+                .Select(item => unchecked((sbyte)item)).ToArray();
+        if (encoding.Equals("UTF-16LE", StringComparison.OrdinalIgnoreCase))
+            return Encoding.Unicode.GetBytes(value)
+                .Select(item => unchecked((sbyte)item)).ToArray();
+        if (encoding.Equals("ISO-8859-1", StringComparison.OrdinalIgnoreCase))
+        {
+            var bytes = new List<sbyte>();
+            foreach (var rune in value.EnumerateRunes())
+                bytes.Add(unchecked((sbyte)(rune.Value <= 0xff ? rune.Value : '?')));
+            return bytes.ToArray();
+        }
+        return StringGetBytes(value, Encoding.GetEncoding(encoding));
+    }
 
     private static string JavaFloatingString(double value)
     {
@@ -1047,6 +1079,436 @@ internal static class JavaCompat
         return s * z;
     }
 
+    // Ports of the corresponding OpenJDK fdlibm routines. StrictMath is
+    // specified in terms of these algorithms; platform libm functions can
+    // differ by one ulp, which is observable in rendered Pkl values.
+    internal static double StrictLog(double x)
+    {
+        const double two54 = 1.80143985094819840000e+16;
+        const double ln2Hi = 6.93147180369123816490e-01;
+        const double ln2Lo = 1.90821492927058770002e-10;
+        const double lg1 = 6.666666666666735130e-01;
+        const double lg2 = 3.999999999940941908e-01;
+        const double lg3 = 2.857142874366239149e-01;
+        const double lg4 = 2.222219843214978396e-01;
+        const double lg5 = 1.818357216161805012e-01;
+        const double lg6 = 1.531383769920937332e-01;
+        const double lg7 = 1.479819860511658591e-01;
+
+        var hx = HighWord(x);
+        var lx = LowWord(x);
+        var k = 0;
+        if (hx < 0x00100000)
+        {
+            if (((hx & 0x7fffffff) | lx) == 0) return double.NegativeInfinity;
+            if (hx < 0) return double.NaN;
+            k -= 54;
+            x *= two54;
+            hx = HighWord(x);
+        }
+        if (hx >= 0x7ff00000) return x + x;
+        k += (hx >> 20) - 1023;
+        hx &= 0x000fffff;
+        var i = (hx + 0x95f64) & 0x100000;
+        x = WithHighWord(x, hx | (i ^ 0x3ff00000));
+        k += i >> 20;
+        var f = x - 1.0;
+        if ((0x000fffff & (2 + hx)) < 3)
+        {
+            if (f == 0.0)
+                return k == 0 ? 0.0 : k * ln2Hi + k * ln2Lo;
+            var smallR = f * f * (0.5 - 0.33333333333333333 * f);
+            return k == 0
+                ? f - smallR
+                : k * ln2Hi - ((smallR - k * ln2Lo) - f);
+        }
+        var s = f / (2.0 + f);
+        var dk = (double)k;
+        var z = s * s;
+        i = hx - 0x6147a;
+        var w = z * z;
+        var j = 0x6b851 - hx;
+        var t1 = w * (lg2 + w * (lg4 + w * lg6));
+        var t2 = z * (lg1 + w * (lg3 + w * (lg5 + w * lg7)));
+        i |= j;
+        var r = t2 + t1;
+        if (i > 0)
+        {
+            var hfsq = 0.5 * f * f;
+            return k == 0
+                ? f - (hfsq - s * (hfsq + r))
+                : dk * ln2Hi - ((hfsq - (s * (hfsq + r) + dk * ln2Lo)) - f);
+        }
+        return k == 0
+            ? f - s * (f - r)
+            : dk * ln2Hi - ((s * (f - r) - dk * ln2Lo) - f);
+    }
+
+    internal static double StrictLog10(double x)
+    {
+        const double two54 = 1.80143985094819840000e+16;
+        const double ivln10 = 4.34294481903251816668e-01;
+        const double log10_2hi = 3.01029995663611771306e-01;
+        const double log10_2lo = 3.69423907715893078616e-13;
+        var hx = HighWord(x);
+        var lx = LowWord(x);
+        var k = 0;
+        if (hx < 0x00100000)
+        {
+            if (((hx & 0x7fffffff) | lx) == 0) return double.NegativeInfinity;
+            if (hx < 0) return double.NaN;
+            k -= 54;
+            x *= two54;
+            hx = HighWord(x);
+        }
+        if (hx >= 0x7ff00000) return x + x;
+        k += (hx >> 20) - 1023;
+        var i = (int)((uint)k >> 31);
+        hx = (hx & 0x000fffff) | ((0x3ff - i) << 20);
+        var y = (double)(k + i);
+        x = WithHighWord(x, hx);
+        var z = y * log10_2lo + ivln10 * StrictLog(x);
+        return z + y * log10_2hi;
+    }
+
+    private static int StrictRemPio2(double x, Span<double> y)
+    {
+        const double invpio2 = 6.36619772367581382433e-01;
+        const double pio2_1 = 1.57079632673412561417e+00;
+        const double pio2_1t = 6.07710050650619224932e-11;
+        const double pio2_2 = 6.07710050630396597660e-11;
+        const double pio2_2t = 2.02226624879595063154e-21;
+        const double pio2_3 = 2.02226624871116645580e-21;
+        const double pio2_3t = 8.47842766036889956997e-32;
+        ReadOnlySpan<int> npio2Hw =
+        [
+            0x3FF921FB, 0x400921FB, 0x4012D97C, 0x401921FB, 0x401F6A7A, 0x4022D97C,
+            0x4025FDBB, 0x402921FB, 0x402C463A, 0x402F6A7A, 0x4031475C, 0x4032D97C,
+            0x40346B9C, 0x4035FDBB, 0x40378FDB, 0x403921FB, 0x403AB41B, 0x403C463A,
+            0x403DD85A, 0x403F6A7A, 0x40407E4C, 0x4041475C, 0x4042106C, 0x4042D97C,
+            0x4043A28C, 0x40446B9C, 0x404534AC, 0x4045FDBB, 0x4046C6CB, 0x40478FDB,
+            0x404858EB, 0x404921FB
+        ];
+
+        var hx = HighWord(x);
+        var ix = hx & 0x7fffffff;
+        if (ix <= 0x3fe921fb)
+        {
+            y[0] = x;
+            y[1] = 0.0;
+            return 0;
+        }
+        if (ix < 0x4002d97c)
+        {
+            if (hx > 0)
+            {
+                var z = x - pio2_1;
+                if (ix != 0x3ff921fb)
+                {
+                    y[0] = z - pio2_1t;
+                    y[1] = (z - y[0]) - pio2_1t;
+                }
+                else
+                {
+                    z -= pio2_2;
+                    y[0] = z - pio2_2t;
+                    y[1] = (z - y[0]) - pio2_2t;
+                }
+                return 1;
+            }
+            else
+            {
+                var z = x + pio2_1;
+                if (ix != 0x3ff921fb)
+                {
+                    y[0] = z + pio2_1t;
+                    y[1] = (z - y[0]) + pio2_1t;
+                }
+                else
+                {
+                    z += pio2_2;
+                    y[0] = z + pio2_2t;
+                    y[1] = (z - y[0]) + pio2_2t;
+                }
+                return -1;
+            }
+        }
+        var t = Math.Abs(x);
+        var n = (int)(t * invpio2 + 0.5);
+        var fn = (double)n;
+        var r = t - fn * pio2_1;
+        var w = fn * pio2_1t;
+        if (n < 32 && ix != npio2Hw[n - 1])
+        {
+            y[0] = r - w;
+        }
+        else
+        {
+            var j = ix >> 20;
+            y[0] = r - w;
+            var i = j - ((HighWord(y[0]) >> 20) & 0x7ff);
+            if (i > 16)
+            {
+                t = r;
+                w = fn * pio2_2;
+                r = t - w;
+                w = fn * pio2_2t - ((t - r) - w);
+                y[0] = r - w;
+                i = j - ((HighWord(y[0]) >> 20) & 0x7ff);
+                if (i > 49)
+                {
+                    t = r;
+                    w = fn * pio2_3;
+                    r = t - w;
+                    w = fn * pio2_3t - ((t - r) - w);
+                    y[0] = r - w;
+                }
+            }
+        }
+        y[1] = (r - y[0]) - w;
+        if (hx >= 0) return n;
+        y[0] = -y[0];
+        y[1] = -y[1];
+        return -n;
+    }
+
+    private static double StrictKernelSin(double x, double y, int iy)
+    {
+        const double s1 = -1.66666666666666324348e-01;
+        const double s2 = 8.33333333332248946124e-03;
+        const double s3 = -1.98412698298579493134e-04;
+        const double s4 = 2.75573137070700676789e-06;
+        const double s5 = -2.50507602534068634195e-08;
+        const double s6 = 1.58969099521155010221e-10;
+        var ix = HighWord(x) & 0x7fffffff;
+        if (ix < 0x3e400000 && (int)x == 0) return x;
+        var z = x * x;
+        var v = z * x;
+        var r = s2 + z * (s3 + z * (s4 + z * (s5 + z * s6)));
+        return iy == 0
+            ? x + v * (s1 + z * r)
+            : x - ((z * (0.5 * y - v * r) - y) - v * s1);
+    }
+
+    private static double StrictKernelCos(double x, double y)
+    {
+        const double c1 = 4.16666666666666019037e-02;
+        const double c2 = -1.38888888888741095749e-03;
+        const double c3 = 2.48015872894767294178e-05;
+        const double c4 = -2.75573143513906633035e-07;
+        const double c5 = 2.08757232129817482790e-09;
+        const double c6 = -1.13596475577881948265e-11;
+        var ix = HighWord(x) & 0x7fffffff;
+        if (ix < 0x3e400000 && (int)x == 0) return 1.0;
+        var z = x * x;
+        var r = z * (c1 + z * (c2 + z * (c3 + z * (c4 + z * (c5 + z * c6)))));
+        if (ix < 0x3fd33333) return 1.0 - (0.5 * z - (z * r - x * y));
+        var qx = ix > 0x3fe90000
+            ? 0.28125
+            : BitConverter.Int64BitsToDouble((long)(ix - 0x00200000) << 32);
+        var hz = 0.5 * z - qx;
+        var a = 1.0 - qx;
+        return a - (hz - (z * r - x * y));
+    }
+
+    internal static double StrictSin(double x)
+    {
+        var ix = HighWord(x) & 0x7fffffff;
+        if (ix <= 0x3fe921fb) return StrictKernelSin(x, 0.0, 0);
+        if (ix >= 0x7ff00000) return x - x;
+        if (ix > 0x413921fb) return Math.Sin(x);
+        Span<double> y = stackalloc double[2];
+        var n = StrictRemPio2(x, y);
+        return (n & 3) switch
+        {
+            0 => StrictKernelSin(y[0], y[1], 1),
+            1 => StrictKernelCos(y[0], y[1]),
+            2 => -StrictKernelSin(y[0], y[1], 1),
+            _ => -StrictKernelCos(y[0], y[1])
+        };
+    }
+
+    internal static double StrictCos(double x)
+    {
+        var ix = HighWord(x) & 0x7fffffff;
+        if (ix <= 0x3fe921fb) return StrictKernelCos(x, 0.0);
+        if (ix >= 0x7ff00000) return x - x;
+        if (ix > 0x413921fb) return Math.Cos(x);
+        Span<double> y = stackalloc double[2];
+        var n = StrictRemPio2(x, y);
+        return (n & 3) switch
+        {
+            0 => StrictKernelCos(y[0], y[1]),
+            1 => -StrictKernelSin(y[0], y[1], 1),
+            2 => -StrictKernelCos(y[0], y[1]),
+            _ => StrictKernelSin(y[0], y[1], 1)
+        };
+    }
+
+    internal static double StrictAsin(double x)
+    {
+        const double pio2Hi = 1.57079632679489655800e+00;
+        const double pio2Lo = 6.12323399573676603587e-17;
+        const double pio4Hi = 7.85398163397448278999e-01;
+        const double pS0 = 1.66666666666666657415e-01;
+        const double pS1 = -3.25565818622400915405e-01;
+        const double pS2 = 2.01212532134862925881e-01;
+        const double pS3 = -4.00555345006794114027e-02;
+        const double pS4 = 7.91534994289814532176e-04;
+        const double pS5 = 3.47933107596021167570e-05;
+        const double qS1 = -2.40339491173441421878e+00;
+        const double qS2 = 2.02094576023350569471e+00;
+        const double qS3 = -6.88283971605453293030e-01;
+        const double qS4 = 7.70381505559019352791e-02;
+        var hx = HighWord(x);
+        var ix = hx & 0x7fffffff;
+        if (ix >= 0x3ff00000)
+        {
+            if (((ix - 0x3ff00000) | LowWord(x)) == 0) return x * pio2Hi + x * pio2Lo;
+            return double.NaN;
+        }
+        double t = 0.0;
+        if (ix < 0x3fe00000)
+        {
+            if (ix < 0x3e400000) return x;
+            t = x * x;
+            var p = t * (pS0 + t * (pS1 + t * (pS2 + t * (pS3 + t * (pS4 + t * pS5)))));
+            var q = 1.0 + t * (qS1 + t * (qS2 + t * (qS3 + t * qS4)));
+            return x + x * (p / q);
+        }
+        var w = 1.0 - Math.Abs(x);
+        t = w * 0.5;
+        var pn = t * (pS0 + t * (pS1 + t * (pS2 + t * (pS3 + t * (pS4 + t * pS5)))));
+        var qn = 1.0 + t * (qS1 + t * (qS2 + t * (qS3 + t * qS4)));
+        var s = Math.Sqrt(t);
+        if (ix >= 0x3fef3333)
+        {
+            w = pn / qn;
+            t = pio2Hi - (2.0 * (s + s * w) - pio2Lo);
+        }
+        else
+        {
+            w = ClearLowWord(s);
+            var c = (t - w * w) / (s + w);
+            var r = pn / qn;
+            var p = 2.0 * s * r - (pio2Lo - 2.0 * c);
+            var q = pio4Hi - 2.0 * w;
+            t = pio4Hi - (p - q);
+        }
+        return hx > 0 ? t : -t;
+    }
+
+    internal static double StrictAtan(double x)
+    {
+        ReadOnlySpan<double> atanHi =
+        [4.63647609000806093515e-01, 7.85398163397448278999e-01,
+         9.82793723247329054082e-01, 1.57079632679489655800e+00];
+        ReadOnlySpan<double> atanLo =
+        [2.26987774529616870924e-17, 3.06161699786838301793e-17,
+         1.39033110312319984516e-17, 6.12323399573676603587e-17];
+        ReadOnlySpan<double> aT =
+        [
+            3.33333333333329318027e-01, -1.99999999998764832476e-01,
+            1.42857142725034663711e-01, -1.11111104054623557880e-01,
+            9.09088713343650656196e-02, -7.69187620504482999495e-02,
+            6.66107313738753120669e-02, -5.83357013379057348645e-02,
+            4.97687799461593236017e-02, -3.65315727442169155270e-02,
+            1.62858201153657823623e-02
+        ];
+        var hx = HighWord(x);
+        var ix = hx & 0x7fffffff;
+        int id;
+        if (ix >= 0x44100000)
+        {
+            if (ix > 0x7ff00000 || (ix == 0x7ff00000 && LowWord(x) != 0)) return x + x;
+            return hx > 0 ? atanHi[3] + atanLo[3] : -atanHi[3] - atanLo[3];
+        }
+        if (ix < 0x3fdc0000)
+        {
+            if (ix < 0x3e200000) return x;
+            id = -1;
+        }
+        else
+        {
+            x = Math.Abs(x);
+            if (ix < 0x3ff30000)
+            {
+                if (ix < 0x3fe60000)
+                {
+                    id = 0;
+                    x = (2.0 * x - 1.0) / (2.0 + x);
+                }
+                else
+                {
+                    id = 1;
+                    x = (x - 1.0) / (x + 1.0);
+                }
+            }
+            else if (ix < 0x40038000)
+            {
+                id = 2;
+                x = (x - 1.5) / (1.0 + 1.5 * x);
+            }
+            else
+            {
+                id = 3;
+                x = -1.0 / x;
+            }
+        }
+        var z = x * x;
+        var w = z * z;
+        var s1 = z * (aT[0] + w * (aT[2] + w * (aT[4] + w * (aT[6] + w * (aT[8] + w * aT[10])))));
+        var s2 = w * (aT[1] + w * (aT[3] + w * (aT[5] + w * (aT[7] + w * aT[9]))));
+        if (id < 0) return x - x * (s1 + s2);
+        z = atanHi[id] - ((x * (s1 + s2) - atanLo[id]) - x);
+        return hx < 0 ? -z : z;
+    }
+
+    internal static double StrictAtan2(double y, double x)
+    {
+        const double tiny = 1.0e-300;
+        const double piOver4 = 7.8539816339744827900e-01;
+        const double piOver2 = 1.5707963267948965580e+00;
+        const double piLo = 1.2246467991473531772e-16;
+        var hx = HighWord(x);
+        var ix = hx & 0x7fffffff;
+        var lx = LowWord(x);
+        var hy = HighWord(y);
+        var iy = hy & 0x7fffffff;
+        var ly = LowWord(y);
+        if (double.IsNaN(x) || double.IsNaN(y)) return x + y;
+        if (((hx - 0x3ff00000) | lx) == 0) return StrictAtan(y);
+        var m = ((hy >> 31) & 1) | ((hx >> 30) & 2);
+        if ((iy | ly) == 0)
+            return m switch { 0 or 1 => y, 2 => Math.PI + tiny, _ => -Math.PI - tiny };
+        if ((ix | lx) == 0) return hy < 0 ? -piOver2 - tiny : piOver2 + tiny;
+        if (ix == 0x7ff00000)
+        {
+            if (iy == 0x7ff00000)
+                return m switch
+                {
+                    0 => piOver4 + tiny,
+                    1 => -piOver4 - tiny,
+                    2 => 3.0 * piOver4 + tiny,
+                    _ => -3.0 * piOver4 - tiny
+                };
+            return m switch { 0 => 0.0, 1 => -0.0, 2 => Math.PI + tiny, _ => -Math.PI - tiny };
+        }
+        if (iy == 0x7ff00000) return hy < 0 ? -piOver2 - tiny : piOver2 + tiny;
+        var k = (iy - ix) >> 20;
+        double z;
+        if (k > 60) z = piOver2 + 0.5 * piLo;
+        else if (hx < 0 && k < -60) z = 0.0;
+        else z = StrictAtan(Math.Abs(y / x));
+        return m switch
+        {
+            0 => z,
+            1 => -z,
+            2 => Math.PI - (z - piLo),
+            _ => (z - piLo) - Math.PI
+        };
+    }
+
     private static int HighWord(double value) =>
         unchecked((int)(BitConverter.DoubleToInt64Bits(value) >> 32));
 
@@ -1112,12 +1574,32 @@ internal static class JavaCompat
             .ToArray();
     }
 
-    internal static int ParseInt(string value) => int.Parse(value, CultureInfo.InvariantCulture);
+    internal static int ParseInt(string value)
+    {
+        try
+        {
+            return int.Parse(value, CultureInfo.InvariantCulture);
+        }
+        catch (OverflowException error)
+        {
+            throw new FormatException(error.Message, error);
+        }
+    }
 
     internal static int ParseInt(string value, int radix) =>
         checked((int)ParseSignedRadix(value, radix, int.MinValue, int.MaxValue));
 
-    internal static long ParseLong(string value) => long.Parse(value, CultureInfo.InvariantCulture);
+    internal static long ParseLong(string value)
+    {
+        try
+        {
+            return long.Parse(value, CultureInfo.InvariantCulture);
+        }
+        catch (OverflowException error)
+        {
+            throw new FormatException(error.Message, error);
+        }
+    }
     internal static long ParseLong(string value, int radix) =>
         ParseSignedRadix(value, radix, long.MinValue, long.MaxValue);
     internal static long ParseLong(string value, int beginIndex, int endIndex, int radix) =>
@@ -1210,7 +1692,9 @@ internal static class JavaCompat
     internal static long AddExact(long left, long right) => checked(left + right);
     internal static long MultiplyExact(long left, long right) => checked(left * right);
     internal static int MultiplyExactInt(int left, int right) => checked(left * right);
-    internal static double SignumDouble(double value) => Math.Sign(value);
+    internal static double SignumDouble(double value) => double.IsNaN(value) || value == 0.0
+        ? value
+        : value > 0.0 ? 1.0 : -1.0;
     internal static long SubtractExact(long left, long right) => checked(left - right);
     internal static long NegateExact(long value) => checked(-value);
     internal static int ToIntExact(long value) => checked((int)value);
@@ -1416,9 +1900,10 @@ internal static class JavaCompat
 
     internal static StringBuilder Reverse(StringBuilder builder)
     {
-        var chars = builder.ToString().ToCharArray();
-        Array.Reverse(chars);
-        builder.Clear().Append(chars);
+        var runes = builder.ToString().EnumerateRunes().ToArray();
+        Array.Reverse(runes);
+        builder.Clear();
+        foreach (var rune in runes) builder.Append(rune.ToString());
         return builder;
     }
     internal static void Reverse<T>(IList<T> values)
@@ -1471,6 +1956,18 @@ internal static class JavaCompat
     internal static Uri CreateUri(string value)
     {
         ValidateJavaUriText(value);
+        if (Regex.IsMatch(value, @"(?i)^file:/[^/]"))
+        {
+            var singleSlash = new Uri("file:///" + value["file:/".Length..], UriKind.Absolute);
+            _ = SingleSlashFileUris.GetValue(singleSlash, _ => new object());
+            return singleSlash;
+        }
+        if (Regex.IsMatch(value, @"(?i)^file:///[a-z]:$"))
+        {
+            var driveOnly = new Uri(value + "/", UriKind.Absolute);
+            _ = OriginalUriTexts.GetValue(driveOnly, _ => new JavaUriText(value));
+            return driveOnly;
+        }
         if (Regex.IsMatch(value, @"(?i)(?:^|/)%2e(?:%2e)?(?:/|$)"))
         {
             var options = new UriCreationOptions
@@ -1493,7 +1990,9 @@ internal static class JavaCompat
     internal static string NewString(object value) => StringValueOf(value);
     internal static Uri NewUri(string value) => CreateUri(value);
     internal static string UriToString(Uri value) =>
-        SingleSlashFileUris.TryGetValue(value, out _) && value.IsAbsoluteUri && value.IsFile
+        OriginalUriTexts.TryGetValue(value, out var original)
+            ? original.Value
+            : SingleSlashFileUris.TryGetValue(value, out _) && value.IsAbsoluteUri && value.IsFile
             ? "file:" + value.AbsolutePath + value.Query + value.Fragment
             : value.OriginalString;
 
@@ -1587,7 +2086,9 @@ internal static class JavaCompat
 
     private static string UriTextBeforeFragment(Uri uri)
     {
-        var text = uri.OriginalString;
+        var text = OriginalUriTexts.TryGetValue(uri, out var original)
+            ? original.Value
+            : uri.OriginalString;
         var fragment = text.IndexOf('#');
         return fragment < 0 ? text : text[..fragment];
     }
@@ -1690,6 +2191,10 @@ internal static class JavaCompat
         // java.net.URI.resolve("") resolves to the base URI's containing
         // directory; System.Uri otherwise preserves the base file itself.
         if (value.OriginalString.Length == 0) value = CreateUri(".");
+        if (OriginalUriTexts.TryGetValue(basis, out var originalBasis) &&
+            Regex.IsMatch(originalBasis.Value, @"(?i)^file:///[a-z]:$") &&
+            value.OriginalString == ".")
+            return new Uri("file:///", UriKind.Absolute);
         if (basis.IsAbsoluteUri) return new Uri(basis, value);
         var basisText = basis.OriginalString;
         var rooted = basisText.StartsWith("/", StringComparison.Ordinal);
@@ -1707,8 +2212,22 @@ internal static class JavaCompat
         return resolved;
     }
     internal static Uri NormalizeUri(Uri uri) => uri;
-    internal static Uri RelativizeUri(Uri basis, Uri value) =>
-        basis.IsAbsoluteUri && value.IsAbsoluteUri ? basis.MakeRelativeUri(value) : value;
+    internal static Uri RelativizeUri(Uri basis, Uri value)
+    {
+        if (!basis.IsAbsoluteUri || !value.IsAbsoluteUri ||
+            !string.Equals(UriScheme(basis), UriScheme(value), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(UriRawAuthority(basis), UriRawAuthority(value), StringComparison.Ordinal))
+            return value;
+        var basePath = UriRawPath(basis) ?? string.Empty;
+        var valuePath = UriRawPath(value) ?? string.Empty;
+        if (!valuePath.StartsWith(basePath, StringComparison.Ordinal)) return value;
+        var relative = valuePath[basePath.Length..];
+        var query = UriRawQuery(value);
+        var fragment = UriRawFragment(value);
+        if (query is not null) relative += "?" + query;
+        if (fragment is not null) relative += "#" + fragment;
+        return CreateUri(relative);
+    }
     internal static bool UriIsOpaque(Uri uri)
     {
         if (!uri.IsAbsoluteUri) return false;
@@ -1899,15 +2418,144 @@ internal static class JavaCompat
         return result;
     }
 
-    private static string TranslateJavaRegex(string pattern) =>
-        Regex.Replace(pattern, @"\[\[\^/\]\&\&\[([^\]]*)\]\]", "[$1]");
+    private static string TranslateJavaCharacterClass(string content)
+    {
+        if (content.StartsWith("^", StringComparison.Ordinal)) return "[" + content + "]";
+        var bmp = new StringBuilder();
+        var astral = new List<string>();
+        for (var index = 0; index < content.Length; index++)
+        {
+            if (char.IsHighSurrogate(content[index]) && index + 1 < content.Length &&
+                char.IsLowSurrogate(content[index + 1]))
+            {
+                astral.Add(content.Substring(index, 2));
+                index++;
+            }
+            else
+            {
+                bmp.Append(content[index]);
+            }
+        }
+        if (astral.Count == 0) return "[" + content + "]";
+        var alternatives = new List<string>();
+        if (bmp.Length > 0) alternatives.Add("[" + bmp + "]");
+        alternatives.AddRange(astral);
+        return "(?:" + string.Join("|", alternatives) + ")";
+    }
 
-    internal static Regex CompileRegex(string pattern) => new(TranslateJavaRegex(pattern));
+    private static string TranslateJavaRegex(string pattern)
+    {
+        pattern = Regex.Replace(pattern, @"\[\[\^/\]\&\&\[([^\]]*)\]\]", "[$1]");
+        var result = new StringBuilder(pattern.Length);
+        for (var index = 0; index < pattern.Length; index++)
+        {
+            var current = pattern[index];
+            if (current == '\\' && index + 1 < pattern.Length)
+            {
+                result.Append(current).Append(pattern[++index]);
+                continue;
+            }
+            if (current == '[')
+            {
+                var end = index + 1;
+                var escaped = false;
+                for (; end < pattern.Length; end++)
+                {
+                    if (!escaped && pattern[end] == ']') break;
+                    escaped = !escaped && pattern[end] == '\\';
+                    if (pattern[end] != '\\') escaped = false;
+                }
+                if (end < pattern.Length)
+                {
+                    result.Append(TranslateJavaCharacterClass(pattern[(index + 1)..end]));
+                    index = end;
+                    continue;
+                }
+            }
+            if (char.IsHighSurrogate(current) && index + 1 < pattern.Length &&
+                char.IsLowSurrogate(pattern[index + 1]))
+            {
+                result.Append("(?:").Append(current).Append(pattern[++index]).Append(')');
+                continue;
+            }
+            if (current == '.')
+            {
+                result.Append("(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\r\\n\\u0085\\u2028\\u2029])");
+                continue;
+            }
+            result.Append(current);
+        }
+        return result.ToString();
+    }
+
+    private static string JavaRegexSyntaxMessage(string pattern, ArgumentException error)
+    {
+        if (pattern.StartsWith('*') || pattern.StartsWith('+') || pattern.StartsWith('?'))
+            return $"Dangling meta character '{pattern[0]}' near index 0\n{pattern}\n^";
+
+        var depth = 0;
+        var escaped = false;
+        foreach (var current in pattern)
+        {
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if (current == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+            if (current == '(') depth++;
+            else if (current == ')' && depth > 0) depth--;
+        }
+        if (depth > 0) return $"Unclosed group near index {pattern.Length}\n{pattern}";
+        return error.Message;
+    }
+
+    private static Regex CompileRegexCore(string pattern, RegexOptions options)
+    {
+        try
+        {
+            var result = new Regex(TranslateJavaRegex(pattern), options);
+            _ = OriginalRegexPatterns.GetValue(result, _ => new JavaUriText(pattern));
+            return result;
+        }
+        catch (ArgumentException error)
+        {
+            throw new ArgumentException(JavaRegexSyntaxMessage(pattern, error), error);
+        }
+    }
+
+    internal static Regex CompileRegex(string pattern) => CompileRegexCore(pattern, RegexOptions.None);
     internal static Regex CompileRegex(string pattern, int flags) =>
-        new(TranslateJavaRegex(pattern), RegexOptions.CultureInvariant);
+        CompileRegexCore(pattern, RegexOptions.CultureInvariant);
+    internal static Regex CompileLiteralRegex(string pattern)
+    {
+        var result = new Regex(Regex.Escape(pattern), RegexOptions.CultureInvariant);
+        _ = OriginalRegexPatterns.GetValue(result, _ => new JavaUriText(pattern));
+        return result;
+    }
+    internal static string RegexPattern(Regex pattern) =>
+        OriginalRegexPatterns.TryGetValue(pattern, out var original)
+            ? original.Value
+            : pattern.ToString();
     internal static JavaRegexMatcher RegexMatcher(Regex pattern, string input) => new(pattern, input);
-    internal static string QuoteReplacement(string value) => value.Replace("$", "$$", StringComparison.Ordinal);
+    internal static string QuoteReplacement(string value) => value
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("$", "\\$", StringComparison.Ordinal);
     internal static string Encode(string value, Encoding encoding) => Uri.EscapeDataString(value);
+
+    internal static bool IsRrbTreeLeaf(object? value)
+    {
+        if (value is null) return false;
+        var type = value.GetType();
+        return type.IsGenericType && type.Name.StartsWith("Leaf`", StringComparison.Ordinal) &&
+               type.DeclaringType?.IsGenericType == true &&
+               type.DeclaringType.Name.StartsWith("RrbTree`", StringComparison.Ordinal) &&
+               type.Namespace == "Pkl.Core.Util.Paguro";
+    }
 
     internal static IList<T> ListOf<T>(params T[] values) => new ReadOnlyCollection<T>(values);
 
@@ -2562,7 +3210,14 @@ internal static class JavaCompat
     private static FileStream OpenFileRead(string path)
     {
         if (Directory.Exists(path)) throw new IOException("Is a directory");
-        return File.OpenRead(path);
+        try
+        {
+            return File.OpenRead(path);
+        }
+        catch (DirectoryNotFoundException error)
+        {
+            throw new FileNotFoundException(error.Message, path, error);
+        }
     }
     internal static sbyte[] ReadAllBytes(Stream stream)
     {
@@ -2774,13 +3429,62 @@ sealed class JavaRegexMatcher
         };
         return result;
     }
-    internal string ReplaceAll(string replacement) => regex.Replace(input, replacement);
-    internal string ReplaceFirst(string replacement) => regex.Replace(input, replacement, 1);
+    private string TranslateReplacement(string replacement)
+    {
+        var result = new StringBuilder(replacement.Length);
+        var groupCount = GroupCount();
+        var groupNames = new HashSet<string>(regex.GetGroupNames(), StringComparer.Ordinal);
+        for (var index = 0; index < replacement.Length; index++)
+        {
+            var current = replacement[index];
+            if (current == '\\')
+            {
+                if (++index == replacement.Length)
+                    throw new ArgumentException("character to be escaped is missing");
+                var literal = replacement[index];
+                result.Append(literal == '$' ? "$$" : literal);
+                continue;
+            }
+            if (current != '$')
+            {
+                result.Append(current);
+                continue;
+            }
+            if (++index == replacement.Length)
+                throw new ArgumentException("Illegal group reference: group index is missing");
+            if (replacement[index] == '{')
+            {
+                var end = replacement.IndexOf('}', index + 1);
+                if (end < 0) throw new ArgumentException("named capturing group is missing trailing '}'");
+                var name = replacement[(index + 1)..end];
+                if (name.Length == 0) throw new ArgumentException("named capturing group has 0 length name");
+                if (!groupNames.Contains(name)) throw new ArgumentException("No group with name {" + name + "}");
+                result.Append("${").Append(name).Append('}');
+                index = end;
+                continue;
+            }
+            if (!char.IsAsciiDigit(replacement[index]))
+                throw new ArgumentException("Illegal group reference");
+            var group = replacement[index] - '0';
+            if (group > groupCount) throw new ArgumentOutOfRangeException(null, "No group " + group);
+            while (index + 1 < replacement.Length && char.IsAsciiDigit(replacement[index + 1]))
+            {
+                var candidate = checked(group * 10 + replacement[index + 1] - '0');
+                if (candidate > groupCount) break;
+                group = candidate;
+                index++;
+            }
+            result.Append("${").Append(group).Append('}');
+        }
+        return result.ToString();
+    }
+    internal string ReplaceAll(string replacement) => regex.Replace(input, TranslateReplacement(replacement));
+    internal string ReplaceFirst(string replacement) => regex.Replace(input, TranslateReplacement(replacement), 1);
     internal JavaRegexMatcher AppendReplacement(StringBuilder buffer, string replacement)
     {
         var match = Current();
         buffer.Append(input, appendIndex, match.Index - appendIndex);
-        buffer.Append(match.Result(replacement));
+        buffer.Append(match.Result(TranslateReplacement(replacement)));
         appendIndex = match.Index + match.Length;
         return this;
     }
@@ -3089,6 +3793,7 @@ internal sealed class JavaMessageFormat : JavaFormat
         null => "null",
         sbyte or byte or short or ushort or int or uint or long or ulong =>
             ((IFormattable)argument).ToString("N0", locale),
+        Regex regex => JavaCompat.RegexPattern(regex),
         _ => Convert.ToString(argument, locale) ?? "null"
     };
 }

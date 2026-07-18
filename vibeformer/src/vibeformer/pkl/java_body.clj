@@ -456,6 +456,9 @@
 (defn- pclass-info-expression? [^CtExpression expression]
   (= "org.pkl.core.PClassInfo" (some-> expression .getType .getQualifiedName)))
 
+(defn- boxed-boolean-expression? [^CtExpression expression]
+  (= "java.lang.Boolean" (some-> expression .getType .getQualifiedName)))
+
 (defn- instanceof-type-reference [expression]
   (cond
     (instance? CtTypeAccess expression) (.getAccessedType ^CtTypeAccess expression)
@@ -480,6 +483,14 @@
                   (not (instance? CtTypePattern right-expression)))))
       (invoke (raw "global::Vibeformer.Runtime.JavaCompat.IsSet") [left])
 
+      (and (= kind "INSTANCEOF")
+           (let [reference (instanceof-type-reference right-expression)]
+             (and reference
+                  (= "org.pkl.core.util.paguro.RrbTree$Leaf"
+                     (.getQualifiedName ^CtTypeReference reference))
+                  (empty? (.getActualTypeArguments ^CtTypeReference reference)))))
+      (invoke (raw "global::Vibeformer.Runtime.JavaCompat.IsRrbTreeLeaf") [left])
+
       (= kind "INSTANCEOF")
       (csharp/binary "is" 40 left right)
 
@@ -489,6 +500,15 @@
       (let [equals (invoke (raw "global::System.Object.Equals")
                            [(invoke (member left "AsObject") [])
                             (invoke (member right "AsObject") [])])]
+        (if (= kind "NE") (csharp/prefix "!" equals) equals))
+
+      ;; Java Boolean has canonical TRUE/FALSE singleton objects. CLR boxing
+      ;; does not preserve reference identity, so value equality is the exact
+      ;; equivalent for Boolean identity comparisons.
+      (and (contains? #{"EQ" "NE"} kind)
+           (or (boxed-boolean-expression? left-expression)
+               (boxed-boolean-expression? right-expression)))
+      (let [equals (invoke (raw "global::System.Object.Equals") [left right])]
         (if (= kind "NE") (csharp/prefix "!" equals) equals))
 
       (and (contains? #{"EQ" "NE"} kind)
@@ -993,6 +1013,13 @@
           "executable:java.lang.StrictMath#toIntExact(long)" (compat-call "ToIntExact" args)
           "executable:java.lang.StrictMath#getExponent(double)" (compat-call "GetExponent" args)
           "executable:java.lang.StrictMath#pow(double,double)" (compat-call "StrictPow" args)
+          "executable:java.lang.StrictMath#log(double)" (compat-call "StrictLog" args)
+          "executable:java.lang.StrictMath#log10(double)" (compat-call "StrictLog10" args)
+          "executable:java.lang.StrictMath#sin(double)" (compat-call "StrictSin" args)
+          "executable:java.lang.StrictMath#cos(double)" (compat-call "StrictCos" args)
+          "executable:java.lang.StrictMath#asin(double)" (compat-call "StrictAsin" args)
+          "executable:java.lang.StrictMath#atan(double)" (compat-call "StrictAtan" args)
+          "executable:java.lang.StrictMath#atan2(double,double)" (compat-call "StrictAtan2" args)
           "executable:java.lang.invoke.MethodHandles#lookup()" (raw "new object()")
           "executable:java.lang.invoke.VarHandle#storeStoreFence()" (invoke (raw "global::System.Threading.Thread.MemoryBarrier") [])
           "executable:java.lang.Object#getClass()" (call-member "GetType")
@@ -1056,6 +1083,10 @@
           "executable:java.lang.AbstractStringBuilder#setLength(int)" (csharp/binary "=" 10 (member target "Length") (arg 0))
           "executable:java.lang.StringBuilder#setLength(int)" (csharp/binary "=" 10 (member target "Length") (arg 0))
           "executable:java.lang.StringBuilder#toString()" (call-member "ToString")
+          "executable:java.lang.Object#toString()"
+          (if (instance? CtSuperAccess target-element)
+            (call-member "ToString")
+            (compat-call "StringValueOf" [target]))
           "executable:java.lang.StringBuilder#appendCodePoint(int)"
           (compat-call "AppendCodePoint" (into [target] args))
           "executable:java.lang.String#compareTo(java.lang.String)"
@@ -1181,6 +1212,8 @@
           "executable:java.util.List#set(int,java.lang.Object)" (compat-call "ListSet" (into [target] args))
           "executable:java.util.List#add(int,java.lang.Object)" (compat-call "ListAdd" (into [target] args))
           "executable:java.util.List#remove(int)" (compat-call "ListRemove" (into [target] args))
+          "executable:java.util.AbstractList#remove(int)" (compat-call "ListRemove" (into [target] args))
+          "executable:java.util.ArrayList#remove(int)" (compat-call "ListRemove" (into [target] args))
           "executable:java.util.List#lastIndexOf(java.lang.Object)" (compat-call "ListLastIndexOf" (into [target] args))
           "executable:java.util.List#clear()" (call-member "Clear")
           "executable:java.util.List#contains(java.lang.Object)" (compat-call "CollectionContains" (into [target] args))
@@ -1333,7 +1366,8 @@
           "executable:java.util.regex.Pattern#compile(java.lang.String)" (compat-call "CompileRegex" args)
           "executable:java.util.regex.Pattern#compile(java.lang.String,int)" (compat-call "CompileRegex" args)
           "executable:java.util.regex.Pattern#matcher(java.lang.CharSequence)" (compat-call "RegexMatcher" (into [target] args))
-          "executable:java.util.regex.Pattern#pattern()" (invoke (member target "ToString") [])
+          "executable:java.util.regex.Pattern#pattern()" (compat-call "RegexPattern" [target])
+          "executable:java.util.regex.Pattern#toString()" (compat-call "RegexPattern" [target])
           "executable:java.util.regex.Pattern#quote(java.lang.String)" (invoke (raw "global::System.Text.RegularExpressions.Regex.Escape") args)
           "executable:java.util.regex.Matcher#quoteReplacement(java.lang.String)" (compat-call "QuoteReplacement" args)
           "executable:java.util.ServiceLoader#load(java.lang.Class)" (generic-compat-call services element "LoadServices" args)
@@ -1912,12 +1946,37 @@
                                          (when anonymous-body
                                            (sequence-node [(raw " ") anonymous-body]))]))))))
 
-(defn- block-node [children ^CtBlock element]
-  (sequence-node [(raw "{")
-                  (when (seq (.getStatements element)) (raw "\n"))
-                  (sequence-node (children-nodes children (.getStatements element)) "\n")
-                  (when (seq (.getStatements element)) (raw "\n"))
-                  (raw "}")]))
+(defn- targets-label? [statement-class ^CtStatement body label]
+  (boolean
+   (and label
+        (some #(= label (.getTargetLabel ^CtStatement %))
+              (.getElements body (TypeFilter. statement-class))))))
+
+(defn- block-node [services children ^CtBlock element]
+  (let [parent (when (.isParentInitialized element) (.getParent element))
+        loop-parent? (or (instance? CtFor parent) (instance? CtForEach parent)
+                         (instance? CtWhile parent) (instance? CtDo parent))
+        label (when loop-parent? (.getLabel ^CtStatement parent))
+        continue-label (when (targets-label? CtContinue element label) label)]
+    (sequence-node [(raw "{")
+                    (when (seq (.getStatements element)) (raw "\n"))
+                    (sequence-node (children-nodes children (.getStatements element)) "\n")
+                    (when continue-label
+                      (raw (str "\n__continue_" (identifier services continue-label) ":;")))
+                    (when (or (seq (.getStatements element)) continue-label) (raw "\n"))
+                    (raw "}")])))
+
+(defn- labeled-loop-body-node [services children ^CtStatement body label]
+  (if-not (targets-label? CtContinue body label)
+    (child-node children body)
+    (if (instance? CtBlock body)
+      (child-node children body)
+      (sequence-node [(raw "{\n") (child-node children body)
+                      (raw (str "\n__continue_" (identifier services label) ":;\n}"))]))))
+
+(defn- labeled-break-node [services ^CtStatement body label]
+  (when (targets-label? CtBreak body label)
+    (raw (str "\n__break_" (identifier services label) ":;"))))
 
 (defn- switch-expression-yield? [^CtYieldStatement statement]
   (loop [current (.getParent statement)]
@@ -2009,11 +2068,18 @@
      :emit (fn [{:keys [^CtBinaryOperator element children]}]
              {:node (finish-expression services children element (binary-node services element children))})}
     {:id :java.statement/block :class CtBlock
-     :emit (fn [{:keys [^CtBlock element children]}] {:node (block-node children element)})}
+     :emit (fn [{:keys [^CtBlock element children]}]
+             {:node (block-node services children element)})}
     {:id :java.statement/break :class CtBreak
-     :emit (fn [_] {:node (raw "break;")})}
+     :emit (fn [{:keys [^CtBreak element]}]
+             {:node (raw (if-let [label (.getTargetLabel element)]
+                           (str "goto __break_" (identifier services label) ";")
+                           "break;"))})}
     {:id :java.statement/continue :class CtContinue
-     :emit (fn [_] {:node (raw "continue;")})}
+     :emit (fn [{:keys [^CtContinue element]}]
+             {:node (raw (if-let [label (.getTargetLabel element)]
+                           (str "goto __continue_" (identifier services label) ";")
+                           "continue;"))})}
     {:id :java.statement/case :class CtCase
      :emit (fn [{:keys [^CtCase element children]}]
              (let [source-statements (vec (.getStatements element))
@@ -2125,9 +2191,12 @@
              {:node (constructor-node services element children)})}
     {:id :java.statement/do :class CtDo
      :emit (fn [{:keys [^CtDo element children]}]
-             {:node (sequence-node [(raw "do ") (child-node children (.getBody element))
+             (let [label (.getLabel element)]
+               {:node (sequence-node [(raw "do ")
+                                      (labeled-loop-body-node services children (.getBody element) label)
                                     (raw " while (") (child-node children (.getLoopingExpression element))
-                                    (raw ");")])})}
+                                      (raw ");")
+                                      (labeled-break-node services (.getBody element) label)])}))}
     {:id :java.expression/method-reference :class CtExecutableReferenceExpression
      :emit (fn [{:keys [context ^CtExecutableReferenceExpression element children]}]
              (let [target-element (.getTarget element)
@@ -2302,18 +2371,23 @@
                                         (raw (str " = " temporary "; "))
                                         (child-node children (.getBody element))
                                         (raw " }")])})
-               {:node (sequence-node [(raw "foreach (") (child-node children (.getVariable element))
-                                      (raw " in ") (child-node children (.getExpression element)) (raw ") ")
-                                      (child-node children (.getBody element))])}))}
+               (let [label (.getLabel element)]
+                 {:node (sequence-node [(raw "foreach (") (child-node children (.getVariable element))
+                                        (raw " in ") (child-node children (.getExpression element)) (raw ") ")
+                                        (labeled-loop-body-node services children (.getBody element) label)
+                                        (labeled-break-node services (.getBody element) label)])})))}
     {:id :java.statement/for :class CtFor
      :emit (fn [{:keys [^CtFor element children]}]
-             {:node (sequence-node [(raw "for (")
-                                    (sequence-node (children-nodes children (.getForInit element)) ", ")
-                                    (raw "; ")
-                                    (when-let [expression (.getExpression element)] (child-node children expression))
-                                    (raw "; ")
-                                    (sequence-node (children-nodes children (.getForUpdate element)) ", ")
-                                    (raw ") ") (child-node children (.getBody element))])})}
+             (let [label (.getLabel element)]
+               {:node (sequence-node [(raw "for (")
+                                      (sequence-node (children-nodes children (.getForInit element)) ", ")
+                                      (raw "; ")
+                                      (when-let [expression (.getExpression element)] (child-node children expression))
+                                      (raw "; ")
+                                      (sequence-node (children-nodes children (.getForUpdate element)) ", ")
+                                      (raw ") ")
+                                      (labeled-loop-body-node services children (.getBody element) label)
+                                      (labeled-break-node services (.getBody element) label)])}))}
     {:id :java.statement/if :class CtIf
      :emit (fn [{:keys [^CtIf element children]}]
              {:node (sequence-node [(raw "if (") (child-node children (.getCondition element))
@@ -2387,10 +2461,12 @@
      :emit (fn [{:keys [^CtNewArray element children]}]
              (let [type-reference (.getType element)
                    component (if (.isArray type-reference) (.getComponentType type-reference) type-reference)
-                   rrb-raw-nested? (and (empty? (.getActualTypeArguments component))
+                   rrb-raw-nested? (and (or (empty? (.getActualTypeArguments component))
+                                            (every? #(instance? CtWildcardReference %)
+                                                    (.getActualTypeArguments component)))
                                         (str/includes? (.getQualifiedName component)
                                                        "org.pkl.core.util.paguro.RrbTree")
-                                        (contains? #{"Node" "Leaf" "Relaxed"}
+                                        (contains? #{"Node" "Leaf" "Relaxed" "IdxNode"}
                                                    (.getSimpleName component)))
                    component-node (if-let [parameter (when rrb-raw-nested?
                                                        (nearest-type-parameter-name element))]
@@ -2573,8 +2649,11 @@
                        (child-node children (.getVariable element)))})}
     {:id :java.statement/while :class CtWhile
      :emit (fn [{:keys [^CtWhile element children]}]
-             {:node (sequence-node [(raw "while (") (child-node children (.getLoopingExpression element))
-                                    (raw ") ") (child-node children (.getBody element))])})}
+             (let [label (.getLabel element)]
+               {:node (sequence-node [(raw "while (") (child-node children (.getLoopingExpression element))
+                                      (raw ") ")
+                                      (labeled-loop-body-node services children (.getBody element) label)
+                                      (labeled-break-node services (.getBody element) label)])}))}
     {:id :java.statement/yield :class CtYieldStatement
      :emit (fn [{:keys [^CtYieldStatement element children]}]
              (let [switch-expression? (switch-expression-yield? element)]

@@ -258,14 +258,34 @@ namespace Pkl.Core.Runtime
     }
     public sealed class JavaDecimalFormat
     {
-        private readonly string pattern; private readonly System.Globalization.NumberFormatInfo format;
+        private readonly string pattern; private System.Globalization.NumberFormatInfo format;
         public JavaDecimalFormat() : this(string.Empty, System.Globalization.CultureInfo.InvariantCulture.NumberFormat) { }
-        public JavaDecimalFormat(string pattern, System.Globalization.NumberFormatInfo format) { this.pattern = pattern; this.format = format; }
-        public string Format(object value) => string.Format(format, "{0}", value);
+        public JavaDecimalFormat(string pattern, System.Globalization.NumberFormatInfo format) { this.pattern = pattern; this.format = (System.Globalization.NumberFormatInfo)format.Clone(); }
+        public string Format(object value)
+        {
+            if (value is double number && double.IsFinite(number))
+            {
+                var negativeZero = number == 0.0 && BitConverter.DoubleToInt64Bits(number) < 0;
+                var shortest = number.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+                if (decimal.TryParse(shortest, System.Globalization.NumberStyles.Float,
+                                     System.Globalization.CultureInfo.InvariantCulture, out var exact))
+                {
+                    var rounded = decimal.Round(exact, format.NumberDecimalDigits,
+                                                MidpointRounding.ToEven);
+                    var rendered = rounded.ToString("F" + format.NumberDecimalDigits, format);
+                    return negativeZero && !rendered.StartsWith("-", StringComparison.Ordinal)
+                        ? "-" + rendered
+                        : rendered;
+                }
+            }
+            return value is System.IFormattable formattable
+                ? formattable.ToString("F" + format.NumberDecimalDigits, format)
+                : value.ToString() ?? string.Empty;
+        }
         public void SetGroupingUsed(bool value) { }
         public void SetMinimumFractionDigits(int value) => format.NumberDecimalDigits = Math.Max(format.NumberDecimalDigits, value);
         public void SetMaximumFractionDigits(int value) => format.NumberDecimalDigits = value;
-        public void SetDecimalFormatSymbols(System.Globalization.NumberFormatInfo value) { }
+        public void SetDecimalFormatSymbols(System.Globalization.NumberFormatInfo value) => format = (System.Globalization.NumberFormatInfo)value.Clone();
     }
     public static class JavaBase64
     {
@@ -286,7 +306,25 @@ namespace Pkl.Core.Runtime
     {
         private readonly bool url; public JavaBase64Decoder(bool url) => this.url = url;
         public sbyte[] Decode(string value)
-        { if (url) value = value.Replace('-', '+').Replace('_', '/'); value = value.PadRight((value.Length + 3) / 4 * 4, '='); return Convert.FromBase64String(value).Select(item => unchecked((sbyte)item)).ToArray(); }
+        {
+            try
+            {
+                if (url) value = value.Replace('-', '+').Replace('_', '/');
+                value = value.PadRight((value.Length + 3) / 4 * 4, '=');
+                return Convert.FromBase64String(value).Select(item => unchecked((sbyte)item)).ToArray();
+            }
+            catch (FormatException error)
+            {
+                var alphabet = url
+                    ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_="
+                    : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+                var invalid = value.FirstOrDefault(character => !alphabet.Contains(character));
+                var message = invalid == default
+                    ? error.Message
+                    : $"Illegal base64 character {((int)invalid):x}";
+                throw new ArgumentException(message, error);
+            }
+        }
     }
 
     public sealed class JavaOptional<T>
@@ -2177,7 +2215,20 @@ namespace Pkl.Core.Runtime.Truffle.api
             this.root = root;
             root?.AdoptChildren();
         }
+
         internal virtual object? Call(params object?[] arguments) => CallFrom(null, arguments);
+
+        private static bool IsStandardLibraryRoot(RootNode? root)
+        {
+            var uri = root?.GetSourceSection()?.GetSource().GetUri();
+            if (string.Equals(uri?.Scheme, "pkl", StringComparison.OrdinalIgnoreCase)) return true;
+            return root?.GetName()?.StartsWith("pkl.", StringComparison.Ordinal) == true;
+        }
+
+        private static bool IsExternalMemberRoot(RootNode? root) =>
+            root is global::Pkl.Core.Ast.MemberNode member &&
+            member.GetBodyNode() is global::Pkl.Core.Stdlib.ExternalMemberNode;
+
         internal object? CallFrom(Node? location, params object?[] arguments)
         {
             global::Vibeformer.Runtime.JavaCancellation.ThrowIfCancellationRequested();
@@ -2192,11 +2243,24 @@ namespace Pkl.Core.Runtime.Truffle.api
             {
                 if (exception.GetTruffleStackTrace().Count == 0)
                 {
-                    exception.AddTruffleStackFrame(
-                        new TruffleStackTraceElement(exception.GetLocation() ?? location, this));
-                    if (caller is not null && location is not null)
+                    // A direct external call can report the exact caller node
+                    // as its exception location. Collapse that duplicate
+                    // location to the caller frame; distinct locations retain
+                    // both the external member and its caller.
+                    if (caller is not null && location is not null &&
+                        exception.GetLocation() is null &&
+                        IsExternalMemberRoot(root) &&
+                        !IsStandardLibraryRoot(caller.root))
                         exception.AddTruffleStackFrame(
                             new TruffleStackTraceElement(location, caller));
+                    else
+                    {
+                        exception.AddTruffleStackFrame(
+                            new TruffleStackTraceElement(exception.GetLocation() ?? location, this));
+                        if (caller is not null && location is not null)
+                            exception.AddTruffleStackFrame(
+                                new TruffleStackTraceElement(location, caller));
+                    }
                 }
                 else
                 {
@@ -2561,6 +2625,26 @@ namespace Pkl.Core
             this is PClassInfo<object> exact
                 ? exact
                 : new PClassInfo<object>(this.moduleName, this.className, this.javaClass, this.moduleUri);
+
+        public PClassInfo<TValue> Retype<TValue>() =>
+            this is PClassInfo<TValue> exact
+                ? exact
+                : new PClassInfo<TValue>(this.moduleName, this.className, this.javaClass, this.moduleUri);
+
+        public static PClassInfo<TValue> ForValueCompat<TValue>(TValue value)
+        {
+            if (value is Value pklValue) return pklValue.GetClassInfo().Retype<TValue>();
+            if (value is string) return PClassInfo<object>.String.Retype<TValue>();
+            if (value is bool) return PClassInfo<object>.Boolean.Retype<TValue>();
+            if (value is long) return PClassInfo<object>.Int.Retype<TValue>();
+            if (value is double) return PClassInfo<object>.Float.Retype<TValue>();
+            if (value is sbyte[]) return PClassInfo<object>.Bytes.Retype<TValue>();
+            if (value is System.Collections.IList) return PClassInfo<object>.List.Retype<TValue>();
+            if (value is System.Collections.IDictionary) return PClassInfo<object>.Map.Retype<TValue>();
+            if (value is System.Text.RegularExpressions.Regex) return PClassInfo<object>.Regex.Retype<TValue>();
+            if (global::Vibeformer.Runtime.JavaCompat.IsSet(value)) return PClassInfo<object>.Set.Retype<TValue>();
+            throw new ArgumentException("Not a Pkl value: " + value);
+        }
     }
 }
 

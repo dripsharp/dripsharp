@@ -13,10 +13,19 @@
   [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
     :expand :body}
    {:key "initializer:org.pkl.core.runtime.BaseModule#static@26:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.AnalyzeModule#static@24:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.BenchmarkModule#static@24:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.CommandModule#static@24:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.JsonnetModule#static@24:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.PklBinaryModule#static@23:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.ReleaseModule#static@24:10" :expand :body}
+   {:key "initializer:org.pkl.core.runtime.XmlModule#static@24:10" :expand :body}
    {:key "initializer:org.pkl.core.runtime.RefModule#static@24:10" :expand :body}
    {:key "initializer:org.pkl.core.runtime.MathModule#static@23:10" :expand :body}
    {:key "initializer:org.pkl.core.runtime.MirrorFactories#static@109:10" :expand :body}
    {:key "initializer:org.pkl.core.stdlib.base.RegexMatchFactory#static@36:10" :expand :body}
+   {:key "initializer:org.pkl.core.util.xml.Xml10Validator#static@28:10" :expand :body}
+   {:key "initializer:org.pkl.core.util.xml.Xml11Validator#static@28:10" :expand :body}
    {:key "initializer:org.pkl.core.runtime.PlatformModule#static@24:10" :expand :body}
    {:key "initializer:org.pkl.core.runtime.ProjectModule#static@23:10" :expand :body}
    {:key "initializer:org.pkl.core.runtime.ReflectModule#static@24:10" :expand :body}
@@ -164,27 +173,27 @@
 
     (testing "the recursively resolved project declaration and source sets are exact"
       (is (= {:ambiguous-symbols 0
-              :executable-references 31837
-              :seeds 83
+              :executable-references 32289
+              :seeds 92
               :constructor-references 4869
               :shadow-symbols 0
               :public-api-declarations 7742
-              :type-references 470504
+              :type-references 479833
               :fallback-symbols 0
               :guessed-symbols 0
               :source-inputs 657
-              :intrinsic-occurrences 93761
+              :intrinsic-occurrences 100780
               :dependency-occurrences 58488
               :type-parameter-occurrences 5039
               :annotations 10958
-              :jdk-occurrences 108129
+              :jdk-occurrences 109492
               :unresolved-symbols 0
-              :declarations 17225
-              :project-occurrences 270110
-              :symbols 16865
-              :field-references 17359}
+              :declarations 17234
+              :project-occurrences 272191
+              :symbols 16866
+              :field-references 18041}
              (:totals first)))
-      (is (= "3c9a776cf3ba2da079242159f6c0569c644dcb1e3f3d69c4c2a82c74062e0b06"
+      (is (= "924747d1d79a5f25c267fbe181271368ed0a2c4c13627bfa2cc08c95c89d9756"
              (sha-256 declaration-keys)))
       (is (= "d7e0f8f71a71a88392d290867b50459f4737307ed1c6de2882bc6241a6332cf0"
              (sha-256 source-paths)))
@@ -236,7 +245,7 @@
     (is (= (keys (:public-api-declarations first))
            (keys (:public-api-declarations second))))
     (is (= first-occurrences second-occurrences))
-    (is (= "87be7a44206cd920876daa2f7fabe68d4085503561cd5e856afc1cd3bfee65ba"
+    (is (= "c6d6c8ba26f73aaf2c394b8d2f7068a9b7922ba82dcca956bae71a6171f9b0bf"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))

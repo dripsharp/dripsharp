@@ -111,11 +111,11 @@
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 30837 (:declarations summary)))
+      (is (= 30846 (:declarations summary)))
       (is (= {:constructor 1175
               :enum-value 101
               :field 3590
-              :initializer 15
+              :initializer 24
               :method 9300
               :parameter 14067
               :record-component 227
@@ -127,17 +127,17 @@
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 11151 (:executable-roots summary)))
+      (is (= 11160 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 455627
+      (is (= {:semantic 466090
               :fallback 0
-              :visited 1053295
+              :visited 1071386
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 597668
+              :structural 605296
               :blocked 0
-              :covered 1053295}
+              :covered 1071386}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
@@ -154,6 +154,13 @@
         (is (some #(str/includes? %
                                  "LoadModule(global::Vibeformer.Runtime.JavaCompat.CreateUri(\"pkl:math\")")
                   sources))
+        (doseq [stdlib-module ["pkl:analyze" "pkl:Benchmark" "pkl:Command"
+                               "pkl:jsonnet" "pkl:pklbinary" "pkl:release"
+                               "pkl:xml"]]
+          (is (some #(str/includes? %
+                                   (str "LoadModule(global::Vibeformer.Runtime.JavaCompat.CreateUri(\""
+                                        stdlib-module "\")"))
+                    sources)))
         (doseq [stdlib-module ["pkl:platform" "pkl:reflect"]]
           (is (some #(str/includes? %
                                    (str "LoadModule(global::Vibeformer.Runtime.JavaCompat.CreateUri(\""
