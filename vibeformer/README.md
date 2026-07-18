@@ -66,6 +66,7 @@ clojure -J-Xmx8g -M:run pack pkl-core-value-model
 clojure -M:run package
 clojure -J-Xmx8g -M:run package pkl-core-value-model
 clojure -M:run differential
+clojure -M:run language-snippet-contract
 clojure -M:test
 clojure -M:test --namespace vibeformer.harness-test
 ```
@@ -171,3 +172,12 @@ comparisons deliberately perturb an oracle result to prove mismatches are
 detected. Proof outputs are retained under
 `validation-output/differential-proof` even while later generation cleans the
 disposable `target` tree.
+
+`language-snippet-contract` validates the pinned, source-controlled manifest
+for all 940 upstream `LanguageSnippetTests` cases, then executes the upstream
+JVM engine twice on its supported Java 21 toolchain. It compares the engine's
+normalized success, output, logger, and error bytes with the source-controlled
+expectations, rejects missing or duplicate observations, proves deterministic
+repetition, and deliberately perturbs the oracle to prove mismatch detection.
+This is evaluator behavior evidence; it does not change product scope or make
+the excluded YAML or Pkl-binary product surfaces part of the .NET package.

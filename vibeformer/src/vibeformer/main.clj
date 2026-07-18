@@ -3,6 +3,7 @@
             [vibeformer.compiler :as compiler]
             [vibeformer.differential :as differential]
             [vibeformer.harness :as harness]
+            [vibeformer.language-snippet-contract :as language-snippet-contract]
             [vibeformer.packaging :as packaging])
   (:import [clojure.lang ExceptionInfo]))
 
@@ -14,11 +15,12 @@
 
 (defn -main
   [& args]
-  (if-not (or (contains? #{["generate"] ["verify"] ["pack"] ["package"] ["differential"]}
+  (if-not (or (contains? #{["generate"] ["verify"] ["pack"] ["package"] ["differential"]
+                           ["language-snippet-contract"]}
                          (vec args))
               (and (= 2 (count args))
                    (contains? #{"generate" "verify" "pack" "package"} (first args))))
-    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential" 2)
+    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|language-snippet-contract" 2)
     (try
       (case (first args)
         "generate" (harness/generate! {:profile (or (second args) "pkl-parser")})
@@ -27,7 +29,8 @@
                 {:profile (or (second args) "pkl-parser")})
         "package" (packaging/verify-package-consumption!
                    {:profile (or (second args) "pkl-parser")})
-        "differential" (differential/verify-differential!))
+        "differential" (differential/verify-differential!)
+        "language-snippet-contract" (language-snippet-contract/verify-contract!))
       (catch ExceptionInfo error
         (let [{:keys [output]} (ex-data error)]
           (fail! (str "Vibeformer command failed: " (.getMessage error)
