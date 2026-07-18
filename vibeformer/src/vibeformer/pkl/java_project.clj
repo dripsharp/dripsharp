@@ -16,8 +16,8 @@
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
-           [spoon.reflect.code CtConstructorCall CtExpression CtLambda CtLocalVariable CtThisAccess
-            CtVariableAccess]
+           [spoon.reflect.code CtConstructorCall CtExpression CtLambda CtLiteral CtLocalVariable
+            CtThisAccess CtVariableAccess]
            [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass
             CtConstructor CtElement CtEnum CtEnumValue CtExecutable CtField
             CtFormalTypeDeclarer CtInterface CtMethod CtModifiable CtParameter CtRecord
@@ -499,7 +499,7 @@
    "java.util.Set" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
    "java.util.HashSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/hash-set]
    "java.util.LinkedHashSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/linked-hash-set]
-   "java.util.LinkedList" ["global::System.Collections.Generic.LinkedList" :dotnet.type/linked-list]
+   "java.util.LinkedList" ["global::Vibeformer.Runtime.JavaLinkedList" :dotnet.type/linked-list]
    "java.util.EnumSet" ["global::System.Collections.Generic.HashSet" :dotnet.type/enum-set]
    "java.util.AbstractCollection" ["global::System.Collections.Generic.ICollection" :dotnet.type/collection]
    "java.util.AbstractList" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
@@ -925,6 +925,23 @@
                               :origin (:origin occurrence)
                               :resolution (:resolution occurrence)}})))
    (.getAnnotations element)))
+
+(defn- node-info-attribute [^CtType type]
+  (when-let [short-name
+             (some (fn [^CtAnnotation annotation]
+                     (when (= "com.oracle.truffle.api.nodes.NodeInfo"
+                              (some-> annotation .getAnnotationType .getQualifiedName))
+                       (let [value (.getValue annotation "shortName")]
+                         (cond
+                           (string? value) value
+                           (instance? CtLiteral value) (.getValue ^CtLiteral value)
+                           :else nil))))
+                   (.getAnnotations type))]
+    (let [escaped (-> (str short-name)
+                      (str/replace "\\" "\\\\")
+                      (str/replace "\"" "\\\""))]
+      (raw (str "[global::Pkl.Core.Runtime.Truffle.api.nodes.NodeInfo(\""
+                escaped "\")]\n")))))
 
 (defn- attach-declaration [ctx node element kind owner name signature rule]
   (let [id (register! ctx element kind owner name signature rule)
@@ -2476,12 +2493,14 @@
           (raw "public override string ToString() {\nreturn global::Vibeformer.Runtime.JavaCompat.EnumName(this);\n}"))
         members (cond-> members enum-to-string (conj enum-to-string))
         header (sequence-node
-                [(raw (join-words (type-words type))) (raw name) node
-                 (when components
-                   (sequence-node [(raw "(") (sequence-node components ", ") (raw ")")]))
-                 (when (seq bases)
-                   (sequence-node [(raw " : ") (sequence-node bases ", ")]))
-                 (constraints-node ctx parameters)])
+                (remove nil?
+                        [(node-info-attribute type)
+                         (raw (join-words (type-words type))) (raw name) node
+                         (when components
+                           (sequence-node [(raw "(") (sequence-node components ", ") (raw ")")]))
+                         (when (seq bases)
+                           (sequence-node [(raw " : ") (sequence-node bases ", ")]))
+                         (constraints-node ctx parameters)]))
         declaration
         (if functional-method
           (let [method-owner (executable-owner functional-method)

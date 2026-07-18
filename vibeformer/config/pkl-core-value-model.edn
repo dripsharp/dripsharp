@@ -21,6 +21,10 @@
   {:key "initializer:org.pkl.core.runtime.ReflectModule#static@24:10" :expand :body}
   {:key "initializer:org.pkl.core.runtime.SemVerModule#static@25:10" :expand :body}
   {:key "initializer:org.pkl.core.runtime.SettingsModule#static@23:10" :expand :body}
+  ;; LanguageSnippetTests modules extend pkl:test. ModuleCache returns this
+  ;; eager singleton directly, so its Java static initializer is part of the
+  ;; evaluator behavior rather than an optional test-infrastructure detail.
+  {:key "initializer:org.pkl.core.runtime.TestModule#static@23:10" :expand :body}
   {:key "initializer:org.pkl.core.util.json.JsonEscaper#static@38:10" :expand :body}
   {:key "initializer:org.pkl.core.resource.ResourceReaders$FromServiceProviders#static@651:12"
    :expand :body}

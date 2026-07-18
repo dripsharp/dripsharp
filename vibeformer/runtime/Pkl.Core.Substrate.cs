@@ -309,13 +309,17 @@ namespace Pkl.Core.Runtime
             present ? presentCase(value!) : emptyCase();
     }
 
-    public sealed class JavaPrintWriter
+    public sealed class JavaPrintWriter : System.IO.TextWriter
     {
         private readonly System.IO.TextWriter writer;
         public JavaPrintWriter(System.IO.TextWriter writer) => this.writer = writer;
+        public override System.Text.Encoding Encoding => writer.Encoding;
+        public override void Write(char value) => writer.Write(value);
+        public override void Write(string? value) => writer.Write(value);
+        public override void WriteLine(object? value) => writer.WriteLine(value);
         public void Print(object? value) => writer.Write(value);
         public void Println(object? value = null) => writer.WriteLine(value);
-        public void Flush() => writer.Flush();
+        public override void Flush() => writer.Flush();
     }
 
     public enum JavaTemporalUnit { NANOS, MICROS, MILLIS, SECONDS, MINUTES, HOURS, DAYS }
@@ -1589,7 +1593,11 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         internal Node? GetParent() => parent;
         internal T? Insert<T>(T? child) where T : Node
         {
-            if (child is not null) child.parent = this;
+            if (child is not null)
+            {
+                child.parent = this;
+                child.AdoptChildren();
+            }
             return child;
         }
         internal RootNode? GetRootNode()
@@ -1642,13 +1650,106 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
                 candidate.GetGenericTypeDefinition() == typeof(IEnumerable<>) &&
                 typeof(Node).IsAssignableFrom(candidate.GetGenericArguments()[0]));
         }
-        internal Node DeepCopy() => (Node)MemberwiseClone();
+        internal Node DeepCopy() => DeepCopy(new Dictionary<Node, Node>(ReferenceEqualityComparer.Instance));
+
+        private Node DeepCopy(IDictionary<Node, Node> copies)
+        {
+            if (copies.TryGetValue(this, out var existing)) return existing;
+            var copy = (Node)MemberwiseClone();
+            copies[this] = copy;
+            copy.parent = null;
+            foreach (var field in NodeFields(GetType()))
+            {
+                if (field.DeclaringType == typeof(Node) && field.Name == nameof(parent)) continue;
+                var value = field.GetValue(this);
+                if (value is Node child)
+                {
+                    field.SetValue(copy, child.DeepCopy(copies));
+                }
+                else if (value is Array array &&
+                         field.FieldType.GetElementType() is { } elementType &&
+                         typeof(Node).IsAssignableFrom(elementType))
+                {
+                    var cloned = (Array)array.Clone();
+                    for (var index = 0; index < cloned.Length; index++)
+                        if (array.GetValue(index) is Node item)
+                            cloned.SetValue(item.DeepCopy(copies), index);
+                    field.SetValue(copy, cloned);
+                }
+            }
+            copy.AdoptChildren();
+            return copy;
+        }
+
         internal T Replace<T>(T replacement) where T : Node
         {
-            replacement.parent = parent;
+            var oldParent = parent;
+            if (oldParent is not null)
+            {
+                foreach (var field in NodeFields(oldParent.GetType()))
+                {
+                    var value = field.GetValue(oldParent);
+                    if (ReferenceEquals(value, this))
+                    {
+                        field.SetValue(oldParent, replacement);
+                        break;
+                    }
+                    if (value is Array array &&
+                        field.FieldType.GetElementType() is { } elementType &&
+                        typeof(Node).IsAssignableFrom(elementType))
+                    {
+                        var replaced = false;
+                        for (var index = 0; index < array.Length; index++)
+                        {
+                            if (!ReferenceEquals(array.GetValue(index), this)) continue;
+                            array.SetValue(replacement, index);
+                            replaced = true;
+                            break;
+                        }
+                        if (replaced) break;
+                    }
+                }
+            }
+            replacement.parent = oldParent;
+            replacement.AdoptChildren();
+            parent = null;
             return replacement;
         }
-        internal bool Accept(Func<Node, bool> visitor) => visitor(this);
+
+        internal bool Accept(Func<Node, bool> visitor) =>
+            Accept(visitor, new HashSet<Node>(ReferenceEqualityComparer.Instance));
+
+        private bool Accept(Func<Node, bool> visitor, ISet<Node> visited)
+        {
+            if (!visited.Add(this)) return true;
+            if (!visitor(this)) return false;
+            foreach (var field in NodeFields(GetType()))
+            {
+                if (field.DeclaringType == typeof(Node) && field.Name == nameof(parent)) continue;
+                var value = field.GetValue(this);
+                if (value is Node child)
+                {
+                    if (!child.Accept(visitor, visited)) return false;
+                }
+                else if (value is IEnumerable children && ContainsNodes(field.FieldType))
+                {
+                    foreach (var item in children)
+                        if (item is Node itemNode && !itemNode.Accept(visitor, visited)) return false;
+                }
+            }
+            return true;
+        }
+
+        private static IEnumerable<FieldInfo> NodeFields(Type type)
+        {
+            for (Type? current = type; current is not null && current != typeof(object); current = current.BaseType)
+                foreach (var field in current.GetFields(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.DeclaredOnly))
+                    yield return field;
+        }
+
+        internal void SetParent(Node? value) => parent = value;
     }
 
     // Truffle uses this exception family for non-error interpreter control
@@ -1758,25 +1859,171 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
 
     public sealed class EventBinding<T> : IDisposable
     {
-        public void Dispose() { }
+        private Action? dispose;
+        internal EventBinding(Action dispose) => this.dispose = dispose;
+        public void Dispose() => System.Threading.Interlocked.Exchange(ref dispose, null)?.Invoke();
     }
 
     public sealed class Instrumenter
     {
+        private sealed class Registration
+        {
+            private readonly Dictionary<Node, ExecutionEventNode> eventNodes =
+                new(ReferenceEqualityComparer.Instance);
+
+            internal Registration(SourceSectionFilter filter, ExecutionEventNodeFactory factory)
+            {
+                Filter = filter;
+                Factory = factory;
+            }
+
+            internal SourceSectionFilter Filter { get; }
+            internal ExecutionEventNodeFactory Factory { get; }
+            internal ExecutionEventNode For(Node node)
+            {
+                if (!eventNodes.TryGetValue(node, out var result))
+                {
+                    result = Factory(new EventContext(node));
+                    eventNodes[node] = result;
+                }
+                return result;
+            }
+        }
+
+        private sealed class InstrumentationProbe : ProbeNode
+        {
+            private readonly Instrumenter owner;
+            private readonly Node instrumentedNode;
+
+            internal InstrumentationProbe(Instrumenter owner, Node instrumentedNode)
+            {
+                this.owner = owner;
+                this.instrumentedNode = instrumentedNode;
+            }
+
+            public override void OnReturnValue(VirtualFrame frame, object? value) =>
+                owner.NotifyReturn(instrumentedNode, frame, value);
+        }
+
+        private readonly List<Registration> registrations = new();
+
         public EventBinding<ExecutionEventNodeFactory> AttachExecutionEventFactory(
-            SourceSectionFilter filter,
-            ExecutionEventNodeFactory factory) => new();
-        public EventBinding<T> AttachExecutionEventFactory<T>(SourceSectionFilter filter, T factory) where T : Delegate => new();
+            SourceSectionFilter filter, ExecutionEventNodeFactory factory) => Attach(filter, factory);
+
+        public EventBinding<T> AttachExecutionEventFactory<T>(SourceSectionFilter filter, T factory) where T : Delegate
+        {
+            if (factory is not ExecutionEventNodeFactory typedFactory)
+                throw new ArgumentException("Unsupported execution event factory delegate.", nameof(factory));
+            var binding = Attach(filter, typedFactory);
+            return new EventBinding<T>(binding.Dispose);
+        }
+
+        private EventBinding<ExecutionEventNodeFactory> Attach(
+            SourceSectionFilter filter, ExecutionEventNodeFactory factory)
+        {
+            var registration = new Registration(filter, factory);
+            lock (registrations) registrations.Add(registration);
+            InstrumentTree(Pkl.Core.Runtime.Truffle.api.CallTarget.GetCurrentRoot());
+            return new EventBinding<ExecutionEventNodeFactory>(() =>
+            {
+                lock (registrations) registrations.Remove(registration);
+            });
+        }
+
+        private void NotifyReturn(Node node, VirtualFrame frame, object? value)
+        {
+            Registration[] current;
+            lock (registrations) current = registrations.ToArray();
+            foreach (var registration in current)
+                if (registration.Filter.Matches(node))
+                    registration.For(node).OnReturnValue(frame, value);
+        }
+
+        private void InstrumentTree(RootNode? root)
+        {
+            if (root is null) return;
+            InstrumentChildren(root, new HashSet<Node>(ReferenceEqualityComparer.Instance));
+        }
+
+        private void InstrumentChildren(Node parent, ISet<Node> visited)
+        {
+            if (!visited.Add(parent)) return;
+            if (parent is InstrumentableNode.WrapperNode wrapper)
+            {
+                var delegateNode = wrapper.GetDelegateNode();
+                delegateNode.SetParent(parent);
+                InstrumentChildren(delegateNode, visited);
+                return;
+            }
+            for (Type? type = parent.GetType(); type is not null && type != typeof(object); type = type.BaseType)
+            {
+                foreach (var field in type.GetFields(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.DeclaredOnly))
+                {
+                    if (field.DeclaringType == typeof(Node) && field.Name == "parent") continue;
+                    var value = field.GetValue(parent);
+                    if (value is Node child)
+                    {
+                        var replacement = WrapIfNeeded(child);
+                        if (!ReferenceEquals(replacement, child)) field.SetValue(parent, replacement);
+                        replacement.SetParent(parent);
+                        InstrumentChildren(replacement, visited);
+                    }
+                    else if (value is Array array &&
+                             field.FieldType.GetElementType() is { } elementType &&
+                             typeof(Node).IsAssignableFrom(elementType))
+                    {
+                        for (var index = 0; index < array.Length; index++)
+                        {
+                            if (array.GetValue(index) is not Node item) continue;
+                            var replacement = WrapIfNeeded(item);
+                            if (!ReferenceEquals(replacement, item)) array.SetValue(replacement, index);
+                            replacement.SetParent(parent);
+                            InstrumentChildren(replacement, visited);
+                        }
+                    }
+                }
+            }
+        }
+
+        private Node WrapIfNeeded(Node node)
+        {
+            if (node is InstrumentableNode.WrapperNode) return node;
+            var type = node.GetType();
+            var isInstrumentable = type.GetMethod("IsInstrumentable", Type.EmptyTypes);
+            if (isInstrumentable?.Invoke(node, null) is not true) return node;
+            var createWrapper = type.GetMethod("CreateWrapper", new[] { typeof(ProbeNode) });
+            if (createWrapper is null) return node;
+            var wrapper = createWrapper.Invoke(node, new object[] { new InstrumentationProbe(this, node) }) as Node;
+            if (wrapper is null) return node;
+            node.SetParent(wrapper);
+            return wrapper;
+        }
     }
 
     public sealed class SourceSectionFilter
     {
+        private readonly Type[] tags;
+        private SourceSectionFilter(Type[] tags) => this.tags = tags;
         public static Builder NewBuilder() => new();
+
+        internal bool Matches(Node node)
+        {
+            if (tags.Length == 0) return true;
+            var hasTag = node.GetType().GetMethod("HasTag", new[] { typeof(Type) });
+            return hasTag is not null && tags.Any(tag => hasTag.Invoke(node, new object[] { tag }) is true);
+        }
 
         public sealed class Builder
         {
-            public Builder TagIs(params Type[] tags) => this;
-            public SourceSectionFilter Build() => new();
+            private Type[] tags = Array.Empty<Type>();
+            public Builder TagIs(params Type[] tags)
+            {
+                this.tags = tags;
+                return this;
+            }
+            public SourceSectionFilter Build() => new(tags);
         }
     }
 
@@ -1883,6 +2130,8 @@ namespace Pkl.Core.Runtime.Truffle.api
 
     public class CallTarget
     {
+        [ThreadStatic]
+        private static CallTarget? current;
         private readonly RootNode? root;
         internal CallTarget(RootNode? root = null)
         {
@@ -1893,18 +2142,36 @@ namespace Pkl.Core.Runtime.Truffle.api
         internal object? CallFrom(Node? location, params object?[] arguments)
         {
             global::Vibeformer.Runtime.JavaCancellation.ThrowIfCancellationRequested();
+            var caller = current;
+            current = this;
             try
             {
                 return root?.Execute(new VirtualFrame(arguments, root.GetFrameDescriptor()));
             }
             catch (AbstractTruffleException exception)
             {
-                exception.AddTruffleStackFrame(
-                    new TruffleStackTraceElement(location ?? exception.GetLocation(), this));
+                if (exception.GetTruffleStackTrace().Count == 0)
+                {
+                    exception.AddTruffleStackFrame(
+                        new TruffleStackTraceElement(exception.GetLocation() ?? location, this));
+                    if (caller is not null && location is not null)
+                        exception.AddTruffleStackFrame(
+                            new TruffleStackTraceElement(location, caller));
+                }
+                else
+                {
+                    exception.AddTruffleStackFrame(
+                        new TruffleStackTraceElement(location ?? exception.GetLocation(), caller ?? this));
+                }
                 throw;
+            }
+            finally
+            {
+                current = caller;
             }
         }
         internal RootNode? GetRootNode() => root;
+        internal static RootNode? GetCurrentRoot() => current?.root;
     }
 
     public sealed class RootCallTarget : CallTarget

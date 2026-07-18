@@ -111,11 +111,11 @@
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 30836 (:declarations summary)))
+      (is (= 30837 (:declarations summary)))
       (is (= {:constructor 1175
               :enum-value 101
               :field 3590
-              :initializer 14
+              :initializer 15
               :method 9300
               :parameter 14067
               :record-component 227
@@ -127,17 +127,17 @@
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 11150 (:executable-roots summary)))
+      (is (= 11151 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 455611
+      (is (= {:semantic 455627
               :fallback 0
-              :visited 1053259
+              :visited 1053295
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 597648
+              :structural 597668
               :blocked 0
-              :covered 1053259}
+              :covered 1053295}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
@@ -159,6 +159,12 @@
                                    (str "LoadModule(global::Vibeformer.Runtime.JavaCompat.CreateUri(\""
                                         stdlib-module "\")"))
                     sources)))
+        (is (some #(str/includes? %
+                                 "LoadModule(global::Vibeformer.Runtime.JavaCompat.CreateUri(\"pkl:test\")")
+                  sources))
+        (is (some #(str/includes? %
+                                 "NodeInfo(\"&&\")")
+                  sources))
         (is (some #(str/includes? % "StdLibModule.LoadModule(global::Pkl.Core.PClassInfo<object>.pklProjectUri")
                   sources))
         (is (some #(str/includes? % "StdLibModule.LoadModule(global::Pkl.Core.PClassInfo<object>.pklSemverUri")
@@ -286,6 +292,22 @@
                                "values.OrderBy(value => value, Comparer<T>.Create(JavaCompare))"))
             (is (str/includes? java-compat
                                "internal static Comparison<T> NaturalOrder<T>() => JavaCompare;"))
+            (is (str/includes? java-compat
+                               "StringBuilder AppendValue(StringBuilder builder, object? value)"))
+            (is (str/includes? java-compat
+                               "internal static double StrictPow(double x, double y)"))
+            (is (str/includes? java-compat
+                               "sealed class JavaLinkedList<T> : IList<T>"))
+            (is (str/includes? java-compat
+                               "if (value.OriginalString.Length == 0) value = CreateUri(\".\")"))
+            (is (str/includes? java-compat
+                               "var pathUri = new Uri(Path.GetFullPath(path))"))
+            (is (str/includes? java-compat
+                               "internal static string UriToString(Uri value) => value.OriginalString"))
+            (is (str/includes? java-compat
+                               "private static string TranslateJavaRegex(string pattern)"))
+            (is (str/includes? java-compat
+                               "internal static int StringCompareTo(string left, string right)"))
             (is (str/includes?
                  vm-exception-builder
                  "JavaCompat.Sorted(result"))
@@ -307,6 +329,10 @@
                                "NewDefaultBufferPacker() => new();"))
             (is (str/includes? substrate
                                "NewDefaultPacker(System.IO.Stream stream) => new(stream);"))
+            (is (str/includes? substrate
+                               "class JavaPrintWriter : System.IO.TextWriter"))
+            (is (str/includes? substrate
+                               "public sealed class Instrumenter"))
             (is (str/includes? substrate
                                "stream ?? throw Excluded()"))))))
 

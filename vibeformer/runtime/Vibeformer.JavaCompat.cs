@@ -705,14 +705,28 @@ internal static class JavaCompat
         return result;
     }
 
-    internal static string StringValueOf(object? value) => value?.ToString() ?? "null";
+    internal static string StringValueOf(object? value) => value switch
+    {
+        null => "null",
+        bool boolean => boolean ? "true" : "false",
+        double number => JavaFloatingString(number),
+        float number => JavaFloatingString(number),
+        Uri uri => uri.OriginalString,
+        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+        _ => value.ToString() ?? "null"
+    };
     internal static string StringValueOf(char value) => value.ToString();
     internal static string StringValueOf(char[] value) => new(value);
     internal static string StringValueOf(bool value) => value ? "true" : "false";
     internal static string StringValueOf(int value) => value.ToString(CultureInfo.InvariantCulture);
     internal static string StringValueOf(long value) => value.ToString(CultureInfo.InvariantCulture);
-    internal static string StringValueOf(float value) => value.ToString(CultureInfo.InvariantCulture);
-    internal static string StringValueOf(double value) => value.ToString(CultureInfo.InvariantCulture);
+    internal static string StringValueOf(float value) => JavaFloatingString(value);
+    internal static string StringValueOf(double value) => JavaFloatingString(value);
+    internal static StringBuilder AppendValue(StringBuilder builder, object? value)
+    {
+        builder.Append(StringValueOf(value));
+        return builder;
+    }
     internal static IEnumerable<string> StringLines(string value) => value.Replace("\r\n", "\n").Split('\n');
     internal static int ReaderRead(TextReader reader, char[] buffer, int index, int count)
     {
@@ -733,9 +747,282 @@ internal static class JavaCompat
     internal static bool StringMatches(string value, string pattern) => Regex.IsMatch(value, "\\A(?:" + pattern + ")\\z");
     internal static string StringReplaceAll(string value, string pattern, string replacement) =>
         Regex.Replace(value, pattern, replacement);
-    internal static sbyte[] StringGetBytes(string value, Encoding encoding) =>
-        encoding.GetBytes(value).Select(item => unchecked((sbyte)item)).ToArray();
+    internal static sbyte[] StringGetBytes(string value, Encoding encoding)
+    {
+        if (encoding.CodePage == Encoding.UTF8.CodePage)
+        {
+            encoding = (Encoding)new UTF8Encoding(false, false).Clone();
+            encoding.EncoderFallback = new EncoderReplacementFallback("?");
+        }
+        return encoding.GetBytes(value).Select(item => unchecked((sbyte)item)).ToArray();
+    }
     internal static sbyte[] StringGetBytes(string value, string encoding) => StringGetBytes(value, Encoding.GetEncoding(encoding));
+
+    private static string JavaFloatingString(double value)
+    {
+        if (double.IsNaN(value)) return "NaN";
+        if (double.IsPositiveInfinity(value)) return "Infinity";
+        if (double.IsNegativeInfinity(value)) return "-Infinity";
+        if (value == 0) return BitConverter.DoubleToInt64Bits(value) < 0 ? "-0.0" : "0.0";
+        // Double.ToString("R") uses "5E-324" for the minimum subnormal,
+        // whereas Java's canonical Double.toString representation is
+        // "4.9E-324". Keep the exact Java spelling at this boundary.
+        if (BitConverter.DoubleToInt64Bits(value) == 1) return "4.9E-324";
+        if (BitConverter.DoubleToInt64Bits(value) == unchecked((long)0x8000000000000001UL))
+            return "-4.9E-324";
+        return JavaFiniteFloatingString(value.ToString("R", CultureInfo.InvariantCulture), Math.Abs(value));
+    }
+
+    private static string JavaFloatingString(float value)
+    {
+        if (float.IsNaN(value)) return "NaN";
+        if (float.IsPositiveInfinity(value)) return "Infinity";
+        if (float.IsNegativeInfinity(value)) return "-Infinity";
+        if (value == 0) return BitConverter.SingleToInt32Bits(value) < 0 ? "-0.0" : "0.0";
+        return JavaFiniteFloatingString(value.ToString("R", CultureInfo.InvariantCulture), Math.Abs((double)value));
+    }
+
+    private static string JavaFiniteFloatingString(string text, double magnitude)
+    {
+        var negative = text[0] == '-';
+        if (negative) text = text[1..];
+        var exponentIndex = text.IndexOfAny(new[] { 'E', 'e' });
+        var exponent = 0;
+        if (exponentIndex >= 0)
+        {
+            exponent = int.Parse(text[(exponentIndex + 1)..], CultureInfo.InvariantCulture);
+            text = text[..exponentIndex];
+        }
+        var decimalIndex = text.IndexOf('.');
+        var decimalPosition = (decimalIndex < 0 ? text.Length : decimalIndex) + exponent;
+        var digits = text.Replace(".", "", StringComparison.Ordinal);
+        while (digits.Length > 1 && digits[0] == '0')
+        {
+            digits = digits[1..];
+            decimalPosition--;
+        }
+        while (digits.Length > 1 && digits[^1] == '0') digits = digits[..^1];
+
+        string result;
+        if (magnitude >= 1e7 || magnitude < 1e-3)
+        {
+            result = digits.Length == 1 ? digits + ".0" : digits[0] + "." + digits[1..];
+            result += "E" + (decimalPosition - 1).ToString(CultureInfo.InvariantCulture);
+        }
+        else if (decimalPosition <= 0)
+        {
+            result = "0." + new string('0', -decimalPosition) + digits;
+        }
+        else if (decimalPosition >= digits.Length)
+        {
+            result = digits + new string('0', decimalPosition - digits.Length) + ".0";
+        }
+        else
+        {
+            result = digits.Insert(decimalPosition, ".");
+        }
+        return negative ? "-" + result : result;
+    }
+
+    // Port of java.lang.FdLibm.Pow from OpenJDK 21. StrictMath.pow is defined
+    // in terms of this fdlibm implementation, and System.Math.Pow can differ
+    // by one ulp for ordinary Pkl expressions.
+    internal static double StrictPow(double x, double y)
+    {
+        double z, r, s, t, u, v, w;
+        int i, j, k, n;
+
+        if (y == 0.0) return 1.0;
+        if (double.IsNaN(x) || double.IsNaN(y)) return x + y;
+
+        var yAbs = Math.Abs(y);
+        var xAbs = Math.Abs(x);
+        if (y == 2.0) return x * x;
+        if (y == 0.5)
+        {
+            if (x >= -double.MaxValue) return Math.Sqrt(x + 0.0);
+        }
+        else if (yAbs == 1.0)
+        {
+            return y == 1.0 ? x : 1.0 / x;
+        }
+        else if (double.IsPositiveInfinity(yAbs))
+        {
+            if (xAbs == 1.0) return y - y;
+            if (xAbs > 1.0) return y >= 0 ? y : 0.0;
+            return y < 0 ? -y : 0.0;
+        }
+
+        var hx = HighWord(x);
+        var ix = hx & 0x7fffffff;
+        var yIsInt = 0;
+        if (hx < 0)
+        {
+            if (yAbs >= 9007199254740992.0)
+            {
+                yIsInt = 2;
+            }
+            else if (yAbs >= 1.0)
+            {
+                var yAsLong = (long)yAbs;
+                if ((double)yAsLong == yAbs) yIsInt = 2 - (int)(yAsLong & 1L);
+            }
+        }
+
+        if (xAbs == 0.0 || double.IsPositiveInfinity(xAbs) || xAbs == 1.0)
+        {
+            z = xAbs;
+            if (y < 0.0) z = 1.0 / z;
+            if (hx < 0)
+            {
+                if (((ix - 0x3ff00000) | yIsInt) == 0) z = (z - z) / (z - z);
+                else if (yIsInt == 1) z = -z;
+            }
+            return z;
+        }
+
+        n = (hx >> 31) + 1;
+        if ((n | yIsInt) == 0) return (x - x) / (x - x);
+        s = (n | (yIsInt - 1)) == 0 ? -1.0 : 1.0;
+
+        double pH, pL, t1, t2;
+        if (yAbs > 2147483903.9999998)
+        {
+            const double invLn2 = 1.44269504088896338700;
+            const double invLn2H = 1.44269502162933349609;
+            const double invLn2L = 1.92596299112661746887e-08;
+            if (xAbs < 0.9999995231628418) return y < 0.0 ? s * double.PositiveInfinity : s * 0.0;
+            if (xAbs > 1.0000009536743162) return y > 0.0 ? s * double.PositiveInfinity : s * 0.0;
+            t = xAbs - 1.0;
+            w = t * t * (0.5 - t * (0.3333333333333333333333 - t * 0.25));
+            u = invLn2H * t;
+            v = t * invLn2L - w * invLn2;
+            t1 = ClearLowWord(u + v);
+            t2 = v - (t1 - u);
+        }
+        else
+        {
+            const double cp = 9.61796693925975554329e-01;
+            const double cpH = 9.61796700954437255859e-01;
+            const double cpL = -7.02846165095275826516e-09;
+            ReadOnlySpan<double> bp = [1.0, 1.5];
+            ReadOnlySpan<double> dpH = [0.0, 5.84962487220764160156e-01];
+            ReadOnlySpan<double> dpL = [0.0, 1.35003920212974897128e-08];
+            const double l1 = 5.99999999999994648725e-01;
+            const double l2 = 4.28571428578550184252e-01;
+            const double l3 = 3.33333329818377432918e-01;
+            const double l4 = 2.72728123808534006489e-01;
+            const double l5 = 2.30660745775561754067e-01;
+            const double l6 = 2.06975017800338417784e-01;
+
+            n = 0;
+            if (ix < 0x00100000)
+            {
+                xAbs *= 9007199254740992.0;
+                n -= 53;
+                ix = HighWord(xAbs);
+            }
+            n += (ix >> 20) - 0x3ff;
+            j = ix & 0x000fffff;
+            ix = j | 0x3ff00000;
+            if (j <= 0x3988E) k = 0;
+            else if (j < 0xBB67A) k = 1;
+            else
+            {
+                k = 0;
+                n++;
+                ix -= 0x00100000;
+            }
+            xAbs = WithHighWord(xAbs, ix);
+            u = xAbs - bp[k];
+            v = 1.0 / (xAbs + bp[k]);
+            var ss = u * v;
+            var sH = ClearLowWord(ss);
+            var tH = WithHighWord(0.0, ((ix >> 1) | 0x20000000) + 0x00080000 + (k << 18));
+            var tL = xAbs - (tH - bp[k]);
+            var sL = v * ((u - sH * tH) - sH * tL);
+            var s2 = ss * ss;
+            r = s2 * s2 * (l1 + s2 * (l2 + s2 * (l3 + s2 * (l4 + s2 * (l5 + s2 * l6)))));
+            r += sL * (sH + ss);
+            s2 = sH * sH;
+            tH = ClearLowWord(3.0 + s2 + r);
+            tL = r - ((tH - 3.0) - s2);
+            u = sH * tH;
+            v = sL * tH + tL * ss;
+            pH = ClearLowWord(u + v);
+            pL = v - (pH - u);
+            var zH = cpH * pH;
+            var zL = cpL * pH + pL * cp + dpL[k];
+            t = n;
+            t1 = ClearLowWord(((zH + zL) + dpH[k]) + t);
+            t2 = zL - (((t1 - t) - dpH[k]) - zH);
+        }
+
+        var y1 = ClearLowWord(y);
+        pL = (y - y1) * t1 + y * t2;
+        pH = y1 * t1;
+        z = pL + pH;
+        j = HighWord(z);
+        i = LowWord(z);
+        if (j >= 0x40900000)
+        {
+            if (((j - 0x40900000) | i) != 0) return s * double.PositiveInfinity;
+            const double ovt = 8.0085662595372944372e-17;
+            if (pL + ovt > z - pH) return s * double.PositiveInfinity;
+        }
+        else if ((j & 0x7fffffff) >= 0x4090cc00)
+        {
+            if (((j - unchecked((int)0xc090cc00)) | i) != 0) return s * 0.0;
+            if (pL <= z - pH) return s * 0.0;
+        }
+
+        const double p1 = 1.66666666666666019037e-01;
+        const double p2 = -2.77777777770155933842e-03;
+        const double p3 = 6.61375632143793436117e-05;
+        const double p4 = -1.65339022054652515390e-06;
+        const double p5 = 4.13813679705723846039e-08;
+        const double lg2 = 6.93147180559945286227e-01;
+        const double lg2H = 6.93147182464599609375e-01;
+        const double lg2L = -1.90465429995776804525e-09;
+        i = j & 0x7fffffff;
+        k = (i >> 20) - 0x3ff;
+        n = 0;
+        if (i > 0x3fe00000)
+        {
+            n = j + (0x00100000 >> (k + 1));
+            k = ((n & 0x7fffffff) >> 20) - 0x3ff;
+            t = WithHighWord(0.0, n & ~(0x000fffff >> k));
+            n = ((n & 0x000fffff) | 0x00100000) >> (20 - k);
+            if (j < 0) n = -n;
+            pH -= t;
+        }
+        t = ClearLowWord(pL + pH);
+        u = t * lg2H;
+        v = (pL - (t - pH)) * lg2 + t * lg2L;
+        z = u + v;
+        w = v - (z - u);
+        t = z * z;
+        t1 = z - t * (p1 + t * (p2 + t * (p3 + t * (p4 + t * p5))));
+        r = z * t1 / (t1 - 2.0) - (w + z * w);
+        z = 1.0 - (r - z);
+        j = HighWord(z) + (n << 20);
+        z = (j >> 20) <= 0 ? Math.ScaleB(z, n) : WithHighWord(z, j);
+        return s * z;
+    }
+
+    private static int HighWord(double value) =>
+        unchecked((int)(BitConverter.DoubleToInt64Bits(value) >> 32));
+
+    private static int LowWord(double value) =>
+        unchecked((int)BitConverter.DoubleToInt64Bits(value));
+
+    private static double ClearLowWord(double value) =>
+        BitConverter.Int64BitsToDouble(BitConverter.DoubleToInt64Bits(value) & unchecked((long)0xffffffff00000000UL));
+
+    private static double WithHighWord(double value, int highWord) =>
+        BitConverter.Int64BitsToDouble(
+            (BitConverter.DoubleToInt64Bits(value) & 0x00000000ffffffffL) |
+            ((long)highWord << 32));
     internal static StringBuilder StringBuilderDelete(StringBuilder value, int start, int end) =>
         value.Remove(start, end - start);
 
@@ -790,25 +1077,56 @@ internal static class JavaCompat
 
     internal static int ParseInt(string value) => int.Parse(value, CultureInfo.InvariantCulture);
 
-    internal static int ParseInt(string value, int radix) => Convert.ToInt32(value, radix);
+    internal static int ParseInt(string value, int radix) =>
+        checked((int)ParseSignedRadix(value, radix, int.MinValue, int.MaxValue));
 
     internal static long ParseLong(string value) => long.Parse(value, CultureInfo.InvariantCulture);
-    internal static long ParseLong(string value, int radix) => Convert.ToInt64(value, radix);
+    internal static long ParseLong(string value, int radix) =>
+        ParseSignedRadix(value, radix, long.MinValue, long.MaxValue);
     internal static long ParseLong(string value, int beginIndex, int endIndex, int radix) =>
-        Convert.ToInt64(value.Substring(beginIndex, endIndex - beginIndex), radix);
+        ParseLong(value.Substring(beginIndex, endIndex - beginIndex), radix);
     internal static sbyte ParseByte(string value, int radix)
     {
-        var parsed = Convert.ToInt32(value, radix);
-        if (parsed < sbyte.MinValue || parsed > sbyte.MaxValue)
+        return checked((sbyte)ParseSignedRadix(value, radix, sbyte.MinValue, sbyte.MaxValue));
+    }
+
+    private static long ParseSignedRadix(string value, int radix, long minimum, long maximum)
+    {
+        if (radix is < 2 or > 36) throw new ArgumentException($"Invalid radix {radix}.");
+        if (string.IsNullOrEmpty(value)) throw new FormatException("Input string was empty.");
+        var index = 0;
+        var negative = false;
+        if (value[0] is '+' or '-')
         {
-            throw new FormatException($"Value '{value}' is outside the Java byte range.");
+            negative = value[0] == '-';
+            index++;
+            if (index == value.Length) throw new FormatException($"Invalid number `{value}`.");
         }
-        return (sbyte)parsed;
+        ulong magnitude = 0;
+        var negativeLimit = unchecked((ulong)(-(minimum + 1))) + 1UL;
+        var limit = negative ? negativeLimit : (ulong)maximum;
+        for (; index < value.Length; index++)
+        {
+            var character = value[index];
+            var digit = character is >= '0' and <= '9' ? character - '0'
+                : character is >= 'a' and <= 'z' ? character - 'a' + 10
+                : character is >= 'A' and <= 'Z' ? character - 'A' + 10
+                : -1;
+            if (digit < 0 || digit >= radix)
+                throw new FormatException($"Invalid number `{value}` for radix {radix}.");
+            if (magnitude > (limit - (uint)digit) / (uint)radix)
+                throw new FormatException($"Number `{value}` is out of range.");
+            magnitude = magnitude * (uint)radix + (uint)digit;
+        }
+        if (!negative) return (long)magnitude;
+        return magnitude == negativeLimit ? minimum : -(long)magnitude;
     }
     internal static double ParseDouble(string value) => double.Parse(value, CultureInfo.InvariantCulture);
     internal static int CompareLong(long left, long right) => left.CompareTo(right);
     internal static int CompareInt(int left, int right) => left.CompareTo(right);
     internal static int CompareDouble(double left, double right) => left.CompareTo(right);
+    internal static int StringCompareTo(string left, string right) =>
+        string.Compare(left, right, StringComparison.Ordinal);
     internal static int LongLeadingZeros(long value) => BitOperations.LeadingZeroCount(unchecked((ulong)value));
     internal static int LongTrailingZeros(long value) => BitOperations.TrailingZeroCount(unchecked((ulong)value));
     internal static int IntLeadingZeros(int value) => BitOperations.LeadingZeroCount(unchecked((uint)value));
@@ -1021,6 +1339,7 @@ internal static class JavaCompat
     internal static string NewString(byte[] value, Encoding encoding) => encoding.GetString(value);
     internal static string NewString(object value) => StringValueOf(value);
     internal static Uri NewUri(string value) => CreateUri(value);
+    internal static string UriToString(Uri value) => value.OriginalString;
 
     private static bool IsUriUnreserved(char value) =>
         value is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or
@@ -1208,6 +1527,9 @@ internal static class JavaCompat
     internal static Uri ResolveUri(Uri basis, Uri value)
     {
         if (value.IsAbsoluteUri) return value;
+        // java.net.URI.resolve("") resolves to the base URI's containing
+        // directory; System.Uri otherwise preserves the base file itself.
+        if (value.OriginalString.Length == 0) value = CreateUri(".");
         if (basis.IsAbsoluteUri) return new Uri(basis, value);
         var basisText = basis.OriginalString;
         var rooted = basisText.StartsWith("/", StringComparison.Ordinal);
@@ -1288,7 +1610,8 @@ internal static class JavaCompat
     }
 
     internal static IList<T> Mutable<T>(IList<T> values) => new List<T>(values);
-    internal static ISet<T> Mutable<T>(ISet<T> values) => new HashSet<T>(values);
+    internal static ISet<T> Mutable<T>(ISet<T> values) =>
+        new HashSet<T>(values, new JavaEqualityComparer<T>());
     internal static IDictionary<K, V> Mutable<K, V>(IDictionary<K, V> values) where K : notnull =>
         new Dictionary<K, V>(values);
     internal static IList<T> Assoc<T>(IList<T> values, int index, T value)
@@ -1310,7 +1633,7 @@ internal static class JavaCompat
     }
     internal static ISet<T> Without<T>(ISet<T> values, T value)
     {
-        var result = new HashSet<T>(values);
+        var result = new HashSet<T>(values, new JavaEqualityComparer<T>());
         result.Remove(value);
         return result;
     }
@@ -1322,7 +1645,8 @@ internal static class JavaCompat
         new JavaMapEntrySet<K, V>(map);
 
     internal static bool MapIsEmpty<K, V>(IDictionary<K, V> map) where K : notnull => map.Count == 0;
-    internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull => new HashSet<K>(map.Keys);
+    internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull =>
+        new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
     internal static int MapCount<K, V>(IDictionary<K, V> map) where K : notnull => map.Count;
     internal static bool MapContainsValue<K, V>(IDictionary<K, V> map, object? value) where K : notnull =>
         value is V typed && map.Values.Contains(typed);
@@ -1409,8 +1733,12 @@ internal static class JavaCompat
         return result;
     }
 
-    internal static Regex CompileRegex(string pattern) => new(pattern);
-    internal static Regex CompileRegex(string pattern, int flags) => new(pattern, RegexOptions.CultureInvariant);
+    private static string TranslateJavaRegex(string pattern) =>
+        Regex.Replace(pattern, @"\[\[\^/\]\&\&\[([^\]]*)\]\]", "[$1]");
+
+    internal static Regex CompileRegex(string pattern) => new(TranslateJavaRegex(pattern));
+    internal static Regex CompileRegex(string pattern, int flags) =>
+        new(TranslateJavaRegex(pattern), RegexOptions.CultureInvariant);
     internal static JavaRegexMatcher RegexMatcher(Regex pattern, string input) => new(pattern, input);
     internal static string QuoteReplacement(string value) => value.Replace("$", "$$", StringComparison.Ordinal);
     internal static string Encode(string value, Encoding encoding) => Uri.EscapeDataString(value);
@@ -1419,8 +1747,10 @@ internal static class JavaCompat
 
     internal static IList<T> AsList<T>(params T[] values) => new JavaArrayList<T>(values);
 
-    internal static HashSet<T> SetOf<T>(params T[] values) => new(values);
-    internal static HashSet<T> SetOfValues<T>(IEnumerable<T> values) => new(values);
+    internal static HashSet<T> SetOf<T>(params T[] values) =>
+        new(values, new JavaEqualityComparer<T>());
+    internal static HashSet<T> SetOfValues<T>(IEnumerable<T> values) =>
+        new(values, new JavaEqualityComparer<T>());
     internal static ISet<T> EnumSetNoneOf<T>(Type _) => new HashSet<T>();
     internal static ISet<T> EnumSetAllOf<T>(Type type) =>
         new HashSet<T>(type.GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -1499,6 +1829,8 @@ internal static class JavaCompat
         if (left is Uri leftUri && right is Uri rightUri)
             return string.Compare(leftUri.OriginalString, rightUri.OriginalString,
                 StringComparison.Ordinal);
+        if (left is string leftString && right is string rightString)
+            return string.Compare(leftString, rightString, StringComparison.Ordinal);
         if (left is IComparable<T> generic) return generic.CompareTo(right);
         if (left is IComparable comparable) return comparable.CompareTo(right);
         var method = left.GetType().GetMethod("CompareTo", new[] { right.GetType() });
@@ -1523,6 +1855,7 @@ internal static class JavaCompat
     internal static void Fill<T>(T[] values, int fromIndex, int toIndex, T value) =>
         Array.Fill(values, value, fromIndex, toIndex - fromIndex);
     internal static T[] EmptyArray<T>() => Array.Empty<T>();
+    internal static IEnumerator<T> EmptyIterator<T>() => Enumerable.Empty<T>().GetEnumerator();
     internal static string ArrayString(Array value) => string.Join(", ", value.Cast<object?>().Select(StringValueOf));
     internal static string ArrayString<T>(T[] value) => ArrayString((Array)value);
     internal static string IndentSpace(int count) => new(' ', Math.Max(0, count));
@@ -1672,6 +2005,16 @@ internal static class JavaCompat
     }
 
     internal static int Hash(params object?[] values)
+    {
+        unchecked
+        {
+            var result = 1;
+            foreach (var value in values) result = 31 * result + JavaHashCode(value);
+            return result;
+        }
+    }
+
+    internal static int ArrayHash(Array values)
     {
         unchecked
         {
@@ -1945,8 +2288,13 @@ internal static class JavaCompat
     {
         return new JavaCollector(values =>
         {
-            dynamic collection = supplier()!;
-            foreach (var value in values) collection.Add((dynamic)value!);
+            object collection = supplier()!;
+            var collectionInterface = collection.GetType().GetInterfaces().FirstOrDefault(type =>
+                type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ICollection<>)) ??
+                throw new InvalidOperationException(
+                    $"Collector target `{collection.GetType()}` is not a Java collection.");
+            var add = collectionInterface.GetMethod(nameof(ICollection<object>.Add))!;
+            foreach (var value in values) add.Invoke(collection, new[] { value });
             return collection;
         });
     }
@@ -1959,8 +2307,12 @@ internal static class JavaCompat
         else if (Directory.Exists(path)) Directory.Delete(path);
     }
     internal static void CreateDirectories(string path) => Directory.CreateDirectory(path);
-    internal static FileStream NewInputStream(string path, params object?[] _) => File.OpenRead(path);
-    internal static string ReadString(string path, Encoding encoding) => File.ReadAllText(path, encoding);
+    internal static FileStream NewInputStream(string path, params object?[] _) => OpenFileRead(path);
+    internal static string ReadString(string path, Encoding encoding)
+    {
+        if (Directory.Exists(path)) throw new IOException("Is a directory");
+        return File.ReadAllText(path, encoding);
+    }
     internal static string PathOf(string first, params string[] more)
     {
         // Path.of(first, more...) joins name elements even when a later string
@@ -1973,7 +2325,8 @@ internal static class JavaCompat
                                                        Path.AltDirectorySeparatorChar));
         return result;
     }
-    internal static string PathOfUri(Uri uri) => uri.IsFile ? uri.LocalPath : uri.OriginalString;
+    internal static string PathOfUri(Uri uri) =>
+        uri.IsFile ? Uri.UnescapeDataString(uri.AbsolutePath) : uri.OriginalString;
     internal static bool PathIsAbsolute(string path) => Path.IsPathRooted(path);
     internal static string? PathRoot(string path) => Path.GetPathRoot(path);
     internal static string PathRelativize(string basis, string path) => Path.GetRelativePath(basis, path);
@@ -2033,9 +2386,18 @@ internal static class JavaCompat
     internal static int CompareUri(Uri left, Uri right) => string.CompareOrdinal(left.OriginalString, right.OriginalString);
     internal static Stream OpenStream(Uri uri) =>
         uri.IsFile
-            ? File.OpenRead(uri.LocalPath)
+            ? OpenFileRead(PathOfUri(uri))
             : new System.Net.Http.HttpClient().GetStreamAsync(uri).GetAwaiter().GetResult();
-    internal static sbyte[] ReadAllBytes(string path) => File.ReadAllBytes(path).Select(value => unchecked((sbyte)value)).ToArray();
+    internal static sbyte[] ReadAllBytes(string path)
+    {
+        using var stream = OpenFileRead(path);
+        return ReadAllBytes(stream);
+    }
+    private static FileStream OpenFileRead(string path)
+    {
+        if (Directory.Exists(path)) throw new IOException("Is a directory");
+        return File.OpenRead(path);
+    }
     internal static sbyte[] ReadAllBytes(Stream stream)
     {
         using var buffer = new MemoryStream();
@@ -2156,7 +2518,17 @@ internal static class JavaCompat
     internal static T OrganicGet<T>(IList<T> values, int index) => values[index];
     internal static V OrganicPut<K, V>(IDictionary<K, V> values, K key, V value) where K : notnull => MapPut(values, key, value);
     internal static ISet<T> OrganicPut<T>(ISet<T> values, T value) { values.Add(value); return values; }
-    internal static Uri PathToUri(string path) => new(Path.GetFullPath(path));
+    internal static ISet<T> Assoc<T>(ISet<T> values, T value)
+    {
+        var result = new HashSet<T>(values, new JavaEqualityComparer<T>());
+        result.Add(value);
+        return result;
+    }
+    internal static Uri PathToUri(string path)
+    {
+        var pathUri = new Uri(Path.GetFullPath(path));
+        return new Uri(pathUri.AbsoluteUri);
+    }
 }
 
 #if VIBEFORMER_PKL_CORE
@@ -2290,6 +2662,62 @@ internal sealed class JavaDeque<T> : ICollection<T>
     public bool Remove(T item) => values.Remove(item);
     public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+#if VIBEFORMER_PKL_CORE
+public
+#else
+internal
+#endif
+sealed class JavaLinkedList<T> : IList<T>
+{
+    private readonly List<T> values = new();
+
+    public T this[int index] { get => values[index]; set => values[index] = value; }
+    public int Count => values.Count;
+    public bool IsReadOnly => false;
+    public void Add(T item) => values.Add(item);
+    public void AddFirst(T item) => values.Insert(0, item);
+    public void Clear() => values.Clear();
+    public bool Contains(T item) => values.Contains(item);
+    public void CopyTo(T[] array, int arrayIndex) => values.CopyTo(array, arrayIndex);
+    public int IndexOf(T item) => values.IndexOf(item);
+    public void Insert(int index, T item) => values.Insert(index, item);
+    public bool Remove(T item) => values.Remove(item);
+    public void RemoveAt(int index) => values.RemoveAt(index);
+    public IEnumerator<T> GetEnumerator() => new Enumerator(values);
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    private sealed class Enumerator : IEnumerator<T>, JavaRemovableIterator
+    {
+        private readonly List<T> values;
+        private int index = -1;
+        private bool canRemove;
+
+        internal Enumerator(List<T> values) => this.values = values;
+        public T Current { get; private set; } = default!;
+        object IEnumerator.Current => Current!;
+        public bool MoveNext()
+        {
+            if (++index >= values.Count)
+            {
+                Current = default!;
+                return false;
+            }
+            Current = values[index];
+            return true;
+        }
+        public void MarkReturned() => canRemove = true;
+        public void Remove()
+        {
+            if (!canRemove) throw new InvalidOperationException(
+                "Iterator.remove() requires one preceding next().");
+            values.RemoveAt(index--);
+            canRemove = false;
+        }
+        public void Reset() => throw new NotSupportedException();
+        public void Dispose() { }
+    }
 }
 
 internal sealed class JavaResourceBundle
@@ -2462,12 +2890,12 @@ internal sealed class JavaMessageFormat : JavaFormat
 
     private string FormatArgument(object? argument, string[] fields)
     {
-        if (fields.Length == 1) return Convert.ToString(argument, locale) ?? "null";
+        if (fields.Length == 1) return FormatDefault(argument);
         if (!string.Equals(fields[1], "number", StringComparison.OrdinalIgnoreCase))
             throw new FormatException($"Unsupported Java MessageFormat type `{fields[1]}`");
         if (argument is null) return "null";
         if (fields.Length == 2 || string.IsNullOrEmpty(fields[2]))
-            return Convert.ToString(argument, locale) ?? "null";
+            return FormatDefault(argument);
 
         var style = fields[2];
         var decimalIndex = style.IndexOf('.');
@@ -2489,6 +2917,14 @@ internal sealed class JavaMessageFormat : JavaFormat
             ? formattable.ToString(custom, locale)
             : Convert.ToString(argument, locale) ?? "null";
     }
+
+    private string FormatDefault(object? argument) => argument switch
+    {
+        null => "null",
+        sbyte or byte or short or ushort or int or uint or long or ulong =>
+            ((IFormattable)argument).ToString("N0", locale),
+        _ => Convert.ToString(argument, locale) ?? "null"
+    };
 }
 
 internal sealed class JavaCollector

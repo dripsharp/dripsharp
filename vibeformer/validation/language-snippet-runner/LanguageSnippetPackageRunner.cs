@@ -169,6 +169,12 @@ static class Program
         };
         var logWriter = new StringWriter(CultureInfo.InvariantCulture);
         TimeSpan timeout = TimeSpan.FromMilliseconds(evaluationTimeoutMs);
+        string fixtureModulePath = Path.GetFullPath(
+            Path.Combine(snippets, "..", "..", "resources"));
+        Require(Directory.Exists(fixtureModulePath),
+            $"language-snippet module-path fixtures are missing: {fixtureModulePath}");
+        using var fixtureModulePathResolver =
+            new Pkl.Core.Module.ModulePathResolver(new[] { fixtureModulePath });
         EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured()
             .SetLogger(Loggers.Stream(logWriter))
             .SetStackFrameTransformer(frame => frame)
@@ -181,6 +187,18 @@ static class Program
                 .BuildLazily())
             .SetPowerAssertionsEnabled(true)
             .SetTimeout(timeout);
+        var moduleKeyFactories = new List<Pkl.Core.Module.ModuleKeyFactory>
+        {
+            Pkl.Core.Module.ModuleKeyFactories.CreateModulePath(fixtureModulePathResolver)
+        };
+        moduleKeyFactories.AddRange(builder.GetModuleKeyFactories());
+        builder.SetModuleKeyFactories(moduleKeyFactories);
+        var resourceReaders = new List<Pkl.Core.Resource.ResourceReader>
+        {
+            Pkl.Core.Resource.ResourceReaders.ModulePath(fixtureModulePathResolver)
+        };
+        resourceReaders.AddRange(builder.GetResourceReaders());
+        builder.SetResourceReaders(resourceReaders);
 
         string output;
         bool success;
