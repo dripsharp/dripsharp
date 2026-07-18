@@ -67,6 +67,7 @@ clojure -M:run package
 clojure -J-Xmx8g -M:run package pkl-core-value-model
 clojure -M:run differential
 clojure -M:run language-snippet-contract
+clojure -J-Xmx8g -M:run language-snippet-package
 clojure -M:test
 clojure -M:test --namespace vibeformer.harness-test
 ```
@@ -181,3 +182,15 @@ expectations, rejects missing or duplicate observations, proves deterministic
 repetition, and deliberately perturbs the oracle to prove mismatch detection.
 This is evaluator behavior evidence; it does not change product scope or make
 the excluded YAML or Pkl-binary product surfaces part of the .NET package.
+
+`language-snippet-package` performs a fresh deterministic `Pkl.Core`/`Pkl.Parser`
+pack and restores a package-reference-only runner into an isolated NuGet cache.
+The runner verifies the exact loaded assembly hashes, reproduces the upstream
+environment, properties, logger, project, power-assertion, no-cache, TLS, and
+test-package-service configuration, and evaluates each of the 909 in-scope
+manifest rows in a bounded child process. Crashes and timeouts are recorded and
+cannot abort later rows; the 31 approved YAML-only exclusions remain explicit.
+Two complete runs must be byte-for-byte deterministic. Rich case results, a
+family baseline, and every oracle mismatch are retained under
+`validation-output/language-snippet-package`; mismatches remain pending product
+implementation rather than accepted results or new exclusions.
