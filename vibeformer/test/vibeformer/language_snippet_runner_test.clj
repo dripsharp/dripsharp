@@ -136,9 +136,17 @@
   (let [root (temp-directory)
         oracle (oracle-file root)
         boundary-message "MessagePack is excluded from the Vibeformer product target."
+        boundary-payload
+        (str "Pkl.Core.PklBugException: An unexpected error has occurred.\n"
+             "https://github.com/apple/pkl/issues/new\n\n"
+             "–– Pkl Error ––\n" boundary-message "\n\n"
+             "System.NotSupportedException: " boundary-message "\n"
+             "   at Pkl.Core.Runtime.ExcludedMessagePackPacker.ToByteArray()\n"
+             " ---> Pkl.Core.Runtime.VmBugException: " boundary-message "\n"
+             " ---> System.NotSupportedException: " boundary-message "\n"
+             "   at Program.EvaluateCase(String caseId)")
         boundary-rows (assoc-in (good-rows) [1 :payload-base64]
-                                (b64 (str "Pkl.Core.PklBugException\n"
-                                          boundary-message)))
+                                (b64 boundary-payload))
         boundary-package (package-file root "boundary.tsv" boundary-rows)
         comparison (runner/compare-package-results validated oracle boundary-package)
         baseline (runner/summarize-family-baseline
@@ -158,6 +166,14 @@
       (let [wrong (package-file root "wrong-boundary.tsv"
                                 (assoc-in (good-rows) [1 :payload-base64]
                                           (b64 "MessagePack failed")))
+            rejected (runner/compare-package-results validated oracle wrong)]
+        (is (= 1 (:mismatched rejected)))
+        (is (= :content-mismatch (get-in rejected [:mismatches 0 :kind])))))
+    (testing "extra failure evidence cannot hide behind the boundary sentence"
+      (let [wrong (package-file root "tainted-boundary.tsv"
+                                (assoc-in (good-rows) [1 :payload-base64]
+                                          (b64 (str boundary-payload
+                                                    "\nSystem.InvalidOperationException: regression"))))
             rejected (runner/compare-package-results validated oracle wrong)]
         (is (= 1 (:mismatched rejected)))
         (is (= :content-mismatch (get-in rejected [:mismatches 0 :kind])))))

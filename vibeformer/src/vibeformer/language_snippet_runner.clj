@@ -26,6 +26,12 @@
 (def ^:private excluded-messagepack-boundary
   "MessagePack is excluded from the Vibeformer product target.")
 
+(def ^:private excluded-messagepack-bug-prefix
+  "Pkl.Core.PklBugException: An unexpected error has occurred.")
+
+(def ^:private excluded-messagepack-final-frame
+  #"^\s+at Program[.]EvaluateCase[(].*[)](?: in .+:line [0-9]+)?$")
+
 (def ^:private default-evaluation-timeout-ms 15000)
 (def ^:private default-process-timeout-ms 30000)
 (def ^:private default-worker-count 2)
@@ -173,12 +179,28 @@
   remains executed and in scope; only its transport-dependent observation is
   separated from directly comparable behavior."
   [case-data actual]
-  (and (= mixed-excluded-surface (:product-scope case-data))
-       (execution-requirement? case-data messagepack-debug-requirement)
-       (= "ERROR" (:status actual))
-       (str/blank? (:logger actual))
-       (str/blank? (:diagnostic actual))
-       (str/includes? (:payload actual) excluded-messagepack-boundary)))
+  (let [payload (:payload actual)
+        lines (str/split-lines payload)
+        exception-lines (filterv #(str/includes? % "Exception:") lines)
+        boundary-exceptions
+        [(str "System.NotSupportedException: " excluded-messagepack-boundary)
+         (str " ---> Pkl.Core.Runtime.VmBugException: " excluded-messagepack-boundary)
+         (str " ---> System.NotSupportedException: " excluded-messagepack-boundary)]]
+    (and (= mixed-excluded-surface (:product-scope case-data))
+         (execution-requirement? case-data messagepack-debug-requirement)
+         (= "ERROR" (:status actual))
+         (str/blank? (:logger actual))
+         (str/blank? (:diagnostic actual))
+         (str/starts-with? payload excluded-messagepack-bug-prefix)
+         (= 4 (count (re-seq (re-pattern
+                              (java.util.regex.Pattern/quote
+                               excluded-messagepack-boundary))
+                             payload)))
+         (= 4 (count exception-lines))
+         (= boundary-exceptions (subvec exception-lines 1))
+         (str/includes? payload (str "\n" excluded-messagepack-boundary "\n\n"))
+         (boolean
+          (re-matches excluded-messagepack-final-frame (or (last lines) ""))))))
 
 (defn compare-package-results
   "Compares every in-scope result with the pinned oracle. Mixed-scope rows that
