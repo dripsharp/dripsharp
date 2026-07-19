@@ -9,10 +9,12 @@
             [vibeformer.csharp :as csharp]
             [vibeformer.spoon :as spoon])
   (:import [java.util IdentityHashMap]
-           [spoon.reflect.code CtExpression CtStatement]
+           [spoon.reflect.code CtBlock CtBreak CtContinue CtDo CtExpression CtFor
+            CtForEach CtStatement CtTry CtWhile]
            [spoon.reflect.declaration CtAnnotation CtElement CtExecutable CtType]
            [spoon.reflect.reference CtExecutableReference CtFieldReference
-            CtTypeReference]))
+            CtTypeReference]
+           [spoon.reflect.visitor.filter TypeFilter]))
 
 (def ^:private mapping-categories
   #{:types :executables :constructors :fields :annotations})
@@ -102,6 +104,247 @@
    :mappings (mapping-registries mappings)
    :mode mode
    :diagnostic-fallback diagnostic-fallback})
+
+(defn- labeled-statement?
+  [^CtStatement statement]
+  (not (str/blank? (.getLabel statement))))
+
+(defn- branch-statement?
+  [^CtStatement statement]
+  (and (or (instance? CtBreak statement)
+           (instance? CtContinue statement))
+       (not (str/blank? (.getTargetLabel statement)))))
+
+(defn- labeled-branch-target
+  "Resolves a labeled break or continue to its exact live declaration object.
+  Java label scope follows the ancestor statement chain and cannot cross an
+  executable boundary. Raw text performs only the scoped source lookup;
+  destination identities belong to the resolved declaration objects."
+  [^CtStatement branch]
+  (when (branch-statement? branch)
+    (let [target-label (.getTargetLabel branch)]
+      (loop [current (when (.isParentInitialized branch) (.getParent branch))]
+        (cond
+          (nil? current) nil
+          (instance? CtExecutable current) nil
+          (and (instance? CtStatement current)
+               (= target-label (.getLabel ^CtStatement current))) current
+          :else (recur (when (.isParentInitialized ^CtElement current)
+                         (.getParent ^CtElement current))))))))
+
+(defn- continue-target?
+  [target]
+  (or (instance? CtDo target)
+      (instance? CtFor target)
+      (instance? CtForEach target)
+      (instance? CtWhile target)))
+
+(defn- finalizer-owner
+  [element]
+  (when (and (instance? CtBlock element)
+             (.isParentInitialized ^CtElement element))
+    (let [parent (.getParent ^CtElement element)]
+      (when (and (instance? CtTry parent)
+                 (identical? element (.getFinalizer ^CtTry parent)))
+        parent))))
+
+(defn- crossed-finalizers
+  [^CtStatement branch ^CtStatement target]
+  (loop [current (when (.isParentInitialized branch) (.getParent branch))
+         result []]
+    (cond
+      (nil? current) result
+      (identical? current target) result
+      :else (recur (when (.isParentInitialized ^CtElement current)
+                     (.getParent ^CtElement current))
+                   (cond-> result
+                     (finalizer-owner current) (conj (finalizer-owner current)))))))
+
+(defn- root-statements
+  [^CtElement root]
+  (cond-> (vec (.getElements root (TypeFilter. CtStatement)))
+    (instance? CtStatement root) (into [root])))
+
+(defn- control-flow-index
+  "Indexes labeled control flow for one translated executable tree. Both maps
+  use object identity so disjoint declarations with the same Java spelling
+  remain distinct and receive collision-free C# labels."
+  [^CtElement root]
+  (let [statements (root-statements root)
+        declaration-ids (IdentityHashMap.)
+        branch-targets (IdentityHashMap.)
+        targeted-breaks (IdentityHashMap.)
+        targeted-continues (IdentityHashMap.)
+        branch-finalizers (IdentityHashMap.)
+        branch-ids (IdentityHashMap.)
+        finalizer-branches (IdentityHashMap.)
+        finalizer-ids (IdentityHashMap.)
+        next-branch-id (atom 0)]
+    (doseq [[ordinal ^CtStatement statement]
+            (map-indexed vector (filter labeled-statement? statements))]
+      (.put declaration-ids statement ordinal))
+    (doseq [^CtStatement branch (filter branch-statement? statements)]
+      (when-let [target (labeled-branch-target branch)]
+        (when (and (instance? CtContinue branch)
+                   (not (continue-target? target)))
+          (throw (ex-info "Java labeled continue does not target a loop declaration"
+                          {:kind :invalid-labeled-continue-target
+                           :branch (spoon/frontend-diagnostic branch)
+                           :target (spoon/frontend-diagnostic target)})))
+        (.put branch-targets branch target)
+        (.put (if (instance? CtBreak branch)
+                targeted-breaks
+                targeted-continues)
+              target true)
+        (let [finalizers (crossed-finalizers branch target)]
+          (when (seq finalizers)
+            (.put branch-finalizers branch finalizers)
+            (.put branch-ids branch (swap! next-branch-id inc))
+            (doseq [finalizer finalizers]
+              (.put finalizer-branches finalizer
+                    (conj (vec (.get finalizer-branches finalizer)) branch)))))))
+    (doseq [[ordinal ^CtTry finalizer]
+            (map-indexed vector
+                         (filter #(.containsKey finalizer-branches %)
+                                 (filter #(instance? CtTry %) statements)))]
+      (.put finalizer-ids finalizer ordinal))
+    {:declaration-ids declaration-ids
+     :branch-targets branch-targets
+     :targeted-breaks targeted-breaks
+     :targeted-continues targeted-continues
+     :branch-finalizers branch-finalizers
+     :branch-ids branch-ids
+     :finalizer-branches finalizer-branches
+     :finalizer-ids finalizer-ids}))
+
+(defn labeled-target
+  "Returns the exact labeled statement declaration targeted by a live branch."
+  [translation-context ^CtStatement branch]
+  (.get ^IdentityHashMap (get-in translation-context
+                                 [:control-flow :branch-targets])
+        branch))
+
+(defn labeled-targeted?
+  "True when a labeled declaration is targeted by the requested branch kind."
+  [translation-context ^CtStatement target kind]
+  (let [index-key (case kind
+                    :break :targeted-breaks
+                    :continue :targeted-continues
+                    (throw (ex-info "Unknown labeled control-flow kind"
+                                    {:kind :invalid-labeled-control-flow-kind
+                                     :control-flow-kind kind})))]
+    (boolean
+     (.get ^IdentityHashMap (get-in translation-context
+                                    [:control-flow index-key])
+           target))))
+
+(defn labeled-target-name
+  "Returns a collision-free destination label for an exact declaration."
+  [translation-context ^CtStatement target kind]
+  (let [ordinal (.get ^IdentityHashMap
+                      (get-in translation-context
+                              [:control-flow :declaration-ids])
+                      target)]
+    (when (nil? ordinal)
+      (throw (ex-info "Labeled branch target is outside the translated tree"
+                      {:kind :unindexed-labeled-branch-target
+                       :target (spoon/frontend-diagnostic target)})))
+    (str "__java_" (name kind) "_" ordinal)))
+
+(defn labeled-branch-target-name
+  "Resolves a live labeled branch and returns its identity-based destination."
+  [translation-context ^CtStatement branch kind]
+  (let [target (labeled-target translation-context branch)]
+    (when-not target
+      (throw (ex-info "Java labeled branch has no declaration in scope"
+                      {:kind :unresolved-labeled-branch-target
+                       :branch (spoon/frontend-diagnostic branch)})))
+    (labeled-target-name translation-context target kind)))
+
+(defn labeled-finally-flow?
+  "True when this translation tree contains a labeled branch that originates
+  inside, and exits, a Java finally clause."
+  [translation-context]
+  (pos? (.size ^IdentityHashMap
+               (get-in translation-context [:control-flow :branch-finalizers]))))
+
+(defn labeled-branch-node
+  "Emits a direct identity-based goto, or an internal control-flow signal when
+  C# forbids control from leaving a finally clause. The nearest translated try
+  boundary catches the signal before ordinary Java exception handlers can
+  observe it."
+  [translation-context ^CtStatement branch kind]
+  (let [target (labeled-target translation-context branch)]
+    (when-not target
+      (throw (ex-info "Java labeled branch has no declaration in scope"
+                      {:kind :unresolved-labeled-branch-target
+                       :branch (spoon/frontend-diagnostic branch)})))
+    (if-let [finalizers (.get ^IdentityHashMap
+                             (get-in translation-context
+                                     [:control-flow :branch-finalizers])
+                             branch)]
+      (let [branch-id (.get ^IdentityHashMap
+                            (get-in translation-context [:control-flow :branch-ids])
+                            branch)]
+        (csharp/raw
+         (str "throw new global::Vibeformer.Runtime.JavaLabeledControlFlowException("
+              branch-id ");")))
+      (csharp/raw
+       (str "goto " (labeled-target-name translation-context target kind) ";")))))
+
+(defn- finalizer-branch-id
+  [translation-context branch]
+  (.get ^IdentityHashMap
+        (get-in translation-context [:control-flow :branch-ids])
+        branch))
+
+(defn- branch-finalizers
+  [translation-context branch]
+  (.get ^IdentityHashMap
+        (get-in translation-context [:control-flow :branch-finalizers])
+        branch))
+
+(defn- outermost-finalizer?
+  [translation-context branch finalizer]
+  (identical? finalizer (last (branch-finalizers translation-context branch))))
+
+(defn- finalizer-identity
+  [translation-context finalizer]
+  (.get ^IdentityHashMap
+        (get-in translation-context [:control-flow :finalizer-ids])
+        finalizer))
+
+(defn- finally-crossing-node
+  [translation-context ^CtTry finalizer node]
+  (let [branches (.get ^IdentityHashMap
+                       (get-in translation-context
+                               [:control-flow :finalizer-branches])
+                       finalizer)]
+    (if-not (seq branches)
+      node
+      (let [exception-name (str "__java_finally_flow_"
+                                (finalizer-identity translation-context finalizer))
+            dispatches
+            (for [branch branches
+                  :when (outermost-finalizer? translation-context branch finalizer)
+                  :let [kind (if (instance? CtBreak branch) :break :continue)
+                        target (labeled-target translation-context branch)]]
+              (csharp/raw
+               (str "if (" exception-name ".BranchId == "
+                    (finalizer-branch-id translation-context branch) ") goto "
+                    (labeled-target-name translation-context target kind) ";")))]
+        (csharp/sequence-node
+         (remove nil?
+                 [(csharp/raw "try {\n")
+                  node
+                  (csharp/raw
+                   (str "\n} catch (global::Vibeformer.Runtime."
+                        "JavaLabeledControlFlowException"
+                        (when (seq dispatches) (str " " exception-name))
+                        ") {\n"))
+                  (csharp/sequence-node dispatches "\n")
+                  (when (seq dispatches) (csharp/raw "\n"))
+                  (csharp/raw "throw;\n}")]))))))
 
 (defn child-result
   "Returns the already translated result for an exact live direct child."
@@ -209,12 +452,30 @@
     (:emit plan)
     (let [emit (:emit plan)]
       (try
-        (or (emit {:context translation-context
-                   :element element
-                   :children children
-                   :occurrence (:occurrence plan)
-                   :mapping (:mapping plan)})
-            {})
+        (let [fragment
+              (or (emit {:context translation-context
+                         :element element
+                         :children children
+                         :occurrence (:occurrence plan)
+                         :mapping (:mapping plan)})
+                  {})
+              fragment
+              (if (and (:node fragment) (instance? CtTry element))
+                (update fragment :node
+                        #(finally-crossing-node translation-context element %))
+                fragment)]
+          (if (and (:node fragment)
+                   (instance? CtStatement element)
+                   (labeled-statement? element)
+                   (labeled-targeted? translation-context element :break))
+            (assoc fragment :node
+                   (csharp/sequence-node
+                    [(:node fragment)
+                     (csharp/raw
+                      (str "\n"
+                           (labeled-target-name translation-context element :break)
+                           ":;"))]))
+            fragment))
         (catch Throwable error
           {:diagnostics
            [(blocking-diagnostic
@@ -317,7 +578,9 @@
   rendered exactly once so text and source ranges remain derived from the
   structured C# tree without repeatedly rendering descendants at each parent."
   [translation-context ^CtElement element]
-  (let [translation (translate-element* translation-context element)
+  (let [translation-context (assoc translation-context
+                                   :control-flow (control-flow-index element))
+        translation (translate-element* translation-context element)
         rendered (when-let [node (:node translation)] (csharp/render node))]
     (assoc translation
            :text (:text rendered)

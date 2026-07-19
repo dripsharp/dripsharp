@@ -1951,37 +1951,32 @@
                                          (when anonymous-body
                                            (sequence-node [(raw " ") anonymous-body]))]))))))
 
-(defn- targets-label? [statement-class ^CtStatement body label]
-  (boolean
-   (and label
-        (some #(= label (.getTargetLabel ^CtStatement %))
-              (.getElements body (TypeFilter. statement-class))))))
-
-(defn- block-node [services children ^CtBlock element]
+(defn- block-node [context children ^CtBlock element]
   (let [parent (when (.isParentInitialized element) (.getParent element))
         loop-parent? (or (instance? CtFor parent) (instance? CtForEach parent)
                          (instance? CtWhile parent) (instance? CtDo parent))
-        label (when loop-parent? (.getLabel ^CtStatement parent))
-        continue-label (when (targets-label? CtContinue element label) label)]
+        continue-target (when (and loop-parent?
+                                   (java/labeled-targeted? context parent :continue))
+                          parent)]
     (sequence-node [(raw "{")
                     (when (seq (.getStatements element)) (raw "\n"))
                     (sequence-node (children-nodes children (.getStatements element)) "\n")
-                    (when continue-label
-                      (raw (str "\n__continue_" (identifier services continue-label) ":;")))
-                    (when (or (seq (.getStatements element)) continue-label) (raw "\n"))
+                    (when continue-target
+                      (raw (str "\n"
+                                (java/labeled-target-name context continue-target :continue)
+                                ":;")))
+                    (when (or (seq (.getStatements element)) continue-target) (raw "\n"))
                     (raw "}")])))
 
-(defn- labeled-loop-body-node [services children ^CtStatement body label]
-  (if-not (targets-label? CtContinue body label)
+(defn- labeled-loop-body-node [context children ^CtStatement body ^CtStatement loop]
+  (if-not (java/labeled-targeted? context loop :continue)
     (child-node children body)
     (if (instance? CtBlock body)
       (child-node children body)
       (sequence-node [(raw "{\n") (child-node children body)
-                      (raw (str "\n__continue_" (identifier services label) ":;\n}"))]))))
-
-(defn- labeled-break-node [services ^CtStatement body label]
-  (when (targets-label? CtBreak body label)
-    (raw (str "\n__break_" (identifier services label) ":;"))))
+                      (raw (str "\n"
+                                (java/labeled-target-name context loop :continue)
+                                ":;\n}"))]))))
 
 (defn- switch-expression-yield? [^CtYieldStatement statement]
   (loop [current (.getParent statement)]
@@ -1995,7 +1990,8 @@
   (cond
     (or (instance? CtReturn statement)
         (instance? CtThrow statement)
-        (instance? CtBreak statement)) true
+        (instance? CtBreak statement)
+        (instance? CtContinue statement)) true
     (instance? CtYieldStatement statement)
     (switch-expression-yield? statement)
     (instance? CtBlock statement)
@@ -2073,18 +2069,18 @@
      :emit (fn [{:keys [^CtBinaryOperator element children]}]
              {:node (finish-expression services children element (binary-node services element children))})}
     {:id :java.statement/block :class CtBlock
-     :emit (fn [{:keys [^CtBlock element children]}]
-             {:node (block-node services children element)})}
+     :emit (fn [{:keys [context ^CtBlock element children]}]
+             {:node (block-node context children element)})}
     {:id :java.statement/break :class CtBreak
-     :emit (fn [{:keys [^CtBreak element]}]
-             {:node (raw (if-let [label (.getTargetLabel element)]
-                           (str "goto __break_" (identifier services label) ";")
-                           "break;"))})}
+     :emit (fn [{:keys [context ^CtBreak element]}]
+             {:node (if (.getTargetLabel element)
+                      (java/labeled-branch-node context element :break)
+                      (raw "break;"))})}
     {:id :java.statement/continue :class CtContinue
-     :emit (fn [{:keys [^CtContinue element]}]
-             {:node (raw (if-let [label (.getTargetLabel element)]
-                           (str "goto __continue_" (identifier services label) ";")
-                           "continue;"))})}
+     :emit (fn [{:keys [context ^CtContinue element]}]
+             {:node (if (.getTargetLabel element)
+                      (java/labeled-branch-node context element :continue)
+                      (raw "continue;"))})}
     {:id :java.statement/case :class CtCase
      :emit (fn [{:keys [^CtCase element children]}]
              (let [source-statements (vec (.getStatements element))
@@ -2097,9 +2093,12 @@
                                                        last-semantic)))
                                         (raw "\nbreak;"))])}))}
     {:id :java.statement/catch :class CtCatch
-     :emit (fn [{:keys [^CtCatch element children]}]
+     :emit (fn [{:keys [context ^CtCatch element children]}]
              (let [parameter (.getParameter element)
                    multi-types (vec (.getMultiTypes ^CtCatchVariable parameter))
+                   catch-types (if (seq multi-types)
+                                 multi-types
+                                 [(or (first multi-types) (.getType parameter))])
                    used? (some (fn [^CtVariableRead read]
                                  (and (identical? parameter
                                                   (some-> read .getVariable .getDeclaration))
@@ -2112,26 +2111,46 @@
                    java-exception? (and (not multi?)
                                         (= "java.lang.Exception"
                                            (some-> (or (first multi-types) (.getType parameter))
-                                                   .getQualifiedName)))]
+                                                   .getQualifiedName)))
+                   labeled-flow-exception?
+                   (and (java/labeled-finally-flow? context)
+                        (some #(contains? #{"java.lang.Throwable"
+                                            "java.lang.Exception"
+                                            "java.lang.RuntimeException"
+                                            "java.lang.AssertionError"
+                                            "java.lang.Error"}
+                                          (.getQualifiedName ^CtTypeReference %))
+                              catch-types))
+                   filter-conditions
+                   (remove nil?
+                           [(when multi?
+                              (sequence-node
+                               [(raw (str parameter-name " is "))
+                                (sequence-node
+                                 (mapv #((:type-node services) %) multi-types)
+                                 " or ")]))
+                            (when java-exception?
+                              (raw (str parameter-name
+                                        " is not global::System.TypeInitializationException")))
+                            (when labeled-flow-exception?
+                              (raw (str parameter-name
+                                        " is not global::Vibeformer.Runtime."
+                                        "JavaLabeledControlFlowException")))])]
                {:node (sequence-node [(raw "catch (")
                                       (if multi?
                                         (sequence-node [(raw "global::System.Exception ")
                                                         (raw parameter-name)])
-                                        (if (or used? java-exception?)
+                                        (if (or used? java-exception?
+                                                labeled-flow-exception?)
                                           (child-node children parameter)
                                           ((:type-node services)
                                            (or (first multi-types) (.getType parameter)))))
                                       (raw ")")
-                                      (when multi?
+                                      (when (seq filter-conditions)
                                         (sequence-node
-                                         [(raw (str " when (" parameter-name " is "))
-                                          (sequence-node
-                                           (mapv #((:type-node services) %) multi-types)
-                                           " or ")
+                                         [(raw " when (")
+                                          (sequence-node filter-conditions " && ")
                                           (raw ")")]))
-                                      (when java-exception?
-                                        (raw (str " when (" parameter-name
-                                                  " is not global::System.TypeInitializationException)")))
                                       (raw " ") (child-node children (.getBody element))])}))}
     {:id :java.declaration/catch-variable :class CtCatchVariable
      :emit (fn [{:keys [^CtCatchVariable element children]}]
@@ -2195,13 +2214,13 @@
      :emit (fn [{:keys [^CtConstructorCall element children]}]
              {:node (constructor-node services element children)})}
     {:id :java.statement/do :class CtDo
-     :emit (fn [{:keys [^CtDo element children]}]
-             (let [label (.getLabel element)]
-               {:node (sequence-node [(raw "do ")
-                                      (labeled-loop-body-node services children (.getBody element) label)
-                                    (raw " while (") (child-node children (.getLoopingExpression element))
-                                      (raw ");")
-                                      (labeled-break-node services (.getBody element) label)])}))}
+     :emit (fn [{:keys [context ^CtDo element children]}]
+             {:node (sequence-node [(raw "do ")
+                                    (labeled-loop-body-node context children
+                                                            (.getBody element) element)
+                                    (raw " while (")
+                                    (child-node children (.getLoopingExpression element))
+                                    (raw ");")])})}
     {:id :java.expression/method-reference :class CtExecutableReferenceExpression
      :emit (fn [{:keys [context ^CtExecutableReferenceExpression element children]}]
              (let [target-element (.getTarget element)
@@ -2371,34 +2390,42 @@
                    field (:text (csharp/render (child-node children (.getVariable element))))]
                {:node (finish-expression services children element (member target field))}))}
     {:id :java.statement/foreach :class CtForEach
-     :emit (fn [{:keys [^CtForEach element children]}]
+     :emit (fn [{:keys [context ^CtForEach element children]}]
              (if (= "org.pkl.core.stdlib.PklConverter"
                     (some-> element enclosing-type .getQualifiedName))
                (let [variable (.getVariable element)
-                     temporary (str "__each_" (local-name services variable))]
+                     temporary (str "__each_" (local-name services variable))
+                     continue-target? (java/labeled-targeted? context element :continue)]
                  {:node (sequence-node [(raw (str "foreach (var " temporary " in "))
                                         (child-node children (.getExpression element))
                                         (raw ") { ") (child-node children variable)
                                         (raw (str " = " temporary "; "))
                                         (child-node children (.getBody element))
+                                        (when continue-target?
+                                          (raw (str "\n"
+                                                    (java/labeled-target-name
+                                                     context element :continue)
+                                                    ":;")))
                                         (raw " }")])})
-               (let [label (.getLabel element)]
-                 {:node (sequence-node [(raw "foreach (") (child-node children (.getVariable element))
-                                        (raw " in ") (child-node children (.getExpression element)) (raw ") ")
-                                        (labeled-loop-body-node services children (.getBody element) label)
-                                        (labeled-break-node services (.getBody element) label)])})))}
-    {:id :java.statement/for :class CtFor
-     :emit (fn [{:keys [^CtFor element children]}]
-             (let [label (.getLabel element)]
-               {:node (sequence-node [(raw "for (")
-                                      (sequence-node (children-nodes children (.getForInit element)) ", ")
-                                      (raw "; ")
-                                      (when-let [expression (.getExpression element)] (child-node children expression))
-                                      (raw "; ")
-                                      (sequence-node (children-nodes children (.getForUpdate element)) ", ")
+               {:node (sequence-node [(raw "foreach (")
+                                      (child-node children (.getVariable element))
+                                      (raw " in ")
+                                      (child-node children (.getExpression element))
                                       (raw ") ")
-                                      (labeled-loop-body-node services children (.getBody element) label)
-                                      (labeled-break-node services (.getBody element) label)])}))}
+                                      (labeled-loop-body-node context children
+                                                              (.getBody element) element)])}))}
+    {:id :java.statement/for :class CtFor
+     :emit (fn [{:keys [context ^CtFor element children]}]
+             {:node (sequence-node [(raw "for (")
+                                    (sequence-node (children-nodes children (.getForInit element)) ", ")
+                                    (raw "; ")
+                                    (when-let [expression (.getExpression element)]
+                                      (child-node children expression))
+                                    (raw "; ")
+                                    (sequence-node (children-nodes children (.getForUpdate element)) ", ")
+                                    (raw ") ")
+                                    (labeled-loop-body-node context children
+                                                            (.getBody element) element)])})}
     {:id :java.statement/if :class CtIf
      :emit (fn [{:keys [^CtIf element children]}]
              {:node (sequence-node [(raw "if (") (child-node children (.getCondition element))
@@ -2659,12 +2686,12 @@
              {:node (finish-expression services children element
                        (child-node children (.getVariable element)))})}
     {:id :java.statement/while :class CtWhile
-     :emit (fn [{:keys [^CtWhile element children]}]
-             (let [label (.getLabel element)]
-               {:node (sequence-node [(raw "while (") (child-node children (.getLoopingExpression element))
-                                      (raw ") ")
-                                      (labeled-loop-body-node services children (.getBody element) label)
-                                      (labeled-break-node services (.getBody element) label)])}))}
+     :emit (fn [{:keys [context ^CtWhile element children]}]
+             {:node (sequence-node [(raw "while (")
+                                    (child-node children (.getLoopingExpression element))
+                                    (raw ") ")
+                                    (labeled-loop-body-node context children
+                                                            (.getBody element) element)])})}
     {:id :java.statement/yield :class CtYieldStatement
      :emit (fn [{:keys [^CtYieldStatement element children]}]
              (let [switch-expression? (switch-expression-yield? element)]

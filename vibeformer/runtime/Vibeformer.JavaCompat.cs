@@ -29,6 +29,15 @@ internal delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight r
 internal enum JavaTimeUnit { MILLISECONDS }
 internal enum JavaProcessRedirect { INHERIT }
 
+// C# forbids goto from a finally clause, while Java permits a labeled break or
+// continue to complete a finally clause abruptly. The recursive translator
+// catches this internal signal at the nearest translated try boundary before
+// ordinary Java exception handlers can observe it.
+internal sealed class JavaLabeledControlFlowException(int branchId) : Exception
+{
+    internal int BranchId { get; } = branchId;
+}
+
 // Carries cancellation through ordinary translated Java blocking primitives.
 // Product runtimes install a token at their evaluation boundary; the generic
 // compatibility layer only observes that token and does not define product
