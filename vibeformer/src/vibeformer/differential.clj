@@ -25,7 +25,76 @@
 (def ^:private unicode-comment-codepoints
   [0x0000 0x0001 0x007f 0x0080 0x7ffe 0x7fff 0x8000 0xfffe 0xffff])
 
-(def ^:private core-cases
+(def ^:private float-fraction-digit-cases
+  [{:id "to-fixed/fraction-00" :expression "1.2345678901234567.toFixed(0)" :expected "1" :digits 0}
+   {:id "to-fixed/fraction-01" :expression "1.2345678901234567.toFixed(1)" :expected "1.2" :digits 1}
+   {:id "to-fixed/fraction-02" :expression "1.2345678901234567.toFixed(2)" :expected "1.23" :digits 2}
+   {:id "to-fixed/fraction-03" :expression "1.2345678901234567.toFixed(3)" :expected "1.235" :digits 3}
+   {:id "to-fixed/fraction-04" :expression "1.2345678901234567.toFixed(4)" :expected "1.2346" :digits 4}
+   {:id "to-fixed/fraction-05" :expression "1.2345678901234567.toFixed(5)" :expected "1.23457" :digits 5}
+   {:id "to-fixed/fraction-06" :expression "1.2345678901234567.toFixed(6)" :expected "1.234568" :digits 6}
+   {:id "to-fixed/fraction-07" :expression "1.2345678901234567.toFixed(7)" :expected "1.2345679" :digits 7}
+   {:id "to-fixed/fraction-08" :expression "1.2345678901234567.toFixed(8)" :expected "1.23456789" :digits 8}
+   {:id "to-fixed/fraction-09" :expression "1.2345678901234567.toFixed(9)" :expected "1.234567890" :digits 9}
+   {:id "to-fixed/fraction-10" :expression "1.2345678901234567.toFixed(10)" :expected "1.2345678901" :digits 10}
+   {:id "to-fixed/fraction-11" :expression "1.2345678901234567.toFixed(11)" :expected "1.23456789012" :digits 11}
+   {:id "to-fixed/fraction-12" :expression "1.2345678901234567.toFixed(12)" :expected "1.234567890123" :digits 12}
+   {:id "to-fixed/fraction-13" :expression "1.2345678901234567.toFixed(13)" :expected "1.2345678901235" :digits 13}
+   {:id "to-fixed/fraction-14" :expression "1.2345678901234567.toFixed(14)" :expected "1.23456789012346" :digits 14}
+   {:id "to-fixed/fraction-15" :expression "1.2345678901234567.toFixed(15)" :expected "1.234567890123457" :digits 15}
+   {:id "to-fixed/fraction-16" :expression "1.2345678901234567.toFixed(16)" :expected "1.2345678901234567" :digits 16}
+   {:id "to-fixed/fraction-17" :expression "1.2345678901234567.toFixed(17)" :expected "1.23456789012345670" :digits 17}
+   {:id "to-fixed/fraction-18" :expression "1.2345678901234567.toFixed(18)" :expected "1.234567890123456700" :digits 18}
+   {:id "to-fixed/fraction-19" :expression "1.2345678901234567.toFixed(19)" :expected "1.2345678901234567000" :digits 19}
+   {:id "to-fixed/fraction-20" :expression "1.2345678901234567.toFixed(20)" :expected "1.23456789012345670000" :digits 20}])
+
+(def ^:private integer-fraction-digit-cases
+  (mapv (fn [digits]
+          {:id (format "to-fixed/int-fraction-%02d" digits)
+           :expression (format "42.toFixed(%d)" digits)
+           :expected (if (zero? digits)
+                       "42"
+                       (str "42." (apply str (repeat digits "0"))))
+           :digits digits})
+        (range 21)))
+
+(def ^:private maximum-double-fixed
+  (str "17976931348623157" (apply str (repeat 292 "0"))))
+
+(def ^:private to-fixed-edge-cases
+  [{:id "to-fixed/decimal-below" :expression "2.6749999999999994.toFixed(2)" :expected "2.67" :digits 2}
+   {:id "to-fixed/decimal-shortest-below" :expression "2.675.toFixed(2)" :expected "2.67" :digits 2}
+   {:id "to-fixed/decimal-above" :expression "2.6750000000000003.toFixed(2)" :expected "2.68" :digits 2}
+   {:id "to-fixed/negative-decimal-below" :expression "(-2.6749999999999994).toFixed(2)" :expected "-2.67" :digits 2}
+   {:id "to-fixed/negative-decimal-shortest-below" :expression "(-2.675).toFixed(2)" :expected "-2.67" :digits 2}
+   {:id "to-fixed/negative-decimal-above" :expression "(-2.6750000000000003).toFixed(2)" :expected "-2.68" :digits 2}
+   {:id "to-fixed/binary-below-half" :expression "2.6249999999999996.toFixed(2)" :expected "2.62" :digits 2}
+   {:id "to-fixed/binary-exact-half-even" :expression "2.625.toFixed(2)" :expected "2.62" :digits 2}
+   {:id "to-fixed/binary-above-half" :expression "2.6250000000000004.toFixed(2)" :expected "2.63" :digits 2}
+   {:id "to-fixed/negative-binary-below-half" :expression "(-2.6249999999999996).toFixed(2)" :expected "-2.62" :digits 2}
+   {:id "to-fixed/negative-binary-exact-half-even" :expression "(-2.625).toFixed(2)" :expected "-2.62" :digits 2}
+   {:id "to-fixed/negative-binary-above-half" :expression "(-2.6250000000000004).toFixed(2)" :expected "-2.63" :digits 2}
+   {:id "to-fixed/one-point-zero-one-five" :expression "1.015.toFixed(2)" :expected "1.01" :digits 2}
+   {:id "to-fixed/negative-one-point-zero-one-five" :expression "(-1.015).toFixed(2)" :expected "-1.01" :digits 2}
+   {:id "to-fixed/positive-zero" :expression "0.0.toFixed(20)" :expected "0.00000000000000000000" :digits 20}
+   {:id "to-fixed/negative-zero" :expression "(-0.0).toFixed(20)" :expected "-0.00000000000000000000" :digits 20}
+   {:id "to-fixed/minimum-positive-double" :expression "4.9E-324.toFixed(20)" :expected "0.00000000000000000000" :digits 20}
+   {:id "to-fixed/minimum-negative-double" :expression "(-4.9E-324).toFixed(20)" :expected "-0.00000000000000000000" :digits 20}
+   {:id "to-fixed/maximum-positive-double" :expression "1.7976931348623157E308.toFixed(0)" :expected maximum-double-fixed :digits 0}
+   {:id "to-fixed/maximum-negative-double" :expression "(-1.7976931348623157E308).toFixed(20)" :expected (str "-" maximum-double-fixed ".00000000000000000000") :digits 20}
+   {:id "to-fixed/not-a-number" :expression "NaN.toFixed(7)" :expected "NaN" :digits 7}
+   {:id "to-fixed/positive-infinity" :expression "Infinity.toFixed(8)" :expected "Infinity" :digits 8}
+   {:id "to-fixed/negative-infinity" :expression "(-Infinity).toFixed(9)" :expected "-Infinity" :digits 9}
+   {:id "to-fixed/negative-integer" :expression "(-123).toFixed(7)" :expected "-123.0000000" :digits 7}
+   {:id "to-fixed/maximum-integer" :expression "9223372036854775807.toFixed(20)" :expected "9223372036854775807.00000000000000000000" :digits 20}
+   {:id "to-fixed/minimum-integer" :expression "(-9223372036854775808).toFixed(20)" :expected "-9223372036854775808.00000000000000000000" :digits 20}])
+
+(def ^:private to-fixed-cases
+  (into [] (concat float-fraction-digit-cases
+                   integer-fraction-digit-cases
+                   to-fixed-edge-cases)))
+
+(def ^:private base-core-cases
   [["evaluation/module-export" "EVALUATE"
     (str "name = \"pigeon\"\n"
          "age = 10 + 20\n"
@@ -109,6 +178,12 @@
          "computed = List(1, 2, 3).map((it) -> it * 2)\n")
     ""]])
 
+(def ^:private core-cases
+  (into base-core-cases
+        (map (fn [{:keys [id expression]}]
+               [id "EXPRESSION" "" expression]))
+        to-fixed-cases))
+
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind :differential-validation-failed))))
 
@@ -157,6 +232,32 @@
                  (str id "\t" operation "\t" (b64 source) "\t" (b64 argument) "\n"))
                cases))))
 
+(defn- write-to-fixed-expectations! [^Path output cases]
+  (write-text!
+   output
+   (apply str
+          (map (fn [{:keys [id expected]}]
+                 (str id "\tEXPRESSION\t"
+                      (b64 (str "OK|string:" (b64 expected))) "\n"))
+               cases))))
+
+(defn- select-results! [^Path input ^Path output cases]
+  (let [ids (mapv :id cases)
+        selected-ids (set ids)
+        lines (->> (str/split-lines (Files/readString input StandardCharsets/UTF_8))
+                   (filterv (fn [line]
+                              (contains? selected-ids (first (str/split line #"\t" 2))))))
+        grouped (group-by #(first (str/split % #"\t" 2)) lines)
+        missing (filterv #(not (contains? grouped %)) ids)
+        duplicates (->> grouped
+                        (keep (fn [[id values]] (when (> (count values) 1) id)))
+                        sort
+                        vec)]
+    (when (or (seq missing) (seq duplicates))
+      (fail! "Focused toFixed observations are missing or duplicated"
+             {:input (str input) :missing missing :duplicates duplicates}))
+    (write-text! output (apply str (map #(str (first (get grouped %)) "\n") ids)))))
+
 (defn compare-results
   "Compares normalized line-oriented observations without loading large trees in memory."
   [expected actual]
@@ -182,6 +283,14 @@
   (let [comparison (compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail! (str "Packaged " subject " behavior differs from the upstream JVM oracle")
+             {:expected (str expected) :actual (str actual) :comparison comparison
+              :mismatch mismatch}))
+    comparison))
+
+(defn- assert-pinned! [subject expected actual]
+  (let [comparison (compare-results expected actual)]
+    (when-let [mismatch (:mismatch comparison)]
+      (fail! (str subject " behavior differs from the pinned upstream outcomes")
              {:expected (str expected) :actual (str actual) :comparison comparison
               :mismatch mismatch}))
     comparison))
@@ -1046,6 +1155,12 @@
         oracle-output (paths/resolve-path proof-root "upstream.tsv")
         package-output (paths/resolve-path proof-root "package.tsv")
         perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
+        to-fixed-expected (write-to-fixed-expectations!
+                           (paths/resolve-path proof-root "to-fixed-expected.tsv")
+                           to-fixed-cases)
+        to-fixed-upstream (paths/resolve-path proof-root "to-fixed-upstream.tsv")
+        to-fixed-package (paths/resolve-path proof-root "to-fixed-package.tsv")
+        to-fixed-perturbed (paths/resolve-path proof-root "to-fixed-perturbed.tsv")
         {:keys [java-release java-home entries]} (core-classpath root)
         classpath (str/join File/pathSeparator (map str (cons oracle-classes entries)))
         compile-classpath (str/join File/pathSeparator (map str entries))
@@ -1056,9 +1171,19 @@
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "vibeformer" "validation" "differential"
                                          "CorePackageProbe.cs")]
-    (when-not (= 23 (count core-cases))
-      (fail! "The pinned Pkl.Core differential case count changed; review the oracle selection"
-             {:expected 23 :actual (count core-cases)}))
+    (when-not (and (= 23 (count base-core-cases))
+                   (= 68 (count to-fixed-cases))
+                   (= 91 (count core-cases))
+                   (= (set (range 21)) (set (map :digits float-fraction-digit-cases)))
+                   (= (set (range 21)) (set (map :digits integer-fraction-digit-cases)))
+                   (= (count to-fixed-cases) (count (set (map :id to-fixed-cases)))))
+      (fail! "The pinned Pkl.Core or toFixed differential contract changed; review the oracle selection"
+             {:base-core-cases (count base-core-cases)
+              :to-fixed-cases (count to-fixed-cases)
+              :core-cases (count core-cases)
+              :float-fraction-digits (set (map :digits float-fraction-digit-cases))
+              :integer-fraction-digits (set (map :digits integer-fraction-digit-cases))
+              :unique-to-fixed-ids (count (set (map :id to-fixed-cases)))}))
     (run-command! {:command ["./gradlew" ":pkl-core:classes" "--console=plain"]
                    :directory upstream-root})
     (run-command! {:command [(str javac) "--release" (str java-release)
@@ -1082,7 +1207,9 @@
                  "--no-build" "--no-restore" "--" (str manifest)
                  (str package-output)]
        :directory consumer-root}])
-          (let [loading-contract (verify-loading-contract!
+    (select-results! oracle-output to-fixed-upstream to-fixed-cases)
+    (select-results! package-output to-fixed-package to-fixed-cases)
+    (let [loading-contract (verify-loading-contract!
                             {:root root :package-proof package-proof
                              :run-command! run-command!
                              :java-release java-release :java-home java-home :entries entries})
@@ -1091,6 +1218,13 @@
                          :java-release java-release :java-home java-home :entries entries})
           comparison (assert-equal! "Pkl.Core" oracle-output package-output)
           perturbation (prove-perturbation! oracle-output perturbed-output)
+          to-fixed-upstream-comparison
+          (assert-pinned! "Upstream JVM toFixed" to-fixed-expected to-fixed-upstream)
+          to-fixed-package-comparison
+          (assert-pinned! "Fresh package-only Pkl.Core toFixed"
+                          to-fixed-expected to-fixed-package)
+          to-fixed-perturbation
+          (prove-perturbation! to-fixed-expected to-fixed-perturbed)
           revision (str/trim (:output (run-command! {:command ["git" "rev-parse" "HEAD"]
                                                       :directory upstream-root})))
           summary {:upstream-revision revision
@@ -1103,6 +1237,13 @@
                    :loading-security-cases 3
                    :error-cases 8
                    :observations (:matched comparison)
+                   :to-fixed {:cases (count to-fixed-cases)
+                              :float-fraction-digits 21
+                              :integer-fraction-digits 21
+                              :upstream-observations (:matched to-fixed-upstream-comparison)
+                              :package-observations (:matched to-fixed-package-comparison)
+                              :perturbation-detected-at
+                              (get-in to-fixed-perturbation [:mismatch :line])}
                    :loading-policy-configuration-contract (:summary loading-contract)
                    :schema-codegen-binding (:summary schema-proof)
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
@@ -1113,7 +1254,10 @@
        :summary summary
        :manifest manifest
        :oracle-output oracle-output
-       :package-output package-output})))
+       :package-output package-output
+       :to-fixed-expected to-fixed-expected
+       :to-fixed-upstream to-fixed-upstream
+       :to-fixed-package to-fixed-package})))
 
 (defn- verify-differential-with-executor!
   "Runs the complete parser proof, then the representative packaged Pkl.Core proof."

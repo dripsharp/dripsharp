@@ -127,3 +127,22 @@
            (:assemblies proof)))
     (is (= (str "Pkl.Core\t" hash-b "\nPkl.Parser\t" hash-a "\n")
            (Files/readString output)))))
+
+(deftest to-fixed-contract-pins-binary-rounding-and-the-complete-digit-range
+  (let [float-cases (var-get #'differential/float-fraction-digit-cases)
+        integer-cases (var-get #'differential/integer-fraction-digit-cases)
+        cases (var-get #'differential/to-fixed-cases)
+        by-id (into {} (map (juxt :id identity) cases))]
+    (is (= 68 (count cases)))
+    (is (= (set (range 21)) (set (map :digits float-cases))))
+    (is (= (set (range 21)) (set (map :digits integer-cases))))
+    (is (= "2.67" (get-in by-id ["to-fixed/decimal-shortest-below" :expected])))
+    (is (= "2.68" (get-in by-id ["to-fixed/decimal-above" :expected])))
+    (is (= "2.62" (get-in by-id ["to-fixed/binary-exact-half-even" :expected])))
+    (is (= "-0.00000000000000000000"
+           (get-in by-id ["to-fixed/negative-zero" :expected])))
+    (is (= "NaN" (get-in by-id ["to-fixed/not-a-number" :expected])))
+    (is (= 309 (count (get-in by-id ["to-fixed/maximum-positive-double"
+                                      :expected]))))
+    (is (= "-9223372036854775808.00000000000000000000"
+           (get-in by-id ["to-fixed/minimum-integer" :expected])))))

@@ -258,33 +258,172 @@ namespace Pkl.Core.Runtime
     }
     public sealed class JavaDecimalFormat
     {
-        private readonly string pattern; private System.Globalization.NumberFormatInfo format;
+        private System.Globalization.NumberFormatInfo format;
+        private int minimumFractionDigits;
+        private int maximumFractionDigits = 3;
         public JavaDecimalFormat() : this(string.Empty, System.Globalization.CultureInfo.InvariantCulture.NumberFormat) { }
-        public JavaDecimalFormat(string pattern, System.Globalization.NumberFormatInfo format) { this.pattern = pattern; this.format = (System.Globalization.NumberFormatInfo)format.Clone(); }
+        public JavaDecimalFormat(string pattern, System.Globalization.NumberFormatInfo format)
+        {
+            _ = pattern;
+            this.format = (System.Globalization.NumberFormatInfo)format.Clone();
+        }
         public string Format(object value)
         {
-            if (value is double number && double.IsFinite(number))
+            if (value is double number)
             {
-                var negativeZero = number == 0.0 && BitConverter.DoubleToInt64Bits(number) < 0;
-                var shortest = number.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
-                if (decimal.TryParse(shortest, System.Globalization.NumberStyles.Float,
-                                     System.Globalization.CultureInfo.InvariantCulture, out var exact))
-                {
-                    var rounded = decimal.Round(exact, format.NumberDecimalDigits,
-                                                MidpointRounding.ToEven);
-                    var rendered = rounded.ToString("F" + format.NumberDecimalDigits, format);
-                    return negativeZero && !rendered.StartsWith("-", StringComparison.Ordinal)
-                        ? "-" + rendered
-                        : rendered;
-                }
+                if (double.IsNaN(number)) return format.NaNSymbol;
+                if (double.IsPositiveInfinity(number)) return format.PositiveInfinitySymbol;
+                if (double.IsNegativeInfinity(number))
+                    return format.NegativeSign + format.PositiveInfinitySymbol;
+                return FormatDouble(number);
             }
-            return value is System.IFormattable formattable
-                ? formattable.ToString("F" + format.NumberDecimalDigits, format)
-                : value.ToString() ?? string.Empty;
+            if (value is long integer) return FormatInteger(integer);
+            if (value is int intValue) return FormatInteger(intValue);
+            if (value is short shortValue) return FormatInteger(shortValue);
+            if (value is sbyte sbyteValue) return FormatInteger(sbyteValue);
+            if (value is byte byteValue) return FormatInteger(byteValue);
+            return value.ToString() ?? string.Empty;
         }
+
+        // DecimalFormat first obtains Java's shortest round-trippable decimal
+        // digits for a double, then applies fixed-point HALF_EVEN rounding. The
+        // exact binary value is consulted only when those shortest digits land
+        // on a decimal halfway boundary. Keeping both values is what makes
+        // 2.675 format as 2.67 while still rendering Double.MAX_VALUE with the
+        // finite significant digits exposed by Double.toString().
+        private string FormatDouble(double value)
+        {
+            var bits = unchecked((ulong)BitConverter.DoubleToInt64Bits(value));
+            var negative = (bits & (1UL << 63)) != 0;
+            var magnitude = value == 0.0 ? 0.0 : Math.Abs(value);
+            var shortest = magnitude.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            ParseDecimal(shortest, out var coefficient, out var decimalExponent);
+
+            var scaledExponent = decimalExponent + maximumFractionDigits;
+            System.Numerics.BigInteger rounded;
+            if (scaledExponent >= 0)
+            {
+                rounded = coefficient * PowerOfTen(scaledExponent);
+            }
+            else
+            {
+                var divisor = PowerOfTen(-scaledExponent);
+                rounded = System.Numerics.BigInteger.DivRem(coefficient, divisor,
+                                                            out var remainder);
+                var halfComparison = (remainder << 1).CompareTo(divisor);
+                var roundUp = halfComparison > 0;
+                if (halfComparison == 0)
+                {
+                    var exactComparison = CompareExactBinaryToDecimal(
+                        bits & 0x7fffffffffffffffUL, coefficient, decimalExponent);
+                    roundUp = exactComparison > 0 ||
+                              (exactComparison == 0 && !rounded.IsEven);
+                }
+                if (roundUp) rounded += System.Numerics.BigInteger.One;
+            }
+            return RenderFixed(rounded, negative);
+        }
+
+        private string FormatInteger(long value)
+        {
+            var integer = new System.Numerics.BigInteger(value);
+            var negative = integer.Sign < 0;
+            if (negative) integer = System.Numerics.BigInteger.Negate(integer);
+            return RenderFixed(integer * PowerOfTen(maximumFractionDigits), negative);
+        }
+
+        private string RenderFixed(System.Numerics.BigInteger scaledMagnitude, bool negative)
+        {
+            var digits = scaledMagnitude.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            string integer;
+            string fraction;
+            if (maximumFractionDigits == 0)
+            {
+                integer = digits;
+                fraction = string.Empty;
+            }
+            else if (digits.Length <= maximumFractionDigits)
+            {
+                integer = "0";
+                fraction = new string('0', maximumFractionDigits - digits.Length) + digits;
+            }
+            else
+            {
+                var split = digits.Length - maximumFractionDigits;
+                integer = digits.Substring(0, split);
+                fraction = digits.Substring(split);
+            }
+
+            while (fraction.Length > minimumFractionDigits && fraction.EndsWith("0", StringComparison.Ordinal))
+                fraction = fraction.Substring(0, fraction.Length - 1);
+            var result = fraction.Length == 0
+                ? integer
+                : integer + format.NumberDecimalSeparator + fraction;
+            return negative ? format.NegativeSign + result : result;
+        }
+
+        private static void ParseDecimal(string value,
+                                         out System.Numerics.BigInteger coefficient,
+                                         out int decimalExponent)
+        {
+            var exponentIndex = value.IndexOfAny(new[] { 'E', 'e' });
+            var exponent = exponentIndex < 0
+                ? 0
+                : int.Parse(value.Substring(exponentIndex + 1),
+                            System.Globalization.CultureInfo.InvariantCulture);
+            var significand = exponentIndex < 0 ? value : value.Substring(0, exponentIndex);
+            var decimalIndex = significand.IndexOf('.');
+            var fractionDigits = decimalIndex < 0 ? 0 : significand.Length - decimalIndex - 1;
+            var digits = decimalIndex < 0
+                ? significand
+                : significand.Remove(decimalIndex, 1);
+            coefficient = System.Numerics.BigInteger.Parse(
+                digits, System.Globalization.CultureInfo.InvariantCulture);
+            decimalExponent = exponent - fractionDigits;
+        }
+
+        private static int CompareExactBinaryToDecimal(
+            ulong magnitudeBits,
+            System.Numerics.BigInteger decimalCoefficient,
+            int decimalExponent)
+        {
+            if (magnitudeBits == 0) return decimalCoefficient.IsZero ? 0 : -1;
+            var exponentBits = (int)((magnitudeBits >> 52) & 0x7ffUL);
+            var fractionBits = magnitudeBits & 0x000fffffffffffffUL;
+            var significand = new System.Numerics.BigInteger(
+                exponentBits == 0 ? fractionBits : fractionBits | (1UL << 52));
+            var binaryExponent = exponentBits == 0 ? -1074 : exponentBits - 1023 - 52;
+
+            var binaryNumerator = binaryExponent >= 0 ? significand << binaryExponent : significand;
+            var binaryDenominator = binaryExponent < 0
+                ? System.Numerics.BigInteger.One << -binaryExponent
+                : System.Numerics.BigInteger.One;
+            var decimalNumerator = decimalExponent >= 0
+                ? decimalCoefficient * PowerOfTen(decimalExponent)
+                : decimalCoefficient;
+            var decimalDenominator = decimalExponent < 0
+                ? PowerOfTen(-decimalExponent)
+                : System.Numerics.BigInteger.One;
+            return (binaryNumerator * decimalDenominator)
+                .CompareTo(decimalNumerator * binaryDenominator);
+        }
+
+        private static System.Numerics.BigInteger PowerOfTen(int exponent) =>
+            System.Numerics.BigInteger.Pow(10, exponent);
+
         public void SetGroupingUsed(bool value) { }
-        public void SetMinimumFractionDigits(int value) => format.NumberDecimalDigits = Math.Max(format.NumberDecimalDigits, value);
-        public void SetMaximumFractionDigits(int value) => format.NumberDecimalDigits = value;
+        public void SetMinimumFractionDigits(int value)
+        {
+            minimumFractionDigits = Math.Max(0, value);
+            if (maximumFractionDigits < minimumFractionDigits)
+                maximumFractionDigits = minimumFractionDigits;
+        }
+        public void SetMaximumFractionDigits(int value)
+        {
+            maximumFractionDigits = Math.Max(0, value);
+            if (minimumFractionDigits > maximumFractionDigits)
+                minimumFractionDigits = maximumFractionDigits;
+        }
         public void SetDecimalFormatSymbols(System.Globalization.NumberFormatInfo value) => format = (System.Globalization.NumberFormatInfo)value.Clone();
     }
     public static class JavaBase64
