@@ -607,7 +607,11 @@ namespace Pkl.Core.Runtime
     public sealed class JavaCharsetDecoder
     {
         private readonly System.Text.Encoding encoding;
-        public JavaCharsetDecoder(System.Text.Encoding encoding) => this.encoding = encoding;
+        public JavaCharsetDecoder(System.Text.Encoding encoding)
+        {
+            this.encoding = (System.Text.Encoding)encoding.Clone();
+            this.encoding.DecoderFallback = System.Text.DecoderFallback.ExceptionFallback;
+        }
         public string Decode(JavaByteBuffer buffer) => encoding.GetString(buffer.UnsignedArray());
     }
     public sealed class JavaCharsetEncoder
@@ -1692,7 +1696,15 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         private void AdoptChild(Node child, ISet<Node> visited)
         {
             if (ReferenceEquals(child, this)) return;
-            child.parent ??= this;
+            // Root nodes are independent call targets, not AST children of
+            // the node that happens to retain them. Treating nested member
+            // roots as children makes their bodies report the surrounding
+            // module as their root and breaks both member names and inserted
+            // diagnostic frames. A body can also move from an unresolved
+            // member root to its resolved root, so normal adoption must update
+            // the parent instead of preserving the stale owner.
+            if (child is RootNode) return;
+            child.parent = this;
             child.AdoptChildren(visited);
         }
 
@@ -2218,13 +2230,6 @@ namespace Pkl.Core.Runtime.Truffle.api
 
         internal virtual object? Call(params object?[] arguments) => CallFrom(null, arguments);
 
-        private static bool IsStandardLibraryRoot(RootNode? root)
-        {
-            var uri = root?.GetSourceSection()?.GetSource().GetUri();
-            if (string.Equals(uri?.Scheme, "pkl", StringComparison.OrdinalIgnoreCase)) return true;
-            return root?.GetName()?.StartsWith("pkl.", StringComparison.Ordinal) == true;
-        }
-
         private static bool IsExternalMemberRoot(RootNode? root) =>
             root is global::Pkl.Core.Ast.MemberNode member &&
             member.GetBodyNode() is global::Pkl.Core.Stdlib.ExternalMemberNode;
@@ -2250,7 +2255,8 @@ namespace Pkl.Core.Runtime.Truffle.api
                     if (caller is not null && location is not null &&
                         exception.GetLocation() is null &&
                         IsExternalMemberRoot(root) &&
-                        !IsStandardLibraryRoot(caller.root))
+                        exception is global::Pkl.Core.Runtime.VmException vmException &&
+                        vmException.GetSourceSection() is null)
                         exception.AddTruffleStackFrame(
                             new TruffleStackTraceElement(location, caller));
                     else

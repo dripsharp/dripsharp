@@ -294,6 +294,10 @@
                                "Instrumenter.InstrumentActive(root)"))
             (is (str/includes? substrate
                                "if (location is not null || caller is not null)"))
+            (is (str/includes? substrate
+                               "if (child is RootNode) return;"))
+            (is (str/includes? substrate
+                               "vmException.GetSourceSection() is null"))
             (is (str/includes? import-analyzer "JavaCompat.NewSortedDictionary<"))
             (is (str/includes? import-analyzer "JavaCompat.NewSortedSet<"))
             (is (str/includes?
@@ -321,6 +325,10 @@
                                "var pathUri = new Uri(Path.GetFullPath(path))"))
             (is (str/includes? java-compat
                                "SingleSlashFileUris.TryGetValue(value, out _)"))
+            (is (str/includes? java-compat
+                               "Regex.IsMatch(value, @\"(?i)^file:[^/]\")"))
+            (is (str/includes? java-compat
+                               "Uri uri => UriToString(uri)"))
             (is (str/includes? java-compat
                                "ResolveLocalDependencyUri(Uri basis, Uri value)"))
             (is (str/includes? java-compat
@@ -350,6 +358,8 @@
                                "NewDefaultPacker(System.IO.Stream stream) => new(stream);"))
             (is (str/includes? substrate
                                "class JavaPrintWriter : System.IO.TextWriter"))
+            (is (str/includes? substrate
+                               "DecoderFallback.ExceptionFallback"))
             (is (str/includes? substrate
                                "public sealed class Instrumenter"))
             (is (str/includes? substrate

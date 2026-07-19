@@ -757,7 +757,7 @@ internal static class JavaCompat
         bool boolean => boolean ? "true" : "false",
         double number => JavaFloatingString(number),
         float number => JavaFloatingString(number),
-        Uri uri => uri.OriginalString,
+        Uri uri => UriToString(uri),
         Regex regex => JavaCompat.RegexPattern(regex),
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
         _ => value.ToString() ?? "null"
@@ -1943,7 +1943,7 @@ internal static class JavaCompat
         for (var index = 0; index < value.Length; index++)
         {
             var current = value[index];
-            if (current <= 0x20 || current == 0x7f)
+            if (current <= 0x20 || current == 0x7f || current == '^')
                 throw new JavaUriSyntaxException(value, "Illegal character in path", index);
             if (current != '%') continue;
             if (index + 2 >= value.Length ||
@@ -1956,6 +1956,16 @@ internal static class JavaCompat
     internal static Uri CreateUri(string value)
     {
         ValidateJavaUriText(value);
+        if (Regex.IsMatch(value, @"(?i)^file:[^/]"))
+        {
+            // System.Uri rejects Java's opaque `file:path` form before the
+            // translated file reader can apply Pkl's purpose-built diagnostic.
+            // Keep a valid CLR carrier while retaining the Java URI spelling
+            // and opaque semantics through the compatibility accessors.
+            var opaqueFile = new Uri("file:///" + value["file:".Length..], UriKind.Absolute);
+            _ = OriginalUriTexts.GetValue(opaqueFile, _ => new JavaUriText(value));
+            return opaqueFile;
+        }
         if (Regex.IsMatch(value, @"(?i)^file:/[^/]"))
         {
             var singleSlash = new Uri("file:///" + value["file:/".Length..], UriKind.Absolute);
@@ -2231,7 +2241,9 @@ internal static class JavaCompat
     internal static bool UriIsOpaque(Uri uri)
     {
         if (!uri.IsAbsoluteUri) return false;
-        var original = uri.OriginalString;
+        var original = OriginalUriTexts.TryGetValue(uri, out var preserved)
+            ? preserved.Value
+            : uri.OriginalString;
         var colon = original.IndexOf(':');
         return colon >= 0 && (colon + 1 == original.Length || original[colon + 1] != '/');
     }
@@ -3793,6 +3805,7 @@ internal sealed class JavaMessageFormat : JavaFormat
         null => "null",
         sbyte or byte or short or ushort or int or uint or long or ulong =>
             ((IFormattable)argument).ToString("N0", locale),
+        Uri uri => JavaCompat.UriToString(uri),
         Regex regex => JavaCompat.RegexPattern(regex),
         _ => Convert.ToString(argument, locale) ?? "null"
     };
