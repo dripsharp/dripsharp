@@ -54,7 +54,31 @@
          "UriQuery(Uri uri) => DecodeUriComponent(UriRawQuery(uri))"))
     (is (str/includes?
          runtime
-         "UriPath(Uri uri) => DecodeUriComponent(UriRawPath(uri))"))))
+         "UriPath(Uri uri) => DecodeUriComponent(UriRawPath(uri))"))
+    (is (str/includes?
+         runtime
+         "value.IsAbsoluteUri && value.IsFile &&"))
+    (is (str/includes?
+         runtime
+         "!value.OriginalString.StartsWith(\"file:\", StringComparison.OrdinalIgnoreCase)"))
+    (is (str/includes?
+         runtime
+         "? value.AbsoluteUri"))))
+
+(deftest translated-regex-carriers-retain-the-original-pattern
+  (let [runtime (slurp "runtime/Vibeformer.JavaCompat.cs")]
+    (is (str/includes?
+         runtime
+         "private sealed class JavaRegex(string originalPattern, string translatedPattern, RegexOptions options)"))
+    (is (str/includes?
+         runtime
+         "public override string ToString() => originalPattern"))
+    (is (str/includes?
+         runtime
+         "new JavaRegex(pattern, TranslateJavaRegex(pattern), options)"))
+    (is (str/includes?
+         runtime
+         "new JavaRegex(pattern, Regex.Escape(pattern), RegexOptions.CultureInvariant)"))))
 
 (deftest java-map-entry-sets-retain-live-view-contracts
   (let [body-rules (source "pkl/java_body")

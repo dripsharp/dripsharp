@@ -285,7 +285,9 @@
             (is (str/includes? project-settings
                                "var cycles = Project.FindImportCycle(moduleSource)"))
             (is (str/includes? project-settings
-                               "var hasDirectSelfCycle = global::Vibeformer.Runtime.JavaCompat.Any"))
+                               "var onlyDirectSelfCycle = global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1"))
+            (is (str/includes? project-settings
+                               "&& !onlyDirectSelfCycle"))
             (is (str/includes? dependency
                                "JavaCompat.ResolveLocalDependencyUri(projectBaseUri"))
             (is (str/includes? substrate

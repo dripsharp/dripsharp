@@ -23,7 +23,9 @@
   [{:case-id "case/a" :semantic-family "fundamental-language"
     :source-family "basic" :product-scope "in-scope"}
    {:case-id "case/b" :semantic-family "fundamental-language"
-    :source-family "types" :product-scope "in-scope-mixed-excluded-surface"}
+    :source-family "types" :product-scope "in-scope-mixed-excluded-surface"
+    :execution-requirements
+    "engine-baseline;messagepack-debug-decoding;mixed-scope-observation"}
    {:case-id "case/c" :semantic-family "standard-library-renderer"
     :source-family "api" :product-scope "outside-epic-approved-exclusion"}
    {:case-id "case/d" :semantic-family "collections-generators"
@@ -73,7 +75,8 @@
            (select-keys comparison [:total :in-scope :excluded :matched :mismatched])))
     (is (= [[:execution-failure "case/b"] [:status-mismatch "case/d"]]
            (mapv (juxt :kind :case-id) (:mismatches comparison))))
-    (is (= {:total 2 :in-scope 2 :excluded 0 :matched 1 :mismatched 1
+    (is (= {:total 2 :in-scope 2 :excluded 0 :matched 1
+            :approved-excluded-surface-boundaries 0 :conformant 1 :mismatched 1
             :success 1 :error 0 :timeout 1 :crash 0}
            (get baseline "fundamental-language")))
     (is (= 1 (get-in baseline ["standard-library-renderer" :excluded])))
@@ -128,6 +131,41 @@
     (is (= ["case/a"]
            (mapv :case (:mismatches
                         (runner/compare-runner-results validated first perturbed)))))))
+
+(deftest approved-excluded-transport-boundary-is-explicit-and-fail-closed
+  (let [root (temp-directory)
+        oracle (oracle-file root)
+        boundary-message "MessagePack is excluded from the Vibeformer product target."
+        boundary-rows (assoc-in (good-rows) [1 :payload-base64]
+                                (b64 (str "Pkl.Core.PklBugException\n"
+                                          boundary-message)))
+        boundary-package (package-file root "boundary.tsv" boundary-rows)
+        comparison (runner/compare-package-results validated oracle boundary-package)
+        baseline (runner/summarize-family-baseline
+                  validated boundary-package comparison)]
+    (is (= {:total 4 :in-scope 3 :excluded 1 :matched 2
+            :approved-excluded-surface-boundaries 1 :conformant 3 :mismatched 0}
+           (select-keys comparison
+                        [:total :in-scope :excluded :matched
+                         :approved-excluded-surface-boundaries :conformant :mismatched])))
+    (is (= :approved-excluded-surface-boundary
+           (get-in comparison [:comparisons 1 :kind])))
+    (is (= {:total 2 :in-scope 2 :excluded 0 :matched 1
+            :approved-excluded-surface-boundaries 1 :conformant 2 :mismatched 0
+            :success 1 :error 1 :timeout 0 :crash 0}
+           (get baseline "fundamental-language")))
+    (testing "a generic mixed-scope failure is not accepted as the transport boundary"
+      (let [wrong (package-file root "wrong-boundary.tsv"
+                                (assoc-in (good-rows) [1 :payload-base64]
+                                          (b64 "MessagePack failed")))
+            rejected (runner/compare-package-results validated oracle wrong)]
+        (is (= 1 (:mismatched rejected)))
+        (is (= :content-mismatch (get-in rejected [:mismatches 0 :kind])))))
+    (testing "the boundary cannot be applied to an ordinary in-scope row"
+      (let [ordinary (assoc-in validated [:cases 1 :product-scope] "in-scope")
+            rejected (runner/compare-package-results ordinary oracle boundary-package)]
+        (is (= 1 (:mismatched rejected)))
+        (is (= :content-mismatch (get-in rejected [:mismatches 0 :kind])))))))
 
 (deftest package-runner-source-is-confined-to-the-fresh-consumer
   (let [root (temp-directory)

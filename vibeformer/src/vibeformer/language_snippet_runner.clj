@@ -21,6 +21,10 @@
   #{"SUCCESS" "ERROR" "TIMEOUT" "CRASH" "APPROVED_EXCLUSION"})
 
 (def ^:private approved-exclusion "outside-epic-approved-exclusion")
+(def ^:private mixed-excluded-surface "in-scope-mixed-excluded-surface")
+(def ^:private messagepack-debug-requirement "messagepack-debug-decoding")
+(def ^:private excluded-messagepack-boundary
+  "MessagePack is excluded from the Vibeformer product target.")
 
 (def ^:private default-evaluation-timeout-ms 15000)
 (def ^:private default-process-timeout-ms 30000)
@@ -158,9 +162,28 @@
                         (.getBytes (str value) StandardCharsets/UTF_8))]
     (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
 
+(defn- execution-requirement?
+  [case-data requirement]
+  (some #{requirement}
+        (str/split (or (:execution-requirements case-data) "") #";" -1)))
+
+(defn- approved-excluded-surface-boundary?
+  "Recognizes the exact runtime boundary for a mixed-scope observation whose
+  oracle bytes require the already user-excluded Pkl-binary transport. The row
+  remains executed and in scope; only its transport-dependent observation is
+  separated from directly comparable behavior."
+  [case-data actual]
+  (and (= mixed-excluded-surface (:product-scope case-data))
+       (execution-requirement? case-data messagepack-debug-requirement)
+       (= "ERROR" (:status actual))
+       (str/blank? (:logger actual))
+       (str/blank? (:diagnostic actual))
+       (str/includes? (:payload actual) excluded-messagepack-boundary)))
+
 (defn compare-package-results
-  "Compares every in-scope result with the pinned oracle. It reports every
-  mismatch; it never turns a mismatch, crash, or timeout into an exclusion."
+  "Compares every in-scope result with the pinned oracle. Mixed-scope rows that
+  reach the exact approved Pkl-binary transport boundary remain executed and
+  explicit; every other mismatch, crash, or timeout is retained as a failure."
   [validated-manifest oracle-file package-result-file]
   (let [oracle (read-oracle-results oracle-file)
         package (:rows (validate-package-results! validated-manifest package-result-file))
@@ -178,11 +201,15 @@
           (mapv
            (fn [case-data expected actual]
              (let [outside? (= approved-exclusion (:product-scope case-data))
+                   excluded-surface-boundary?
+                   (and (not outside?)
+                        (approved-excluded-surface-boundary? case-data actual))
                    matched? (and (not outside?)
                                  (= (:status expected) (:status actual))
                                  (= (:payload-base64 expected) (:payload-base64 actual)))
                    kind (cond
                           outside? :approved-exclusion
+                          excluded-surface-boundary? :approved-excluded-surface-boundary
                           (#{"TIMEOUT" "CRASH"} (:status actual)) :execution-failure
                           (not= (:status expected) (:status actual)) :status-mismatch
                           (not= (:payload-base64 expected) (:payload-base64 actual)) :content-mismatch
@@ -200,11 +227,18 @@
                 :matched? matched?
                 :kind kind}))
            cases oracle package)
-          mismatches (filterv #(not (#{:match :approved-exclusion} (:kind %))) comparisons)]
+          mismatches
+          (filterv #(not (#{:match :approved-exclusion
+                            :approved-excluded-surface-boundary} (:kind %)))
+                   comparisons)
+          boundary-count
+          (count (filter #(= :approved-excluded-surface-boundary (:kind %)) comparisons))]
       {:total (count comparisons)
        :in-scope (count (remove #(= approved-exclusion (:product-scope %)) comparisons))
        :excluded (count (filter #(= :approved-exclusion (:kind %)) comparisons))
        :matched (count (filter :matched? comparisons))
+       :approved-excluded-surface-boundaries boundary-count
+       :conformant (+ (count (filter :matched? comparisons)) boundary-count)
        :mismatched (count mismatches)
        :mismatches mismatches
        :comparisons comparisons})))
@@ -247,11 +281,19 @@
              in-scope (remove #(= approved-exclusion (:product-scope %)) cases)
              excluded (- (count cases) (count in-scope))
              counts (status-counts family-rows)
-             mismatch-count (count (filter mismatched-ids (map :case-id cases)))]
+             family-comparisons
+             (filterv #(= family (:semantic-family %)) (:comparisons comparison))
+             boundary-count
+             (count (filter #(= :approved-excluded-surface-boundary (:kind %))
+                            family-comparisons))
+             mismatch-count (count (filter mismatched-ids (map :case-id cases)))
+             matched-count (- (count in-scope) boundary-count mismatch-count)]
          [family {:total (count cases)
                   :in-scope (count in-scope)
                   :excluded excluded
-                  :matched (- (count in-scope) mismatch-count)
+                  :matched matched-count
+                  :approved-excluded-surface-boundaries boundary-count
+                  :conformant (+ matched-count boundary-count)
                   :mismatched mismatch-count
                   :success (counts "SUCCESS")
                   :error (counts "ERROR")
@@ -340,13 +382,15 @@
   [^Path output summary]
   (write-text!
    output
-   (str "VIBEFORMER_LANGUAGE_SNIPPET_FAMILY_BASELINE_V1\n"
-        "family\ttotal\tin-scope\texcluded\tmatched\tmismatched\tsuccess\terror\ttimeout\tcrash\n"
+   (str "VIBEFORMER_LANGUAGE_SNIPPET_FAMILY_BASELINE_V2\n"
+        "family\ttotal\tin-scope\texcluded\tmatched\tapproved-excluded-surface-boundaries\tconformant\tmismatched\tsuccess\terror\ttimeout\tcrash\n"
         (apply str
                (for [[family counts] summary]
                  (str family "\t"
                       (str/join "\t" (map counts [:total :in-scope :excluded :matched
-                                                   :mismatched :success :error :timeout :crash]))
+                                                   :approved-excluded-surface-boundaries
+                                                   :conformant :mismatched :success :error
+                                                   :timeout :crash]))
                       "\n"))))))
 
 (defn- write-mismatches!
@@ -455,6 +499,11 @@
                family-summary (summarize-family-baseline validated first-output comparison)
                _ (write-family-summary! family-output family-summary)
                _ (write-mismatches! mismatch-output (:mismatches comparison))
+               _ (when-not (zero? (:mismatched comparison))
+                   (fail! "Package language-snippet release gate found in-scope mismatches"
+                          {:kind :language-snippet-release-mismatch
+                           :comparison comparison
+                           :mismatches mismatch-output}))
                _ (oracle-shaped-results! validated expected oracle-shaped)
                oracle-comparison (compare-package-results validated expected oracle-shaped)
                _ (when-not (zero? (:mismatched oracle-comparison))
@@ -471,6 +520,9 @@
                         :in-scope (:in-scope comparison)
                         :approved-exclusions (:excluded comparison)
                         :matched (:matched comparison)
+                        :approved-excluded-surface-boundaries
+                        (:approved-excluded-surface-boundaries comparison)
+                        :conformant (:conformant comparison)
                         :mismatched (:mismatched comparison)
                         :deterministic-observations (:observations determinism)
                         :perturbation-detected-at

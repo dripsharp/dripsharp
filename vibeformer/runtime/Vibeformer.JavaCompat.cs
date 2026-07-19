@@ -593,6 +593,12 @@ internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K :
 
 internal static class JavaCompat
 {
+    private sealed class JavaRegex(string originalPattern, string translatedPattern, RegexOptions options)
+        : Regex(translatedPattern, options)
+    {
+        public override string ToString() => originalPattern;
+    }
+
     private sealed class JavaUriText(string value)
     {
         internal string Value { get; } = value;
@@ -2004,6 +2010,15 @@ internal static class JavaCompat
             ? original.Value
             : SingleSlashFileUris.TryGetValue(value, out _) && value.IsAbsoluteUri && value.IsFile
             ? "file:" + value.AbsolutePath + value.Query + value.Fragment
+            : value.IsAbsoluteUri && value.IsFile &&
+              !value.OriginalString.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+            // Idiomatic .NET callers commonly construct a file URI directly
+            // from an absolute path. System.Uri keeps that bare path as its
+            // OriginalString even though the URI's scheme is `file`; Java's
+            // URI.toString() carrier must expose the scheme for allowlist and
+            // other URI-pattern behavior. Explicit Java URI spellings were
+            // handled by the preserved-text branches above.
+            ? value.AbsoluteUri
             : value.OriginalString;
 
     private static bool IsUriUnreserved(char value) =>
@@ -2530,7 +2545,7 @@ internal static class JavaCompat
     {
         try
         {
-            var result = new Regex(TranslateJavaRegex(pattern), options);
+            var result = new JavaRegex(pattern, TranslateJavaRegex(pattern), options);
             _ = OriginalRegexPatterns.GetValue(result, _ => new JavaUriText(pattern));
             return result;
         }
@@ -2545,7 +2560,7 @@ internal static class JavaCompat
         CompileRegexCore(pattern, RegexOptions.CultureInvariant);
     internal static Regex CompileLiteralRegex(string pattern)
     {
-        var result = new Regex(Regex.Escape(pattern), RegexOptions.CultureInvariant);
+        var result = new JavaRegex(pattern, Regex.Escape(pattern), RegexOptions.CultureInvariant);
         _ = OriginalRegexPatterns.GetValue(result, _ => new JavaUriText(pattern));
         return result;
     }
