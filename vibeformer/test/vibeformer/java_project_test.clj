@@ -72,7 +72,7 @@
 
     (testing "all production inputs and source declarations are accounted for"
       (is (= 50 (:compilation-units summary)))
-      (is (= 48 (:generated-files summary)))
+      (is (= 49 (:generated-files summary)))
       (is (= 1 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
@@ -161,6 +161,11 @@
                                        "src/Vibeformer/Runtime/JavaCompat.cs")
             helper-source (paths/resolve-path (paths/workspace-root)
                                               "vibeformer/runtime/Vibeformer.JavaCompat.cs")
+            unicode-helper (paths/resolve-path first-root
+                                               "src/Vibeformer/Runtime/JavaRegexUnicodeData.cs")
+            unicode-helper-source
+            (paths/resolve-path (paths/workspace-root)
+                                "vibeformer/runtime/Vibeformer.JavaRegexUnicodeData.cs")
             upstream (first (:resources (:discovery (fixture/models))))]
         (is (str/includes? project "<TargetFramework>net8.0</TargetFramework>"))
         (is (str/includes? project "<Nullable>enable</Nullable>"))
@@ -177,7 +182,9 @@
         (is (= (vec (Files/readAllBytes ^Path upstream))
                (vec (Files/readAllBytes resource))))
         (is (= (vec (Files/readAllBytes helper-source))
-               (vec (Files/readAllBytes helper))))))
+               (vec (Files/readAllBytes helper))))
+        (is (= (vec (Files/readAllBytes unicode-helper-source))
+               (vec (Files/readAllBytes unicode-helper))))))
 
     (testing "two clean emissions are byte-for-byte identical"
       (is (= (directory-bytes first-root) (directory-bytes second-root))))))

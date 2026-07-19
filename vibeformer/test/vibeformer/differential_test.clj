@@ -146,3 +146,31 @@
                                       :expected]))))
     (is (= "-9223372036854775808.00000000000000000000"
            (get-in by-id ["to-fixed/minimum-integer" :expected])))))
+
+(deftest regex-compat-contract-inventories-java-pattern-and-matcher-behavior
+  (let [cases (var-get #'differential/regex-compat-cases)
+        ids (mapv first cases)
+        operations (set (map second cases))
+        flags (set (map #(nth % 2) cases))]
+    (is (= 116 (count cases)))
+    (is (= (count ids) (count (set ids))))
+    (is (= #{"PATTERN" "QUOTE_PATTERN" "QUOTE_REPLACEMENT" "MATCHES"
+             "LOOKING_AT" "FIND" "REGION" "SPLIT" "REPLACE_ALL"
+             "REPLACE_FIRST" "APPEND"}
+           operations))
+    (is (every? flags [0 1 2 4 8 9 16 32 66 128 256 511 512]))
+    (doseq [family ["regex/quote/direct-qe"
+                    "regex/flags/canonical-equivalence"
+                    "regex/class/intersection"
+                    "regex/class/quoted"
+                    "regex/property/script"
+                    "regex/property/script-iso-alias"
+                    "regex/property/binary-emoji"
+                    "regex/escape/unicode-name-hangul"
+                    "regex/grapheme/cluster"
+                    "regex/group/numeric-order"
+                    "regex/quantifier/possessive"
+                    "regex/matcher/zero-width-astral"
+                    "regex/split/captures-not-returned"
+                    "regex/replace/missing-group"]]
+      (is (some #{family} ids)))))

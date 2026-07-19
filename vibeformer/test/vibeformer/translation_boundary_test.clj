@@ -66,19 +66,27 @@
          "? value.AbsoluteUri"))))
 
 (deftest translated-regex-carriers-retain-the-original-pattern
-  (let [runtime (slurp "runtime/Vibeformer.JavaCompat.cs")]
+  (let [runtime (slurp "runtime/Vibeformer.JavaCompat.cs")
+        unicode-data (slurp "runtime/Vibeformer.JavaRegexUnicodeData.cs")]
     (is (str/includes?
          runtime
-         "private sealed class JavaRegex(string originalPattern, string translatedPattern, RegexOptions options)"))
+         "private sealed class JavaRegex("))
+    (is (str/includes? runtime "internal int Flags { get; } = flags"))
+    (is (str/includes? runtime "internal string[] GroupNames { get; } = groupNames"))
     (is (str/includes?
          runtime
          "public override string ToString() => originalPattern"))
     (is (str/includes?
          runtime
-         "new JavaRegex(pattern, TranslateJavaRegex(pattern), options)"))
+         "var translator = new JavaRegexTranslator(pattern)"))
     (is (str/includes?
          runtime
-         "new JavaRegex(pattern, Regex.Escape(pattern), RegexOptions.CultureInvariant)"))))
+         "var result = new JavaRegex(pattern, translated, options, effectiveFlags, groupNames, namedGroups)"))
+    (is (str/includes? runtime "internal static string[] RegexSplit"))
+    (is (str/includes? runtime "internal static string QuoteRegex"))
+    (is (str/includes? runtime "JavaRegexUnicodeData.GzipBase64"))
+    (is (str/includes? runtime "JavaGraphemeClusterPattern"))
+    (is (str/includes? unicode-data "Regenerate with GenerateRegexUnicodeData.java"))))
 
 (deftest java-map-entry-sets-retain-live-view-contracts
   (let [body-rules (source "pkl/java_body")

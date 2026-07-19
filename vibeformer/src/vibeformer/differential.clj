@@ -94,6 +94,133 @@
                    integer-fraction-digit-cases
                    to-fixed-edge-cases)))
 
+(def ^:private regex-compat-cases
+  [;; Pattern text, flags, quoting, literal escapes, and compile failures.
+   ["regex/pattern/default-flags" "PATTERN" 0 "a(b)" "" ""]
+   ["regex/pattern/unicode-implies-unicode-case" "PATTERN" 256 "a" "" ""]
+   ["regex/pattern/all-flags" "PATTERN" 511 "a" "" ""]
+   ["regex/pattern/unknown-flag" "PATTERN" 512 "a" "" ""]
+   ["regex/quote/metacharacters" "QUOTE_PATTERN" 0 ".a[0]" ".a[0]" ""]
+   ["regex/quote/embedded-end-marker" "QUOTE_PATTERN" 0 "a\\Eb" "a\\Eb" ""]
+   ["regex/quote/direct-qe" "MATCHES" 0 "\\Q.a[0]\\E" ".a[0]" ""]
+   ["regex/escape/octal" "MATCHES" 0 "\\0141" "a" ""]
+   ["regex/escape/hex" "MATCHES" 0 "\\x61\\u0062" "ab" ""]
+   ["regex/escape/codepoint" "MATCHES" 0 "\\x{1F600}" "😀" ""]
+   ["regex/escape/unicode-name" "MATCHES" 0 "\\N{GREEK CAPITAL LETTER OMEGA}" "Ω" ""]
+   ["regex/escape/unicode-name-table" "MATCHES" 0 "\\N{PILE OF POO}" "💩" ""]
+   ["regex/escape/unicode-name-hangul" "MATCHES" 0 "\\N{HANGUL SYLLABLES AC00}" "가" ""]
+   ["regex/escape/unicode-name-cjk" "MATCHES" 0 "\\N{CJK UNIFIED IDEOGRAPHS 4E00}" "一" ""]
+   ["regex/escape/unicode-name-private" "MATCHES" 0 "\\N{PRIVATE USE AREA E000}" "" ""]
+   ["regex/escape/control" "MATCHES" 0 "\\cJ" "\n" ""]
+   ["regex/syntax/dangling" "MATCHES" 0 "*" "" ""]
+   ["regex/syntax/unknown-escape" "MATCHES" 0 "\\y" "y" ""]
+
+   ;; Compile flags and their inline equivalents.
+   ["regex/flags/ascii-case" "MATCHES" 2 "Ä" "ä" ""]
+   ["regex/flags/ascii-case-class" "MATCHES" 2 "[a-z]+" "ABC" ""]
+   ["regex/flags/ascii-case-negated-class" "MATCHES" 2 "[^a]" "A" ""]
+   ["regex/flags/ascii-case-literal" "MATCHES" 18 "a.+" "A.+" ""]
+   ["regex/flags/unicode-case" "MATCHES" 66 "Ä" "ä" ""]
+   ["regex/flags/unicode-case-class" "MATCHES" 66 "[α]+" "Α" ""]
+   ["regex/flags/literal" "MATCHES" 16 ".+" ".+" ""]
+   ["regex/flags/comments" "MATCHES" 4 "a # comment\n b" "ab" ""]
+   ["regex/flags/comments-class" "MATCHES" 4 "[ a ]" "a" ""]
+   ["regex/flags/unix-lines-dot" "MATCHES" 1 "." "\r" ""]
+   ["regex/flags/dotall" "MATCHES" 32 ".+" "a\nb" ""]
+   ["regex/flags/multiline-cr" "FIND" 8 "^b$" "a\rb" ""]
+   ["regex/flags/unix-lines-cr" "FIND" 9 "^b$" "a\rb" ""]
+   ["regex/flags/canonical-equivalence" "MATCHES" 128 "å" "å" ""]
+   ["regex/flags/inline-enable-disable" "MATCHES" 0 "(?i:a)(?-i:b)" "Ab" ""]
+   ["regex/flags/scoped-unicode-class" "MATCHES" 0 "(?U:\\w+)" "café" ""]
+
+   ;; Character classes, properties, astral code points, and class algebra.
+   ["regex/class/default-ascii-word" "MATCHES" 0 "\\w+" "café" ""]
+   ["regex/class/unicode-word" "MATCHES" 256 "\\w+" "café" ""]
+   ["regex/class/default-ascii-digit" "MATCHES" 0 "\\d" "٣" ""]
+   ["regex/class/unicode-digit" "MATCHES" 256 "\\d" "٣" ""]
+   ["regex/class/horizontal" "MATCHES" 0 "\\h+" " \t" ""]
+   ["regex/class/vertical" "MATCHES" 0 "\\v+" "\n " ""]
+   ["regex/class/union" "MATCHES" 0 "[a-d[m-p]]+" "camp" ""]
+   ["regex/class/intersection" "MATCHES" 0 "[a-z&&[def]]+" "feed" ""]
+   ["regex/class/subtraction" "MATCHES" 0 "[a-z&&[^m-p]]+" "lazy" ""]
+   ["regex/class/nested-subtraction" "MATCHES" 0 "[[^/]&&[^\\p{Alnum}+.-]]" "_" ""]
+   ["regex/class/astral-literal" "MATCHES" 0 "[😀😈]+" "😀😈" ""]
+   ["regex/class/astral-negation" "MATCHES" 0 "[^😀]+" "😈" ""]
+   ["regex/class/octal-escape" "MATCHES" 0 "[\\0141]" "a" ""]
+   ["regex/class/unicode-escape-range" "MATCHES" 0 "[\\u0061-\\u0063]+" "abc" ""]
+   ["regex/class/codepoint-escape" "MATCHES" 0 "[\\x{1F600}]" "😀" ""]
+   ["regex/class/unicode-name" "MATCHES" 0 "[\\N{PILE OF POO}]" "💩" ""]
+   ["regex/class/quoted" "MATCHES" 0 "[\\Q.+-\\E]+" ".+-" ""]
+   ["regex/property/posix-ascii" "MATCHES" 0 "\\p{Lower}+" "abc" ""]
+   ["regex/property/posix-unicode" "MATCHES" 256 "\\p{Lower}+" "é" ""]
+   ["regex/property/posix-ascii-case" "MATCHES" 2 "\\p{Lower}+" "ABC" ""]
+   ["regex/property/posix-unicode-case" "MATCHES" 258 "\\p{Lower}+" "É" ""]
+   ["regex/property/java-whitespace" "MATCHES" 0 "\\p{javaWhitespace}" " " ""]
+   ["regex/property/java-identifier" "MATCHES" 0 "\\p{javaJavaIdentifierStart}" "$" ""]
+   ["regex/property/java-ideographic" "MATCHES" 0 "\\p{javaIdeographic}" "一" ""]
+   ["regex/property/block" "MATCHES" 0 "\\p{InGreek}+" "Ω" ""]
+   ["regex/property/block-equality" "MATCHES" 0 "\\p{blk=Emoticons}" "😀" ""]
+   ["regex/property/script" "MATCHES" 0 "\\p{IsLatin}+" "é" ""]
+   ["regex/property/script-equality" "MATCHES" 0 "\\p{script=Gothic}" "𐌰" ""]
+   ["regex/property/script-iso-alias" "MATCHES" 0 "\\p{sc=Latn}+" "é" ""]
+   ["regex/property/category" "MATCHES" 0 "\\p{Lu}+" "ΩA" ""]
+   ["regex/property/category-equality" "MATCHES" 0 "\\p{gc=No}" "½" ""]
+   ["regex/property/category-format" "MATCHES" 0 "\\p{Cf}" "‍" ""]
+   ["regex/property/category-private" "MATCHES" 0 "\\p{Co}" "" ""]
+   ["regex/property/category-quote" "MATCHES" 0 "\\p{Pi}" "“" ""]
+   ["regex/property/category-symbol" "MATCHES" 0 "\\p{Sm}" "+" ""]
+   ["regex/property/binary" "MATCHES" 0 "\\p{IsAlphabetic}+" "ΩA" ""]
+   ["regex/property/binary-emoji" "MATCHES" 0 "\\p{IsEmoji}" "💩" ""]
+
+   ;; Boundaries, line breaks, graphemes, grouping, and quantifier modes.
+   ["regex/boundary/word" "FIND" 0 "\\bword\\b" "a word!" ""]
+   ["regex/boundary/non-word" "FIND" 0 "\\Boo\\B" "zooom" ""]
+   ["regex/boundary/input" "MATCHES" 0 "\\Aabc\\z" "abc" ""]
+   ["regex/boundary/final-terminator" "FIND" 0 "abc\\Z" "abc\r\n" ""]
+   ["regex/boundary/previous-match" "FIND" 0 "\\G." "abc" ""]
+   ["regex/matcher/looking-at" "LOOKING_AT" 0 "ab" "abc" ""]
+   ["regex/linebreak/unicode" "MATCHES" 0 "a\\Rb" "a\r\nb" ""]
+   ["regex/grapheme/cluster" "FIND" 0 "\\X" "á" ""]
+   ["regex/grapheme/regional-indicators" "FIND" 0 "\\X" "🇺🇸🇨🇦" ""]
+   ["regex/grapheme/hangul" "MATCHES" 0 "\\X" "가" ""]
+   ["regex/grapheme/prepend" "MATCHES" 0 "\\X" "؀A" ""]
+   ["regex/grapheme/emoji-modifier" "MATCHES" 0 "\\X" "👍🏽" ""]
+   ["regex/grapheme/emoji-zwj" "MATCHES" 0 "\\X" "👩‍❤️‍💋‍👨" ""]
+   ["regex/grapheme/boundary" "FIND" 0 "a\\b{g}" "á" ""]
+   ["regex/group/numeric-order" "FIND" 0 "(?<first>a)(b)(c)?" "ab" ""]
+   ["regex/group/numeric-backref" "MATCHES" 0 "(?<first>a)(b)\\1\\2" "abab" ""]
+   ["regex/group/named-backref" "MATCHES" 0 "(?<word>ab)-\\k<word>" "ab-ab" ""]
+   ["regex/group/lookahead" "FIND" 0 "a(?=b)" "zab" ""]
+   ["regex/group/lookbehind" "FIND" 0 "(?<=a)b" "zab" ""]
+   ["regex/group/atomic" "MATCHES" 0 "(?>a|ab)c" "abc" ""]
+   ["regex/quantifier/greedy" "FIND" 0 "a+" "aaaa" ""]
+   ["regex/quantifier/reluctant" "FIND" 0 "a+?" "aaaa" ""]
+   ["regex/quantifier/possessive" "MATCHES" 0 "a++a" "aaaa" ""]
+   ["regex/quantifier/possessive-range" "MATCHES" 0 "a{2,3}+a" "aaaa" ""]
+
+   ;; Matcher region/zero-width state, split, and replacement contracts.
+   ["regex/matcher/zero-width-astral" "FIND" 0 "" "😀a" ""]
+   ["regex/matcher/region-matches" "REGION" 0 "^b$" "abc" "1,2,matches"]
+   ["regex/matcher/region-looking-at" "REGION" 0 "b" "abc" "1,3,lookingAt"]
+   ["regex/matcher/region-find" "REGION" 0 "c" "abc" "1,3,find"]
+   ["regex/split/positive-limit" "SPLIT" 0 ":" "boo:and:foo" "2"]
+   ["regex/split/negative-limit" "SPLIT" 0 "o" "boo:and:foo" "-2"]
+   ["regex/split/zero-limit" "SPLIT" 0 "o" "boo:and:foo" "0"]
+   ["regex/split/positive-start" "SPLIT" 0 ":" ":a" "0"]
+   ["regex/split/zero-width-start" "SPLIT" 0 "^" "abc" "0"]
+   ["regex/split/captures-not-returned" "SPLIT" 0 "(,)" "a,b,c" "0"]
+   ["regex/split/astral-zero-width" "SPLIT" 0 "" "😀a" "-1"]
+   ["regex/replace/numeric" "REPLACE_ALL" 0 "(a)(b)" "abxab" "$2$1"]
+   ["regex/replace/whole-match" "REPLACE_ALL" 0 "a" "aba" "<$0>"]
+   ["regex/replace/unmatched-group" "REPLACE_ALL" 0 "(a)?b" "b" "<$1>"]
+   ["regex/replace/zero-width-astral" "REPLACE_ALL" 0 "" "😀a" "-"]
+   ["regex/replace/canonical-equivalence" "REPLACE_ALL" 128 "å" "åx" "X"]
+   ["regex/replace/named" "REPLACE_FIRST" 0 "(?<left>a)(?<right>b)" "abxab" "${right}${left}"]
+   ["regex/replace/escaped" "REPLACE_ALL" 0 "a" "a" "\\$\\\\"]
+   ["regex/replace/append" "APPEND" 0 "(a)" "a-a" "<$1>"]
+   ["regex/replace/missing-group" "REPLACE_ALL" 0 "a" "a" "$4"]
+   ["regex/replace/quote" "QUOTE_REPLACEMENT" 0 "a$\\b" "" ""]])
+
 (def ^:private base-core-cases
   [["evaluation/module-export" "EVALUATE"
     (str "name = \"pigeon\"\n"
@@ -176,7 +303,15 @@
          "bytes = Bytes(0, 127, 128, 255)\n"
          "regex = Regex(#\"a.+b\"#)\n"
          "computed = List(1, 2, 3).map((it) -> it * 2)\n")
-    ""]])
+    ""]
+   ["regex/pkl-java-quotation" "EXPRESSION" ""
+    "\".a[0]\".matches(Regex(#\"\\Q.a[0]\\E\"#))"]
+   ["regex/pkl-unicode-word" "EXPRESSION" ""
+    "\"café\".matches(Regex(#\"\\w+\"#))"]
+   ["regex/pkl-zero-width-astral-split" "EXPRESSION" ""
+    "\"😀a\".split(Regex(#\"\"#))"]
+   ["regex/pkl-replacement-groups" "EXPRESSION" ""
+    "\"abxab\".replaceAll(Regex(#\"(a)(b)\"#), \"$2$1\")"]])
 
 (def ^:private core-cases
   (into base-core-cases
@@ -230,6 +365,15 @@
    (apply str
           (map (fn [[id operation source argument]]
                  (str id "\t" operation "\t" (b64 source) "\t" (b64 argument) "\n"))
+               cases))))
+
+(defn- write-regex-compat-manifest! [^Path manifest cases]
+  (write-text!
+   manifest
+   (apply str
+          (map (fn [[id operation flags pattern input argument]]
+                 (str id "\t" operation "\t" flags "\t" (b64 pattern) "\t"
+                      (b64 input) "\t" (b64 argument) "\n"))
                cases))))
 
 (defn- write-to-fixed-expectations! [^Path output cases]
@@ -1134,6 +1278,111 @@
                  :generator-dependencies generator-dependencies
                  :consumer-dependencies consumer-dependencies}))))))))
 
+(defn- verify-regex-compatibility!
+  [{:keys [root package-proof run-command! java-release java-home]}]
+  (let [proof-root (harness/clean-directory!
+                    (paths/resolve-path root "vibeformer" "validation-output"
+                                        "differential-proof" "regex-compat"))
+        manifest (write-regex-compat-manifest!
+                  (paths/resolve-path proof-root "cases.tsv") regex-compat-cases)
+        oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
+                         (Files/createDirectories (make-array FileAttribute 0)))
+        oracle-source (paths/resolve-path root "vibeformer" "validation" "regex-compat"
+                                          "RegexCompatOracle.java")
+        unicode-generator-source
+        (paths/resolve-path root "vibeformer" "validation" "regex-compat"
+                            "GenerateRegexUnicodeData.java")
+        committed-unicode-source
+        (paths/resolve-path root "vibeformer" "runtime" "Vibeformer.JavaRegexUnicodeData.cs")
+        generated-unicode-tsv (paths/resolve-path proof-root "unicode-data.tsv")
+        generated-unicode-source (paths/resolve-path proof-root "JavaRegexUnicodeData.cs")
+        oracle-first (paths/resolve-path proof-root "upstream-first.tsv")
+        oracle-second (paths/resolve-path proof-root "upstream-second.tsv")
+        package-first (paths/resolve-path proof-root "package-first.tsv")
+        package-second (paths/resolve-path proof-root "package-second.tsv")
+        perturbed (paths/resolve-path proof-root "perturbed.tsv")
+        javac (paths/resolve-path java-home "bin" "javac")
+        java (paths/resolve-path java-home "bin" "java")
+        consumer-root (:consumer-root package-proof)
+        consumer-project (paths/resolve-path consumer-root "Pkl.Core.PackageConsumer.csproj")
+        consumer-source (paths/resolve-path consumer-root "Program.cs")
+        probe-source (paths/resolve-path root "vibeformer" "validation" "regex-compat"
+                                         "RegexCompatPackageProbe.cs")
+        ids (mapv first regex-compat-cases)
+        operations (set (map second regex-compat-cases))
+        flags (set (map #(nth % 2) regex-compat-cases))]
+    (when-not (and (= 116 (count ids))
+                   (= (count ids) (count (set ids)))
+                   (every? operations
+                           #{"PATTERN" "QUOTE_PATTERN" "QUOTE_REPLACEMENT" "MATCHES"
+                             "LOOKING_AT" "FIND" "REGION" "SPLIT" "REPLACE_ALL"
+                             "REPLACE_FIRST" "APPEND"})
+                   (every? flags [0 1 2 4 8 9 16 32 66 128 256 511 512]))
+      (fail! "The Java Pattern compatibility inventory is incomplete or duplicated"
+             {:cases (count ids) :unique-ids (count (set ids))
+              :operations operations :flags flags}))
+    (run-command! {:command [(str javac) "--release" (str java-release)
+                             "-d" (str oracle-classes) (str oracle-source)
+                             (str unicode-generator-source)]
+                   :directory root})
+    (run-command! {:command [(str java) "--add-opens" "java.base/java.lang=ALL-UNNAMED"
+                             "--add-opens" "java.base/jdk.internal.util.regex=ALL-UNNAMED"
+                             "-cp" (str oracle-classes) "GenerateRegexUnicodeData"
+                             (str generated-unicode-tsv) (str generated-unicode-source)]
+                   :directory root})
+    (assert-pinned! "JDK-derived Java regex Unicode data"
+                    committed-unicode-source generated-unicode-source)
+    (let [unicode-counts
+          (->> (str/split-lines (Files/readString generated-unicode-tsv StandardCharsets/UTF_8))
+               (map #(first (str/split % #"\t" 2)))
+               frequencies)]
+      (when-not (= {"V" 1 "A" 338 "B" 338 "S" 342 "P" 368 "F" 2933
+                    "G" 15 "I" 3 "N" 38196}
+                   unicode-counts)
+        (fail! "The pinned JDK regex Unicode inventory changed"
+               {:expected {"V" 1 "A" 338 "B" 338 "S" 342 "P" 368 "F" 2933
+                           "G" 15 "I" 3 "N" 38196}
+                :actual unicode-counts})))
+    (Files/copy probe-source consumer-source
+                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+    (run-command! {:command ["dotnet" "build" (str consumer-project) "--nologo"
+                             "--verbosity:minimal" "--no-restore" "--no-incremental"
+                             "-warnaserror"]
+                   :directory consumer-root})
+    (run-independent-probes!
+     run-command!
+     [{:name :upstream-regex-oracle-first
+       :command [(str java) "-cp" (str oracle-classes) "RegexCompatOracle"
+                 (str manifest) (str oracle-first)]
+       :directory root}
+      {:name :upstream-regex-oracle-second
+       :command [(str java) "-cp" (str oracle-classes) "RegexCompatOracle"
+                 (str manifest) (str oracle-second)]
+       :directory root}
+      {:name :packaged-regex-probe-first
+       :command ["dotnet" "run" "--project" (str consumer-project)
+                 "--no-build" "--no-restore" "--" (str manifest) (str package-first)]
+       :directory consumer-root}
+      {:name :packaged-regex-probe-second
+       :command ["dotnet" "run" "--project" (str consumer-project)
+                 "--no-build" "--no-restore" "--" (str manifest) (str package-second)]
+       :directory consumer-root}])
+    (assert-pinned! "Repeated upstream JVM regex" oracle-first oracle-second)
+    (assert-pinned! "Repeated package-only regex" package-first package-second)
+    (let [comparison (assert-equal! "Java Pattern/Matcher" oracle-first package-first)
+          perturbation (prove-perturbation! oracle-first perturbed)
+          summary {:cases (count regex-compat-cases)
+                   :observations (:matched comparison)
+                   :operations (count operations)
+                   :compile-flags (sort flags)
+                   :unicode-data {:blocks 338 :block-names 338 :scripts-and-aliases 342
+                                  :properties 368 :case-folds 2933 :character-names 38196
+                                  :grapheme-types 15 :indic-conjunct-types 3}
+                   :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
+      (println "Independent Java Pattern/package regex differential passed:" (pr-str summary))
+      {:summary summary :manifest manifest :oracle-output oracle-first
+       :package-output package-first})))
+
 (defn- verify-core-differential!
   "Runs representative evaluator/value-model cases in isolated upstream and package processes."
   [{:keys [workspace-root core-package-fn run-command!]
@@ -1171,9 +1420,9 @@
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "vibeformer" "validation" "differential"
                                          "CorePackageProbe.cs")]
-    (when-not (and (= 23 (count base-core-cases))
+    (when-not (and (= 27 (count base-core-cases))
                    (= 68 (count to-fixed-cases))
-                   (= 91 (count core-cases))
+                   (= 95 (count core-cases))
                    (= (set (range 21)) (set (map :digits float-fraction-digit-cases)))
                    (= (set (range 21)) (set (map :digits integer-fraction-digit-cases)))
                    (= (count to-fixed-cases) (count (set (map :id to-fixed-cases)))))
@@ -1209,7 +1458,10 @@
        :directory consumer-root}])
     (select-results! oracle-output to-fixed-upstream to-fixed-cases)
     (select-results! package-output to-fixed-package to-fixed-cases)
-    (let [loading-contract (verify-loading-contract!
+    (let [regex-compat (verify-regex-compatibility!
+                        {:root root :package-proof package-proof :run-command! run-command!
+                         :java-release java-release :java-home java-home})
+          loading-contract (verify-loading-contract!
                             {:root root :package-proof package-proof
                              :run-command! run-command!
                              :java-release java-release :java-home java-home :entries entries})
@@ -1231,7 +1483,7 @@
                    :package (:identity package-proof)
                    :cases (count core-cases)
                    :value-model-observations 6
-                   :evaluation-cases 11
+                   :evaluation-cases 15
                    :output-cases 4
                    :value-export-cases 2
                    :loading-security-cases 3
@@ -1244,11 +1496,13 @@
                               :package-observations (:matched to-fixed-package-comparison)
                               :perturbation-detected-at
                               (get-in to-fixed-perturbation [:mismatch :line])}
+                   :java-pattern-regex (:summary regex-compat)
                    :loading-policy-configuration-contract (:summary loading-contract)
                    :schema-codegen-binding (:summary schema-proof)
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
       (println "Independent upstream/package Pkl.Core differential passed:" (pr-str summary))
       {:package-proof package-proof
+       :java-pattern-regex regex-compat
        :loading-policy-configuration-contract loading-contract
        :schema-codegen-binding schema-proof
        :summary summary

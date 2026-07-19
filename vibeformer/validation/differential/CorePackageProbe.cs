@@ -11,6 +11,11 @@ using Pkl.Core;
 /** Package-only .NET probe for independently normalized Pkl.Core observations. */
 static class CorePackageProbe
 {
+    private static readonly Encoding JavaUtf8 = Encoding.GetEncoding(
+        Encoding.UTF8.CodePage,
+        new EncoderReplacementFallback("?"),
+        new DecoderReplacementFallback("\uFFFD"));
+
     public static void Main(string[] args)
     {
         if (args.Length != 2) throw new ArgumentException("manifest and output paths are required");
@@ -209,7 +214,10 @@ static class CorePackageProbe
 
     static string Lower(bool value) => value ? "true" : "false";
     static string Decode(string value) => Encoding.UTF8.GetString(Convert.FromBase64String(value));
-    static string Encode(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+    // Java's UTF-8 encoder writes an unpaired UTF-16 surrogate as '?'. Regex
+    // zero-width matches can expose surrogate halves, so use the same transport
+    // fallback when normalizing otherwise-identical JVM and .NET observations.
+    static string Encode(string value) => Convert.ToBase64String(JavaUtf8.GetBytes(value));
     static void Write(StreamWriter writer, string id, string kind, string observation) =>
         writer.WriteLine($"{id}\t{kind}\t{Encode(observation)}");
 }

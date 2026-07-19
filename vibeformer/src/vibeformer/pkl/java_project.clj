@@ -2995,12 +2995,28 @@
              :declarations (atom (vec (mapcat :declarations declaration-results)))
              :diagnostics (atom (vec (mapcat :diagnostics declaration-results)))
              :body-translations (atom (vec (mapcat :body-translations declaration-results)))}
-        helper-source (paths/resolve-path root "vibeformer/runtime/Vibeformer.JavaCompat.cs")
-        helper-file (paths/resolve-path source-root "Vibeformer/Runtime/JavaCompat.cs")
-        _ (Files/createDirectories (.getParent helper-file)
-                                   (make-array java.nio.file.attribute.FileAttribute 0))
-        _ (Files/copy helper-source helper-file
-                      (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
+        helper-artifacts
+        (mapv (fn [[source-name destination-name strategy]]
+                (let [source (paths/resolve-path root "vibeformer/runtime" source-name)
+                      destination (paths/resolve-path source-root "Vibeformer/Runtime"
+                                                      destination-name)]
+                  (when-not (paths/regular-file? source)
+                    (throw (ex-info "Java compatibility source is missing"
+                                    {:kind :missing-java-compatibility-source
+                                     :source (portable root source)})))
+                  (Files/createDirectories (.getParent destination)
+                                           (make-array java.nio.file.attribute.FileAttribute 0))
+                  (Files/copy source destination
+                              (into-array java.nio.file.CopyOption
+                                          [StandardCopyOption/REPLACE_EXISTING]))
+                  {:file (portable project-root destination)
+                   :source {:file (portable root source) :line 1 :column 1}
+                   :mappings []
+                   :strategy strategy}))
+              [["Vibeformer.JavaCompat.cs" "JavaCompat.cs"
+                :reviewable-java-compatibility-source]
+               ["Vibeformer.JavaRegexUnicodeData.cs" "JavaRegexUnicodeData.cs"
+                :generated-java-compatibility-data]])
         runtime-artifacts
         (mapv (fn [relative]
                 (let [source (paths/resolve-path root relative)
@@ -3019,12 +3035,7 @@
                    :mappings []
                    :strategy :reviewable-product-runtime-source}))
               (:runtime-sources configuration))
-        artifacts (into (conj declaration-artifacts
-                              {:file (portable project-root helper-file)
-                               :source {:file (portable root helper-source) :line 1 :column 1}
-                               :mappings []
-                               :strategy :reviewable-java-compatibility-source})
-                        runtime-artifacts)
+        artifacts (into declaration-artifacts (concat helper-artifacts runtime-artifacts))
         artifact-collisions (->> artifacts (group-by :file) vals (filter #(< 1 (count %))) vec)
         declaration-collisions (collision-errors @(:declarations ctx))]
     (when (or (seq artifact-collisions) (seq declaration-collisions))

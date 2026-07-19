@@ -106,7 +106,7 @@
 
     (testing "the entire selected declaration and body closure is accounted for"
       (is (= 657 (:compilation-units summary)))
-      (is (= 661 (:generated-files summary)))
+      (is (= 662 (:generated-files summary)))
       (is (= 28 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
