@@ -423,7 +423,7 @@ internal sealed class JavaMapEntry<K, V> where K : notnull
     {
         this.source = source;
         this.key = key;
-        value = source[key];
+        value = source.TryGetValue(key, out var current) ? current : default!;
     }
 
     internal JavaMapEntry(K key, V value)
@@ -442,7 +442,10 @@ internal sealed class JavaMapEntry<K, V> where K : notnull
         if (source is null)
             throw new NotSupportedException("This Java map entry is immutable.");
         var previous = Value;
-        source[key] = replacement;
+        if (source is JavaLinkedHashMap<K, V> linked)
+            linked.ReplaceValueWithoutAccess(key, replacement);
+        else
+            source[key] = replacement;
         value = replacement;
         return previous;
     }
@@ -2445,7 +2448,9 @@ internal static class JavaCompat
     internal static bool MapIsEmpty<K, V>(IDictionary<K, V> map) where K : notnull => map.Count == 0;
     internal static bool MapIsEmpty<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull => map.Count == 0;
     internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull =>
-        new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
+        map is JavaLinkedHashMap<K, V> linked
+            ? linked.KeySet()
+            : new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
     internal static ISet<K> MapKeySet<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull =>
         new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
     internal static int MapCount<K, V>(IDictionary<K, V> map) where K : notnull => map.Count;
@@ -2462,29 +2467,41 @@ internal static class JavaCompat
     internal static V ComputeIfAbsent<K, V>(IDictionary<K, V> map, K key, Func<K, V> factory) where K : notnull
     {
         if (map is JavaLinkedHashMap<K, V> linked) return linked.ComputeIfAbsent(key, factory);
-        if (map.TryGetValue(key, out var value)) return value;
+        if (map.TryGetValue(key, out var value) && value is not null) return value;
         value = factory(key);
+        if (value is null) return default!;
         map[key] = value;
         return value;
     }
     internal static V MapGetOrDefault<K, V>(IDictionary<K, V> map, K key, V fallback) where K : notnull =>
-        map.TryGetValue(key, out var value) ? value : fallback;
+        map is JavaLinkedHashMap<K, V> linked
+            ? linked.GetOrDefault(key, fallback)
+            : map.TryGetValue(key, out var value) ? value : fallback;
     internal static V MapGetOrDefault<K, V>(IReadOnlyDictionary<K, V> map, K key, V fallback) where K : notnull =>
         map.TryGetValue(key, out var value) ? value : fallback;
     internal static V MapPutIfAbsent<K, V>(IDictionary<K, V> map, K key, V value) where K : notnull
     {
-        if (map.TryGetValue(key, out var previous)) return previous;
-        map[key] = value;
-        return default!;
+        if (map is JavaLinkedHashMap<K, V> linked) return linked.PutIfAbsent(key, value);
+        if (map.TryGetValue(key, out var previous) && previous is not null) return previous;
+        return MapPut(map, key, value);
     }
 
     internal static void MapPutAll<K, V>(IDictionary<K, V> map, IEnumerable<KeyValuePair<K, V>> values) where K : notnull
     {
+        if (map is JavaLinkedHashMap<K, V> linked)
+        {
+            linked.PutAll(values);
+            return;
+        }
         foreach (var (key, value) in values) map[key] = value;
     }
 
     internal static V MapGet<K, V>(IDictionary<K, V> map, object? key) where K : notnull =>
-        key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
+        key is K typed
+            ? map is JavaLinkedHashMap<K, V> linked
+                ? linked.Get(typed)
+                : map.TryGetValue(typed, out var value) ? value : default!
+            : default!;
     internal static V MapGet<K, V>(IReadOnlyDictionary<K, V> map, object? key) where K : notnull =>
         key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
 
@@ -4917,46 +4934,326 @@ internal sealed class JavaDeque<T> : ICollection<T>
 }
 
 internal
-class JavaLinkedHashMap<K, V> : Dictionary<K, V> where K : notnull
+class JavaLinkedHashMap<K, V> : IDictionary<K, V>, IDictionary where K : notnull
 {
+    private sealed class Entry(K key, V value)
+    {
+        internal K Key { get; } = key;
+        internal V Value { get; set; } = value;
+    }
+
+    private sealed class KeyComparer : IEqualityComparer<K>
+    {
+        public bool Equals(K? left, K? right) => JavaCompat.Equals(left, right);
+        public int GetHashCode(K value) => JavaCompat.HashCode(value);
+    }
+
+    private readonly Dictionary<K, LinkedListNode<Entry>> entries;
+    private readonly LinkedList<Entry> order = new();
     private readonly bool accessOrder;
 
-    public JavaLinkedHashMap() { }
-    public JavaLinkedHashMap(int initialCapacity) : base(initialCapacity) { }
-    public JavaLinkedHashMap(int initialCapacity, float loadFactor) : base(initialCapacity) { }
+    public JavaLinkedHashMap() : this(0, 0.75f, false) { }
+    public JavaLinkedHashMap(int initialCapacity) : this(initialCapacity, 0.75f, false) { }
+    public JavaLinkedHashMap(int initialCapacity, float loadFactor)
+        : this(initialCapacity, loadFactor, false) { }
     public JavaLinkedHashMap(int initialCapacity, float loadFactor, bool accessOrder)
-        : base(initialCapacity) => this.accessOrder = accessOrder;
+    {
+        if (initialCapacity < 0) throw new ArgumentOutOfRangeException(nameof(initialCapacity));
+        if (!(loadFactor > 0) || float.IsNaN(loadFactor))
+            throw new ArgumentOutOfRangeException(nameof(loadFactor));
+        entries = new Dictionary<K, LinkedListNode<Entry>>(initialCapacity, new KeyComparer());
+        this.accessOrder = accessOrder;
+    }
+    public JavaLinkedHashMap(IEnumerable<KeyValuePair<K, V>> values) : this()
+    {
+        PutAll(values);
+    }
 
     protected internal virtual bool RemoveEldestEntry(JavaMapEntry<K, V> eldest) => false;
+
+    public int Count => entries.Count;
+    public bool IsReadOnly => false;
+    bool IDictionary.IsFixedSize => false;
+    bool IDictionary.IsReadOnly => false;
+    bool ICollection.IsSynchronized => false;
+    object ICollection.SyncRoot => this;
+    public ICollection<K> Keys => new KeyCollection(this);
+    public ICollection<V> Values => new ValueCollection(this);
+    ICollection IDictionary.Keys => Keys.ToList();
+    ICollection IDictionary.Values => Values.ToList();
+    public V this[K key]
+    {
+        get
+        {
+            if (!entries.TryGetValue(key, out var node)) throw new KeyNotFoundException();
+            RecordAccess(node);
+            return node.Value.Value;
+        }
+        set => Put(key, value);
+    }
+    object? IDictionary.this[object key]
+    {
+        get => key is K typed && TryGetValue(typed, out var value) ? value : null;
+        set => Put(RequireKey(key), RequireValue(value));
+    }
+
     public int Size() => Count;
+
+    internal V Get(K key)
+    {
+        if (!entries.TryGetValue(key, out var node)) return default!;
+        RecordAccess(node);
+        return node.Value.Value;
+    }
+
+    internal V GetOrDefault(K key, V fallback)
+    {
+        if (!entries.TryGetValue(key, out var node)) return fallback;
+        RecordAccess(node);
+        return node.Value.Value;
+    }
+
+    internal V PutIfAbsent(K key, V value)
+    {
+        if (entries.TryGetValue(key, out var node))
+        {
+            var previous = node.Value.Value;
+            RecordAccess(node);
+            if (previous is not null) return previous;
+        }
+        return Put(key, value);
+    }
 
     internal V ComputeIfAbsent(K key, Func<K, V> factory)
     {
-        if (TryGetValue(key, out var value))
+        var present = entries.TryGetValue(key, out var node);
+        if (present)
         {
-            if (accessOrder)
-            {
-                Remove(key);
-                base[key] = value;
-            }
-            return value;
+            var current = node!.Value.Value;
+            RecordAccess(node);
+            if (current is not null) return current;
         }
-        value = factory(key);
+        var value = factory(key);
+        if (value is null) return default!;
         Put(key, value);
         return value;
     }
 
     internal V Put(K key, V value)
     {
-        var previous = TryGetValue(key, out var oldValue) ? oldValue : default!;
-        if (accessOrder && ContainsKey(key)) Remove(key);
-        base[key] = value;
-        if (Count > 0)
+        if (entries.TryGetValue(key, out var existing))
         {
-            var eldestKey = Keys.First();
-            if (RemoveEldestEntry(new JavaMapEntry<K, V>(this, eldestKey))) Remove(eldestKey);
+            var previous = existing.Value.Value;
+            existing.Value.Value = value;
+            RecordAccess(existing);
+            return previous;
         }
-        return previous;
+
+        var node = order.AddLast(new Entry(key, value));
+        entries.Add(key, node);
+        var eldest = order.First!;
+        if (RemoveEldestEntry(new JavaMapEntry<K, V>(this, eldest.Value.Key)))
+            Remove(eldest.Value.Key);
+        return default!;
+    }
+
+    internal void PutAll(IEnumerable<KeyValuePair<K, V>> values)
+    {
+        foreach (var (key, value) in values) Put(key, value);
+    }
+
+    internal void ReplaceValueWithoutAccess(K key, V value)
+    {
+        if (!entries.TryGetValue(key, out var node)) throw new KeyNotFoundException();
+        node.Value.Value = value;
+    }
+
+    internal ISet<K> KeySet() => new KeySetView(this);
+
+    private void RecordAccess(LinkedListNode<Entry> node)
+    {
+        if (!accessOrder || ReferenceEquals(order.Last, node)) return;
+        order.Remove(node);
+        order.AddLast(node);
+    }
+
+    public void Add(K key, V value)
+    {
+        if (entries.ContainsKey(key)) throw new ArgumentException("An item with the same key has already been added.");
+        Put(key, value);
+    }
+
+    public bool ContainsKey(K key) => entries.ContainsKey(key);
+
+    public bool Remove(K key)
+    {
+        if (!entries.Remove(key, out var node)) return false;
+        order.Remove(node);
+        return true;
+    }
+
+    public bool Remove(K key, out V value)
+    {
+        if (!entries.TryGetValue(key, out var node))
+        {
+            value = default!;
+            return false;
+        }
+        value = node.Value.Value;
+        entries.Remove(key);
+        order.Remove(node);
+        return true;
+    }
+
+    public bool TryGetValue(K key, out V value)
+    {
+        if (entries.TryGetValue(key, out var node))
+        {
+            value = node.Value.Value;
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    public void Add(KeyValuePair<K, V> item) => Add(item.Key, item.Value);
+    void IDictionary.Add(object key, object? value) => Add(RequireKey(key), RequireValue(value));
+    public void Clear()
+    {
+        entries.Clear();
+        order.Clear();
+    }
+
+    public bool Contains(KeyValuePair<K, V> item) =>
+        entries.TryGetValue(item.Key, out var node) && JavaCompat.Equals(node.Value.Value, item.Value);
+    bool IDictionary.Contains(object key) => key is K typed && ContainsKey(typed);
+
+    public void CopyTo(KeyValuePair<K, V>[] array, int arrayIndex)
+    {
+        foreach (var item in this) array[arrayIndex++] = item;
+    }
+    void ICollection.CopyTo(Array array, int index)
+    {
+        foreach (var item in this)
+            array.SetValue(new DictionaryEntry(item.Key!, item.Value), index++);
+    }
+
+    public bool Remove(KeyValuePair<K, V> item) => Contains(item) && Remove(item.Key);
+    void IDictionary.Remove(object key)
+    {
+        if (key is K typed) Remove(typed);
+    }
+
+    public IEnumerator<KeyValuePair<K, V>> GetEnumerator()
+    {
+        foreach (var entry in order)
+            yield return new KeyValuePair<K, V>(entry.Key, entry.Value);
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    IDictionaryEnumerator IDictionary.GetEnumerator() => new DictionaryEnumerator(this);
+
+    private static K RequireKey(object key) => key is K typed
+        ? typed
+        : throw new ArgumentException($"Key must be assignable to {typeof(K)}.", nameof(key));
+
+    private static V RequireValue(object? value)
+    {
+        if (value is V typed) return typed;
+        if (value is null && default(V) is null) return default!;
+        throw new ArgumentException($"Value must be assignable to {typeof(V)}.", nameof(value));
+    }
+
+    private sealed class DictionaryEnumerator(JavaLinkedHashMap<K, V> source) : IDictionaryEnumerator
+    {
+        private readonly IEnumerator<KeyValuePair<K, V>> inner = source.GetEnumerator();
+        public DictionaryEntry Entry => new(Key!, Value);
+        public object Key => inner.Current.Key;
+        public object? Value => inner.Current.Value;
+        public object Current => Entry;
+        public bool MoveNext() => inner.MoveNext();
+        public void Reset() => inner.Reset();
+    }
+
+    private sealed class KeyCollection(JavaLinkedHashMap<K, V> source) : ICollection<K>
+    {
+        public int Count => source.Count;
+        public bool IsReadOnly => false;
+        public void Add(K item) => throw new NotSupportedException("Java Map.keySet does not support add().");
+        public void Clear() => source.Clear();
+        public bool Contains(K item) => source.ContainsKey(item);
+        public void CopyTo(K[] array, int arrayIndex)
+        {
+            foreach (var item in this) array[arrayIndex++] = item;
+        }
+        public bool Remove(K item) => source.Remove(item);
+        public IEnumerator<K> GetEnumerator()
+        {
+            foreach (var entry in source.order) yield return entry.Key;
+        }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class ValueCollection(JavaLinkedHashMap<K, V> source) : ICollection<V>
+    {
+        public int Count => source.Count;
+        public bool IsReadOnly => false;
+        public void Add(V item) => throw new NotSupportedException("Java Map.values does not support add().");
+        public void Clear() => source.Clear();
+        public bool Contains(V item) => source.order.Any(entry => JavaCompat.Equals(entry.Value, item));
+        public void CopyTo(V[] array, int arrayIndex)
+        {
+            foreach (var item in this) array[arrayIndex++] = item;
+        }
+        public bool Remove(V item)
+        {
+            var node = source.order.First;
+            while (node is not null)
+            {
+                if (JavaCompat.Equals(node.Value.Value, item)) return source.Remove(node.Value.Key);
+                node = node.Next;
+            }
+            return false;
+        }
+        public IEnumerator<V> GetEnumerator()
+        {
+            foreach (var entry in source.order) yield return entry.Value;
+        }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class KeySetView(JavaLinkedHashMap<K, V> source) : ISet<K>
+    {
+        private HashSet<K> Snapshot() => new(source.Keys, new KeyComparer());
+        public int Count => source.Count;
+        public bool IsReadOnly => false;
+        bool ISet<K>.Add(K item) => throw new NotSupportedException("Java Map.keySet does not support add().");
+        void ICollection<K>.Add(K item) => throw new NotSupportedException("Java Map.keySet does not support add().");
+        public void Clear() => source.Clear();
+        public bool Contains(K item) => source.ContainsKey(item);
+        public void CopyTo(K[] array, int arrayIndex) => source.Keys.CopyTo(array, arrayIndex);
+        public void ExceptWith(IEnumerable<K> other)
+        {
+            foreach (var item in other.ToList()) source.Remove(item);
+        }
+        public void IntersectWith(IEnumerable<K> other)
+        {
+            var retained = new HashSet<K>(other, new KeyComparer());
+            foreach (var item in source.Keys.Where(item => !retained.Contains(item)).ToList()) source.Remove(item);
+        }
+        public bool IsProperSubsetOf(IEnumerable<K> other) => Snapshot().IsProperSubsetOf(other);
+        public bool IsProperSupersetOf(IEnumerable<K> other) => Snapshot().IsProperSupersetOf(other);
+        public bool IsSubsetOf(IEnumerable<K> other) => Snapshot().IsSubsetOf(other);
+        public bool IsSupersetOf(IEnumerable<K> other) => Snapshot().IsSupersetOf(other);
+        public bool Overlaps(IEnumerable<K> other) => Snapshot().Overlaps(other);
+        public bool SetEquals(IEnumerable<K> other) => Snapshot().SetEquals(other);
+        public void SymmetricExceptWith(IEnumerable<K> other) =>
+            throw new NotSupportedException("Java Map.keySet does not support adding keys.");
+        public void UnionWith(IEnumerable<K> other) =>
+            throw new NotSupportedException("Java Map.keySet does not support adding keys.");
+        public bool Remove(K item) => source.Remove(item);
+        public IEnumerator<K> GetEnumerator() => source.Keys.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }
 

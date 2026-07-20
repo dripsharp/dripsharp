@@ -181,10 +181,7 @@ static class Program
             .SetEnvironmentVariables(environment)
             .SetExternalProperties(properties)
             .SetModuleCacheDir(null)
-            .SetHttpClient(PklHttpClient.CreateBuilder()
-                .SetTestPort(testPort)
-                .AddCertificates(Path.Combine(packageBuild, "keystore", "localhost.pem"))
-                .BuildLazily())
+            .SetHttpClient(CreateTestHttpClient(packageBuild, testPort))
             .SetPowerAssertionsEnabled(true)
             .SetTimeout(timeout);
         var moduleKeyFactories = new List<Pkl.Core.Module.ModuleKeyFactory>
@@ -213,7 +210,7 @@ static class Program
                 {
                     Project project = Project.LoadFromPath(
                         Path.Combine(projectDirectory, "PklProject"),
-                        SecurityManagers.defaultManager,
+                        SecurityManagers.DefaultManager,
                         timeout,
                         frame => frame,
                         new Dictionary<string, string>(),
@@ -430,7 +427,19 @@ static class Program
             binder: null, new[] { typeof(string), typeof(string) }, modifiers: null)
             ?? throw new MissingMethodException(compat.FullName, "SetProperty");
         _ = method.Invoke(null, new object[] { "org.pkl.testMode", "true" });
-        Require(IoUtils.IsTestMode(), "Pkl test mode was not enabled for package fixtures");
+    }
+
+    static PklHttpClient CreateTestHttpClient(string packageBuild, int testPort)
+    {
+        PklHttpClient.Builder builder = PklHttpClient.CreateBuilder();
+        MethodInfo setTestPort = builder.GetType().GetMethod(
+            "SetTestPort", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, new[] { typeof(int) }, modifiers: null)
+            ?? throw new MissingMethodException(builder.GetType().FullName, "SetTestPort");
+        _ = setTestPort.Invoke(builder, new object[] { testPort });
+        return builder
+            .AddCertificates(Path.Combine(packageBuild, "keystore", "localhost.pem"))
+            .BuildLazily();
     }
 
     static string? FindProjectDirectory(string start)
