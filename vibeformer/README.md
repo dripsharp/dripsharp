@@ -214,6 +214,9 @@ service, subprocess, and platform-path fixtures without uncontrolled network
 access. It verifies the exact loaded package assembly paths and hashes. Missing,
 duplicate, stale, skipped, unowned, crashed, or timed-out rows remain explicit
 and fail closed; byte-for-byte repetition and deliberate JVM/package,
-coverage, provenance, crash, and timeout controls are retained under
-`validation-output/pkl-core-corpus`. Pending product adaptations remain
-mismatches for the dependent behavior work and do not become exclusions.
+coverage, classification, provenance, crash, and timeout controls are retained under
+`validation-output/pkl-core-corpus`. The aggregate command re-discovers the
+live upstream case set, requires all three implementation partitions to form
+one non-overlapping 563-row product matrix, and fails unless every in-scope row
+matches the independent package result. Product mismatches cannot become
+exclusions.

@@ -37,9 +37,45 @@
 (def ^:private execution-failure-statuses
   #{"FAIL" "TIMEOUT" "CRASH" "PENDING"})
 
+(def ^:private in-scope-classifications
+  #{"jvm-shared-product-behavior" "idiomatic-dotnet-adaptation"})
+
 (def ^:private default-case-timeout-ms 60000)
 (def ^:private default-process-timeout-ms 3600000)
 (def ^:private default-worker-count 22)
+
+(def ^:private evaluator-diagnostic-renderer-partition
+  {:name :evaluator-analyzer-test-reporting-diagnostic-renderer
+   :expected-count 59
+   :source-classes
+   #{"org.pkl.core.EvaluateExpressionTest"
+     "org.pkl.core.EvaluateMultipleFileOutputTest"
+     "org.pkl.core.EvaluateOutputTextTest"
+     "org.pkl.core.EvaluateSchemaTest"
+     "org.pkl.core.EvaluateTestsTest"
+     "org.pkl.core.JsonRendererTest"
+     "org.pkl.core.PListRendererTest"
+     "org.pkl.core.PcfRendererTest"
+     "org.pkl.core.PropertiesRendererTest"
+     "org.pkl.core.StackFrameTransformersTest"
+     "org.pkl.core.runtime.StackTraceRendererTest"
+     "org.pkl.core.stdlib.MinimalReportTest"
+     "org.pkl.core.stdlib.SimpleReportTest"}
+   :source-methods-by-class
+   {"org.pkl.core.AnalyzerTest"
+    #{"simple case"
+      "glob imports"
+      "cyclical imports"}
+    "org.pkl.core.EvaluatorTest"
+    #{"evaluate text"
+      "evaluating a broken module multiple times results in the same error every time"
+      "evaluation timeout"
+      "stack overflow"
+      "constraint failures activate instrumentation"
+      "union single-member constraint failures do not activate instrumentation"
+      "type test failures do not activate instrumentation"
+      "power assertions work with test facts with unavailable source section"
+      "eval schema when property has a ConvertProperty annotation"}}})
 
 (def ^:private value-runtime-parser-path-partition
   {:name :value-runtime-parser-path-utilities
@@ -149,6 +185,23 @@
       "root dir check happens without any UNC or SMB access"
       "eval dependency notation as a module source"
       "eval dependency notation -- no project configured"}}})
+
+(def ^:private complete-partitions
+  [evaluator-diagnostic-renderer-partition
+   value-runtime-parser-path-partition
+   loading-security-project-package-partition])
+
+(def ^:private complete-matrix-boundary
+  {:cases 605
+   :classifications
+   {"jvm-shared-product-behavior" 291
+    "idiomatic-dotnet-adaptation" 272
+    "user-approved-excluded-surface" 40
+    "test-infrastructure-only-mechanics" 2}
+   :package-statuses
+   {"PASS" 563
+    "APPROVED_EXCLUSION" 40
+    "TEST_INFRASTRUCTURE" 2}})
 
 (defn- fail!
   [message data]
@@ -306,6 +359,15 @@
                     :case (:case-id case-data) :status (:status row)})))))
     (assoc parsed :origin origin :rows rows)))
 
+(defn- partition-member?
+  [case-data {:keys [source-classes source-methods-by-class]}]
+  (let [source-class (:source-class case-data)]
+    (and (contains? in-scope-classifications
+                    (:product-classification case-data))
+         (or (contains? source-classes source-class)
+             (contains? (get source-methods-by-class source-class #{})
+                        (:source-method case-data))))))
+
 (defn validate-completed-partition!
   "Requires a named, bounded contract partition to retain its exact row count
   and PASS every row. This is partition evidence only; it does not redefine
@@ -315,10 +377,11 @@
   (let [parsed (validate-results! validated-manifest origin result-file)
         selected (->> (map vector (:cases validated-manifest) (:rows parsed))
                       (filterv (fn [[case-data _]]
-                                 (let [source-class (:source-class case-data)]
-                                   (or (contains? source-classes source-class)
-                                       (contains? (get source-methods-by-class source-class #{})
-                                                  (:source-method case-data)))))))]
+                                 (partition-member?
+                                  case-data
+                                  {:source-classes source-classes
+                                   :source-methods-by-class
+                                   source-methods-by-class}))))]
     (when-not (= expected-count (count selected))
       (fail! "Completed Pkl.Core corpus partition contract drifted"
              {:kind :pkl-core-completed-partition-contract-drift
@@ -338,6 +401,57 @@
                {:kind :pkl-core-completed-partition-failed
                 :partition name :failures failures})))
     {:partition name :passed (count selected)}))
+
+(defn validate-complete-package-matrix!
+  "Requires the three implementation partitions to be disjoint, exhaustive,
+  and entirely PASS across the pinned 563-row product matrix. The remaining
+  rows must retain only their source-controlled approved-exclusion or
+  test-infrastructure dispositions."
+  ([validated-manifest result-file]
+   (validate-complete-package-matrix!
+    validated-manifest result-file complete-partitions complete-matrix-boundary))
+  ([validated-manifest result-file partitions expected-boundary]
+   (let [parsed (validate-results! validated-manifest "package-dotnet" result-file)
+         cases (:cases validated-manifest)
+         rows (:rows parsed)
+         actual-boundary
+         {:cases (count cases)
+          :classifications (frequencies (map :product-classification cases))
+          :package-statuses (frequencies (map :status rows))}]
+     (when-not (= expected-boundary actual-boundary)
+       (fail! "The complete Pkl.Core product matrix boundary drifted"
+              {:kind :pkl-core-complete-matrix-boundary-drift
+               :expected expected-boundary :actual actual-boundary}))
+     (let [ownership-errors
+           (->> cases
+                (keep (fn [case-data]
+                        (let [classification (:product-classification case-data)
+                              in-scope? (contains? in-scope-classifications
+                                                   classification)
+                              owners (->> partitions
+                                          (filter #(partition-member? case-data %))
+                                          (mapv :name))]
+                          (when (or (and in-scope? (not= 1 (count owners)))
+                                    (and (not in-scope?) (seq owners)))
+                            {:case-id (:case-id case-data)
+                             :source-class (:source-class case-data)
+                             :source-method (:source-method case-data)
+                             :product-classification classification
+                             :partitions owners}))))
+                vec)]
+       (when (seq ownership-errors)
+         (fail! "The complete Pkl.Core product matrix is overlapping or unowned"
+                {:kind :pkl-core-complete-matrix-partition-ownership
+                 :errors ownership-errors})))
+     (let [partition-results
+           (mapv #(validate-completed-partition!
+                   validated-manifest "package-dotnet" result-file %)
+                 partitions)]
+       {:cases (:cases actual-boundary)
+        :in-scope (reduce + (map :passed partition-results))
+        :classifications (:classifications actual-boundary)
+        :package-statuses (:package-statuses actual-boundary)
+        :partitions partition-results}))))
 
 (defn compare-repeated-results
   "Requires two complete executions to be byte-for-byte identical after each
@@ -468,17 +582,15 @@
 
 (defn prove-fail-closed-controls!
   "Writes and executes deliberate JVM/package perturbation, omission,
-  duplication, stale-provenance, crash, and timeout controls."
+  duplication, classification, stale-provenance, crash, and timeout controls."
   [validated output-root]
   (let [output-root (paths/absolute output-root)
         upstream-rows (synthetic-upstream-rows validated)
         package-rows (conformant-package-rows validated upstream-rows)
         executable-index (first (keep-indexed
                                  (fn [index case-data]
-                                   (when (contains?
-                                          #{"jvm-shared-product-behavior"
-                                            "idiomatic-dotnet-adaptation"}
-                                          (:product-classification case-data))
+                                   (when (contains? in-scope-classifications
+                                                    (:product-classification case-data))
                                      index))
                                  (:cases validated)))
         upstream (write-results! (paths/resolve-path output-root "control-upstream.tsv")
@@ -524,13 +636,26 @@
         (write-results! (paths/resolve-path output-root "control-package-stale.tsv")
                         (update package-rows executable-index assoc
                                 :source-sha256 (apply str (repeat 64 "0"))))
+        classification-file
+        (write-results!
+         (paths/resolve-path output-root "control-package-classification.tsv")
+         (update package-rows executable-index assoc
+                 :product-classification
+                 (if (= "jvm-shared-product-behavior"
+                        (:product-classification (nth package-rows executable-index)))
+                   "idiomatic-dotnet-adaptation"
+                   "jvm-shared-product-behavior")))
         controls
-        {:jvm-perturbation (= 1 (:mismatched upstream-perturbation))
-         :package-perturbation (= 1 (:mismatched package-perturbation))
-         :crash (= :package-execution-failure
-                   (get-in crash [:mismatches 0 :kind]))
-         :timeout (= :package-execution-failure
-                     (get-in timeout [:mismatches 0 :kind]))
+        {:jvm-perturbation (= :pkl-core-corpus-mismatch
+                              (thrown-kind #(require-conformant!
+                                             upstream-perturbation)))
+         :package-perturbation (= :pkl-core-corpus-mismatch
+                                  (thrown-kind #(require-conformant!
+                                                 package-perturbation)))
+         :crash (= :pkl-core-corpus-mismatch
+                   (thrown-kind #(require-conformant! crash)))
+         :timeout (= :pkl-core-corpus-mismatch
+                     (thrown-kind #(require-conformant! timeout)))
          :missing (= :pkl-core-corpus-result-coverage
                      (thrown-kind #(validate-results! validated "package-dotnet"
                                                       missing-file)))
@@ -539,7 +664,11 @@
                                                         duplicate-file)))
          :stale (= :stale-pkl-core-corpus-provenance
                    (thrown-kind #(validate-results! validated "package-dotnet"
-                                                    stale-file)))}]
+                                                    stale-file)))
+         :classification (= :stale-pkl-core-corpus-provenance
+                            (thrown-kind
+                             #(validate-results! validated "package-dotnet"
+                                                 classification-file)))}]
     (when-not (every? true? (vals controls))
       (fail! "Pkl.Core corpus fail-closed controls did not all trigger"
              {:kind :pkl-core-corpus-control-failed :controls controls}))
@@ -701,9 +830,8 @@
       (write-text! project (str/replace project-text closing (str resources closing))))))
 
 (defn verify-corpus-runner!
-  "Executes the pinned upstream contract and isolated package consumer twice.
-  Infrastructure failures throw; semantic mismatches are retained as the
-  implementation baseline consumed by the dependent behavior tasks."
+  "Re-discovers the pinned contract, executes the upstream and isolated package
+  sides twice, and requires complete deterministic conformance."
   ([] (verify-corpus-runner! {}))
   ([{:keys [workspace-root manifest run-command! package-fn case-timeout-ms
             process-timeout-ms worker-count]
@@ -718,6 +846,10 @@
                                           "pkl-core-test-contract"
                                           "PklCoreTestContract.tsv"))
          validated (contract/validate-manifest! root manifest)
+         discovery-proof (contract/verify-contract!
+                          {:workspace-root root
+                           :manifest manifest
+                           :run-command! run-command!})
          proof-root (harness/clean-directory!
                      (paths/resolve-path root "vibeformer" "validation-output"
                                          "pkl-core-corpus"))
@@ -809,14 +941,8 @@
                      (fail! "Repeated isolated-package corpus executions were not byte-identical"
                             {:kind :nondeterministic-package-pkl-core-corpus
                              :first (str package-first) :second (str package-second)}))
-                 value-runtime-partition
-                 (validate-completed-partition!
-                  validated "package-dotnet" package-first
-                  value-runtime-parser-path-partition)
-                 loading-partition
-                 (validate-completed-partition!
-                  validated "package-dotnet" package-first
-                  loading-security-project-package-partition)
+                 complete-matrix
+                 (validate-complete-package-matrix! validated package-first)
                  first-assemblies
                  (validate-loaded-assemblies! assembly-manifest first-loaded consumer-root)
                  second-assemblies
@@ -831,6 +957,7 @@
                  baseline (write-family-summary! family-file validated comparison
                                                  package-first)
                  _ (write-mismatches! mismatch-file (:mismatches comparison))
+                 _ (require-conformant! comparison)
                  controls (prove-fail-closed-controls!
                            validated (paths/resolve-path proof-root "controls"))
                  summary {:cases (:total comparison)
@@ -844,9 +971,10 @@
                           :package-deterministic-observations
                           (:observations package-determinism)
                           :package-statuses (:statuses baseline)
-                          :completed-partition value-runtime-partition
-                          :completed-partitions
-                          [value-runtime-partition loading-partition]
+                          :live-discovery
+                          (get-in discovery-proof [:summary :live-discovery])
+                          :complete-matrix complete-matrix
+                          :completed-partitions (:partitions complete-matrix)
                           :package (:identity package-proof)
                           :controls controls}]
              (println "Complete Pkl.Core corpus runner baseline recorded:"
@@ -859,6 +987,7 @@
               :package-second package-second
               :family-baseline family-file
               :mismatches mismatch-file
+              :discovery-proof discovery-proof
               :package-proof package-proof
               :source-isolation source-isolation
               :loaded-assemblies first-assemblies})))))))

@@ -207,6 +207,43 @@
               (assoc method-partition
                      :source-methods-by-class {"B" #{"renamed"}})))))))
 
+(deftest complete-package-matrix-is-exact-exhaustive-and-non-overlapping
+  (let [root (temp-directory)
+        rows (package-rows)
+        result (result-file root "complete-matrix.tsv" rows)
+        partitions [{:name :a :source-classes #{"A"} :expected-count 1}
+                    {:name :b :source-classes #{}
+                     :source-methods-by-class {"B" #{"b"}}
+                     :expected-count 1}
+                    {:name :e :source-classes #{"E"} :expected-count 1}]
+        boundary {:cases 5
+                  :classifications
+                  {"jvm-shared-product-behavior" 1
+                   "idiomatic-dotnet-adaptation" 2
+                   "user-approved-excluded-surface" 1
+                   "test-infrastructure-only-mechanics" 1}
+                  :package-statuses
+                  {"PASS" 3 "APPROVED_EXCLUSION" 1 "TEST_INFRASTRUCTURE" 1}}
+        complete (runner/validate-complete-package-matrix!
+                  validated result partitions boundary)]
+    (is (= 5 (:cases complete)))
+    (is (= 3 (:in-scope complete)))
+    (is (= [{:partition :a :passed 1}
+            {:partition :b :passed 1}
+            {:partition :e :passed 1}]
+           (:partitions complete)))
+    (is (= :pkl-core-complete-matrix-partition-ownership
+           (thrown-kind
+            #(runner/validate-complete-package-matrix!
+              validated result
+              (update-in partitions [2 :source-classes] conj "A")
+              boundary))))
+    (is (= :pkl-core-complete-matrix-boundary-drift
+           (thrown-kind
+            #(runner/validate-complete-package-matrix!
+              validated result partitions
+              (assoc boundary :cases 4)))))))
+
 (deftest comparison-retains-failures-and-repetition-is-byte-exact
   (let [root (temp-directory)
         upstream (result-file root "upstream.tsv" (upstream-rows))
@@ -235,7 +272,7 @@
   (let [controls (runner/prove-fail-closed-controls!
                   validated (.resolve (temp-directory) "controls"))]
     (is (= #{:jvm-perturbation :package-perturbation :crash :timeout
-             :missing :duplicate :stale}
+             :missing :duplicate :stale :classification}
            (set (keys controls))))
     (is (every? true? (vals controls)))))
 
@@ -287,4 +324,5 @@
     (is (.contains packaging ":packages-root packages"))
     (is (.contains corpus "packages-root (:packages-root package-proof)"))
     (is (.contains corpus "Corpus.Resources.payload.txt"))
-    (is (.contains corpus ":expected-count 215"))))
+    (is (.contains corpus ":expected-count 215"))
+    (is (.contains corpus ":expected-count 59"))))
