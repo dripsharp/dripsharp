@@ -1,0 +1,196 @@
+(ns vibeformer.public-api-contract-test
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [vibeformer.paths :as paths]
+            [vibeformer.public-api-contract :as contract])
+  (:import [clojure.lang ExceptionInfo]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
+
+(def ^:private workspace (delay (paths/workspace-root)))
+(def ^:private fixtures (delay (contract/contract-paths @workspace)))
+(def ^:private upstream
+  (delay (:rows (contract/read-tsv (:upstream @fixtures) contract/upstream-columns))))
+(def ^:private package
+  (delay (:rows (contract/read-tsv (:package @fixtures) contract/package-columns))))
+(def ^:private policies (delay (contract/read-policy (:policy @fixtures))))
+(def ^:private behavior
+  (delay (:rows (contract/read-tsv (:behavior @fixtures) contract/behavior-columns))))
+(def ^:private controls
+  (delay (:rows (contract/read-tsv (:controls @fixtures)
+                                   contract/failing-control-columns))))
+(def ^:private validated (delay (contract/validate-contract! @workspace)))
+
+(defn- thrown-kind
+  [f]
+  (try
+    (f)
+    nil
+    (catch ExceptionInfo error
+      (:kind (ex-data error)))))
+
+(defn- temp-file
+  [name]
+  (.resolve (Files/createTempDirectory "public-api-contract-test"
+                                       (make-array FileAttribute 0))
+            name))
+
+(deftest authoritative-contract-is-complete-source-backed-and-scope-safe
+  (let [summary @validated
+        rows (contract/contract-rows @upstream @policies)
+        kinds (set (map :kind rows))]
+    (testing "all independently extracted declarations and package rows are classified"
+      (is (= 6353 (:upstream-rows summary)))
+      (is (= 9441 (:package-rows summary)))
+      (is (= 14 (:behavior-rows summary)))
+      (is (= 10 (:failing-controls summary)))
+      (is (= 6353 (reduce + (vals (:classifications summary)))))
+      (is (= 9441 (reduce + (vals (:package-classifications summary))))))
+
+    (testing "member metadata covers every required declaration dimension"
+      (is (every? kinds ["type" "constructor" "property" "field" "method"
+                         "enum-value"]))
+      (is (some #(not= "-" (:generic-constraints %)) rows))
+      (is (some #(str/includes? (:nullability %) "nullable") rows))
+      (is (some #(not= "-" (:exceptions %)) rows))
+      (is (some #(not= "-" (:delegate %)) rows))
+      (is (some #(not= "-" (:lifecycle %)) rows))
+      (is (some #(not= "-" (:invocation-evidence %)) rows))
+      (is (some (fn [[_ declarations]] (< 1 (count declarations)))
+                (group-by (juxt :owner :kind :name :parameter-count) rows))))
+
+    (testing "implementation internals do not become product exclusions"
+      (let [internals (filter #(= "public-implementation-internal"
+                                  (:classification %)) rows)
+            exclusions (filter #(= "approved-exclusion" (:classification %)) rows)]
+        (is (seq internals))
+        (is (every? #(= "-" (:exclusion-evidence %)) internals))
+        (is (every? #(str/includes? (:dotnet-adaptation %)
+                                    "not a product exclusion")
+                    internals))
+        (is (seq exclusions))
+        (is (every? #(str/starts-with? (:exclusion-evidence %)
+                                       "vibeformer/doc/product-goal.md#User-Approved")
+                    exclusions))))
+
+    (testing "all four product areas have surface or behavior rows"
+      (is (every? #(pos? (get (:areas summary) % 0))
+                  ["parser" "core" "config-binding"]))
+      (is (pos? (get (:native-areas summary) "csharp-generation" 0)))
+      (is (= #{"parser" "core" "config-binding" "csharp-generation"}
+             (set (map :area @behavior)))))))
+
+(deftest independent-upstream-extraction-matches-the-pinned-snapshot
+  (is (= {:matched 6353}
+         (contract/verify-upstream-snapshot! @workspace))))
+
+(deftest surface-comparators-fail-closed-on-missing-duplicate-and-perturbed-rows
+  (testing "upstream declaration extraction"
+    (is (= {:matched 6353}
+           (contract/compare-upstream-surface @upstream @upstream)))
+    (is (= :upstream-public-surface-drift
+           (get-in (contract/compare-upstream-surface @upstream (pop @upstream))
+                   [:mismatch :kind])))
+    (is (= :duplicate-upstream-extraction-rows
+           (get-in (contract/compare-upstream-surface @upstream
+                                                      (conj @upstream (first @upstream)))
+                   [:mismatch :kind])))
+    (is (= :upstream-public-surface-drift
+           (get-in (contract/compare-upstream-surface
+                    @upstream (assoc-in @upstream [0 :signature] "perturbed"))
+                   [:mismatch :kind]))))
+
+  (testing "package reflection"
+    (is (= {:matched 9441}
+           (contract/compare-package-surface @package @package)))
+    (is (= :package-public-surface-drift
+           (get-in (contract/compare-package-surface @package (pop @package))
+                   [:mismatch :kind])))
+    (is (= :duplicate-package-reflection-rows
+           (get-in (contract/compare-package-surface @package
+                                                     (conj @package (first @package)))
+                   [:mismatch :kind])))
+    (is (= :package-public-surface-drift
+           (get-in (contract/compare-package-surface
+                    @package (assoc-in @package [0 :nullability] "perturbed"))
+                   [:mismatch :kind])))))
+
+(deftest policy-rejects-silently-skipped-and-ambiguously-classified-declarations
+  (let [parser-row (some #(when (= "pkl-parser" (:source-module %)) %) @upstream)
+        parser-policy (contract/classify-upstream-row @policies parser-row)]
+    (is (= :unclassified-upstream-public-api
+           (thrown-kind #(contract/classify-upstream-row
+                          @policies (assoc parser-row :source-module "unknown")))))
+    (is (= :ambiguous-upstream-public-api-policy
+           (thrown-kind #(contract/classify-upstream-row
+                          (conj @policies (assoc parser-policy :rule-id "duplicate-first"))
+                          parser-row))))))
+
+(deftest known-current-gaps-are-explicit-failing-controls
+  (let [ids (set (map :control-id @controls))]
+    (is (ids "import-graph-parse-json"))
+    (is (ids "stack-empty"))
+    (is (ids "stack-create-default"))
+    (is (= #{"missing" "non-idiomatic"} (set (map :failure @controls))))
+    (is (every? #(not (str/blank? (:desired-adaptation %))) @controls))
+    (is (every? #(str/starts-with? (:upstream-provenance %) "research/pkl/")
+                @controls))))
+
+(deftest behavior-comparator-detects-coverage-execution-and-observation-drift
+  (let [results (mapv (fn [row]
+                        {:case-id (:case-id row)
+                         :status "EXECUTED"
+                         :observation (:normalized-expectation row)})
+                      @behavior)]
+    (is (= {:matched 14}
+           (contract/compare-behavior-results @behavior results)))
+    (is (= :public-api-behavior-coverage
+           (get-in (contract/compare-behavior-results @behavior (pop results))
+                   [:mismatch :kind])))
+    (is (= :duplicate-public-api-behavior-results
+           (get-in (contract/compare-behavior-results @behavior
+                                                      (conj results (first results)))
+                   [:mismatch :kind])))
+    (is (= :unexecuted-public-api-behavior
+           (get-in (contract/compare-behavior-results
+                    @behavior (assoc-in results [0 :status] "SKIPPED"))
+                   [:mismatch :kind])))
+    (is (= :public-api-behavior-drift
+           (get-in (contract/compare-behavior-results
+                    @behavior (assoc-in results [0 :observation] "perturbed"))
+                   [:mismatch :kind])))))
+
+(deftest behavior-evidence-extraction-is-independent-and-deterministic
+  (let [actual (temp-file "behavior.tsv")
+        expected-columns ["case-id" "upstream-provenance" "line-sha256"
+                          "dotnet-invocation"]]
+    (contract/extract-behavior-evidence! @workspace (:behavior @fixtures) actual)
+    (is (= (mapv #(dissoc % :fixture-line)
+                 (:rows (contract/read-tsv (:behavior-evidence @fixtures)
+                                           expected-columns)))
+           (mapv #(dissoc % :fixture-line)
+                 (:rows (contract/read-tsv actual expected-columns)))))))
+
+(deftest package-probe-reflects-generic-nullable-delegate-and-lifecycle-metadata
+  (let [project (paths/resolve-path (:root @fixtures) "PackageProbeFixture.csproj")
+        _ (vibeformer.process/run! {:command ["dotnet" "build" project
+                                              "--configuration" "Release" "--nologo"]
+                                    :directory @workspace})
+        assembly (paths/resolve-path (:root @fixtures) "bin" "Release" "net10.0"
+                                     "PackageProbeFixture.dll")
+        output (temp-file "package.tsv")]
+    (contract/reflect-packages! @workspace [assembly] output)
+    (let [rows (:rows (contract/read-tsv output contract/package-columns))
+          by-owner (group-by :owner rows)
+          resource (by-owner "Vibeformer.PublicApiProbeFixture.Resource`1")
+          formatter (by-owner "Vibeformer.PublicApiProbeFixture.Formatter`1")]
+      (is (seq resource))
+      (is (some #(and (= "property" (:kind %)) (= "Label" (:name %))
+                      (str/includes? (:nullability %) "nullable"))
+                resource))
+      (is (some #(and (= "method" (:kind %)) (= "Map" (:name %))
+                      (not= "-" (:generic-constraints %)))
+                resource))
+      (is (some #(= "dispose" (:lifecycle %)) resource))
+      (is (some #(= "delegate" (:delegate %)) formatter)))))
