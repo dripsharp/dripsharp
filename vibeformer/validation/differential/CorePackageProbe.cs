@@ -145,6 +145,10 @@ static class CorePackageProbe
             PClassInfo<object>.ForModuleClass("equality.module", new Uri("repl:equality")), leftProperties);
         var moduleCopy = new PModule(new Uri("repl:equality"), "equality.module",
             PClassInfo<object>.ForModuleClass("equality.module", new Uri("repl:equality")), rightProperties);
+        IReadOnlyDictionary<string, object> exportedProperties = left.GetProperties();
+        bool protectedIdentity = !ReferenceEquals(exportedProperties, leftProperties) &&
+            (exportedProperties is not IDictionary<string, object> mutableProperties ||
+             RejectsMutation(() => mutableProperties.Add("other", 2L)));
         return $"object={Lower(left.Equals(right) && left.GetHashCode() == right.GetHashCode())}" +
             $"|module={Lower(module.Equals(moduleCopy) && module.GetHashCode() == moduleCopy.GetHashCode())}" +
             $"|pair={Lower(new Pair<object, object>("a", 1L).Equals(new Pair<object, object>("a", 1L)))}" +
@@ -152,7 +156,7 @@ static class CorePackageProbe
             $"|size={Lower(DataSize.OfKibibytes(2).Equals(DataSize.OfBytes(2048)))}" +
             $"|class={Lower(PClassInfo<object>.String.Equals(PClassInfo<object>.Get("pkl.base", "String", new Uri("pkl:base"))))}" +
             $"|order={string.Join(",", left.GetProperties().Keys)}" +
-            $"|identity={Lower(ReferenceEquals(left.GetProperties(), leftProperties))}" +
+            $"|identity={Lower(protectedIdentity)}" +
             $"|render={Encode(module.ToString())}";
     }
 
@@ -161,7 +165,7 @@ static class CorePackageProbe
         ValueFormatter basic = ValueFormatter.Basic();
         ValueFormatter custom = ValueFormatter.WithCustomStringDelimiters();
         var multiline = new ValueFormatter(true, true);
-        var builder = new StringBuilder();
+        var builder = new StringWriter(CultureInfo.InvariantCulture);
         custom.FormatStringValue("\"\"start\\#\nnext\t\r", "  ", builder);
         return $"basic={Encode(basic.FormatStringValue("quote\"slash\\\n", ""))}" +
             $"|custom-quote={Encode(custom.FormatStringValue("\"", ""))}" +
@@ -239,7 +243,8 @@ static class CorePackageProbe
     static bool RejectsMutation(Action action)
     {
         try { action(); return false; }
-        catch (NotSupportedException) { return true; }
+        catch (Exception error) when (error is NotSupportedException or InvalidCastException)
+        { return true; }
     }
 
     sealed class RecordingVisitor : ValueVisitor
@@ -254,9 +259,9 @@ static class CorePackageProbe
         public void VisitDataSize(DataSize value) => Observation = "data-size";
         public void VisitBytes(byte[] value) => Observation = "bytes";
         public void VisitPair(Pair<object, object> value) => Observation = "pair";
-        public void VisitList(IList<object> value) => Observation = "list";
-        public void VisitSet(ISet<object> value) => Observation = "set";
-        public void VisitMap(IDictionary<object, object> value) => Observation = "map";
+        public void VisitList(IReadOnlyList<object> value) => Observation = "list";
+        public void VisitSet(IReadOnlySet<object> value) => Observation = "set";
+        public void VisitMap(IReadOnlyDictionary<object, object> value) => Observation = "map";
         public void VisitObject(PObject value) => Observation = "object";
         public void VisitModule(PModule value) => Observation = "module";
         public void VisitClass(PClass value) => Observation = "class";
@@ -276,9 +281,9 @@ static class CorePackageProbe
         public string ConvertDataSize(DataSize value) => "data-size";
         public string ConvertBytes(byte[] value) => "bytes";
         public string ConvertPair(Pair<object, object> value) => "pair";
-        public string ConvertList(IList<object> value) => "list";
-        public string ConvertSet(ISet<object> value) => "set";
-        public string ConvertMap(IDictionary<object, object> value) => "map";
+        public string ConvertList(IReadOnlyList<object> value) => "list";
+        public string ConvertSet(IReadOnlySet<object> value) => "set";
+        public string ConvertMap(IReadOnlyDictionary<object, object> value) => "map";
         public string ConvertObject(PObject value) => "object";
         public string ConvertModule(PModule value) => "module";
         public string ConvertClass(PClass value) => "class";
@@ -336,7 +341,7 @@ static class CorePackageProbe
         }
     }
 
-    static string NormalizeFileOutputs(IDictionary<string, FileOutput> outputs) =>
+    static string NormalizeFileOutputs(IReadOnlyDictionary<string, FileOutput> outputs) =>
         "files{" + string.Join(",", outputs.OrderBy(entry => entry.Key, StringComparer.Ordinal)
             .Select(entry => Encode(entry.Key) + "=text:" + Encode(entry.Value.GetText()) + "," +
                 Normalize(entry.Value.GetBytes()))) + "}";
@@ -377,7 +382,7 @@ static class CorePackageProbe
         throw new ArgumentException("unsupported exported value: " + value.GetType().FullName);
     }
 
-    static string NormalizeProperties(IDictionary<string, object> properties) =>
+    static string NormalizeProperties(IReadOnlyDictionary<string, object> properties) =>
         "{" + string.Join(",", properties.OrderBy(entry => entry.Key, StringComparer.Ordinal)
             .Select(entry => Encode(entry.Key) + "=" + Normalize(entry.Value))) + "}";
 

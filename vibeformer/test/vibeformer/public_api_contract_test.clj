@@ -45,11 +45,13 @@
         kinds (set (map :kind rows))]
     (testing "all independently extracted declarations and package rows are classified"
       (is (= 6353 (:upstream-rows summary)))
-      (is (= 9653 (:package-rows summary)))
+      (is (= 2643 (:package-rows summary)))
       (is (= 20 (:behavior-rows summary)))
       (is (zero? (:failing-controls summary)))
       (is (= 6353 (reduce + (vals (:classifications summary)))))
-      (is (= 9653 (reduce + (vals (:package-classifications summary))))))
+      (is (= 2643 (reduce + (vals (:package-classifications summary)))))
+      (is (zero? (get (:package-classifications summary)
+                      "public-implementation-internal" 0))))
 
     (testing "member metadata covers every required declaration dimension"
       (is (every? kinds ["type" "constructor" "property" "field" "method"
@@ -105,7 +107,7 @@
                    [:mismatch :kind]))))
 
   (testing "package reflection"
-    (is (= {:matched 9653}
+    (is (= {:matched 2643}
            (contract/compare-package-surface @package @package)))
     (is (= :package-public-surface-drift
            (get-in (contract/compare-package-surface @package (pop @package))
@@ -135,8 +137,8 @@
                 @workspace {:source-module "pkl-parser"})
         core (contract/generation-surface!
               @workspace {:source-module "pkl-core"})]
-    (is (= [958 1250] (mapv #(count (:required-rows %)) [parser core])))
-    (is (= [102 139] (mapv #(count (:seeds %)) [parser core])))
+    (is (= [958 1138] (mapv #(count (:required-rows %)) [parser core])))
+    (is (= [102 126] (mapv #(count (:seeds %)) [parser core])))
     (is (every? #(and (= :public-api (:expand %)) (set? (:members %)))
                 (concat (:seeds parser) (:seeds core))))
     (is (some #(and (= "org.pkl.core.ImportGraph" (:owner %))
@@ -173,6 +175,28 @@
                     (assoc-in metadata [:rows 0 :generated :destination :owner] "")
                     [actual-row actual-row])
                    [:mismatch :kind])))))
+
+(deftest package-boundary-rejects-implementation-and-java-shaped-metadata
+  (let [product-row {:assembly "Pkl.Core" :owner "Pkl.Core.Evaluator"
+                     :signature "System.String Evaluate()"}
+        implementation-row {:assembly "Pkl.Core" :owner "Pkl.Core.Runtime.VmContext"
+                            :signature "Pkl.Core.Runtime.VmContext Get()"}
+        mutable-row {:assembly "Pkl.Core" :owner "Pkl.Core.Evaluator"
+                     :signature "System.Collections.Generic.IList<System.String> Get()"}]
+    (is (= {:approved 1}
+           (contract/validate-package-boundary!
+            [product-row] [(assoc product-row :classification "product-api-current")])))
+    (is (= :public-implementation-metadata-leak
+           (thrown-kind
+            #(contract/validate-package-boundary!
+              [implementation-row]
+              [(assoc implementation-row
+                      :classification "public-implementation-internal")]))))
+    (is (= :forbidden-public-package-signature
+           (thrown-kind
+            #(contract/validate-package-boundary!
+              [mutable-row]
+              [(assoc mutable-row :classification "product-api-current")]))))))
 
 (deftest behavior-comparator-detects-coverage-execution-and-observation-drift
   (let [results (mapv (fn [row]
@@ -243,15 +267,14 @@
 
 (deftest whole-public-body-audit-is-reviewed-and-perturbation-sensitive
   (let [rows @body-candidates]
-    (is (= 147 (count rows)))
-    (is (= {"constant-default" 2
-            "constant-empty" 5
-            "constant-null" 20
-            "constant-zero" 37
-            "empty-no-op" 54
-            "unconditional-unsupported" 29}
+    (is (= 17 (count rows)))
+    (is (= {"constant-empty" 1
+            "constant-null" 3
+            "constant-zero" 4
+            "empty-no-op" 5
+            "unconditional-unsupported" 4}
            (frequencies (map :finding rows))))
-    (is (= {:matched 147} (contract/compare-body-audit rows rows)))
+    (is (= {:matched 17} (contract/compare-body-audit rows rows)))
     (is (= :public-body-audit-drift
            (get-in (contract/compare-body-audit rows (pop rows))
                    [:mismatch :kind])))
@@ -268,8 +291,8 @@
         summary (contract/write-strong-contract-keys! @workspace output)
         lines (->> (str/split-lines (Files/readString output))
                    (remove #(str/starts-with? % "#")) vec)]
-    (is (= {:rows 1853 :keys 1827} summary))
-    (is (= 1827 (count lines)))
+    (is (= {:rows 2606 :keys 2552} summary))
+    (is (= 2552 (count lines)))
     (is (= (sort lines) lines))
     (is (some #(str/includes? % "Pkl.Core\tPkl.Core.ConfigBinder\tmethod\tBind")
               lines))

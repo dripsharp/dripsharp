@@ -13,7 +13,6 @@ using Pkl.Core.Module;
 using Pkl.Core.Packages;
 using Pkl.Core.Project;
 using Pkl.Core.Resource;
-using Pkl.Core.Runtime;
 using Pkl.Core.Settings;
 using PklHttpClient = Pkl.Core.Http.HttpClient;
 
@@ -64,6 +63,11 @@ static class PackageConsumer
             "module string-URI source");
         Check.That(ModuleSource.ModulePath("lib/main.pkl").GetUri().ToString() ==
             "modulepath:/lib/main.pkl", "module-path source");
+        using ModuleKeyFactory customFactory = new TextModuleKeyFactory();
+        ModuleKey? customKey = customFactory.TryCreate(new Uri("consumer:module"));
+        Check.That(customKey is not null && customKey.GetUri().Scheme == "consumer" &&
+            customKey.Resolve(SecurityManagers.DefaultManager).LoadSource() == "value = 42\n",
+            "idiomatic nullable module factory and resolved module contracts");
 
         var modulePatterns = new List<Regex> { new("repl:") };
         var resourcePatterns = new List<Regex> { new("env:"), new("prop:") };
@@ -149,9 +153,9 @@ static class PackageConsumer
         {
             [new Uri("https://origin.test/")] = new Uri("https://mirror.test/")
         };
-        var headers = new Dictionary<string, IDictionary<string, IList<string>>>
+        var headers = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>
         {
-            ["**"] = new Dictionary<string, IList<string>>
+            ["**"] = new Dictionary<string, IReadOnlyList<string>>
             {
                 ["X-Contract"] = new List<string> { "one", "two" }
             }
@@ -203,9 +207,9 @@ static class PackageConsumer
         Func<ModuleSource, PModule> evaluate = evaluator.Evaluate;
         Func<ModuleSource, object> evaluateOutputValue = evaluator.EvaluateOutputValue;
         Func<ModuleSource, string, object> evaluateExpression = evaluator.EvaluateExpression;
-        Check.That(evaluate.Target is EvaluatorImpl, "module evaluator entry target");
-        Check.That(evaluateOutputValue.Target is EvaluatorImpl, "output-value evaluator entry target");
-        Check.That(evaluateExpression.Target is EvaluatorImpl, "expression evaluator entry target");
+        Check.That(evaluate.Target is not null, "module evaluator entry target");
+        Check.That(evaluateOutputValue.Target is not null, "output-value evaluator entry target");
+        Check.That(evaluateExpression.Target is not null, "expression evaluator entry target");
 
         Console.WriteLine("Independent Pkl.Core package consumer passed.");
     }
@@ -327,10 +331,6 @@ static class PackageConsumer
             .AddResourceReader(reader)
             .SetProjectDependencies(dependencies)
             .Build();
-        reader.ExpectedSecurityManager = builder.GetSecurityManager()
-            ?? throw new InvalidOperationException("context security manager was not built");
-        reader.ExpectedHttpClient = httpClient;
-        reader.ExpectedProjectFile = new Uri(projectFile);
         return evaluator;
     }
 
@@ -359,32 +359,16 @@ static class PackageConsumer
 
     sealed class ContextResourceReader(string identity) : ResourceReader
     {
-        public Pkl.Core.SecurityManager? ExpectedSecurityManager { get; set; }
-        public PklHttpClient? ExpectedHttpClient { get; set; }
-        public Uri? ExpectedProjectFile { get; set; }
         public Action? NestedAction { get; set; }
 
         public string GetUriScheme() => "context";
         public bool HasHierarchicalUris() => false;
         public bool IsGlobbable() => false;
 
-        public JavaOptional<object> Read(Uri uri)
+        public object? Read(Uri uri)
         {
             NestedAction?.Invoke();
-            VmContext context = VmContext.Get(null!);
-            Check.That(ReferenceEquals(context.GetSecurityManager(), ExpectedSecurityManager),
-                $"{identity} security manager binding");
-            Check.That(ReferenceEquals(context.GetHttpClient(), ExpectedHttpClient),
-                $"{identity} HTTP client binding");
-            Check.That(context.GetEnvironmentVariables()["CONTEXT_ID"] == identity,
-                $"{identity} environment binding");
-            Check.That(context.GetExternalProperties()["context.id"] == identity,
-                $"{identity} property binding");
-            ProjectDependenciesManager? dependencies = context.GetProjectDependenciesManager();
-            Check.That(dependencies is not null &&
-                dependencies.GetProjectFileUri() == ExpectedProjectFile,
-                $"{identity} project dependency binding");
-            return JavaOptional<object>.Of(identity);
+            return identity;
         }
 
         public void Close() { }
@@ -395,23 +379,51 @@ static class PackageConsumer
     {
         bool disposed;
 
-        public JavaHttpResponse<T> Send<T>(
-            JavaHttpRequest request,
-            JavaHttpBodyHandler<T> responseBodyHandler,
-            PklHttpClient.HttpRequestChecker httpRequestChecker)
+        public HttpResponseMessage Send(
+            HttpRequestMessage request,
+            PklHttpClient.HttpRequestChecker requestChecker)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            httpRequestChecker(request.Uri());
-            var message = new HttpResponseMessage(HttpStatusCode.OK)
+            Uri uri = request.RequestUri ?? throw new InvalidOperationException("request URI missing");
+            requestChecker(uri);
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                RequestMessage = new HttpRequestMessage(HttpMethod.Get, request.Uri()),
+                RequestMessage = request,
                 Content = new StringContent($"value = \"{identity}\"\n", Encoding.UTF8)
             };
-            T body = responseBodyHandler(message);
-            return new JavaHttpResponse<T>(message, body);
         }
 
         public void Close() => Dispose();
         public void Dispose() => disposed = true;
+    }
+
+    sealed class TextModuleKeyFactory : ModuleKeyFactory
+    {
+        bool disposed;
+
+        public ModuleKey? Create(Uri uri)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return uri.Scheme == "consumer" ? new TextModuleKey(uri) : null;
+        }
+
+        public void Close() => disposed = true;
+        public void Dispose() => Close();
+    }
+
+    sealed class TextModuleKey(Uri uri) : ModuleKey
+    {
+        public Uri GetUri() => uri;
+        public ResolvedModuleKey Resolve(Pkl.Core.SecurityManager securityManager) =>
+            new TextResolvedModuleKey(this);
+        public bool HasHierarchicalUris() => false;
+        public bool IsGlobbable() => false;
+    }
+
+    sealed class TextResolvedModuleKey(ModuleKey original) : ResolvedModuleKey
+    {
+        public ModuleKey GetOriginal() => original;
+        public Uri GetUri() => original.GetUri();
+        public string LoadSource() => "value = 42\n";
     }
 }

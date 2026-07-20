@@ -240,6 +240,36 @@
   (or (nil? (:selected-declarations ctx))
       (.containsKey ^IdentityHashMap (:selected-declarations ctx) declaration)))
 
+(defn- exported-product-type?
+  "Returns true when a translated type is part of the executable shipped
+  product boundary. A nil boundary preserves the reusable translator's normal
+  Java-derived visibility for non-Pkl projects and focused translator tests."
+  [ctx ^CtType type]
+  (let [boundary (:public-api-type-keys ctx)]
+    (or (nil? boundary)
+        (contains? boundary (spoon/declaration-key type)))))
+
+(defn- exported-product-declaration?
+  [ctx ^CtElement declaration]
+  (let [boundary (:public-api-declaration-keys ctx)]
+    (or (nil? boundary)
+        (contains? boundary (spoon/declaration-key declaration)))))
+
+(defn- cap-product-visibility
+  [ctx ^CtElement declaration visibility]
+  (let [owner (cond
+                (instance? CtType declaration) declaration
+                (instance? CtExecutable declaration)
+                (.getDeclaringType ^CtExecutable declaration)
+                (instance? CtField declaration)
+                (.getDeclaringType ^CtField declaration)
+                :else nil)]
+    (if (or (and owner (not (exported-product-type? ctx owner)))
+            (exported-product-declaration? ctx declaration)
+            (contains? #{"private" "protected" "protected internal"} visibility))
+      visibility
+      "internal")))
+
 (defn- same-type? [^CtType left ^CtType right]
   (and left right (= (.getQualifiedName left) (.getQualifiedName right))))
 
@@ -776,6 +806,84 @@
        (contains? idiomatic-list-dispatch-declarations
                   (enclosing-declaration-key reference))))
 
+(defn- signature-declaration-key [^CtTypeReference reference]
+  (loop [current reference]
+    (cond
+      (instance? CtTypeReference current)
+      (when (.isParentInitialized ^CtElement current)
+        (recur (.getParent ^CtElement current)))
+
+      (instance? CtParameter current)
+      (some-> ^CtParameter current .getParent spoon/declaration-key)
+
+      (instance? CtRecordComponent current)
+      (let [parent (.getParent ^CtRecordComponent current)]
+        (str "record-component:"
+             (when (instance? CtType parent)
+               (.getQualifiedName ^CtType parent))
+             "#" (.getSimpleName ^CtRecordComponent current)))
+
+      (or (instance? CtExecutable current) (instance? CtField current))
+      (spoon/declaration-key current)
+
+      :else nil)))
+
+(defn- exported-product-signature-reference?
+  [ctx ^CtTypeReference reference]
+  (let [boundary (:public-api-declaration-keys ctx)]
+    (and boundary
+         (not (:suppress-product-signature? ctx))
+         (or (:force-product-signature? ctx)
+             (contains? boundary (signature-declaration-key reference))))))
+
+(def ^:private read-only-collection-type-bases
+  {"java.util.Collection" "global::System.Collections.Generic.IReadOnlyCollection"
+   "java.util.List" "global::System.Collections.Generic.IReadOnlyList"
+   "java.util.Map" "global::System.Collections.Generic.IReadOnlyDictionary"
+   "java.util.Set" "global::System.Collections.Generic.IReadOnlySet"})
+
+(def ^:private read-only-collection-adaptations
+  {"java.util.Collection" :read-only-product-collection
+   "java.util.List" :read-only-product-list
+   "java.util.Map" :read-only-product-map
+   "java.util.Set" :read-only-product-set})
+
+(declare top-definitions)
+
+(defn- exact-product-signature-collection-adaptation
+  [ctx ^CtTypeReference reference]
+  (when (or (exported-product-signature-reference? ctx reference)
+            (let [component (when (and (.isParentInitialized reference)
+                                       (instance? CtRecordComponent
+                                                  (.getParent reference)))
+                              (.getParent reference))]
+              (and component
+                   (exported-product-type?
+                    ctx (.getParent ^CtRecordComponent component)))))
+    (get read-only-collection-adaptations (.getQualifiedName reference))))
+
+(defn- product-signature-collection-adaptation
+  [ctx ^CtTypeReference reference]
+  (or (exact-product-signature-collection-adaptation ctx reference)
+      (let [parameter (when (and (.isParentInitialized reference)
+                                 (instance? CtParameter (.getParent reference)))
+                        (.getParent reference))
+            method (when (and parameter (.isParentInitialized ^CtParameter parameter)
+                              (instance? CtMethod (.getParent ^CtParameter parameter)))
+                     (.getParent ^CtParameter parameter))
+            parameters (when method (vec (.getParameters ^CtMethod method)))
+            index (when parameter
+                    (first (keep-indexed #(when (identical? parameter %2) %1)
+                                         parameters)))]
+        (when (some? index)
+          (some (fn [^CtMethod definition]
+                  (let [definition-parameters (vec (.getParameters definition))]
+                    (when (< index (count definition-parameters))
+                      (exact-product-signature-collection-adaptation
+                       ctx (.getType ^CtParameter
+                                     (nth definition-parameters index))))))
+                (top-definitions ctx method))))))
+
 (declare type-node)
 
 (defn- generic-node [base arguments]
@@ -873,11 +981,27 @@
   (let [occurrence (occurrence! ctx reference :type)
         [node rule]
         (cond
+          ;; Public Pkl APIs expose immutable collection views. Mutable Java
+          ;; collection contracts remain available only inside translated
+          ;; implementation bodies and adapters.
+          (and (exported-product-signature-reference? ctx reference)
+               (contains? read-only-collection-type-bases
+                          (.getQualifiedName reference)))
+          [(generic-node (get read-only-collection-type-bases
+                              (.getQualifiedName reference))
+                         (let [arguments (.getActualTypeArguments reference)]
+                           (if (seq arguments)
+                             (mapv #(type-node ctx %) arguments)
+                             [(raw "object")])))
+           :pkl-core.type/read-only-product-collection]
+
           ;; Java byte is signed, so internal arithmetic continues to use
           ;; sbyte. At exported value/data boundaries, however, byte[] is the
           ;; idiomatic CLR representation. Keep this adaptation declaration-
           ;; scoped so generic Java translation semantics are unchanged.
-          (idiomatic-byte-array-reference? reference)
+          (or (idiomatic-byte-array-reference? reference)
+              (and (primitive-byte-array? reference)
+                   (exported-product-signature-reference? ctx reference)))
           [(raw "byte[]") :pkl-core.type/idiomatic-byte-array]
 
           ;; List<?> was historically widened to IEnumerable<object> to model
@@ -1254,11 +1378,17 @@
                    (.getParameters method))]
     (str "From" (str/join "And" parts))))
 
+(declare method-signature-adaptation)
+
 (defn- method-name [ctx ^CtMethod method]
   (let [simple-name (.getSimpleName method)
         owner (.getDeclaringType method)
         owner-name (some-> owner .getQualifiedName)
         base-name (cond
+                    (and (= :http-send-compatibility
+                            (method-signature-adaptation ctx method))
+                         (not= "org.pkl.core.http.HttpClient" owner-name))
+                    "SendCompatibility"
                     (and (= owner-name "org.pkl.core.module.ModuleKeys")
                          (= simple-name "synthetic"))
                     "CreateSynthetic"
@@ -1293,6 +1423,47 @@
       (let [definitions (vec (.getTopDefinitions method))]
         (.put cache method definitions)
         definitions))))
+
+(def ^:private module-key-factory-create-key
+  "executable:org.pkl.core.module.ModuleKeyFactory#create(java.net.URI)")
+
+(def ^:private nullable-resource-reader-contract-keys
+  #{"executable:org.pkl.core.resource.ResourceReader#read(java.net.URI)"
+    "executable:org.pkl.core.externalreader.ExternalResourceResolver#read(java.net.URI)"})
+
+(def ^:private reader-list-contract-key
+  "executable:org.pkl.core.runtime.ReaderBase#listElements(org.pkl.core.SecurityManager,java.net.URI)")
+
+(def ^:private http-send-contract-key
+  "executable:org.pkl.core.http.HttpClient#send(java.net.http.HttpRequest,java.net.http.HttpResponse$BodyHandler,org.pkl.core.http.HttpClient$HttpRequestChecker)")
+
+(def ^:private http-proxy-selector-contract-key
+  "executable:org.pkl.core.http.HttpClient$Builder#setProxySelector(java.net.ProxySelector)")
+
+(defn- method-contract-keys [ctx ^CtMethod method]
+  (set (keep #(when % (spoon/declaration-key %))
+             (cons method (top-definitions ctx method)))))
+
+(defn- method-signature-adaptation [ctx ^CtMethod method]
+  (let [definitions (cons method (top-definitions ctx method))
+        keys (set (keep #(when % (spoon/declaration-key %)) definitions))]
+    (cond
+      (contains? keys module-key-factory-create-key) :nullable-module-key
+      (some keys nullable-resource-reader-contract-keys) :nullable-resource
+      (or (contains? keys reader-list-contract-key)
+          (= "listElements" (.getSimpleName method)))
+      :read-only-path-elements
+      (contains? keys http-send-contract-key) :http-send-compatibility
+      (contains? keys http-proxy-selector-contract-key) :http-proxy-selector-compatibility
+      (some #(product-signature-collection-adaptation ctx (.getType ^CtMethod %))
+            definitions)
+      (some #(product-signature-collection-adaptation ctx (.getType ^CtMethod %))
+            definitions)
+      (some #(and (primitive-byte-array? (.getType ^CtMethod %))
+                  (exported-product-signature-reference? ctx (.getType ^CtMethod %)))
+            definitions)
+      :idiomatic-byte-array
+      :else nil)))
 
 (defn- class-definition [ctx ^CtMethod method]
   (some #(when-not (instance? CtInterface (.getDeclaringType ^CtMethod %)) %)
@@ -1504,6 +1675,7 @@
                               "protected"
                               (visibility (or overridable-base method)
                                           (if interface? "public" "internal"))))
+        member-visibility (cap-product-visibility ctx method member-visibility)
         destination-hiding? (and (= "GetType" name) (not override?))]
     [member-visibility
      (when destination-hiding? "new")
@@ -1548,10 +1720,23 @@
 (defn- deferred-interface-method-node [ctx ^CtType owner-type ^CtMethod method]
   (let [owner (executable-owner method)
         name (method-name ctx method)
+        signature-adaptation (method-signature-adaptation ctx method)
         {:keys [parameters node]} (synthetic-formals-node method)
         body (.getBody method)
         return-reference (or (substituted-interface-return owner-type method)
                              (.getType method))
+        return-type (or (case signature-adaptation
+                          :nullable-module-key
+                          (raw "global::Pkl.Core.Module.ModuleKey?")
+                          :nullable-resource
+                          (raw "object?")
+                          :read-only-path-elements
+                          (raw (str "global::System.Collections.Generic.IReadOnlyList<"
+                                    "global::Pkl.Core.Module.PathElement>"))
+                          :idiomatic-byte-array
+                          (raw "byte[]")
+                          nil)
+                        (type-node ctx return-reference))
         sealed-owner? (or (modifier? owner-type ModifierKind/FINAL)
                           (instance? CtRecord owner-type)
                           (instance? CtEnum owner-type))
@@ -1565,11 +1750,14 @@
                  (nil? body) "public abstract "
                  sealed-owner? "public "
                  :else "public virtual "))
-          (type-node ctx return-reference) (raw (str " " name)) node
+          return-type (raw (str " " name)) node
           (raw "(") (sequence-node params ", ") (raw ")")
           (constraints-node ctx parameters)
           (if body
-            (sequence-node [(raw " ") (:node (java-body/translate (:body-context ctx) body))])
+            (sequence-node
+             [(raw " ")
+              (translated-node (assoc ctx :signature-adaptation signature-adaptation)
+                               body)])
             (raw ";"))])]
     (with-source declaration method (if body
                                       :dotnet.interface/inherited-default-contract
@@ -1633,6 +1821,7 @@
 (defn- method-node [ctx owner-type ^CtMethod method]
   (let [owner (executable-owner method)
         name (method-name ctx method)
+        signature-adaptation (method-signature-adaptation ctx method)
         loggers-stream?
         (= "executable:org.pkl.core.Loggers#stream(java.io.PrintStream)"
            (spoon/declaration-key method))
@@ -1643,15 +1832,33 @@
                 (mapv #(.getQualifiedName (.getType ^CtParameter %))
                       (.getParameters method))))
         {:keys [parameters node]} (formals ctx owner method)
-        params (mapv #(parameter-node
-                       ctx owner %
-                       (cond
-                         loggers-stream? (raw "global::System.IO.Stream")
-                         record-object-equals?
-                         (sequence-node [(raw (identifier (.getSimpleName owner-type)))
-                                         (raw "?")])
-                         :else nil))
-                     (.getParameters method))
+        product-contract (some #(when (exported-product-declaration? ctx %) %)
+                               (top-definitions ctx method))
+        product-contract-parameters (when product-contract
+                                      (vec (.getParameters ^CtMethod product-contract)))
+        params (mapv (fn [index ^CtParameter parameter]
+                       (let [contract-reference
+                             (when (and product-contract-parameters
+                                        (< index (count product-contract-parameters)))
+                               (.getType ^CtParameter
+                                         (nth product-contract-parameters index)))
+                             adapted-contract?
+                             (and contract-reference
+                                  (or (product-signature-collection-adaptation
+                                       ctx contract-reference)
+                                      (and (primitive-byte-array? contract-reference)
+                                           (exported-product-signature-reference?
+                                            ctx contract-reference))))]
+                         (parameter-node
+                          ctx owner parameter
+                          (cond
+                            loggers-stream? (raw "global::System.IO.Stream")
+                            record-object-equals?
+                            (sequence-node [(raw (identifier (.getSimpleName owner-type)))
+                                            (raw "?")])
+                            adapted-contract? (type-node ctx contract-reference)
+                            :else nil))))
+                     (range) (.getParameters method))
         body (.getBody method)
         words (method-modifiers ctx owner-type method body name)
         signature (str name "(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
@@ -1727,16 +1934,38 @@
           (raw "object")
 
           :else nil)
-        return-type (or forced-return
+        return-type (or (case signature-adaptation
+                          :nullable-module-key
+                          (raw "global::Pkl.Core.Module.ModuleKey?")
+                          :nullable-resource
+                          (raw "object?")
+                          :read-only-path-elements
+                          (raw (str "global::System.Collections.Generic.IReadOnlyList<"
+                                    "global::Pkl.Core.Module.PathElement>"))
+                          :idiomatic-byte-array
+                          (raw "byte[]")
+                          (:read-only-product-list :read-only-product-map
+                           :read-only-product-set :read-only-product-collection)
+                          (type-node ctx (.getType ^CtMethod
+                                                   (or product-contract method)))
+                          nil)
+                        forced-return
                         (if (and external-object-interface-contract?
                                  (not= "java.lang.Object" (.getQualifiedName (.getType method))))
                           (raw "object")
                           (type-node ctx return-reference)))
-        return-type (if (and (nullable-annotation? method)
+        return-type (if (and (nil? signature-adaptation)
+                             (nullable-annotation? method)
                              (not (.isPrimitive (.getType method))))
                       (sequence-node [return-type (raw "?")])
                       return-type)
-        translated-body (when body (translated-node ctx body))
+        translated-body (when body
+                          (translated-node
+                           (assoc ctx
+                                  :signature-adaptation signature-adaptation
+                                  :product-return-reference
+                                  (.getType ^CtMethod (or product-contract method)))
+                           body))
         ;; Java's anonymous Iterator implementation in Pair has no direct C#
         ;; anonymous-class equivalent.  Keep recursively translating its live
         ;; Spoon body for coverage, then map this exact resolved product method
@@ -1870,6 +2099,22 @@
           :else translated-body)
         declaration
         (cond
+          (and (= :http-send-compatibility signature-adaptation)
+               (= "org.pkl.core.http.HttpClient"
+                  (.getQualifiedName owner-type)))
+          (sequence-node
+           [(raw "/* Java HttpClient.send") node (raw "(")
+            (sequence-node params ", ")
+            (raw ") is supplied by the internal compatibility adapter. */")])
+
+          (and (= :http-proxy-selector-compatibility signature-adaptation)
+               (= "org.pkl.core.http.HttpClient$Builder"
+                  (.getQualifiedName owner-type)))
+          (sequence-node
+           [(raw "/* Java ProxySelector configuration ") node (raw "(")
+            (sequence-node params ", ")
+            (raw ") remains an internal HTTP builder adapter. */")])
+
           (= "executable:org.pkl.core.project.CanonicalPackageUri#equals(java.lang.Object)"
              (spoon/declaration-key method))
           ;; C# positional records synthesize the same value equality contract
@@ -1944,10 +2189,12 @@
         instance-initializers
         (when-not (delegates-to-this-constructor? owner-type explicit-invocation)
           (instance-initializer-nodes ctx owner-type))
-        constructor-visibility (if (and (modifier? constructor ModifierKind/PRIVATE)
-                                        (not (.isTopLevel owner-type)))
-                                 "internal"
-                                 (visibility constructor "internal"))
+        constructor-visibility (cap-product-visibility
+                                ctx constructor
+                                (if (and (modifier? constructor ModifierKind/PRIVATE)
+                                         (not (.isTopLevel owner-type)))
+                                  "internal"
+                                  (visibility constructor "internal")))
         declaration
         (sequence-node
          [(raw (join-words [constructor-visibility]))
@@ -2019,6 +2266,7 @@
                            (and (modifier? field ModifierKind/PRIVATE)
                                 (not (.isTopLevel owner-type))) "internal"
                            :else (visibility field (if enum-value? "public" "internal")))
+        field-visibility (cap-product-visibility ctx field field-visibility)
         property? (public-static-property-field? field)
         words [field-visibility
                (when (or enum-value? (modifier? field ModifierKind/STATIC)) "static")
@@ -2045,14 +2293,19 @@
 (defn- record-component-node [ctx ^CtType owner-type ^CtRecordComponent component]
   (let [owner (.getQualifiedName owner-type)
         name (record-component-name owner-type component)
-        node (sequence-node [(type-node ctx (.getType component)) (raw (str " " name))])]
+        signature-ctx (assoc ctx :force-product-signature?
+                             (exported-product-type? ctx owner-type))
+        node (sequence-node [(type-node signature-ctx (.getType component))
+                             (raw (str " " name))])]
     (attach-declaration ctx node component :record-component owner name nil
                         :java.declaration/record-component)))
 
 (defn- record-component-property-node [ctx ^CtType owner-type ^CtRecordComponent component]
   (let [owner (.getQualifiedName owner-type)
         name (record-component-name owner-type component)
-        node (sequence-node [(raw "public ") (type-node ctx (.getType component))
+        signature-ctx (assoc ctx :force-product-signature?
+                             (exported-product-type? ctx owner-type))
+        node (sequence-node [(raw "public ") (type-node signature-ctx (.getType component))
                              (raw (str " " name " { get; }"))])]
     (attach-declaration ctx node component :record-component owner name nil
                         :java.declaration/record-component-property)))
@@ -2593,13 +2846,16 @@
                  (not (modifier? (first members) ModifierKind/STATIC)))
         (first members)))))
 
-(defn- type-words [^CtType type]
+(defn- type-words [ctx ^CtType type]
   (let [;; Java allows a public nested class to extend a less-visible sibling.
         ;; C# exposes the base type in the derived type's metadata and rejects
         ;; that shape. Promote the selected base declaration to the visibility
         ;; already exposed by its public subtype.
         declaring-type (.getDeclaringType type)
         visibility (cond
+                     (not (exported-product-type? ctx type))
+                     "internal"
+
                      ;; MessagePack transport is a user-approved exclusion.
                      ;; The transport remains assembly-internal implementation
                      ;; detail. Public external-reader contracts are independent
@@ -2674,8 +2930,11 @@
         ;; context just like member signatures. This is significant when a
         ;; nested subtype shadows a sibling base name (for example an inner
         ;; Response extending its owner's Response contract).
-        bases (mapv #(type-node (assoc member-ctx :base-clause? true) %)
-                    (base-types type))
+        bases (->> (base-types type)
+                   (remove #(and (exported-product-type? ctx type)
+                                 (= "org.pkl.core.runtime.ReaderBase"
+                                    (.getQualifiedName ^CtTypeReference %))))
+                   (mapv #(type-node (assoc member-ctx :base-clause? true) %)))
         raw-members (concat (when (instance? CtEnum type)
                               (.getEnumValues ^CtEnum type))
                             (.getTypeMembers type))
@@ -2767,7 +3026,7 @@
         header (sequence-node
                 (remove nil?
                         [(node-info-attribute type)
-                         (raw (join-words (type-words type))) (raw name) node
+                         (raw (join-words (type-words ctx type))) (raw name) node
                          (when components
                            (sequence-node [(raw "(") (sequence-node components ", ") (raw ")")]))
                          (when (seq bases)
@@ -2813,7 +3072,9 @@
                              (.getParameters functional-method))
                 delegate-node
                 (sequence-node
-                 [(raw (join-words [(visibility type "internal")
+                 [(raw (join-words [(if (exported-product-type? ctx type)
+                                     (visibility type "internal")
+                                     "internal")
                                     "delegate"]))
                   (type-node ctx (.getType functional-method))
                   (raw (str " " name)) node
@@ -2998,6 +3259,34 @@
         base-services {:identifier identifier
                        :pascal pascal
                        :method-name (fn [method] (method-name @ctx-holder method))
+                       :current-signature-adaptation
+                       (fn [] (:signature-adaptation @ctx-holder))
+                       :current-product-return-reference
+                       (fn [] (:product-return-reference @ctx-holder))
+                       :product-boundary?
+                       (fn [] (some? (:public-api-declaration-keys @ctx-holder)))
+                       :method-signature-adaptation
+                       (fn [method]
+                         (when (instance? CtMethod method)
+                           (method-signature-adaptation @ctx-holder method)))
+                       :exported-product-declaration?
+                       (fn [declaration]
+                         (exported-product-declaration? @ctx-holder declaration))
+                       :product-signature-collection-adaptation
+                       (fn [reference]
+                         (when (instance? CtTypeReference reference)
+                           (product-signature-collection-adaptation
+                            @ctx-holder reference)))
+                       :read-only-product-type-node
+                       (fn [reference]
+                         (type-node (assoc @ctx-holder
+                                          :force-product-signature? true)
+                                    reference))
+                       :mutable-product-type-node
+                       (fn [reference]
+                         (type-node (assoc @ctx-holder
+                                          :suppress-product-signature? true)
+                                    reference))
                        :anonymous-class-name anonymous-class-name
                        :record-component-name record-component-name
                        :local-name (fn [^CtElement element]
@@ -3053,13 +3342,16 @@
      :body-context body-context}))
 
 (defn- root-emission-context
-  [template configuration resolved-model occurrence-index selected-declarations blocker-start]
+  [template configuration resolved-model occurrence-index selected-declarations
+   public-api-type-keys public-api-declaration-keys blocker-start]
   (let [ctx {:configuration configuration
              :resolved-model resolved-model
              :ctx-holder (:ctx-holder template)
              :top-definitions-cache (:top-definitions-cache template)
              :occurrence-index occurrence-index
              :selected-declarations selected-declarations
+             :public-api-type-keys public-api-type-keys
+             :public-api-declaration-keys public-api-declaration-keys
              :emitted (IdentityHashMap.)
              :declarations (atom [])
              :diagnostics (atom [])
@@ -3104,13 +3396,23 @@
 
 (defn emit-project!
   "Emits declaration-complete, body-blocked C# project inputs from a live model."
-  [{:keys [workspace-root target discovery resolved-model configuration]}]
+  [{:keys [workspace-root target discovery resolved-model configuration
+           public-api-boundary]}]
   (let [configuration (validate-configuration! configuration)
         root (paths/absolute workspace-root)
         project-root (paths/resolve-path target (get-in configuration [:output :project-directory]))
         source-root (paths/resolve-path project-root (get-in configuration [:output :source-directory]))
         occurrence-index (java/resolved-occurrence-index resolved-model)
         selected-declarations (selected-declaration-index resolved-model)
+        public-api-type-keys
+        (when public-api-boundary
+          (->> (:selection-evidence public-api-boundary)
+               (filter #(= "type" (get-in % [:row :kind])))
+               (map :declaration-key)
+               set))
+        public-api-declaration-keys
+        (when public-api-boundary
+          (set (map :declaration-key (:selection-evidence public-api-boundary))))
         roots (java/project-roots resolved-model)
         scheduled-roots
         (->> roots
@@ -3155,7 +3457,9 @@
                           template (.get ^ThreadLocal worker-template)
                           base-ctx (root-emission-context
                                     template configuration resolved-model occurrence-index
-                                    selected-declarations (* index 1000000000))
+                                    selected-declarations public-api-type-keys
+                                    public-api-declaration-keys
+                                    (* index 1000000000))
                           ctx (cond-> base-ctx emit-members (assoc :emit-members emit-members))
                           _ (reset! (:ctx-holder template) ctx)
                           namespace (destination-namespace ctx type)
@@ -3183,7 +3487,8 @@
                     (let [template (.get ^ThreadLocal worker-template)
                           ctx (root-emission-context
                                template configuration resolved-model occurrence-index
-                               selected-declarations
+                               selected-declarations public-api-type-keys
+                               public-api-declaration-keys
                                (+ (* root-index 1000000000) (* (inc index) 1000000)))
                           member-ctx (type-body-context (assoc ctx :current-type owner) owner)
                           node (member-node member-ctx owner member)]
@@ -3250,6 +3555,8 @@
              :resolved-model resolved-model
              :occurrence-index occurrence-index
              :selected-declarations selected-declarations
+             :public-api-type-keys public-api-type-keys
+             :public-api-declaration-keys public-api-declaration-keys
              :declarations (atom (vec (mapcat :declarations declaration-results)))
              :diagnostics (atom (vec (mapcat :diagnostics declaration-results)))
              :body-translations (atom (vec (mapcat :body-translations declaration-results)))}

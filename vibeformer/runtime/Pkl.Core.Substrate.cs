@@ -11,7 +11,7 @@ using System.Reflection;
 
 namespace Pkl.Core.Runtime
 {
-    public readonly struct JavaAppendable
+    internal readonly struct JavaAppendable
     {
         private readonly object value;
         private JavaAppendable(object value) => this.value = value;
@@ -22,23 +22,23 @@ namespace Pkl.Core.Runtime
         public JavaAppendable Append(object? item) => Append(item?.ToString());
     }
 
-    public delegate T JavaBinaryOperator<T>(T left, T right);
-    public delegate T JavaLongFunction<T>(long value);
-    public sealed partial class VmList
+    internal delegate T JavaBinaryOperator<T>(T left, T right);
+    internal delegate T JavaLongFunction<T>(long value);
+    internal sealed partial class VmList
     {
         internal static VmList Create(IEnumerable<object> values) => CreateFromUnmodIterable(values);
     }
-    public sealed partial class VmBytes
+    internal sealed partial class VmBytes
     {
         internal VmBytes(byte[] bytes) :
             this(bytes.Select(value => unchecked((sbyte)value)).ToArray()) { }
     }
-    public sealed partial class VmSet
+    internal sealed partial class VmSet
     {
         internal static VmSet Create(ISet<object> values, global::Pkl.Core.Util.Paguro.RrbTree<object> order) =>
             Create(values, (global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<object>)(object)order);
     }
-    public static class ExcludedMessagePack
+    internal static class ExcludedMessagePack
     {
         // General Pkl binary serialization remains excluded. The stream overloads
         // implement only the private framing required by configured external readers.
@@ -47,7 +47,7 @@ namespace Pkl.Core.Runtime
         public static ExcludedMessagePackUnpacker NewDefaultUnpacker(byte[] bytes) => new();
         public static ExcludedMessagePackUnpacker NewDefaultUnpacker(System.IO.Stream stream) => new(stream);
     }
-    public sealed class ExcludedMessagePackPacker : IDisposable
+    internal sealed class ExcludedMessagePackPacker : IDisposable
     {
         private readonly System.IO.Stream? stream;
         private static NotSupportedException Excluded() => new("MessagePack is excluded from the Vibeformer product target.");
@@ -109,7 +109,7 @@ namespace Pkl.Core.Runtime
         public void Close() { }
         public void Dispose() { }
     }
-    public sealed class ExcludedMessagePackUnpacker : IDisposable
+    internal sealed class ExcludedMessagePackUnpacker : IDisposable
     {
         private readonly System.IO.Stream? stream;
         private int lookahead = -2;
@@ -241,18 +241,18 @@ namespace Pkl.Core.Runtime
         public override bool Equals(object? other) => other is ExcludedMessagePackValue item && Equals(value, item.value);
         public override int GetHashCode() => value?.GetHashCode() ?? 0;
     }
-    public class JavaTuple2<A, B>
+    internal class JavaTuple2<A, B>
     {
         public readonly A _1; public readonly B _2;
         public JavaTuple2(A first, B second) { _1 = first; _2 = second; }
         public static JavaTuple2<X, Y> Of<X, Y>(X first, Y second) => new(first, second);
     }
-    public class JavaTuple4<A, B, C, D>
+    internal class JavaTuple4<A, B, C, D>
     {
         public readonly A _1; public readonly B _2; public readonly C _3; public readonly D _4;
         public JavaTuple4(A first, B second, C third, D fourth) { _1 = first; _2 = second; _3 = third; _4 = fourth; }
     }
-    public sealed class JavaIdentityDictionary<K, V> : Dictionary<K, V> where K : notnull
+    internal sealed class JavaIdentityDictionary<K, V> : Dictionary<K, V> where K : notnull
     {
         private sealed class IdentityComparer : IEqualityComparer<K>
         {
@@ -261,7 +261,7 @@ namespace Pkl.Core.Runtime
         }
         public JavaIdentityDictionary() : base(new IdentityComparer()) { }
     }
-    public sealed class JavaDecimalFormat
+    internal sealed class JavaDecimalFormat
     {
         private System.Globalization.NumberFormatInfo format;
         private int minimumFractionDigits;
@@ -431,14 +431,14 @@ namespace Pkl.Core.Runtime
         }
         public void SetDecimalFormatSymbols(System.Globalization.NumberFormatInfo value) => format = (System.Globalization.NumberFormatInfo)value.Clone();
     }
-    public static class JavaBase64
+    internal static class JavaBase64
     {
         public static JavaBase64Encoder GetEncoder() => new(false);
         public static JavaBase64Encoder GetUrlEncoder() => new(true);
         public static JavaBase64Decoder GetDecoder() => new(false);
         public static JavaBase64Decoder GetUrlDecoder() => new(true);
     }
-    public sealed class JavaBase64Encoder
+    internal sealed class JavaBase64Encoder
     {
         private readonly bool url; public JavaBase64Encoder(bool url) => this.url = url;
         public string EncodeToString(byte[] bytes)
@@ -446,7 +446,7 @@ namespace Pkl.Core.Runtime
         public string EncodeToString(sbyte[] bytes) => EncodeToString(bytes.Select(value => unchecked((byte)value)).ToArray());
         public JavaBase64Encoder WithoutPadding() => this;
     }
-    public sealed class JavaBase64Decoder
+    internal sealed class JavaBase64Decoder
     {
         private readonly bool url; public JavaBase64Decoder(bool url) => this.url = url;
         public sbyte[] Decode(string value)
@@ -471,7 +471,7 @@ namespace Pkl.Core.Runtime
         }
     }
 
-    public sealed class JavaOptional<T>
+    internal sealed class JavaOptional<T>
     {
         private readonly T? value;
         private readonly bool present;
@@ -504,10 +504,10 @@ namespace Pkl.Core.Runtime
         public override void Flush() => writer.Flush();
     }
 
-    public enum JavaTemporalUnit { NANOS, MICROS, MILLIS, SECONDS, MINUTES, HOURS, DAYS }
-    public enum JavaRoundingMode { UP, DOWN, CEILING, FLOOR, HALF_UP, HALF_DOWN, HALF_EVEN, UNNECESSARY }
+    internal enum JavaTemporalUnit { NANOS, MICROS, MILLIS, SECONDS, MINUTES, HOURS, DAYS }
+    internal enum JavaRoundingMode { UP, DOWN, CEILING, FLOOR, HALF_UP, HALF_DOWN, HALF_EVEN, UNNECESSARY }
 
-    public sealed class JavaScheduledExecutor
+    internal sealed class JavaScheduledExecutor
     {
         private sealed class ScheduledWork
         {
@@ -622,7 +622,7 @@ namespace Pkl.Core.Runtime
         }
     }
 
-    public sealed class JavaThread
+    internal sealed class JavaThread
     {
         private readonly System.Threading.Thread thread;
         private System.Exception? failure;
@@ -654,13 +654,13 @@ namespace Pkl.Core.Runtime
         internal System.Exception? Failure => failure;
     }
 
-    public static class JavaConcurrency
+    internal static class JavaConcurrency
     {
         public static JavaScheduledExecutor NewSingleThreadScheduledExecutor(
             Func<Action, JavaThread> threadFactory) => new();
     }
 
-    public sealed class JavaAtomicBoolean
+    internal sealed class JavaAtomicBoolean
     {
         private int value;
         public JavaAtomicBoolean(bool value = false) => this.value = value ? 1 : 0;
@@ -670,7 +670,7 @@ namespace Pkl.Core.Runtime
         public bool CompareAndSet(bool expected, bool next) =>
             System.Threading.Interlocked.CompareExchange(ref value, next ? 1 : 0, expected ? 1 : 0) == (expected ? 1 : 0);
     }
-    public sealed class JavaAtomicLong
+    internal sealed class JavaAtomicLong
     {
         private long value;
         public JavaAtomicLong(long value = 0) => this.value = value;
@@ -678,7 +678,7 @@ namespace Pkl.Core.Runtime
         public void Set(long next) => System.Threading.Interlocked.Exchange(ref value, next);
         public long IncrementAndGet() => System.Threading.Interlocked.Increment(ref value);
     }
-    public sealed class JavaAtomicReference<T> where T : class
+    internal sealed class JavaAtomicReference<T> where T : class
     {
         private T? value;
         public JavaAtomicReference(T? value = null) => this.value = value;
@@ -688,7 +688,7 @@ namespace Pkl.Core.Runtime
             ReferenceEquals(System.Threading.Interlocked.CompareExchange(ref value, next, expected), expected);
     }
 
-    public sealed class JavaByteBuffer
+    internal sealed class JavaByteBuffer
     {
         private readonly byte[] bytes;
         private int position;
@@ -720,7 +720,7 @@ namespace Pkl.Core.Runtime
         public JavaByteBuffer Flip() { position = 0; return this; }
     }
 
-    public class JavaUrlConnection
+    internal class JavaUrlConnection
     {
         private readonly Uri? uri;
         public JavaUrlConnection() { }
@@ -733,12 +733,12 @@ namespace Pkl.Core.Runtime
                 uri, global::Vibeformer.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult();
         public virtual void SetUseCaches(bool value) { }
     }
-    public sealed class JavaJarConnection : JavaUrlConnection
+    internal sealed class JavaJarConnection : JavaUrlConnection
     {
         public override System.IO.Stream GetInputStream() => throw new NotSupportedException("JAR URL streams require a resolved module path.");
     }
 
-    public sealed class JavaBufferedWriter : System.IO.TextWriter
+    internal sealed class JavaBufferedWriter : System.IO.TextWriter
     {
         private readonly System.IO.TextWriter writer;
         public JavaBufferedWriter(System.IO.TextWriter writer) => this.writer = writer;
@@ -748,7 +748,7 @@ namespace Pkl.Core.Runtime
         public override void Flush() => writer.Flush();
         protected override void Dispose(bool disposing) { if (disposing) writer.Dispose(); base.Dispose(disposing); }
     }
-    public sealed class JavaCharsetDecoder
+    internal sealed class JavaCharsetDecoder
     {
         private readonly System.Text.Encoding encoding;
         public JavaCharsetDecoder(System.Text.Encoding encoding)
@@ -758,24 +758,24 @@ namespace Pkl.Core.Runtime
         }
         public string Decode(JavaByteBuffer buffer) => encoding.GetString(buffer.UnsignedArray());
     }
-    public sealed class JavaCharsetEncoder
+    internal sealed class JavaCharsetEncoder
     {
         private readonly System.Text.Encoding encoding;
         public JavaCharsetEncoder(System.Text.Encoding encoding) => this.encoding = encoding;
         public JavaByteBuffer Encode(string value) => JavaByteBuffer.Wrap(encoding.GetBytes(value));
     }
 
-    public enum JavaFileVisitResult { CONTINUE, TERMINATE, SKIP_SUBTREE, SKIP_SIBLINGS }
-    public enum JavaCopyOption { REPLACE_EXISTING, COPY_ATTRIBUTES, ATOMIC_MOVE }
-    public sealed class JavaWatchService : IDisposable { public void Close() { } public void Dispose() { } }
-    public class JavaSimpleFileVisitor<T>
+    internal enum JavaFileVisitResult { CONTINUE, TERMINATE, SKIP_SUBTREE, SKIP_SIBLINGS }
+    internal enum JavaCopyOption { REPLACE_EXISTING, COPY_ATTRIBUTES, ATOMIC_MOVE }
+    internal sealed class JavaWatchService : IDisposable { public void Close() { } public void Dispose() { } }
+    internal class JavaSimpleFileVisitor<T>
     {
         public virtual JavaFileVisitResult VisitFile(T file, System.IO.FileSystemInfo attributes) => JavaFileVisitResult.CONTINUE;
         public virtual JavaFileVisitResult PreVisitDirectory(T directory, System.IO.FileSystemInfo attributes) => JavaFileVisitResult.CONTINUE;
         public virtual JavaFileVisitResult PostVisitDirectory(T directory, System.IO.IOException? error) => JavaFileVisitResult.CONTINUE;
         public virtual JavaFileVisitResult VisitFileFailed(T file, System.IO.IOException error) => JavaFileVisitResult.CONTINUE;
     }
-    public class JavaFileSystem : IDisposable
+    internal class JavaFileSystem : IDisposable
     {
         public virtual JavaFileSystemProvider Provider() => new();
         public virtual string GetPath(string first, params string[] more) => System.IO.Path.Combine(new[] { first }.Concat(more).ToArray());
@@ -792,12 +792,12 @@ namespace Pkl.Core.Runtime
         public void Dispose() => Close();
     }
 
-    public sealed class JavaFileSystemAlreadyExistsException : System.IO.IOException
+    internal sealed class JavaFileSystemAlreadyExistsException : System.IO.IOException
     {
         public JavaFileSystemAlreadyExistsException(string? message = null) : base(message) { }
     }
 
-    public sealed class JavaZipFileSystem : JavaFileSystem
+    internal sealed class JavaZipFileSystem : JavaFileSystem
     {
         private readonly string root;
         private bool open = true;
@@ -880,13 +880,13 @@ namespace Pkl.Core.Runtime
         }
     }
 
-    public class JavaProxySelector
+    internal class JavaProxySelector
     {
         public static JavaProxySelector GetDefault() => new();
         public virtual IList<System.Net.WebProxy> Select(Uri uri) => new[] { new System.Net.WebProxy() };
         public virtual void ConnectFailed(Uri uri, System.Net.EndPoint address, System.IO.IOException error) { }
     }
-    public static class JavaFileSystems
+    internal static class JavaFileSystems
     {
         public static JavaFileSystem GetDefault() => new();
         public static JavaFileSystem GetFileSystem(Uri uri) => new();
@@ -895,16 +895,16 @@ namespace Pkl.Core.Runtime
                 ? new JavaZipFileSystem(uri)
                 : new JavaFileSystem();
     }
-    public sealed class JavaFileSystemProvider
+    internal sealed class JavaFileSystemProvider
     {
         public static IEnumerable<JavaFileSystemProvider> InstalledProviders() => new[] { new JavaFileSystemProvider() };
         public string GetScheme() => "file";
     }
-    public abstract class JavaFileTypeDetector
+    internal abstract class JavaFileTypeDetector
     {
         public abstract string? ProbeContentType(string path);
     }
-    public sealed class JavaZipEntry
+    internal sealed class JavaZipEntry
     {
         private readonly string name;
         internal DateTime? TimeLocal { get; private set; }
@@ -914,7 +914,7 @@ namespace Pkl.Core.Runtime
         public bool IsDirectory() => name.EndsWith("/", StringComparison.Ordinal);
         public void SetTimeLocal(DateTime value) => TimeLocal = value;
     }
-    public sealed class JavaZipInputStream : IDisposable
+    internal sealed class JavaZipInputStream : IDisposable
     {
         private readonly System.IO.Compression.ZipArchive archive; private int index = -1; private System.IO.Stream? current;
         public JavaZipInputStream(System.IO.Stream stream) => archive = new(stream, System.IO.Compression.ZipArchiveMode.Read);
@@ -937,7 +937,7 @@ namespace Pkl.Core.Runtime
         public void CloseEntry() { current?.Dispose(); current = null; }
         public void Dispose() => archive.Dispose();
     }
-    public sealed class JavaZipOutputStream : System.IO.Stream
+    internal sealed class JavaZipOutputStream : System.IO.Stream
     {
         private readonly System.IO.Compression.ZipArchive archive; private System.IO.Stream? current;
         public JavaZipOutputStream(System.IO.Stream stream) => archive = new(stream, System.IO.Compression.ZipArchiveMode.Create, true);
@@ -956,7 +956,7 @@ namespace Pkl.Core.Runtime
         protected override void Dispose(bool disposing) { if (disposing) { current?.Dispose(); archive.Dispose(); } base.Dispose(disposing); }
     }
 
-    public sealed class JavaMessageDigest
+    internal sealed class JavaMessageDigest
     {
         private readonly System.Security.Cryptography.IncrementalHash hash;
         private JavaMessageDigest(System.Security.Cryptography.HashAlgorithmName algorithm) =>
@@ -973,7 +973,7 @@ namespace Pkl.Core.Runtime
         }
     }
 
-    public sealed class JavaDigestInputStream : System.IO.Stream
+    internal sealed class JavaDigestInputStream : System.IO.Stream
     {
         private readonly System.IO.Stream stream;
         private readonly JavaMessageDigest digest;
@@ -994,7 +994,7 @@ namespace Pkl.Core.Runtime
         }
     }
 
-    public sealed class JavaDigestOutputStream : System.IO.Stream
+    internal sealed class JavaDigestOutputStream : System.IO.Stream
     {
         private readonly System.IO.Stream stream; private readonly JavaMessageDigest digest;
         public JavaDigestOutputStream(System.IO.Stream stream, JavaMessageDigest digest) { this.stream = stream; this.digest = digest; }
@@ -1006,8 +1006,8 @@ namespace Pkl.Core.Runtime
         public override long Seek(long o, System.IO.SeekOrigin so) => throw new NotSupportedException(); public override void SetLength(long v) => stream.SetLength(v);
     }
 
-    public sealed class JavaSecureRandom { }
-    public sealed class JavaKeyStore
+    internal sealed class JavaSecureRandom { }
+    internal sealed class JavaKeyStore
     {
         private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> certificates = new();
         internal IReadOnlyList<System.Security.Cryptography.X509Certificates.X509Certificate2> Certificates => certificates;
@@ -1017,7 +1017,7 @@ namespace Pkl.Core.Runtime
         public void SetCertificateEntry(string alias, System.Security.Cryptography.X509Certificates.X509Certificate2 certificate) =>
             certificates.Add(certificate);
     }
-    public sealed class JavaCertificateFactory
+    internal sealed class JavaCertificateFactory
     {
         public static JavaCertificateFactory GetInstance(string type) => new();
         public System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateCertificate(System.IO.Stream stream)
@@ -1048,7 +1048,7 @@ namespace Pkl.Core.Runtime
             return result.Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>().ToList();
         }
     }
-    public sealed class JavaSslContext
+    internal sealed class JavaSslContext
     {
         private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> trustAnchors = new();
         internal IReadOnlyList<System.Security.Cryptography.X509Certificates.X509Certificate2> TrustAnchors => trustAnchors;
@@ -1061,7 +1061,7 @@ namespace Pkl.Core.Runtime
             trustAnchors.AddRange(managers.OfType<System.Security.Cryptography.X509Certificates.X509Certificate2>());
         }
     }
-    public sealed class JavaTrustManagerFactory
+    internal sealed class JavaTrustManagerFactory
     {
         private JavaKeyStore? keyStore;
         public static JavaTrustManagerFactory GetInstance(string algorithm) => new();
@@ -1069,12 +1069,12 @@ namespace Pkl.Core.Runtime
         public object[] GetTrustManagers() => keyStore?.Certificates.Cast<object>().ToArray() ?? Array.Empty<object>();
     }
 
-    public enum JavaHttpRedirect { NEVER, NORMAL, ALWAYS }
-    public enum JavaProxyType { DIRECT, HTTP, SOCKS }
-    public enum JavaHttpVersion { HTTP_1_1, HTTP_2 }
-    public delegate T JavaHttpBodyHandler<T>(System.Net.Http.HttpResponseMessage response);
+    internal enum JavaHttpRedirect { NEVER, NORMAL, ALWAYS }
+    internal enum JavaProxyType { DIRECT, HTTP, SOCKS }
+    internal enum JavaHttpVersion { HTTP_1_1, HTTP_2 }
+    internal delegate T JavaHttpBodyHandler<T>(System.Net.Http.HttpResponseMessage response);
 
-    public sealed class JavaHttpResponse<T>
+    internal sealed class JavaHttpResponse<T>
     {
         private readonly int statusCode;
         private readonly JavaHttpRequest request;
@@ -1103,7 +1103,7 @@ namespace Pkl.Core.Runtime
         public JavaHttpVersion Version() => version;
     }
 
-    public sealed class JavaHttpRequest
+    internal sealed class JavaHttpRequest
     {
         internal System.Net.Http.HttpRequestMessage Message { get; }
         private readonly TimeSpan? timeout;
@@ -1141,12 +1141,12 @@ namespace Pkl.Core.Runtime
         }
     }
 
-    public static class JavaHttpBodyPublishers
+    internal static class JavaHttpBodyPublishers
     {
         public static object NoBody() => new object();
     }
 
-    public sealed class JavaHttpHeaders
+    internal sealed class JavaHttpHeaders
     {
         private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> values;
         public JavaHttpHeaders(IReadOnlyDictionary<string, IReadOnlyList<string>> values) => this.values = values;
@@ -1156,7 +1156,7 @@ namespace Pkl.Core.Runtime
         public IReadOnlyDictionary<string, IReadOnlyList<string>> Map() => values;
     }
 
-    public static class JavaHttpBodyHandlers
+    internal static class JavaHttpBodyHandlers
     {
         public static JavaHttpBodyHandler<System.IO.Stream> OfInputStream() =>
             response => new ResponseOwningStream(response.Content.ReadAsStream(), response);
@@ -1196,7 +1196,7 @@ namespace Pkl.Core.Runtime
         }
     }
 
-    public sealed class JavaHttpClient : IDisposable
+    internal sealed class JavaHttpClient : IDisposable
     {
         private readonly System.Net.Http.HttpClient client;
         private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> trustAnchors;
@@ -1327,7 +1327,7 @@ namespace Pkl.Core.Runtime
 
 namespace Pkl.Core.Runtime.Polyglot
 {
-    public sealed class PolyglotException : Exception
+    internal sealed class PolyglotException : Exception
     {
         public PolyglotException(string? message = null, Exception? cause = null)
             : base(message, cause) { }
@@ -1335,7 +1335,7 @@ namespace Pkl.Core.Runtime.Polyglot
         public bool IsCancelled() => false;
     }
 
-    public sealed class Engine
+    internal sealed class Engine
     {
         public static Builder NewBuilder(params string[] languages) => new();
 
@@ -1346,7 +1346,7 @@ namespace Pkl.Core.Runtime.Polyglot
         }
     }
 
-    public sealed class Context : IDisposable
+    internal sealed class Context : IDisposable
     {
         private readonly object lifecycleLock = new();
         private readonly System.Threading.CancellationTokenSource cancellation = new();
@@ -1465,7 +1465,7 @@ namespace Pkl.Core.Runtime.Polyglot
 
 namespace Pkl.Core.Runtime.GraalCollections
 {
-    public class UnmodifiableEconomicMap<K, V> where K : notnull
+    internal class UnmodifiableEconomicMap<K, V> where K : notnull
     {
         protected readonly Dictionary<K, V> Values;
 
@@ -1481,7 +1481,7 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal UnmodifiableMapCursor<K, V> GetEntries() => new(Values.GetEnumerator());
     }
 
-    public sealed class EconomicMap<K, V> : UnmodifiableEconomicMap<K, V> where K : notnull
+    internal sealed class EconomicMap<K, V> : UnmodifiableEconomicMap<K, V> where K : notnull
     {
         internal EconomicMap(int capacity = 0) : base(new Dictionary<K, V>(capacity)) { }
 
@@ -1521,13 +1521,13 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal static UnmodifiableEconomicMap<K2, V2> EmptyMap<K2, V2>() where K2 : notnull => new EconomicMap<K2, V2>();
     }
 
-    public static class EconomicMap
+    internal static class EconomicMap
     {
         internal static EconomicMap<K, V> Create<K, V>() where K : notnull => new();
         internal static EconomicMap<K, V> Create<K, V>(int capacity) where K : notnull => new(capacity);
     }
 
-    public class UnmodifiableEconomicSet<T> : IEnumerable<T> where T : notnull
+    internal class UnmodifiableEconomicSet<T> : IEnumerable<T> where T : notnull
     {
         protected readonly HashSet<T> Values;
         protected UnmodifiableEconomicSet(HashSet<T>? values = null) => Values = values ?? new HashSet<T>();
@@ -1539,7 +1539,7 @@ namespace Pkl.Core.Runtime.GraalCollections
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    public sealed class EconomicSet<T> : UnmodifiableEconomicSet<T> where T : notnull
+    internal sealed class EconomicSet<T> : UnmodifiableEconomicSet<T> where T : notnull
     {
         internal EconomicSet(int capacity = 0) : base(new HashSet<T>(capacity)) { }
         internal bool Add(T value) => Values.Add(value);
@@ -1551,13 +1551,13 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal static EconomicSet<T2> Create<T2>(int capacity) where T2 : notnull => new(capacity);
     }
 
-    public static class EconomicSet
+    internal static class EconomicSet
     {
         internal static EconomicSet<T> Create<T>() where T : notnull => new();
         internal static EconomicSet<T> Create<T>(int capacity) where T : notnull => new(capacity);
     }
 
-    public sealed class UnmodifiableMapCursor<K, V> where K : notnull
+    internal sealed class UnmodifiableMapCursor<K, V> where K : notnull
     {
         private readonly IEnumerator<KeyValuePair<K, V>> entries;
         internal UnmodifiableMapCursor(IEnumerator<KeyValuePair<K, V>> entries) => this.entries = entries;
@@ -1573,7 +1573,7 @@ namespace Pkl.Core.Runtime.GraalCollections
 
 namespace Pkl.Core.Runtime.Truffle.api.source
 {
-    public sealed class Source
+    internal sealed class Source
     {
         private readonly string characters;
         private readonly string name;
@@ -1644,7 +1644,7 @@ namespace Pkl.Core.Runtime.Truffle.api.source
         }
     }
 
-    public sealed class SourceSection
+    internal sealed class SourceSection
     {
         private readonly Source source;
         private readonly int start;
@@ -1682,11 +1682,11 @@ namespace Pkl.Core.Runtime.Truffle.api.source
 
 namespace Pkl.Core.Runtime.Truffle.api.frame
 {
-    public enum FrameSlotKind { Illegal, Object, Long, Double, Boolean }
+    internal enum FrameSlotKind { Illegal, Object, Long, Double, Boolean }
 
-    public sealed class FrameSlotTypeException : Exception { }
+    internal sealed class FrameSlotTypeException : Exception { }
 
-    public class Frame
+    internal class Frame
     {
         protected readonly object?[] Arguments;
         private readonly Dictionary<int, object?> values = new();
@@ -1719,7 +1719,7 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
         }
     }
 
-    public class VirtualFrame : Frame
+    internal class VirtualFrame : Frame
     {
         internal VirtualFrame(object?[]? arguments = null) : base(arguments) { }
         internal VirtualFrame(object?[]? arguments, FrameDescriptor? descriptor) : base(arguments, descriptor) { }
@@ -1731,13 +1731,13 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
         }
     }
 
-    public sealed class MaterializedFrame : VirtualFrame
+    internal sealed class MaterializedFrame : VirtualFrame
     {
         internal MaterializedFrame(object?[]? arguments = null, FrameDescriptor? descriptor = null) :
             base(arguments, descriptor) { }
     }
 
-    public sealed class FrameDescriptor
+    internal sealed class FrameDescriptor
     {
         private readonly Dictionary<int, FrameSlotKind> slotKinds = new();
         private readonly Dictionary<int, object?> slotNames = new();
@@ -1790,7 +1790,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     using Pkl.Core.Runtime.Truffle.api.frame;
     using Pkl.Core.Runtime.Truffle.api.source;
 
-    public class Node
+    internal class Node
     {
         private Node? parent;
         public virtual SourceSection? GetSourceSection() => null;
@@ -1967,9 +1967,9 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     // Truffle uses this exception family for non-error interpreter control
     // flow.  Keeping it distinct from ordinary failures preserves the
     // generated evaluator's catch behavior.
-    public class ControlFlowException : Exception { }
+    internal class ControlFlowException : Exception { }
 
-    public sealed class UnexpectedResultException : Exception
+    internal sealed class UnexpectedResultException : Exception
     {
         private readonly object result;
 
@@ -1978,7 +1978,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         public object GetResult() => result;
     }
 
-    public static class LoopNode
+    internal static class LoopNode
     {
         // Truffle consumes this count as a compilation profile hint. The CLR
         // has no corresponding interpreter notification, so evaluation keeps
@@ -1987,14 +1987,14 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     }
 
     [AttributeUsage(AttributeTargets.Class, Inherited = true)]
-    public sealed class NodeInfo : Attribute
+    internal sealed class NodeInfo : Attribute
     {
         private readonly string shortName;
         public NodeInfo(string shortName = "") => this.shortName = shortName;
         public string ShortName() => shortName;
     }
 
-    public abstract class RootNode : Node
+    internal abstract class RootNode : Node
     {
         private readonly FrameDescriptor descriptor;
         private Pkl.Core.Runtime.Truffle.api.RootCallTarget? callTarget;
@@ -2012,7 +2012,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         }
     }
 
-    public sealed class DirectCallNode : Node
+    internal sealed class DirectCallNode : Node
     {
         private readonly Pkl.Core.Runtime.Truffle.api.CallTarget target;
         private DirectCallNode(Pkl.Core.Runtime.Truffle.api.CallTarget target) => this.target = target;
@@ -2020,7 +2020,7 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
         internal object? Call(params object?[] arguments) => target.CallFrom(this, arguments);
     }
 
-    public sealed class IndirectCallNode : Node
+    internal sealed class IndirectCallNode : Node
     {
         internal static IndirectCallNode Create() => new();
         internal static IndirectCallNode GetUncached() => new();
@@ -2034,7 +2034,7 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
     using Pkl.Core.Runtime.Truffle.api.frame;
     using Pkl.Core.Runtime.Truffle.api.nodes;
 
-    public interface InstrumentableNode
+    internal interface InstrumentableNode
     {
         public interface WrapperNode
         {
@@ -2043,7 +2043,7 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
         }
     }
 
-    public class ProbeNode : Node
+    internal class ProbeNode : Node
     {
         public static readonly object UNWIND_ACTION_REENTER = new();
 
@@ -2055,28 +2055,28 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
             bool wasOnReturnExecuted) => null;
     }
 
-    public sealed class EventContext
+    internal sealed class EventContext
     {
         private readonly Node instrumentedNode;
         internal EventContext(Node instrumentedNode) => this.instrumentedNode = instrumentedNode;
         public Node GetInstrumentedNode() => instrumentedNode;
     }
 
-    public abstract class ExecutionEventNode : Node
+    internal abstract class ExecutionEventNode : Node
     {
         protected internal virtual void OnReturnValue(VirtualFrame frame, object? result) { }
     }
 
-    public delegate ExecutionEventNode ExecutionEventNodeFactory(EventContext context);
+    internal delegate ExecutionEventNode ExecutionEventNodeFactory(EventContext context);
 
-    public sealed class EventBinding<T> : IDisposable
+    internal sealed class EventBinding<T> : IDisposable
     {
         private Action? dispose;
         internal EventBinding(Action dispose) => this.dispose = dispose;
         public void Dispose() => System.Threading.Interlocked.Exchange(ref dispose, null)?.Invoke();
     }
 
-    public sealed class Instrumenter
+    internal sealed class Instrumenter
     {
         [ThreadStatic]
         private static List<Instrumenter>? active;
@@ -2235,7 +2235,7 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
         }
     }
 
-    public sealed class SourceSectionFilter
+    internal sealed class SourceSectionFilter
     {
         private readonly Type[] tags;
         private SourceSectionFilter(Type[] tags) => this.tags = tags;
@@ -2260,19 +2260,19 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
         }
     }
 
-    public class Tag { }
+    internal class Tag { }
 }
 
 namespace Pkl.Core.Runtime.Truffle.api.dsl
 {
     using Pkl.Core.Runtime.Truffle.api.nodes;
 
-    public static class DSLSupport
+    internal static class DSLSupport
     {
         public static bool AssertIdempotence(bool value) => value;
     }
 
-    public sealed class UnsupportedSpecializationException : Exception
+    internal sealed class UnsupportedSpecializationException : Exception
     {
         public UnsupportedSpecializationException(
             Node node,
@@ -2281,7 +2281,7 @@ namespace Pkl.Core.Runtime.Truffle.api.dsl
             : base("No generated Truffle specialization accepts the supplied values.") { }
     }
 
-    public static class InlineSupport
+    internal static class InlineSupport
     {
         public class ReferenceField
         {
@@ -2338,7 +2338,7 @@ namespace Pkl.Core.Runtime.Truffle.api.exception
 {
     using Pkl.Core.Runtime.Truffle.api.nodes;
 
-    public class AbstractTruffleException : Exception
+    internal class AbstractTruffleException : Exception
     {
         internal const int UNLIMITED_STACK_TRACE = -1;
         private readonly Node? location;
@@ -2361,7 +2361,7 @@ namespace Pkl.Core.Runtime.Truffle.api
     using Pkl.Core.Runtime.Truffle.api.nodes;
     using Pkl.Core.Runtime.Truffle.api.source;
 
-    public class CallTarget
+    internal class CallTarget
     {
         [ThreadStatic]
         private static CallTarget? current;
@@ -2432,35 +2432,35 @@ namespace Pkl.Core.Runtime.Truffle.api
         internal static RootNode? GetCurrentRoot() => current?.root;
     }
 
-    public sealed class RootCallTarget : CallTarget
+    internal sealed class RootCallTarget : CallTarget
     {
         internal RootCallTarget(RootNode root) : base(root) { }
     }
 
-    public static class CompilerDirectives
+    internal static class CompilerDirectives
     {
         internal static void TransferToInterpreter() { }
         internal static void TransferToInterpreterAndInvalidate() { }
         internal static void Blackhole(object? value) { }
     }
 
-    public static class CompilerAsserts
+    internal static class CompilerAsserts
     {
         internal static void NeverPartOfCompilation() { }
     }
 
-    public static class TruffleOptions
+    internal static class TruffleOptions
     {
         internal const bool AOT = false;
     }
 
-    public static class Truffle
+    internal static class Truffle
     {
         private static readonly TruffleRuntime Runtime = new();
         internal static TruffleRuntime GetRuntime() => Runtime;
     }
 
-    public sealed class TruffleRuntime
+    internal sealed class TruffleRuntime
     {
         internal VirtualFrame CreateVirtualFrame(object?[] arguments, FrameDescriptor descriptor) =>
             new(arguments, descriptor);
@@ -2469,7 +2469,7 @@ namespace Pkl.Core.Runtime.Truffle.api
         internal RootCallTarget CreateCallTarget(RootNode root) => root.GetCallTarget();
     }
 
-    public sealed class ContextThreadLocal<T> where T : class
+    internal sealed class ContextThreadLocal<T> where T : class
     {
         private readonly System.Threading.ThreadLocal<T> local;
         internal ContextThreadLocal(Func<object?, System.Threading.Thread, T> factory) =>
@@ -2478,20 +2478,20 @@ namespace Pkl.Core.Runtime.Truffle.api
         public T Get() => local.Value!;
     }
 
-    public sealed class ContextLocalSupport
+    internal sealed class ContextLocalSupport
     {
         public ContextThreadLocal<T> CreateContextThreadLocal<T>(
             Func<object?, System.Threading.Thread, T> factory) where T : class => new(factory);
     }
 
-    public abstract class TruffleLanguage<TContext> where TContext : class
+    internal abstract class TruffleLanguage<TContext> where TContext : class
     {
         protected readonly ContextLocalSupport locals = new();
         protected internal abstract TContext CreateContext(TruffleLanguage.Env env);
         protected internal abstract CallTarget Parse(TruffleLanguage.ParsingRequest request);
     }
 
-    public static class TruffleLanguage
+    internal static class TruffleLanguage
     {
         private sealed record InstalledContext(object Value, global::Pkl.Core.Runtime.Polyglot.Context Owner);
 
@@ -2571,7 +2571,7 @@ namespace Pkl.Core.Runtime.Truffle.api
         }
     }
 
-    public static class TruffleStackTrace
+    internal static class TruffleStackTrace
     {
         internal static IReadOnlyList<TruffleStackTraceElement> GetStackTrace(Exception exception) =>
             exception is AbstractTruffleException truffleException
@@ -2579,7 +2579,7 @@ namespace Pkl.Core.Runtime.Truffle.api
                 : Array.Empty<TruffleStackTraceElement>();
     }
 
-    public sealed class TruffleStackTraceElement
+    internal sealed class TruffleStackTraceElement
     {
         private readonly Node? location;
         private readonly CallTarget target;
@@ -2603,19 +2603,19 @@ namespace Pkl.Core.Runtime.SnakeYaml.api
     using Pkl.Core.Runtime.SnakeYaml.constructor;
     using Pkl.Core.Runtime.SnakeYaml.nodes;
 
-    public interface ConstructNode
+    internal interface ConstructNode
     {
         object? Construct(Node node);
         void ConstructRecursive(Node node, object? data) { }
     }
 
-    public sealed class LoadSettings
+    internal sealed class LoadSettings
     {
         internal LoadSettings() { }
         public static LoadSettingsBuilder Builder() => new();
     }
 
-    public sealed class LoadSettingsBuilder
+    internal sealed class LoadSettingsBuilder
     {
         public LoadSettingsBuilder SetAllowNonScalarKeys(bool value) => this;
         public LoadSettingsBuilder SetLabel(string value) => this;
@@ -2624,7 +2624,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.api
         public LoadSettings Build() => new();
     }
 
-    public sealed class Load
+    internal sealed class Load
     {
         private readonly BaseConstructor constructor;
         public Load(LoadSettings settings, BaseConstructor constructor) => this.constructor = constructor;
@@ -2640,7 +2640,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.constructor
     using Pkl.Core.Runtime.SnakeYaml.api;
     using Pkl.Core.Runtime.SnakeYaml.nodes;
 
-    public class BaseConstructor
+    internal class BaseConstructor
     {
         protected readonly Dictionary<Tag, ConstructNode> TagConstructors = new();
         protected Dictionary<Tag, ConstructNode> tagConstructors => TagConstructors;
@@ -2648,7 +2648,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.constructor
         protected void FlattenMapping(MappingNode node) { }
     }
 
-    public class StandardConstructor : BaseConstructor
+    internal class StandardConstructor : BaseConstructor
     {
         public StandardConstructor(api.LoadSettings settings) { }
     }
@@ -2656,9 +2656,9 @@ namespace Pkl.Core.Runtime.SnakeYaml.constructor
 
 namespace Pkl.Core.Runtime.SnakeYaml.exceptions
 {
-    public sealed class Mark { }
+    internal sealed class Mark { }
 
-    public class YamlEngineException : Exception
+    internal class YamlEngineException : Exception
     {
         public YamlEngineException(string message) : base(message) { }
     }
@@ -2668,7 +2668,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.nodes
 {
     using Pkl.Core.Runtime.SnakeYaml.exceptions;
 
-    public class Tag : IEquatable<Tag>
+    internal class Tag : IEquatable<Tag>
     {
         public const string PREFIX = "tag:yaml.org,2002:";
         public static readonly Tag BINARY = new(PREFIX + "binary");
@@ -2689,28 +2689,28 @@ namespace Pkl.Core.Runtime.SnakeYaml.nodes
         public override string ToString() => value;
     }
 
-    public class Node
+    internal class Node
     {
         public virtual JavaOptional<Mark> GetStartMark() => JavaOptional<Mark>.Empty();
         public virtual JavaOptional<Mark> GetEndMark() => JavaOptional<Mark>.Empty();
         public virtual bool IsRecursive() => false;
     }
 
-    public sealed class ScalarNode : Node
+    internal sealed class ScalarNode : Node
     {
         private readonly string value;
         public ScalarNode(string value) => this.value = value;
         public string GetValue() => value;
     }
 
-    public sealed class SequenceNode : Node
+    internal sealed class SequenceNode : Node
     {
         private readonly IList<Node> value;
         public SequenceNode(IList<Node> value) => this.value = value;
         public IList<Node> GetValue() => value;
     }
 
-    public sealed class NodeTuple
+    internal sealed class NodeTuple
     {
         private readonly Node keyNode;
         private readonly Node valueNode;
@@ -2723,7 +2723,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.nodes
         public Node GetValueNode() => valueNode;
     }
 
-    public sealed class MappingNode : Node
+    internal sealed class MappingNode : Node
     {
         private readonly IList<NodeTuple> value;
         public MappingNode(IList<NodeTuple> value) => this.value = value;
@@ -2735,7 +2735,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.resolver
 {
     using Pkl.Core.Runtime.SnakeYaml.nodes;
 
-    public interface ScalarResolver
+    internal interface ScalarResolver
     {
         Tag Resolve(string value, bool implicitValue);
     }
@@ -2747,7 +2747,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.schema
     using Pkl.Core.Runtime.SnakeYaml.nodes;
     using Pkl.Core.Runtime.SnakeYaml.resolver;
 
-    public abstract class Schema
+    internal abstract class Schema
     {
         public abstract ScalarResolver GetScalarResolver();
         public abstract IDictionary<Tag, ConstructNode> GetSchemaTagConstructors();
@@ -2756,7 +2756,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.schema
 
 namespace Pkl.Core.Util
 {
-    public sealed partial class HttpUtils
+    internal sealed partial class HttpUtils
     {
         public static void CheckHasStatusCode200<T>(global::Pkl.Core.Runtime.JavaHttpResponse<T> response)
         {
@@ -2800,7 +2800,7 @@ namespace Pkl.Core
 
 namespace Pkl.Core.Util
 {
-    public sealed partial class ByteArrayUtils
+    internal sealed partial class ByteArrayUtils
     {
         public static string Base64(byte[] input) =>
             global::System.Convert.ToBase64String(input);
@@ -2812,18 +2812,18 @@ namespace Pkl.Core.Service
     // Product-owned .NET representation of the versioned executor SPI used by
     // the upstream service implementation. It avoids exposing ServiceLoader or
     // a JVM distribution contract while preserving the ordinary provider body.
-    public interface IExecutorSpi
+    internal interface IExecutorSpi
     {
         string GetPklVersion();
         string EvaluatePath(string modulePath, ExecutorSpiOptions options);
     }
 
-    public sealed class ExecutorSpiException : Exception
+    internal sealed class ExecutorSpiException : Exception
     {
         public ExecutorSpiException(string? message, Exception? cause) : base(message, cause) { }
     }
 
-    public class ExecutorSpiOptions
+    internal class ExecutorSpiOptions
     {
         private readonly IList<string> allowedModules;
         private readonly IList<string> allowedResources;
@@ -2872,7 +2872,7 @@ namespace Pkl.Core.Service
         public string? GetProjectDir() => projectDir;
     }
 
-    public class ExecutorSpiOptions2 : ExecutorSpiOptions
+    internal class ExecutorSpiOptions2 : ExecutorSpiOptions
     {
         private readonly IList<string> certificateFiles;
         private readonly IList<sbyte[]> certificateBytes;
@@ -2905,7 +2905,7 @@ namespace Pkl.Core.Service
         public int GetTestPort() => testPort;
     }
 
-    public class ExecutorSpiOptions3 : ExecutorSpiOptions2
+    internal class ExecutorSpiOptions3 : ExecutorSpiOptions2
     {
         private readonly IDictionary<Uri, Uri> httpRewrites;
 
@@ -2931,7 +2931,7 @@ namespace Pkl.Core.Service
         public IDictionary<Uri, Uri> GetHttpRewrites() => httpRewrites;
     }
 
-    public class ExecutorSpiOptions4 : ExecutorSpiOptions3
+    internal class ExecutorSpiOptions4 : ExecutorSpiOptions3
     {
         private readonly IDictionary<string, IDictionary<string, IList<string>>> httpHeaders;
 
@@ -2962,7 +2962,7 @@ namespace Pkl.Core.Service
 
 namespace Pkl.Core.Messaging
 {
-    public partial interface MessageTransport
+    internal partial interface MessageTransport
     {
         // Destination-only lifecycle hook. The upstream transport drops its
         // response-handler map on EOF/close; .NET external readers instead use

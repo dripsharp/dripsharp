@@ -105,39 +105,39 @@
                      :worker-threads :worker-participation :elapsed-millis))))
 
     (testing "the entire selected declaration and body closure is accounted for"
-      (is (= 656 (:compilation-units summary)))
-      (is (= 662 (:generated-files summary)))
+      (is (= 657 (:compilation-units summary)))
+      (is (= 663 (:generated-files summary)))
       (is (= 28 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 30672 (:declarations summary)))
-      (is (= {:constructor 1172
+      (is (= 30954 (:declarations summary)))
+      (is (= {:constructor 1178
               :enum-value 101
-              :field 3544
+              :field 3598
               :initializer 25
-              :method 9283
-              :parameter 14013
-              :record-component 194
-              :type 2188
-              :type-parameter 152}
+              :method 9352
+              :parameter 14109
+              :record-component 227
+              :type 2211
+              :type-parameter 153}
              (:declaration-kinds summary)))
-      (is (= 656 (count (:sources manifest))))
+      (is (= 657 (count (:sources manifest))))
       (is (= 28 (count (:resources manifest))))
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 11110 (:executable-roots summary)))
+      (is (= 11358 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 459709
+      (is (= {:semantic 469224
               :fallback 0
-              :visited 1057221
+              :visited 1079029
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 597512
+              :structural 609805
               :blocked 0
-              :covered 1057221}
+              :covered 1079029}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
@@ -284,7 +284,9 @@
             (is (str/includes? package-uri "JavaCompat.StringSplit(path"))
             (is (str/includes? module-keys "JavaCompat.CastDictionary<string"))
             (is (str/includes? module-keys
-                               "Pkl.Core.Util.IoUtils.Resolve(((global::Pkl.Core.Runtime.ReaderBase)(object)this)"))
+                               "Pkl.Core.Util.IoUtils.Resolve(this, baseUri, importUri)"))
+            (is (not (str/includes? module-keys
+                                    "((global::Pkl.Core.Runtime.ReaderBase)(object)this)")))
             (is (str/includes? module-cache "JavaCompat.NewJavaDictionary<global::System.Uri"))
             ;; The one exact null body is the intentional upstream default for
             ;; custom managers that do not configure root-path resolution.
@@ -379,7 +381,7 @@
             (is (str/includes? substrate
                                "DecoderFallback.ExceptionFallback"))
             (is (str/includes? substrate
-                               "public sealed class Instrumenter"))
+                               "internal sealed class Instrumenter"))
             (is (str/includes? substrate
                                "stream ?? throw Excluded()"))))))
 

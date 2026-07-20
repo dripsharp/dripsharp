@@ -11,9 +11,21 @@ internal static class DotNetCollections
     internal static IReadOnlyList<T> ReadOnly<T>(IList<T> values) =>
         new ReadOnlyCollection<T>(values);
 
+    internal static IReadOnlyList<T> ReadOnly<T>(IReadOnlyList<T> values) =>
+        values is IList<T> mutable ? new ReadOnlyCollection<T>(mutable) : values;
+
     internal static IReadOnlyDictionary<TKey, TValue> ReadOnly<TKey, TValue>(
         IDictionary<TKey, TValue> values) where TKey : notnull =>
         new ReadOnlyDictionary<TKey, TValue>(values);
+
+    internal static IReadOnlyDictionary<TKey, TValue> ReadOnly<TKey, TValue>(
+        IReadOnlyDictionary<TKey, TValue> values) where TKey : notnull =>
+        values is IDictionary<TKey, TValue> mutable
+            ? new ReadOnlyDictionary<TKey, TValue>(mutable)
+            : values;
+
+    internal static IReadOnlySet<T> ReadOnly<T>(IReadOnlySet<T> values) =>
+        values is ISet<T> mutable ? new ReadOnlySet<T>(mutable) : values;
 
     internal static IReadOnlySet<T> ReadOnly<T>(ISet<T> values) =>
         new ReadOnlySet<T>(values);
@@ -86,7 +98,7 @@ public sealed partial class PClassInfo<T>
     public string SimpleName => GetSimpleName();
     public string QualifiedName => GetQualifiedName();
     public string DisplayName => GetDisplayName();
-    public Type ValueType => GetJavaClass();
+    public Type ValueType => javaClass;
     public Uri ModuleUri => GetModuleUri();
     public bool IsModule => IsModuleClass();
     public bool IsExternal => IsExternalClass();

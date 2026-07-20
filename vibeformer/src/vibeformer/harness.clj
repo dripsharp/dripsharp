@@ -277,19 +277,27 @@
                                       :target target
                                       :discovery dependency-discovery
                                       :resolved-model dependency-model
+                                      :public-api-boundary dependency-surface
                                       :configuration dependency-destination})
                     dependency-destination validate-generated-surface-fn)]
                (assoc dependency-emission
                       :profile dependency-name
                       :source-project dependency-source-project
+                      :public-api-boundary dependency-surface
                       :destination dependency-destination)))
            (:dependency-profiles generation-profile)))
+        emission-public-api-boundary
+        (when surface
+          (update surface :selection-evidence into
+                  (mapcat #(get-in % [:public-api-boundary :selection-evidence])
+                          dependency-emissions)))
         emission (finish-emission!
                   surface
                   (emit-project-fn {:workspace-root root
                                     :target target
                                     :discovery discovery
                                     :resolved-model java-model
+                                    :public-api-boundary emission-public-api-boundary
                                     :configuration destination})
                   destination validate-generated-surface-fn)
         config-file (paths/resolve-path target "generation-config.edn")

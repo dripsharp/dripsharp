@@ -26,7 +26,6 @@ using Pkl.Core.Module;
 using Pkl.Core.Packages;
 using Pkl.Core.Project;
 using Pkl.Core.Resource;
-using Pkl.Core.Runtime;
 using Pkl.Core.Settings;
 using PklHttpClient = Pkl.Core.Http.HttpClient;
 using StackFrame = Pkl.Core.StackFrame;
@@ -276,7 +275,7 @@ static class LoadingContractDotNetProbe
         var analyzer = new Analyzer(
             StackFrameTransformers.DefaultTransformer,
             false,
-            SecurityManagers.defaultManager,
+            SecurityManagers.DefaultManager,
             new List<ModuleKeyFactory> { ModuleKeyFactories.file, ModuleKeyFactories.standardLibrary },
             null,
             null,
@@ -485,14 +484,16 @@ static class LoadingContractDotNetProbe
         using var resolver = new ModulePathResolver(new[] { directoryRoot, archive });
         using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
         using ResourceReader reader = ResourceReaders.ModulePath(resolver);
-        ModuleKey directory = factory.Create(new Uri("modulepath:/directory/module.pkl")).OrElseThrow();
-        ModuleKey zipped = factory.Create(new Uri("modulepath:/archive/module.pkl")).OrElseThrow();
-        ResolvedModuleKey resolvedDirectory = directory.Resolve(SecurityManagers.defaultManager);
-        ResolvedModuleKey resolvedZip = zipped.Resolve(SecurityManagers.defaultManager);
-        var directoryResource = (Resource)reader.Read(
-            new Uri("modulepath:/directory/resource.txt")).OrElseThrow();
-        var zipResource = (Resource)reader.Read(
-            new Uri("modulepath:/archive/resource.txt")).OrElseThrow();
+        ModuleKey directory = factory.Create(new Uri("modulepath:/directory/module.pkl"))
+            ?? throw new InvalidOperationException("directory module path was not recognized");
+        ModuleKey zipped = factory.Create(new Uri("modulepath:/archive/module.pkl"))
+            ?? throw new InvalidOperationException("archive module path was not recognized");
+        ResolvedModuleKey resolvedDirectory = directory.Resolve(SecurityManagers.DefaultManager);
+        ResolvedModuleKey resolvedZip = zipped.Resolve(SecurityManagers.DefaultManager);
+        var directoryResource = reader.Read(new Uri("modulepath:/directory/resource.txt")) as Resource
+            ?? throw new InvalidOperationException("directory resource path was not recognized");
+        var zipResource = reader.Read(new Uri("modulepath:/archive/resource.txt")) as Resource
+            ?? throw new InvalidOperationException("archive resource path was not recognized");
         Require(resolvedDirectory.GetUri().IsFile, "directory module path must resolve to a file");
         Require(resolvedZip.GetUri().IsFile || resolvedZip.GetUri().Scheme == "jar",
             "archive module path must resolve to an extracted file or archive URI");
@@ -577,7 +578,7 @@ static class LoadingContractDotNetProbe
         bool conflict;
         try
         {
-            builder.SetSecurityManager(SecurityManagers.defaultManager)
+            builder.SetSecurityManager(SecurityManagers.DefaultManager)
                 .SetAllowedModules(Array.Empty<Regex>());
             conflict = false;
         }
@@ -616,7 +617,7 @@ static class LoadingContractDotNetProbe
         SecurityManager manager = SecurityManagers.CreateStandard(
             new List<Regex> { new("file:"), new("pkl:") },
             new List<Regex> { new("file:"), new("env:") },
-            SecurityManagers.defaultTrustLevels,
+            SecurityManagers.DefaultTrustLevels,
             root);
         Uri allowedUri = new(Path.GetFullPath(allowed));
         Uri outsideUri = new(Path.GetFullPath(outside));
@@ -703,11 +704,11 @@ static class LoadingContractDotNetProbe
     {
         PrepareEncodedAssetPackage(packageBuild);
         using var server = new ContractHttpServer(packageBuild);
-        var httpModules = new List<Regex>(SecurityManagers.defaultAllowedModules) { new("http:") };
-        var httpResources = new List<Regex>(SecurityManagers.defaultAllowedResources) { new("http:") };
+        var httpModules = new List<Regex>(SecurityManagers.DefaultAllowedModules) { new("http:") };
+        var httpResources = new List<Regex>(SecurityManagers.DefaultAllowedResources) { new("http:") };
         PModule httpModule;
         using (PklHttpClient client = PklHttpClient.CreateBuilder()
-            .AddHeaders("**", new Dictionary<string, IList<string>>
+            .AddHeaders("**", new Dictionary<string, IReadOnlyList<string>>
                 { ["X-Contract"] = new List<string> { "enabled" } })
             .Build())
         using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
@@ -722,7 +723,7 @@ static class LoadingContractDotNetProbe
         PModule proxied;
         using (PklHttpClient proxyClient = PklHttpClient.CreateBuilder()
             .SetProxy(server.ProxyUri, Array.Empty<string>())
-            .AddHeaders("**", new Dictionary<string, IList<string>>
+            .AddHeaders("**", new Dictionary<string, IReadOnlyList<string>>
                 { ["X-Contract"] = new List<string> { "enabled" } })
             .Build())
         using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
@@ -735,14 +736,13 @@ static class LoadingContractDotNetProbe
         }
 
         using PklHttpClient directClient = server.NewTlsClient()
-            .AddRewrite(new Uri("https://origin.test/"), new Uri("https://localhost:0/"))
-            .AddHeaders("**", new Dictionary<string, IList<string>>
+            .AddRewrite(new Uri("https://origin.test/"), server.TlsUri("/"))
+            .AddHeaders("**", new Dictionary<string, IReadOnlyList<string>>
                 { ["X-Contract"] = new List<string> { "enabled" } })
             .Build();
         var checkedUris = new List<Uri>();
-        JavaHttpResponse<sbyte[]> redirectResponse = directClient.Send(
-            JavaHttpRequest.NewBuilder(new Uri("https://origin.test/redirect.pkl")).Build(),
-            JavaHttpBodyHandlers.OfByteArray(),
+        using HttpResponseMessage redirectResponse = directClient.Send(
+            new HttpRequestMessage(HttpMethod.Get, new Uri("https://origin.test/redirect.pkl")),
             checkedUris.Add);
         PModule httpsModule;
         using (Evaluator evaluator = EvaluatorBuilder.Preconfigured()
@@ -751,8 +751,7 @@ static class LoadingContractDotNetProbe
         {
             httpsModule = evaluator.Evaluate(ModuleSource.Uri("https://origin.test/main.pkl"));
         }
-        string redirectBody = Encoding.UTF8.GetString(
-            redirectResponse.Body().Select(value => unchecked((byte)value)).ToArray());
+        string redirectBody = redirectResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult();
         string http = $"http={httpModule.GetProperty("value")}:" +
             Escape((string)httpModule.GetProperty("payload")) +
             $"|https={httpsModule.GetProperty("value")}:" +
@@ -761,26 +760,25 @@ static class LoadingContractDotNetProbe
             $"|headers={Lower(server.AllRequestsHadContractHeader)}" +
             $"|proxy={proxied.GetProperty("value")}:{Lower(server.ProxyRequestCount > 0)}";
 
-        var orderedHeaderRules = new Dictionary<string, IDictionary<string, IList<string>>>
+        var orderedHeaderRules = new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>
         {
-            ["**"] = new Dictionary<string, IList<string>>
+            ["**"] = new Dictionary<string, IReadOnlyList<string>>
             {
                 ["X-Contract"] = new List<string> { "enabled" },
                 ["X-Rule-Order"] = new List<string> { "first" }
             },
-            ["**/main.pkl"] = new Dictionary<string, IList<string>>
+            ["**/main.pkl"] = new Dictionary<string, IReadOnlyList<string>>
             {
                 ["X-Rule-Order"] = new List<string> { "second" }
             }
         };
         using (PklHttpClient orderedHeaderClient = server.NewTlsClient()
-            .AddRewrite(new Uri("https://origin.test/"), new Uri("https://localhost:0/"))
+            .AddRewrite(new Uri("https://origin.test/"), server.TlsUri("/"))
             .SetHeaders(orderedHeaderRules)
             .Build())
         {
-            _ = orderedHeaderClient.Send(
-                JavaHttpRequest.NewBuilder(new Uri("https://origin.test/main.pkl")).Build(),
-                JavaHttpBodyHandlers.OfByteArray(),
+            using HttpResponseMessage _ = orderedHeaderClient.Send(
+                new HttpRequestMessage(HttpMethod.Get, new Uri("https://origin.test/main.pkl")),
                 _ => { });
         }
         string collections = ObserveMapEntrySet(server.HeaderRuleOrder);
@@ -867,8 +865,11 @@ static class LoadingContractDotNetProbe
             [lower] = "one",
             [secondUri] = "two"
         };
-        object view = InvokeJavaCompatGeneric(
-            "MapEntrySet", new[] { typeof(Uri), typeof(string) }, source);
+        object view = InvokeJavaCompatGenericExact(
+            "MapEntrySet",
+            new[] { typeof(Uri), typeof(string) },
+            new[] { typeof(IDictionary<Uri, string>) },
+            source);
         source[thirdUri] = "three";
         bool live = (int)view.GetType().GetProperty("Count")!.GetValue(view)! == 3;
 
@@ -1032,6 +1033,24 @@ static class LoadingContractDotNetProbe
         return selected.Invoke(null, arguments)!;
     }
 
+    static object InvokeJavaCompatGenericExact(
+        string method,
+        Type[] typeArguments,
+        Type[] parameterTypes,
+        params object?[] arguments)
+    {
+        Type compatibility = typeof(Evaluator).Assembly.GetType("Vibeformer.Runtime.JavaCompat")
+            ?? throw new InvalidOperationException("The packaged Java compatibility type is missing.");
+        MethodInfo selected = compatibility.GetMethods(
+                BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+            .Where(candidate => candidate.Name == method && candidate.IsGenericMethodDefinition &&
+                candidate.GetGenericArguments().Length == typeArguments.Length)
+            .Select(candidate => candidate.MakeGenericMethod(typeArguments))
+            .Single(candidate => candidate.GetParameters().Select(parameter => parameter.ParameterType)
+                .SequenceEqual(parameterTypes));
+        return selected.Invoke(null, arguments)!;
+    }
+
     static void PrepareEncodedAssetPackage(string packageBuild)
     {
         const string identity = "encoded-assets@1.0.0";
@@ -1097,7 +1116,7 @@ static class LoadingContractDotNetProbe
 
     static string ObserveNetworkErrors(ContractHttpServer server, string work, bool checksumFailure)
     {
-        var httpModules = new List<Regex>(SecurityManagers.defaultAllowedModules) { new("http:") };
+        var httpModules = new List<Regex>(SecurityManagers.DefaultAllowedModules) { new("http:") };
         bool httpFailure;
         try
         {
@@ -1352,9 +1371,8 @@ static class LoadingContractDotNetProbe
         bool httpAfterClose;
         try
         {
-            _ = client.Send(
-                JavaHttpRequest.NewBuilder(new Uri("https://example.test/")).Build(),
-                JavaHttpBodyHandlers.OfByteArray(),
+            using HttpResponseMessage _ = client.Send(
+                new HttpRequestMessage(HttpMethod.Get, new Uri("https://example.test/")),
                 _ => { });
             httpAfterClose = false;
         }
@@ -1692,7 +1710,7 @@ static class LoadingContractDotNetProbe
             new UTF8Encoding(false));
         elapsed.Add(ExpectPklTimeout("project load", shortTimeout,
             () => _ = Project.LoadFromPath(
-                slowProject, SecurityManagers.defaultManager, shortTimeout)));
+                slowProject, SecurityManagers.DefaultManager, shortTimeout)));
 
         bool processClean = ObserveProjectSettingsExternalTimeout(work, elapsed);
 
@@ -1782,7 +1800,8 @@ static class LoadingContractDotNetProbe
             new UTF8Encoding(false));
 
         Project project = Project.LoadFromPath(projectFile);
-        TimeSpan configured = project.GetResolvedEvaluatorSettings().Timeout!.ToJavaDuration();
+        TimeSpan configured = TimeSpan.FromSeconds(
+            project.GetResolvedEvaluatorSettings().Timeout!.InSeconds());
         elapsed.Add(ExpectTimeout("project external reader", configured,
             () => EvaluatorBuilder.Preconfigured().ApplyFromProject(project).Build(),
             evaluator => _ = evaluator.Evaluate(ModuleSource.Uri("timeoutreader:main"))));
@@ -1831,7 +1850,8 @@ static class LoadingContractDotNetProbe
                     siblings == "[dependency.pkl, main.pkl]",
                 "assembly module glob: " + siblings);
         }
-        ModuleKey missing = factory.Create(new Uri("assembly:/missing.pkl")).OrElseThrow();
+        ModuleKey missing = factory.Create(new Uri("assembly:/missing.pkl"))
+            ?? throw new InvalidOperationException("assembly module URI was not recognized");
         bool missingDiagnostic;
         try
         {
@@ -1860,7 +1880,8 @@ static class LoadingContractDotNetProbe
             Assembly.GetExecutingAssembly(), "Contract.Resources");
         SecurityManager manager = SecurityManagers.CreateStandard(
             new List<Regex>(), new List<Regex> { new("embedded:") }, _ => 0, null);
-        var payload = (Resource)reader.Read(new Uri("embedded:/payload.txt")).OrElseThrow();
+        var payload = reader.Read(new Uri("embedded:/payload.txt")) as Resource
+            ?? throw new InvalidOperationException("embedded resource URI was not recognized");
         string hex = string.Concat(payload.Bytes.Select(value =>
             unchecked((byte)value).ToString("x2", CultureInfo.InvariantCulture)));
         string list = "[" + string.Join(", ", reader.ListElements(manager, new Uri("embedded:/"))
@@ -2042,9 +2063,9 @@ static class LoadingContractDotNetProbe
 
     sealed class FailingModuleFactory : ModuleKeyFactory
     {
-        public JavaOptional<ModuleKey> Create(Uri uri) => uri.Scheme == "iofail"
-            ? JavaOptional<ModuleKey>.Of(new FailingModuleKey(uri))
-            : JavaOptional<ModuleKey>.Empty();
+        public ModuleKey? Create(Uri uri) => uri.Scheme == "iofail"
+            ? new FailingModuleKey(uri)
+            : null;
         public void Close() { }
         public void Dispose() { }
     }
@@ -2074,12 +2095,12 @@ static class LoadingContractDotNetProbe
         public int Closes { get; private set; }
         bool disposed;
 
-        public JavaOptional<ModuleKey> Create(Uri uri)
+        public ModuleKey? Create(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            if (uri.Scheme != "custom") return JavaOptional<ModuleKey>.Empty();
+            if (uri.Scheme != "custom") return null;
             Creates++;
-            return JavaOptional<ModuleKey>.Of(new CountingModuleKey(uri));
+            return new CountingModuleKey(uri);
         }
 
         public void Close()
@@ -2095,12 +2116,12 @@ static class LoadingContractDotNetProbe
     sealed class BlockingModuleFactory : ModuleKeyFactory
     {
         internal ManualResetEventSlim Exited { get; } = new(false);
-        public JavaOptional<ModuleKey> Create(Uri uri)
+        public ModuleKey? Create(Uri uri)
         {
-            if (uri.Scheme != "timeoutmod") return JavaOptional<ModuleKey>.Empty();
+            if (uri.Scheme != "timeoutmod") return null;
             try { Thread.Sleep(TimeSpan.FromSeconds(5)); }
             finally { Exited.Set(); }
-            return JavaOptional<ModuleKey>.Empty();
+            return null;
         }
         public void Close() { }
         public void Dispose() { }
@@ -2112,11 +2133,11 @@ static class LoadingContractDotNetProbe
         public string GetUriScheme() => "timeoutres";
         public bool HasHierarchicalUris() => false;
         public bool IsGlobbable() => false;
-        public JavaOptional<object> Read(Uri uri)
+        public object? Read(Uri uri)
         {
             try { Thread.Sleep(TimeSpan.FromSeconds(5)); }
             finally { Exited.Set(); }
-            return JavaOptional<object>.Empty();
+            return null;
         }
         public void Close() { }
         public void Dispose() { }
@@ -2151,13 +2172,13 @@ static class LoadingContractDotNetProbe
         public string GetUriScheme() => "contractres";
         public bool HasHierarchicalUris() => false;
         public bool IsGlobbable() => false;
-        public JavaOptional<object> Read(Uri uri)
+        public object? Read(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             Reads++;
             return uri.ToString() == "contractres:item"
-                ? JavaOptional<object>.Of("resource-value")
-                : JavaOptional<object>.Empty();
+                ? "resource-value"
+                : null;
         }
         public void Close()
         {
@@ -2292,9 +2313,11 @@ static class LoadingContractDotNetProbe
         internal Uri ProxyUri => new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}");
         internal Uri PlainUri(string path) =>
             new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}{path}");
+        internal Uri TlsUri(string path) =>
+            new($"https://localhost:{((IPEndPoint)tls.LocalEndpoint).Port}{path}");
         internal PklHttpClient.Builder NewTlsClient() => PklHttpClient.CreateBuilder()
             .AddCertificates(Path.Combine(packageBuild, "keystore", "localhost.pem"))
-            .SetTestPort(((IPEndPoint)tls.LocalEndpoint).Port);
+            .AddRewrite(new Uri("https://localhost:0/"), TlsUri("/"));
 
         void AcceptLoop(TcpListener listener, bool secure)
         {
@@ -2489,7 +2512,9 @@ static class LoadingContractDotNetProbe
 
         internal PklHttpClient NewClient() => PklHttpClient.CreateBuilder()
             .AddCertificates(certificatePath)
-            .SetTestPort(((IPEndPoint)listener.LocalEndpoint).Port)
+            .AddRewrite(
+                new Uri("https://localhost:0/"),
+                new Uri($"https://localhost:{((IPEndPoint)listener.LocalEndpoint).Port}/"))
             .Build();
 
         void Serve()

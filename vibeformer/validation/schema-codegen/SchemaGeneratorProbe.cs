@@ -77,8 +77,8 @@ static class SchemaGeneratorProbe
         var mainSchema = evaluator.EvaluateSchema(
             ModuleSource.PathFromPath(Path.Combine(fixtures, "ContractMain.pkl")));
         var mappedOptions = new CSharpGeneratorOptions { Namespace = "Pinned.Main" };
-        mappedOptions.NamespaceMappings["contract.base"] = "Pinned.Base";
-        mappedOptions.NamespaceMappings["contract.imported"] = "Pinned.Imported";
+        mappedOptions.MapNamespace("contract.base", "Pinned.Base");
+        mappedOptions.MapNamespace("contract.imported", "Pinned.Imported");
         string mapped = new CSharpGenerator(mappedOptions).Generate(mainSchema);
         foreach (string expected in new[]
         {
@@ -305,7 +305,7 @@ static class SchemaGeneratorProbe
         ";params=" + TypeParameters(value.GetTypeParameters()) +
         ";type=" + TypeValue(value.GetAliasedType()) + ")";
 
-    static string TypeParameters(IList<TypeParameter> values) => List(values.Select(value =>
+    static string TypeParameters(IReadOnlyList<TypeParameter> values) => List(values.Select(value =>
         "parameter(" + Q(value.GetName()) + ";variance=" + Variance(value.GetVariance()) +
         ";index=" + value.GetIndex() + ";owner=" +
         Q(value.GetOwner().GetModuleName() + "#" + value.GetOwner().GetSimpleName()) + ")"));
@@ -316,7 +316,7 @@ static class SchemaGeneratorProbe
         ReferenceEquals(value, TypeParameter.Variance.CONTRAVARIANT) ? "CONTRAVARIANT" :
         throw new ArgumentException("Unknown variance");
 
-    static string Annotations(IList<PObject> values) => List(values.Select(Annotation));
+    static string Annotations(IReadOnlyList<PObject> values) => List(values.Select(Annotation));
 
     static string Annotation(PObject value) => "annotation(" + Q(value.GetClassInfo().GetQualifiedName()) + ";" +
         List(value.GetProperties().OrderBy(entry => entry.Key, StringComparer.Ordinal)
@@ -489,7 +489,7 @@ static class SchemaGeneratorProbe
             ";index=" + parameter.GetIndex() + ")";
     }
 
-    static string TypeArguments(IList<PType> values) => values.Count == 0 ? "" :
+    static string TypeArguments(IReadOnlyList<PType> values) => values.Count == 0 ? "" :
         "<" + List(values.Select(item => TypeValue(item))) + ">";
     static string List(IEnumerable<string> values) => "[" + string.Join(", ", values) + "]";
     static string Names(IEnumerable<string> values) => "[" + string.Join(", ", values) + "]";

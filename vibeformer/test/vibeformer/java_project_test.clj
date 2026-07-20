@@ -93,18 +93,18 @@
                   (:sources manifest))))
 
     (testing "all executable roots pass accepted recursive coverage"
-      (is (= 983 (:executable-roots summary)))
+      (is (= 984 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
       (is (empty? (:diagnostics first-emission)))
-      (is (= {:semantic 38938
+      (is (= {:semantic 38963
               :fallback 0
-              :visited 89271
+              :visited 89321
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 50333
+              :structural 50358
               :blocked 0
-              :covered 89271}
+              :covered 89321}
              (:executable-coverage summary)))
       (let [sources (map #(slurp (str (paths/resolve-path first-root (:file %))))
                          (:artifacts first-emission))]

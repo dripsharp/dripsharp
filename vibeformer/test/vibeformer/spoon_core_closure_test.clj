@@ -60,16 +60,16 @@
         discovery-sources (set (map #(str (.toFile ^Path %))
                                     (:java-sources discovery)))]
     (testing "the contract-derived entry paths are exact live declaration identities"
-      (is (= 1250 (count (:required-rows surface))))
-      (is (= 1250 (count (:selection-evidence surface))))
-      (is (= 187 (count (:seeds configuration))))
+      (is (= 1138 (count (:required-rows surface))))
+      (is (= 1138 (count (:selection-evidence surface))))
+      (is (= 174 (count (:seeds configuration))))
       (is (= (sort-by :key (:seeds configuration))
              (mapv #(select-keys % [:key :expand :members]) (:seeds first))))
       (is (every? #(instance? CtElement (:declaration %)) (:seeds first))))
 
     (testing "the recursively resolved project declaration and source sets are exact"
-      (is (= {:seeds 187 :declarations 17141 :source-inputs 656
-              :public-api-declarations 7720 :shadow-symbols 0
+      (is (= {:seeds 174 :declarations 17301 :source-inputs 657
+              :public-api-declarations 7792 :shadow-symbols 0
               :unresolved-symbols 0 :ambiguous-symbols 0
               :fallback-symbols 0 :guessed-symbols 0}
              (select-keys (:totals first)
@@ -77,17 +77,17 @@
                            :public-api-declarations :shadow-symbols
                            :unresolved-symbols :ambiguous-symbols
                            :fallback-symbols :guessed-symbols])))
-      (is (= "e0c79e0149104dd4ddfdb86d44fbdea6226c53b48bbbe47ee61fc531c5b5b25d"
+      (is (= "f2d7f8fa7cb6951fc69d2ef5f6084792d86fefe08014da4aeb55a5955b7c8c6b"
              (sha-256 declaration-keys)))
-      (is (= "c4c7cca9825e79e26afbda347967f549c7b30590ef0edd22aa52c5fcfc0d2dfb"
+      (is (= "d7e0f8f71a71a88392d290867b50459f4737307ed1c6de2882bc6241a6332cf0"
              (sha-256 source-paths)))
-      (is (= "618d6b3305573e0565ffff8a92f17e2f18b7764d0c9a9ef328a5f3cdf62bc85a"
+      (is (= "2e625358d0eb4b832831f805bb9249e5f1fc768d9878e8961baa4b8e2a359855"
              (sha-256 public-api-keys)))
       (is (= discovery-sources (set (:compilation-units (:frontend first)))))
       (is (every? discovery-sources (keys (:source-inputs first))))
       (is (every? #(instance? CtElement (:declaration %))
                   (vals (:declarations first))))
-      (is (= 656 (count project-roots)))
+      (is (= 657 (count project-roots)))
       (is (every? #(.isTopLevel ^CtType %) project-roots))
       (is (every? #(contains? (:declarations first)
                               (str "type:" (.getQualifiedName ^CtType %)))
@@ -135,7 +135,7 @@
                                   :representation])
                  (:selection-evidence second-surface))))
     (is (= first-occurrences second-occurrences))
-    (is (= "ca20e8259486b496b6141b0ffedb980437dfc00d344856db8aa5bd10aa94abd4"
+    (is (= "0a27451794dbebc7dd3ad67972a0046161d8917bb1cb77e8ebd9aa4709eabc53"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))

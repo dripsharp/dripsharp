@@ -110,5 +110,5 @@
                        "internal static void IteratorRemove(IEnumerator iterator)"))
     (is (not (re-find #"(?i)org\\.pkl|Pkl\\.Core|Pkl\\.Parser"
                       (subs runtime
-                            (.indexOf runtime "public sealed class JavaMapEntry")
+                            (.indexOf runtime "internal sealed class JavaMapEntry")
                             (.indexOf runtime "internal static class JavaCompat")))))))

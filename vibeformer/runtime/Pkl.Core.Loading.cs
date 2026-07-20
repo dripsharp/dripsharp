@@ -17,6 +17,7 @@ namespace Pkl.Core
     {
         internal static byte[] Unsigned(sbyte[] values) =>
             values.Select(value => unchecked((byte)value)).ToArray();
+        internal static byte[] Unsigned(byte[] values) => values;
     }
 
     public sealed partial class SecurityManagers
@@ -36,6 +37,81 @@ namespace Pkl.Core
                 DotNetCollections.ReadOnly(GetAllowedResources());
             public string? RootDirectory => GetRootDir();
         }
+    }
+}
+
+namespace Pkl.Core.Runtime
+{
+    internal sealed class ReaderBaseAdapter : ReaderBase
+    {
+        private readonly Module.ModuleKey? moduleKey;
+        private readonly Resource.ResourceReader? resourceReader;
+
+        internal ReaderBaseAdapter(Module.ModuleKey reader) => moduleKey = reader;
+        internal ReaderBaseAdapter(Resource.ResourceReader reader) => resourceReader = reader;
+
+        private bool IsModule => moduleKey is not null;
+
+        public bool HasHierarchicalUris() => IsModule
+            ? moduleKey!.HasHierarchicalUris()
+            : resourceReader!.HasHierarchicalUris();
+        public bool IsGlobbable() => IsModule
+            ? moduleKey!.IsGlobbable()
+            : resourceReader!.IsGlobbable();
+        public bool HasFragmentPaths() => IsModule
+            ? moduleKey!.HasFragmentPaths()
+            : resourceReader!.HasFragmentPaths();
+        public bool HasElement(SecurityManager securityManager, Uri elementUri) => IsModule
+            ? moduleKey!.HasElement(securityManager, elementUri)
+            : resourceReader!.HasElement(securityManager, elementUri);
+        public IReadOnlyList<Module.PathElement> ListElements(
+            SecurityManager securityManager, Uri baseUri) => IsModule
+                ? moduleKey!.ListElements(securityManager, baseUri)
+                : resourceReader!.ListElements(securityManager, baseUri);
+        public Uri ResolveUri(Uri baseUri, Uri uri) => IsModule
+            ? moduleKey!.ResolveUri(baseUri, uri)
+            : resourceReader!.ResolveUri(baseUri, uri);
+    }
+}
+
+namespace Pkl.Core
+{
+    internal sealed partial record class CommandSpec
+    {
+        internal sealed partial record class Result
+        {
+            internal Result(byte[] outputBytes, IDictionary<string, FileOutput> outputFiles)
+                : this(outputBytes.Select(value => unchecked((sbyte)value)).ToArray(), outputFiles)
+            {
+            }
+        }
+    }
+}
+
+namespace Pkl.Core.Util
+{
+    internal sealed partial class GlobResolver
+    {
+        internal static IDictionary<string, ResolvedGlobElement> ResolveGlob(
+            SecurityManager securityManager, Module.ModuleKey reader,
+            Module.ModuleKey? enclosingModuleKey, Uri? enclosingUri, string globPattern) =>
+            ResolveGlob(securityManager, new Runtime.ReaderBaseAdapter(reader),
+                enclosingModuleKey, enclosingUri, globPattern);
+
+        internal static IDictionary<string, ResolvedGlobElement> ResolveGlob(
+            SecurityManager securityManager, Resource.ResourceReader reader,
+            Module.ModuleKey? enclosingModuleKey, Uri? enclosingUri, string globPattern) =>
+            ResolveGlob(securityManager, new Runtime.ReaderBaseAdapter(reader),
+                enclosingModuleKey, enclosingUri, globPattern);
+    }
+
+    internal sealed partial class IoUtils
+    {
+        internal static Uri Resolve(Module.ModuleKey reader, Uri baseUri, string uri) =>
+            Resolve(reader, baseUri, CreateUri(uri));
+
+        internal static Uri Resolve(Resource.ResourceReader reader, Uri baseUri, string uri) =>
+            Resolve(reader, baseUri, CreateUri(uri));
     }
 }
 
@@ -132,6 +208,16 @@ namespace Pkl.Core.Module
         public bool Cached => IsCached();
         public bool Local => IsLocal();
         public string? FileCachePath => GetFileCacheLocation();
+        public bool HasHierarchicalUris();
+        public bool IsGlobbable();
+        public bool HasElement(SecurityManager securityManager, Uri elementUri) =>
+            throw new NotSupportedException();
+        public IReadOnlyList<PathElement> ListElements(
+            SecurityManager securityManager, Uri baseUri) =>
+            throw new NotSupportedException();
+        public bool HasFragmentPaths() => false;
+        public Uri ResolveUri(Uri baseUri, Uri uri) =>
+            Pkl.Core.Util.IoUtils.Resolve(this, baseUri, uri);
     }
 
     public partial interface ResolvedModuleKey
@@ -146,8 +232,7 @@ namespace Pkl.Core.Module
         public ModuleKey? TryCreate(Uri uri)
         {
             ArgumentNullException.ThrowIfNull(uri);
-            var result = Create(uri);
-            return result.IsPresent() ? result.Get() : null;
+            return Create(uri);
         }
     }
 
@@ -232,13 +317,13 @@ namespace Pkl.Core.Module
             resources = new DotNetLoading.AssemblyResourceIndex(assembly, resourcePrefix);
         }
 
-        public Runtime.JavaOptional<ModuleKey> Create(Uri uri)
+        public ModuleKey? Create(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             ArgumentNullException.ThrowIfNull(uri);
             if (!string.Equals(uri.Scheme, uriScheme, StringComparison.OrdinalIgnoreCase))
-                return Runtime.JavaOptional<ModuleKey>.Empty();
-            return Runtime.JavaOptional<ModuleKey>.Of(new AssemblyModuleKey(uri, resources));
+                return null;
+            return new AssemblyModuleKey(uri, resources);
         }
 
         public void Close() => disposed = true;
@@ -268,11 +353,11 @@ namespace Pkl.Core.Module
             return resources.HasElement(elementUri);
         }
 
-        public IList<PathElement> ListElements(SecurityManager securityManager, Uri baseUri)
+        public IReadOnlyList<PathElement> ListElements(SecurityManager securityManager, Uri baseUri)
         {
             ArgumentNullException.ThrowIfNull(securityManager);
             securityManager.CheckResolveModule(baseUri);
-            return resources.ListElements(baseUri);
+            return new List<PathElement>(resources.ListElements(baseUri));
         }
 
         public ResolvedModuleKey Resolve(SecurityManager securityManager)
@@ -318,12 +403,22 @@ namespace Pkl.Core.Resource
 
     public partial interface ResourceReader
     {
+        public bool HasHierarchicalUris();
+        public bool IsGlobbable();
         public object? TryRead(Uri uri)
         {
             ArgumentNullException.ThrowIfNull(uri);
-            var result = Read(uri);
-            return result.IsPresent() ? result.Get() : null;
+            return Read(uri);
         }
+
+        public bool HasElement(SecurityManager securityManager, Uri elementUri) =>
+            throw new NotSupportedException();
+        public IReadOnlyList<Module.PathElement> ListElements(
+            SecurityManager securityManager, Uri baseUri) =>
+            throw new NotSupportedException();
+        public bool HasFragmentPaths() => false;
+        public Uri ResolveUri(Uri baseUri, Uri uri) =>
+            Pkl.Core.Util.IoUtils.Resolve(this, baseUri, uri);
     }
 
     public sealed partial class ResourceReaders
@@ -366,13 +461,13 @@ namespace Pkl.Core.Resource
         public bool HasHierarchicalUris() => true;
         public bool IsGlobbable() => true;
 
-        public Runtime.JavaOptional<object> Read(Uri uri)
+        public object? Read(Uri uri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             if (!string.Equals(uri.Scheme, uriScheme, StringComparison.OrdinalIgnoreCase) ||
                 !resources.TryRead(uri, out var bytes))
-                return Runtime.JavaOptional<object>.Empty();
-            return Runtime.JavaOptional<object>.Of(new Resource(uri, bytes));
+                return null;
+            return new Resource(uri, bytes);
         }
 
         public bool HasElement(SecurityManager securityManager, Uri elementUri)
@@ -383,13 +478,13 @@ namespace Pkl.Core.Resource
             return resources.HasElement(elementUri);
         }
 
-        public IList<Module.PathElement> ListElements(
+        public IReadOnlyList<Module.PathElement> ListElements(
             SecurityManager securityManager, Uri baseUri)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             ArgumentNullException.ThrowIfNull(securityManager);
             securityManager.CheckResolveResource(baseUri);
-            return resources.ListElements(baseUri);
+            return new List<Module.PathElement>(resources.ListElements(baseUri));
         }
 
         public void Close() => disposed = true;
@@ -401,15 +496,26 @@ namespace Pkl.Core.Http
 {
     public partial interface HttpClient
     {
-        public byte[] Send(
+        public HttpResponseMessage Send(
             HttpRequestMessage request,
             HttpRequestChecker requestChecker)
         {
             ArgumentNullException.ThrowIfNull(request);
             ArgumentNullException.ThrowIfNull(requestChecker);
-            return Send(
+            return HttpClientCompatibility.SendMessage(this, request, requestChecker);
+        }
+
+        public byte[] GetBytes(
+            HttpRequestMessage request,
+            HttpRequestChecker requestChecker)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(requestChecker);
+            return HttpClientCompatibility.Send(
+                this,
                 new Runtime.JavaHttpRequest(request),
-                response => response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult(),
+                response => response.Content.ReadAsByteArrayAsync(
+                    global::Vibeformer.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult(),
                 requestChecker).Body();
         }
 
@@ -419,10 +525,7 @@ namespace Pkl.Core.Http
         {
             ArgumentNullException.ThrowIfNull(request);
             ArgumentNullException.ThrowIfNull(requestChecker);
-            return Send(
-                new Runtime.JavaHttpRequest(request),
-                Runtime.JavaHttpBodyHandlers.OfInputStream(),
-                requestChecker).Body();
+            return new MemoryStream(GetBytes(request, requestChecker), writable: false);
         }
 
         public partial interface Builder
@@ -431,6 +534,69 @@ namespace Pkl.Core.Http
                 AddCertificates(certificateBytes);
 
             public Builder AddCertificate(string path) => AddCertificates(path);
+        }
+    }
+
+    internal static class HttpClientCompatibility
+    {
+        internal static Runtime.JavaHttpResponse<T> Send<T>(
+            HttpClient client,
+            Runtime.JavaHttpRequest request,
+            Runtime.JavaHttpBodyHandler<T> responseBodyHandler,
+            HttpClient.HttpRequestChecker requestChecker)
+        {
+            ArgumentNullException.ThrowIfNull(client);
+            var compatibilityMethod = client.GetType().GetMethods(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .SingleOrDefault(method =>
+                    method.Name == "SendCompatibility" && method.IsGenericMethodDefinition &&
+                    method.GetParameters().Length == 3);
+            if (compatibilityMethod is not null)
+            {
+                try
+                {
+                    return (Runtime.JavaHttpResponse<T>)compatibilityMethod
+                        .MakeGenericMethod(typeof(T))
+                        .Invoke(client, new object[] { request, responseBodyHandler, requestChecker })!;
+                }
+                catch (TargetInvocationException error) when (error.InnerException is not null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                        .Capture(error.InnerException).Throw();
+                    throw;
+                }
+            }
+
+            var response = client.Send(request.Message, requestChecker);
+            return new Runtime.JavaHttpResponse<T>(response, responseBodyHandler(response));
+        }
+
+        internal static HttpResponseMessage SendMessage(
+            HttpClient client,
+            HttpRequestMessage request,
+            HttpClient.HttpRequestChecker requestChecker) =>
+            Send(client, new Runtime.JavaHttpRequest(request), CloneResponse, requestChecker).Body();
+
+        private static HttpResponseMessage CloneResponse(HttpResponseMessage response)
+        {
+            if (Pkl.Core.Util.HttpUtils.IsRedirectStatusCode((int)response.StatusCode))
+                return response;
+
+            var clone = new HttpResponseMessage(response.StatusCode)
+            {
+                ReasonPhrase = response.ReasonPhrase,
+                RequestMessage = response.RequestMessage,
+                Version = response.Version,
+                Content = new ByteArrayContent(response.Content.ReadAsByteArrayAsync(
+                    global::Vibeformer.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult())
+            };
+            foreach (var header in response.Headers)
+                clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            foreach (var header in response.Content.Headers)
+                clone.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            foreach (var header in response.TrailingHeaders)
+                clone.TrailingHeaders.TryAddWithoutValidation(header.Key, header.Value);
+            return clone;
         }
     }
 }
@@ -499,7 +665,7 @@ namespace Pkl.Core.Packages
 
         public IReadOnlyList<Pkl.Core.Module.PathElement> GetElements(
             PackageAssetUri uri, Checksums? checksums = null) =>
-            Pkl.Core.DotNetCollections.ReadOnly(ListElements(uri, checksums));
+            ListElements(uri, checksums);
     }
 
     public sealed partial class PackageLoadError
@@ -630,8 +796,35 @@ namespace Pkl.Core.Externalreader
         public object? TryRead(Uri uri)
         {
             ArgumentNullException.ThrowIfNull(uri);
-            var result = Read(uri);
-            return result.IsPresent() ? result.Get() : null;
+            return Read(uri);
+        }
+    }
+}
+
+namespace Pkl.Core.Util
+{
+    internal sealed partial class IoUtils
+    {
+        internal static Uri Resolve(
+            Pkl.Core.Module.ModuleKey reader, Uri baseUri, Uri importUri) =>
+            ResolveProductReader(reader.HasFragmentPaths(), baseUri, importUri);
+
+        internal static Uri Resolve(
+            Pkl.Core.Resource.ResourceReader reader, Uri baseUri, Uri importUri) =>
+            ResolveProductReader(reader.HasFragmentPaths(), baseUri, importUri);
+
+        private static Uri ResolveProductReader(
+            bool hasFragmentPaths, Uri baseUri, Uri importUri)
+        {
+            if (hasFragmentPaths && !importUri.IsAbsoluteUri &&
+                global::Vibeformer.Runtime.JavaCompat.UriPath(importUri) is not null)
+            {
+                var fragment = global::Vibeformer.Runtime.JavaCompat.UriFragment(baseUri);
+                var newFragment = Resolve(CreateUri(fragment), importUri);
+                return global::Vibeformer.Runtime.JavaCompat.ResolveUri(
+                    StripFragment(baseUri), "#" + newFragment);
+            }
+            return Resolve(baseUri, importUri);
         }
     }
 }

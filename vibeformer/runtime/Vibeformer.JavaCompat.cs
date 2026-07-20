@@ -26,11 +26,7 @@ internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
 internal delegate long JavaToLongFunction<in TValue>(TValue value);
 internal delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight right);
-#if VIBEFORMER_PKL_CORE
-public
-#else
 internal
-#endif
 enum JavaTimeUnit { NANOSECONDS, MICROSECONDS, MILLISECONDS, SECONDS, MINUTES, HOURS, DAYS }
 internal enum JavaProcessRedirect { INHERIT }
 
@@ -417,11 +413,7 @@ internal sealed class JavaOptional<T>
 // A Java Map.Entry is a reference object whose value can remain backed by the
 // source map. KeyValuePair cannot model setValue(), so translated declarations
 // use this reusable compatibility type instead of taking an entry snapshot.
-#if VIBEFORMER_PKL_CORE
-public sealed class JavaMapEntry<K, V> where K : notnull
-#else
 internal sealed class JavaMapEntry<K, V> where K : notnull
-#endif
 {
     private readonly IDictionary<K, V>? source;
     private readonly K key;
@@ -475,6 +467,60 @@ internal interface JavaRemovableIterator
 {
     void MarkReturned();
     void Remove();
+}
+
+internal interface JavaReadOnlyAdapter
+{
+    object MutableSource { get; }
+}
+
+internal sealed class JavaReadOnlyList<T> : IReadOnlyList<T>, JavaReadOnlyAdapter
+{
+    private readonly IList<T> values;
+
+    public JavaReadOnlyList(IList<T> values) => this.values = values;
+
+    object JavaReadOnlyAdapter.MutableSource => values;
+    public int Count => values.Count;
+    public T this[int index] => values[index];
+    public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+internal sealed class JavaReadOnlyDictionary<K, V> : IReadOnlyDictionary<K, V>, JavaReadOnlyAdapter
+{
+    private readonly IDictionary<K, V> values;
+
+    public JavaReadOnlyDictionary(IDictionary<K, V> values) => this.values = values;
+
+    object JavaReadOnlyAdapter.MutableSource => values;
+    public int Count => values.Count;
+    public IEnumerable<K> Keys => values.Keys;
+    public IEnumerable<V> Values => values.Values;
+    public V this[K key] => values[key];
+    public bool ContainsKey(K key) => values.ContainsKey(key);
+    public bool TryGetValue(K key, out V value) => values.TryGetValue(key, out value!);
+    public IEnumerator<KeyValuePair<K, V>> GetEnumerator() => values.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+internal sealed class JavaReadOnlySet<T> : IReadOnlySet<T>, JavaReadOnlyAdapter
+{
+    private readonly ISet<T> values;
+
+    public JavaReadOnlySet(ISet<T> values) => this.values = values;
+
+    object JavaReadOnlyAdapter.MutableSource => values;
+    public int Count => values.Count;
+    public bool Contains(T item) => values.Contains(item);
+    public bool IsProperSubsetOf(IEnumerable<T> other) => values.IsProperSubsetOf(other);
+    public bool IsProperSupersetOf(IEnumerable<T> other) => values.IsProperSupersetOf(other);
+    public bool IsSubsetOf(IEnumerable<T> other) => values.IsSubsetOf(other);
+    public bool IsSupersetOf(IEnumerable<T> other) => values.IsSupersetOf(other);
+    public bool Overlaps(IEnumerable<T> other) => values.Overlaps(other);
+    public bool SetEquals(IEnumerable<T> other) => values.SetEquals(other);
+    public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K : notnull
@@ -608,6 +654,26 @@ internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K :
 
 internal static class JavaCompat
 {
+    private sealed class ReadOnlyAdapterCache
+    {
+        internal Dictionary<Type, object> Values { get; } = new();
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, ReadOnlyAdapterCache>
+        ReadOnlyAdapters = new();
+
+    private static object ReadOnlyAdapter(Type targetType, object source, Func<object> create)
+    {
+        var cache = ReadOnlyAdapters.GetOrCreateValue(source);
+        lock (cache.Values)
+        {
+            if (cache.Values.TryGetValue(targetType, out var existing)) return existing;
+            var adapter = create();
+            cache.Values.Add(targetType, adapter);
+            return adapter;
+        }
+    }
+
     private sealed class JavaRegex(
         string originalPattern,
         string translatedPattern,
@@ -2368,15 +2434,25 @@ internal static class JavaCompat
 
     internal static bool MapContainsKey<K, V>(IDictionary<K, V> map, object? key) where K : notnull =>
         key is K typed && map.ContainsKey(typed);
+    internal static bool MapContainsKey<K, V>(IReadOnlyDictionary<K, V> map, object? key) where K : notnull =>
+        key is K typed && map.ContainsKey(typed);
 
     internal static ISet<JavaMapEntry<K, V>> MapEntrySet<K, V>(IDictionary<K, V> map) where K : notnull =>
         new JavaMapEntrySet<K, V>(map);
+    internal static IEnumerable<KeyValuePair<K, V>> MapEntrySet<K, V>(IReadOnlyDictionary<K, V> map)
+        where K : notnull => map;
 
     internal static bool MapIsEmpty<K, V>(IDictionary<K, V> map) where K : notnull => map.Count == 0;
+    internal static bool MapIsEmpty<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull => map.Count == 0;
     internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull =>
         new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
+    internal static ISet<K> MapKeySet<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull =>
+        new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
     internal static int MapCount<K, V>(IDictionary<K, V> map) where K : notnull => map.Count;
+    internal static int MapCount<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull => map.Count;
     internal static bool MapContainsValue<K, V>(IDictionary<K, V> map, object? value) where K : notnull =>
+        value is V typed && map.Values.Contains(typed);
+    internal static bool MapContainsValue<K, V>(IReadOnlyDictionary<K, V> map, object? value) where K : notnull =>
         value is V typed && map.Values.Contains(typed);
     internal static V MapRemove<K, V>(IDictionary<K, V> map, object? key) where K : notnull
     {
@@ -2393,6 +2469,8 @@ internal static class JavaCompat
     }
     internal static V MapGetOrDefault<K, V>(IDictionary<K, V> map, K key, V fallback) where K : notnull =>
         map.TryGetValue(key, out var value) ? value : fallback;
+    internal static V MapGetOrDefault<K, V>(IReadOnlyDictionary<K, V> map, K key, V fallback) where K : notnull =>
+        map.TryGetValue(key, out var value) ? value : fallback;
     internal static V MapPutIfAbsent<K, V>(IDictionary<K, V> map, K key, V value) where K : notnull
     {
         if (map.TryGetValue(key, out var previous)) return previous;
@@ -2406,6 +2484,8 @@ internal static class JavaCompat
     }
 
     internal static V MapGet<K, V>(IDictionary<K, V> map, object? key) where K : notnull =>
+        key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
+    internal static V MapGet<K, V>(IReadOnlyDictionary<K, V> map, object? key) where K : notnull =>
         key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
 
     internal static V MapPut<K, V>(IDictionary<K, V> map, K key, V value) where K : notnull
@@ -3646,7 +3726,7 @@ internal static class JavaCompat
                type.Namespace == "Pkl.Core.Util.Paguro";
     }
 
-    internal static IList<T> ListOf<T>(params T[] values) => new ReadOnlyCollection<T>(values);
+    internal static ReadOnlyCollection<T> ListOf<T>(params T[] values) => new(values);
 
     internal static IList<T> AsList<T>(params T[] values) => new JavaArrayList<T>(values);
 
@@ -3662,8 +3742,8 @@ internal static class JavaCompat
     internal static ISet<T> EnumSetOf<T>(T value) => new HashSet<T> { value };
     internal static ISet<T> EnumSetCopyOf<T>(IEnumerable<T> values) => new HashSet<T>(values);
 
-    internal static IList<T> UnmodifiableList<T>(IEnumerable<T> values) =>
-        new ReadOnlyCollection<T>(values is IList<T> list ? list : values.ToList());
+    internal static ReadOnlyCollection<T> UnmodifiableList<T>(IEnumerable<T> values) =>
+        new(values is IList<T> list ? list : values.ToList());
 
     internal static IList<T> SubList<T>(IEnumerable<T> values, int fromIndex, int toIndex) =>
         new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
@@ -3872,6 +3952,8 @@ internal static class JavaCompat
 
     internal new static bool Equals(object? left, object? right)
     {
+        if (left is JavaReadOnlyAdapter leftAdapter) left = leftAdapter.MutableSource;
+        if (right is JavaReadOnlyAdapter rightAdapter) right = rightAdapter.MutableSource;
         if (ReferenceEquals(left, right)) return true;
         if (left is null || right is null) return false;
         if (left is Uri leftUri)
@@ -3930,11 +4012,15 @@ internal static class JavaCompat
     private static bool IsJavaList(object value) =>
         value is not Array && value is IEnumerable &&
         (value is IList || value.GetType().GetInterfaces().Any(type =>
-            type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IList<>)));
+            type.IsGenericType &&
+            (type.GetGenericTypeDefinition() == typeof(IList<>) ||
+             type.GetGenericTypeDefinition() == typeof(IReadOnlyList<>))));
 
     private static bool IsJavaSet(object value) =>
         value is IEnumerable && value.GetType().GetInterfaces().Any(type =>
-            type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ISet<>));
+            type.IsGenericType &&
+            (type.GetGenericTypeDefinition() == typeof(ISet<>) ||
+             type.GetGenericTypeDefinition() == typeof(IReadOnlySet<>)));
 
     internal static bool IsSet(object? value) => value is not null && IsJavaSet(value);
 
@@ -3989,6 +4075,7 @@ internal static class JavaCompat
 
     private static int JavaHashCode(object? value)
     {
+        if (value is JavaReadOnlyAdapter adapter) value = adapter.MutableSource;
         if (value is null) return 0;
         if (value is Uri uri)
         {
@@ -4137,9 +4224,141 @@ internal static class JavaCompat
     internal static T[] ToArrayLoose<T>(System.Collections.IEnumerable values) =>
         values.Cast<object?>().Select(value => (T)value!).ToArray();
     internal static IList<T> ToListValues<T>(IEnumerable<T> values) => values.ToList();
+    internal static IReadOnlyList<T> ToReadOnlyList<T>(IEnumerable<T> values) =>
+        values as IReadOnlyList<T> ?? values.ToList();
+    internal static IReadOnlyCollection<T> ToReadOnlyCollection<T>(IEnumerable<T> values) =>
+        values as IReadOnlyCollection<T> ?? values.ToList();
+    internal static IReadOnlySet<T> ToReadOnlySet<T>(IEnumerable<T> values) =>
+        values as IReadOnlySet<T> ?? values.ToHashSet();
+    internal static IReadOnlyDictionary<K, V> ToReadOnlyDictionary<K, V>(
+        IEnumerable<KeyValuePair<K, V>> values) where K : notnull =>
+        values as IReadOnlyDictionary<K, V> ??
+        values.ToDictionary(entry => entry.Key, entry => entry.Value);
+    internal static T ToReadOnly<T>(object? value) =>
+        (T)ToReadOnlyValue(typeof(T), value)!;
+    private static object? ToReadOnlyValue(Type targetType, object? value)
+    {
+        if (value is null || !targetType.IsGenericType) return value;
+        if (value is JavaReadOnlyAdapter && targetType.IsInstanceOfType(value)) return value;
+
+        var definition = targetType.GetGenericTypeDefinition();
+        var arguments = targetType.GetGenericArguments();
+        if (definition == typeof(IReadOnlyList<>) ||
+            definition == typeof(IReadOnlyCollection<>))
+        {
+            var mutableType = typeof(IList<>).MakeGenericType(arguments[0]);
+            object result = value;
+            if (!mutableType.IsInstanceOfType(value))
+            {
+                var transformed = (IList)Activator.CreateInstance(
+                    typeof(List<>).MakeGenericType(arguments[0]))!;
+                foreach (var item in (IEnumerable)value)
+                    transformed.Add(ToReadOnlyValue(arguments[0], item));
+                result = transformed;
+            }
+            return ReadOnlyAdapter(targetType, value, () => Activator.CreateInstance(
+                typeof(JavaReadOnlyList<>).MakeGenericType(arguments[0]), result)!);
+        }
+
+        if (definition == typeof(IReadOnlySet<>))
+        {
+            var mutableType = typeof(ISet<>).MakeGenericType(arguments[0]);
+            object result = value;
+            if (!mutableType.IsInstanceOfType(value))
+            {
+                result = Activator.CreateInstance(typeof(HashSet<>).MakeGenericType(arguments[0]))!;
+                var add = result.GetType().GetMethod("Add", arguments)!;
+                foreach (var item in (IEnumerable)value)
+                    add.Invoke(result, new[] { ToReadOnlyValue(arguments[0], item) });
+            }
+            return ReadOnlyAdapter(targetType, value, () => Activator.CreateInstance(
+                typeof(JavaReadOnlySet<>).MakeGenericType(arguments[0]), result)!);
+        }
+
+        if (definition == typeof(IReadOnlyDictionary<,>))
+        {
+            var mutableType = typeof(IDictionary<,>).MakeGenericType(arguments);
+            object result = value;
+            if (!mutableType.IsInstanceOfType(value))
+            {
+                result = Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(arguments))!;
+                var add = result.GetType().GetMethod("Add", arguments)!;
+                foreach (var entry in (IEnumerable)value)
+                {
+                    var entryType = entry.GetType();
+                    var key = entryType.GetProperty("Key")!.GetValue(entry);
+                    var item = entryType.GetProperty("Value")!.GetValue(entry);
+                    add.Invoke(result, new[]
+                    {
+                        ToReadOnlyValue(arguments[0], key),
+                        ToReadOnlyValue(arguments[1], item)
+                    });
+                }
+            }
+            return ReadOnlyAdapter(targetType, value, () => Activator.CreateInstance(
+                typeof(JavaReadOnlyDictionary<,>).MakeGenericType(arguments), result)!);
+        }
+
+        return value;
+    }
+    internal static T ToMutable<T>(object? value) =>
+        (T)ToMutableValue(typeof(T), value)!;
+    private static object? ToMutableValue(Type targetType, object? value)
+    {
+        if (value is JavaReadOnlyAdapter adapter &&
+            targetType.IsInstanceOfType(adapter.MutableSource))
+            return adapter.MutableSource;
+        if (value is null || targetType.IsInstanceOfType(value)) return value;
+        if (!targetType.IsGenericType) return value;
+
+        var definition = targetType.GetGenericTypeDefinition();
+        var arguments = targetType.GetGenericArguments();
+        if (definition == typeof(IList<>) || definition == typeof(ICollection<>))
+        {
+            var result = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(arguments[0]))!;
+            foreach (var item in (IEnumerable)value)
+                result.Add(ToMutableValue(arguments[0], item));
+            return result;
+        }
+
+        if (definition == typeof(ISet<>))
+        {
+            var result = Activator.CreateInstance(typeof(HashSet<>).MakeGenericType(arguments[0]))!;
+            var add = result.GetType().GetMethod("Add", arguments)!;
+            foreach (var item in (IEnumerable)value)
+                add.Invoke(result, new[] { ToMutableValue(arguments[0], item) });
+            return result;
+        }
+
+        if (definition == typeof(IDictionary<,>))
+        {
+            var result = Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(arguments))!;
+            var add = result.GetType().GetMethod("Add", arguments)!;
+            foreach (var entry in (IEnumerable)value)
+            {
+                var entryType = entry.GetType();
+                var key = entryType.GetProperty("Key")!.GetValue(entry);
+                var item = entryType.GetProperty("Value")!.GetValue(entry);
+                add.Invoke(result, new[]
+                {
+                    ToMutableValue(arguments[0], key),
+                    ToMutableValue(arguments[1], item)
+                });
+            }
+            return result;
+        }
+
+        return value;
+    }
+    internal static IDictionary<K, V> ToDictionaryValues<K, V>(
+        IEnumerable<KeyValuePair<K, V>> values) where K : notnull =>
+        values.ToDictionary(entry => entry.Key, entry => entry.Value);
 
     internal static byte[] ToUnsignedBytes(sbyte[] values) =>
         values.Select(value => unchecked((byte)value)).ToArray();
+    internal static byte[] ToUnsignedBytes(byte[] values) => values;
+    internal static sbyte[] ToSignedBytes(byte[] values) =>
+        values.Select(value => unchecked((sbyte)value)).ToArray();
     internal static void ForEach<T>(IEnumerable<T> values, Action<T> action)
     {
         foreach (var value in values) action(value);
@@ -4445,11 +4664,7 @@ internal static class JavaCompat
     }
 }
 
-#if VIBEFORMER_PKL_CORE
-public
-#else
 internal
-#endif
 sealed class JavaRegexMatcher
 {
     private readonly Regex regex;
@@ -4701,11 +4916,7 @@ internal sealed class JavaDeque<T> : ICollection<T>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
-#if VIBEFORMER_PKL_CORE
-public
-#else
 internal
-#endif
 class JavaLinkedHashMap<K, V> : Dictionary<K, V> where K : notnull
 {
     private readonly bool accessOrder;
@@ -4749,11 +4960,7 @@ class JavaLinkedHashMap<K, V> : Dictionary<K, V> where K : notnull
     }
 }
 
-#if VIBEFORMER_PKL_CORE
-public
-#else
 internal
-#endif
 sealed class JavaLinkedList<T> : IList<T>
 {
     private readonly List<T> values = new();

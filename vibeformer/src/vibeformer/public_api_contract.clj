@@ -32,7 +32,7 @@
 
 (def policy-columns
   ["rule-id" "priority" "source-module" "package-regex" "owner-regex"
-   "kind-regex" "name-regex" "classification" "area" "behavior-family"
+   "kind-regex" "name-regex" "parameter-count-regex" "classification" "area" "behavior-family"
    "policy-evidence" "dotnet-adaptation" "exclusion-evidence"])
 
 (def behavior-columns
@@ -79,6 +79,14 @@
   #{"Pkl.Core.CSharpGenerationException"
     "Pkl.Core.CSharpGeneratorOptions"
     "Pkl.Core.CSharpGenerator"})
+
+(def ^:private native-core-owners
+  #{"Pkl.Core.Module.AssemblyModuleKeyFactory"
+    "Pkl.Core.Resource.EmbeddedResourceReader"
+    "Pkl.Core.StackFrameTransformerExtensions"})
+
+(def ^:private forbidden-package-metadata
+  #"(?i)(?:Pkl[.]Core[.](?:Runtime|Ast|Stdlib|Util|Messaging)(?:[$.<]|$)|Vibeformer[.]Runtime|SnakeYaml|MessagePack|Org[.]Msgpack|System[.]Collections[.]Generic[.]I(?:List|Dictionary|Set)<|System[.]SByte(?:\[\])?|\bJava[A-Z][A-Za-z0-9_]*\b|\b(?:ToJavaDuration|GetJavaClass)\b)")
 
 (defn- fail!
   [message data]
@@ -278,7 +286,8 @@
            :package-pattern (re-pattern (:package-regex row))
            :owner-pattern (re-pattern (:owner-regex row))
            :kind-pattern (re-pattern (:kind-regex row))
-           :name-pattern (re-pattern (:name-regex row)))))
+           :name-pattern (re-pattern (:name-regex row))
+           :parameter-count-pattern (re-pattern (:parameter-count-regex row)))))
 
 (defn read-policy
   [file]
@@ -308,7 +317,8 @@
        (re-matches (:package-pattern policy) (:package row))
        (re-matches (:owner-pattern policy) (:owner row))
        (re-matches (:kind-pattern policy) (:kind row))
-       (re-matches (:name-pattern policy) (:name row))))
+       (re-matches (:name-pattern policy) (:name row))
+       (re-matches (:parameter-count-pattern policy) (:parameter-count row))))
 
 (defn classify-upstream-row
   [policies row]
@@ -708,7 +718,12 @@
 
 (defn classify-package-row
   [target-keys row]
-  (cond
+  (let [product-owners (->> target-keys
+                            (keep (fn [[owner kind _ _]]
+                                    (when (= "type" kind) owner)))
+                            set)
+        owner (normalized-owner (:owner row))]
+    (cond
     (native-config-owners (:owner row))
     {:classification "product-api-native" :area "config-binding"
      :behavior-family "binding.public-api"
@@ -721,6 +736,12 @@
      :upstream-provenance "research/pkl/docs/modules/java-binding/pages/codegen.adoc"
      :dotnet-adaptation "Native C# generator API backed by upstream schema/codegen behavior."}
 
+    (native-core-owners (:owner row))
+    {:classification "product-api-native" :area "core"
+     :behavior-family "loading.public-api"
+     :upstream-provenance "vibeformer/validation/loading-contract/PackageConsumer.cs"
+     :dotnet-adaptation "Idiomatic .NET loading and delegate APIs backed by package-only consumer behavior."}
+
     (target-keys (package-broad-key row))
     {:classification "product-api-current" :area (if (= "Pkl.Parser" (:assembly row))
                                                    "parser" "core")
@@ -728,11 +749,59 @@
      :upstream-provenance "joined-by-executable-target-shape"
      :dotnet-adaptation "Exact package metadata is pinned by PackageSurface.tsv."}
 
+    (product-owners owner)
+    {:classification "product-api-native" :area (if (= "Pkl.Parser" (:assembly row))
+                                                   "parser" "core")
+     :behavior-family "translated.native-public-api"
+     :upstream-provenance "derived-from-approved-product-type"
+     :dotnet-adaptation "CLR-synthesized or idiomatic member on an explicitly selected product type; exact metadata is pinned by PackageSurface.tsv."}
+
     :else
     {:classification "public-implementation-internal" :area "implementation"
      :behavior-family "implementation.runtime"
      :upstream-provenance "package-reflection"
-     :dotnet-adaptation "Not promised as product API; required behavior remains in scope and this is not an exclusion."}))
+     :dotnet-adaptation "Not promised as product API; required behavior remains in scope and this is not an exclusion."})))
+
+(defn validate-package-boundary!
+  "Rejects consumer metadata that is not part of the explicit product/native
+  boundary or that mentions implementation, excluded, mutable, or Java-shaped
+  compatibility types."
+  [package-rows package-classifications]
+  (let [implementation-leaks
+        (filterv #(= "public-implementation-internal" (:classification %))
+                 package-classifications)
+        forbidden-metadata
+        (filterv #(re-find forbidden-package-metadata
+                           (str (:owner %) " " (:signature %)))
+                 package-rows)]
+    (when (seq implementation-leaks)
+      (fail! "Package metadata exports unapproved implementation types or members"
+             {:kind :public-implementation-metadata-leak
+              :count (count implementation-leaks)
+              :rows (vec (take 30 implementation-leaks))}))
+    (when (seq forbidden-metadata)
+      (fail! "Package metadata exposes an implementation, excluded, mutable, or Java-shaped signature"
+             {:kind :forbidden-public-package-signature
+              :count (count forbidden-metadata)
+              :rows (vec (take 30 forbidden-metadata))}))
+    {:approved (count package-rows)}))
+
+(defn- validate-package-consumer-boundary!
+  [workspace]
+  (let [source (paths/resolve-path workspace "vibeformer" "validation"
+                                   "package-consumer" "Pkl.Core.Program.cs")
+        text (Files/readString source)]
+    (when (re-find #"(?:using Pkl[.]Core[.]Runtime|Vibeformer[.]Runtime|\bJava[A-Z][A-Za-z0-9_]*\b)"
+                   text)
+      (fail! "The package-only consumer imports implementation or Java compatibility APIs"
+             {:kind :package-consumer-implementation-api-leak
+              :source (str source)}))
+    (doseq [contract [": ModuleKeyFactory" ": ResourceReader" ": PklHttpClient"]]
+      (when-not (str/includes? text contract)
+        (fail! "The package-only consumer does not implement every extension boundary"
+               {:kind :missing-package-consumer-extension-contract
+                :contract contract :source (str source)})))
+    {:source (str source) :extension-contracts 3}))
 
 (defn write-strong-contract-keys!
   "Writes the deterministic package-member key set whose exact signatures must
@@ -749,9 +818,16 @@
                                   (target-broad-key %))
                                contract))
         package-rows (:rows (read-tsv package package-columns))
+        delegate-owners (->> package-rows
+                             (filter #(and (= "type" (:kind %))
+                                           (= "delegate" (:delegate %))))
+                             (map :owner) set)
         selected
-        (filter #(contains? #{"product-api-current" "product-api-native"}
-                            (:classification %))
+        (filter #(and (contains? #{"product-api-current" "product-api-native"}
+                                 (:classification %))
+                      (not= "<Clone>$" (:name %))
+                      (not (and (delegate-owners (:owner %))
+                                (not= "type" (:kind %)))))
                 (map #(merge % (classify-package-row target-keys %)) package-rows))
         keys (->> selected
                   (map (fn [row]
@@ -1248,6 +1324,8 @@
           package-classifications (mapv #(merge % (classify-package-row target-keys %))
                                         package-rows)
           behavior-ids (map :case-id behavior-rows)]
+      (validate-package-boundary! package-rows package-classifications)
+      (validate-package-consumer-boundary! workspace)
       (when-not (= (count behavior-ids) (count (distinct behavior-ids)))
         (fail! "Behavior contract has duplicate case IDs"
                {:kind :duplicate-public-api-behavior}))

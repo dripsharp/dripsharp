@@ -814,11 +814,21 @@ public sealed class CSharpGenerationException : Exception
 
 public sealed class CSharpGeneratorOptions
 {
+    private readonly SortedDictionary<string, string> namespaceMappings =
+        new(StringComparer.Ordinal);
+
     public string? Namespace { get; set; }
     public bool EmitDocComments { get; set; } = true;
     public bool EmitGeneratedLoaders { get; set; } = true;
-    public IDictionary<string, string> NamespaceMappings { get; } =
-        new SortedDictionary<string, string>(StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, string> NamespaceMappings => namespaceMappings;
+
+    public CSharpGeneratorOptions MapNamespace(string moduleName, string @namespace)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(moduleName);
+        ArgumentException.ThrowIfNullOrEmpty(@namespace);
+        namespaceMappings[moduleName] = @namespace;
+        return this;
+    }
 }
 
 public sealed class CSharpGenerator
@@ -1130,7 +1140,7 @@ public sealed class CSharpGenerator
         return arguments.Count == 0 ? name : name + "<" + string.Join(", ", arguments.Select(TypeName)) + ">";
     }
 
-    private string ClassTypeName(PClass pClass, IList<PType> arguments)
+    private string ClassTypeName(PClass pClass, IReadOnlyList<PType> arguments)
     {
         var name = pClass.GetModuleName() == moduleName ? LocalClassSymbol(pClass) :
             "global::" + NamespaceForModule(pClass.GetModuleName()) + "." +
@@ -1151,7 +1161,7 @@ public sealed class CSharpGenerator
     private static bool IsNullType(PType type) => type is PType.Class classType &&
         classType.GetPClass().GetQualifiedName() == "pkl.base#Null";
     private static string MakeNullable(string type) => type.EndsWith("?", StringComparison.Ordinal) ? type : type + "?";
-    private string Argument(IList<PType> arguments, int index) => index < arguments.Count ? TypeName(arguments[index]) : "object";
+    private string Argument(IReadOnlyList<PType> arguments, int index) => index < arguments.Count ? TypeName(arguments[index]) : "object";
 
     private static IReadOnlyList<string>? StringLiteralValues(PType type)
     {
@@ -1170,13 +1180,13 @@ public sealed class CSharpGenerator
     private string NamespaceForModule(string name) => options.NamespaceMappings.TryGetValue(name, out var mapped) ? mapped :
         string.Join(".", name.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(ToIdentifier));
     private static string LastModulePart(string name) => name.Split('.', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "Module";
-    private static IEnumerable<KeyValuePair<string, T>> Ordered<T>(IDictionary<string, T> values) =>
+    private static IEnumerable<KeyValuePair<string, T>> Ordered<T>(IEnumerable<KeyValuePair<string, T>> values) =>
         values.OrderBy(entry => entry.Value is Member member ? member.GetSourceLocation().StartLine : int.MaxValue)
             .ThenBy(entry => entry.Key, StringComparer.Ordinal);
 
-    private static string TypeParameters(IList<TypeParameter> parameters) => parameters.Count == 0 ? "" :
+    private static string TypeParameters(IReadOnlyList<TypeParameter> parameters) => parameters.Count == 0 ? "" :
         "<" + string.Join(", ", parameters.Select(item => ToIdentifier(item.GetName()))) + ">";
-    private static string TypeArguments(IList<TypeParameter> parameters) => TypeParameters(parameters);
+    private static string TypeArguments(IReadOnlyList<TypeParameter> parameters) => TypeParameters(parameters);
 
     private void EmitDocs(StringBuilder output, string? comment, string indent = "")
     {

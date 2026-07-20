@@ -18,7 +18,7 @@
             CtFor CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable
             CtNewArray CtOperatorAssignment CtReturn CtStatement CtSuperAccess
             CtSwitch CtSwitchExpression CtSynchronized CtThisAccess CtThrow CtTry CtTryWithResource CtTypeAccess
-            CtTypePattern CtUnaryOperator CtVariableRead CtVariableWrite CtWhile
+            CtTypePattern CtUnaryOperator CtVariableAccess CtVariableRead CtVariableWrite CtWhile
             CtYieldStatement UnaryOperatorKind]
            [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement CtField CtFormalTypeDeclarer CtMethod CtRecord
             CtParameter CtRecordComponent ModifierKind]
@@ -301,6 +301,15 @@
             return-type))
         :else (recur (when (.isParentInitialized ^CtElement current)
                        (.getParent ^CtElement current)))))))
+
+(defn- method-level-return? [^CtReturn element]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (nil? current) false
+      (instance? CtLambda current) false
+      (instance? CtMethod current) true
+      :else (recur (when (.isParentInitialized ^CtElement current)
+                     (.getParent ^CtElement current))))))
 
 (defn- escape-string [value]
   (str "\""
@@ -612,6 +621,104 @@
                    (every? #(emittable-type-reference? element %) arguments))
           (mapv #((:type-node services) %) arguments))))))
 
+(declare compat-call)
+
+(defn- adapt-product-collection-argument [services reference node]
+  (if (when-let [adaptation (:product-signature-collection-adaptation services)]
+        (adaptation reference))
+    (invoke
+     (csharp/generic-name
+      (raw "global::Vibeformer.Runtime.JavaCompat.ToReadOnly")
+      [((:read-only-product-type-node services) reference)])
+     [node])
+    node))
+
+(defn- adapt-product-collection-result
+  ([services reference node]
+   (if (when-let [adaptation (:product-signature-collection-adaptation services)]
+         (adaptation reference))
+     (adapt-product-collection-result services reference reference node)
+     node))
+  ([services reference target-reference node]
+   (let [mutable-reference (if (and target-reference
+                                    (pkl-core-element? target-reference))
+                             target-reference
+                             reference)]
+     (invoke
+      (csharp/generic-name
+       (raw "global::Vibeformer.Runtime.JavaCompat.ToMutable")
+       [((:mutable-product-type-node services) mutable-reference)])
+      [node]))))
+
+(defn- expression-declaration-type [expression]
+  (cond
+    (instance? CtVariableAccess expression)
+    (let [declaration (some-> ^CtVariableAccess expression .getVariable .getDeclaration)]
+      (if (and (instance? CtLocalVariable declaration)
+               (.isInferred ^CtLocalVariable declaration)
+               (.getDefaultExpression ^CtLocalVariable declaration))
+        (or (expression-declaration-type
+             (.getDefaultExpression ^CtLocalVariable declaration))
+            (.getType ^CtLocalVariable declaration))
+        (some-> declaration .getType)))
+
+    (instance? CtConditional expression)
+    (or (expression-declaration-type (.getThenExpression ^CtConditional expression))
+        (expression-declaration-type (.getElseExpression ^CtConditional expression)))
+
+    (instance? CtInvocation expression)
+    (let [invocation ^CtInvocation expression
+          executable (.getExecutable invocation)
+          owner (some-> executable .getDeclaringType .getQualifiedName)]
+      (if (and (= "requireNonNull" (.getSimpleName executable))
+               (= "java.util.Objects" owner))
+        (expression-declaration-type (first (.getArguments invocation)))
+        (some-> executable .getExecutableDeclaration .getType)))
+
+    :else nil))
+
+(defn- coerce-product-collection-argument
+  [services source target-reference node]
+  (let [source-reference (expression-declaration-type source)
+        adaptation (:product-signature-collection-adaptation services)
+        source-adaptation (when (and adaptation source-reference)
+                            (adaptation source-reference))
+        source-adaptation
+        (or source-adaptation
+            (when (instance? CtInvocation source)
+              (let [declaration (some-> ^CtInvocation source .getExecutable
+                                        .getExecutableDeclaration)
+                    adaptation
+                    (when-let [method-adaptation (:method-signature-adaptation services)]
+                      (method-adaptation declaration))]
+                (or (when (contains? #{:read-only-product-list
+                                       :read-only-product-map
+                                       :read-only-product-set
+                                       :read-only-product-collection}
+                                     adaptation)
+                      adaptation)
+                    (when (and (when-let [boundary? (:product-boundary? services)]
+                                 (boundary?))
+                               source-reference
+                               (contains? #{"java.util.Collection" "java.util.List"
+                                            "java.util.Map" "java.util.Set"}
+                                          (.getQualifiedName
+                                           ^CtTypeReference source-reference))
+                               (when-let [exported?
+                                          (:exported-product-declaration? services)]
+                                 (exported? declaration)))
+                      :exported-product-collection)))))
+        target-adaptation (when (and adaptation target-reference)
+                            (adaptation target-reference))]
+    (cond
+      target-adaptation
+      (adapt-product-collection-argument services target-reference node)
+
+      source-adaptation
+      (adapt-product-collection-result services source-reference target-reference node)
+
+      :else node)))
+
 (defn- normal-invocation
   ([services element children] (normal-invocation services element children false))
   ([services element children property?]
@@ -625,10 +732,21 @@
          executable (if-let [arguments (inferred-method-type-arguments services element)]
                       (csharp/generic-name executable-base arguments)
                       executable-base)
-         callable (if target (member target (:text (csharp/render executable))) executable)]
+         callable (if target (member target (:text (csharp/render executable))) executable)
+         sources (vec (.getArguments ^CtInvocation element))
+         arguments (children-nodes children sources)
+         declaration (.getExecutableDeclaration (.getExecutable ^CtInvocation element))
+         parameters (when declaration (vec (.getParameters declaration)))
+         arguments (mapv (fn [index node]
+                           (coerce-product-collection-argument
+                            services (nth sources index)
+                            (when (and parameters (< index (count parameters)))
+                              (.getType ^CtParameter (nth parameters index)))
+                            node))
+                         (range) arguments)]
      (if property?
        callable
-       (invoke callable (children-nodes children (.getArguments ^CtInvocation element)))))))
+       (invoke callable arguments)))))
 
 (defn- class-literal? [^CtFieldRead element]
   (and (= "class" (some-> element .getVariable .getSimpleName))
@@ -1507,7 +1625,7 @@
                   (= "AbstractPackage"
                      (some-> element enclosing-type .getSimpleName)))
             (invoke (raw "global::Pkl.Core.Util.IoUtils.Resolve")
-                    (into [(raw "((global::Pkl.Core.Runtime.ReaderBase)(object)this)")]
+                    (into [(raw "this")]
                           args))
             (normal-invocation services element children))
           "executable:org.pkl.core.runtime.ReaderBase#resolveUri(java.net.URI,java.net.URI)"
@@ -1515,7 +1633,7 @@
                   (= "AbstractPackage"
                      (some-> element enclosing-type .getSimpleName)))
             (invoke (raw "global::Pkl.Core.Util.IoUtils.Resolve")
-                    (into [(raw "((global::Pkl.Core.Runtime.ReaderBase)(object)this)")]
+                    (into [(raw "this")]
                           args))
             (normal-invocation services element children))
           "executable:org.pkl.core.runtime.VmValueVisitor#visit(java.lang.Object)"
@@ -1524,8 +1642,43 @@
             (normal-invocation services element children))
           ;; Project-local calls are mapped by exact declaration identity.  A
           ;; constructor invocation is handled separately below.
-          (let [resolved (occurrence context (.getExecutable element))]
+          (let [resolved (occurrence context (.getExecutable element))
+                signature-adaptation
+                (when (and (= :project (:origin resolved))
+                           (instance? CtMethod (:declaration resolved)))
+                  (when-let [adaptation (:method-signature-adaptation services)]
+                    (adaptation (:declaration resolved))))
+                normal-project-call #(normal-invocation services element children)]
             (cond
+              (contains? #{:nullable-module-key :nullable-resource}
+                         signature-adaptation)
+              (result-type-call services element "OfNullable" [(normal-project-call)])
+
+              (= :read-only-path-elements signature-adaptation)
+              (compat-call "ToListValues" [(normal-project-call)])
+
+              (contains? #{:read-only-product-list :read-only-product-collection}
+                         signature-adaptation)
+              (compat-call "ToListValues" [(normal-project-call)])
+
+              (= :read-only-product-map signature-adaptation)
+              (compat-call "ToDictionaryValues" [(normal-project-call)])
+
+              (= :read-only-product-set signature-adaptation)
+              (compat-call "SetOfValues" [(normal-project-call)])
+
+              (= :idiomatic-byte-array signature-adaptation)
+              (compat-call "ToSignedBytes" [(normal-project-call)])
+
+              (= :http-send-compatibility signature-adaptation)
+              (let [arguments (.getActualTypeArguments (.getType element))
+                    callable (if (seq arguments)
+                               (csharp/generic-name
+                                (raw "global::Pkl.Core.Http.HttpClientCompatibility.Send")
+                                (mapv (:type-node services) arguments))
+                               (raw "global::Pkl.Core.Http.HttpClientCompatibility.Send"))]
+                (invoke callable (into [target] args)))
+
               (str/starts-with? key "executable:java.util.EnumSet#of(")
               (result-generic-compat-call services element "SetOf" args)
               (str/starts-with? key "executable:java.util.EnumSet#copyOf(")
@@ -1811,7 +1964,13 @@
               ;; constructor signature by constructor-initializer.
               (raw "")
               (= :record-component-accessor (:resolution resolved))
-              (member target ((:pascal services) (.getSimpleName (.getExecutable element))))
+              (let [node (member target ((:pascal services)
+                                         (.getSimpleName (.getExecutable element))))
+                    declaration (:declaration resolved)]
+                (if (instance? CtRecordComponent declaration)
+                  (adapt-product-collection-result
+                   services (.getType ^CtRecordComponent declaration) node)
+                  node))
               (= :enum-synthetic-method (:resolution resolved))
               (normal-invocation services element children)
               (= :project (:origin resolved))
@@ -1902,11 +2061,17 @@
                                                               record-component)))))
                                         (non-null-node source node)
                                         node)]
-                             (if (and (not rrb-constructor?)
-                                      parameter)
-                               (invariant-argument-cast services source
-                                                        parameter node)
-                               node)))
+                             (let [node (if (and (not rrb-constructor?)
+                                                 parameter)
+                                          (invariant-argument-cast services source
+                                                                   parameter node)
+                                          node)
+                                   product-parameter (or parameter-declaration
+                                                         record-component)]
+                               (coerce-product-collection-argument
+                                services source
+                                (when product-parameter (.getType product-parameter))
+                                node))))
                          (range)
                          (.getArguments element)
                          (children-nodes children (.getArguments element))))
@@ -1959,10 +2124,7 @@
                          "org.pkl.core.PType$Union"
                          (sequence-node
                           [(raw "new ") type (raw "(")
-                           (invoke (csharp/generic-name
-                                    (raw "global::Vibeformer.Runtime.JavaCompat.CastList")
-                                    [(raw "global::Pkl.Core.PType")])
-                                   [(first args)])
+                           (first args)
                            (raw ")")])
                          "java.lang.String" (compat-call "NewString" args)
                          "java.net.URISyntaxException" (compat-call "NewUriSyntaxException" args)
@@ -2091,11 +2253,28 @@
                                        (child-node children (.getAssignment element))]))}))}
     {:id :java.expression/assignment :class CtAssignment
      :emit (fn [{:keys [^CtAssignment element children]}]
-             {:node (finish-expression services children element
-                       (sequence-node [(child-node children (.getAssigned element)) (raw " = ")
-                                       (coerce-initializer services (.getType (.getAssigned element))
-                                                           (.getAssignment element)
-                                                           (child-node children (.getAssignment element)))]))})}
+             (let [assigned (.getAssigned element)
+                   assignment (.getAssignment element)
+                   assigned-reference (expression-declaration-type assigned)
+                   assignment-reference (expression-declaration-type assignment)
+                   node (coerce-initializer services (.getType assigned) assignment
+                                            (child-node children assignment))
+                   source-adaptation
+                   (when (and assignment-reference
+                              (:product-signature-collection-adaptation services))
+                     ((:product-signature-collection-adaptation services)
+                      assignment-reference))
+                   target-adaptation
+                   (when (and assigned-reference
+                              (:product-signature-collection-adaptation services))
+                     ((:product-signature-collection-adaptation services)
+                      assigned-reference))
+                   node (if (and source-adaptation (nil? target-adaptation))
+                          (adapt-product-collection-result services assignment-reference node)
+                          node)]
+               {:node (finish-expression
+                       services children element
+                       (sequence-node [(child-node children assigned) (raw " = ") node]))}))}
     {:id :java.expression/binary :class CtBinaryOperator
      :emit (fn [{:keys [^CtBinaryOperator element children]}]
              {:node (finish-expression services children element (binary-node services element children))})}
@@ -2279,6 +2458,24 @@
                    supplier-type (when (= "java.util.function.Supplier"
                                           (some-> element .getType .getQualifiedName))
                                    (first (.getActualTypeArguments (.getType element))))
+                   functional-result (last (.getActualTypeArguments (.getType element)))
+                   adapted-method-result
+                   (fn [node]
+                     (let [return-reference (when (instance? CtMethod declaration)
+                                              (.getType ^CtMethod declaration))]
+                       (if (and (when-let [boundary? (:product-boundary? services)]
+                                  (boundary?))
+                                return-reference functional-result
+                                (contains? #{"java.util.Collection" "java.util.List"
+                                             "java.util.Map" "java.util.Set"}
+                                           (.getQualifiedName
+                                            ^CtTypeReference return-reference))
+                                (when-let [exported?
+                                           (:exported-product-declaration? services)]
+                                  (exported? declaration)))
+                         (adapt-product-collection-result
+                          services return-reference functional-result node)
+                         node)))
                    node (cond
                           (and (= resolved-key "executable:java.util.regex.Pattern#compile(java.lang.String)")
                                (= 1 parameter-count))
@@ -2344,7 +2541,8 @@
                           (and static? (instance? CtTypeAccess target-element))
                           (sequence-node
                            [(raw "(") (sequence-node parameters ", ") (raw ") => ")
-                            (invoke (member target method-name) parameters)])
+                            (adapted-method-result
+                             (invoke (member target method-name) parameters))])
 
                           (instance? CtTypeAccess target-element)
                           (sequence-node [(raw "value => value.") (raw method-name) (raw "()")])
@@ -2474,6 +2672,10 @@
                           (child-node children expression)
                           (child-node children (.getBody element)))
                    functional-result (first (.getActualTypeArguments (.getType element)))
+                   body (if-let [expression (.getExpression element)]
+                          (coerce-product-collection-argument
+                           services expression functional-result body)
+                          body)
                    body (if (and functional-result
                                  (str/starts-with? (.getQualifiedName ^CtTypeReference functional-result)
                                                    "org.pkl.core.util.paguro.RrbTree$")
@@ -2520,10 +2722,13 @@
                    declaration (sequence-node [type (when type (raw " "))
                                                (raw (local-name services element))
                                                (when default
-                                                 (sequence-node
+                                               (sequence-node
                                                   [(raw " = ")
-                                                   (coerce-initializer services type-reference default
-                                                                       (child-node children default))]))])]
+                                                   (coerce-product-collection-argument
+                                                    services default type-reference
+                                                    (coerce-initializer
+                                                     services type-reference default
+                                                     (child-node children default)))]))])]
                {:node (if (= "statement" (role element))
                         (sequence-node [declaration (raw ";")]) declaration)}))}
     {:id :java.expression/new-array :class CtNewArray
@@ -2568,8 +2773,9 @@
                                                             (not (nullable-enclosing-return? element)))
                                                      (non-null-node expression node)
                                                      node)]
-                                          (if-let [return-type (generic-invariant-return-type element)]
-                                            (cond
+                                          (let [node
+                                                (if-let [return-type (generic-invariant-return-type element)]
+                                                  (cond
                                               (and (= "org.pkl.core.PClassInfo"
                                                       (.getQualifiedName ^CtTypeReference return-type))
                                                    (= 1 (count (.getActualTypeArguments return-type)))
@@ -2600,11 +2806,54 @@
                                                       (.getActualTypeArguments return-type)))
                                                [node])
 
-                                              :else
-                                              (sequence-node [(raw "((")
-                                                              ((:type-node services) return-type)
-                                                              (raw ")((object)(") node (raw ")))!")]))
-                                            node))]))
+                                                    :else
+                                                    (sequence-node [(raw "((")
+                                                                    ((:type-node services) return-type)
+                                                                    (raw ")((object)(") node (raw ")))!")]))
+                                                  node)]
+                                            (case (when (method-level-return? element)
+                                                    (let [product-reference
+                                                          (when-let [current
+                                                                     (:current-product-return-reference
+                                                                      services)]
+                                                            (current))]
+                                                      (or (when-let [current
+                                                                     (:current-signature-adaptation
+                                                                      services)]
+                                                            (current))
+                                                          (when-let [adaptation
+                                                                     (:product-signature-collection-adaptation
+                                                                      services)]
+                                                            (adaptation
+                                                             (or product-reference
+                                                                 (enclosing-method-return-type
+                                                                  element)))))))
+                                              (:nullable-module-key :nullable-resource)
+                                              (invoke (member node "OrElse") [(raw "null!")])
+
+                                              :read-only-path-elements
+                                              (sequence-node
+                                               [(raw (str "new global::System.Collections.Generic.List<"
+                                                          "global::Pkl.Core.Module.PathElement>("))
+                                                node (raw ")")])
+
+                                              (:read-only-product-list
+                                               :read-only-product-map
+                                               :read-only-product-set
+                                               :read-only-product-collection)
+                                              (adapt-product-collection-argument
+                                               services
+                                               (or (when-let [current
+                                                              (:current-product-return-reference
+                                                               services)]
+                                                     (current))
+                                                   (enclosing-method-return-type element))
+                                               node)
+
+                                              :idiomatic-byte-array
+                                              (compat-call "ToUnsignedBytes" [node])
+
+                                              node)))]))
                                     (raw ";")])})}
     {:id :java.expression/super :class CtSuperAccess
      :emit (fn [{:keys [^CtSuperAccess element children]}]
@@ -2851,10 +3100,11 @@
   Services provide destination declaration naming/type mappings without
   introducing a second frontend representation."
   [resolved-model services]
-  (java/context resolved-model
-                {:mode :accepted
-                 :rules (structural-rules services)
-                 :mappings (semantic-mappings resolved-model services)}))
+  (assoc (java/context resolved-model
+                       {:mode :accepted
+                        :rules (structural-rules services)
+                        :mappings (semantic-mappings resolved-model services)})
+         :services services))
 
 (defn translate
   "Translates and gates one live executable body or initializer."
@@ -2894,6 +3144,22 @@
                                                      "this.__outer" "__outer"))))
                           arguments)
                     arguments)
+        declaration (.getExecutableDeclaration (.getExecutable invocation))
+        parameters (when declaration (vec (.getParameters declaration)))
+        arguments (mapv
+                   (fn [index {:keys [node] :as argument}]
+                     (let [parameter-index (- index (if outer-argument 1 0))]
+                       (if (and parameters (<= 0 parameter-index)
+                                (< parameter-index (count parameters)))
+                         (assoc argument :node
+                                (coerce-product-collection-argument
+                                 (:services translation-context)
+                                 (nth (vec (.getArguments invocation)) parameter-index)
+                                 (.getType ^CtParameter
+                                           (nth parameters parameter-index))
+                                 node))
+                         argument)))
+                   (range) arguments)
         option-behavior-delegating?
         (and (= "org.pkl.core.runtime.CommandSpecParser$OptionBehavior"
                 (some-> owner .getDeclaringType .getQualifiedName))
