@@ -1,0 +1,266 @@
+#nullable enable
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+
+namespace Pkl.Core;
+
+internal static class DotNetCollections
+{
+    internal static IReadOnlyList<T> ReadOnly<T>(IList<T> values) =>
+        new ReadOnlyCollection<T>(values);
+
+    internal static IReadOnlyDictionary<TKey, TValue> ReadOnly<TKey, TValue>(
+        IDictionary<TKey, TValue> values) where TKey : notnull =>
+        new ReadOnlyDictionary<TKey, TValue>(values);
+
+    internal static IReadOnlySet<T> ReadOnly<T>(ISet<T> values) =>
+        new ReadOnlySet<T>(values);
+
+    private sealed class ReadOnlySet<T> : IReadOnlySet<T>
+    {
+        private readonly HashSet<T> values;
+
+        internal ReadOnlySet(IEnumerable<T> values) => this.values = new HashSet<T>(values);
+
+        public int Count => values.Count;
+        public bool Contains(T item) => values.Contains(item);
+        public bool IsProperSubsetOf(IEnumerable<T> other) => values.IsProperSubsetOf(other);
+        public bool IsProperSupersetOf(IEnumerable<T> other) => values.IsProperSupersetOf(other);
+        public bool IsSubsetOf(IEnumerable<T> other) => values.IsSubsetOf(other);
+        public bool IsSupersetOf(IEnumerable<T> other) => values.IsSupersetOf(other);
+        public bool Overlaps(IEnumerable<T> other) => values.Overlaps(other);
+        public bool SetEquals(IEnumerable<T> other) => values.SetEquals(other);
+        public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+}
+
+public sealed partial class ModuleSource
+{
+    public static ModuleSource FromPath(string path) => PathFromString(path);
+    public static ModuleSource FromFile(string path) => FileFromString(path);
+    public static ModuleSource FromText(string text) => Text(text);
+    public static ModuleSource FromUri(string uri) => Uri(uri);
+    public static ModuleSource FromUri(Uri uri) => Uri(uri);
+    public static ModuleSource FromModulePath(string path) => ModulePath(path);
+
+    public Uri SourceUri => GetUri();
+    public string? Contents => GetContents();
+}
+
+public partial interface FileOutput
+{
+    public string Text => GetText();
+    public byte[] Bytes => GetBytes();
+}
+
+public partial interface Evaluator
+{
+    public IReadOnlyDictionary<string, FileOutput> EvaluateOutputFilesReadOnly(
+        ModuleSource moduleSource) => DotNetCollections.ReadOnly(EvaluateOutputFiles(moduleSource));
+}
+
+public partial class PObject
+{
+    public PClassInfo<object> ClassInfo => GetClassInfo();
+    public IReadOnlyDictionary<string, object> Properties =>
+        DotNetCollections.ReadOnly(GetProperties());
+}
+
+public sealed partial class PModule
+{
+    public Uri ModuleUri => GetModuleUri();
+    public string ModuleName => GetModuleName();
+}
+
+public sealed partial class PNull
+{
+    public static PNull Instance => GetInstance();
+}
+
+public sealed partial class PClassInfo<T>
+{
+    public string ModuleName => GetModuleName();
+    public string SimpleName => GetSimpleName();
+    public string QualifiedName => GetQualifiedName();
+    public string DisplayName => GetDisplayName();
+    public Type ValueType => GetJavaClass();
+    public Uri ModuleUri => GetModuleUri();
+    public bool IsModule => IsModuleClass();
+    public bool IsExternal => IsExternalClass();
+    public bool IsStandardLibrary => IsStandardLibraryClass();
+    public bool IsConcreteCollection => IsConcreteCollectionClass();
+}
+
+public sealed partial class ModuleSchema
+{
+    public Uri ModuleUri => GetModuleUri();
+    public string ModuleName => GetModuleName();
+    public string ShortModuleName => GetShortModuleName();
+    public bool AmendsModule => IsAmend();
+    public bool ExtendsModule => IsExtend();
+    public ModuleSchema? Supermodule => GetSupermodule();
+    public PClass ModuleClass => GetModuleClass();
+    public string? DocComment => GetDocComment();
+    public IReadOnlyList<PObject> Annotations => DotNetCollections.ReadOnly(GetAnnotations());
+    public IReadOnlyDictionary<string, Uri> Imports => DotNetCollections.ReadOnly(GetImports());
+    public IReadOnlyDictionary<string, PClass> Classes => DotNetCollections.ReadOnly(GetClasses());
+    public IReadOnlyDictionary<string, PClass> AllClasses => DotNetCollections.ReadOnly(GetAllClasses());
+    public IReadOnlyDictionary<string, TypeAlias> TypeAliases => DotNetCollections.ReadOnly(GetTypeAliases());
+    public IReadOnlyDictionary<string, TypeAlias> AllTypeAliases => DotNetCollections.ReadOnly(GetAllTypeAliases());
+}
+
+public abstract partial class Member
+{
+    public string ModuleName => GetModuleName();
+    public string? DocComment => GetDocComment();
+    public SourceLocation Location => GetSourceLocation();
+    public IReadOnlySet<Modifier> Modifiers => DotNetCollections.ReadOnly(GetModifiers());
+    public IReadOnlyList<PObject> Annotations => DotNetCollections.ReadOnly(GetAnnotations());
+    public string SimpleName => GetSimpleName();
+    public bool IsExternalMember => IsExternal();
+    public bool IsAbstractMember => IsAbstract();
+    public bool IsHiddenMember => IsHidden();
+    public bool IsOpenMember => IsOpen();
+    public bool IsStandardLibrary => IsStandardLibraryMember();
+}
+
+public sealed partial class PClass
+{
+    public string QualifiedName => GetQualifiedName();
+    public string DisplayName => GetDisplayName();
+    public PClassInfo<object> Info => GetInfo();
+    public bool IsModule => IsModuleClass();
+    public IReadOnlyList<TypeParameter> TypeParameters => DotNetCollections.ReadOnly(GetTypeParameters());
+    public PType? Supertype => GetSupertype();
+    public PClass? Superclass => GetSuperclass();
+    public IReadOnlyDictionary<string, Property> Properties => DotNetCollections.ReadOnly(GetProperties());
+    public IReadOnlyDictionary<string, Method> Methods => DotNetCollections.ReadOnly(GetMethods());
+    public IReadOnlyDictionary<string, Property> AllProperties => DotNetCollections.ReadOnly(GetAllProperties());
+    public IReadOnlyDictionary<string, Method> AllMethods => DotNetCollections.ReadOnly(GetAllMethods());
+    public PClass ModuleClass => GetModuleClass();
+
+    public abstract partial class ClassMember
+    {
+        public PClass Owner => GetOwner();
+        public string? InheritedDocComment => GetInheritedDocComment();
+    }
+
+    public sealed partial class Property
+    {
+        public PType ValueType => GetType();
+    }
+
+    public sealed partial class Method
+    {
+        public IReadOnlyList<TypeParameter> TypeParameters =>
+            DotNetCollections.ReadOnly(GetTypeParameters());
+        public IReadOnlyDictionary<string, PType> Parameters =>
+            DotNetCollections.ReadOnly(GetParameters());
+        public PType ReturnType => GetReturnType();
+    }
+}
+
+public sealed partial class TypeAlias
+{
+    public string QualifiedName => GetQualifiedName();
+    public string DisplayName => GetDisplayName();
+    public IReadOnlyList<TypeParameter> TypeParameters =>
+        DotNetCollections.ReadOnly(GetTypeParameters());
+    public PClass ModuleClass => GetModuleClass();
+    public PType AliasedType => GetAliasedType();
+}
+
+public sealed partial class TypeParameter
+{
+    public Member Owner => GetOwner();
+    public Variance VarianceValue => GetVariance();
+    public string Name => GetName();
+    public int Index => GetIndex();
+}
+
+public abstract partial class PType
+{
+    public IReadOnlyList<PType> TypeArguments => DotNetCollections.ReadOnly(GetTypeArguments());
+
+    public sealed partial class StringLiteral
+    {
+        public string Literal => GetLiteral();
+    }
+
+    public sealed partial class Class
+    {
+        public PClass SchemaClass => GetPClass();
+    }
+
+    public sealed partial class Nullable
+    {
+        public PType BaseType => GetBaseType();
+    }
+
+    public sealed partial class Constrained
+    {
+        public PType BaseType => GetBaseType();
+        public IReadOnlyList<string> Constraints => DotNetCollections.ReadOnly(GetConstraints());
+    }
+
+    public sealed partial class Alias
+    {
+        public TypeAlias TypeAliasValue => GetTypeAlias();
+        public PType AliasedType => GetAliasedType();
+    }
+
+    public sealed partial class Function
+    {
+        public IReadOnlyList<PType> ParameterTypes => DotNetCollections.ReadOnly(GetParameterTypes());
+        public PType ReturnType => GetReturnType();
+    }
+
+    public sealed partial class Union
+    {
+        public IReadOnlyList<PType> ElementTypes => DotNetCollections.ReadOnly(GetElementTypes());
+    }
+
+    public sealed partial class TypeVariable
+    {
+        public string Name => GetName();
+        public TypeParameter TypeParameter => GetTypeParameter();
+    }
+}
+
+public sealed partial class Duration
+{
+    public double Value => GetValue();
+    public DurationUnit Unit => GetUnit();
+}
+
+public sealed partial class DataSize
+{
+    public double Value => GetValue();
+    public DataSizeUnit Unit => GetUnit();
+}
+
+public sealed partial class Pair<F, S>
+{
+    public F First => GetFirst();
+    public S Second => GetSecond();
+}
+
+public partial class Reference
+{
+    public Composite Domain => GetDomain();
+    public object Data => GetData();
+    public IReadOnlyList<Composite> Path => DotNetCollections.ReadOnly(GetPath());
+    public PType ReferentType => GetReferentType();
+}
+
+public sealed partial class ValueFormatter
+{
+    public void FormatStringValue(string value, string lineIndent, System.IO.TextWriter writer)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        writer.Write(FormatStringValue(value, lineIndent));
+    }
+}

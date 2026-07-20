@@ -134,12 +134,17 @@ probe over all 940 LanguageSnippetTests inputs and the upstream lexer/span edge
 cases (956 cases and 2,871 normalized observations in total). It retains that
 complete parser proof, then independently compares the
 packaged Pkl.Core evaluator and value model with a separate JVM oracle across
-25 normalized observations: module and nested-object export; object, path, and
+107 normalized observations: module and nested-object export; object, path, and
 string expression evaluation; text, JSON, bytes, and multi-file output;
 untyped and typed output-value export; local and standard-library imports;
 local text/byte resources; module security denial; collection, bytes, and regex
 runtime values; four normalized error classes; and `Duration`, `DataSize`,
-`Pair`, `PNull`, `PClassInfo`, and `ModuleSource` behavior. Each core case gets a
+`Pair`, `PNull`, `PClassInfo`, and `ModuleSource` behavior. The value-model
+observations separately exercise every visitor and converter dispatch family,
+equality/hash/order and schema identity, formatter edge cases, JSON/PCF/PList/
+properties rendering and invalid values, and idiomatic .NET byte, nullable, and
+read-only collection facades. The 107 observations include 68 independently
+checked `toFixed` cases. Each core case gets a
 fresh evaluator, and neither package probe loads generated sources or shares
 runtime state with its oracle. The core gate also executes a source-backed
 loading, security-policy, and evaluator-configuration contract against the
@@ -154,7 +159,8 @@ resources, configured external readers, canonical policy checks, errors,
 ownership boundaries, and evaluator timeout deadlines across CPU, reader,
 network, package, project/settings, and subprocess paths. It rejects project/source leakage, verifies the runtime
 locations and hashes of the exact packed assemblies, and audits the selected
-loading, evaluator, analyzer, logging, and diagnostic public surface for
+loading, evaluator, analyzer, logging, diagnostic, value-model, schema,
+formatter, renderer, and output public surface for
 implementation stubs. The 25
 normalized upstream observations cover local, directory, archive, custom,
 HTTP/TLS, package, and projectpackage loading; cache and integrity behavior;

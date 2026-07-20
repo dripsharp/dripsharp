@@ -68,7 +68,7 @@
       (is (every? #(instance? CtElement (:declaration %)) (:seeds first))))
 
     (testing "the recursively resolved project declaration and source sets are exact"
-      (is (= {:seeds 187 :declarations 17140 :source-inputs 656
+      (is (= {:seeds 187 :declarations 17141 :source-inputs 656
               :public-api-declarations 7720 :shadow-symbols 0
               :unresolved-symbols 0 :ambiguous-symbols 0
               :fallback-symbols 0 :guessed-symbols 0}
@@ -77,7 +77,7 @@
                            :public-api-declarations :shadow-symbols
                            :unresolved-symbols :ambiguous-symbols
                            :fallback-symbols :guessed-symbols])))
-      (is (= "41e2b86d16fe39075c7cc9aa9c6040fd0bc109c2d074f7b581b1e027d2870e7c"
+      (is (= "e0c79e0149104dd4ddfdb86d44fbdea6226c53b48bbbe47ee61fc531c5b5b25d"
              (sha-256 declaration-keys)))
       (is (= "c4c7cca9825e79e26afbda347967f549c7b30590ef0edd22aa52c5fcfc0d2dfb"
              (sha-256 source-paths)))
@@ -135,7 +135,7 @@
                                   :representation])
                  (:selection-evidence second-surface))))
     (is (= first-occurrences second-occurrences))
-    (is (= "49e3ed6499f50bdc5db3343915afda906db9de3b61208653984365167911eb83"
+    (is (= "ca20e8259486b496b6141b0ffedb980437dfc00d344856db8aa5bd10aa94abd4"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))

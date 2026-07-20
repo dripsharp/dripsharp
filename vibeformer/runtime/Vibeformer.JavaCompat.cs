@@ -1694,6 +1694,7 @@ internal static class JavaCompat
     }
     internal static string ToStringRadix(int value, int radix) => ToStringRadix((long)value, radix);
     internal static int ToUnsignedInt(sbyte value) => unchecked((byte)value);
+    internal static int ToUnsignedInt(byte value) => value;
     internal static long ToUnsignedLong(sbyte value) => unchecked((byte)value);
     internal static bool IsBmpCodePoint(int value) => value is >= char.MinValue and <= char.MaxValue;
     internal static bool IsValidCodePoint(int value) => Rune.IsValid(value);
@@ -4136,6 +4137,9 @@ internal static class JavaCompat
     internal static T[] ToArrayLoose<T>(System.Collections.IEnumerable values) =>
         values.Cast<object?>().Select(value => (T)value!).ToArray();
     internal static IList<T> ToListValues<T>(IEnumerable<T> values) => values.ToList();
+
+    internal static byte[] ToUnsignedBytes(sbyte[] values) =>
+        values.Select(value => unchecked((byte)value)).ToArray();
     internal static void ForEach<T>(IEnumerable<T> values, Action<T> action)
     {
         foreach (var value in values) action(value);

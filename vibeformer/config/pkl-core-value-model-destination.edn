@@ -33,5 +33,6 @@
  :project-references ["../pkl-parser/Pkl.Parser.csproj"]
  :runtime-sources ["vibeformer/runtime/Pkl.Core.Substrate.cs"
                    "vibeformer/runtime/Pkl.Core.DotNet.cs"
+                   "vibeformer/runtime/Pkl.Core.ValueModel.DotNet.cs"
                    "vibeformer/runtime/Pkl.Core.Loading.cs"]
  :resource-policy {:strategy :embedded-resource-preserve-path}}

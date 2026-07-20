@@ -65,6 +65,226 @@ static class CorePackageProbe
             "pkl.base", "String", new Uri("pkl:base"));
         Write(writer, "@class-info", "VALUE",
             $"qualified={Encode(classInfo.GetQualifiedName())},display={Encode(classInfo.GetDisplayName())},equal={Lower(PClassInfo<object>.String.Equals(classInfo))}");
+
+        Write(writer, "@value-visitation", "VALUE", ObserveValueVisitation());
+        Write(writer, "@value-conversion", "VALUE", ObserveValueConversion());
+        Write(writer, "@value-equality-order", "VALUE", ObserveValueEqualityAndOrder());
+        Write(writer, "@value-formatter", "FORMAT", ObserveValueFormatter());
+        Write(writer, "@value-renderers", "RENDER", ObserveValueRenderers());
+        Write(writer, "@idiomatic-data-api", "DOTNET", ObserveIdiomaticDataApi());
+    }
+
+    static string ObserveValueVisitation()
+    {
+        var properties = new Dictionary<string, object> { ["name"] = "Pigeon" };
+        var obj = new PObject(PClassInfo<object>.Object.AsObject(), properties);
+        var module = new PModule(new Uri("repl:visitor"), "visitor.module",
+            PClassInfo<object>.ForModuleClass("visitor.module", new Uri("repl:visitor")), properties);
+        var set = new HashSet<object> { "set" };
+        var map = new Dictionary<object, object> { ["key"] = 1L };
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        ModuleSchema schema = evaluator.EvaluateSchema(ModuleSource.Text(
+            "class Bird { name: String }\ntypealias Name = String\n"));
+        var reference = new Reference(obj, "data", new List<Composite> { obj }, PType.UNKNOWN);
+        var values = new List<object>
+        {
+            PNull.GetInstance(), "text", true, 1L, 1.5d, Duration.OfSeconds(2),
+            DataSize.OfBytes(3), new byte[] { 0, 127, 128, 255 },
+            new Pair<object, object>("first", 2L), new List<object> { "list" },
+            set, map, obj, module, schema.GetClasses()["Bird"],
+            schema.GetTypeAliases()["Name"], new Regex("a.+b"), reference,
+        };
+        var observed = new List<string>();
+        foreach (object value in values)
+        {
+            var recording = new RecordingVisitor();
+            ((ValueVisitor)recording).Visit(value);
+            observed.Add(recording.Observation);
+        }
+        var direct = new RecordingVisitor();
+        module.Accept(direct);
+        bool invalid = ThrowsArgument(() => ((ValueVisitor)new RecordingVisitor()).Visit(new object()));
+        return string.Join(",", observed) + $"|direct={direct.Observation}|invalid={Lower(invalid)}";
+    }
+
+    static string ObserveValueConversion()
+    {
+        ValueConverter<string> converter = new RecordingConverter();
+        var properties = new Dictionary<string, object> { ["name"] = "Pigeon" };
+        var obj = new PObject(PClassInfo<object>.Object.AsObject(), properties);
+        var module = new PModule(new Uri("repl:converter"), "converter.module",
+            PClassInfo<object>.ForModuleClass("converter.module", new Uri("repl:converter")), properties);
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        ModuleSchema schema = evaluator.EvaluateSchema(ModuleSource.Text(
+            "class Bird { name: String }\ntypealias Name = String\n"));
+        var reference = new Reference(obj, "data", new List<Composite> { obj }, PType.UNKNOWN);
+        var values = new List<object>
+        {
+            PNull.GetInstance(), "text", true, 1L, 1.5d, Duration.OfSeconds(2),
+            DataSize.OfBytes(3), new Pair<object, object>("first", 2L),
+            new List<object> { "list" }, new HashSet<object> { "set" },
+            new Dictionary<object, object> { ["key"] = 1L }, obj, module,
+            schema.GetClasses()["Bird"], schema.GetTypeAliases()["Name"],
+            new Regex("a.+b"), reference,
+        };
+        var observed = values.Select(converter.Convert).ToList();
+        bool bytesRejected = ThrowsArgument(() => converter.Convert(new byte[] { 1 }));
+        bool invalid = ThrowsArgument(() => converter.Convert(new object()));
+        return string.Join(",", observed) +
+            $"|direct-bytes={converter.ConvertBytes(new byte[] { 1 })}" +
+            $"|bytes-rejected={Lower(bytesRejected)}|invalid={Lower(invalid)}";
+    }
+
+    static string ObserveValueEqualityAndOrder()
+    {
+        var leftProperties = new Dictionary<string, object> { ["name"] = "Pigeon", ["age"] = 42L };
+        var rightProperties = new Dictionary<string, object> { ["age"] = 42L, ["name"] = "Pigeon" };
+        var left = new PObject(PClassInfo<object>.Object.AsObject(), leftProperties);
+        var right = new PObject(PClassInfo<object>.Object.AsObject(), rightProperties);
+        var module = new PModule(new Uri("repl:equality"), "equality.module",
+            PClassInfo<object>.ForModuleClass("equality.module", new Uri("repl:equality")), leftProperties);
+        var moduleCopy = new PModule(new Uri("repl:equality"), "equality.module",
+            PClassInfo<object>.ForModuleClass("equality.module", new Uri("repl:equality")), rightProperties);
+        return $"object={Lower(left.Equals(right) && left.GetHashCode() == right.GetHashCode())}" +
+            $"|module={Lower(module.Equals(moduleCopy) && module.GetHashCode() == moduleCopy.GetHashCode())}" +
+            $"|pair={Lower(new Pair<object, object>("a", 1L).Equals(new Pair<object, object>("a", 1L)))}" +
+            $"|duration={Lower(Duration.OfSeconds(90).Equals(Duration.OfMinutes(1.5)))}" +
+            $"|size={Lower(DataSize.OfKibibytes(2).Equals(DataSize.OfBytes(2048)))}" +
+            $"|class={Lower(PClassInfo<object>.String.Equals(PClassInfo<object>.Get("pkl.base", "String", new Uri("pkl:base"))))}" +
+            $"|order={string.Join(",", left.GetProperties().Keys)}" +
+            $"|identity={Lower(ReferenceEquals(left.GetProperties(), leftProperties))}" +
+            $"|render={Encode(module.ToString())}";
+    }
+
+    static string ObserveValueFormatter()
+    {
+        ValueFormatter basic = ValueFormatter.Basic();
+        ValueFormatter custom = ValueFormatter.WithCustomStringDelimiters();
+        var multiline = new ValueFormatter(true, true);
+        var builder = new StringBuilder();
+        custom.FormatStringValue("\"\"start\\#\nnext\t\r", "  ", builder);
+        return $"basic={Encode(basic.FormatStringValue("quote\"slash\\\n", ""))}" +
+            $"|custom-quote={Encode(custom.FormatStringValue("\"", ""))}" +
+            $"|custom-prefix={Encode(custom.FormatStringValue("\"\"start", ""))}" +
+            $"|multiline={Encode(multiline.FormatStringValue("first\nsecond\"\"\"#\\##", "  "))}" +
+            $"|builder={Encode(builder.ToString())}";
+    }
+
+    static string ObserveValueRenderers()
+    {
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        PModule module = evaluator.Evaluate(ModuleSource.Text(
+            "name = \"Pigeon\"\nage = 3\nactive = true\nitems = List(\"a\", 2)\nnested { value = \"x\" }\nnullable = null\n"));
+        var jsonWriter = new StringWriter(CultureInfo.InvariantCulture);
+        ValueRenderers.Json(jsonWriter, "  ", true).RenderDocument(module);
+        string json = jsonWriter.ToString();
+        var pcfWriter = new StringWriter(CultureInfo.InvariantCulture);
+        ValueRenderers.Pcf(pcfWriter, "  ", false, true).RenderDocument(module);
+        string pcf = pcfWriter.ToString();
+        var plistWriter = new StringWriter(CultureInfo.InvariantCulture);
+        ValueRenderers.Plist(plistWriter, "  ").RenderDocument(module);
+        string plist = plistWriter.ToString();
+        var propertiesWriter = new StringWriter(CultureInfo.InvariantCulture);
+        PModule propertiesModule = evaluator.Evaluate(ModuleSource.Text(
+            "name = \"Pigeon\"\nage = 3\nactive = true\nnested { value = \"x\" }\nnullable = null\n"));
+        ValueRenderers.Properties(propertiesWriter, false, true).RenderDocument(propertiesModule);
+        string properties = propertiesWriter.ToString();
+        return $"json={Encode(json)}|pcf={Encode(pcf)}|plist={Encode(plist)}|properties={Encode(properties)}" +
+            $"|newline={Lower(json.EndsWith('\n') && pcf.EndsWith('\n') && plist.EndsWith('\n') && properties.EndsWith('\n'))}" +
+            $"|invalid={Lower(InvalidRenderer(ValueRenderers.Json(new StringWriter(), "  ", false)))}:" +
+            $"{Lower(InvalidRenderer(ValueRenderers.Pcf(new StringWriter(), "  ", false, false)))}:" +
+            $"{Lower(InvalidRenderer(ValueRenderers.Plist(new StringWriter(), "  ")))}:" +
+            $"{Lower(InvalidRenderer(ValueRenderers.Properties(new StringWriter(), false, true)))}";
+    }
+
+    static string ObserveIdiomaticDataApi()
+    {
+        ModuleSource source = ModuleSource.FromText("value = 1");
+        var obj = new PObject(PClassInfo<object>.Object.AsObject(),
+            new Dictionary<string, object> { ["value"] = 1L });
+        var reference = new Reference(obj, "data", new List<Composite> { obj }, PType.UNKNOWN);
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        ModuleSchema schema = evaluator.EvaluateSchema(ModuleSource.FromText(
+            "class Bird { name: String }\ntypealias Name = String\n"));
+        IReadOnlyDictionary<string, FileOutput> files = evaluator.EvaluateOutputFilesReadOnly(
+            ModuleSource.FromText("output { files { [\"a.txt\"] { text = \"a\" } } }"));
+        bool bytes = typeof(Evaluator).GetMethod(nameof(Evaluator.EvaluateOutputBytes))!.ReturnType == typeof(byte[]) &&
+            PClassInfo<object>.Bytes.ValueType == typeof(byte[]);
+        bool readOnly = RejectsMutation(() => ((IDictionary<string, object>)obj.Properties).Add("other", 2L)) &&
+            RejectsMutation(() => ((IDictionary<string, PClass>)schema.Classes).Clear()) &&
+            RejectsMutation(() => ((IDictionary<string, FileOutput>)files).Clear()) &&
+            RejectsMutation(() => ((IList<Composite>)reference.Path).Add(obj)) &&
+            schema.ModuleClass.Modifiers is not ISet<Modifier>;
+        bool facades = source.Contents == "value = 1" &&
+            source.SourceUri == ModuleSource.Text("x").GetUri() && obj.Properties.Count == 1 &&
+            schema.Classes.ContainsKey("Bird") && schema.TypeAliases.ContainsKey("Name") &&
+            files["a.txt"].Text == "a" && files["a.txt"].Bytes.SequenceEqual(new byte[] { 97 }) &&
+            reference.Path.Count == 1 && ReferenceEquals(reference.Domain, obj) && readOnly;
+        bool nullable = ModuleSource.FromUri(new Uri("file:///nullable.pkl")).Contents is null;
+        return $"bytes={Lower(bytes)}|facades={Lower(facades)}|nullable={Lower(nullable)}";
+    }
+
+    static bool InvalidRenderer(ValueRenderer renderer)
+    {
+        try { renderer.RenderDocument(new object()); return false; }
+        catch (Exception error) when (error is ArgumentException or RendererException) { return true; }
+    }
+
+    static bool ThrowsArgument(Action action)
+    {
+        try { action(); return false; }
+        catch (ArgumentException) { return true; }
+    }
+
+    static bool RejectsMutation(Action action)
+    {
+        try { action(); return false; }
+        catch (NotSupportedException) { return true; }
+    }
+
+    sealed class RecordingVisitor : ValueVisitor
+    {
+        public string Observation { get; private set; } = "none";
+        public void VisitNull() => Observation = "null";
+        public void VisitString(string value) => Observation = "string";
+        public void VisitBoolean(bool value) => Observation = "boolean";
+        public void VisitInt(long value) => Observation = "int";
+        public void VisitFloat(double value) => Observation = "float";
+        public void VisitDuration(Duration value) => Observation = "duration";
+        public void VisitDataSize(DataSize value) => Observation = "data-size";
+        public void VisitBytes(byte[] value) => Observation = "bytes";
+        public void VisitPair(Pair<object, object> value) => Observation = "pair";
+        public void VisitList(IList<object> value) => Observation = "list";
+        public void VisitSet(ISet<object> value) => Observation = "set";
+        public void VisitMap(IDictionary<object, object> value) => Observation = "map";
+        public void VisitObject(PObject value) => Observation = "object";
+        public void VisitModule(PModule value) => Observation = "module";
+        public void VisitClass(PClass value) => Observation = "class";
+        public void VisitTypeAlias(TypeAlias value) => Observation = "alias";
+        public void VisitRegex(Regex value) => Observation = "regex";
+        public void VisitReference(Reference value) => Observation = "reference";
+    }
+
+    sealed class RecordingConverter : ValueConverter<string>
+    {
+        public string ConvertNull() => "null";
+        public string ConvertString(string value) => "string";
+        public string ConvertBoolean(bool value) => "boolean";
+        public string ConvertInt(long value) => "int";
+        public string ConvertFloat(double value) => "float";
+        public string ConvertDuration(Duration value) => "duration";
+        public string ConvertDataSize(DataSize value) => "data-size";
+        public string ConvertBytes(byte[] value) => "bytes";
+        public string ConvertPair(Pair<object, object> value) => "pair";
+        public string ConvertList(IList<object> value) => "list";
+        public string ConvertSet(ISet<object> value) => "set";
+        public string ConvertMap(IDictionary<object, object> value) => "map";
+        public string ConvertObject(PObject value) => "object";
+        public string ConvertModule(PModule value) => "module";
+        public string ConvertClass(PClass value) => "class";
+        public string ConvertTypeAlias(TypeAlias value) => "alias";
+        public string ConvertRegex(Regex value) => "regex";
+        public string ConvertReference(Reference value) => "reference";
     }
 
     static string Observe(Evaluator evaluator, string operation, string module, string argument)
@@ -130,7 +350,7 @@ static class CorePackageProbe
             return "int:" + Convert.ToInt64(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
         if (value is float or double)
             return "float:" + DoubleBits(Convert.ToDouble(value, CultureInfo.InvariantCulture));
-        if (value is sbyte[] bytes) return "bytes:" + HexBytes(bytes);
+        if (value is byte[] bytes) return "bytes:" + HexBytes(bytes);
         if (value is Regex regex) return "regex:" + Encode(regex.ToString());
         if (value is Duration duration)
             return $"duration:{DoubleBits(duration.GetValue())}@{duration.GetUnit().GetSymbol()}";
@@ -203,8 +423,8 @@ static class CorePackageProbe
             "|suggestions:" + Encode(string.Join("\n", suggestions));
     }
 
-    static string HexBytes(sbyte[] bytes) =>
-        string.Concat(bytes.Select(value => unchecked((byte)value).ToString("x2", CultureInfo.InvariantCulture)));
+    static string HexBytes(byte[] bytes) =>
+        string.Concat(bytes.Select(value => value.ToString("x2", CultureInfo.InvariantCulture)));
 
     static string DoubleBits(double value) =>
         unchecked((ulong)BitConverter.DoubleToInt64Bits(value)).ToString("x16", CultureInfo.InvariantCulture);

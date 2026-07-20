@@ -2783,13 +2783,22 @@ namespace Pkl.Core
             if (value is bool) return PClassInfo<object>.Boolean.Retype<TValue>();
             if (value is long) return PClassInfo<object>.Int.Retype<TValue>();
             if (value is double) return PClassInfo<object>.Float.Retype<TValue>();
-            if (value is sbyte[]) return PClassInfo<object>.Bytes.Retype<TValue>();
+            if (value is byte[] or sbyte[]) return PClassInfo<object>.Bytes.Retype<TValue>();
             if (value is System.Collections.IList) return PClassInfo<object>.List.Retype<TValue>();
             if (value is System.Collections.IDictionary) return PClassInfo<object>.Map.Retype<TValue>();
             if (value is System.Text.RegularExpressions.Regex) return PClassInfo<object>.Regex.Retype<TValue>();
             if (global::Vibeformer.Runtime.JavaCompat.IsSet(value)) return PClassInfo<object>.Set.Retype<TValue>();
             throw new ArgumentException("Not a Pkl value: " + value);
         }
+    }
+}
+
+namespace Pkl.Core.Util
+{
+    public sealed partial class ByteArrayUtils
+    {
+        public static string Base64(byte[] input) =>
+            global::System.Convert.ToBase64String(input);
     }
 }
 

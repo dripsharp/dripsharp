@@ -106,16 +106,16 @@
 
     (testing "the entire selected declaration and body closure is accounted for"
       (is (= 656 (:compilation-units summary)))
-      (is (= 661 (:generated-files summary)))
+      (is (= 662 (:generated-files summary)))
       (is (= 28 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 30671 (:declarations summary)))
+      (is (= 30672 (:declarations summary)))
       (is (= {:constructor 1172
               :enum-value 101
               :field 3544
-              :initializer 24
+              :initializer 25
               :method 9283
               :parameter 14013
               :record-component 194
@@ -127,17 +127,17 @@
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 11109 (:executable-roots summary)))
+      (is (= 11110 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 459699
+      (is (= {:semantic 459709
               :fallback 0
-              :visited 1057200
+              :visited 1057221
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 597501
+              :structural 597512
               :blocked 0
-              :covered 1057200}
+              :covered 1057221}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
@@ -220,6 +220,8 @@
               substrate (slurp (str (paths/resolve-path
                                       source-root "Runtime" "Substrate"
                                       "Pkl.Core.Substrate.cs")))
+              json-writer (slurp (str (paths/resolve-path
+                                        source-root "Util" "Json" "JsonWriter.cs")))
               http-client (slurp (str (paths/resolve-path source-root
                                                            "Http" "HttpClient.cs")))
               package-uri (slurp (str (paths/resolve-path source-root
@@ -236,6 +238,10 @@
                                                 "DependencyMetadata.cs")))
               json (slurp (str (paths/resolve-path source-root
                                                     "Util" "Json" "Json.cs")))
+              pcf-renderer (slurp (str (paths/resolve-path source-root
+                                                            "PcfRenderer.cs")))
+              properties-renderer (slurp (str (paths/resolve-path
+                                                source-root "PropertiesRenderer.cs")))
               module-keys (slurp (str (paths/resolve-path source-root
                                                            "Module" "ModuleKeys.cs")))
               module-cache (slurp (str (paths/resolve-path source-root
@@ -271,6 +277,10 @@
             (is (str/includes? dependency-metadata
                                "public static DependencyMetadata Parse(string input)"))
             (is (str/includes? json "JsonHandlerBridge.Erase(handler"))
+            (is (str/includes? pcf-renderer
+                               "JavaCompat.StringValueOf(value)"))
+            (is (str/includes? properties-renderer
+                               "JavaCompat.StringValueOf(value)"))
             (is (str/includes? package-uri "JavaCompat.StringSplit(path"))
             (is (str/includes? module-keys "JavaCompat.CastDictionary<string"))
             (is (str/includes? module-keys
@@ -352,6 +362,12 @@
             (is (str/includes? loading-runtime "CreateEmbeddedResources"))
             (is (str/includes? loading-runtime "static Platform()"))
             (is (str/includes? loading-runtime "static JdkHttpClient()"))
+            (let [push-index (str/index-of json-writer
+                                           "this.Push(JsonWriter.EMPTY_DOCUMENT);")
+                  assignment-index (str/index-of json-writer "this.@out = @out;")]
+              (is (number? push-index))
+              (is (number? assignment-index))
+              (is (< push-index assignment-index)))
             (is (str/includes? java-compat
                                "colon + 1 == original.Length || original[colon + 1] != '/'"))
             (is (str/includes? substrate

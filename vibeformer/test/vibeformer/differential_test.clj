@@ -96,7 +96,7 @@
 (deftest loading-public-surface-audit-is-fail-closed
   (let [clean (public-surface-root "public int Value() { return 1; }\n")
         summary (#'differential/audit-loading-public-surface! clean)]
-    (is (= 32 (:files summary)))
+    (is (= 59 (:files summary)))
     (is (= [:translation-error :not-implemented :todo
             :null-or-default-body :null-or-default-expression]
            (:patterns summary))))

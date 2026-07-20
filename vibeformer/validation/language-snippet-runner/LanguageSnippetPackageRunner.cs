@@ -176,7 +176,7 @@ static class Program
         using var fixtureModulePathResolver =
             new Pkl.Core.Module.ModulePathResolver(new[] { fixtureModulePath });
         EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured()
-            .SetLogger(Loggers.Stream(logWriter))
+            .SetLogger(Loggers.Writer(logWriter))
             .SetStackFrameTransformer(frame => frame)
             .SetEnvironmentVariables(environment)
             .SetExternalProperties(properties)
@@ -222,7 +222,7 @@ static class Program
                 }
             }
             using Evaluator evaluator = builder.Build();
-            sbyte[] bytes = evaluator.EvaluateOutputBytes(ModuleSource.PathFromPath(input));
+            byte[] bytes = evaluator.EvaluateOutputBytes(ModuleSource.PathFromPath(input));
             output = DecodeOutput(bytes, input);
             output = StripLineNumbers(output);
             success = true;
@@ -440,9 +440,8 @@ static class Program
         return null;
     }
 
-    static string DecodeOutput(sbyte[] signedBytes, string input)
+    static string DecodeOutput(byte[] bytes, string input)
     {
-        byte[] bytes = signedBytes.Select(value => unchecked((byte)value)).ToArray();
         return Regex.IsMatch(input, @"[.]msgpack[.]yaml[.]pkl$")
             ? new MessagePackDebugRenderer(bytes).Render()
             : Utf8.GetString(bytes);

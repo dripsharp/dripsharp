@@ -18,7 +18,7 @@
            [spoon.reflect CtModel]
            [spoon.reflect.code CtInvocation CtThisAccess CtTypeAccess]
            [spoon.reflect.cu SourcePosition]
-           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtElement CtEnum CtEnumValue
+           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtConstructor CtElement CtEnum CtEnumValue
             CtExecutable CtField CtInterface CtMethod CtModifiable CtRecord CtRecordComponent CtType CtTypeMember
             CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtExecutableReference
@@ -666,6 +666,7 @@
   [^CtElement declaration]
   (cond
     (instance? CtType declaration) :type
+    (instance? CtAnonymousExecutable declaration) :initializer
     (instance? CtRecordComponent declaration) :record-component
     (instance? CtField declaration) :field
     (instance? CtExecutable declaration)
@@ -682,6 +683,7 @@
 (defn- declaration-index
   [^CtModel model project-types source-files]
   (let [declarations (concat (vals project-types)
+                             (elements-of model CtAnonymousExecutable)
                              (elements-of model CtExecutable)
                              (elements-of model CtField)
                              (elements-of model CtRecordComponent))]
@@ -840,6 +842,20 @@
                                  :declaration owner
                                  :expand :shell}))
       result)))
+
+(defn- initializer-items
+  [^CtElement declaration]
+  (let [^CtType owner (when (instance? CtConstructor declaration)
+                        (.getDeclaringType ^CtConstructor declaration))]
+    (when owner
+      (->> (.getTypeMembers owner)
+           (filter #(and (instance? CtAnonymousExecutable %)
+                         (not (.isImplicit ^CtElement %))
+                         (not (.hasModifier ^CtModifiable % ModifierKind/STATIC))))
+           (mapv (fn [^CtAnonymousExecutable initializer]
+                   {:key (declaration-key initializer)
+                    :declaration initializer
+                    :expand :body}))))))
 
 (defn- dependency-items
   [occurrence]
@@ -1012,8 +1028,10 @@
                                      nil)
                   obligations (when (instance? CtType declaration)
                                 (compilation-obligation-items declaration expand members))
+                  initializers (initializer-items declaration)
                   owners (owner-type-items declaration)
-                  additions (->> (concat dependencies member-additions obligations owners)
+                  additions (->> (concat dependencies member-additions obligations
+                                          initializers owners)
                                  (remove #(nil? (:key %)))
                                  (sort-by (juxt :key #(expansion-rank (:expand %))))
                                  vec)

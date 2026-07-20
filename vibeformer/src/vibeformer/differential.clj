@@ -875,7 +875,34 @@
    "Packages/DependencyMetadata.cs"
    "Settings/PklSettings.cs"
    "Externalreader/ExternalReaderProcess.cs"
-   "Externalreader/ExternalReaderProcessImpl.cs"])
+   "Externalreader/ExternalReaderProcessImpl.cs"
+   "Value.cs"
+   "ValueVisitor.cs"
+   "ValueConverter.cs"
+   "PModule.cs"
+   "PObject.cs"
+   "PNull.cs"
+   "PClassInfo.cs"
+   "ModuleSchema.cs"
+   "PClass.cs"
+   "PType.cs"
+   "TypeAlias.cs"
+   "Member.cs"
+   "TypeParameter.cs"
+   "FileOutput.cs"
+   "FileOutputImpl.cs"
+   "OutputFormat.cs"
+   "Duration.cs"
+   "DataSize.cs"
+   "Pair.cs"
+   "ValueFormatter.cs"
+   "ValueRenderer.cs"
+   "ValueRenderers.cs"
+   "JsonRenderer.cs"
+   "PcfRenderer.cs"
+   "PListRenderer.cs"
+   "PropertiesRenderer.cs"
+   "Runtime/Substrate/Pkl.Core.ValueModel.DotNet.cs"])
 
 (def ^:private loading-public-stub-patterns
   [[:translation-error #"#error VIBEFORMER_"]
@@ -1608,7 +1635,7 @@
           summary {:upstream-revision revision
                    :package (:identity package-proof)
                    :cases (count core-cases)
-                   :value-model-observations 6
+                   :value-model-observations 12
                    :evaluation-cases 15
                    :output-cases 4
                    :value-export-cases 2

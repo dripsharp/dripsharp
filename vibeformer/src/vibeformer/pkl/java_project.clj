@@ -712,6 +712,59 @@
    "float" ["float" :dotnet.type/single]
    "double" ["double" :dotnet.type/double]})
 
+(def ^:private idiomatic-byte-array-declarations
+  #{"field:org.pkl.core.PClassInfo#Bytes"
+    "executable:org.pkl.core.Evaluator#evaluateOutputBytes(org.pkl.core.ModuleSource)"
+    "executable:org.pkl.core.EvaluatorImpl#evaluateOutputBytes(org.pkl.core.ModuleSource)"
+    "executable:org.pkl.core.EvaluatorImpl#evaluateOutputBytes(org.pkl.core.runtime.VmTyped)"
+    "executable:org.pkl.core.FileOutput#getBytes()"
+    "executable:org.pkl.core.FileOutputImpl#getBytes()"
+    "executable:org.pkl.core.JsonRenderer$Visitor#visitBytes(byte[])"
+    "executable:org.pkl.core.PListRenderer$Visitor#visitBytes(byte[])"
+    "executable:org.pkl.core.PcfRenderer$Visitor#visitBytes(byte[])"
+    "executable:org.pkl.core.PropertiesRenderer$Visitor#convertBytes(byte[])"
+    "executable:org.pkl.core.ValueConverter#convertBytes(byte[])"
+    "executable:org.pkl.core.ValueVisitor#visit(byte[])"
+    "executable:org.pkl.core.ValueVisitor#visit(java.lang.Object)"
+    "executable:org.pkl.core.ValueVisitor#visitBytes(byte[])"
+    "executable:org.pkl.core.runtime.VmBytes#export()"})
+
+(def ^:private idiomatic-list-dispatch-declarations
+  #{"executable:org.pkl.core.JsonRenderer$Visitor#visitList(java.util.List)"
+    "executable:org.pkl.core.PListRenderer$Visitor#visitList(java.util.List)"
+    "executable:org.pkl.core.PcfRenderer$Visitor#visitList(java.util.List)"
+    "executable:org.pkl.core.PropertiesRenderer$Visitor#convertList(java.util.List)"
+    "executable:org.pkl.core.ValueConverter#convert(java.lang.Object)"
+    "executable:org.pkl.core.ValueConverter#convertList(java.util.List)"
+    "executable:org.pkl.core.ValueVisitor#visit(java.lang.Object)"
+    "executable:org.pkl.core.ValueVisitor#visitList(java.util.List)"})
+
+(defn- enclosing-declaration-key [^CtElement element]
+  (loop [current element]
+    (cond
+      (or (instance? CtExecutable current) (instance? CtField current))
+      (spoon/declaration-key current)
+
+      (and current (.isParentInitialized current))
+      (recur (.getParent current))
+
+      :else nil)))
+
+(defn- primitive-byte-array? [^CtTypeReference reference]
+  (and (instance? CtArrayTypeReference reference)
+       (= "byte" (some-> ^CtArrayTypeReference reference .getComponentType
+                          .getQualifiedName))))
+
+(defn- idiomatic-byte-array-reference? [^CtTypeReference reference]
+  (and (primitive-byte-array? reference)
+       (contains? idiomatic-byte-array-declarations
+                  (enclosing-declaration-key reference))))
+
+(defn- idiomatic-list-dispatch-reference? [^CtTypeReference reference]
+  (and (= "java.util.List" (.getQualifiedName reference))
+       (contains? idiomatic-list-dispatch-declarations
+                  (enclosing-declaration-key reference))))
+
 (declare type-node)
 
 (defn- generic-node [base arguments]
@@ -809,6 +862,21 @@
   (let [occurrence (occurrence! ctx reference :type)
         [node rule]
         (cond
+          ;; Java byte is signed, so internal arithmetic continues to use
+          ;; sbyte. At exported value/data boundaries, however, byte[] is the
+          ;; idiomatic CLR representation. Keep this adaptation declaration-
+          ;; scoped so generic Java translation semantics are unchanged.
+          (idiomatic-byte-array-reference? reference)
+          [(raw "byte[]") :pkl-core.type/idiomatic-byte-array]
+
+          ;; List<?> was historically widened to IEnumerable<object> to model
+          ;; Java wildcard covariance. That makes a Set<object> satisfy the
+          ;; list branch in ValueVisitor/ValueConverter dispatch. Preserve the
+          ;; distinct upstream List/Set/Map cases at these public boundaries.
+          (idiomatic-list-dispatch-reference? reference)
+          [(raw "global::System.Collections.Generic.IList<object>")
+           :pkl-core.type/idiomatic-list-dispatch]
+
           ;; Comparable<?> is commonly used as an erased local carrier (for
           ;; example, JSON parser member names may be String or Identifier).
           ;; Keep declaration bases generic, but erase value-site occurrences
@@ -1734,6 +1802,11 @@
           (sequence-node
            [(raw "{\nreturn global::Vibeformer.Runtime.JavaCompat.Equals(this, obj);\n}")])
 
+          (= "executable:org.pkl.core.runtime.VmBytes#export()"
+             (spoon/declaration-key method))
+          (raw
+           "{\nreturn global::Vibeformer.Runtime.JavaCompat.ToUnsignedBytes(this.GetBytes());\n}")
+
           (= "executable:org.pkl.core.packages.Dependency$LocalDependency#resolveAssetUri(java.net.URI,org.pkl.core.packages.PackageAssetUri)"
              (spoon/declaration-key method))
           ;; System.Uri canonicalizes Java's file:/ spelling to file:///.
@@ -1814,7 +1887,24 @@
     (attach-declaration ctx declaration method :method (.getQualifiedName owner-type)
                         name signature :java.declaration/method)))
 
-(declare named-inner-class?)
+(declare named-inner-class? source-order-key)
+
+(defn- instance-initializer-blocks [^CtType owner-type]
+  (->> (.getTypeMembers owner-type)
+       (filter #(and (instance? CtAnonymousExecutable %)
+                     (not (.isImplicit ^CtElement %))
+                     (not (modifier? % ModifierKind/STATIC))))
+       (sort-by source-order-key)
+       vec))
+
+(defn- delegates-to-this-constructor? [^CtType owner-type explicit-invocation]
+  (and explicit-invocation
+       (= (.getQualifiedName owner-type)
+          (some-> explicit-invocation .getExecutable .getDeclaringType .getQualifiedName))))
+
+(defn- instance-initializer-nodes [ctx ^CtType owner-type]
+  (mapv #(translated-node ctx (.getBody ^CtAnonymousExecutable %))
+        (instance-initializer-blocks owner-type)))
 
 (defn- constructor-node [ctx ^CtType owner-type ^CtConstructor constructor]
   (let [owner (executable-owner constructor)
@@ -1840,6 +1930,9 @@
                       (java-body/constructor-initializer
                        body-context explicit-invocation
                        (when outer-type-node (raw "__outer"))))
+        instance-initializers
+        (when-not (delegates-to-this-constructor? owner-type explicit-invocation)
+          (instance-initializer-nodes ctx owner-type))
         constructor-visibility (if (and (modifier? constructor ModifierKind/PRIVATE)
                                         (not (.isTopLevel owner-type)))
                                  "internal"
@@ -1850,10 +1943,14 @@
           (raw name) node (raw "(") (sequence-node params ", ") (raw ")") initializer
           (constraints-node ctx parameters)
           (if body
-            (if outer-type-node
-              (sequence-node [(raw " {\nthis.__outer = __outer;\n")
-                              (translated-node ctx body)
-                              (raw "\n}")])
+            (if (or outer-type-node (seq instance-initializers))
+              (sequence-node
+               [(raw " {\n")
+                (when outer-type-node (raw "this.__outer = __outer;\n"))
+                (when (seq instance-initializers)
+                  (sequence-node instance-initializers "\n"))
+                (translated-node ctx body)
+                (raw "\n}")])
               (sequence-node [(raw " ") (translated-node ctx body)]))
             (raw ";"))])]
     (attach-declaration ctx declaration constructor :constructor
@@ -2435,11 +2532,12 @@
         (attach-declaration ctx declaration member :initializer
                             (.getQualifiedName owner) name signature
                             :java.declaration/static-initializer))
-      (let [id (blocker! ctx member :unsupported-instance-initializer-block
-                         (.getQualifiedName owner))]
-        (with-source
-          (raw (str "#error " id " Java instance initializer block requires direct Spoon translation"))
-          member :java.executable/pending {:diagnostic-id id})))
+      (attach-declaration
+       ctx (raw "/* Java instance initializer is emitted in each non-delegating constructor. */")
+       member :initializer (.getQualifiedName owner) (pascal (.getSimpleName owner))
+       (str ".iinit@" (:line (spoon/source-location member)) ":"
+            (:column (spoon/source-location member)))
+       :java.declaration/instance-initializer))
     :else
     (throw (ex-info (str "Unsupported live Spoon type member " (.getName (class member)))
                     {:kind :unsupported-declaration-member
@@ -2601,15 +2699,27 @@
                               (.getRecordComponents ^CtRecord type))
                         members)
                   members)
-        implicit-inner-constructor
-        (when (and outer-capture-type-node
-                   (not-any? #(and (instance? CtConstructor %)
-                                   (not (.isImplicit ^CtElement %))
-                                   (selected-declaration? ctx %))
-                             raw-members))
-          (sequence-node [(raw "internal ") (raw name) (raw "(") outer-capture-type-node
-                          (raw " __outer) { this.__outer = __outer; }")]))
-        members (into (vec (remove nil? [outer-capture implicit-inner-constructor])) members)
+        explicit-selected-constructor?
+        (some #(and (instance? CtConstructor %)
+                    (not (.isImplicit ^CtElement %))
+                    (selected-declaration? ctx %))
+              raw-members)
+        instance-initializers (instance-initializer-blocks type)
+        implicit-constructor
+        (when (and (not explicit-selected-constructor?)
+                   (or outer-capture-type-node (seq instance-initializers)))
+          (sequence-node
+           [(raw (if outer-capture-type-node "internal "
+                     (str (visibility type "internal") " ")))
+            (raw name) (raw "(")
+            (when outer-capture-type-node
+              (sequence-node [outer-capture-type-node (raw " __outer")]))
+            (raw ") {\n")
+            (when outer-capture-type-node (raw "this.__outer = __outer;\n"))
+            (when (seq instance-initializers)
+              (sequence-node (instance-initializer-nodes member-ctx type) "\n"))
+            (raw "\n}")]))
+        members (into (vec (remove nil? [outer-capture implicit-constructor])) members)
         members (into (vec (missing-interface-contracts member-ctx type)) members)
         members (into (vec (destination-bridge-members member-ctx type)) members)
         members (into members (mapv #(anonymous-type-node member-ctx type %)
