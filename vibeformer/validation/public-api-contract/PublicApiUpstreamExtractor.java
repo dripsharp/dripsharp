@@ -592,11 +592,11 @@ public final class PublicApiUpstreamExtractor {
             workspace.resolve("vibeformer/validation"));
     Predicate<Path> evidenceFile =
         path -> {
-          String name = path.getFileName().toString();
-          return !slash(path).contains("/public-contract-compiler/") && (name.endsWith(".java")
-              || name.endsWith(".kt")
-              || name.endsWith(".cs")
-              || name.endsWith(".adoc"));
+          String name = path.getFileName().toString(), portable = slash(path);
+          return !portable.contains("/public-contract-compiler/")
+              && !portable.contains("/pkl-core-test-contract/")
+              && (name.endsWith(".java") || name.endsWith(".kt")
+                  || name.endsWith(".cs") || name.endsWith(".adoc"));
         };
     Map<String, String> tokens = new HashMap<>();
     Map<String, String> members = new HashMap<>();
