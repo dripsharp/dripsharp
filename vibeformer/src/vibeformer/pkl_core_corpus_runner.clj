@@ -593,7 +593,7 @@
                                         :profile "pkl-core-value-model"
                                         :run-command! run-command!})
              consumer-root (:consumer-root package-proof)
-             packages-root (paths/resolve-path (:proof-root package-proof) "packages")
+             packages-root (:packages-root package-proof)
              project (consumer-project-file consumer-root)
              source (paths/resolve-path consumer-root "Program.cs")
              runner-source (paths/resolve-path root "vibeformer" "validation"

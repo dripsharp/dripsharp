@@ -2363,8 +2363,11 @@ namespace Pkl.Core.Runtime.Truffle.api
 
     internal class CallTarget
     {
+        private const int MaxPklCallDepth = 256;
         [ThreadStatic]
         private static CallTarget? current;
+        [ThreadStatic]
+        private static int callDepth;
         private readonly RootNode? root;
         internal CallTarget(RootNode? root = null)
         {
@@ -2381,8 +2384,12 @@ namespace Pkl.Core.Runtime.Truffle.api
         internal object? CallFrom(Node? location, params object?[] arguments)
         {
             global::Vibeformer.Runtime.JavaCancellation.ThrowIfCancellationRequested();
+            if (callDepth >= MaxPklCallDepth)
+                throw new global::Pkl.Core.Runtime.VmStackOverflowException(
+                    new StackOverflowException("Maximum Pkl call depth exceeded."));
             var caller = current;
             current = this;
+            callDepth++;
             try
             {
                 Pkl.Core.Runtime.Truffle.api.instrumentation.Instrumenter.InstrumentActive(root);
@@ -2425,6 +2432,7 @@ namespace Pkl.Core.Runtime.Truffle.api
             }
             finally
             {
+                callDepth--;
                 current = caller;
             }
         }

@@ -3,6 +3,10 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
 
 namespace Pkl.Core;
 
@@ -72,6 +76,81 @@ public partial interface Evaluator
 {
     public IReadOnlyDictionary<string, FileOutput> EvaluateOutputFilesReadOnly(
         ModuleSource moduleSource) => DotNetCollections.ReadOnly(EvaluateOutputFiles(moduleSource));
+
+    public TestResults EvaluateTests(ModuleSource moduleSource, bool overwriteExpected = false) =>
+        EvaluateTest(moduleSource, overwriteExpected);
+}
+
+public interface PklTestReporter
+{
+    void Report(TestResults results, TextWriter writer);
+    void Summarize(IReadOnlyList<TestResults> results, TextWriter writer);
+    string Report(TestResults results);
+    string Summarize(IReadOnlyList<TestResults> results);
+    void ReportToFile(TestResults results, string path);
+    void SummarizeToFile(IReadOnlyList<TestResults> results, string path);
+}
+
+public static class PklTestReporters
+{
+    public static PklTestReporter Minimal(bool useColor = false) =>
+        new PklTestReporterAdapter(new Stdlib.Test.Report.MinimalReporter(useColor));
+
+    public static PklTestReporter Spec(bool useColor = false) =>
+        new PklTestReporterAdapter(new Stdlib.Test.Report.SpecReporter(useColor));
+
+    public static PklTestReporter JUnit(string aggregateSuiteName = "") =>
+        new PklTestReporterAdapter(new Stdlib.Test.Report.JUnitReporter(aggregateSuiteName));
+
+    private sealed class PklTestReporterAdapter : PklTestReporter
+    {
+        private readonly Stdlib.Test.Report.TestReporter reporter;
+
+        internal PklTestReporterAdapter(Stdlib.Test.Report.TestReporter reporter) =>
+            this.reporter = reporter;
+
+        public void Report(TestResults results, TextWriter writer)
+        {
+            ArgumentNullException.ThrowIfNull(results);
+            ArgumentNullException.ThrowIfNull(writer);
+            reporter.Report(results, writer);
+        }
+
+        public void Summarize(IReadOnlyList<TestResults> results, TextWriter writer)
+        {
+            ArgumentNullException.ThrowIfNull(results);
+            ArgumentNullException.ThrowIfNull(writer);
+            reporter.Summarize(results as IList<TestResults> ?? results.ToList(), writer);
+        }
+
+        public string Report(TestResults results)
+        {
+            using var writer = new StringWriter(CultureInfo.InvariantCulture);
+            Report(results, writer);
+            return writer.ToString();
+        }
+
+        public string Summarize(IReadOnlyList<TestResults> results)
+        {
+            using var writer = new StringWriter(CultureInfo.InvariantCulture);
+            Summarize(results, writer);
+            return writer.ToString();
+        }
+
+        public void ReportToFile(TestResults results, string path)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(path);
+            using var writer = new StreamWriter(path, append: false, new UTF8Encoding(false));
+            Report(results, writer);
+        }
+
+        public void SummarizeToFile(IReadOnlyList<TestResults> results, string path)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(path);
+            using var writer = new StreamWriter(path, append: false, new UTF8Encoding(false));
+            Summarize(results, writer);
+        }
+    }
 }
 
 public partial class PObject

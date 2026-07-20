@@ -4218,10 +4218,21 @@ internal static class JavaCompat
     internal static IEnumerable<long> MapToLong<T>(IEnumerable<T> values, JavaToLongFunction<T> mapper) =>
         values.Select(value => mapper(value));
     internal static long Sum(IEnumerable<long> values) => values.Sum();
-    internal static decimal DecimalDivide(decimal left, decimal right, int scale, object rounding) =>
-        decimal.Round(left / right, scale, string.Equals(rounding.ToString(), "DOWN", StringComparison.Ordinal)
-            ? MidpointRounding.ToZero
-            : MidpointRounding.ToEven);
+    internal static decimal DecimalDivide(decimal left, decimal right, int scale, object rounding)
+    {
+        var rounded = decimal.Round(
+            left / right,
+            scale,
+            string.Equals(rounding.ToString(), "DOWN", StringComparison.Ordinal)
+                ? MidpointRounding.ToZero
+                : MidpointRounding.ToEven);
+        // BigDecimal.toString() retains the requested division scale. Reparse a fixed-point
+        // representation so System.Decimal carries the same scale in its value bits.
+        return decimal.Parse(
+            rounded.ToString("F" + scale, System.Globalization.CultureInfo.InvariantCulture),
+            System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture);
+    }
     internal static IEnumerable<T> Filter<T>(IEnumerable<T> values, Func<T, bool> predicate) => values.Where(predicate);
     internal static IEnumerable<T> Sorted<T>(IEnumerable<T> values) =>
         values.OrderBy(value => value, Comparer<T>.Create(JavaCompare));
@@ -4325,7 +4336,9 @@ internal static class JavaCompat
         if (value is JavaReadOnlyAdapter adapter &&
             targetType.IsInstanceOfType(adapter.MutableSource))
             return adapter.MutableSource;
-        if (value is null || targetType.IsInstanceOfType(value)) return value;
+        // Arrays satisfy IList<T> in .NET but Java arrays are not Lists: retaining one here
+        // breaks Java List structural equality and hashing for public read-only inputs.
+        if (value is null || (value is not Array && targetType.IsInstanceOfType(value))) return value;
         if (!targetType.IsGenericType) return value;
 
         var definition = targetType.GetGenericTypeDefinition();

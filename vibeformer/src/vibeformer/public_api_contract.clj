@@ -85,6 +85,10 @@
     "Pkl.Core.Resource.EmbeddedResourceReader"
     "Pkl.Core.StackFrameTransformerExtensions"})
 
+(def ^:private native-test-reporting-owners
+  #{"Pkl.Core.PklTestReporter"
+    "Pkl.Core.PklTestReporters"})
+
 (def ^:private forbidden-package-metadata
   #"(?i)(?:Pkl[.]Core[.](?:Runtime|Ast|Stdlib|Util|Messaging)(?:[$.<]|$)|Vibeformer[.]Runtime|SnakeYaml|MessagePack|Org[.]Msgpack|System[.]Collections[.]Generic[.]I(?:List|Dictionary|Set)<|System[.]SByte(?:\[\])?|\bJava[A-Z][A-Za-z0-9_]*\b|\b(?:ToJavaDuration|GetJavaClass)\b)")
 
@@ -741,6 +745,12 @@
      :behavior-family "loading.public-api"
      :upstream-provenance "vibeformer/validation/loading-contract/PackageConsumer.cs"
      :dotnet-adaptation "Idiomatic .NET loading and delegate APIs backed by package-only consumer behavior."}
+
+    (native-test-reporting-owners (:owner row))
+    {:classification "product-api-native" :area "core"
+     :behavior-family "test.reporting"
+     :upstream-provenance "vibeformer/validation/pkl-core-corpus/PklCorePackageCorpusRunner.cs"
+     :dotnet-adaptation "Idiomatic .NET test reporting facade backed by package-only consumer behavior."}
 
     (target-keys (package-broad-key row))
     {:classification "product-api-current" :area (if (= "Pkl.Parser" (:assembly row))

@@ -2,18 +2,12 @@
 assembly	owner	member	signature	finding
 Pkl.Core	Pkl.Core.Logger	Trace	System.Void Trace(System.String,Pkl.Core.StackFrame)	empty-no-op
 Pkl.Core	Pkl.Core.Logger	Warn	System.Void Warn(System.String,Pkl.Core.StackFrame)	empty-no-op
-Pkl.Core	Pkl.Core.Module.ModuleKey	GetFileCacheLocation	System.String GetFileCacheLocation()	constant-null
 Pkl.Core	Pkl.Core.Module.ModuleKey	HasElement	System.Boolean HasElement(Pkl.Core.SecurityManager,System.Uri)	unconditional-unsupported
 Pkl.Core	Pkl.Core.Module.ModuleKey	HasFragmentPaths	System.Boolean HasFragmentPaths()	constant-zero
-Pkl.Core	Pkl.Core.Module.ModuleKey	IsLocal	System.Boolean IsLocal()	constant-zero
 Pkl.Core	Pkl.Core.Module.ModuleKey	ListElements	System.Collections.Generic.IReadOnlyList<Pkl.Core.Module.PathElement> ListElements(Pkl.Core.SecurityManager,System.Uri)	unconditional-unsupported
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactory	Close	System.Void Close()	empty-no-op
-Pkl.Core	Pkl.Core.Module.ModuleKeys$ExternalResolver	GetFileCacheLocation	System.String GetFileCacheLocation()	constant-null
-Pkl.Core	Pkl.Core.Module.ModuleKeys$ExternalResolver	HasFragmentPaths	System.Boolean HasFragmentPaths()	constant-zero
-Pkl.Core	Pkl.Core.PType	GetTypeArguments	System.Collections.Generic.IReadOnlyList<Pkl.Core.PType> GetTypeArguments()	constant-empty
 Pkl.Core	Pkl.Core.Resource.ResourceReader	Close	System.Void Close()	empty-no-op
 Pkl.Core	Pkl.Core.Resource.ResourceReader	HasElement	System.Boolean HasElement(Pkl.Core.SecurityManager,System.Uri)	unconditional-unsupported
 Pkl.Core	Pkl.Core.Resource.ResourceReader	HasFragmentPaths	System.Boolean HasFragmentPaths()	constant-zero
 Pkl.Core	Pkl.Core.Resource.ResourceReader	ListElements	System.Collections.Generic.IReadOnlyList<Pkl.Core.Module.PathElement> ListElements(Pkl.Core.SecurityManager,System.Uri)	unconditional-unsupported
-Pkl.Core	Pkl.Core.SecurityManager	ResolveSecurePath	System.String ResolveSecurePath(System.Uri,System.Boolean)	constant-null
 Pkl.Core	Pkl.Core.ValueVisitor	VisitDefault	System.Void VisitDefault(System.Object)	empty-no-op

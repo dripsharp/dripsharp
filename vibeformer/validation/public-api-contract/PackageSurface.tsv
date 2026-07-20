@@ -182,6 +182,7 @@ Pkl.Core	Pkl.Core.Evaluator	method	EvaluateOutputText	1	System.String EvaluateOu
 Pkl.Core	Pkl.Core.Evaluator	method	EvaluateOutputValue	1	System.Object EvaluateOutputValue(Pkl.Core.ModuleSource moduleSource)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Evaluator	method	EvaluateOutputValueAs	2	<T> T EvaluateOutputValueAs(Pkl.Core.ModuleSource moduleSource,Pkl.Core.PClassInfo<T> classInfo)	T	return=nullable;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Evaluator	method	EvaluateSchema	1	Pkl.Core.ModuleSchema EvaluateSchema(Pkl.Core.ModuleSource moduleSource)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Evaluator	method	EvaluateTests	2	Pkl.Core.TestResults EvaluateTests(Pkl.Core.ModuleSource moduleSource,System.Boolean overwriteExpected)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Evaluator	method	Preconfigured	0	Pkl.Core.Evaluator Preconfigured()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Evaluator	type	Evaluator	0	interface Evaluator : System.IDisposable	-	type=oblivious	-	interface	disposable
 Pkl.Core	Pkl.Core.EvaluatorBuilder	method	AddEnvironmentVariable	2	Pkl.Core.EvaluatorBuilder AddEnvironmentVariable(System.String name,System.String value)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
@@ -1078,6 +1079,17 @@ Pkl.Core	Pkl.Core.PklQualifiedNameAttribute	property	QualifiedName	0	System.Stri
 Pkl.Core	Pkl.Core.PklQualifiedNameAttribute	type	PklQualifiedNameAttribute	0	class PklQualifiedNameAttribute : System.Attribute	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.PklRequiredAttribute	constructor	.ctor	0	PklRequiredAttribute .ctor()	-	-	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.PklRequiredAttribute	type	PklRequiredAttribute	0	class PklRequiredAttribute : System.Attribute	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.PklTestReporter	method	Report	1	System.String Report(Pkl.Core.TestResults results)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporter	method	Report	2	System.Void Report(Pkl.Core.TestResults results,System.IO.TextWriter writer)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporter	method	ReportToFile	2	System.Void ReportToFile(Pkl.Core.TestResults results,System.String path)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporter	method	Summarize	1	System.String Summarize(System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults> results)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporter	method	Summarize	2	System.Void Summarize(System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults> results,System.IO.TextWriter writer)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporter	method	SummarizeToFile	2	System.Void SummarizeToFile(System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults> results,System.String path)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporter	type	PklTestReporter	0	interface PklTestReporter	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.PklTestReporters	method	JUnit	1	Pkl.Core.PklTestReporter JUnit(System.String aggregateSuiteName)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporters	method	Minimal	1	Pkl.Core.PklTestReporter Minimal(System.Boolean useColor)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporters	method	Spec	1	Pkl.Core.PklTestReporter Spec(System.Boolean useColor)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PklTestReporters	type	PklTestReporters	0	static-class PklTestReporters	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.PklTypeAliasAttribute	constructor	.ctor	0	PklTypeAliasAttribute .ctor()	-	-	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.PklTypeAliasAttribute	type	PklTypeAliasAttribute	0	class PklTypeAliasAttribute : System.Attribute	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Platform	constructor	.ctor	5	Platform .ctor(Pkl.Core.Platform$Language LanguageValue,Pkl.Core.Platform$Runtime RuntimeValue,Pkl.Core.Platform$VirtualMachine VirtualMachineValue,Pkl.Core.Platform$OperatingSystem OperatingSystemValue,Pkl.Core.Platform$Processor ProcessorValue)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null	not-representable-in-cli-metadata	-	construct
@@ -1525,6 +1537,100 @@ Pkl.Core	Pkl.Core.StackFrameTransformers	property	Empty	0	Pkl.Core.StackFrameTra
 Pkl.Core	Pkl.Core.StackFrameTransformers	property	FromServiceProviders	0	Pkl.Core.StackFrameTransformer FromServiceProviders {get}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.StackFrameTransformers	property	ReplacePackageUriWithSourceCodeUrl	0	Pkl.Core.StackFrameTransformer ReplacePackageUriWithSourceCodeUrl {get}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.StackFrameTransformers	type	StackFrameTransformers	0	static-class StackFrameTransformers	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.TestResults	constructor	.ctor	6	TestResults .ctor(System.String ModuleName,System.String DisplayUri,Pkl.Core.TestResults$TestSectionResults Facts,Pkl.Core.TestResults$TestSectionResults Examples,System.String Logs,Pkl.Core.TestResults$Error ErrorValue)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=nullable	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.TestResults	method	<Clone>$	0	Pkl.Core.TestResults <Clone>$()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	Deconstruct	6	System.Void Deconstruct(out System.String ModuleName,out System.String DisplayUri,out Pkl.Core.TestResults$TestSectionResults Facts,out Pkl.Core.TestResults$TestSectionResults Examples,out System.String Logs,out Pkl.Core.TestResults$Error ErrorValue)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	Equals	1	System.Boolean Equals(Pkl.Core.TestResults other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	Failed	0	System.Boolean Failed()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	IsExampleWrittenFailure	0	System.Boolean IsExampleWrittenFailure()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	TotalAsserts	0	System.Int32 TotalAsserts()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	TotalAssertsFailed	0	System.Int32 TotalAssertsFailed()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	TotalFailures	0	System.Int32 TotalFailures()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	method	TotalTests	0	System.Int32 TotalTests()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults	property	DisplayUri	0	System.String DisplayUri {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults	property	ErrorValue	0	Pkl.Core.TestResults$Error ErrorValue {get;set}	-	value=nullable	-	-	-
+Pkl.Core	Pkl.Core.TestResults	property	Examples	0	Pkl.Core.TestResults$TestSectionResults Examples {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults	property	Facts	0	Pkl.Core.TestResults$TestSectionResults Facts {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults	property	Logs	0	System.String Logs {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults	property	ModuleName	0	System.String ModuleName {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults	type	TestResults	0	class TestResults : System.IEquatable<Pkl.Core.TestResults>	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.TestResults$Builder	constructor	.ctor	2	Builder .ctor(System.String moduleName,System.String displayUri)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.TestResults$Builder	method	Build	0	Pkl.Core.TestResults Build()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Builder	method	SetError	1	Pkl.Core.TestResults$Builder SetError(Pkl.Core.TestResults$Error error)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Builder	method	SetExamplesSection	1	Pkl.Core.TestResults$Builder SetExamplesSection(Pkl.Core.TestResults$TestSectionResults examplesSection)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Builder	method	SetFactsSection	1	Pkl.Core.TestResults$Builder SetFactsSection(Pkl.Core.TestResults$TestSectionResults factsSection)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Builder	method	SetStdErr	1	Pkl.Core.TestResults$Builder SetStdErr(System.String stdErr)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Builder	type	Builder	0	class Builder	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	constructor	.ctor	2	Error .ctor(System.String Message,Pkl.Core.PklException Exception)	-	param0=nullable;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.TestResults$Error	method	<Clone>$	0	Pkl.Core.TestResults$Error <Clone>$()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	method	Deconstruct	2	System.Void Deconstruct(out System.String Message,out Pkl.Core.PklException Exception)	-	return=non-null;param0=nullable;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	method	Equals	1	System.Boolean Equals(Pkl.Core.TestResults$Error other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	property	Exception	0	Pkl.Core.PklException Exception {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	property	Message	0	System.String Message {get;set}	-	value=nullable	-	-	-
+Pkl.Core	Pkl.Core.TestResults$Error	type	Error	0	class Error : System.IEquatable<Pkl.Core.TestResults$Error>	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	constructor	.ctor	2	Failure .ctor(System.String Kind,System.String Message)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.TestResults$Failure	method	<Clone>$	0	Pkl.Core.TestResults$Failure <Clone>$()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	method	Deconstruct	2	System.Void Deconstruct(out System.String Kind,out System.String Message)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	method	Equals	1	System.Boolean Equals(Pkl.Core.TestResults$Failure other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	property	Kind	0	System.String Kind {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	property	Message	0	System.String Message {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$Failure	type	Failure	0	class Failure : System.IEquatable<Pkl.Core.TestResults$Failure>	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	constructor	.ctor	5	TestResult .ctor(System.String Name,System.Int32 TotalAsserts,System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$Failure> Failures,System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$Error> Errors,System.Boolean IsExampleWritten)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	<Clone>$	0	Pkl.Core.TestResults$TestResult <Clone>$()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	Deconstruct	5	System.Void Deconstruct(out System.String Name,out System.Int32 TotalAsserts,out System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$Failure> Failures,out System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$Error> Errors,out System.Boolean IsExampleWritten)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	Equals	1	System.Boolean Equals(Pkl.Core.TestResults$TestResult other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	HasErrors	0	System.Boolean HasErrors()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	HasFailures	0	System.Boolean HasFailures()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	IsFailure	0	System.Boolean IsFailure()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	TotalAssertsFailedOrErrored	0	System.Int32 TotalAssertsFailedOrErrored()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	property	Errors	0	System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$Error> Errors {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	property	Failures	0	System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$Failure> Failures {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	property	IsExampleWritten	0	System.Boolean IsExampleWritten {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	property	Name	0	System.String Name {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	property	TotalAsserts	0	System.Int32 TotalAsserts {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	type	TestResult	0	class TestResult : System.IEquatable<Pkl.Core.TestResults$TestResult>	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult$Builder	constructor	.ctor	1	Builder .ctor(System.String name)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.TestResults$TestResult$Builder	method	AddError	1	Pkl.Core.TestResults$TestResult$Builder AddError(Pkl.Core.TestResults$Error error)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult$Builder	method	AddFailure	1	Pkl.Core.TestResults$TestResult$Builder AddFailure(Pkl.Core.TestResults$Failure failure)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult$Builder	method	AddSuccess	0	Pkl.Core.TestResults$TestResult$Builder AddSuccess()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult$Builder	method	Build	0	Pkl.Core.TestResults$TestResult Build()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult$Builder	method	GetCount	0	System.Int32 GetCount()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult$Builder	method	SetExampleWritten	1	Pkl.Core.TestResults$TestResult$Builder SetExampleWritten(System.Boolean exampleWritten)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult$Builder	type	Builder	0	class Builder	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionName	field	EXAMPLES	0	Pkl.Core.TestResults$TestSectionName EXAMPLES	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionName	field	FACTS	0	Pkl.Core.TestResults$TestSectionName FACTS	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionName	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionName	method	ValueOf	1	Pkl.Core.TestResults$TestSectionName ValueOf(System.String name)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionName	method	Values	0	Pkl.Core.TestResults$TestSectionName[] Values()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionName	type	TestSectionName	0	class TestSectionName	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	constructor	.ctor	2	TestSectionResults .ctor(Pkl.Core.TestResults$TestSectionName Name,System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$TestResult> Results)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	<Clone>$	0	Pkl.Core.TestResults$TestSectionResults <Clone>$()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	Deconstruct	2	System.Void Deconstruct(out Pkl.Core.TestResults$TestSectionName Name,out System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$TestResult> Results)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	Equals	1	System.Boolean Equals(Pkl.Core.TestResults$TestSectionResults other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	Failed	0	System.Boolean Failed()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	HasError	0	System.Boolean HasError()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	TotalAsserts	0	System.Int32 TotalAsserts()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	TotalAssertsFailedOrErrored	0	System.Int32 TotalAssertsFailedOrErrored()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	TotalFailures	0	System.Int32 TotalFailures()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	TotalTests	0	System.Int32 TotalTests()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	property	Name	0	Pkl.Core.TestResults$TestSectionName Name {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	property	Results	0	System.Collections.Generic.IReadOnlyList<Pkl.Core.TestResults$TestResult> Results {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	type	TestSectionResults	0	class TestSectionResults : System.IEquatable<Pkl.Core.TestResults$TestSectionResults>	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.TypeAlias	constructor	.ctor	9	TypeAlias .ctor(System.String docComment,Pkl.Core.Member$SourceLocation sourceLocation,System.Collections.Generic.IReadOnlySet<Pkl.Core.Modifier> modifiers,System.Collections.Generic.IReadOnlyList<Pkl.Core.PObject> annotations,System.String simpleName,System.String moduleName,System.String qualifiedName,System.Collections.Generic.IReadOnlyList<Pkl.Core.TypeParameter> typeParameters,Pkl.Core.PClass moduleClass)	-	param0=nullable;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=non-null;param6=non-null;param7=non-null;param8=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.TypeAlias	method	Accept	1	<T> T Accept(Pkl.Core.ValueConverter<T> converter)	T	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TypeAlias	method	Accept	1	System.Void Accept(Pkl.Core.ValueVisitor visitor)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-

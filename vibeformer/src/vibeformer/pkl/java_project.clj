@@ -2015,6 +2015,16 @@
           (raw
            "{\nthis.Log(\"Sending message: {0}\", message);\nthis.SendRequestSafely(message, responseHandler);\n}")
 
+          (= "executable:org.pkl.core.FileOutputImpl#getText()"
+             (spoon/declaration-key method))
+          (raw
+           "{\ntry {\nreturn this.evaluator.EvaluateOutputText(this.fileOutput);\n} catch (global::Pkl.Core.Runtime.Polyglot.PolyglotException e) {\nif (e.IsCancelled()) throw new global::Pkl.Core.PklException(\"The evaluator is no longer available\", e);\nthrow new global::Pkl.Core.PklBugException(e);\n} catch (global::System.ObjectDisposedException e) {\nthrow new global::Pkl.Core.PklException(\"The evaluator is no longer available\", e);\n}\n}")
+
+          (= "executable:org.pkl.core.FileOutputImpl#getBytes()"
+             (spoon/declaration-key method))
+          (raw
+           "{\ntry {\nreturn global::Vibeformer.Runtime.JavaCompat.ToUnsignedBytes(this.evaluator.EvaluateOutputBytes(this.fileOutput));\n} catch (global::Pkl.Core.Runtime.Polyglot.PolyglotException e) {\nif (e.IsCancelled()) throw new global::Pkl.Core.PklException(\"The evaluator is no longer available\", e);\nthrow new global::Pkl.Core.PklBugException(e);\n} catch (global::System.ObjectDisposedException e) {\nthrow new global::Pkl.Core.PklException(\"The evaluator is no longer available\", e);\n}\n}")
+
           (= "executable:org.pkl.core.EvaluatorImpl#doEvaluate(java.util.function.Supplier)"
              (spoon/declaration-key method))
           ;; Graal cancellation is an Error rather than an Exception and its

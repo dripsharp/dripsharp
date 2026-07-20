@@ -225,3 +225,14 @@
                       "environment-value" "property-value" "module-key-factory"
                       "WaitForExitAsync" "entireProcessTree" "TIMEOUT" "CRASH"]]
       (is (.contains csharp required)))))
+
+(deftest isolated-corpus-uses-the-package-proofs-restored-cache
+  (let [root (paths/workspace-root)
+        packaging (Files/readString
+                   (paths/resolve-path root "vibeformer" "src" "vibeformer"
+                                       "packaging.clj"))
+        corpus (Files/readString
+                (paths/resolve-path root "vibeformer" "src" "vibeformer"
+                                    "pkl_core_corpus_runner.clj"))]
+    (is (.contains packaging ":packages-root packages"))
+    (is (.contains corpus "packages-root (:packages-root package-proof)"))))

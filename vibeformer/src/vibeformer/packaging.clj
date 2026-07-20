@@ -1016,5 +1016,7 @@
           :feed feed
           :packing-summary (:summary package-proof)
           :dependency-proof dependency-proof
+          :proof-root proof-root
+          :packages-root packages
           :consumer-root consumer
           :run run-result}))))))
