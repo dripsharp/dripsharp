@@ -5,7 +5,7 @@
             [vibeformer.process :as process]
             [vibeformer.public-api-contract :as contract])
   (:import [clojure.lang ExceptionInfo]
-           [java.nio.file Files]
+           [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]))
 
 (def ^:private workspace (delay (paths/workspace-root)))
@@ -20,6 +20,9 @@
 (def ^:private controls
   (delay (:rows (contract/read-tsv (:controls @fixtures)
                                    contract/failing-control-columns))))
+(def ^:private body-candidates
+  (delay (:rows (contract/read-tsv (:body-candidates @fixtures)
+                                   contract/body-audit-columns))))
 (def ^:private validated (delay (contract/validate-contract! @workspace)))
 
 (defn- thrown-kind
@@ -197,6 +200,7 @@
 
 (deftest behavior-evidence-extraction-is-independent-and-deterministic
   (let [actual (temp-file "behavior.tsv")
+        perturbed (temp-file "perturbed-behavior.tsv")
         expected-columns ["case-id" "upstream-provenance" "line-sha256"
                           "dotnet-invocation"]]
     (contract/extract-behavior-evidence! @workspace (:behavior @fixtures) actual)
@@ -204,7 +208,15 @@
                  (:rows (contract/read-tsv (:behavior-evidence @fixtures)
                                            expected-columns)))
            (mapv #(dissoc % :fixture-line)
-                 (:rows (contract/read-tsv actual expected-columns)))))))
+                 (:rows (contract/read-tsv actual expected-columns)))))
+    (Files/writeString
+     perturbed
+     (str/replace-first (Files/readString (:behavior @fixtures))
+                        "new Parser().ParseModule(" "ABSENT_DOTNET_CALL(")
+     (make-array OpenOption 0))
+    (is (= :missing-dotnet-behavior-call
+           (thrown-kind #(contract/extract-behavior-evidence!
+                          @workspace perturbed (temp-file "unused.tsv")))))))
 
 (deftest package-probe-reflects-generic-nullable-delegate-and-lifecycle-metadata
   (let [project (paths/resolve-path (:root @fixtures) "PackageProbeFixture.csproj")
@@ -228,3 +240,40 @@
                 resource))
       (is (some #(= "dispose" (:lifecycle %)) resource))
       (is (some #(= "delegate" (:delegate %)) formatter)))))
+
+(deftest whole-public-body-audit-is-reviewed-and-perturbation-sensitive
+  (let [rows @body-candidates]
+    (is (= 147 (count rows)))
+    (is (= {"constant-default" 2
+            "constant-empty" 5
+            "constant-null" 20
+            "constant-zero" 37
+            "empty-no-op" 54
+            "unconditional-unsupported" 29}
+           (frequencies (map :finding rows))))
+    (is (= {:matched 147} (contract/compare-body-audit rows rows)))
+    (is (= :public-body-audit-drift
+           (get-in (contract/compare-body-audit rows (pop rows))
+                   [:mismatch :kind])))
+    (is (= :duplicate-public-body-audit-rows
+           (get-in (contract/compare-body-audit rows (conj rows (first rows)))
+                   [:mismatch :kind])))
+    (is (= :public-body-audit-drift
+           (get-in (contract/compare-body-audit
+                    rows (assoc-in rows [0 :finding] "constant-null"))
+                   [:mismatch :kind])))))
+
+(deftest strongly-typed-contract-key-generation-covers-product-and-native-apis
+  (let [output (temp-file "strong-keys.tsv")
+        summary (contract/write-strong-contract-keys! @workspace output)
+        lines (->> (str/split-lines (Files/readString output))
+                   (remove #(str/starts-with? % "#")) vec)]
+    (is (= {:rows 1853 :keys 1827} summary))
+    (is (= 1827 (count lines)))
+    (is (= (sort lines) lines))
+    (is (some #(str/includes? % "Pkl.Core\tPkl.Core.ConfigBinder\tmethod\tBind")
+              lines))
+    (is (some #(str/includes? % "Pkl.Core\tPkl.Core.CSharpGenerator\tmethod\tGenerate")
+              lines))
+    (is (some #(str/includes? % "Pkl.Parser\tPkl.Parser.Parser\tmethod\tParseModule")
+              lines))))

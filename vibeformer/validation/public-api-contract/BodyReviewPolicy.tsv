@@ -1,0 +1,11 @@
+# Every compiled default/no-op/unsupported body candidate must match exactly one
+# first-priority review rule. These rules classify implementation evidence; they
+# do not add product exclusions or turn unfinished behavior into an exclusion.
+rule-id	priority	owner-regex	member-regex	finding-regex	disposition	evidence	rationale
+excluded-messagepack-substrate	10	Pkl[.]Core[.]Runtime[.]ExcludedMessagePack.*	.*	.*	approved-exclusion-substrate	vibeformer/doc/product-goal.md	The inert packer/unpacker is a non-product compatibility boundary for the existing MessagePack exclusion; no product contract row targets it.
+java-runtime-adapters	20	Pkl[.]Core[.]Runtime[.]Java.*	.*	.*	runtime-adapter-contract	vibeformer/runtime/Pkl.Core.Substrate.cs	Reviewed .NET stream, iterator, filesystem, HTTP, and Java-compatibility defaults match their capability and mutability contracts.
+polyglot-runtime-adapter	20	Pkl[.]Core[.]Runtime[.]Polyglot[.].*	.*	.*	runtime-adapter-contract	vibeformer/runtime/Pkl.Core.Substrate.cs	The native runtime replacement exposes a stable false cancellation default and concrete cancellation paths override it.
+truffle-runtime-adapters	20	Pkl[.]Core[.]Runtime[.]Truffle[.].*	.*	.*	runtime-adapter-contract	vibeformer/runtime/Pkl.Core.Substrate.cs	Reviewed Truffle replacement hook defaults are intentionally nullable, false, or no-op and are overridden on behavior-bearing paths.
+snakeyaml-runtime-adapters	20	Pkl[.]Core[.]Runtime[.]SnakeYaml[.].*	.*	.*	runtime-adapter-contract	vibeformer/runtime/Pkl.Core.Substrate.cs	These inert compatibility hooks are reachable only behind the existing YAML exclusion and are not product API behavior.
+vibeformer-runtime-adapters	20	Vibeformer[.]Runtime[.].*	.*	.*	runtime-adapter-contract	vibeformer/runtime/Vibeformer.JavaCompat.cs	Reviewed generic collection defaults implement the declared .NET collection contract.
+translated-source-semantics	100	Pkl[.]Core[.].*	.*	.*	source-semantic-default	vibeformer/validation/public-api-contract/UpstreamSurface.tsv	The pinned upstream declaration and generated source were reviewed: nullable misses, false capability flags, immutable-operation failures, visitor hooks, lifecycle no-ops, and identity defaults are intentional semantics rather than stubs.

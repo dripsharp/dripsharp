@@ -6,7 +6,8 @@
             [vibeformer.packaging :as packaging]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
-            [vibeformer.project :as project])
+            [vibeformer.project :as project]
+            [vibeformer.public-api-contract :as public-api-contract])
   (:import [java.io BufferedReader File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
@@ -843,139 +844,6 @@
                  (str observation "\t" kind "\t" (b64 expectation) "\n"))
                entries))))
 
-(def ^:private loading-public-surface-files
-  ["EvaluatorBuilder.cs"
-   "Analyzer.cs"
-   "BufferedLogger.cs"
-   "Evaluator.cs"
-   "ImportGraph.cs"
-   "Logger.cs"
-   "Loggers.cs"
-   "NoSuchPropertyException.cs"
-   "PklBugException.cs"
-   "PklException.cs"
-   "Platform.cs"
-   "Release.cs"
-   "RendererException.cs"
-   "SecurityManagerException.cs"
-   "StackFrame.cs"
-   "StackFrameTransformer.cs"
-   "StackFrameTransformers.cs"
-   "Runtime/LoggerImpl.cs"
-   "ModuleSource.cs"
-   "SecurityManager.cs"
-   "SecurityManagers.cs"
-   "EvaluatorSettings/Color.cs"
-   "EvaluatorSettings/PklEvaluatorSettings.cs"
-   "EvaluatorSettings/TraceMode.cs"
-   "Project/Project.cs"
-   "Runtime/Substrate/Pkl.Core.Loading.cs"
-   "Http/HttpClient.cs"
-   "Http/HttpClientBuilder.cs"
-   "Http/HttpClientException.cs"
-   "Module/FileResolver.cs"
-   "Module/ModuleKey.cs"
-   "Module/ModuleKeyFactories.cs"
-   "Module/ModuleKeyFactory.cs"
-   "Module/ModuleKeys.cs"
-   "Module/ModulePathResolver.cs"
-   "Module/PathElement.cs"
-   "Module/ProjectDependenciesManager.cs"
-   "Module/ResolvedModuleKey.cs"
-   "Module/ResolvedModuleKeys.cs"
-   "Packages/PackageUri.cs"
-   "Packages/PackageAssetUri.cs"
-   "Packages/Checksums.cs"
-   "Packages/Dependency.cs"
-   "Packages/DependencyMetadata.cs"
-   "Packages/PackageLoadError.cs"
-   "Packages/PackageResolver.cs"
-   "Packages/PackageResolvers.cs"
-   "Packages/PackageUtils.cs"
-   "Project/CanonicalPackageUri.cs"
-   "Project/DeclaredDependencies.cs"
-   "Project/Package.cs"
-   "Project/ProjectDependenciesResolver.cs"
-   "Project/ProjectDeps.cs"
-   "Project/ProjectPackager.cs"
-   "Resource/Resource.cs"
-   "Resource/ResourceReader.cs"
-   "Resource/ResourceReaders.cs"
-   "Settings/PklSettings.cs"
-   "Externalreader/ExternalModuleResolver.cs"
-   "Externalreader/ExternalReaderProcess.cs"
-   "Externalreader/ExternalReaderProcessException.cs"
-   "Externalreader/ExternalReaderProcessImpl.cs"
-   "Externalreader/ExternalResourceResolver.cs"
-   "Externalreader/ModuleReaderSpec.cs"
-   "Externalreader/ResourceReaderSpec.cs"
-   "Value.cs"
-   "ValueVisitor.cs"
-   "ValueConverter.cs"
-   "PModule.cs"
-   "PObject.cs"
-   "PNull.cs"
-   "PClassInfo.cs"
-   "ModuleSchema.cs"
-   "PClass.cs"
-   "PType.cs"
-   "TypeAlias.cs"
-   "Member.cs"
-   "TypeParameter.cs"
-   "FileOutput.cs"
-   "FileOutputImpl.cs"
-   "OutputFormat.cs"
-   "Duration.cs"
-   "DataSize.cs"
-   "Pair.cs"
-   "ValueFormatter.cs"
-   "ValueRenderer.cs"
-   "ValueRenderers.cs"
-   "JsonRenderer.cs"
-   "PcfRenderer.cs"
-   "PListRenderer.cs"
-   "PropertiesRenderer.cs"
-   "Runtime/Substrate/Pkl.Core.ValueModel.DotNet.cs"])
-
-(def ^:private loading-public-stub-patterns
-  [[:translation-error #"#error VIBEFORMER_"]
-   [:not-implemented #"NotImplementedException"]
-   [:todo #"\bTODO\b"]
-   [:null-or-default-body
-    #"(?ms)^public[^\n{]+ [A-Z][A-Za-z0-9_]*\([^)]*\) \{\s*return (?:null!|default!);\s*\}"]
-   [:null-or-default-expression
-    #"(?m)^public[^\n=]+=>\s*(?:null!|default!);?"]])
-
-(def ^:private loading-public-semantic-default-bodies
-  [#"(?ms)^public string\? ResolveSecurePath\([^)]*\) \{\s*return null!;\s*\}"
-   #"(?ms)^public (?:virtual )?string\? GetFileCacheLocation\(\) \{\s*return null!;\s*\}"])
-
-(defn- audit-loading-public-surface!
-  [^Path project-root]
-  (let [source-root (paths/resolve-path project-root "src" "Pkl" "Core")
-        files (mapv #(paths/resolve-path source-root %) loading-public-surface-files)
-        missing (->> files (remove paths/regular-file?) (mapv str))]
-    (when (seq missing)
-      (fail! "Selected loading public-surface source is missing"
-             {:project-root (str project-root) :missing missing}))
-    (let [findings
-          (->> files
-               (mapcat
-                (fn [^Path file]
-                  (let [source (reduce #(str/replace %1 %2 "")
-                                       (Files/readString file StandardCharsets/UTF_8)
-                                       loading-public-semantic-default-bodies)]
-                    (keep (fn [[kind pattern]]
-                            (when (re-find pattern source)
-                              {:file (str (.relativize source-root file)) :kind kind}))
-                          loading-public-stub-patterns))))
-               vec)]
-      (when (seq findings)
-        (fail! "Selected loading public surface contains implementation stubs"
-               {:project-root (str project-root) :findings findings}))
-      {:files (count files)
-       :patterns (mapv first loading-public-stub-patterns)})))
-
 (defn- write-packed-assembly-manifest!
   [^Path output packages]
   (let [assemblies
@@ -1131,8 +999,6 @@
                               (Files/readString installed-consumer-project))
         target-framework (second target-match)
         identities (get-in package-proof [:dependency-proof :packages])
-        generated-project-root
-        (get-in package-proof [:verification :generation :emission :project-root])
         {:keys [id version]} (:identity package-proof)]
     (doseq [required [oracle-source package-probe-source source-package-config
                       (paths/resolve-path dotnet-fixtures "modules" "main.pkl")
@@ -1148,12 +1014,7 @@
       (fail! "The package-only loading observation selection changed"
              {:expected 38 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
-    (when-not generated-project-root
-      (fail! "Could not locate the clean generated Pkl.Core project for stub auditing"
-             {:package-proof-keys (keys package-proof)}))
-    (let [public-surface-audit
-          (audit-loading-public-surface! generated-project-root)
-          runtime-assemblies
+    (let [runtime-assemblies
           (write-packed-assembly-manifest! assembly-manifest (:packages package-proof))]
     (run-command! {:command ["./gradlew" ":pkl-commons-test:processResources" "--console=plain"]
                    :directory upstream-root})
@@ -1223,7 +1084,6 @@
        :package-output package-output
        :package-dependencies package-dependencies
        :source-isolation source-isolation
-       :public-surface-audit public-surface-audit
        :runtime-assemblies runtime-assemblies}))))))
 
 (defn- package-only-project [package-id version target-framework]
@@ -1251,6 +1111,121 @@
   (packaging/inspect-consumer-dependencies!
    project (paths/resolve-path (.getParent project) "obj" "project.assets.json")
    packages (:identity package-proof) identities))
+
+(defn- verify-public-contract-package!
+  [{:keys [root package-proof run-command!]}]
+  (let [proof-root (harness/clean-directory!
+                    (paths/resolve-path root "vibeformer" "validation-output"
+                                        "differential-proof" "public-contract"))
+        project-file (paths/resolve-path proof-root "PublicContractConsumer.csproj")
+        source-file (paths/resolve-path proof-root "GeneratedSignatures.cs")
+        strong-keys (paths/resolve-path proof-root "strong-keys.tsv")
+        nuget-config (paths/resolve-path proof-root "NuGet.Config")
+        package-cache (doto (paths/resolve-path proof-root "package-cache")
+                        (Files/createDirectories (make-array FileAttribute 0)))
+        source-package-config
+        (paths/resolve-path (:consumer-root package-proof) "NuGet.Config")
+        installed-consumer-project
+        (paths/resolve-path (:consumer-root package-proof) "Pkl.Core.PackageConsumer.csproj")
+        consumer-framework
+        (second (re-find #"<TargetFramework>(net\d+[.]\d+)</TargetFramework>"
+                         (Files/readString installed-consumer-project)))
+        generation (get-in package-proof [:verification :generation])
+        package-framework (get-in generation [:destination :project :target-framework])
+        {:keys [id version]} (:identity package-proof)
+        identities (get-in package-proof [:dependency-proof :packages])
+        contract-tool (get-in (public-api-contract/contract-paths root)
+                              [:contract-compiler])]
+    (when-not consumer-framework
+      (fail! "Could not determine the public contract consumer target framework"
+             {:project (str installed-consumer-project)}))
+    (write-text! project-file (package-only-project id version consumer-framework))
+    (Files/copy source-package-config nuget-config
+                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+    (let [dependency-proof
+          (restore-package-only-project! run-command! project-file nuget-config
+                                         package-cache package-proof identities)
+          assemblies
+          (->> identities
+               (mapv (fn [{:keys [id version]}]
+                       (paths/resolve-path package-cache (str/lower-case id) version
+                                           "lib" package-framework (str id ".dll"))))
+               (sort-by str) vec)]
+      (doseq [assembly assemblies]
+        (when-not (paths/regular-file? assembly)
+          (fail! "Isolated package cache is missing a public contract assembly"
+                 {:assembly (str assembly)})))
+      (let [strong-summary
+            (public-api-contract/write-strong-contract-keys! root strong-keys)]
+        (run-command! {:command ["dotnet" "build" (str contract-tool)
+                                 "--configuration" "Release" "--nologo"]
+                       :directory root})
+        (let [generation-run
+              (run-command!
+               {:command (into ["dotnet" "run" "--project" (str contract-tool)
+                                "--configuration" "Release" "--no-build" "--"
+                                "generate" (str source-file) (str strong-keys)]
+                               (map str assemblies))
+                :directory root})
+              source-isolation
+              (verify-package-probe-source-isolation!
+               proof-root project-file source-file)]
+          (run-command! {:command ["dotnet" "build" (str project-file) "--nologo"
+                                   "--verbosity:minimal" "--no-restore"
+                                   "--no-incremental" "-warnaserror"]
+                         :directory proof-root})
+          (let [run (run-command! {:command ["dotnet" "run" "--project"
+                                             (str project-file) "--no-build"
+                                             "--no-restore"]
+                                   :directory proof-root})
+                expected-package
+                (:rows (public-api-contract/read-tsv
+                        (:package (public-api-contract/contract-paths root))
+                        public-api-contract/package-columns))
+                perturbed-package (assoc-in expected-package [0 :signature]
+                                             "PERTURBED-CONTRACT-SIGNATURE")
+                metadata-control
+                (public-api-contract/compare-package-surface expected-package
+                                                             perturbed-package)
+                expected-bodies
+                (:rows (public-api-contract/read-tsv
+                        (:body-candidates (public-api-contract/contract-paths root))
+                        public-api-contract/body-audit-columns))
+                body-control
+                (public-api-contract/compare-body-audit expected-bodies
+                                                        (pop expected-bodies))
+                whole-surface
+                (public-api-contract/audit-public-surface!
+                 root generation "Release")]
+            (when-not (str/includes?
+                       (:output run)
+                       "Package-only public contract signature compilation passed:")
+              (fail! "Package-only public contract compiler did not report success"
+                     {:output (:output run)}))
+            (when-not (= :package-public-surface-drift
+                         (get-in metadata-control [:mismatch :kind]))
+              (fail! "Package metadata perturbation was not detected"
+                     {:control metadata-control}))
+            (when-not (= :public-body-audit-drift
+                         (get-in body-control [:mismatch :kind]))
+              (fail! "Public body perturbation was not detected"
+                     {:control body-control}))
+            {:summary {:contract-rows (count expected-package)
+                       :strong-rows (:rows strong-summary)
+                       :strong-keys (:keys strong-summary)
+                       :assemblies (count assemblies)
+                       :source-files (:source-files whole-surface)
+                       :body-candidates (:reviewed-body-candidates whole-surface)
+                       :mapped-members (:mapped-generated-members whole-surface)
+                       :source-mappings (:generated-source-mappings whole-surface)
+                       :metadata-perturbation (get-in metadata-control
+                                                      [:mismatch :kind])
+                       :body-perturbation (get-in body-control [:mismatch :kind])}
+             :dependency-proof dependency-proof
+             :source-isolation source-isolation
+             :generation generation-run
+             :run run
+             :whole-public-surface whole-surface}))))))
 
 (defn- verify-schema-codegen-binding!
   [{:keys [root package-proof run-command! java-release java-home entries]}]
@@ -1393,10 +1368,33 @@
                        {:output (:output consumer-run)}))
               (let [comparison (assert-equal! "Pkl schema/codegen/binding" oracle-output package-output)
                     perturbation (prove-perturbation! oracle-output perturbed-output)
-                    binding-report (Files/readString binding-diagnostics)]
-                (when (str/blank? binding-report)
-                  (fail! "Generated consumer did not retain focused binding diagnostics"
-                         {:path (str binding-diagnostics)}))
+                    binding-report (Files/readString binding-diagnostics)
+                    expected-binding-report
+                    (str "constructor-and-members=passed\n"
+                         "metadata-options=passed\n"
+                         "custom-loader=passed\n"
+                         "custom-conversion=passed\n"
+                         "explicit-polymorphism=passed\n"
+                         "unknown=$\n"
+                         "incompatible=$.count\n"
+                         "missing=$\n"
+                         "overflow=$.count\n"
+                         "nullability=$.name\n"
+                         "nested-list-nullability=$.values[1]\n"
+                         "nested-map-nullability=$.mapping[\"bad\"]\n"
+                         "nested-pair-nullability=$.pair.second\n"
+                         "nullable-nested-generics=passed\n"
+                         "numeric-exactness=passed\n"
+                         "conversion-failures=passed\n"
+                         "polymorphic-mismatch=$\n"
+                         "cycle=$.next\n"
+                         "config-evaluator=passed\n"
+                         "disposed=passed\n")]
+                (when-not (= expected-binding-report binding-report)
+                  (fail! "Generated consumer focused binding diagnostics were missing, duplicated, or reordered"
+                         {:path (str binding-diagnostics)
+                          :expected expected-binding-report
+                          :actual binding-report}))
                 {:summary {:schemas 9
                            :generated-files (count generated-files)
                            :observations (:matched comparison)
@@ -1590,6 +1588,9 @@
         package-proof (core-package-fn {:workspace-root root
                                         :profile "pkl-core-value-model"
                                         :run-command! run-command!})
+        public-contract (verify-public-contract-package!
+                         {:root root :package-proof package-proof
+                          :run-command! run-command!})
         proof-root (harness/clean-directory!
                     (paths/resolve-path root "vibeformer" "validation-output"
                                         "differential-proof" "core"))
@@ -1695,11 +1696,13 @@
                               :perturbation-detected-at
                               (get-in to-fixed-perturbation [:mismatch :line])}
                    :java-pattern-regex (:summary regex-compat)
+                   :public-contract (:summary public-contract)
                    :loading-policy-configuration-contract (:summary loading-contract)
                    :schema-codegen-binding (:summary schema-proof)
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
       (println "Independent upstream/package Pkl.Core differential passed:" (pr-str summary))
       {:package-proof package-proof
+       :public-contract public-contract
        :java-pattern-regex regex-compat
        :loading-policy-configuration-contract loading-contract
        :schema-codegen-binding schema-proof
@@ -1714,7 +1717,11 @@
 (defn- verify-differential-with-executor!
   "Runs the complete parser proof, then the representative packaged Pkl.Core proof."
   [options]
-  (let [parser (verify-parser-differential! options)
+  (let [command-timeout-ms (or (:command-timeout-ms options) 1200000)
+        delegate (or (:run-command! options) process/run!)
+        options (assoc options :run-command!
+                       #(delegate (assoc % :timeout-ms command-timeout-ms)))
+        parser (verify-parser-differential! options)
         core (verify-core-differential! options)
         summary {:parser (:summary parser) :core (:summary core)}]
     (println "Independent upstream/package differential suite passed:" (pr-str summary))

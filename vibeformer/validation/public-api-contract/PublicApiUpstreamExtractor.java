@@ -593,10 +593,10 @@ public final class PublicApiUpstreamExtractor {
     Predicate<Path> evidenceFile =
         path -> {
           String name = path.getFileName().toString();
-          return name.endsWith(".java")
+          return !slash(path).contains("/public-contract-compiler/") && (name.endsWith(".java")
               || name.endsWith(".kt")
               || name.endsWith(".cs")
-              || name.endsWith(".adoc");
+              || name.endsWith(".adoc"));
         };
     Map<String, String> tokens = new HashMap<>();
     Map<String, String> members = new HashMap<>();

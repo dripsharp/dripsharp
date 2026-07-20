@@ -12,7 +12,7 @@
             [vibeformer.process :as process]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file Files OpenOption Path]
+           [java.nio.file FileVisitOption Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]
            [spoon.reflect.declaration CtConstructor CtElement CtEnumValue CtField
@@ -37,8 +37,8 @@
 
 (def behavior-columns
   ["case-id" "area" "behavior-family" "comparison" "upstream-source"
-   "upstream-needle" "dotnet-invocation" "expected-exceptions" "lifecycle"
-   "normalized-expectation"])
+   "upstream-needle" "dotnet-invocation" "dotnet-needle" "expected-exceptions"
+   "lifecycle" "normalized-expectation"])
 
 (def failing-control-columns
   ["control-id" "expected-owner" "expected-kind" "expected-name"
@@ -46,6 +46,12 @@
    "desired-adaptation" "upstream-provenance" "invocation-evidence"])
 
 (def behavior-result-columns ["case-id" "status" "observation"])
+
+(def body-audit-columns ["assembly" "owner" "member" "signature" "finding"])
+
+(def body-review-policy-columns
+  ["rule-id" "priority" "owner-regex" "member-regex" "finding-regex"
+   "disposition" "evidence" "rationale"])
 
 (def ^:private classifications
   #{"product-api" "adaptation-source" "public-implementation-internal"
@@ -94,8 +100,13 @@
      :behavior (paths/resolve-path root "BehaviorContract.tsv")
      :behavior-evidence (paths/resolve-path root "UpstreamBehavior.tsv")
      :controls (paths/resolve-path root "FailingControls.tsv")
+     :body-candidates (paths/resolve-path root "BodyCandidates.tsv")
+     :body-review-policy (paths/resolve-path root "BodyReviewPolicy.tsv")
      :upstream-extractor (paths/resolve-path root "PublicApiUpstreamExtractor.java")
-     :package-probe (paths/resolve-path root "PublicApiPackageProbe.csproj")}))
+     :package-probe (paths/resolve-path root "PublicApiPackageProbe.csproj")
+     :contract-compiler
+     (paths/resolve-path workspace "vibeformer" "validation"
+                         "public-contract-compiler" "PublicContractCompiler.csproj")}))
 
 (defn read-tsv
   [file expected-columns]
@@ -195,6 +206,13 @@
   [^Path root ^Path file]
   (str/replace (str (.relativize root file)) "\\" "/"))
 
+(def ^:private executed-behavior-probes
+  #{"vibeformer/validation/differential/PackageProbe.cs"
+    "vibeformer/validation/package-consumer/Pkl.Core.Program.cs"
+    "vibeformer/validation/loading-contract/LoadingContractDotNetProbe.cs"
+    "vibeformer/validation/schema-codegen/GeneratedConsumer.cs"
+    "vibeformer/validation/schema-codegen/SchemaGeneratorProbe.cs"})
+
 (defn extract-behavior-evidence!
   "Extracts the exact upstream line and hash backing every behavior row."
   [workspace behavior-file output]
@@ -202,7 +220,8 @@
         cases (:rows (read-tsv behavior-file behavior-columns))
         rows
         (mapv
-         (fn [{:keys [case-id upstream-source upstream-needle dotnet-invocation]}]
+         (fn [{:keys [case-id upstream-source upstream-needle dotnet-invocation
+                      dotnet-needle]}]
            (let [source (paths/resolve-path workspace upstream-source)
                  invocation (paths/resolve-path workspace dotnet-invocation)]
              (when-not (paths/regular-file? source)
@@ -213,6 +232,16 @@
                (fail! "Behavior contract .NET invocation evidence is missing"
                       {:kind :missing-dotnet-invocation :case-id case-id
                        :source dotnet-invocation}))
+             (when-not (executed-behavior-probes dotnet-invocation)
+               (fail! "Behavior contract points at a source that the isolated proof does not execute"
+                      {:kind :unexecuted-dotnet-behavior-probe :case-id case-id
+                       :source dotnet-invocation}))
+             (when-not (str/includes?
+                        (Files/readString invocation StandardCharsets/UTF_8)
+                        dotnet-needle)
+               (fail! "Behavior contract .NET invocation does not call its promised API family"
+                      {:kind :missing-dotnet-behavior-call :case-id case-id
+                       :source dotnet-invocation :needle dotnet-needle}))
              (let [matches (keep-indexed
                             (fn [index line]
                               (when (str/includes? line upstream-needle)
@@ -704,6 +733,241 @@
      :behavior-family "implementation.runtime"
      :upstream-provenance "package-reflection"
      :dotnet-adaptation "Not promised as product API; required behavior remains in scope and this is not an exclusion."}))
+
+(defn write-strong-contract-keys!
+  "Writes the deterministic package-member key set whose exact signatures must
+  be compiled as strongly typed method groups, constructors, properties, and
+  fields by the isolated package consumer. All remaining public rows are still
+  compiled as type references and verified through exact metadata and hashes."
+  [workspace output]
+  (let [workspace (paths/absolute workspace)
+        {:keys [upstream package policy]} (contract-paths workspace)
+        upstream-rows (:rows (read-tsv upstream upstream-columns))
+        policies (read-policy policy)
+        contract (contract-rows upstream-rows policies)
+        target-keys (set (keep #(when (= "product-api" (:classification %))
+                                  (target-broad-key %))
+                               contract))
+        package-rows (:rows (read-tsv package package-columns))
+        selected
+        (filter #(contains? #{"product-api-current" "product-api-native"}
+                            (:classification %))
+                (map #(merge % (classify-package-row target-keys %)) package-rows))
+        keys (->> selected
+                  (map (fn [row]
+                         [(:assembly row) (normalized-owner (:owner row))
+                          (:kind row) (:name row) (:parameter-count row)]))
+                  distinct sort vec)
+        text (str "# VIBEFORMER_STRONGLY_TYPED_PUBLIC_CONTRACT_V1\n"
+                  (str/join "\n" (map #(str/join "\t" %) keys)) "\n")]
+    (write-text! (paths/path output) text)
+    {:rows (count selected) :keys (count keys)}))
+
+(defn- body-audit-key
+  [row]
+  (mapv row (map keyword body-audit-columns)))
+
+(declare duplicate-values)
+
+(defn compare-body-audit
+  "Exact comparator for the reviewed compiled-body candidate snapshot."
+  [expected-rows actual-rows]
+  (let [duplicates (duplicate-values body-audit-key actual-rows)]
+    (if (seq duplicates)
+      {:mismatch {:kind :duplicate-public-body-audit-rows
+                  :rows (vec (take 20 duplicates))}}
+      (let [expected (set (map body-audit-key expected-rows))
+            actual (set (map body-audit-key actual-rows))
+            missing (sort (set/difference expected actual))
+            unexpected (sort (set/difference actual expected))]
+        (if (and (empty? missing) (empty? unexpected))
+          {:matched (count expected)}
+          {:mismatch {:kind :public-body-audit-drift
+                      :missing (vec (take 20 missing))
+                      :unexpected (vec (take 20 unexpected))
+                      :missing-count (count missing)
+                      :unexpected-count (count unexpected)}})))))
+
+(def ^:private body-review-dispositions
+  #{"source-semantic-default" "runtime-adapter-contract"
+    "approved-exclusion-substrate"})
+
+(defn- compile-body-review-policy
+  [row]
+  (let [priority (parse-long (:priority row))]
+    (when-not priority
+      (fail! "Public body review policy priority is not an integer"
+             {:kind :invalid-public-body-review-priority :rule-id (:rule-id row)}))
+    (when-not (body-review-dispositions (:disposition row))
+      (fail! "Public body review policy has an unknown disposition"
+             {:kind :invalid-public-body-review-disposition
+              :rule-id (:rule-id row) :disposition (:disposition row)}))
+    (assoc row :priority-value priority
+           :owner-pattern (re-pattern (:owner-regex row))
+           :member-pattern (re-pattern (:member-regex row))
+           :finding-pattern (re-pattern (:finding-regex row)))))
+
+(defn- review-public-body-candidates!
+  [workspace candidates policy-file]
+  (let [policies (->> (:rows (read-tsv policy-file body-review-policy-columns))
+                      (map compile-body-review-policy)
+                      (sort-by (juxt :priority-value :rule-id)) vec)
+        ids (map :rule-id policies)]
+    (when-not (= (count ids) (count (distinct ids)))
+      (fail! "Public body review policy has duplicate rule IDs"
+             {:kind :duplicate-public-body-review-rule}))
+    (doseq [policy policies]
+      (let [evidence (paths/resolve-path workspace (:evidence policy))]
+        (when-not (paths/regular-file? evidence)
+          (fail! "Public body review evidence is missing"
+                 {:kind :missing-public-body-review-evidence
+                  :rule-id (:rule-id policy) :evidence (:evidence policy)}))))
+    (let [reviewed
+          (mapv
+           (fn [candidate]
+             (let [matches (filter #(and (re-matches (:owner-pattern %) (:owner candidate))
+                                         (re-matches (:member-pattern %) (:member candidate))
+                                         (re-matches (:finding-pattern %) (:finding candidate)))
+                                   policies)]
+               (when-not (seq matches)
+                 (fail! "A compiled public stub candidate has no source-semantic review"
+                        {:kind :unreviewed-public-body-candidate
+                         :candidate (select-keys candidate
+                                                 (map keyword body-audit-columns))}))
+               (let [priority (:priority-value (first matches))
+                     winners (filter #(= priority (:priority-value %)) matches)]
+                 (when-not (= 1 (count winners))
+                   (fail! "A compiled public stub candidate has ambiguous review policy"
+                          {:kind :ambiguous-public-body-review
+                           :candidate (body-audit-key candidate)
+                           :rules (mapv :rule-id winners)}))
+                 {:candidate candidate :review (first winners)})))
+           candidates)
+          used (set (map #(get-in % [:review :rule-id]) reviewed))
+          unused (->> policies (remove #(used (:rule-id %))) (map :rule-id) sort vec)]
+      (when (seq unused)
+        (fail! "Public body review policy contains stale rules"
+               {:kind :stale-public-body-review-rules :rules unused}))
+      reviewed)))
+
+(def ^:private forbidden-public-source-patterns
+  [[:translation-error #"#error\s+VIBEFORMER_"]
+   [:not-implemented #"\bNotImplementedException\b"]
+   [:unsupported-java-placeholder #"\bUnsupportedOperationException\b"]
+   [:todo-comment #"(?m)//[^\n]*\b(?:TODO|FIXME|HACK)\b"]
+   [:todo-block-comment #"(?s)/\*.*?\b(?:TODO|FIXME|HACK)\b.*?\*/"]])
+
+(defn- csharp-source-files
+  [^Path source-root]
+  (when-not (paths/directory? source-root)
+    (fail! "Generated package source root is missing"
+           {:kind :missing-public-source-root :source-root (str source-root)}))
+  (with-open [files (Files/walk source-root (make-array FileVisitOption 0))]
+    (->> (.toArray files)
+         (map #(cast Path %))
+         (filter paths/regular-file?)
+         (filter #(str/ends-with? (str %) ".cs"))
+         (sort-by str) vec)))
+
+(defn audit-public-surface!
+  "Audits every C# source file and every public compiled body in a clean
+  dependency-closed generation. Exact candidate drift is rejected, and every
+  legitimate default/no-op/unsupported candidate must match a source-semantic
+  review rule backed by durable evidence."
+  [workspace generation build-configuration]
+  (let [workspace (paths/absolute workspace)
+        {:keys [body-candidates body-review-policy contract-compiler]}
+        (contract-paths workspace)
+        main (assoc (:emission generation) :destination (:destination generation))
+        emissions (vec (concat (:dependency-emissions generation) [main]))
+        mapping-audits
+        (mapv (fn [emission]
+                {:profile (or (:profile emission)
+                              (get-in emission [:destination :package :id]))
+                 :source-mappings (get-in emission [:summary :source-mappings] 0)
+                 :missing-source-mappings
+                 (get-in emission [:summary :missing-source-mappings] 0)
+                 :hard-failures (get-in emission [:summary :hard-failures] 0)})
+              emissions)
+        source-roots (mapv #(paths/resolve-path (:project-root %) "src") emissions)
+        source-files (vec (mapcat csharp-source-files source-roots))
+        source-findings
+        (->> source-files
+             (mapcat
+              (fn [^Path file]
+                (let [source (Files/readString file StandardCharsets/UTF_8)]
+                  (keep (fn [[kind pattern]]
+                          (when (re-find pattern source)
+                            {:file (str file) :kind kind}))
+                        forbidden-public-source-patterns))))
+             vec)
+        packages
+        (mapv (fn [{:keys [project-root destination]}]
+                (let [assembly (get-in destination [:project :assembly-name])
+                      framework (get-in destination [:project :target-framework])]
+                  (paths/resolve-path project-root "bin" build-configuration framework
+                                      (str assembly ".dll"))))
+              emissions)
+        actual (.resolve (temp-directory "vibeformer-public-body-audit") "actual.tsv")]
+    (when-not (seq source-files)
+      (fail! "Whole public source audit found no C# files"
+             {:kind :empty-public-source-audit}))
+    (when-let [unmapped (first (filter #(or (not (pos? (:source-mappings %)))
+                                             (pos? (:missing-source-mappings %))
+                                             (pos? (:hard-failures %)))
+                                        mapping-audits))]
+      (fail! "A clean generated package did not retain complete source mappings"
+             (assoc unmapped :kind :incomplete-generated-source-mappings)))
+    (when (seq source-findings)
+      (fail! "Whole shipped public source contains implementation placeholders"
+             {:kind :public-source-placeholders
+              :findings (vec (take 50 source-findings))
+              :finding-count (count source-findings)}))
+    (command-output {:command ["dotnet" "build" contract-compiler
+                               "--configuration" "Release" "--nologo"]
+                     :directory workspace})
+    (command-output
+     {:command (into ["dotnet" "run" "--project" contract-compiler
+                      "--configuration" "Release" "--no-build" "--"
+                      "audit" actual]
+                     packages)
+      :directory workspace})
+    (let [expected (:rows (read-tsv body-candidates body-audit-columns))
+          actual-rows (:rows (read-tsv actual body-audit-columns))
+          comparison (compare-body-audit expected actual-rows)]
+      (when-let [mismatch (:mismatch comparison)]
+        (fail! "Compiled whole-public-surface body audit drifted"
+               mismatch))
+      (let [reviewed (review-public-body-candidates!
+                      workspace actual-rows body-review-policy)
+            mapped (mapcat #(get-in % [:public-metadata :rows]) emissions)
+            unmapped
+            (->> mapped
+                 (filter (fn [row]
+                           (or (str/blank? (:declaration-key row))
+                               (str/blank? (get-in row [:generated :id]))
+                               (str/blank?
+                                (get-in row [:generated :source :location :file]))
+                               (not (pos? (or (get-in row
+                                                      [:generated :source :location :line])
+                                              0)))
+                               (some (fn [field]
+                                       (str/blank?
+                                        (str (get-in row
+                                                     [:generated :destination field]))))
+                                     [:assembly :owner :kind :name :parameter-count]))))
+                 (take 30) vec)]
+        (when (seq unmapped)
+          (fail! "A generated public contract member lost its exact source mapping"
+                 {:kind :unmapped-generated-public-member :rows unmapped}))
+        {:source-files (count source-files)
+         :source-roots (mapv str source-roots)
+         :compiled-assemblies (count packages)
+         :reviewed-body-candidates (count reviewed)
+         :body-findings (frequencies (map :finding actual-rows))
+         :mapped-generated-members (count mapped)
+         :generated-source-mappings (reduce + (map :source-mappings mapping-audits))
+         :source-patterns (mapv first forbidden-public-source-patterns)}))))
 
 (defn- duplicate-values
   [key-fn rows]

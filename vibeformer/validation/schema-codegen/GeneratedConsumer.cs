@@ -580,6 +580,21 @@ static class GeneratedConsumer
         cycle["next"] = cycle;
         ExpectBindFailure(() => binder.Bind<CycleModel>(cycle), "$.next", typeof(CycleModel), "cyclic object graphs");
 
+        using (var configEvaluator = new ConfigEvaluator(evaluator, binder))
+        {
+            Check(ReferenceEquals(configEvaluator.Evaluator, evaluator) &&
+                  ReferenceEquals(configEvaluator.Binder, binder),
+                "ConfigEvaluator did not retain supplied evaluator and binder");
+            KnownOnly evaluated = configEvaluator.Evaluate<KnownOnly>(
+                ModuleSource.Text("known = \"evaluated\"\n"));
+            long expression = configEvaluator.EvaluateExpression<long>(
+                ModuleSource.Text("value = 41\n"), "value + 1");
+            Check(evaluated.Known == "evaluated" && expression == 42,
+                "ConfigEvaluator end-to-end evaluation and binding");
+        }
+        Check((long)evaluator.EvaluateExpression(ModuleSource.Text("value = 1\n"), "value") == 1,
+            "disposing a non-owning ConfigEvaluator disposed its evaluator");
+
         var disposed = new ConfigEvaluator(evaluator);
         disposed.Dispose();
         try
@@ -608,6 +623,7 @@ static class GeneratedConsumer
             "conversion-failures=passed\n" +
             "polymorphic-mismatch=$\n" +
             "cycle=$.next\n" +
+            "config-evaluator=passed\n" +
             "disposed=passed\n", Utf8);
     }
 
