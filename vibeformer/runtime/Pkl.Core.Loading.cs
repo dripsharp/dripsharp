@@ -948,6 +948,9 @@ namespace Pkl.Core
                 ArgumentNullException.ThrowIfNull(uri);
                 if (!uri.IsAbsoluteUri)
                     throw new UriFormatException($"Expected an absolute resource URI, got `{uri}`.");
+                if (global::Vibeformer.Runtime.JavaCompat.UriPath(uri) is null)
+                    throw new UriFormatException(
+                        $"Resource URI `{uri}` is missing a `/` after its scheme.");
                 var escaped = uri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
                 string decoded;
                 try { decoded = Uri.UnescapeDataString(escaped); }

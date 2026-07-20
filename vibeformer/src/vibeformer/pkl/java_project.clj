@@ -476,7 +476,7 @@
    "java.nio.charset.CharsetDecoder" ["global::Pkl.Core.Runtime.JavaCharsetDecoder" :pkl-core.type/charset-decoder]
    "java.nio.charset.CharsetEncoder" ["global::Pkl.Core.Runtime.JavaCharsetEncoder" :pkl-core.type/charset-encoder]
    "java.nio.charset.CharacterCodingException" ["global::System.Text.DecoderFallbackException" :dotnet.type/decoder-exception]
-   "java.nio.charset.StandardCharsets" ["global::System.Text.Encoding" :dotnet.type/encoding]
+   "java.nio.charset.StandardCharsets" ["global::Vibeformer.Runtime.JavaStandardCharsets" :pkl-core.type/standard-charsets]
    "java.security.GeneralSecurityException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
    "java.security.NoSuchAlgorithmException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
    "java.security.SecureRandom" ["global::Pkl.Core.Runtime.JavaSecureRandom" :pkl-core.type/secure-random]
@@ -2069,6 +2069,23 @@
           ;; where Resource.uri makes the original Java form observable.
           (raw
            "{\nvar assetPath = packageAssetUri.GetAssetPath().Substring(1);\nvar resolvedPath = global::Vibeformer.Runtime.JavaCompat.PathResolve(this.path, assetPath);\nvar normalized = global::Pkl.Core.Util.IoUtils.ToNormalizedPathString(resolvedPath);\ntry {\nvar relativeUri = global::Vibeformer.Runtime.JavaCompat.NewUri(null, null, normalized, null);\nreturn global::Vibeformer.Runtime.JavaCompat.ResolveLocalDependencyUri(projectBaseUri, relativeUri);\n} catch (global::System.UriFormatException) {\nthrow global::Pkl.Core.PklBugException.UnreachableCode();\n}\n}")
+
+          (= "executable:org.pkl.core.project.ProjectDeps#equals(java.lang.Object)"
+             (spoon/declaration-key method))
+          ;; The JVM method intentionally accepts raw EconomicMap values. Keep
+          ;; their actual key/value types on CLR so lookup uses the canonical
+          ;; package-URI comparer instead of erased object-map identity.
+          (raw
+           "{\nif (global::System.Object.ReferenceEquals(this, o)) return true;\nif (o is not global::Pkl.Core.Project.ProjectDeps that) return false;\nreturn global::Vibeformer.Runtime.JavaCompat.EconomicMapEquals(this.resolvedDependencies, that.resolvedDependencies);\n}")
+
+          (= "executable:org.pkl.core.project.Project#findImportCycle(org.pkl.core.ModuleSource)"
+             (spoon/declaration-key method))
+          ;; Project.load must support caller-supplied module factories. The
+          ;; proactive CLR cycle check can only analyze schemes owned by the
+          ;; standalone project analyzer; other schemes proceed to the supplied
+          ;; evaluator instead of failing before evaluation starts.
+          (raw
+           "{\nvar scheme = global::Vibeformer.Runtime.JavaCompat.UriScheme(moduleSource.GetUri());\nif (!global::Vibeformer.Runtime.JavaCompat.EqualsIgnoreCase(scheme, \"file\") && !global::Vibeformer.Runtime.JavaCompat.EqualsIgnoreCase(scheme, \"package\")) {\nreturn new global::System.Collections.Generic.List<global::System.Collections.Generic.IList<global::System.Uri>>();\n}\nvar builder = Project.EvaluatorBuilder();\nvar analyzer = new global::Pkl.Core.Analyzer(global::Pkl.Core.StackFrameTransformers.DefaultTransformer, builder.GetColor(), global::Pkl.Core.SecurityManagers.DefaultManager, global::Vibeformer.Runtime.JavaCompat.ToReadOnly<global::System.Collections.Generic.IReadOnlyCollection<global::Pkl.Core.Module.ModuleKeyFactory>>(global::Vibeformer.Runtime.JavaCompat.ToListValues(builder.GetModuleKeyFactories())), builder.GetModuleCacheDir(), builder.GetProjectDependencies(), builder.GetHttpClient(), builder.GetTraceMode());\nvar importGraph = analyzer.ImportGraph(moduleSource.GetUri());\nvar ret = global::Pkl.Core.Util.ImportGraphUtils.FindImportCycles(importGraph);\nreturn global::Vibeformer.Runtime.JavaCompat.ToListValues(global::Vibeformer.Runtime.JavaCompat.Filter(ret, cycle => global::Vibeformer.Runtime.JavaCompat.Any(cycle, uri => global::Vibeformer.Runtime.JavaCompat.EqualsIgnoreCase(global::Vibeformer.Runtime.JavaCompat.UriScheme(uri), scheme))));\n}")
 
           (= "executable:org.pkl.core.project.Project#load(org.pkl.core.Evaluator,org.pkl.core.ModuleSource)"
              (spoon/declaration-key method))

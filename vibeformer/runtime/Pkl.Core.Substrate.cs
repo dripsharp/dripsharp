@@ -727,10 +727,13 @@ namespace Pkl.Core.Runtime
         public JavaUrlConnection(Uri uri) => this.uri = uri;
         public virtual void Connect() { }
         public virtual Uri GetURL() => uri ?? throw new InvalidOperationException("URL is unavailable");
-        public virtual System.IO.Stream GetInputStream() =>
-            uri is null ? throw new NotSupportedException() :
-            new System.Net.Http.HttpClient().GetStreamAsync(
+        public virtual System.IO.Stream GetInputStream()
+        {
+            if (uri is null) throw new NotSupportedException();
+            if (uri.IsFile) return System.IO.File.OpenRead(uri.LocalPath);
+            return new System.Net.Http.HttpClient().GetStreamAsync(
                 uri, global::Vibeformer.Runtime.JavaCancellation.CurrentToken).GetAwaiter().GetResult();
+        }
         public virtual void SetUseCaches(bool value) { }
     }
     internal sealed class JavaJarConnection : JavaUrlConnection
@@ -1034,6 +1037,8 @@ namespace Pkl.Core.Runtime
             stream.CopyTo(bytes);
             var encoded = bytes.ToArray();
             var result = new System.Security.Cryptography.X509Certificates.X509Certificate2Collection();
+            if (encoded.Length == 0)
+                return Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>();
             var text = System.Text.Encoding.UTF8.GetString(encoded);
             if (text.Contains("-----BEGIN CERTIFICATE-----", StringComparison.Ordinal))
             {
@@ -1130,11 +1135,23 @@ namespace Pkl.Core.Runtime
             private TimeSpan? timeout;
             public Builder Uri(Uri uri) { message.RequestUri = uri; return this; }
             public Builder Timeout(TimeSpan timeout) { this.timeout = timeout; return this; }
-            public Builder Version(JavaHttpVersion version) { return this; }
+            public Builder Version(JavaHttpVersion version)
+            {
+                message.Version = version == JavaHttpVersion.HTTP_2
+                    ? System.Net.HttpVersion.Version20
+                    : System.Net.HttpVersion.Version11;
+                message.VersionPolicy = System.Net.Http.HttpVersionPolicy.RequestVersionOrLower;
+                return this;
+            }
             public Builder Header(string name, string value) { message.Headers.TryAddWithoutValidation(name, value); return this; }
             public Builder SetHeader(string name, string value) { message.Headers.Remove(name); return Header(name, value); }
             public Builder ExpectContinue(bool value) { message.Headers.ExpectContinue = value; return this; }
-            public Builder Method(string method, object? body) { message.Method = new System.Net.Http.HttpMethod(method); return this; }
+            public Builder Method(string method, object? body)
+            {
+                message.Method = new System.Net.Http.HttpMethod(method);
+                message.Content = body as System.Net.Http.HttpContent;
+                return this;
+            }
             public Builder GET() { message.Method = System.Net.Http.HttpMethod.Get; return this; }
             public Builder DELETE() { message.Method = System.Net.Http.HttpMethod.Delete; return this; }
             public JavaHttpRequest Build() => new(message, timeout);

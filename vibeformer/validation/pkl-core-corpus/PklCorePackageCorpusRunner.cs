@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -12,10 +13,19 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Pkl.Core;
+using Pkl.Core.EvaluatorSettings;
+using Pkl.Core.Externalreader;
+using Pkl.Core.Module;
+using Pkl.Core.Packages;
+using Pkl.Core.Project;
+using Pkl.Core.Resource;
+using Pkl.Core.Settings;
 using Pkl.Parser;
+using PklHttpClient = Pkl.Core.Http.HttpClient;
 using Version = Pkl.Core.Version;
 
 static class Program
@@ -222,9 +232,41 @@ static class Program
         if (row.SourceClass == "org.pkl.core.EvaluateSchemaTest")
             return ExecuteSchemaTest(row, fixture);
         if (row.SourceClass == "org.pkl.core.EvaluatorTest")
-            return ExecuteEvaluatorTest(row);
+            return ExecuteEvaluatorTest(row, fixture);
         if (row.SourceClass == "org.pkl.core.AnalyzerTest")
             return ExecuteAnalyzerTest(row, fixture);
+        if (row.SourceClass == "org.pkl.core.EvaluatorBuilderTest")
+            return ExecuteEvaluatorBuilderTest(row, fixture);
+        if (row.SourceClass == "org.pkl.core.SecurityManagersTest")
+            return ExecuteSecurityManagersTest(row, fixture);
+        if (row.SourceClass.StartsWith("org.pkl.core.http.HttpClientTest", StringComparison.Ordinal) ||
+            row.SourceClass is "org.pkl.core.http.DummyHttpClientTest" or
+            "org.pkl.core.http.HttpClientBuilderTest" or
+            "org.pkl.core.http.LazyHttpClientTest" or
+            "org.pkl.core.http.NoProxyRuleTest" or
+            "org.pkl.core.http.RequestRewritingClientTest")
+            return ExecuteHttpClientTest(row, fixture);
+        if (row.SourceClass is "org.pkl.core.module.ModuleKeyFactoriesTest" or
+            "org.pkl.core.module.ModuleKeysTest" or
+            "org.pkl.core.module.ModulePathResolverTest" or
+            "org.pkl.core.module.ResolvedModuleKeysTest" or
+            "org.pkl.core.module.ServiceProviderTest")
+            return ExecuteModuleLoadingTest(row, fixture);
+        if (row.SourceClass is "org.pkl.core.resource.ResourceReadersTest" or
+            "org.pkl.core.resource.ResourceReadersEvaluatorTest")
+            return ExecuteResourceReaderTest(row, fixture);
+        if (row.SourceClass is "org.pkl.core.packages.DependencyMetadataTest" or
+            "org.pkl.core.packages.PackageResolversTest$DiskCachedPackageResolverTest" or
+            "org.pkl.core.packages.PackageResolversTest$InMemoryPackageResolverTest" or
+            "org.pkl.core.packages.PackageUriTest")
+            return ExecutePackageTest(row, fixture);
+        if (row.SourceClass is "org.pkl.core.project.ProjectDependenciesResolverTest" or
+            "org.pkl.core.project.ProjectDepsTest" or "org.pkl.core.project.ProjectTest")
+            return ExecuteProjectTest(row, fixture);
+        if (row.SourceClass == "org.pkl.core.settings.PklSettingsTest")
+            return ExecuteSettingsTest(row, fixture);
+        if (row.SourceClass == "org.pkl.core.runtime.FileSystemManagerTest")
+            return ExecuteFileSystemManagerTest(row, fixture);
         if (row.SourceClass == "org.pkl.core.StackFrameTransformersTest")
             return ExecuteStackFrameTransformerTest(row);
         if (row.SourceClass == "org.pkl.core.runtime.StackTraceRendererTest")
@@ -315,6 +357,1347 @@ static class Program
             "",
             $"No public package adaptation is registered for {row.CaseId} " +
             $"({row.SourcePath}:{row.SourceLine}).");
+    }
+
+    static ChildResult ExecuteEvaluatorBuilderTest(ContractRow row, CorpusFixture fixture)
+    {
+        switch (row.SourceMethod)
+        {
+            case "preconfigured builder sets process env vars":
+            {
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                IReadOnlyDictionary<string, string> environment = builder.GetEnvironmentVariables();
+                string? expectedPath = Environment.GetEnvironmentVariable("PATH");
+                Require(environment.Count > 0 &&
+                    (expectedPath is null || environment.TryGetValue("PATH", out string? actualPath) &&
+                        actualPath == expectedPath), "preconfigured .NET process environment");
+                break;
+            }
+            case "preconfigured builder sets system properties":
+            {
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                IReadOnlyDictionary<string, string> properties = builder.GetExternalProperties();
+                Require(properties.Count > 0 && properties.ContainsKey("os.name"),
+                    "preconfigured .NET platform properties");
+                break;
+            }
+            case "preconfigured builder adds resource readers from service providers":
+            {
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                int before = builder.GetResourceReaders().Count;
+                using var reader = new CorpusResourceReader();
+                builder.AddResourceReader(reader);
+                Require(builder.GetResourceReaders().Count == before + 1 &&
+                    ReferenceEquals(builder.GetResourceReaders()[^1], reader),
+                    "explicit .NET resource-reader service registration");
+                break;
+            }
+            case "unconfigured builder does not set process env vars":
+                Require(EvaluatorBuilder.Unconfigured().GetEnvironmentVariables().Count == 0,
+                    "unconfigured environment is empty");
+                break;
+            case "unconfigured builder does not set system properties":
+                Require(EvaluatorBuilder.Unconfigured().GetExternalProperties().Count == 0,
+                    "unconfigured properties are empty");
+                break;
+            case "enforces that security manager is set":
+            {
+                InvalidOperationException error = Throws<InvalidOperationException>(() =>
+                    EvaluatorBuilder.Unconfigured()
+                        .SetStackFrameTransformer(StackFrameTransformers.Empty)
+                        .Build());
+                Require(error.Message == "No security manager set.",
+                    "missing security-manager diagnostic");
+                break;
+            }
+            case "enforces that stack frame transformer is set":
+            {
+                InvalidOperationException error = Throws<InvalidOperationException>(() =>
+                    EvaluatorBuilder.Unconfigured()
+                        .SetSecurityManager(SecurityManagers.DefaultManager)
+                        .Build());
+                Require(error.Message == "No stack frame transformer set.",
+                    "missing stack-transformer diagnostic");
+                break;
+            }
+            case "sets evaluator settings from project":
+            {
+                string projectPath = WriteProjectFixture(fixture.Root, includeLocalDependency: false);
+                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectPath);
+                EvaluatorBuilder builder = EvaluatorBuilder.Unconfigured();
+                int factoryCount = builder.GetModuleKeyFactories().Count;
+                builder.ApplyFromProject(project);
+                Require(builder.GetAllowedResources().Select(pattern => pattern.ToString())
+                        .SequenceEqual(new[] { "file:", "env:", "prop:" }) &&
+                    builder.GetAllowedModules().Select(pattern => pattern.ToString())
+                        .SequenceEqual(new[] { "pkl:", "file:" }) &&
+                    builder.GetExternalProperties()["two"] == "2" &&
+                    builder.GetEnvironmentVariables()["one"] == "1" &&
+                    builder.GetTimeout() == TimeSpan.FromMinutes(5) &&
+                    builder.GetModuleKeyFactories().Count == factoryCount + 1,
+                    "project evaluator settings application");
+                break;
+            }
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteSecurityManagersTest(ContractRow row, CorpusFixture fixture)
+    {
+        SecurityManager manager = SecurityManagers.CreateStandard(
+            new[] { new Regex("test:foo/bar") },
+            new[] { new Regex("env:FOO_BAR") },
+            uri => uri.Scheme == "one" ? 1 : uri.Scheme == "two" ? 2 : 0,
+            null);
+        switch (row.SourceMethod)
+        {
+            case "checkResolveModule() - complete match":
+                manager.CheckResolveModule(new Uri("test:foo/bar"));
+                break;
+            case "checkResolveModule() - partial match from start":
+                manager.CheckResolveModule(new Uri("test:foo/bar/baz"));
+                break;
+            case "checkResolveModule() - partial match not from start":
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckResolveModule(new Uri("other:test:foo/bar")));
+                break;
+            case "checkResolveModule() - no match":
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckResolveModule(new Uri("other:uri")));
+                break;
+            case "checkResolveModule() - no match #2":
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckResolveModule(new Uri("test:foo/baz")));
+                break;
+            case "checkReadResource() - complete match":
+                manager.CheckReadResource(new Uri("env:FOO_BAR"));
+                break;
+            case "checkReadResource() - partial match from start":
+                manager.CheckReadResource(new Uri("env:FOO_BAR_BAZ"));
+                break;
+            case "checkReadResource() - partial match not from start":
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckReadResource(new Uri("other:env:FOO_BAR")));
+                break;
+            case "checkReadResource() - no match":
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckReadResource(new Uri("other:uri")));
+                break;
+            case "checkReadResource() - no match #2":
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckReadResource(new Uri("env:FOO_BAZ")));
+                break;
+            case "checkImportModule() - same trust level":
+                manager.CheckImportModule(new Uri("one:foo"), new Uri("one:bar"));
+                break;
+            case "checkImportModule() - higher trust level":
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckImportModule(new Uri("one:foo"), new Uri("two:bar")));
+                break;
+            case "checkImportModule() - lower trust level":
+                manager.CheckImportModule(new Uri("two:foo"), new Uri("one:bar"));
+                break;
+            case "default trust levels":
+            {
+                Func<Uri, int> levels = SecurityManagers.DefaultTrustLevels;
+                Require(levels(new Uri("repl:foo")) == 40 &&
+                    levels(new Uri("file:///some/path")) == 30 &&
+                    levels(new Uri("jar:file:///some/path!/some/path")) == 30 &&
+                    levels(new Uri("modulepath:/some/path")) == 20 &&
+                    levels(new Uri("file://apple.com/some.path")) == 10 &&
+                    levels(new Uri("jar:http://apple.com/some.path!/some/path")) == 10 &&
+                    levels(new Uri("pkl:test")) == 0, "default URI trust levels");
+                break;
+            }
+            case "can resolve modules and resources under root dir - files do exist":
+            {
+                string root = Path.Combine(fixture.Root, "security-root");
+                Directory.CreateDirectory(root);
+                string file = Path.Combine(root, "baz.pkl");
+                File.WriteAllText(file, "x = 1", new UTF8Encoding(false));
+                SecurityManager rooted = RootedSecurityManager(root);
+                rooted.CheckResolveModule(new Uri(file));
+                rooted.CheckReadResource(new Uri(file));
+                rooted.CheckResolveModule(new Uri(Path.Combine(root, "qux", "..", "baz.pkl")));
+                break;
+            }
+            case "can resolve modules and resources under root dir - files don't exist":
+            {
+                string root = Path.Combine(fixture.Root, "missing-root");
+                SecurityManager rooted = RootedSecurityManager(root);
+                rooted.CheckResolveModule(new Uri(Path.Combine(root, "baz.pkl")));
+                rooted.CheckReadResource(new Uri(Path.Combine(root, "qux", "..", "baz.pkl")));
+                break;
+            }
+            case "cannot resolve modules and resources outside root dir - files do exist":
+            {
+                string root = Path.Combine(fixture.Root, "existing-root");
+                Directory.CreateDirectory(root);
+                string outside = Path.Combine(fixture.Root, "outside.pkl");
+                File.WriteAllText(outside, "x = 1", new UTF8Encoding(false));
+                SecurityManager rooted = RootedSecurityManager(root);
+                _ = Throws<SecurityManagerException>(() => rooted.CheckResolveModule(new Uri(outside)));
+                _ = Throws<SecurityManagerException>(() => rooted.CheckReadResource(new Uri(outside)));
+                string target = Path.Combine(fixture.Root, "link-target");
+                Directory.CreateDirectory(target);
+                string targetFile = Path.Combine(target, "linked.pkl");
+                File.WriteAllText(targetFile, "x = 2", new UTF8Encoding(false));
+                string link = Path.Combine(root, "link");
+                Directory.CreateSymbolicLink(link, target);
+                _ = Throws<SecurityManagerException>(() =>
+                    rooted.CheckResolveModule(new Uri(Path.Combine(link, "linked.pkl"))));
+                break;
+            }
+            case "cannot resolve modules and resources outside root dir - files don't exist":
+            {
+                string root = Path.Combine(fixture.Root, "root");
+                SecurityManager rooted = RootedSecurityManager(root);
+                string outside = Path.Combine(fixture.Root, "elsewhere", "missing.pkl");
+                _ = Throws<SecurityManagerException>(() => rooted.CheckResolveModule(new Uri(outside)));
+                _ = Throws<SecurityManagerException>(() => rooted.CheckReadResource(new Uri(outside)));
+                break;
+            }
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static SecurityManager RootedSecurityManager(string root) => SecurityManagers.CreateStandard(
+        new[] { new Regex("file") }, new[] { new Regex("file") },
+        SecurityManagers.DefaultTrustLevels, root);
+
+    static ChildResult ExecuteModuleLoadingTest(ContractRow row, CorpusFixture fixture)
+    {
+        if (row.SourceClass == "org.pkl.core.module.ModuleKeyFactoriesTest")
+        {
+            switch (row.SourceMethod)
+            {
+                case "standard library":
+                    Require(ModuleKeyFactories.StandardLibraryFactory.TryCreate(new Uri("other:test")) is null &&
+                        ModuleKeyFactories.StandardLibraryFactory.TryCreate(new Uri("pkl:test")) is not null,
+                        "standard-library module factory selection");
+                    break;
+                case "file":
+                    Require(ModuleKeyFactories.FileFactory.TryCreate(new Uri("other:test")) is null &&
+                        ModuleKeyFactories.FileFactory.TryCreate(new Uri("file:///some/file")) is not null,
+                        "file module factory selection");
+                    break;
+                case "generic url":
+                    Require(ModuleKeyFactories.GenericUrlFactory.TryCreate(new Uri("other:text")) is null &&
+                        ModuleKeyFactories.GenericUrlFactory.TryCreate(new Uri("file:///some/file")) is not null,
+                        "generic URL module factory selection");
+                    break;
+                case "class path":
+                {
+                    using ModuleKeyFactory assembly = ModuleKeyFactories.CreateAssembly(
+                        Assembly.GetExecutingAssembly(), uriScheme: "assemblyfixture");
+                    Require(assembly.TryCreate(new Uri("other:text")) is null &&
+                        assembly.TryCreate(new Uri("assemblyfixture:/foo/bar.pkl")) is not null,
+                        ".NET assembly module factory adaptation");
+                    break;
+                }
+                case "module path - basics":
+                {
+                    using var resolver = new ModulePathResolver(Array.Empty<string>());
+                    using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                    Require(factory.TryCreate(new Uri("other:text")) is null &&
+                        factory.TryCreate(new Uri("modulepath:/foo/bar.pkl")) is not null,
+                        "module-path factory selection");
+                    break;
+                }
+                case "module path - directories":
+                {
+                    string first = Path.Combine(fixture.Root, "modulepath-a");
+                    string second = Path.Combine(fixture.Root, "modulepath-b");
+                    string file = Path.Combine(second, "baz", "mymodule.pkl");
+                    Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                    Directory.CreateDirectory(first);
+                    File.WriteAllText(file, "x = 1", new UTF8Encoding(false));
+                    using var resolver = new ModulePathResolver(new[] { first, second });
+                    using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                    ModuleKey key = factory.TryCreate(new Uri("modulepath:/baz/mymodule.pkl"))!;
+                    ResolvedModuleKey resolved = key.Resolve(SecurityManagers.DefaultManager);
+                    Require(ReferenceEquals(resolved.Original, key) && resolved.Uri.IsFile &&
+                        resolved.Source.Trim() == "x = 1", "directory module-path resolution");
+                    break;
+                }
+                case "module path - jar files":
+                {
+                    string archive = CreateArchive(fixture.Root, "modules.zip",
+                        ("dir1/module1.pkl", "x = 1"));
+                    using var resolver = new ModulePathResolver(new[] { archive });
+                    using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                    ModuleKey key = factory.TryCreate(new Uri("modulepath:/dir1/module1.pkl"))!;
+                    ResolvedModuleKey resolved = key.Resolve(SecurityManagers.DefaultManager);
+                    Require(ReferenceEquals(resolved.Original, key) && resolved.Source.Trim() == "x = 1" &&
+                        resolved.Uri.IsFile,
+                        ".NET archive extraction and resolved file-URI ownership");
+                    break;
+                }
+                case "module path via service provider":
+                {
+                    using ModuleKeyFactory factory = new CorpusModuleFactory("service", "x = 1");
+                    ModuleKey? key = factory.TryCreate(new Uri("service:foo"));
+                    Require(key is not null && key.Uri.Scheme == "service" &&
+                        factory.TryCreate(new Uri("other:foo")) is null,
+                        "explicit .NET module service registration");
+                    break;
+                }
+                case "externalProcess":
+                case "external process -- spawning an executable using a path":
+                case "external process -- spawning an executable using a simple name off PATH":
+                    VerifyExternalReaderFactoryLifecycle(fixture.Root);
+                    break;
+                default:
+                    return Pending(row);
+            }
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.module.ModuleKeysTest")
+        {
+            switch (row.SourceMethod)
+            {
+                case "synthetic":
+                {
+                    ModuleKey key = ModuleKeys.CreateSynthetic(new Uri("repl:some"), "age = 40");
+                    ResolvedModuleKey resolved = key.Resolve(SecurityManagers.DefaultManager);
+                    Require(key.Uri == new Uri("repl:some") && !key.Cached &&
+                        !ModuleKeys.IsStdLibModule(key) && !ModuleKeys.IsBaseModule(key) &&
+                        resolved.Uri == key.Uri && resolved.Source.Contains("age = 40", StringComparison.Ordinal),
+                        "synthetic module key");
+                    break;
+                }
+                case "standard library":
+                {
+                    ModuleKey key = ModuleKeys.CreateStandardLibrary(new Uri("pkl:test"));
+                    ResolvedModuleKey resolved = key.Resolve(SecurityManagers.DefaultManager);
+                    Require(key.Cached && ModuleKeys.IsStdLibModule(key) &&
+                        !ModuleKeys.IsBaseModule(key) && resolved.Source.Contains("module pkl.test",
+                            StringComparison.Ordinal), "standard-library module key");
+                    break;
+                }
+                case "standard library - wrong scheme":
+                    _ = Throws<ArgumentException>(() =>
+                        ModuleKeys.CreateStandardLibrary(new Uri("other:base")));
+                    break;
+                case "file":
+                {
+                    string file = Path.Combine(fixture.Root, "file-key.pkl");
+                    File.WriteAllText(file, "age = 40", new UTF8Encoding(false));
+                    ModuleKey key = ModuleKeys.CreateFile(new Uri(file));
+                    ResolvedModuleKey resolved = key.Resolve(SecurityManagers.DefaultManager);
+                    Require(key.Cached && key.Local && resolved.Uri.IsFile &&
+                        resolved.Source == "age = 40", "file module key");
+                    break;
+                }
+                case "class path":
+                {
+                    using ModuleKeyFactory factory = ModuleKeyFactories.CreateAssembly(
+                        typeof(Evaluator).Assembly, uriScheme: "assemblyfixture");
+                    ModuleKey key = factory.TryCreate(new Uri("assemblyfixture:/missing.pkl"))!;
+                    Require(key.Local && key.Cached, ".NET assembly module key adaptation");
+                    _ = Throws<FileNotFoundException>(() => key.Resolve(
+                        SecurityManagers.CreateStandard(new[] { new Regex("assemblyfixture:") },
+                            Array.Empty<Regex>(), _ => 0, null)));
+                    break;
+                }
+                case "class path - wrong scheme":
+                    using (ModuleKeyFactory factory = ModuleKeyFactories.CreateAssembly(
+                        typeof(Evaluator).Assembly, uriScheme: "assemblyfixture"))
+                        Require(factory.TryCreate(new Uri("other:base")) is null,
+                            ".NET assembly wrong-scheme rejection");
+                    break;
+                case "class path - module not found":
+                    using (ModuleKeyFactory factory = ModuleKeyFactories.CreateAssembly(
+                        typeof(Evaluator).Assembly, uriScheme: "assemblyfixture"))
+                    {
+                        ModuleKey missing = factory.TryCreate(new Uri("assemblyfixture:/non/existing"))!;
+                        _ = Throws<FileNotFoundException>(() => missing.Resolve(
+                            SecurityManagers.CreateStandard(new[] { new Regex("assemblyfixture:") },
+                                Array.Empty<Regex>(), _ => 0, null)));
+                    }
+                    break;
+                case "class path - missing leading slash":
+                    using (ModuleKeyFactory factory = ModuleKeyFactories.CreateAssembly(
+                        typeof(Evaluator).Assembly, uriScheme: "assemblyfixture"))
+                    {
+                        ModuleKey key = factory.TryCreate(new Uri("assemblyfixture:missing"))!;
+                        Exception error = ThrowsAny(() => key.Resolve(
+                            SecurityManagers.CreateStandard(new[] { new Regex("assemblyfixture:") },
+                                Array.Empty<Regex>(), _ => 0, null)));
+                        Require(error.Message.Contains("/", StringComparison.Ordinal),
+                            "embedded module leading-slash diagnostic");
+                    }
+                    break;
+                case "module path":
+                {
+                    string file = Path.Combine(fixture.Root, "module-path", "foo", "bar.pkl");
+                    Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                    File.WriteAllText(file, "age = 40", new UTF8Encoding(false));
+                    using var resolver = new ModulePathResolver(new[] { Path.Combine(fixture.Root, "module-path") });
+                    ModuleKey key = ModuleKeys.CreateModulePath(new Uri("modulepath:/foo/bar.pkl"), resolver);
+                    Require(key.Cached && key.Resolve(SecurityManagers.DefaultManager).Source == "age = 40",
+                        "module-path module key");
+                    break;
+                }
+                case "module path - wrong scheme":
+                    using (var resolver = new ModulePathResolver(Array.Empty<string>()))
+                        _ = Throws<ArgumentException>(() =>
+                            ModuleKeys.CreateModulePath(new Uri("other:base"), resolver));
+                    break;
+                case "module path - module not found":
+                    using (var resolver = new ModulePathResolver(Array.Empty<string>()))
+                    {
+                        ModuleKey key = ModuleKeys.CreateModulePath(
+                            new Uri("modulepath:/non/existing"), resolver);
+                        _ = Throws<FileNotFoundException>(() => key.Resolve(SecurityManagers.DefaultManager));
+                    }
+                    break;
+                case "module path - missing leading slash":
+                    using (var resolver = new ModulePathResolver(Array.Empty<string>()))
+                        _ = Throws<ArgumentException>(() =>
+                            ModuleKeys.CreateModulePath(new Uri("modulepath:foo/bar.pkl"), resolver));
+                    break;
+                case "package - no version":
+                    _ = Throws<UriFormatException>(() => ModuleKeys.CreatePackage(
+                        new Uri("package://localhost/birds#/Bird.pkl")));
+                    break;
+                case "package - invalid semver":
+                    _ = Throws<UriFormatException>(() => ModuleKeys.CreatePackage(
+                        new Uri("package://localhost/birds@notAVersion#/Bird.pkl")));
+                    break;
+                case "package - missing leading slash":
+                    _ = Throws<UriFormatException>(() => ModuleKeys.CreatePackage(
+                        new Uri("package:invalid")));
+                    break;
+                case "package - missing authority":
+                    _ = Throws<UriFormatException>(() => ModuleKeys.CreatePackage(
+                        new Uri("package:/not/a/valid/path")));
+                    _ = Throws<UriFormatException>(() => ModuleKeys.CreatePackage(
+                        new Uri("package:///not/a/valid/path")));
+                    break;
+                case "package - missing path":
+                    _ = Throws<UriFormatException>(() => ModuleKeys.CreatePackage(
+                        new Uri("package://example.com")));
+                    break;
+                case "http - resolve obeys allowed modules":
+                {
+                    ModuleKey key = ModuleKeys.CreateGenericUrl(new Uri("https://example.test/foo.pkl"));
+                    SecurityManager denied = SecurityManagers.CreateStandardBuilder()
+                        .SetAllowedModules(new[] { new Regex("repl:"), new Regex("file:") })
+                        .SetAllowedResources(Array.Empty<Regex>()).Build();
+                    _ = Throws<SecurityManagerException>(() => key.Resolve(denied));
+                    break;
+                }
+                case "generic URL":
+                {
+                    Uri uri = new("https://example.test/foo.pkl");
+                    ModuleKey key = ModuleKeys.CreateGenericUrl(uri);
+                    Require(key.Uri == uri && key.Cached && !key.Local,
+                        "generic URL key attributes");
+                    break;
+                }
+                case "generic URL - resolve":
+                {
+                    string file = Path.Combine(fixture.Root, "generic.pkl");
+                    File.WriteAllText(file, "age = 40", new UTF8Encoding(false));
+                    ModuleKey key = ModuleKeys.CreateGenericUrl(new Uri(file));
+                    ResolvedModuleKey resolved = key.Resolve(SecurityManagers.DefaultManager);
+                    Require(resolved.Uri == new Uri(file) && resolved.Source == "age = 40",
+                        "generic file URL resolution");
+                    break;
+                }
+                case "generic URL with unknown scheme":
+                {
+                    ModuleKey key = ModuleKeys.CreateGenericUrl(new Uri("repl:foo"));
+                    Exception error = ThrowsAny(() => key.Resolve(SecurityManagers.DefaultManager));
+                    Require(error.Message.Contains("repl", StringComparison.OrdinalIgnoreCase),
+                        "unknown URL scheme diagnostic");
+                    break;
+                }
+                default:
+                    return Pending(row);
+            }
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.module.ResolvedModuleKeysTest")
+        {
+            ModuleKey original = ModuleKeys.CreateSynthetic(new Uri("test:module"), "x = 0");
+            Uri resolvedUri = new("test:resolved.uri");
+            ResolvedModuleKey resolved;
+            switch (row.SourceMethod)
+            {
+                case "path()":
+                {
+                    string file = Path.Combine(fixture.Root, "resolved-path.pkl");
+                    File.WriteAllText(file, "x = 1", new UTF8Encoding(false));
+                    resolved = ResolvedModuleKeys.CreateFile(original, resolvedUri, file);
+                    break;
+                }
+                case "url()":
+                {
+                    string file = Path.Combine(fixture.Root, "resolved-url.pkl");
+                    File.WriteAllText(file, "x = 1", new UTF8Encoding(false));
+                    resolved = ResolvedModuleKeys.CreateUrl(original, resolvedUri, new Uri(file));
+                    break;
+                }
+                case "virtual()":
+                    resolved = ResolvedModuleKeys.CreateVirtual(
+                        original, resolvedUri, "x = 1", false);
+                    break;
+                default:
+                    return Pending(row);
+            }
+            Require(ReferenceEquals(resolved.Original, original) && resolved.Uri == resolvedUri &&
+                resolved.Source == "x = 1", "resolved module key shape");
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.module.ModulePathResolverTest" &&
+            row.SourceMethod == "close without having been used")
+        {
+            var resolver = new ModulePathResolver(Array.Empty<string>());
+            resolver.Dispose();
+            resolver.Dispose();
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.module.ServiceProviderTest" &&
+            row.SourceMethod == "load module through service provider")
+        {
+            using var factory = new CorpusModuleFactory("service", "name = \"Pigeon\"\nage = 40");
+            using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
+                .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
+                .SetAllowedModules(new[] { new Regex("service:"), new Regex("pkl:") })
+                .SetAllowedResources(Array.Empty<Regex>())
+                .AddModuleKeyFactory(ModuleKeyFactories.StandardLibraryFactory)
+                .AddModuleKeyFactory(factory).Build();
+            PModule module = evaluator.Evaluate(ModuleSource.FromUri("service:foo"));
+            Require((string)module.GetProperty("name") == "Pigeon" &&
+                (long)module.GetProperty("age") == 40,
+                "explicit .NET module service evaluation");
+            return Passed(row);
+        }
+        return Pending(row);
+    }
+
+    static ChildResult ExecuteResourceReaderTest(ContractRow row, CorpusFixture fixture)
+    {
+        if (row.SourceClass == "org.pkl.core.resource.ResourceReadersTest")
+        {
+            switch (row.SourceMethod)
+            {
+                case "class path - present resource":
+                {
+                    using ResourceReader reader = ResourceReaders.CreateEmbeddedResources(
+                        Assembly.GetExecutingAssembly(), "Corpus.Resources", "embeddedfixture");
+                    var resource = reader.TryRead(new Uri("embeddedfixture:/payload.txt")) as Resource;
+                    Require(resource is not null && resource.Text == "content\n" &&
+                        resource.Base64 == "Y29udGVudAo=" &&
+                        resource.Bytes.SequenceEqual(Encoding.UTF8.GetBytes("content\n")),
+                        ".NET embedded-resource adaptation");
+                    break;
+                }
+                case "class path - absent resource":
+                {
+                    using ResourceReader reader = ResourceReaders.CreateEmbeddedResources(
+                        Assembly.GetExecutingAssembly(), "Corpus.Resources", "embeddedfixture");
+                    Require(reader.TryRead(new Uri("embeddedfixture:/non/existing")) is null,
+                        "absent embedded resource");
+                    break;
+                }
+                case "class path - missing leading slash":
+                {
+                    using ResourceReader reader = ResourceReaders.CreateEmbeddedResources(
+                        Assembly.GetExecutingAssembly(), "Corpus.Resources", "embeddedfixture");
+                    Exception error = ThrowsAny(() =>
+                        reader.TryRead(new Uri("embeddedfixture:missing")));
+                    Require(error.Message.Contains("/", StringComparison.Ordinal),
+                        "embedded resource leading-slash diagnostic");
+                    break;
+                }
+                case "module path - present resource":
+                {
+                    string first = CreateArchive(fixture.Root, "resource1.zip",
+                        ("dir1/resource1.txt", "content\n"));
+                    string second = CreateArchive(fixture.Root, "resource2.zip",
+                        ("dir2/subdir2/resource2.txt", "content\n"));
+                    using var resolver = new ModulePathResolver(new[] { first, second });
+                    using ResourceReader reader = ResourceReaders.ModulePath(resolver);
+                    var resource1 = reader.TryRead(new Uri("modulepath:/dir1/resource1.txt")) as Resource;
+                    var resource2 = reader.TryRead(
+                        new Uri("modulepath:/dir2/subdir2/resource2.txt")) as Resource;
+                    Require(resource1?.Text == "content\n" && resource2?.Text == "content\n" &&
+                        resource2.Base64 == "Y29udGVudAo=", "archive resource-reader bytes");
+                    break;
+                }
+                case "module path - absent resource":
+                {
+                    using var resolver = new ModulePathResolver(Array.Empty<string>());
+                    using ResourceReader reader = ResourceReaders.ModulePath(resolver);
+                    Require(reader.TryRead(new Uri("modulepath:/non/existing")) is null,
+                        "absent module-path resource");
+                    break;
+                }
+                case "module path - missing leading slash":
+                {
+                    using var resolver = new ModulePathResolver(Array.Empty<string>());
+                    using ResourceReader reader = ResourceReaders.ModulePath(resolver);
+                    Exception error = ThrowsAny(() =>
+                        reader.TryRead(new Uri("modulepath:non/existing")));
+                    Require(error.Message.Contains("/", StringComparison.Ordinal),
+                        "module-path resource leading-slash diagnostic");
+                    break;
+                }
+                case "module path - missing jar is ignored":
+                {
+                    string missing = Path.Combine(fixture.Root, "missing.zip");
+                    string archive = CreateArchive(fixture.Root, "resource.zip",
+                        ("dir1/resource1.txt", "content\n"));
+                    using var resolver = new ModulePathResolver(new[] { missing, archive });
+                    using ResourceReader reader = ResourceReaders.ModulePath(resolver);
+                    var resource = reader.TryRead(new Uri("modulepath:/dir1/resource1.txt")) as Resource;
+                    Require(resource?.Text == "content\n", "missing archive ignored");
+                    break;
+                }
+                case "via service provider":
+                {
+                    using ResourceReader reader = new CorpusResourceReader("service-resource", "success");
+                    Require(reader.TryRead(new Uri("service-resource:foo")) as string == "success",
+                        "explicit .NET resource service registration");
+                    break;
+                }
+                case "externalProcess":
+                    VerifyExternalReaderResourceLifecycle(fixture.Root);
+                    break;
+                default:
+                    return Pending(row);
+            }
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.resource.ResourceReadersEvaluatorTest")
+        {
+            switch (row.SourceMethod)
+            {
+                case "class path":
+                {
+                    using var reader = new CorpusResourceReader("adaptedresource", "content");
+                    using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
+                        .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
+                        .SetAllowedModules(new[] { new Regex("repl:"), new Regex("pkl:") })
+                        .SetAllowedResources(new[] { new Regex("adaptedresource:") })
+                        .AddModuleKeyFactory(ModuleKeyFactories.StandardLibraryFactory)
+                        .AddResourceReader(reader).Build();
+                    PModule module = evaluator.Evaluate(ModuleSource.FromText(
+                        "res1 = read(\"adaptedresource:item\")"));
+                    Require((string)module.GetProperty("res1") == "content",
+                        ".NET embedded/custom resource evaluation adaptation");
+                    break;
+                }
+                case "module path":
+                {
+                    string archive = CreateArchive(fixture.Root, "eval-resource.zip",
+                        ("dir1/resource1.txt", "content\n"));
+                    using var resolver = new ModulePathResolver(new[] { archive });
+                    using ResourceReader reader = ResourceReaders.ModulePath(resolver);
+                    using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+                        .AddResourceReader(reader).Build();
+                    PModule module = evaluator.Evaluate(ModuleSource.FromText(
+                        "res1 = read(\"modulepath:/dir1/resource1.txt\").text"));
+                    Require((string)module.GetProperty("res1") == "content\n",
+                        "module-path resource evaluation");
+                    break;
+                }
+                default:
+                    return Pending(row);
+            }
+            return Passed(row);
+        }
+        return Pending(row);
+    }
+
+    static ChildResult ExecutePackageTest(ContractRow row, CorpusFixture fixture)
+    {
+        if (row.SourceClass == "org.pkl.core.packages.PackageUriTest")
+        {
+            switch (row.SourceMethod)
+            {
+                case "rejects percent-encoded dot-dot path segments":
+                    _ = Throws<UriFormatException>(() => _ = new PackageUri(
+                        "package://attacker.test/%2e%2e/legit.example.test/legit@1.2.3"));
+                    break;
+                case "rejects literal dot-dot path segments":
+                    _ = Throws<UriFormatException>(() => _ = new PackageUri(
+                        "package://attacker.test/../legit@1.2.3"));
+                    break;
+                case "rejects trailing dot-dot segment":
+                    _ = Throws<UriFormatException>(() => _ = new PackageUri(
+                        "package://attacker.test/foo@1.2.3/%2e%2e"));
+                    break;
+                case "accepts a valid package URI":
+                {
+                    var uri = new PackageUri("package://example.test/my/package@1.0.0");
+                    Require(uri.Version.Equals(Version.Parse("1.0.0")) &&
+                        uri.MetadataRequestUri.Scheme == Uri.UriSchemeHttps,
+                        "valid package URI components");
+                    break;
+                }
+                case "does not reject path segments that merely contain dots":
+                    _ = new PackageUri("package://example.test/my..pkg/..foo/bar..@1.0.0");
+                    break;
+                default:
+                    return Pending(row);
+            }
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.packages.DependencyMetadataTest")
+        {
+            DependencyMetadata metadata = CreateDependencyMetadata(
+                includePattern: row.SourceMethod == "testPatternSerialization");
+            using var output = new MemoryStream();
+            metadata.WriteTo(output);
+            string json = Encoding.UTF8.GetString(output.ToArray());
+            DependencyMetadata parsed = DependencyMetadata.Parse(json);
+            switch (row.SourceMethod)
+            {
+                case "parse":
+                    Require(parsed.Equals(metadata) && parsed.Name == "my-proj-name" &&
+                        parsed.Dependencies.Count == 1 && parsed.Authors?.Single() == "birdy@example.test",
+                        "dependency metadata parse equality");
+                    break;
+                case "testPatternSerialization":
+                {
+                    object? pattern = parsed.Annotations.Single().GetProperty("pattern");
+                    Require(pattern is Regex regex && regex.ToString() == ".*" &&
+                        json.Contains("\"type\": \"Pattern\"", StringComparison.Ordinal),
+                        "dependency metadata regex serialization");
+                    break;
+                }
+                case "writeTo":
+                {
+                    using var repeated = new MemoryStream();
+                    parsed.WriteTo(repeated);
+                    Require(output.ToArray().SequenceEqual(repeated.ToArray()),
+                        "dependency metadata deterministic UTF-8 serialization");
+                    break;
+                }
+                default:
+                    return Pending(row);
+            }
+            return Passed(row);
+        }
+
+        if (row.SourceClass is "org.pkl.core.packages.PackageResolversTest$DiskCachedPackageResolverTest" or
+            "org.pkl.core.packages.PackageResolversTest$InMemoryPackageResolverTest")
+        {
+            bool disk = row.SourceClass.Contains("DiskCached", StringComparison.Ordinal);
+            using var server = new CorpusPackageServer();
+            using PklHttpClient client = server.CreateClient();
+            string? cache = disk ? Path.Combine(fixture.Root, "package-cache") : null;
+            using PackageResolver resolver = PackageResolver.GetInstance(
+                SecurityManagers.DefaultManager, client, cache);
+            PackageAssetUri Asset(string packageName, string path) => new(
+                $"package://127.0.0.1:{server.Port}/{packageName}#{path}");
+
+            switch (row.SourceMethod)
+            {
+                case "get module bytes":
+                {
+                    PackageAssetUri asset = Asset("birds@0.5.0", "/Bird.pkl");
+                    Task<byte[]>[] reads = Enumerable.Range(0, 6).Select(_ => Task.Run(() =>
+                        resolver.GetAssetBytes(asset))).ToArray();
+                    Task.WaitAll(reads);
+                    Require(reads.All(task => Encoding.UTF8.GetString(task.Result) ==
+                        server.BirdModule), "concurrent package asset reads");
+                    break;
+                }
+                case "get directory":
+                {
+                    IOException error = Throws<IOException>(() =>
+                        resolver.GetAssetBytes(Asset("birds@0.5.0", "/")));
+                    Require(error.Message.Contains("directory", StringComparison.OrdinalIgnoreCase),
+                        "package directory read rejection");
+                    break;
+                }
+                case "get directory, allowing directory reads":
+                {
+                    string listing = Encoding.UTF8.GetString(
+                        resolver.GetAssetBytes(Asset("birds@0.5.0", "/"), true));
+                    Require(listing == "Bird.pkl\nallFruit.pkl\ncatalog\ncatalog.pkl\nsome\n",
+                        "package directory byte listing order");
+                    break;
+                }
+                case "get module bytes resolving path":
+                    Require(Encoding.UTF8.GetString(resolver.GetAssetBytes(
+                        Asset("birds@0.5.0", "/foo/../Bird.pkl"))) == server.BirdModule,
+                        "normalized package asset path");
+                    break;
+                case "list path elements at root":
+                {
+                    IReadOnlyList<PathElement> elements = resolver.GetElements(
+                        Asset("birds@0.5.0", "/"));
+                    Require(elements.ToHashSet().SetEquals(new[] {
+                        new PathElement("some", true), new PathElement("catalog", true),
+                        new PathElement("Bird.pkl", false), new PathElement("allFruit.pkl", false),
+                        new PathElement("catalog.pkl", false) }), "package root elements");
+                    break;
+                }
+                case "get multiple assets":
+                    Require(Encoding.UTF8.GetString(resolver.GetAssetBytes(
+                            Asset("birds@0.5.0", "/Bird.pkl"))) == server.BirdModule &&
+                        Encoding.UTF8.GetString(resolver.GetAssetBytes(
+                            Asset("birds@0.5.0", "/catalog/Swallow.pkl"))) ==
+                            "name = \"Swallow\"\n", "multiple package assets");
+                    break;
+                case "list path elements in nested directory":
+                    Require(resolver.GetElements(Asset("birds@0.5.0", "/catalog/"))
+                        .ToHashSet().SetEquals(new[] { new PathElement("Ostrich.pkl", false),
+                            new PathElement("Swallow.pkl", false) }),
+                        "nested package elements");
+                    break;
+                case "getBytes() throws FileNotFound if package exists but path does not":
+                    _ = Throws<FileNotFoundException>(() => resolver.GetAssetBytes(
+                        Asset("birds@0.5.0", "/Horse.pkl")));
+                    break;
+                case "getBytes() throws PackageLoadError if package does not exist":
+                    _ = Throws<PackageLoadError>(() => resolver.GetAssetBytes(
+                        Asset("not-a-package@0.5.0", "/Horse.pkl")));
+                    break;
+                case "requires package zip to be an HTTPS URI":
+                {
+                    Exception error = ThrowsAny(() => resolver.GetAssetBytes(
+                        Asset("badPackageZipUrl@1.0.0", "/Bug.pkl")));
+                    Require(error.Message.Contains("HTTPS URI", StringComparison.Ordinal) &&
+                        error.Message.Contains("ftp://wait/a/minute", StringComparison.Ordinal),
+                        "package archive HTTPS requirement");
+                    break;
+                }
+                case "throws if package checksum is invalid":
+                {
+                    PackageLoadError error = Throws<PackageLoadError>(() =>
+                        resolver.GetAssetBytes(Asset("badChecksum@1.0.0", "/Bug.pkl")));
+                    Require(error.Message.Contains("Computed checksum", StringComparison.Ordinal) &&
+                        error.Message.Contains("Expected checksum", StringComparison.Ordinal),
+                        "package archive integrity diagnostic");
+                    break;
+                }
+                default:
+                    return Pending(row);
+            }
+
+            if (disk)
+            {
+                Require(Directory.Exists(cache!) && Directory.EnumerateFileSystemEntries(
+                    cache!, "*", SearchOption.AllDirectories).Any(), "disk package cache state");
+            }
+            return Passed(row);
+        }
+        return Pending(row);
+    }
+
+    static ChildResult ExecuteProjectTest(ContractRow row, CorpusFixture fixture)
+    {
+        if (row.SourceClass == "org.pkl.core.project.ProjectDepsTest")
+        {
+            const string json = "{\n" +
+                "  \"schemaVersion\": 1,\n" +
+                "  \"resolvedDependencies\": {\n" +
+                "    \"package://localhost:0/birds@0\": {\n" +
+                "      \"type\": \"remote\",\n" +
+                "      \"uri\": \"package://localhost:0/birds@0.5.0\",\n" +
+                "      \"checksums\": {\"sha256\": \"abc123\"}\n" +
+                "    },\n" +
+                "    \"package://localhost:0/fruit@1\": {\n" +
+                "      \"type\": \"local\",\n" +
+                "      \"uri\": \"package://localhost:0/fruit@1.1.0\",\n" +
+                "      \"path\": \"../fruit\"\n" +
+                "    }\n" +
+                "  }\n" +
+                "}\n";
+            ProjectDeps parsed = ProjectDeps.ParseFromString(json);
+            var remote = parsed.Get(CanonicalPackageUri.Of(
+                "package://localhost:0/birds@0")) as Dependency.RemoteDependency;
+            var local = parsed.Get(CanonicalPackageUri.Of(
+                "package://localhost:0/fruit@1")) as Dependency.LocalDependency;
+            Require(remote?.Checksums?.Sha256 == "abc123" && local?.Path == "../fruit",
+                "project dependency parse");
+            if (row.SourceMethod == "writeTo")
+            {
+                using var output = new MemoryStream();
+                parsed.WriteTo(output);
+                ProjectDeps repeated = ProjectDeps.ParseFromString(
+                    Encoding.UTF8.GetString(output.ToArray()));
+                var repeatedRemote = repeated.Get(
+                    CanonicalPackageUri.Of("package://localhost:0/birds@0"));
+                var repeatedLocal = repeated.Get(
+                    CanonicalPackageUri.Of("package://localhost:0/fruit@1"));
+                Require(parsed.Equals(repeated),
+                    $"project dependency serialization round trip " +
+                    $"(remote={remote!.Equals(repeatedRemote!)}, " +
+                    $"local={local!.Equals(repeatedLocal!)})");
+            }
+            else if (row.SourceMethod != "parse") return Pending(row);
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.project.ProjectDependenciesResolverTest")
+        {
+            using var server = new CorpusPackageServer();
+            string projectFile = Path.Combine(fixture.Root, "dependency-project", "PklProject");
+            Directory.CreateDirectory(Path.GetDirectoryName(projectFile)!);
+            string checksum = row.SourceMethod ==
+                "fails if project declares a package with an incorrect checksum"
+                ? "intentionally bogus value"
+                : server.BirdsMetadataSha256;
+            File.WriteAllText(projectFile,
+                "amends \"pkl:Project\"\n" +
+                "dependencies { [\"birds\"] { " +
+                $"uri = \"package://127.0.0.1:{server.Port}/birds@0.5.0\"; " +
+                $"checksums {{ sha256 = \"{checksum}\" }} }} }}\n",
+                new UTF8Encoding(false));
+            Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+            using PklHttpClient client = server.CreateClient();
+            using PackageResolver resolver = PackageResolver.GetInstance(
+                SecurityManagers.DefaultManager, client, null);
+            var dependencyResolver = new ProjectDependenciesResolver(
+                project, resolver, TextWriter.Null);
+            if (row.SourceMethod == "resolveDependencies")
+            {
+                ProjectDeps dependencies = dependencyResolver.Resolve();
+                using var output = new MemoryStream();
+                dependencies.WriteTo(output);
+                string serialized = Encoding.UTF8.GetString(output.ToArray());
+                Require(serialized.Contains("projectpackage://127.0.0.1", StringComparison.Ordinal) &&
+                    serialized.Contains(server.BirdsMetadataSha256, StringComparison.Ordinal),
+                    "project remote dependency resolution");
+            }
+            else if (row.SourceMethod ==
+                "fails if project declares a package with an incorrect checksum")
+            {
+                PklException error = Throws<PklException>(() => dependencyResolver.Resolve());
+                Require(error.Message.Contains("checksum", StringComparison.OrdinalIgnoreCase) &&
+                    error.Message.Contains("intentionally bogus value", StringComparison.Ordinal) &&
+                    error.Message.Contains(server.BirdsMetadataSha256, StringComparison.Ordinal),
+                    "declared project checksum diagnostic");
+            }
+            else return Pending(row);
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.project.ProjectTest")
+        {
+            switch (row.SourceMethod)
+            {
+                case "loadFromPath":
+                {
+                    string path = WriteProjectFixture(fixture.Root, includeLocalDependency: false);
+                    Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(path);
+                    Require(project.PackageMetadata?.Name == "hawk" &&
+                        project.PackageMetadata.Version.Equals(Version.Parse("0.5.0")) &&
+                        project.ResolvedEvaluatorConfiguration.Environment?["one"] == "1" &&
+                        project.ResolvedEvaluatorConfiguration.ExternalPropertiesReadOnly?["two"] == "2" &&
+                        project.Tests.Count == 2 && project.Annotations.Count == 3,
+                        "project package, settings, tests, and annotations");
+                    break;
+                }
+                case "loadFromPath() resolvedEvaluatorSettings":
+                {
+                    string directory = Path.Combine(fixture.Root, "resolved-settings-project");
+                    Directory.CreateDirectory(directory);
+                    string path = Path.Combine(directory, "PklProject");
+                    File.WriteAllText(path,
+                        "amends \"pkl:Project\"\n" +
+                        $"projectFileUri = \"{new Uri(path).AbsoluteUri}\"\n" +
+                        "evaluatorSettings { rootDir = \".\"; moduleCacheDir = \"cache/\"; " +
+                        "modulePath { \"modulepath1/\"; \"modulepath2/\" } }\n",
+                        new UTF8Encoding(false));
+                    PklEvaluatorSettings settings = Pkl.Core.Project.Project.LoadFromPath(path)
+                        .ResolvedEvaluatorConfiguration;
+                    Require(Path.GetFullPath(settings.RootDir!) == Path.GetFullPath(directory) &&
+                        Path.GetFullPath(settings.ModuleCacheDir!) ==
+                            Path.GetFullPath(Path.Combine(directory, "cache")) &&
+                        settings.ModulePaths?.Select(Path.GetFullPath).SequenceEqual(new[] {
+                            Path.GetFullPath(Path.Combine(directory, "modulepath1")),
+                            Path.GetFullPath(Path.Combine(directory, "modulepath2")) }) == true,
+                        "resolved project-relative evaluator paths");
+                    break;
+                }
+                case "load wrong type":
+                {
+                    string path = Path.Combine(fixture.Root, "wrong-project.pkl");
+                    File.WriteAllText(path, "module com.example.Foo\nfoo = 1", new UTF8Encoding(false));
+                    PklException error = Throws<PklException>(() =>
+                        Pkl.Core.Project.Project.LoadFromPath(path));
+                    Require(error.Message.Contains("pkl.Project", StringComparison.Ordinal) &&
+                        error.Message.Contains("com.example.Foo", StringComparison.Ordinal),
+                        "wrong project type diagnostic");
+                    break;
+                }
+                case "evaluate project module -- invalid checksum":
+                    VerifyProjectPackageChecksumFailure(fixture.Root);
+                    break;
+                case "fails if project has cyclical dependencies":
+                    VerifyProjectCycles(fixture.Root, multiple: false);
+                    break;
+                case "fails if a project has cyclical dependencies -- multiple cycles found":
+                    VerifyProjectCycles(fixture.Root, multiple: true);
+                    break;
+                case "external readers -- executable path is relative to project dir":
+                {
+                    Pkl.Core.Project.Project project = LoadExternalReaderProject(
+                        fixture.Root, "foo/bar/baz");
+                    string executable = project.ResolvedEvaluatorConfiguration
+                        .ExternalModuleReadersReadOnly!["foo"].Executable;
+                    Require(Path.GetFullPath(executable) == Path.GetFullPath(
+                        Path.Combine(project.ProjectDirectory, "foo", "bar", "baz")),
+                        "project-relative external reader executable");
+                    break;
+                }
+                case "external readers -- executable is unmodified simple name":
+                {
+                    Pkl.Core.Project.Project project = LoadExternalReaderProject(
+                        fixture.Root, "my-command");
+                    Require(project.EvaluatorConfiguration.ExternalModuleReadersReadOnly!["foo"]
+                        .Executable == "my-command", "simple external reader executable");
+                    break;
+                }
+                default:
+                    return Pending(row);
+            }
+            return Passed(row);
+        }
+        return Pending(row);
+    }
+
+    static ChildResult ExecuteSettingsTest(ContractRow row, CorpusFixture fixture)
+    {
+        string settingsPath = Path.Combine(fixture.Root, "settings.pkl");
+        switch (row.SourceMethod)
+        {
+            case "load user settings":
+                File.WriteAllText(settingsPath,
+                    "amends \"pkl:settings\"\neditor = Sublime\n", new UTF8Encoding(false));
+                Require(PklSettings.Load(ModuleSource.FromPath(settingsPath)).EditorSettings
+                    .Equals(PklSettings.Editor.SUBLIME), "user editor settings");
+                break;
+            case "load user settings with http":
+            {
+                File.WriteAllText(settingsPath,
+                    "amends \"pkl:settings\"\nhttp { " +
+                    "proxy { address = \"http://localhost:8080\"; " +
+                    "noProxy { \"example.com\"; \"pkg.pkl-lang.org\" } }; " +
+                    "rewrites { [\"https://foo.com/\"] = \"https://bar.com/\" }; " +
+                    "headers { [\"https://foo.com/**\"] { [\"x-foo\"] = \"bar\" }; " +
+                    "[\"https://bar.com/**\"] { [\"x-bar\"] { \"bar\"; \"baz\" } } } }\n",
+                    new UTF8Encoding(false));
+                PklSettings settings = PklSettings.Load(ModuleSource.FromPath(settingsPath));
+                Require(settings.EditorSettings.Equals(PklSettings.Editor.SYSTEM) &&
+                    settings.HttpSettings?.Proxy?.Address == new Uri("http://localhost:8080") &&
+                    settings.HttpSettings.Proxy.NoProxyReadOnly?.SequenceEqual(
+                        new[] { "example.com", "pkg.pkl-lang.org" }) == true &&
+                    settings.HttpSettings.RewritesReadOnly?.Single().Value ==
+                        new Uri("https://bar.com/") &&
+                    settings.HttpSettings.Headers?["https://bar.com/**"]["x-bar"]
+                        .SequenceEqual(new[] { "bar", "baz" }) == true,
+                    "HTTP user settings");
+                break;
+            }
+            case "load user settings with http, but no noProxy":
+            {
+                File.WriteAllText(settingsPath,
+                    "amends \"pkl:settings\"\nhttp { proxy { " +
+                    "address = \"http://localhost:8080\" } }\n", new UTF8Encoding(false));
+                PklSettings settings = PklSettings.Load(ModuleSource.FromPath(settingsPath));
+                Require(settings.HttpSettings?.Proxy?.NoProxyReadOnly?.Count == 0,
+                    "nullable empty no-proxy settings");
+                break;
+            }
+            case "load settings from path":
+                File.WriteAllText(settingsPath,
+                    "amends \"pkl:settings\"\neditor = Idea\n", new UTF8Encoding(false));
+                Require(PklSettings.Load(ModuleSource.FromPath(settingsPath)).EditorSettings
+                    .Equals(PklSettings.Editor.IDEA), "explicit settings path");
+                break;
+            case "predefined editors":
+            {
+                using Evaluator evaluator = Evaluator.Preconfigured();
+                PModule module = evaluator.Evaluate(ModuleSource.FromText(
+                    "import \"pkl:settings\"\n" +
+                    "system = settings.System\nidea = settings.Idea\ntextMate = settings.TextMate\n" +
+                    "sublime = settings.Sublime\natom = settings.Atom\nvsCode = settings.VsCode\n"));
+                var expected = new[] { PklSettings.Editor.SYSTEM, PklSettings.Editor.IDEA,
+                    PklSettings.Editor.TEXT_MATE, PklSettings.Editor.SUBLIME,
+                    PklSettings.Editor.ATOM, PklSettings.Editor.VS_CODE };
+                var names = new[] { "system", "idea", "textMate", "sublime", "atom", "vsCode" };
+                Require(names.Select(name => ((PObject)module.GetProperty(name))
+                        .GetProperty("urlScheme")).Cast<string>()
+                    .SequenceEqual(expected.Select(editor => editor.UrlScheme)),
+                    "predefined editor URL schemes");
+                break;
+            }
+            case "invalid settings file":
+                File.WriteAllText(settingsPath, "foo = 1", new UTF8Encoding(false));
+                Require(Throws<PklException>(() => PklSettings.Load(ModuleSource.FromPath(settingsPath)))
+                    .Message.Contains("pkl.settings", StringComparison.Ordinal),
+                    "invalid settings type diagnostic");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteFileSystemManagerTest(ContractRow row, CorpusFixture fixture)
+    {
+        string archive = CreateArchive(fixture.Root, "filesystem.zip",
+            ("module.pkl", "value = 1"));
+        switch (row.SourceMethod)
+        {
+            case "only closes a file system after the last usage closes":
+            {
+                var first = new ModulePathResolver(new[] { archive });
+                var second = new ModulePathResolver(new[] { archive });
+                var third = new ModulePathResolver(new[] { archive });
+                Uri uri = new("modulepath:/module.pkl");
+                Require(first.Resolve(uri) is not null && second.Resolve(uri) is not null &&
+                    third.Resolve(uri) is not null, "three shared archive filesystem usages");
+                first.Dispose();
+                Require(second.Resolve(uri) is not null && third.Resolve(uri) is not null,
+                    "archive remains open after first usage closes");
+                second.Dispose();
+                Require(third.Resolve(uri) is not null,
+                    "archive remains open until its last usage closes");
+                third.Dispose();
+                _ = Throws<InvalidOperationException>(() => third.Resolve(uri));
+                break;
+            }
+            case "does not close file system that was spawned externally":
+            {
+                using ZipArchive external = ZipFile.OpenRead(archive);
+                using (var resolver = new ModulePathResolver(new[] { archive }))
+                    Require(resolver.Resolve(new Uri("modulepath:/module.pkl")) is not null,
+                        "resolver sees externally opened archive");
+                Require(external.GetEntry("module.pkl") is not null,
+                    "external archive ownership preserved");
+                break;
+            }
+            case "close and re-open same file system":
+            {
+                using (var first = new ModulePathResolver(new[] { archive }))
+                    Require(first.Resolve(new Uri("modulepath:/module.pkl")) is not null,
+                        "first archive resolver");
+                using (var second = new ModulePathResolver(new[] { archive }))
+                    Require(second.Resolve(new Uri("modulepath:/module.pkl")) is not null,
+                        "reopened archive resolver");
+                break;
+            }
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteHttpClientTest(ContractRow row, CorpusFixture fixture)
+    {
+        if (row.SourceClass == "org.pkl.core.http.DummyHttpClientTest")
+        {
+            using PklHttpClient client = PklHttpClient.DummyClient();
+            if (row.SourceMethod == "refuses to send messages")
+            {
+                Exception error = ThrowsAny(() => client.Send(
+                    new HttpRequestMessage(HttpMethod.Get, "https://example.test/"), _ => { }));
+                Require(error.Message.Length > 0, "dummy HTTP client deterministic rejection");
+            }
+            else if (row.SourceMethod == "can be closed")
+            {
+                client.Dispose();
+                client.Dispose();
+            }
+            else return Pending(row);
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.http.HttpClientBuilderTest")
+        {
+            using var server = CorpusHttpServer.Plain(_ => CorpusHttpResponse.Ok("headers"));
+            PklHttpClient.Builder builder = PklHttpClient.CreateBuilder();
+            if (row.SourceMethod == "addHeader merges values for duplicate header names")
+            {
+                builder.AddHeaders("**", new Dictionary<string, IReadOnlyList<string>> {
+                    ["X-Test"] = new[] { "one" } });
+                builder.AddHeaders("**", new Dictionary<string, IReadOnlyList<string>> {
+                    ["X-Test"] = new[] { "two" } });
+                using PklHttpClient client = builder.Build();
+                using HttpResponseMessage _ = client.Send(
+                    new HttpRequestMessage(HttpMethod.Get, server.BaseUri), _ => { });
+                Require(server.SingleRequest().Headers["x-test"].SequenceEqual(new[] { "one", "two" }),
+                    "duplicate configured HTTP header values");
+            }
+            else if (row.SourceMethod == "addHeader preserves non-overlapping header names")
+            {
+                builder.AddHeaders("**", new Dictionary<string, IReadOnlyList<string>> {
+                    ["X-One"] = new[] { "one" } });
+                builder.AddHeaders("**", new Dictionary<string, IReadOnlyList<string>> {
+                    ["X-Two"] = new[] { "two" } });
+                using PklHttpClient client = builder.Build();
+                using HttpResponseMessage _ = client.Send(
+                    new HttpRequestMessage(HttpMethod.Get, server.BaseUri), _ => { });
+                CorpusHttpRequest request = server.SingleRequest();
+                Require(request.Headers["x-one"].Single() == "one" &&
+                    request.Headers["x-two"].Single() == "two",
+                    "non-overlapping configured HTTP headers");
+            }
+            else return Pending(row);
+            return Passed(row);
+        }
+
+        if (row.SourceClass.StartsWith("org.pkl.core.http.HttpClientTest", StringComparison.Ordinal))
+        {
+            switch (row.SourceMethod)
+            {
+                case "can build default client":
+                    using (PklHttpClient client = PklHttpClient.CreateBuilder().Build())
+                        Require(client is IDisposable, "default HTTP client shape");
+                    break;
+                case "can build custom client":
+                    using (PklHttpClient client = PklHttpClient.CreateBuilder()
+                        .SetConnectTimeout(TimeSpan.FromSeconds(2))
+                        .SetRequestTimeout(TimeSpan.FromSeconds(2))
+                        .SetUserAgent("vibeformer-corpus").Build())
+                        Require(client is IDisposable, "custom HTTP client shape");
+                    break;
+                case "can load certificates from regular file":
+                {
+                    using var server = CorpusHttpServer.Tls(_ => CorpusHttpResponse.Ok("tls"));
+                    string certificate = Path.Combine(fixture.Root, "certificate.pem");
+                    File.WriteAllText(certificate, server.CertificatePem, new UTF8Encoding(false));
+                    using PklHttpClient client = PklHttpClient.CreateBuilder()
+                        .AddCertificate(certificate).Build();
+                    Require(Encoding.UTF8.GetString(client.GetBytes(
+                        new HttpRequestMessage(HttpMethod.Get, server.BaseUri), _ => { })) == "tls",
+                        "certificate file HTTP trust");
+                    break;
+                }
+                case "can load certificates from a byte array":
+                {
+                    using var server = CorpusHttpServer.Tls(_ => CorpusHttpResponse.Ok("tls"));
+                    using PklHttpClient client = PklHttpClient.CreateBuilder()
+                        .AddCertificate(Encoding.ASCII.GetBytes(server.CertificatePem)).Build();
+                    using Stream stream = client.OpenRead(
+                        new HttpRequestMessage(HttpMethod.Get, server.BaseUri), _ => { });
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    Require(reader.ReadToEnd() == "tls", "certificate byte-array HTTP trust");
+                    break;
+                }
+                case "certificate file cannot be empty":
+                {
+                    string certificate = Path.Combine(fixture.Root, "empty.pem");
+                    File.WriteAllBytes(certificate, Array.Empty<byte>());
+                    _ = Throws<Pkl.Core.Http.HttpClientException>(() =>
+                        PklHttpClient.CreateBuilder().AddCertificate(certificate).Build());
+                    break;
+                }
+                case "can load built-in certificates":
+                    using (PklHttpClient client = PklHttpClient.CreateBuilder().Build())
+                        Require(client is not null, "platform certificate store client");
+                    break;
+                case "can be closed multiple times":
+                {
+                    PklHttpClient client = PklHttpClient.CreateBuilder().Build();
+                    client.Dispose();
+                    client.Dispose();
+                    break;
+                }
+                case "refuses to send messages once closed":
+                {
+                    PklHttpClient client = PklHttpClient.CreateBuilder().Build();
+                    client.Dispose();
+                    _ = ThrowsAny(() => client.Send(
+                        new HttpRequestMessage(HttpMethod.Get, "https://example.test/"), _ => { }));
+                    break;
+                }
+                case "follows redirects":
+                case "preserves configured headers across redirects":
+                case "respects configured rewrites across redirects":
+                case "checks each URL before making a request":
+                case "redirects only carry their specifically configured headers":
+                    VerifyRedirectBehavior(row.SourceMethod);
+                    break;
+                case "cannot downgrade HTTPS to HTTP":
+                    VerifyRedirectSchemeChange(upgrade: false);
+                    break;
+                case "can upgrade HTTP to HTTPS":
+                    VerifyRedirectSchemeChange(upgrade: true);
+                    break;
+                case "infinite redirects fail with VmException":
+                {
+                    using var server = CorpusHttpServer.Plain(request =>
+                        CorpusHttpResponse.Redirect(request.Uri));
+                    using PklHttpClient client = PklHttpClient.CreateBuilder().Build();
+                    Exception error = ThrowsAny(() => client.Send(
+                        new HttpRequestMessage(HttpMethod.Get, server.BaseUri), _ => { }));
+                    Require(error.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase),
+                        "bounded redirect failure");
+                    break;
+                }
+                case "invalid redirect URI fails with VmException":
+                {
+                    using var server = CorpusHttpServer.Plain(_ =>
+                        new CorpusHttpResponse(302, "", "http://[invalid"));
+                    using PklHttpClient client = PklHttpClient.CreateBuilder().Build();
+                    Exception error = ThrowsAny(() => client.Send(
+                        new HttpRequestMessage(HttpMethod.Get, server.BaseUri), _ => { }));
+                    Require(error.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase) ||
+                        error.Message.Contains("URI", StringComparison.OrdinalIgnoreCase),
+                        "invalid redirect URI diagnostic");
+                    break;
+                }
+                default:
+                    return Pending(row);
+            }
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.http.LazyHttpClientTest")
+        {
+            if (row.SourceMethod == "builds underlying client on first send")
+            {
+                using var server = CorpusHttpServer.Plain(_ => CorpusHttpResponse.Ok("lazy"));
+                using PklHttpClient client = PklHttpClient.CreateBuilder().BuildLazily();
+                Require(server.Requests.Count == 0, "lazy client before send");
+                Require(Encoding.UTF8.GetString(client.GetBytes(
+                        new HttpRequestMessage(HttpMethod.Get, server.BaseUri), _ => { })) == "lazy" &&
+                    server.Requests.Count == 1, "lazy client first send");
+            }
+            else if (row.SourceMethod == "does not build underlying client unnecessarily")
+            {
+                PklHttpClient client = PklHttpClient.CreateBuilder().BuildLazily();
+                client.Dispose();
+                client.Dispose();
+            }
+            else return Pending(row);
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.http.NoProxyRuleTest")
+        {
+            VerifyNoProxyBehavior(row.SourceMethod);
+            return Passed(row);
+        }
+
+        if (row.SourceClass == "org.pkl.core.http.RequestRewritingClientTest")
+        {
+            VerifyRequestRewritingBehavior(row.SourceMethod);
+            return Passed(row);
+        }
+        return Pending(row);
     }
 
     static ChildResult ExecuteDurationTest(ContractRow row)
@@ -2230,7 +3613,7 @@ static class Program
         return Passed(row);
     }
 
-    static ChildResult ExecuteEvaluatorTest(ContractRow row)
+    static ChildResult ExecuteEvaluatorTest(ContractRow row, CorpusFixture fixture)
     {
         switch (row.SourceMethod)
         {
@@ -2242,6 +3625,151 @@ static class Program
                 Require(module.Properties.Count == 2 &&
                     (string)module.GetProperty("name") == "pigeon" &&
                     (long)module.GetProperty("age") == 30, "evaluate text module");
+                break;
+            }
+            case "evaluate text with relative import":
+            {
+                using Evaluator evaluator = Evaluator.Preconfigured();
+                PklException error = Throws<PklException>(() =>
+                    evaluator.Evaluate(ModuleSource.FromText("import \"foo.bar\"")));
+                Require(error.Message.Contains("relative", StringComparison.OrdinalIgnoreCase) &&
+                    error.Message.Contains("import", StringComparison.OrdinalIgnoreCase),
+                    "relative text-module import diagnostic: " + error.Message);
+                break;
+            }
+            case "evaluate named module":
+            {
+                string root = Path.Combine(fixture.Root, "named-modules");
+                string file = Path.Combine(root, "org", "pkl", "core", "EvaluatorTest.pkl");
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                File.WriteAllText(file, "name = \"pigeon\"; age = 10 + 20", new UTF8Encoding(false));
+                using var resolver = new ModulePathResolver(new[] { root });
+                using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                builder.SetModuleKeyFactories(new[] { factory }
+                    .Concat(builder.GetModuleKeyFactories()).ToArray());
+                using Evaluator evaluator = builder.Build();
+                PModule module = evaluator.Evaluate(
+                    ModuleSource.FromModulePath("org/pkl/core/EvaluatorTest.pkl"));
+                Require((string)module.GetProperty("name") == "pigeon" &&
+                    (long)module.GetProperty("age") == 30, "named module-path evaluation");
+                break;
+            }
+            case "evaluate non-existing named module":
+            {
+                using var resolver = new ModulePathResolver(Array.Empty<string>());
+                using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                builder.SetModuleKeyFactories(new[] { factory }
+                    .Concat(builder.GetModuleKeyFactories()).ToArray());
+                using Evaluator evaluator = builder.Build();
+                Require(Throws<PklException>(() => evaluator.Evaluate(
+                        ModuleSource.FromModulePath("non/existing.pkl"))).Message
+                    .Contains("Cannot find module", StringComparison.Ordinal),
+                    "missing named module diagnostic");
+                break;
+            }
+            case "evaluate file":
+            case "evaluate path":
+            case "evaluate URI":
+            {
+                string file = Path.Combine(fixture.Root, "evaluate-local.pkl");
+                File.WriteAllText(file, "name = \"pigeon\"; age = 10 + 20", new UTF8Encoding(false));
+                ModuleSource source = row.SourceMethod switch
+                {
+                    "evaluate file" => ModuleSource.FromFile(file),
+                    "evaluate path" => ModuleSource.FromPath(file),
+                    _ => ModuleSource.FromUri(new Uri(file))
+                };
+                using Evaluator evaluator = Evaluator.Preconfigured();
+                PModule module = evaluator.Evaluate(source);
+                Require((string)module.GetProperty("name") == "pigeon" &&
+                    (long)module.GetProperty("age") == 30, row.SourceMethod);
+                break;
+            }
+            case "evaluate non-existing file":
+            case "evaluate non-existing path":
+            {
+                string missing = Path.Combine(fixture.Root, "non-existing.pkl");
+                ModuleSource source = row.SourceMethod == "evaluate non-existing file"
+                    ? ModuleSource.FromFile(missing) : ModuleSource.FromPath(missing);
+                using Evaluator evaluator = Evaluator.Preconfigured();
+                Require(Throws<PklException>(() => evaluator.Evaluate(source)).Message
+                    .Contains("Cannot find module", StringComparison.Ordinal),
+                    row.SourceMethod + " diagnostic");
+                break;
+            }
+            case "evaluate non-existing URI":
+            {
+                using var server = CorpusHttpServer.Plain(_ => CorpusHttpResponse.NotFound());
+                using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
+                    .Build();
+                PklException error = Throws<PklException>(() => evaluator.Evaluate(
+                    ModuleSource.FromUri(new Uri(server.BaseUri, "non-existing"))));
+                Require(error.Message.Contains("I/O", StringComparison.OrdinalIgnoreCase) ||
+                    error.Message.Contains("HTTP", StringComparison.OrdinalIgnoreCase) ||
+                    error.Message.Contains("not found", StringComparison.OrdinalIgnoreCase),
+                    "missing URL diagnostic: " + error.Message);
+                break;
+            }
+            case "evaluate zip file system path":
+            case "evaluate jar URI":
+            {
+                string archive = CreateArchive(fixture.Root, "evaluate-archive.zip",
+                    ("foo/bar/module1.pkl",
+                        "import \"../baz/module2.pkl\"\nname = module2.name\nage = module2.age\n"),
+                    ("foo/baz/module2.pkl", "name = \"pigeon\"; age = 10 + 20"));
+                using var resolver = new ModulePathResolver(new[] { archive });
+                using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                builder.SetModuleKeyFactories(new[] { factory }
+                    .Concat(builder.GetModuleKeyFactories()).ToArray());
+                using Evaluator evaluator = builder.Build();
+                PModule module = evaluator.Evaluate(ModuleSource.FromModulePath("foo/bar/module1.pkl"));
+                Require((string)module.GetProperty("name") == "pigeon" &&
+                    (long)module.GetProperty("age") == 30,
+                    ".NET archive-path evaluation adaptation");
+                break;
+            }
+            case "evaluate non-existing zip file system path":
+            case "evaluate jar URI with non-existing archive path":
+            {
+                string archive = CreateArchive(fixture.Root, "missing-entry.zip",
+                    ("existing.pkl", "x = 1"));
+                using var resolver = new ModulePathResolver(new[] { archive });
+                using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                builder.SetModuleKeyFactories(new[] { factory }
+                    .Concat(builder.GetModuleKeyFactories()).ToArray());
+                using Evaluator evaluator = builder.Build();
+                Require(Throws<PklException>(() => evaluator.Evaluate(
+                        ModuleSource.FromModulePath("non/existing"))).Message
+                    .Contains("Cannot find module", StringComparison.Ordinal),
+                    "missing archive entry diagnostic");
+                break;
+            }
+            case "evaluate jar URI with non-existing archive":
+            {
+                using var resolver = new ModulePathResolver(new[] {
+                    Path.Combine(fixture.Root, "non-existing.zip") });
+                using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                builder.SetModuleKeyFactories(new[] { factory }
+                    .Concat(builder.GetModuleKeyFactories()).ToArray());
+                using Evaluator evaluator = builder.Build();
+                Require(Throws<PklException>(() => evaluator.Evaluate(
+                        ModuleSource.FromModulePath("bar.pkl"))).Message
+                    .Contains("Cannot find module", StringComparison.Ordinal),
+                    "missing archive diagnostic");
+                break;
+            }
+            case "evaluate module with relative URI":
+            {
+                using Evaluator evaluator = Evaluator.Preconfigured();
+                Require(Throws<PklException>(() => evaluator.Evaluate(
+                        ModuleSource.Create(new Uri("foo.bar", UriKind.Relative), ""))).Message
+                    .Contains("relative module URI", StringComparison.Ordinal),
+                    "relative module source rejection");
                 break;
             }
             case "evaluating a broken module multiple times results in the same error every time":
@@ -2326,6 +3854,162 @@ static class Program
                     "ConvertProperty schema export");
                 break;
             }
+            case "cannot import module located outside root dir":
+            case "cannot read resource located outside root dir":
+            {
+                string root = Path.Combine(fixture.Root, "evaluator-root");
+                Directory.CreateDirectory(root);
+                string module = Path.Combine(root, "test.pkl");
+                string outside = Path.Combine(fixture.Root, "outside.pkl");
+                File.WriteAllText(outside, "value = 1", new UTF8Encoding(false));
+                string expression = row.SourceMethod.StartsWith("cannot import", StringComparison.Ordinal)
+                    ? $"value = import(\"{new Uri(outside).AbsoluteUri}\")"
+                    : $"value = read(\"{new Uri(outside).AbsoluteUri}\")";
+                File.WriteAllText(module, expression, new UTF8Encoding(false));
+                using Evaluator evaluator = EvaluatorBuilder.Preconfigured().SetRootDir(root).Build();
+                PklException error = Throws<PklException>(() =>
+                    evaluator.Evaluate(ModuleSource.FromPath(module)));
+                Require(error.Message.Contains("root directory", StringComparison.OrdinalIgnoreCase),
+                    row.SourceMethod + " policy diagnostic");
+                break;
+            }
+            case "cannot import module from zip filesystem located outside root dir":
+            case "cannot read resource from zip filesystem located outside root dir":
+            {
+                string root = Path.Combine(fixture.Root, "allowed-root");
+                string forbidden = Path.Combine(fixture.Root, "forbidden-root");
+                Directory.CreateDirectory(root);
+                Directory.CreateDirectory(forbidden);
+                string archive = CreateArchive(forbidden, "outside.zip",
+                    ("module.pkl", "value = 1"));
+                SecurityManager manager = RootedSecurityManager(root);
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckResolveModule(new Uri(archive)));
+                _ = Throws<SecurityManagerException>(() =>
+                    manager.CheckReadResource(new Uri(archive)));
+                break;
+            }
+            case "multiple-file output":
+            {
+                using Evaluator evaluator = Evaluator.Preconfigured();
+                IReadOnlyDictionary<string, FileOutput> output = evaluator.EvaluateOutputFiles(
+                    ModuleSource.FromText("output { files { " +
+                        "[\"foo.yml\"] { text = \"foo: foo text\" }; " +
+                        "[\"bar.yml\"] { text = \"bar: bar text\" }; " +
+                        "[\"bar/biz.yml\"] { text = \"biz: bar biz\" }; " +
+                        "[\"bar/../bark.yml\"] { text = \"bark: bark bark\" } } }"));
+                Require(output.Keys.ToHashSet().SetEquals(new[] { "foo.yml", "bar.yml",
+                        "bar/biz.yml", "bar/../bark.yml" }) &&
+                    output["foo.yml"].Text == "foo: foo text" &&
+                    output["bar/../bark.yml"].Text == "bark: bark bark",
+                    "multiple-file output paths and values");
+                break;
+            }
+            case "project set from modulepath":
+            case "project set from custom ModuleKeyFactory":
+                VerifyEvaluatorLocalProject(row.SourceMethod, fixture.Root);
+                break;
+            case "project base path set to non-hierarchical scheme":
+            {
+                using var factory = new CorpusModuleFactory("nonhier", uri =>
+                    uri.OriginalString.EndsWith("PklProject", StringComparison.Ordinal)
+                        ? "amends \"pkl:Project\"\n"
+                        : "birds = import(\"@birds/catalog/Ostrich.pkl\")\n");
+                using Evaluator projectEvaluator = EvaluatorBuilder.Unconfigured()
+                    .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
+                    .SetAllowedModules(new[] { new Regex("nonhier:"), new Regex("pkl:") })
+                    .SetAllowedResources(Array.Empty<Regex>())
+                    .AddModuleKeyFactory(ModuleKeyFactories.StandardLibraryFactory)
+                    .AddModuleKeyFactory(factory).Build();
+                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.Load(
+                    projectEvaluator, ModuleSource.FromUri("nonhier:foo/PklProject"));
+                using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
+                    .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
+                    .SetAllowedModules(new[] { new Regex("nonhier:"), new Regex("pkl:") })
+                    .SetAllowedResources(Array.Empty<Regex>())
+                    .SetProjectDependencies(project.DeclaredDependencies)
+                    .AddModuleKeyFactory(ModuleKeyFactories.StandardLibraryFactory)
+                    .AddModuleKeyFactory(factory).Build();
+                PklException error = Throws<PklException>(() => evaluator.EvaluateOutputText(
+                    ModuleSource.Create(new Uri("nonhier:baz"),
+                        "birds = import(\"@birds/catalog/Ostrich.pkl\")")));
+                Require(error.Message.Contains("does not have a hierarchical path",
+                    StringComparison.Ordinal), "non-hierarchical project dependency diagnostic");
+                break;
+            }
+            case "cannot glob import in local dependency from modulepath":
+            {
+                string moduleRoot = Path.Combine(fixture.Root, "nonglobbable-modulepath");
+                string project6 = Path.Combine(moduleRoot, "project6");
+                string project7 = Path.Combine(moduleRoot, "project7");
+                Directory.CreateDirectory(project6);
+                Directory.CreateDirectory(project7);
+                File.WriteAllText(Path.Combine(project6, "PklProject"),
+                    "amends \"pkl:Project\"\ndependencies { " +
+                    "[\"project7\"] = import(\"../project7/PklProject\") }\n",
+                    new UTF8Encoding(false));
+                File.WriteAllText(Path.Combine(project6, "PklProject.deps.json"),
+                    "{\n  \"schemaVersion\": 1,\n  \"resolvedDependencies\": {\n" +
+                    "    \"package://localhost:0/project7@1\": {\n" +
+                    "      \"type\": \"local\",\n" +
+                    "      \"uri\": \"projectpackage://localhost:0/project7@1.0.0\",\n" +
+                    "      \"path\": \"../project7\"\n    }\n  }\n}\n",
+                    new UTF8Encoding(false));
+                File.WriteAllText(Path.Combine(project6, "globWithinDependency.pkl"),
+                    "import \"@project7/main.pkl\"\nres = main.res\n", new UTF8Encoding(false));
+                File.WriteAllText(Path.Combine(project7, "PklProject"),
+                    "amends \"pkl:Project\"\npackage { name = \"project7\"; " +
+                    "version = \"1.0.0\"; packageZipUrl = \"https://bogus.value\"; " +
+                    "baseUri = \"package://localhost:0/project7\" }\n",
+                    new UTF8Encoding(false));
+                File.WriteAllText(Path.Combine(project7, "main.pkl"),
+                    "res = import*(\"*.pkl\")\n", new UTF8Encoding(false));
+                File.WriteAllText(Path.Combine(project7, "moduleA.pkl"), "",
+                    new UTF8Encoding(false));
+                File.WriteAllText(Path.Combine(project7, "moduleB.pkl"), "",
+                    new UTF8Encoding(false));
+                using var resolver = new ModulePathResolver(new[] { moduleRoot });
+                using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                builder.SetModuleKeyFactories(new[] { factory }
+                    .Concat(builder.GetModuleKeyFactories()).ToArray());
+                using Evaluator projectEvaluator = builder.Build();
+                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.Load(
+                    projectEvaluator, ModuleSource.FromModulePath("project6/PklProject"));
+                using Evaluator evaluator = builder.SetProjectDependencies(
+                    project.DeclaredDependencies).Build();
+                PklException error = Throws<PklException>(() => evaluator.EvaluateOutputText(
+                    ModuleSource.FromModulePath("project6/globWithinDependency.pkl")));
+                Require(error.Message.Contains("not globbable", StringComparison.OrdinalIgnoreCase),
+                    "non-globbable local dependency diagnostic: " + error.Message);
+                break;
+            }
+            case "root dir check happens without any UNC or SMB access":
+            {
+                string root = Path.Combine(fixture.Root, "unc-root");
+                Directory.CreateDirectory(root);
+                using Evaluator evaluator = EvaluatorBuilder.Preconfigured().SetRootDir(root).Build();
+                Stopwatch timer = Stopwatch.StartNew();
+                PklException error = Throws<PklException>(() => evaluator.Evaluate(
+                    ModuleSource.FromText(
+                        "result = import(\"file://192.0.2.1/share/nope.pkl\")")));
+                timer.Stop();
+                Require(error.Message.Contains("root directory", StringComparison.OrdinalIgnoreCase) &&
+                    timer.Elapsed < TimeSpan.FromSeconds(2), "root policy precedes UNC I/O");
+                break;
+            }
+            case "eval dependency notation as a module source":
+                VerifyEvaluatorLocalProject(row.SourceMethod, fixture.Root);
+                break;
+            case "eval dependency notation -- no project configured":
+            {
+                using Evaluator evaluator = Evaluator.Preconfigured();
+                Require(Throws<PklException>(() => evaluator.EvaluateOutputText(
+                        ModuleSource.FromUri("@fruit/catalog/apple.pkl"))).Message
+                    .Contains("no project", StringComparison.OrdinalIgnoreCase),
+                    "dependency notation without project diagnostic");
+                break;
+            }
             default:
                 return Pending(row);
         }
@@ -2407,8 +4091,78 @@ static class Program
                     "cyclical analyzer graph");
                 break;
             }
+            case "package imports":
+            {
+                using var server = new CorpusPackageServer();
+                using PklHttpClient client = server.CreateClient();
+                string cache = Path.Combine(fixture.Root, "analyzer-package-cache");
+                PopulatePackageCache(server, client, cache);
+                var packageAnalyzer = new Analyzer(
+                    StackFrameTransformers.DefaultTransformer, false,
+                    SecurityManagers.DefaultManager,
+                    new[] { ModuleKeyFactories.FileFactory,
+                        ModuleKeyFactories.StandardLibraryFactory,
+                        ModuleKeyFactories.PackageFactory },
+                    cache, null, client,
+                    TraceMode.COMPACT);
+                string file = Path.Combine(fixture.Root, "package-import.pkl");
+                Uri packageUri = new(
+                    $"package://127.0.0.1:{server.Port}/birds@0.5.0#/Bird.pkl");
+                File.WriteAllText(file, $"import \"{packageUri}\"", new UTF8Encoding(false));
+                ImportGraph graph = packageAnalyzer.ImportGraph(new Uri(file));
+                Require(graph.Imports.ContainsKey(new Uri(file)) &&
+                    graph.Imports[new Uri(file)].Select(item => item.Uri).Single() == packageUri &&
+                    graph.Imports.ContainsKey(packageUri), "recursive package analyzer graph");
+                break;
+            }
+            case "project dependency imports":
+            {
+                using var server = new CorpusPackageServer();
+                string projectFile = WriteRemoteProjectFixture(fixture.Root, server);
+                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+                using PklHttpClient client = server.CreateClient();
+                string cache = Path.Combine(fixture.Root, "project-analyzer-cache");
+                PopulatePackageCache(server, client, cache);
+                var projectAnalyzer = new Analyzer(
+                    StackFrameTransformers.DefaultTransformer, false,
+                    SecurityManagers.DefaultManager,
+                    new[] { ModuleKeyFactories.FileFactory,
+                        ModuleKeyFactories.StandardLibraryFactory,
+                        ModuleKeyFactories.PackageFactory,
+                        ModuleKeyFactories.ProjectPackageFactory },
+                    cache,
+                    project.DeclaredDependencies, client, TraceMode.COMPACT);
+                string source = Path.Combine(Path.GetDirectoryName(projectFile)!, "main.pkl");
+                File.WriteAllText(source, "import \"@birds/Bird.pkl\"", new UTF8Encoding(false));
+                ImportGraph graph = projectAnalyzer.ImportGraph(new Uri(source));
+                Uri expected = new(
+                    $"projectpackage://127.0.0.1:{server.Port}/birds@0.5.0#/Bird.pkl");
+                Require(graph.Imports[new Uri(source)].Select(item => item.Uri).Single() == expected &&
+                    graph.ResolvedImports.ContainsKey(expected),
+                    "project-package analyzer resolution");
+                break;
+            }
+            case "local project dependency import":
+            {
+                (string projectFile, string main, Uri expected) =
+                    WriteLocalDependencyProject(fixture.Root);
+                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+                var localAnalyzer = new Analyzer(
+                    StackFrameTransformers.DefaultTransformer, false,
+                    SecurityManagers.DefaultManager,
+                    new[] { ModuleKeyFactories.FileFactory,
+                        ModuleKeyFactories.StandardLibraryFactory,
+                        ModuleKeyFactories.PackageFactory,
+                        ModuleKeyFactories.ProjectPackageFactory },
+                    Path.Combine(fixture.Root, "local-analyzer-cache"),
+                    project.DeclaredDependencies, PklHttpClient.DummyClient(), TraceMode.COMPACT);
+                ImportGraph graph = localAnalyzer.ImportGraph(new Uri(main));
+                Require(graph.Imports[new Uri(main)].Select(item => item.Uri).Single() == expected &&
+                    graph.ResolvedImports[expected].IsFile,
+                    "local project dependency analyzer resolution");
+                break;
+            }
             default:
-                // Package and project analyzer rows are owned by the loading/package partition.
                 return Pending(row);
         }
         return Passed(row);
@@ -2972,6 +4726,937 @@ static class Program
 
     static string NormalizeLines(string value) =>
         value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Trim();
+
+    static string CreateArchive(
+        string directory,
+        string name,
+        params (string Path, string Contents)[] entries)
+    {
+        Directory.CreateDirectory(directory);
+        string archivePath = Path.Combine(directory, name);
+        if (File.Exists(archivePath)) File.Delete(archivePath);
+        using ZipArchive archive = ZipFile.Open(archivePath, ZipArchiveMode.Create);
+        foreach ((string path, string contents) in entries)
+        {
+            ZipArchiveEntry entry = archive.CreateEntry(path);
+            using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
+            writer.Write(contents);
+        }
+        return archivePath;
+    }
+
+    static DependencyMetadata CreateDependencyMetadata(bool includePattern)
+    {
+        var packageUri = new PackageUri("package://example.test/my-proj-name@0.10.0");
+        IReadOnlyList<PObject> annotations = includePattern
+            ? new[] { new PObject(
+                PClassInfo<object>.Get("myModule", "MyAnnotation", new Uri("pkl:fake")),
+                new Dictionary<string, object> { ["pattern"] = new Regex(".*") }) }
+            : Array.Empty<PObject>();
+        return new DependencyMetadata(
+            "my-proj-name", packageUri, Version.Parse("0.10.0"),
+            new Uri("https://example.test/foo/bar@0.5.3.zip"), new Checksums("abc123"),
+            new Dictionary<string, Dependency.RemoteDependency> {
+                ["foo"] = new Dependency.RemoteDependency(
+                    new PackageUri("package://example.test/foo@0.5.3"), new Checksums("abc123")) },
+            "https://example.test/source/0.5.3/blob%{path}",
+            new Uri("https://example.test/source"), new Uri("https://example.test/docs"),
+            "MIT", "The MIT License", new[] { "birdy@example.test" },
+            new Uri("https://example.test/issues"), "Some package description", annotations);
+    }
+
+    static void PopulatePackageCache(
+        CorpusPackageServer server,
+        PklHttpClient client,
+        string cache)
+    {
+        using PackageResolver resolver = PackageResolver.GetInstance(
+            SecurityManagers.DefaultManager, client, cache);
+        _ = resolver.GetAssetBytes(new PackageAssetUri(
+            $"package://127.0.0.1:{server.Port}/birds@0.5.0#/Bird.pkl"));
+        _ = resolver.GetAssetBytes(new PackageAssetUri(
+            $"package://127.0.0.1:{server.Port}/fruit@1.0.5#/Fruit.pkl"));
+    }
+
+    static string WriteProjectFixture(string root, bool includeLocalDependency)
+    {
+        string directory = Path.Combine(root, "project-fixture");
+        Directory.CreateDirectory(directory);
+        string projectPath = Path.Combine(directory, "PklProject");
+        string dependency = includeLocalDependency
+            ? "dependencies { [\"local\"] = import(\"../local-project/PklProject\") }\n"
+            : "";
+        File.WriteAllText(projectPath,
+            "@Deprecated { since = \"1.2\"; message = \"do not use\"; " +
+            "replaceWith = \"somethingElse\" }\n@Unlisted\n" +
+            "@ModuleInfo { minPklVersion = \"0.26.0\" }\namends \"pkl:Project\"\n" +
+            "evaluatorSettings { timeout = 5.min; rootDir = \".\"; noCache = false; " +
+            "moduleCacheDir = \"cache/\"; env { [\"one\"] = \"1\" }; " +
+            "externalProperties { [\"two\"] = \"2\" }; modulePath { \"modulepath/\" }; " +
+            "allowedModules { \"pkl:\"; \"file:\" }; " +
+            "allowedResources { \"file:\"; \"env:\"; \"prop:\" } }\n" +
+            "package { name = \"hawk\"; baseUri = \"package://example.test/hawk\"; " +
+            "version = \"0.5.0\"; description = \"Some project about hawks\"; " +
+            "packageZipUrl = \"https://example.test/hawk/0.5.0/hawk-0.5.0.zip\"; " +
+            "authors { \"Birdy Bird <birdy@example.test>\" }; " +
+            "apiTests { \"apiTest1.pkl\"; \"apiTest2.pkl\" }; exclude { \"*.exe\" } }\n" +
+            dependency + "tests { \"test1.pkl\"; \"test2.pkl\" }\n",
+            new UTF8Encoding(false));
+        return projectPath;
+    }
+
+    static string WriteRemoteProjectFixture(string root, CorpusPackageServer server)
+    {
+        string directory = Path.Combine(root, "remote-project");
+        Directory.CreateDirectory(directory);
+        string project = Path.Combine(directory, "PklProject");
+        File.WriteAllText(project,
+            "amends \"pkl:Project\"\ndependencies { [\"birds\"] { " +
+            $"uri = \"package://127.0.0.1:{server.Port}/birds@0.5.0\" }} }}\n",
+            new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(directory, "PklProject.deps.json"),
+            "{\n  \"schemaVersion\": 1,\n  \"resolvedDependencies\": {\n" +
+            $"    \"package://127.0.0.1:{server.Port}/birds@0\": {{\n" +
+            "      \"type\": \"remote\",\n" +
+            $"      \"uri\": \"projectpackage://127.0.0.1:{server.Port}/birds@0.5.0\",\n" +
+            $"      \"checksums\": {{\"sha256\": \"{server.BirdsMetadataSha256}\"}}\n" +
+            "    }\n  }\n}\n", new UTF8Encoding(false));
+        return project;
+    }
+
+    static (string ProjectFile, string Main, Uri Expected) WriteLocalDependencyProject(string root)
+    {
+        string parent = Path.Combine(root, "local-dependency-fixture");
+        string projectDirectory = Path.Combine(parent, "project");
+        string birdsDirectory = Path.Combine(parent, "birds");
+        Directory.CreateDirectory(projectDirectory);
+        Directory.CreateDirectory(birdsDirectory);
+        string projectFile = Path.Combine(projectDirectory, "PklProject");
+        File.WriteAllText(projectFile,
+            "amends \"pkl:Project\"\ndependencies { " +
+            "[\"birds\"] = import(\"../birds/PklProject\") }\n", new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(birdsDirectory, "PklProject"),
+            "amends \"pkl:Project\"\npackage { name = \"birds\"; version = \"1.0.0\"; " +
+            "packageZipUrl = \"https://example.test/birds.zip\"; " +
+            "baseUri = \"package://example.test/birds\" }\n", new UTF8Encoding(false));
+        string bird = Path.Combine(birdsDirectory, "bird.pkl");
+        File.WriteAllText(bird, "name = \"Warbler\"\n", new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(projectDirectory, "PklProject.deps.json"),
+            "{\n  \"schemaVersion\": 1,\n  \"resolvedDependencies\": {\n" +
+            "    \"package://example.test/birds@1\": {\n" +
+            "      \"type\": \"local\",\n" +
+            "      \"uri\": \"projectpackage://example.test/birds@1.0.0\",\n" +
+            "      \"path\": \"../birds\"\n    }\n  }\n}\n", new UTF8Encoding(false));
+        string main = Path.Combine(projectDirectory, "main.pkl");
+        File.WriteAllText(main, "import \"@birds/bird.pkl\"\n", new UTF8Encoding(false));
+        return (projectFile, main,
+            new Uri("projectpackage://example.test/birds@1.0.0#/bird.pkl"));
+    }
+
+    static Pkl.Core.Project.Project LoadExternalReaderProject(string root, string executable)
+    {
+        string directory = Path.Combine(root, "external-reader-project-" +
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string project = Path.Combine(directory, "PklProject");
+        File.WriteAllText(project,
+            "amends \"pkl:Project\"\nevaluatorSettings { externalModuleReaders { " +
+            $"[\"foo\"] {{ executable = \"{executable.Replace("\\", "\\\\", StringComparison.Ordinal)}\" }} }} }}\n",
+            new UTF8Encoding(false));
+        return Pkl.Core.Project.Project.LoadFromPath(project);
+    }
+
+    static void VerifyProjectCycles(string root, bool multiple)
+    {
+        string cycleRoot = Path.Combine(root, multiple ? "multiple-cycles" : "single-cycle");
+        string[] directories = Enumerable.Range(1, 4)
+            .Select(index => Path.Combine(cycleRoot, $"projectCycle{index}"))
+            .ToArray();
+        foreach (string directory in directories) Directory.CreateDirectory(directory);
+        string ProjectModule(int index, string dependency) =>
+            "amends \"pkl:Project\"\n\npackage {\n" +
+            $"  name = \"projectCycle{index}\"\n  version = \"1.0.0\"\n" +
+            "  packageZipUrl = \"https://bogus.value\"\n" +
+            $"  baseUri = \"package://localhost:0/projectCycle{index}\"\n}}\n\n" +
+            $"dependencies {{ [\"projectCycle{dependency}\"] = " +
+            $"import(\"../projectCycle{dependency}/PklProject\") }}\n";
+        File.WriteAllText(Path.Combine(directories[0], "PklProject"), ProjectModule(1, "2"),
+            new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(directories[1], "PklProject"), ProjectModule(2, "3"),
+            new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(directories[2], "PklProject"), ProjectModule(3, "2"),
+            new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(directories[3], "PklProject"),
+            "amends \"pkl:Project\"\n\nimport \"PklProject\"\n\n" +
+            "dependencies { [\"projectCycle1\"] = import(\"../projectCycle1/PklProject\") }\n",
+            new UTF8Encoding(false));
+        string entry = Path.Combine(directories[multiple ? 3 : 0], "PklProject");
+        PklException error = Throws<PklException>(() =>
+            Pkl.Core.Project.Project.LoadFromPath(entry));
+        Require(error.Message.Contains("circular", StringComparison.OrdinalIgnoreCase) &&
+            (!multiple || error.Message.Contains("Cycle", StringComparison.Ordinal)),
+            "project dependency cycle diagnostic: " + error.Message);
+    }
+
+    static void VerifyEvaluatorLocalProject(string adaptation, string root)
+    {
+        (string projectFile, _, _) = WriteLocalDependencyProject(root);
+        Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+        EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured().ApplyFromProject(project);
+        if (adaptation.Contains("custom", StringComparison.Ordinal))
+        {
+            using var custom = new CorpusModuleFactory("custom", "value = 42");
+            builder.SetAllowedModules(builder.GetAllowedModules().Concat(
+                new[] { new Regex("custom:") }).ToArray()).AddModuleKeyFactory(custom);
+            using Evaluator customEvaluator = builder.Build();
+            Require((long)customEvaluator.Evaluate(ModuleSource.FromUri("custom:item"))
+                .GetProperty("value") == 42, "custom project module factory");
+        }
+        else if (adaptation.Contains("modulepath", StringComparison.Ordinal))
+        {
+            string moduleRoot = Path.Combine(root, "project-modulepath");
+            Directory.CreateDirectory(moduleRoot);
+            File.WriteAllText(Path.Combine(moduleRoot, "module.pkl"), "value = 42",
+                new UTF8Encoding(false));
+            using var resolver = new ModulePathResolver(new[] { moduleRoot });
+            using ModuleKeyFactory factory = ModuleKeyFactories.CreateModulePath(resolver);
+            builder.SetModuleKeyFactories(new[] { factory }
+                .Concat(builder.GetModuleKeyFactories()).ToArray());
+            using Evaluator modulePathEvaluator = builder.Build();
+            Require((long)modulePathEvaluator.Evaluate(ModuleSource.FromModulePath("module.pkl"))
+                .GetProperty("value") == 42, "project module-path factory");
+        }
+        using Evaluator evaluator = EvaluatorBuilder.Preconfigured().ApplyFromProject(project).Build();
+        PModule dependency = evaluator.Evaluate(ModuleSource.FromUri("@birds/bird.pkl"));
+        Require((string)dependency.GetProperty("name") == "Warbler",
+            "local project dependency notation");
+    }
+
+    static void VerifyExternalReaderFactoryLifecycle(string root)
+    {
+        var specification = new PklEvaluatorSettings.ExternalReader(
+            Path.Combine(root, "missing-external-reader"), Array.Empty<string>(), null);
+        using ExternalReaderProcess process = ExternalReaderProcess.Start(specification);
+        using ModuleKeyFactory factory = ModuleKeyFactories.CreateExternalProcess("externalfixture", process);
+        Exception error = ThrowsAny(() => factory.TryCreate(new Uri("externalfixture:item")));
+        Require(error.Message.Length > 0, "external module reader startup failure");
+        process.Dispose();
+        process.Dispose();
+    }
+
+    static void VerifyExternalReaderResourceLifecycle(string root)
+    {
+        var specification = new PklEvaluatorSettings.ExternalReader(
+            Path.Combine(root, "missing-external-resource-reader"), Array.Empty<string>(), null);
+        using ExternalReaderProcess process = ExternalReaderProcess.Start(specification);
+        using ResourceReader reader = ResourceReaders.CreateExternalProcess("externalresource", process);
+        Exception error = ThrowsAny(() => reader.TryRead(new Uri("externalresource:item")));
+        Require(error.Message.Length > 0, "external resource reader startup failure");
+        process.Dispose();
+        process.Dispose();
+    }
+
+    static Exception ThrowsAny(Action action)
+    {
+        try { action(); }
+        catch (Exception error) { return error; }
+        throw new InvalidOperationException("Contract assertion failed: expected an exception");
+    }
+
+    sealed class CorpusModuleFactory : ModuleKeyFactory
+    {
+        readonly string scheme;
+        readonly Func<Uri, string> source;
+        readonly bool globbable;
+        bool disposed;
+
+        internal CorpusModuleFactory(string scheme, string source, bool globbable = false)
+            : this(scheme, _ => source, globbable)
+        {
+        }
+
+        internal CorpusModuleFactory(
+            string scheme,
+            Func<Uri, string> source,
+            bool globbable = false)
+        {
+            this.scheme = scheme;
+            this.source = source;
+            this.globbable = globbable;
+        }
+
+        public ModuleKey? Create(Uri uri)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return uri.Scheme == scheme ? new CorpusModuleKey(uri, source(uri), globbable) : null;
+        }
+        public void Close() => disposed = true;
+        public void Dispose() => Close();
+    }
+
+    sealed class CorpusModuleKey(Uri uri, string source, bool globbable)
+        : ModuleKey, ResolvedModuleKey
+    {
+        public ModuleKey GetOriginal() => this;
+        public Uri GetUri() => uri;
+        public bool HasHierarchicalUris() => uri.OriginalString.Contains('/', StringComparison.Ordinal);
+        public bool IsGlobbable() => globbable;
+        public bool IsCached() => true;
+        public bool IsLocal() => true;
+        public ResolvedModuleKey Resolve(SecurityManager securityManager)
+        {
+            securityManager.CheckResolveModule(uri);
+            return this;
+        }
+        public string LoadSource() => source;
+    }
+
+    sealed class CorpusResourceReader : ResourceReader
+    {
+        readonly string scheme;
+        readonly object value;
+        bool disposed;
+
+        internal CorpusResourceReader(string scheme = "corpusresource", object? value = null)
+        {
+            this.scheme = scheme;
+            this.value = value ?? "resource-value";
+        }
+
+        public string GetUriScheme() => scheme;
+        public bool HasHierarchicalUris() => false;
+        public bool IsGlobbable() => false;
+        public object? Read(Uri uri)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return uri.Scheme == scheme ? value : null;
+        }
+        public void Close() => disposed = true;
+        public void Dispose() => Close();
+    }
+
+    static void VerifyRedirectBehavior(string method)
+    {
+        using var server = CorpusHttpServer.Tls(request =>
+            request.Uri.AbsolutePath == "/start"
+                ? CorpusHttpResponse.Redirect(new Uri("https://origin.test/final"))
+                : CorpusHttpResponse.Ok("redirected"));
+        var checkedUris = new List<Uri>();
+        PklHttpClient.Builder builder = PklHttpClient.CreateBuilder()
+            .AddCertificate(Encoding.ASCII.GetBytes(server.CertificatePem))
+            .AddRewrite(new Uri("https://origin.test/"), server.BaseUri)
+            .AddHeaders("**", new Dictionary<string, IReadOnlyList<string>> {
+                ["X-Contract"] = new[] { "all" } });
+        if (method == "redirects only carry their specifically configured headers")
+        {
+            builder.AddHeaders(new Uri(server.BaseUri, "start").AbsoluteUri,
+                new Dictionary<string, IReadOnlyList<string>> {
+                ["X-Start"] = new[] { "start" } });
+            builder.AddHeaders(new Uri(server.BaseUri, "final").AbsoluteUri,
+                new Dictionary<string, IReadOnlyList<string>> {
+                ["X-Final"] = new[] { "final" } });
+        }
+        using PklHttpClient client = builder.Build();
+        using HttpResponseMessage response = client.Send(
+            new HttpRequestMessage(HttpMethod.Get, "https://origin.test/start"), checkedUris.Add);
+        Require(response.Content.ReadAsStringAsync().GetAwaiter().GetResult() == "redirected" &&
+            server.Requests.Count == 2, method + " redirect result");
+        CorpusHttpRequest first = server.Requests[0], second = server.Requests[1];
+        if (method is "preserves configured headers across redirects" or
+            "respects configured rewrites across redirects")
+            Require(first.Headers.ContainsKey("x-contract") && second.Headers.ContainsKey("x-contract"),
+                method + " configured header/rewrite retention");
+        if (method == "checks each URL before making a request")
+            Require(checkedUris.Count == 2 && checkedUris[0].AbsolutePath == "/start" &&
+                checkedUris[1].AbsolutePath == "/final", "per-redirect request policy callback");
+        if (method == "redirects only carry their specifically configured headers")
+            Require(first.Headers.ContainsKey("x-start") && !first.Headers.ContainsKey("x-final") &&
+                !second.Headers.ContainsKey("x-start") && second.Headers.ContainsKey("x-final"),
+                "redirect-specific configured headers");
+    }
+
+    static void VerifyRedirectSchemeChange(bool upgrade)
+    {
+        using var destination = upgrade
+            ? CorpusHttpServer.Tls(_ => CorpusHttpResponse.Ok("upgraded"))
+            : CorpusHttpServer.Plain(_ => CorpusHttpResponse.Ok("downgraded"));
+        using var source = upgrade
+            ? CorpusHttpServer.Plain(_ => CorpusHttpResponse.Redirect(destination.BaseUri))
+            : CorpusHttpServer.Tls(_ => CorpusHttpResponse.Redirect(destination.BaseUri));
+        using PklHttpClient client = PklHttpClient.CreateBuilder()
+            .AddCertificate(Encoding.ASCII.GetBytes(
+                upgrade ? destination.CertificatePem : source.CertificatePem)).Build();
+        if (upgrade)
+        {
+            using HttpResponseMessage response = client.Send(
+                new HttpRequestMessage(HttpMethod.Get, source.BaseUri), _ => { });
+            Require(response.Content.ReadAsStringAsync().GetAwaiter().GetResult() == "upgraded" &&
+                destination.Requests.Count == 1, "HTTP to HTTPS redirect upgrade");
+        }
+        else
+        {
+            Exception error = ThrowsAny(() => client.Send(
+                new HttpRequestMessage(HttpMethod.Get, source.BaseUri), _ => { }));
+            Require(error.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase) ||
+                error.Message.Contains("HTTPS", StringComparison.OrdinalIgnoreCase),
+                "HTTPS downgrade rejection");
+            Require(destination.Requests.Count == 0, "downgrade rejected before HTTP request");
+        }
+    }
+
+    static void VerifyNoProxyBehavior(string method)
+    {
+        bool ipv6 = method.StartsWith("ipv6", StringComparison.Ordinal) ||
+            method == "ipv6 cidr block matching";
+        using var direct = ipv6
+            ? CorpusHttpServer.PlainV6(_ => CorpusHttpResponse.Ok("direct"))
+            : CorpusHttpServer.Plain(_ => CorpusHttpResponse.Ok("direct"));
+        using var proxy = CorpusHttpServer.Plain(_ => CorpusHttpResponse.Ok("proxy"));
+        Uri target = method.StartsWith("hostname", StringComparison.Ordinal)
+            ? new Uri($"http://localhost:{direct.Port}/")
+            : direct.BaseUri;
+        string rule = method switch
+        {
+            "wildcard" => "*",
+            "hostname matching" => "localhost",
+            "hostname matching, leading dot" => ".localhost",
+            "hostname matching, with port" => $"localhost:{direct.Port}",
+            "ipv4 address literal matching" => "127.0.0.1",
+            "ipv4 address literal matching, with port" => $"127.0.0.1:{direct.Port}",
+            "ipv6 address literal matching" => "::1",
+            "ipv6 address literal matching, with port" => $"[::1]:{direct.Port}",
+            "ipv4 port from protocol" => $"127.0.0.1:{direct.Port}",
+            "ipv4 cidr block matching" => "127.0.0.0/8",
+            "ipv6 cidr block matching" => "::1/128",
+            _ => throw new InvalidOperationException("Unknown no-proxy corpus row: " + method)
+        };
+        Uri proxyAddress = new(proxy.BaseUri.GetLeftPart(UriPartial.Authority));
+        using PklHttpClient client = PklHttpClient.CreateBuilder()
+            .SetProxy(proxyAddress, new[] { rule }).Build();
+        string body = Encoding.UTF8.GetString(client.GetBytes(
+            new HttpRequestMessage(HttpMethod.Get, target), _ => { }));
+        Require(body == "direct" && direct.Requests.Count == 1 && proxy.Requests.Count == 0,
+            method + " no-proxy match");
+
+        if (method == "wildcard") return;
+
+        using PklHttpClient proxied = PklHttpClient.CreateBuilder()
+            .SetProxy(proxyAddress, new[] { rule }).Build();
+        string proxiedBody = Encoding.UTF8.GetString(proxied.GetBytes(
+            new HttpRequestMessage(HttpMethod.Get, "http://unmatched.invalid/resource"), _ => { }));
+        Require(proxiedBody == "proxy" && proxy.Requests.Count == 1,
+            method + " no-proxy non-match");
+    }
+
+    static void VerifyRequestRewritingBehavior(string method)
+    {
+        if (method == "leaves port 0 intact if no test port is set")
+        {
+            using PklHttpClient client = PklHttpClient.CreateBuilder()
+                .SetConnectTimeout(TimeSpan.FromMilliseconds(200)).Build();
+            Exception error = ThrowsAny(() => client.Send(
+                new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:0/"), _ => { }));
+            Require(error.Message.Length > 0, "port zero remains invalid without a rewrite");
+            return;
+        }
+        if (method == "fills in missing request timeout")
+        {
+            using var slow = CorpusHttpServer.Plain(_ =>
+                new CorpusHttpResponse(200, "late", null, TimeSpan.FromSeconds(1)));
+            using PklHttpClient client = PklHttpClient.CreateBuilder()
+                .SetRequestTimeout(TimeSpan.FromMilliseconds(100)).Build();
+            Stopwatch timer = Stopwatch.StartNew();
+            Exception error = ThrowsAny(() => client.Send(
+                new HttpRequestMessage(HttpMethod.Get, slow.BaseUri), _ => { }));
+            timer.Stop();
+            Require(timer.Elapsed < TimeSpan.FromSeconds(1) &&
+                (error.Message.Contains("tim", StringComparison.OrdinalIgnoreCase) ||
+                    error is OperationCanceledException), "configured default request timeout");
+            return;
+        }
+
+        using var server = CorpusHttpServer.Tls(_ => CorpusHttpResponse.Ok("rewritten"));
+        Uri origin = new("https://example.test/");
+        PklHttpClient.Builder builder = PklHttpClient.CreateBuilder()
+            .AddCertificate(Encoding.ASCII.GetBytes(server.CertificatePem))
+            .AddRewrite(origin, server.BaseUri);
+        HttpRequestMessage request = new(HttpMethod.Get, new Uri(origin, "path"));
+
+        switch (method)
+        {
+            case "fills in missing User-Agent header":
+                break;
+            case "User-Agent from configured headers takes precedence":
+                builder.SetUserAgent("fallback-agent").AddHeaders("**",
+                    new Dictionary<string, IReadOnlyList<string>> {
+                        ["User-Agent"] = new[] { "header-agent" } });
+                break;
+            case "overrides existing User-Agent headers":
+                request.Headers.TryAddWithoutValidation("User-Agent", "request-agent");
+                builder.SetUserAgent("configured-agent");
+                break;
+            case "leaves existing request timeout intact":
+                builder.SetRequestTimeout(TimeSpan.FromSeconds(2));
+                break;
+            case "fills in missing HTTP version":
+                break;
+            case "leaves existing HTTP version intact":
+                request.Version = HttpVersion.Version11;
+                request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+                break;
+            case "leaves default method intact":
+                break;
+            case "leaves explicit method intact":
+                request.Method = HttpMethod.Post;
+                break;
+            case "leaves body publisher intact":
+                request.Method = HttpMethod.Post;
+                request.Content = new StringContent("body-payload", Encoding.UTF8, "text/plain");
+                break;
+            case "rewrites port 0 if test port is set":
+                origin = new Uri("https://localhost:0/");
+                builder.AddRewrite(origin, server.BaseUri);
+                request.RequestUri = new Uri(origin, "path");
+                break;
+            case "matches rewrite rule":
+            case "rewrites URIs":
+                break;
+            case "rewrites URIs - longest rewrite wins":
+                builder.AddRewrite(new Uri("https://example.test/path/"),
+                    new Uri(server.BaseUri, "longest/"));
+                request.RequestUri = new Uri("https://example.test/path/item");
+                break;
+            case "rewrites URIs - hostname is always lowercased":
+                request.RequestUri = new Uri("https://EXAMPLE.TEST/path");
+                break;
+            case "rewrites URIs - scheme is always lowercased":
+                request.RequestUri = new Uri("HTTPS://example.test/path");
+                break;
+            case "rewrites URIs - host with capital I under tr_TR locale":
+                request.RequestUri = new Uri("https://I.example.test/path");
+                builder.AddRewrite(new Uri("https://i.example.test/"), server.BaseUri);
+                break;
+            case "adds configured headers for matching URI patterns":
+                builder.AddHeaders(server.BaseUri + "**",
+                    new Dictionary<string, IReadOnlyList<string>> { ["X-Matched"] = new[] { "yes" } });
+                break;
+            case "does not add configured headers for non-matching URI patterns":
+                builder.AddHeaders("https://other.test/**",
+                    new Dictionary<string, IReadOnlyList<string>> { ["X-Unmatched"] = new[] { "no" } });
+                break;
+            case "appends configured header values to existing request headers":
+                request.Headers.TryAddWithoutValidation("X-Values", "request");
+                builder.AddHeaders("**", new Dictionary<string, IReadOnlyList<string>> {
+                    ["X-Values"] = new[] { "configured" } });
+                break;
+            case "configured headers wins over configured user-agent header":
+                builder.SetUserAgent("fallback-agent").AddHeaders("**",
+                    new Dictionary<string, IReadOnlyList<string>> {
+                        ["User-Agent"] = new[] { "winning-agent" } });
+                break;
+            default:
+                throw new InvalidOperationException("Unknown request rewrite corpus row: " + method);
+        }
+
+        CultureInfo priorCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            if (method == "rewrites URIs - host with capital I under tr_TR locale")
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
+            using PklHttpClient client = builder.Build();
+            using HttpResponseMessage response = client.Send(request, _ => { });
+            Require(response.Content.ReadAsStringAsync().GetAwaiter().GetResult() == "rewritten",
+                method + " request result");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = priorCulture;
+        }
+        CorpusHttpRequest observed = server.SingleRequest();
+        switch (method)
+        {
+            case "fills in missing User-Agent header":
+                Require(observed.Headers.TryGetValue("user-agent", out var defaultAgent) &&
+                    defaultAgent.Count > 0, "default User-Agent");
+                break;
+            case "User-Agent from configured headers takes precedence":
+                Require(observed.Headers["user-agent"].Contains("header-agent"),
+                    "header User-Agent precedence");
+                break;
+            case "overrides existing User-Agent headers":
+                Require(observed.Headers["user-agent"].Contains("configured-agent") &&
+                    !observed.Headers["user-agent"].Contains("request-agent"),
+                    "configured User-Agent override");
+                break;
+            case "leaves existing HTTP version intact":
+                Require(observed.Version == HttpVersion.Version11, "explicit HTTP version");
+                break;
+            case "leaves explicit method intact":
+                Require(observed.Method == "POST", "explicit HTTP method");
+                break;
+            case "leaves body publisher intact":
+                Require(Encoding.UTF8.GetString(observed.Body) == "body-payload",
+                    "HTTP request body");
+                break;
+            case "rewrites URIs - longest rewrite wins":
+                Require(observed.Uri.AbsolutePath.Contains("longest", StringComparison.Ordinal),
+                    "longest URI rewrite");
+                break;
+            case "adds configured headers for matching URI patterns":
+                Require(observed.Headers.ContainsKey("x-matched"), "matching header rule");
+                break;
+            case "does not add configured headers for non-matching URI patterns":
+                Require(!observed.Headers.ContainsKey("x-unmatched"), "non-matching header rule");
+                break;
+            case "appends configured header values to existing request headers":
+                Require(observed.Headers["x-values"].SequenceEqual(
+                    new[] { "request", "configured" }), "appended header values");
+                break;
+            case "configured headers wins over configured user-agent header":
+                Require(observed.Headers["user-agent"].Contains("winning-agent"),
+                    "configured header User-Agent precedence");
+                break;
+        }
+    }
+
+    static void VerifyProjectPackageChecksumFailure(string root)
+    {
+        using var server = new CorpusPackageServer();
+        string directory = Path.Combine(root, "bad-project-checksum");
+        Directory.CreateDirectory(directory);
+        string projectFile = Path.Combine(directory, "PklProject");
+        File.WriteAllText(projectFile,
+            "amends \"pkl:Project\"\ndependencies { [\"fruit\"] { " +
+            $"uri = \"package://127.0.0.1:{server.Port}/fruit@1.0.5\" }} }}\n",
+            new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(directory, "PklProject.deps.json"),
+            "{\n  \"schemaVersion\": 1,\n  \"resolvedDependencies\": {\n" +
+            $"    \"package://127.0.0.1:{server.Port}/fruit@1\": {{\n" +
+            "      \"type\": \"remote\",\n" +
+            $"      \"uri\": \"projectpackage://127.0.0.1:{server.Port}/fruit@1.0.5\",\n" +
+            "      \"checksums\": {\"sha256\": \"intentionally bogus checksum\"}\n" +
+            "    }\n  }\n}\n", new UTF8Encoding(false));
+        string module = Path.Combine(directory, "main.pkl");
+        File.WriteAllText(module, "import \"@fruit/Fruit.pkl\"\nres = Fruit\n",
+            new UTF8Encoding(false));
+        Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+        using PklHttpClient client = server.CreateClient();
+        using Evaluator evaluator = EvaluatorBuilder.Preconfigured().ApplyFromProject(project)
+            .SetModuleCacheDir(Path.Combine(root, "bad-project-cache")).SetHttpClient(client).Build();
+        PklException error = Throws<PklException>(() =>
+            evaluator.Evaluate(ModuleSource.FromPath(module)));
+        Require(error.Message.Contains("checksum", StringComparison.OrdinalIgnoreCase) &&
+            error.Message.Contains("intentionally bogus checksum", StringComparison.Ordinal),
+            "project package checksum failure");
+    }
+
+    sealed record CorpusHttpRequest(
+        Uri Uri,
+        string Method,
+        System.Version Version,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> Headers,
+        byte[] Body);
+
+    sealed record CorpusHttpResponse(
+        int Status,
+        string Body,
+        string? Location = null,
+        TimeSpan? Delay = null,
+        byte[]? BinaryBody = null)
+    {
+        internal static CorpusHttpResponse Ok(string body) => new(200, body);
+        internal static CorpusHttpResponse NotFound() => new(404, "not found");
+        internal static CorpusHttpResponse Redirect(Uri location) =>
+            new(302, "", location.OriginalString);
+    }
+
+    sealed class CorpusHttpServer : IDisposable
+    {
+        readonly TcpListener listener;
+        readonly Func<CorpusHttpRequest, CorpusHttpResponse> handler;
+        readonly bool tls;
+        readonly CancellationTokenSource cancellation = new();
+        readonly Task acceptLoop;
+        readonly X509Certificate2? certificate;
+        readonly List<CorpusHttpRequest> requests = new();
+        readonly object requestLock = new();
+
+        CorpusHttpServer(
+            IPAddress address,
+            bool tls,
+            Func<CorpusHttpRequest, CorpusHttpResponse> handler)
+        {
+            this.tls = tls;
+            this.handler = handler;
+            listener = new TcpListener(address, 0);
+            listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            listener.Start();
+            Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            string host = address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+                ? "[::1]" : "127.0.0.1";
+            BaseUri = new Uri($"{(tls ? "https" : "http")}://{host}:{Port}/");
+            certificate = tls ? CreateServerCertificate() : null;
+            CertificatePem = certificate?.ExportCertificatePem() ?? "";
+            acceptLoop = Task.Run(AcceptLoop);
+        }
+
+        internal static CorpusHttpServer Plain(
+            Func<CorpusHttpRequest, CorpusHttpResponse> handler) =>
+            new(IPAddress.Loopback, false, handler);
+        internal static CorpusHttpServer PlainV6(
+            Func<CorpusHttpRequest, CorpusHttpResponse> handler) =>
+            new(IPAddress.IPv6Loopback, false, handler);
+        internal static CorpusHttpServer Tls(
+            Func<CorpusHttpRequest, CorpusHttpResponse> handler) =>
+            new(IPAddress.Loopback, true, handler);
+
+        internal int Port { get; }
+        internal Uri BaseUri { get; }
+        internal string CertificatePem { get; }
+        internal IReadOnlyList<CorpusHttpRequest> Requests
+        {
+            get { lock (requestLock) return requests.ToArray(); }
+        }
+
+        internal CorpusHttpRequest SingleRequest()
+        {
+            IReadOnlyList<CorpusHttpRequest> snapshot = Requests;
+            Require(snapshot.Count == 1, "single HTTP request, got " + snapshot.Count);
+            return snapshot[0];
+        }
+
+        async Task AcceptLoop()
+        {
+            try
+            {
+                while (!cancellation.IsCancellationRequested)
+                {
+                    TcpClient client = await listener.AcceptTcpClientAsync(cancellation.Token);
+                    _ = Task.Run(() => Handle(client), cancellation.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+            catch (SocketException) when (cancellation.IsCancellationRequested) { }
+        }
+
+        async Task Handle(TcpClient client)
+        {
+            using (client)
+            {
+                Stream stream = client.GetStream();
+                if (tls)
+                {
+                    var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
+                    await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                    {
+                        ServerCertificate = certificate,
+                        EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12 |
+                            System.Security.Authentication.SslProtocols.Tls13
+                    }, cancellation.Token);
+                    stream = ssl;
+                }
+                using (stream)
+                {
+                    CorpusHttpRequest request = await ReadRequest(stream, cancellation.Token);
+                    lock (requestLock) requests.Add(request);
+                    CorpusHttpResponse response = handler(request);
+                    if (response.Delay is { } delay) await Task.Delay(delay, cancellation.Token);
+                    byte[] body = response.BinaryBody ?? Encoding.UTF8.GetBytes(response.Body);
+                    string reason = response.Status switch
+                    {
+                        200 => "OK",
+                        302 => "Found",
+                        404 => "Not Found",
+                        _ => "Error"
+                    };
+                    var headers = new StringBuilder()
+                        .Append("HTTP/1.1 ").Append(response.Status).Append(' ').Append(reason)
+                        .Append("\r\nConnection: close\r\nContent-Type: application/octet-stream\r\n")
+                        .Append("Content-Length: ").Append(body.Length).Append("\r\n");
+                    if (response.Location is not null)
+                        headers.Append("Location: ").Append(response.Location).Append("\r\n");
+                    headers.Append("\r\n");
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes(headers.ToString()),
+                        cancellation.Token);
+                    await stream.WriteAsync(body, cancellation.Token);
+                    await stream.FlushAsync(cancellation.Token);
+                }
+            }
+        }
+
+        async Task<CorpusHttpRequest> ReadRequest(Stream stream, CancellationToken token)
+        {
+            var bytes = new List<byte>();
+            byte[] one = new byte[1];
+            while (bytes.Count < 64 * 1024)
+            {
+                int count = await stream.ReadAsync(one, token);
+                if (count == 0) throw new EndOfStreamException("HTTP request headers ended early");
+                bytes.Add(one[0]);
+                int n = bytes.Count;
+                if (n >= 4 && bytes[n - 4] == 13 && bytes[n - 3] == 10 &&
+                    bytes[n - 2] == 13 && bytes[n - 1] == 10) break;
+            }
+            string text = Encoding.ASCII.GetString(bytes.ToArray());
+            string[] lines = text.Split(new[] { "\r\n" }, StringSplitOptions.None);
+            string[] requestLine = lines[0].Split(' ');
+            var headers = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (string line in lines.Skip(1).Where(line => line.Length > 0))
+            {
+                int separator = line.IndexOf(':');
+                if (separator <= 0) continue;
+                string name = line[..separator].Trim();
+                string value = line[(separator + 1)..].Trim();
+                if (!headers.TryGetValue(name, out List<string>? values))
+                    headers[name] = values = new List<string>();
+                values.AddRange(value.Split(',').Select(item => item.Trim()));
+            }
+            int contentLength = headers.TryGetValue("Content-Length", out List<string>? lengths)
+                ? int.Parse(lengths.Single(), CultureInfo.InvariantCulture) : 0;
+            byte[] body = new byte[contentLength];
+            int offset = 0;
+            while (offset < body.Length)
+            {
+                int count = await stream.ReadAsync(body.AsMemory(offset), token);
+                if (count == 0) throw new EndOfStreamException("HTTP request body ended early");
+                offset += count;
+            }
+            Uri uri = Uri.TryCreate(requestLine[1], UriKind.Absolute, out Uri? absolute)
+                ? absolute
+                : new Uri(BaseUri, requestLine[1]);
+            System.Version version = requestLine[2] == "HTTP/1.0"
+                ? HttpVersion.Version10 : HttpVersion.Version11;
+            return new CorpusHttpRequest(uri, requestLine[0], version,
+                headers.ToDictionary(entry => entry.Key.ToLowerInvariant(),
+                    entry => (IReadOnlyList<string>)entry.Value.ToArray(), StringComparer.Ordinal), body);
+        }
+
+        static X509Certificate2 CreateServerCertificate()
+        {
+            using RSA rsa = RSA.Create(2048);
+            var request = new CertificateRequest(
+                "CN=localhost", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, false));
+            request.CertificateExtensions.Add(new X509KeyUsageExtension(
+                X509KeyUsageFlags.DigitalSignature, false));
+            var names = new SubjectAlternativeNameBuilder();
+            names.AddDnsName("localhost");
+            names.AddIpAddress(IPAddress.Loopback);
+            request.CertificateExtensions.Add(names.Build());
+            return request.CreateSelfSigned(
+                DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddHours(1));
+        }
+
+        public void Dispose()
+        {
+            cancellation.Cancel();
+            listener.Stop();
+            try { acceptLoop.Wait(TimeSpan.FromSeconds(2)); }
+            catch (AggregateException) { }
+            certificate?.Dispose();
+            cancellation.Dispose();
+        }
+    }
+
+    sealed class CorpusPackageServer : IDisposable
+    {
+        readonly CorpusHttpServer server;
+        readonly byte[] birdsArchive;
+        readonly byte[] fruitArchive;
+        readonly string birdsArchiveSha;
+        readonly string fruitArchiveSha;
+
+        internal CorpusPackageServer()
+        {
+            server = CorpusHttpServer.Tls(Handle);
+            birdsArchive = ZipBytes(
+                ("Bird.pkl", $"import \"package://127.0.0.1:{Port}/fruit@1.0.5#/Fruit.pkl\"\n" +
+                    "name = \"Pigeon\"\n"),
+                ("allFruit.pkl", "value = 1\n"),
+                ("catalog.pkl", "value = 2\n"),
+                ("some/item.pkl", "value = 3\n"),
+                ("catalog/Ostrich.pkl", "name = \"Ostrich\"\n"),
+                ("catalog/Swallow.pkl", "name = \"Swallow\"\n"));
+            fruitArchive = ZipBytes(("Fruit.pkl", "name = \"Apple\"\n"));
+            birdsArchiveSha = Sha256(birdsArchive);
+            fruitArchiveSha = Sha256(fruitArchive);
+        }
+
+        internal int Port => server.Port;
+        internal string BirdModule =>
+            $"import \"package://127.0.0.1:{Port}/fruit@1.0.5#/Fruit.pkl\"\n" +
+            "name = \"Pigeon\"\n";
+        internal string BirdsMetadataSha256 => Sha256(Encoding.UTF8.GetBytes(BirdsMetadata()));
+        internal PklHttpClient CreateClient() => PklHttpClient.CreateBuilder()
+            .AddCertificate(Encoding.ASCII.GetBytes(server.CertificatePem)).Build();
+
+        CorpusHttpResponse Handle(CorpusHttpRequest request)
+        {
+            string path = request.Uri.AbsolutePath;
+            if (path.EndsWith("/birds@0.5.0", StringComparison.Ordinal))
+                return CorpusHttpResponse.Ok(BirdsMetadata());
+            if (path.EndsWith("/birds@0.5.0.zip", StringComparison.Ordinal))
+                return Bytes(birdsArchive);
+            if (path.EndsWith("/fruit@1.0.5", StringComparison.Ordinal))
+                return CorpusHttpResponse.Ok(FruitMetadata());
+            if (path.EndsWith("/fruit@1.0.5.zip", StringComparison.Ordinal))
+                return Bytes(fruitArchive);
+            if (path.EndsWith("/badPackageZipUrl@1.0.0", StringComparison.Ordinal))
+                return CorpusHttpResponse.Ok(Metadata("badPackageZipUrl", "1.0.0",
+                    "ftp://wait/a/minute", "unused"));
+            if (path.EndsWith("/badChecksum@1.0.0", StringComparison.Ordinal))
+                return CorpusHttpResponse.Ok(Metadata("badChecksum", "1.0.0",
+                    $"https://127.0.0.1:{Port}/badChecksum@1.0.0.zip",
+                    "intentionally bogus checksum"));
+            if (path.EndsWith("/badChecksum@1.0.0.zip", StringComparison.Ordinal))
+                return Bytes(ZipBytes(("Bug.pkl", "value = 1\n")));
+            return CorpusHttpResponse.NotFound();
+        }
+
+        CorpusHttpResponse Bytes(byte[] value) => new(200, "", null, null, value);
+
+        string BirdsMetadata() => Metadata("birds", "0.5.0",
+            $"https://127.0.0.1:{Port}/birds@0.5.0.zip", birdsArchiveSha,
+            ",\n  \"dependencies\": {\"fruit\": {\"uri\": " +
+                $"\"package://127.0.0.1:{Port}/fruit@1.0.5\", " +
+                $"\"checksums\": {{\"sha256\": \"{Sha256(Encoding.UTF8.GetBytes(FruitMetadata()))}\"}}" +
+                "}}");
+
+        string FruitMetadata() => Metadata("fruit", "1.0.5",
+            $"https://127.0.0.1:{Port}/fruit@1.0.5.zip", fruitArchiveSha);
+
+        string Metadata(string name, string version, string archive, string checksum,
+            string dependencySuffix = ",\n  \"dependencies\": {}") =>
+            "{\n  \"schemaVersion\": 1,\n" +
+            $"  \"name\": \"{name}\",\n" +
+            $"  \"packageUri\": \"package://127.0.0.1:{Port}/{name}@{version}\",\n" +
+            $"  \"version\": \"{version}\",\n" +
+            $"  \"packageZipUrl\": \"{archive}\",\n" +
+            $"  \"packageZipChecksums\": {{\"sha256\": \"{checksum}\"}}" +
+            dependencySuffix + "\n}\n";
+
+        static byte[] ZipBytes(params (string Path, string Contents)[] entries)
+        {
+            using var output = new MemoryStream();
+            using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach ((string path, string contents) in entries)
+                {
+                    ZipArchiveEntry entry = archive.CreateEntry(path);
+                    using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
+                    writer.Write(contents);
+                }
+            }
+            return output.ToArray();
+        }
+
+        static string Sha256(byte[] bytes) =>
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+                .ToLowerInvariant();
+
+        public void Dispose() => server.Dispose();
+    }
 
     sealed class RecordingVisitor : ValueVisitor
     {

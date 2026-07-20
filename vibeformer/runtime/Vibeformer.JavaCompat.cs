@@ -22,6 +22,11 @@ using System.Threading.Tasks;
 
 namespace Vibeformer.Runtime;
 
+internal static class JavaStandardCharsets
+{
+    internal static readonly Encoding UTF8 = new UTF8Encoding(false);
+}
+
 internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
 internal delegate long JavaToLongFunction<in TValue>(TValue value);
@@ -2360,6 +2365,10 @@ internal static class JavaCompat
             Regex.IsMatch(originalBasis.Value, @"(?i)^file:///[a-z]:$") &&
             value.OriginalString == ".")
             return new Uri("file:///", UriKind.Absolute);
+        // java.net.URI.resolve leaves a relative reference relative when the
+        // base URI is opaque. System.Uri instead interprets it as a new opaque
+        // scheme-specific part (for example, `repl:foo.pkl`).
+        if (basis.IsAbsoluteUri && UriIsOpaque(basis)) return value;
         if (basis.IsAbsoluteUri) return new Uri(basis, value);
         var basisText = basis.OriginalString;
         var rooted = basisText.StartsWith("/", StringComparison.Ordinal);
@@ -4719,6 +4728,27 @@ internal static class JavaCompat
     internal static global::Pkl.Core.Runtime.GraalCollections.EconomicMap<K, V> CreateEconomicMap<K, V>(int capacity) where K : notnull => new(capacity);
     internal static global::Pkl.Core.Runtime.GraalCollections.UnmodifiableEconomicMap<K, V> EmptyEconomicMap<K, V>() where K : notnull =>
         new global::Pkl.Core.Runtime.GraalCollections.EconomicMap<K, V>();
+    internal static bool EconomicMapEquals<K, V>(
+        global::Pkl.Core.Runtime.GraalCollections.UnmodifiableEconomicMap<K, V> left,
+        global::Pkl.Core.Runtime.GraalCollections.UnmodifiableEconomicMap<K, V> right)
+        where K : notnull
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left.Size() != right.Size()) return false;
+        var cursor = left.GetEntries();
+        while (cursor.Advance())
+        {
+            K key = cursor.GetKey();
+            object? leftValue = cursor.GetValue();
+            object? rightValue = right.Get(key);
+            if (rightValue is null)
+            {
+                if (leftValue is not null || !right.ContainsKey(key)) return false;
+            }
+            else if (!Equals(rightValue, leftValue)) return false;
+        }
+        return true;
+    }
     internal static global::System.Net.IPEndPoint NewIpEndPoint(string host, int port) =>
         new(global::System.Net.Dns.GetHostAddresses(host)[0], port);
     internal static global::System.Net.WebProxy NewWebProxy(

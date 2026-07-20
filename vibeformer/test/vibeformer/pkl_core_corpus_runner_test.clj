@@ -27,6 +27,7 @@
 (def ^:private cases
   [{:case-id "case/a" :junit-unique-id "[engine:junit]/[class:A]/[method:a()]"
     :source-class "A"
+    :source-method "a"
     :source-path "pkl-core/src/test/kotlin/A.kt"
     :source-sha256 (apply str (repeat 64 "a")) :source-line "10"
     :behavior-family "evaluation-runtime"
@@ -35,6 +36,7 @@
     :expected-outcome "assertions-succeed" :platform-conditions "all-supported-hosts"}
    {:case-id "case/b" :junit-unique-id "[engine:junit]/[class:B]/[method:b()]"
     :source-class "B"
+    :source-method "b"
     :source-path "pkl-core/src/test/kotlin/B.kt"
     :source-sha256 (apply str (repeat 64 "b")) :source-line "20"
     :behavior-family "loading-security-project-package"
@@ -168,11 +170,19 @@
         rows (package-rows)
         partition {:name :focused-value-runtime
                    :source-classes #{"A"}
-                   :expected-count 1}]
+                   :expected-count 1}
+        method-partition {:name :focused-loading
+                          :source-classes #{}
+                          :source-methods-by-class {"B" #{"b"}}
+                          :expected-count 1}]
     (is (= {:partition :focused-value-runtime :passed 1}
            (runner/validate-completed-partition!
             validated "package-dotnet" (result-file root "partition.tsv" rows)
             partition)))
+    (is (= {:partition :focused-loading :passed 1}
+           (runner/validate-completed-partition!
+            validated "package-dotnet" (result-file root "method-partition.tsv" rows)
+            method-partition)))
     (is (= :pkl-core-completed-partition-failed
            (thrown-kind
             #(runner/validate-completed-partition!
@@ -188,7 +198,14 @@
            (thrown-kind
             #(runner/validate-completed-partition!
               validated "package-dotnet" (result-file root "partition-drift.tsv" rows)
-              (assoc partition :expected-count 2)))))))
+              (assoc partition :expected-count 2)))))
+    (is (= :pkl-core-completed-partition-contract-drift
+           (thrown-kind
+            #(runner/validate-completed-partition!
+              validated "package-dotnet"
+              (result-file root "method-partition-drift.tsv" rows)
+              (assoc method-partition
+                     :source-methods-by-class {"B" #{"renamed"}})))))))
 
 (deftest comparison-retains-failures-and-repetition-is-byte-exact
   (let [root (temp-directory)
@@ -268,4 +285,6 @@
                 (paths/resolve-path root "vibeformer" "src" "vibeformer"
                                     "pkl_core_corpus_runner.clj"))]
     (is (.contains packaging ":packages-root packages"))
-    (is (.contains corpus "packages-root (:packages-root package-proof)"))))
+    (is (.contains corpus "packages-root (:packages-root package-proof)"))
+    (is (.contains corpus "Corpus.Resources.payload.txt"))
+    (is (.contains corpus ":expected-count 215"))))

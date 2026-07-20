@@ -87,6 +87,69 @@
      "org.pkl.core.util.PathResolverTest$PosixTests"
      "org.pkl.core.util.PathResolverTest$WindowsTests"}})
 
+(def ^:private loading-security-project-package-partition
+  {:name :loading-security-project-package
+   :expected-count 215
+   :source-classes
+   #{"org.pkl.core.EvaluatorBuilderTest"
+     "org.pkl.core.SecurityManagersTest"
+     "org.pkl.core.http.DummyHttpClientTest"
+     "org.pkl.core.http.HttpClientBuilderTest"
+     "org.pkl.core.http.HttpClientTest"
+     "org.pkl.core.http.HttpClientTest$RedirectsTest"
+     "org.pkl.core.http.LazyHttpClientTest"
+     "org.pkl.core.http.NoProxyRuleTest"
+     "org.pkl.core.http.RequestRewritingClientTest"
+     "org.pkl.core.module.ModuleKeyFactoriesTest"
+     "org.pkl.core.module.ModuleKeysTest"
+     "org.pkl.core.module.ModulePathResolverTest"
+     "org.pkl.core.module.ResolvedModuleKeysTest"
+     "org.pkl.core.module.ServiceProviderTest"
+     "org.pkl.core.packages.DependencyMetadataTest"
+     "org.pkl.core.packages.PackageResolversTest$DiskCachedPackageResolverTest"
+     "org.pkl.core.packages.PackageResolversTest$InMemoryPackageResolverTest"
+     "org.pkl.core.packages.PackageUriTest"
+     "org.pkl.core.project.ProjectDependenciesResolverTest"
+     "org.pkl.core.project.ProjectDepsTest"
+     "org.pkl.core.project.ProjectTest"
+     "org.pkl.core.resource.ResourceReadersEvaluatorTest"
+     "org.pkl.core.resource.ResourceReadersTest"
+     "org.pkl.core.runtime.FileSystemManagerTest"
+     "org.pkl.core.settings.PklSettingsTest"}
+   :source-methods-by-class
+   {"org.pkl.core.AnalyzerTest"
+    #{"package imports"
+      "project dependency imports"
+      "local project dependency import"}
+    "org.pkl.core.EvaluatorTest"
+    #{"evaluate text with relative import"
+      "evaluate named module"
+      "evaluate non-existing named module"
+      "evaluate file"
+      "evaluate non-existing file"
+      "evaluate path"
+      "evaluate non-existing path"
+      "evaluate zip file system path"
+      "evaluate non-existing zip file system path"
+      "evaluate URI"
+      "evaluate non-existing URI"
+      "evaluate jar URI"
+      "evaluate jar URI with non-existing archive"
+      "evaluate jar URI with non-existing archive path"
+      "evaluate module with relative URI"
+      "cannot import module located outside root dir"
+      "cannot import module from zip filesystem located outside root dir"
+      "cannot read resource from zip filesystem located outside root dir"
+      "cannot read resource located outside root dir"
+      "multiple-file output"
+      "project set from modulepath"
+      "project set from custom ModuleKeyFactory"
+      "project base path set to non-hierarchical scheme"
+      "cannot glob import in local dependency from modulepath"
+      "root dir check happens without any UNC or SMB access"
+      "eval dependency notation as a module source"
+      "eval dependency notation -- no project configured"}}})
+
 (defn- fail!
   [message data]
   (throw (ex-info message (assoc data :kind (or (:kind data)
@@ -248,16 +311,20 @@
   and PASS every row. This is partition evidence only; it does not redefine
   the complete product contract or grant dispositions to other rows."
   [validated-manifest origin result-file
-   {:keys [name source-classes expected-count]}]
+   {:keys [name source-classes source-methods-by-class expected-count]}]
   (let [parsed (validate-results! validated-manifest origin result-file)
         selected (->> (map vector (:cases validated-manifest) (:rows parsed))
                       (filterv (fn [[case-data _]]
-                                 (contains? source-classes (:source-class case-data)))))]
+                                 (let [source-class (:source-class case-data)]
+                                   (or (contains? source-classes source-class)
+                                       (contains? (get source-methods-by-class source-class #{})
+                                                  (:source-method case-data)))))))]
     (when-not (= expected-count (count selected))
       (fail! "Completed Pkl.Core corpus partition contract drifted"
              {:kind :pkl-core-completed-partition-contract-drift
               :partition name :expected expected-count :actual (count selected)
-              :source-classes source-classes}))
+              :source-classes source-classes
+              :source-methods-by-class source-methods-by-class}))
     (let [failures (->> selected
                         (keep (fn [[case-data row]]
                                 (when-not (= "PASS" (:status row))
@@ -600,6 +667,39 @@
   [consumer-root]
   (paths/resolve-path consumer-root "Pkl.Core.PackageConsumer.csproj"))
 
+(defn- install-package-runner!
+  [root consumer-root project source runner-source]
+  (Files/copy runner-source source
+              (into-array StandardCopyOption
+                          [StandardCopyOption/REPLACE_EXISTING]))
+  (let [fixture-root (paths/resolve-path root "vibeformer" "validation"
+                                         "pkl-core-corpus" "fixtures")
+        fixtures [["payload.txt" "Corpus.Resources.payload.txt"]
+                  ["module.pkl" "Corpus.Resources.module.pkl"]]]
+    (doseq [[file _] fixtures]
+      (let [input (paths/resolve-path fixture-root file)
+            output (paths/resolve-path consumer-root file)]
+        (when-not (paths/regular-file? input)
+          (fail! "Package Pkl.Core corpus fixture is missing"
+                 {:kind :missing-pkl-core-corpus-input :path (str input)}))
+        (Files/copy input output
+                    (into-array StandardCopyOption
+                                [StandardCopyOption/REPLACE_EXISTING]))))
+    (let [project-text (Files/readString project StandardCharsets/UTF_8)
+          closing "</Project>"
+          resources
+          (str "  <ItemGroup>\n"
+               (apply str
+                      (for [[file logical-name] fixtures]
+                        (str "    <EmbeddedResource Include=\"" file
+                             "\" LogicalName=\"" logical-name "\" />\n")))
+               "  </ItemGroup>\n")]
+      (when-not (str/includes? project-text closing)
+        (fail! "Package Pkl.Core consumer project is malformed"
+               {:kind :malformed-pkl-core-corpus-consumer-project
+                :path (str project)}))
+      (write-text! project (str/replace project-text closing (str resources closing))))))
+
 (defn verify-corpus-runner!
   "Executes the pinned upstream contract and isolated package consumer twice.
   Infrastructure failures throw; semantic mismatches are retained as the
@@ -693,9 +793,7 @@
                   {:kind :missing-pkl-core-corpus-input :path (str runner-source)}))
          (package-provenance/write-packed-assembly-manifest!
           assembly-manifest (:packages package-proof))
-         (Files/copy runner-source source
-                     (into-array StandardCopyOption
-                                 [StandardCopyOption/REPLACE_EXISTING]))
+         (install-package-runner! root consumer-root project source runner-source)
          (let [source-isolation
                (verify-package-source-isolation! consumer-root project source)]
            (run-command! {:command ["dotnet" "build" (str project)
@@ -715,6 +813,10 @@
                  (validate-completed-partition!
                   validated "package-dotnet" package-first
                   value-runtime-parser-path-partition)
+                 loading-partition
+                 (validate-completed-partition!
+                  validated "package-dotnet" package-first
+                  loading-security-project-package-partition)
                  first-assemblies
                  (validate-loaded-assemblies! assembly-manifest first-loaded consumer-root)
                  second-assemblies
@@ -743,6 +845,8 @@
                           (:observations package-determinism)
                           :package-statuses (:statuses baseline)
                           :completed-partition value-runtime-partition
+                          :completed-partitions
+                          [value-runtime-partition loading-partition]
                           :package (:identity package-proof)
                           :controls controls}]
              (println "Complete Pkl.Core corpus runner baseline recorded:"

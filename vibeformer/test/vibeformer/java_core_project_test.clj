@@ -198,6 +198,8 @@
                                                "PklEvaluatorSettings.cs")))
               project-settings (slurp (str (paths/resolve-path
                                              source-root "Project" "Project.cs")))
+              project-deps (slurp (str (paths/resolve-path
+                                         source-root "Project" "ProjectDeps.cs")))
               import-analyzer (slurp (str (paths/resolve-path
                                             source-root "Runtime" "VmImportAnalyzer.cs")))
               file-system-manager (slurp (str (paths/resolve-path
@@ -297,11 +299,15 @@
             (is (str/includes? project-settings
                                "var cycles = Project.FindImportCycle(moduleSource)"))
             (is (str/includes? project-settings
+                               "EqualsIgnoreCase(scheme, \"file\")"))
+            (is (str/includes? project-settings
                                "var onlyDirectSelfCycle = global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1"))
             (is (str/includes? project-settings
                                "&& !onlyDirectSelfCycle"))
             (is (str/includes? dependency
                                "JavaCompat.ResolveLocalDependencyUri(projectBaseUri"))
+            (is (str/includes? project-deps
+                               "JavaCompat.EconomicMapEquals(this.resolvedDependencies"))
             (is (str/includes? substrate
                                "internal SourceSection CreateSection(int line)"))
             (is (str/includes? substrate
@@ -312,6 +318,16 @@
                                "if (child is RootNode) return;"))
             (is (str/includes? substrate
                                "vmException.GetSourceSection() is null"))
+            (is (str/includes? substrate
+                               "if (encoded.Length == 0)"))
+            (is (str/includes? substrate
+                               "message.Content = body as System.Net.Http.HttpContent;"))
+            (is (str/includes? substrate
+                               "if (uri.IsFile) return System.IO.File.OpenRead(uri.LocalPath);"))
+            (is (str/includes? java-compat
+                               "internal static class JavaStandardCharsets"))
+            (is (str/includes? dependency-metadata
+                               "global::Vibeformer.Runtime.JavaStandardCharsets.UTF8"))
             (is (str/includes? import-analyzer "JavaCompat.NewSortedDictionary<"))
             (is (str/includes? import-analyzer "JavaCompat.NewSortedSet<"))
             (is (str/includes?
@@ -346,6 +362,10 @@
             (is (str/includes? java-compat
                                "ResolveLocalDependencyUri(Uri basis, Uri value)"))
             (is (str/includes? java-compat
+                               "if (basis.IsAbsoluteUri && UriIsOpaque(basis)) return value;"))
+            (is (str/includes? java-compat
+                               "internal static bool EconomicMapEquals<K, V>"))
+            (is (str/includes? java-compat
                                "private static string TranslateJavaRegex(string pattern)"))
             (is (str/includes? java-compat
                                "internal static int StringCompareTo(string left, string right)"))
@@ -362,6 +382,8 @@
                                "JavaFileSystemAlreadyExistsException"))
             (is (str/includes? loading-runtime "CreateAssembly"))
             (is (str/includes? loading-runtime "CreateEmbeddedResources"))
+            (is (str/includes? loading-runtime
+                               "is missing a `/` after its scheme"))
             (is (str/includes? loading-runtime "static Platform()"))
             (is (str/includes? loading-runtime "static JdkHttpClient()"))
             (let [push-index (str/index-of json-writer
