@@ -846,6 +846,17 @@
            (str/ends-with? (or (some-> source-type .getQualifiedName) "") "Handler"))
       (invoke (raw "global::Pkl.Core.Util.Json.JsonHandlerBridge.Erase") [node])
 
+      ;; StackFrameTransformer is emitted as an idiomatic named .NET delegate,
+      ;; while internal Java helpers can still accept Function<StackFrame,
+      ;; StackFrame>. Delegate instances are not cast-compatible across CLR
+      ;; delegate types, so preserve Java's functional-interface adaptation
+      ;; with a forwarding lambda at those internal call sites.
+      (and (= "org.pkl.core.StackFrameTransformer"
+              (some-> source-type .getQualifiedName))
+           (= "java.util.function.Function"
+              (some-> parameter-type .getQualifiedName)))
+      (sequence-node [(raw "(frame => ") node (raw "(frame))")])
+
       (and (.isArray parameter-type)
            source-type (.isArray ^CtTypeReference source-type)
            (let [source-component (.getComponentType ^CtTypeReference source-type)
@@ -1438,7 +1449,9 @@
           "executable:java.util.Spliterator#reduce(java.util.function.BinaryOperator)" (compat-call "ReduceOptional" (into [target] args))
           "executable:java.util.stream.Stream#reduce(java.util.function.BinaryOperator)" (compat-call "ReduceOptional" (into [target] args))
           "executable:java.util.function.Function#andThen(java.util.function.Function)" (compat-call "AndThen" (into [target] args))
-          "executable:org.pkl.core.StackFrameTransformer#andThen(org.pkl.core.StackFrameTransformer)" (compat-call "AndThen" (into [target] args))
+          "executable:org.pkl.core.StackFrameTransformer#andThen(org.pkl.core.StackFrameTransformer)"
+          (invoke (raw "global::Pkl.Core.StackFrameTransformerExtensions.AndThen")
+                  (into [target] args))
           "executable:java.net.URL#getProtocol()" (compat-call "UriScheme" [target])
           "executable:java.net.URL#openStream()" (compat-call "OpenStream" [target])
           "executable:java.net.URL#openConnection()" (invoke (raw "new global::Pkl.Core.Runtime.JavaUrlConnection") [target])
@@ -1924,6 +1937,11 @@
                          "java.io.ByteArrayInputStream" (compat-call "NewMemoryStream" args)
                          "java.io.File" (first args)
                          "java.io.FileWriter" (compat-call "NewFileWriter" args)
+                         ;; TextWriter already supplies PrintWriter's observable
+                         ;; WriteLine/Flush behavior. Preserve ownership of the
+                         ;; caller-provided writer instead of allocating a Java
+                         ;; wrapper that would escape through public metadata.
+                         "java.io.PrintWriter" (first args)
                          "java.net.InetSocketAddress" (compat-call "NewIpEndPoint" args)
                          "java.net.Proxy" (compat-call "NewWebProxy" args)
                          "java.net.URI" (compat-call "NewUri" args)

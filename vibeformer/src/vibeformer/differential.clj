@@ -689,6 +689,11 @@
     "adaptation.embedded-resources"
     "evaluator.builder-mutations-getters"
     "evaluator.builder-invalid-combinations"
+    "analyzer.import-graph"
+    "logging.public-api"
+    "diagnostics.stack-transform"
+    "diagnostics.exception-metadata"
+    "runtime.platform-release"
     "evaluator.timeout-deadline"
     "evaluator.timeout-diagnostic"
     "evaluator.timeout-cancellation"
@@ -840,6 +845,23 @@
 
 (def ^:private loading-public-surface-files
   ["EvaluatorBuilder.cs"
+   "Analyzer.cs"
+   "BufferedLogger.cs"
+   "Evaluator.cs"
+   "ImportGraph.cs"
+   "Logger.cs"
+   "Loggers.cs"
+   "NoSuchPropertyException.cs"
+   "PklBugException.cs"
+   "PklException.cs"
+   "Platform.cs"
+   "Release.cs"
+   "RendererException.cs"
+   "SecurityManagerException.cs"
+   "StackFrame.cs"
+   "StackFrameTransformer.cs"
+   "StackFrameTransformers.cs"
+   "Runtime/LoggerImpl.cs"
    "ModuleSource.cs"
    "SecurityManagers.cs"
    "EvaluatorSettings/PklEvaluatorSettings.cs"
@@ -940,6 +962,11 @@
     "custom/module-resource-lifecycle"
     "resources/environment-property"
     "evaluator/builder"
+    "analyzer/import-graph"
+    "logging/public-api"
+    "diagnostics/stack-transform"
+    "diagnostics/exception-metadata"
+    "runtime/platform-release"
     "security/policy"
     "https/rewrite-redirect-headers"
     "package/assets-cache-integrity"
@@ -1045,9 +1072,9 @@
     (when-not target-framework
       (fail! "Could not determine the loading consumer target framework"
              {:project (str installed-consumer-project)}))
-    (when-not (= 27 (count package-entries))
+    (when-not (= 32 (count package-entries))
       (fail! "The package-only loading observation selection changed"
-             {:expected 27 :actual (count package-entries)
+             {:expected 32 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
     (when-not generated-project-root
       (fail! "Could not locate the clean generated Pkl.Core project for stub auditing"

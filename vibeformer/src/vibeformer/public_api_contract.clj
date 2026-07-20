@@ -317,9 +317,15 @@
   [row policy]
   (when (= "product-api" (:classification policy))
     (let [kind (:kind row)
-          name (:name row)]
+          name (:name row)
+          stack-frame-composition?
+          (and (= "org.pkl.core.StackFrameTransformer" (:owner row))
+               (= "method" kind)
+               (= "andThen" name))]
       {:dotnet-assembly (if (= "pkl-parser" (:source-module row)) "Pkl.Parser" "Pkl.Core")
-       :dotnet-owner (dotnet-owner row)
+       :dotnet-owner (if stack-frame-composition?
+                       "Pkl.Core.StackFrameTransformerExtensions"
+                       (dotnet-owner row))
        :dotnet-kind (case kind
                       "property" "property"
                       "constructor" "constructor"
@@ -332,7 +338,9 @@
                       "type" name
                       "enum-value" name
                       (pascal name))
-       :parameter-count (:parameter-count row)})))
+       :dotnet-parameter-count (if stack-frame-composition?
+                                 "2"
+                                 (:parameter-count row))})))
 
 (defn contract-rows
   [upstream-rows policies]
@@ -345,7 +353,7 @@
                                    :exclusion-evidence])
               (or (target-shape row policy)
                   {:dotnet-assembly "-" :dotnet-owner "-" :dotnet-kind "-"
-                   :dotnet-name "-" :parameter-count (:parameter-count row)}))))
+                   :dotnet-name "-" :dotnet-parameter-count "-"}))))
    upstream-rows))
 
 (declare implicit-record-constructor?)
@@ -667,7 +675,7 @@
 (defn- target-broad-key
   [row]
   [(normalized-owner (:dotnet-owner row)) (:dotnet-kind row) (:dotnet-name row)
-   (:parameter-count row)])
+   (:dotnet-parameter-count row)])
 
 (defn classify-package-row
   [target-keys row]

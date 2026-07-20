@@ -486,7 +486,7 @@ namespace Pkl.Core.Runtime
             present ? presentCase(value!) : emptyCase();
     }
 
-    public sealed class JavaPrintWriter : System.IO.TextWriter
+    internal sealed class JavaPrintWriter : System.IO.TextWriter
     {
         private readonly System.IO.TextWriter writer;
         public JavaPrintWriter(System.IO.TextWriter writer) => this.writer = writer;

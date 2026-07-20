@@ -42,11 +42,11 @@
         kinds (set (map :kind rows))]
     (testing "all independently extracted declarations and package rows are classified"
       (is (= 6353 (:upstream-rows summary)))
-      (is (= 9612 (:package-rows summary)))
+      (is (= 9448 (:package-rows summary)))
       (is (= 14 (:behavior-rows summary)))
       (is (zero? (:failing-controls summary)))
       (is (= 6353 (reduce + (vals (:classifications summary)))))
-      (is (= 9612 (reduce + (vals (:package-classifications summary))))))
+      (is (= 9448 (reduce + (vals (:package-classifications summary))))))
 
     (testing "member metadata covers every required declaration dimension"
       (is (every? kinds ["type" "constructor" "property" "field" "method"
@@ -102,7 +102,7 @@
                    [:mismatch :kind]))))
 
   (testing "package reflection"
-    (is (= {:matched 9612}
+    (is (= {:matched 9448}
            (contract/compare-package-surface @package @package)))
     (is (= :package-public-surface-drift
            (get-in (contract/compare-package-surface @package (pop @package))
@@ -132,7 +132,7 @@
                 @workspace {:source-module "pkl-parser"})
         core (contract/generation-surface!
               @workspace {:source-module "pkl-core"})]
-    (is (= [958 1254] (mapv #(count (:required-rows %)) [parser core])))
+    (is (= [958 1250] (mapv #(count (:required-rows %)) [parser core])))
     (is (= [102 139] (mapv #(count (:seeds %)) [parser core])))
     (is (every? #(and (= :public-api (:expand %)) (set? (:members %)))
                 (concat (:seeds parser) (:seeds core))))

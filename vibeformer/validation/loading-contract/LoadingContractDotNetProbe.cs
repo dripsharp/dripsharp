@@ -28,6 +28,7 @@ using Pkl.Core.Resource;
 using Pkl.Core.Runtime;
 using Pkl.Core.Settings;
 using PklHttpClient = Pkl.Core.Http.HttpClient;
+using StackFrame = Pkl.Core.StackFrame;
 
 /** Package-only .NET probe for the loader, package, and policy contract. */
 static class LoadingContractDotNetProbe
@@ -88,6 +89,11 @@ static class LoadingContractDotNetProbe
         Write(writer, "custom/module-resource-lifecycle", "LOADING", ObserveCustomReaders());
         Write(writer, "resources/environment-property", "LOADING", ObserveEnvironmentAndProperties());
         Write(writer, "evaluator/builder", "API", ObserveEvaluatorBuilder(work));
+        Write(writer, "analyzer/import-graph", "API", ObserveAnalyzerAndImportGraph(work));
+        Write(writer, "logging/public-api", "LOGGING", ObserveLogging());
+        Write(writer, "diagnostics/stack-transform", "DIAGNOSTIC", ObserveStackTransforms(fixtures));
+        Write(writer, "diagnostics/exception-metadata", "DIAGNOSTIC", ObserveExceptions());
+        Write(writer, "runtime/platform-release", "API", ObservePlatformAndRelease());
         Write(writer, "security/policy", "POLICY", ObserveSecurityPolicy(work));
         NetworkObservations network = ObserveNetworkAndPackages(packageBuild, work);
         Write(writer, "https/rewrite-redirect-headers", "HTTP", network.Http);
@@ -112,6 +118,157 @@ static class LoadingContractDotNetProbe
             ObserveExternalReaderFailureLifecycle(work));
         Write(writer, "evaluator/timeout-cleanup", "DOTNET", timeouts.Cleanup);
         Console.WriteLine("Package-only loading, package, and policy validation passed.");
+    }
+
+    static string ObserveAnalyzerAndImportGraph(string work)
+    {
+        string source = Path.Combine(work, "analyzer-main.pkl");
+        File.WriteAllText(source,
+            "amends \"pkl:base\"\nimport \"pkl:json\"\nvalue = import(\"pkl:xml\")\n",
+            new UTF8Encoding(false));
+        var analyzer = new Analyzer(
+            StackFrameTransformers.DefaultTransformer,
+            false,
+            SecurityManagers.defaultManager,
+            new List<ModuleKeyFactory> { ModuleKeyFactories.file, ModuleKeyFactories.standardLibrary },
+            null,
+            null,
+            PklHttpClient.DummyClient(),
+            TraceMode.COMPACT);
+        ImportGraph analyzed = analyzer.ImportGraph(new Uri(source));
+        string analyzedImports = string.Join(",", analyzed.Imports[new Uri(source)]
+            .Select(item => item.Uri.OriginalString).OrderBy(value => value, StringComparer.Ordinal));
+
+        string json = "{\"imports\":{" +
+            "\"pkl:z\":[{\"uri\":\"pkl:xml\"},{\"uri\":\"pkl:base\"},{\"uri\":\"pkl:base\"}]," +
+            "\"pkl:a\":[]}," +
+            "\"resolvedImports\":{\"pkl:z\":\"file:/tmp/z.pkl\",\"pkl:a\":\"pkl:a\"}}";
+        ImportGraph parsed = ImportGraph.ParseFromJson(json);
+        ImportGraph equal = ImportGraph.ParseFromJson(json);
+        string keys = string.Join(",", parsed.Imports.Keys.Select(uri => uri.OriginalString));
+        string imports = string.Join(",", parsed.Imports[new Uri("pkl:z")]
+            .Select(item => item.Uri.OriginalString));
+        string invalidJson = ExceptionName(() => ImportGraph.ParseFromJson("{"));
+        string invalidShape = ExceptionName(() => ImportGraph.ParseFromJson(
+            "{\"imports\":{\"pkl:a\":1},\"resolvedImports\":{}}"));
+        string invalidUri = ExceptionName(() => ImportGraph.ParseFromJson(
+            "{\"imports\":{\"http://[\":[]},\"resolvedImports\":{}}"));
+        return $"analyzed={analyzed.Imports.Count}:{analyzedImports}" +
+            $"|parsed={keys}:{imports}:{parsed.ResolvedImports.Count}" +
+            $"|equality={Lower(parsed.Equals(equal) && parsed.GetHashCode() == equal.GetHashCode())}" +
+            $"|invalid={invalidJson}:{invalidShape}:{invalidUri}";
+    }
+
+    static string ObserveLogging()
+    {
+        var frame = new StackFrame("file:/module.pkl", "local#member",
+            new List<string> { "value = 1" }, 1, 1, 1, 9);
+        var sink = new StringWriter(CultureInfo.InvariantCulture);
+        Logger logger = Loggers.Writer(sink);
+        var buffered = new BufferedLogger(logger);
+        buffered.Trace("trace", frame);
+        buffered.Warn("warn\n", frame);
+        string bufferedText = Escape(buffered.GetLogs());
+        string writtenText = Escape(sink.ToString());
+        buffered.Clear();
+        Loggers.Noop().Trace("discarded", frame);
+        var streamSink = new MemoryStream();
+        Loggers.Stream(streamSink).Trace("stream", frame);
+        string streamText = Escape(Encoding.UTF8.GetString(streamSink.ToArray()));
+        var stderrSink = new StringWriter(CultureInfo.InvariantCulture);
+        TextWriter originalError = Console.Error;
+        try
+        {
+            Console.SetError(stderrSink);
+            Loggers.StdErr().Warn("stderr", frame);
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+        string stderrText = Escape(stderrSink.ToString());
+        return $"buffered={bufferedText}|cleared={Lower(buffered.GetLogs().Length == 0)}" +
+            $"|writer={writtenText}|stream={streamText}|stderr={stderrText}" +
+            $"|factories={Lower(Loggers.Noop() is not null && Loggers.StdErr() is not null)}";
+    }
+
+    static string ObserveStackTransforms(string fixtures)
+    {
+        var frame = new StackFrame("file:///tmp/project/main.pkl", "local#member",
+            new List<string> { "value = 1" }, 2, 3, 4, 5);
+        var same = new StackFrame("file:///tmp/project/main.pkl", "local#member",
+            new List<string> { "value = 1" }, 2, 3, 4, 5);
+        StackFrameTransformer composed =
+            ((StackFrameTransformer)(value => value.WithModuleUri(value.GetModuleUri() + "|first")))
+            .AndThen(value => value.WithModuleUri(value.GetModuleUri() + "|second"));
+        string format = "editor://open?url=%{url}&path=%{path}&line=%{line}" +
+            "&end=%{endLine}&column=%{column}&endColumn=%{endColumn}";
+        StackFrame converted = StackFrameTransformers.ConvertFilePathToUriScheme(format)(frame);
+        StackFrame relative = StackFrameTransformers.RelativizeModuleUri(
+            new Uri("file:///tmp/project/"))(frame);
+        StackFrame stdlib = StackFrameTransformers.ConvertStdLibUrlToExternalUrl(
+            new StackFrame("pkl:base", null, new List<string>(), 7, 1, 7, 2));
+        PklSettings settings = PklSettings.Load(ModuleSource.PathFromPath(
+            Path.Combine(fixtures, "project", "settings.pkl")));
+        StackFrame configured = StackFrameTransformers.CreateDefault(settings)(frame);
+        return $"identity={Lower(ReferenceEquals(StackFrameTransformers.Empty(frame), frame))}:" +
+            $"{Lower(ReferenceEquals(StackFrameTransformers.FromServiceProviders(frame), frame))}" +
+            $"|composition={composed(frame).GetModuleUri()}" +
+            $"|file={converted.GetModuleUri()}|relative={relative.GetModuleUri()}" +
+            $"|stdlib={Lower(stdlib.GetModuleUri().Contains("stdlib/base.pkl#L7", StringComparison.Ordinal))}" +
+            $"|configured={Lower(configured.GetModuleUri() != frame.GetModuleUri())}" +
+            $"|equality={Lower(frame.Equals(same) && frame.GetHashCode() == same.GetHashCode() && !frame.Equals(frame.WithModuleUri("other:")))}";
+    }
+
+    static string ObserveExceptions()
+    {
+        var cause = new ArgumentException("cause");
+        var pkl = new PklException("message", cause);
+        var causeOnly = new PklException(cause);
+        var bug = new PklBugException(cause);
+        var missing = new NoSuchPropertyException("missing", "bird");
+        var renderer = new RendererException("render");
+        var security = new SecurityManagerException("denied");
+        return $"types={pkl.GetType().Name}:{bug.GetType().Name}:{missing.GetType().Name}:" +
+            $"{renderer.GetType().Name}:{security.GetType().Name}" +
+            $"|metadata={pkl.Message}:{Lower(ReferenceEquals(pkl.InnerException, cause))}:" +
+            $"{Lower(causeOnly.Message.Contains("cause", StringComparison.Ordinal))}:" +
+            $"{Lower(bug.Message.StartsWith("An unexpected error", StringComparison.Ordinal))}:" +
+            $"{missing.GetPropertyName()}:{PklBugException.UnreachableCode().Message}";
+    }
+
+    static string ObservePlatformAndRelease()
+    {
+        Platform platform = Platform.Current();
+        var platformCopy = new Platform(platform.LanguageValue, platform.RuntimeValue,
+            platform.VirtualMachineValue, platform.OperatingSystemValue, platform.ProcessorValue);
+        Release release = Release.Current();
+        var releaseCopy = new Release(release.Version, release.Os, release.Flavor,
+            release.VersionInfo, release.CommitId, release.SourceCodeValue,
+            release.DocumentationValue, release.StandardLibraryValue);
+        return $"identity={Lower(ReferenceEquals(platform, Platform.Current()))}:" +
+            $"{Lower(ReferenceEquals(release, Release.Current()))}" +
+            $"|equality={Lower(platform.Equals(platformCopy) && platform.GetHashCode() == platformCopy.GetHashCode())}:" +
+            $"{Lower(release.Equals(releaseCopy) && release.GetHashCode() == releaseCopy.GetHashCode())}" +
+            $"|metadata={Lower(!string.IsNullOrWhiteSpace(platform.LanguageValue.Version))}:" +
+            $"{Lower(!string.IsNullOrWhiteSpace(platform.RuntimeValue.Name))}:" +
+            $"{Lower(!string.IsNullOrWhiteSpace(platform.OperatingSystemValue.Name))}:" +
+            $"{Lower(release.VersionInfo.StartsWith("Pkl ", StringComparison.Ordinal))}:" +
+            $"{Lower(release.StandardLibraryValue.Modules.Count > 0)}:" +
+            $"{Lower(release.SourceCodeValue.SourceCodeUrlScheme().Contains("%{path}", StringComparison.Ordinal))}";
+    }
+
+    static string ExceptionName(Action action)
+    {
+        try
+        {
+            action();
+            return "none";
+        }
+        catch (Exception exception)
+        {
+            return exception.GetType().Name;
+        }
     }
 
     static void VerifyPackedAssemblies(string manifest)

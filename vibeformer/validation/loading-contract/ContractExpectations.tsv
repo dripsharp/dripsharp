@@ -7,6 +7,11 @@ jvm-shared	stdlib/import	LOADING	gcd=6
 jvm-shared	custom/module-resource-lifecycle	LOADING	dependency=42|resource=resource-value|creates=2|factory-closes=0|reader-closes=0
 jvm-shared	resources/environment-property	LOADING	environment=environment-value|property=property-value
 jvm-shared	evaluator/builder	API	color=true|stack=true|allowed=1:1|root=true|logger=true|http=true|readers=1:1|values=1:2|timeout=2|cache=true|format=json|trace=pretty|power=true|conflict=true
+jvm-shared	analyzer/import-graph	API	analyzed=10:pkl:base,pkl:json,pkl:xml|parsed=pkl:a,pkl:z:pkl:base,pkl:xml:2|equality=true|invalid=MalformedJsonException:FormatException:MappingException
+jvm-shared	logging/public-api	LOGGING	buffered=trace\nwarn\n\n|cleared=true|writer=pkl: TRACE: trace (file:/module.pkl)\npkl: WARN: warn\n(file:/module.pkl)\n|stream=pkl: TRACE: stream (file:/module.pkl)\n|stderr=pkl: WARN: stderr (file:/module.pkl)\n|factories=true
+jvm-shared	diagnostics/stack-transform	DIAGNOSTIC	identity=true:true|composition=file:///tmp/project/main.pkl|first|second|file=editor://open?url=file:///tmp/project/main.pkl&path=/tmp/project/main.pkl&line=2&end=4&column=3&endColumn=5|relative=main.pkl|stdlib=true|configured=true|equality=true
+jvm-shared	diagnostics/exception-metadata	DIAGNOSTIC	types=PklException:PklBugException:NoSuchPropertyException:RendererException:SecurityManagerException|metadata=message:true:true:true:bird:Unreachable code.
+jvm-shared	runtime/platform-release	API	identity=true:true|equality=true:true|metadata=true:true:true:true:true:true
 jvm-shared	security/policy	POLICY	allowed=true|module-denied=true|resource-denied=true|trust-denied=true|root-denied=true|encoded-traversal=true|literal-traversal=true
 jvm-shared	https/rewrite-redirect-headers	HTTP	http=42:plain payload\n|https=42:secure payload\n|redirect=value = 42 payload = read("https://origin.test/data.txt").text|checked=2|headers=true|proxy=17:true
 jvm-shared	package/assets-cache-integrity	PACKAGE	bird=Swallow|modules=[package://localhost:0/birds@0.5.0#/catalog/Ostrich.pkl, package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl]|resources=[package://localhost:0/birds@0.5.0#/catalog/Ostrich.pkl, package://localhost:0/birds@0.5.0#/catalog/Swallow.pkl]|offline=Swallow:true|downloads=true|metadata=birds:1|metadata-sha=true|asset=/foo/../Bird.pkl/./catalog.pkl|checksum-failure=true

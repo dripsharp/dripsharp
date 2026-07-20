@@ -5,7 +5,11 @@ import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsParameters;
 import com.sun.net.httpserver.HttpsServer;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -40,13 +44,23 @@ import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import org.pkl.core.Evaluator;
 import org.pkl.core.EvaluatorBuilder;
+import org.pkl.core.Analyzer;
+import org.pkl.core.BufferedLogger;
+import org.pkl.core.ImportGraph;
 import org.pkl.core.Loggers;
 import org.pkl.core.ModuleSource;
+import org.pkl.core.NoSuchPropertyException;
 import org.pkl.core.PModule;
+import org.pkl.core.PklBugException;
 import org.pkl.core.PklException;
+import org.pkl.core.Platform;
+import org.pkl.core.Release;
+import org.pkl.core.RendererException;
 import org.pkl.core.SecurityManager;
 import org.pkl.core.SecurityManagerException;
 import org.pkl.core.SecurityManagers;
+import org.pkl.core.StackFrame;
+import org.pkl.core.StackFrameTransformer;
 import org.pkl.core.StackFrameTransformers;
 import org.pkl.core.evaluatorSettings.PklEvaluatorSettings;
 import org.pkl.core.evaluatorSettings.TraceMode;
@@ -92,6 +106,11 @@ public final class LoadingContractUpstreamOracle {
       write(writer, "custom/module-resource-lifecycle", "LOADING", observeCustomReaders());
       write(writer, "resources/environment-property", "LOADING", observeEnvironmentAndProperties());
       write(writer, "evaluator/builder", "API", observeEvaluatorBuilder(work));
+      write(writer, "analyzer/import-graph", "API", observeAnalyzerAndImportGraph(work));
+      write(writer, "logging/public-api", "LOGGING", observeLogging());
+      write(writer, "diagnostics/stack-transform", "DIAGNOSTIC", observeStackTransforms(fixtures));
+      write(writer, "diagnostics/exception-metadata", "DIAGNOSTIC", observeExceptions());
+      write(writer, "runtime/platform-release", "API", observePlatformAndRelease());
       write(writer, "security/policy", "POLICY", observeSecurityPolicy(work));
 
       NetworkObservations network = observeNetworkAndPackages(root, work);
@@ -107,6 +126,242 @@ public final class LoadingContractUpstreamOracle {
       write(writer, "project/dependency-cycles", "ERROR", observeProjectCycles(root));
       write(writer, "lifecycle/close", "LIFECYCLE", observeLifecycle());
       write(writer, "evaluator/timeout", "TIMEOUT", observeTimeout(work));
+    }
+  }
+
+  private static String observeAnalyzerAndImportGraph(Path work) throws Exception {
+    Path source = work.resolve("analyzer-main.pkl");
+    Files.writeString(
+        source,
+        "amends \"pkl:base\"\nimport \"pkl:json\"\nvalue = import(\"pkl:xml\")\n",
+        StandardCharsets.UTF_8);
+    var analyzer =
+        new Analyzer(
+            StackFrameTransformers.defaultTransformer,
+            false,
+            SecurityManagers.defaultManager,
+            List.of(ModuleKeyFactories.file, ModuleKeyFactories.standardLibrary),
+            null,
+            null,
+            HttpClient.dummyClient(),
+            TraceMode.COMPACT);
+    ImportGraph analyzed = analyzer.importGraph(source.toUri());
+    String analyzedImports =
+        analyzed.imports().get(source.toUri()).stream()
+            .map(item -> item.uri().toString())
+            .sorted()
+            .reduce((left, right) -> left + "," + right)
+            .orElse("");
+
+    String json =
+        "{\"imports\":{"
+            + "\"pkl:z\":[{\"uri\":\"pkl:xml\"},{\"uri\":\"pkl:base\"},{\"uri\":\"pkl:base\"}],"
+            + "\"pkl:a\":[]},"
+            + "\"resolvedImports\":{\"pkl:z\":\"file:/tmp/z.pkl\",\"pkl:a\":\"pkl:a\"}}";
+    ImportGraph parsed = ImportGraph.parseFromJson(json);
+    ImportGraph equal = ImportGraph.parseFromJson(json);
+    String keys =
+        parsed.imports().keySet().stream()
+            .map(URI::toString)
+            .reduce((left, right) -> left + "," + right)
+            .orElse("");
+    String imports =
+        parsed.imports().get(URI.create("pkl:z")).stream()
+            .map(item -> item.uri().toString())
+            .reduce((left, right) -> left + "," + right)
+            .orElse("");
+    String invalidJson = exceptionName(() -> ImportGraph.parseFromJson("{"));
+    String invalidShape =
+        exceptionName(
+            () ->
+                ImportGraph.parseFromJson(
+                    "{\"imports\":{\"pkl:a\":1},\"resolvedImports\":{}}"));
+    String invalidUri =
+        exceptionName(
+            () ->
+                ImportGraph.parseFromJson(
+                    "{\"imports\":{\"http://[\":[]},\"resolvedImports\":{}}"));
+    return "analyzed="
+        + analyzed.imports().size()
+        + ":"
+        + analyzedImports
+        + "|parsed="
+        + keys
+        + ":"
+        + imports
+        + ":"
+        + parsed.resolvedImports().size()
+        + "|equality="
+        + (parsed.equals(equal) && parsed.hashCode() == equal.hashCode())
+        + "|invalid="
+        + invalidJson
+        + ":"
+        + invalidShape
+        + ":"
+        + invalidUri;
+  }
+
+  private static String observeLogging() {
+    var frame = new StackFrame("file:/module.pkl", "local#member", List.of("value = 1"), 1, 1, 1, 9);
+    var sink = new StringWriter();
+    var logger = Loggers.writer(new PrintWriter(sink));
+    var buffered = new BufferedLogger(logger);
+    buffered.trace("trace", frame);
+    buffered.warn("warn\n", frame);
+    String bufferedText = escaped(buffered.getLogs());
+    String writtenText = escaped(sink.toString());
+    buffered.clear();
+    Loggers.noop().trace("discarded", frame);
+    var streamSink = new ByteArrayOutputStream();
+    Loggers.stream(new PrintStream(streamSink, true, StandardCharsets.UTF_8)).trace("stream", frame);
+    String streamText = escaped(streamSink.toString(StandardCharsets.UTF_8));
+    var stderrSink = new ByteArrayOutputStream();
+    PrintStream originalError = System.err;
+    try {
+      System.setErr(new PrintStream(stderrSink, true, StandardCharsets.UTF_8));
+      Loggers.stdErr().warn("stderr", frame);
+    } finally {
+      System.setErr(originalError);
+    }
+    String stderrText = escaped(stderrSink.toString(StandardCharsets.UTF_8));
+    return "buffered="
+        + bufferedText
+        + "|cleared="
+        + buffered.getLogs().isEmpty()
+        + "|writer="
+        + writtenText
+        + "|stream="
+        + streamText
+        + "|stderr="
+        + stderrText
+        + "|factories="
+        + (Loggers.noop() != null && Loggers.stdErr() != null);
+  }
+
+  private static String observeStackTransforms(Path fixtures) {
+    var frame =
+        new StackFrame("file:///tmp/project/main.pkl", "local#member", List.of("value = 1"), 2, 3, 4, 5);
+    var same =
+        new StackFrame("file:///tmp/project/main.pkl", "local#member", List.of("value = 1"), 2, 3, 4, 5);
+    StackFrameTransformer composed =
+        ((StackFrameTransformer) value -> value.withModuleUri(value.getModuleUri() + "|first"))
+            .andThen(value -> value.withModuleUri(value.getModuleUri() + "|second"));
+    String format =
+        "editor://open?url=%{url}&path=%{path}&line=%{line}&end=%{endLine}&column=%{column}&endColumn=%{endColumn}";
+    StackFrame converted = StackFrameTransformers.convertFilePathToUriScheme(format).apply(frame);
+    StackFrame relative =
+        StackFrameTransformers.relativizeModuleUri(URI.create("file:///tmp/project/"))
+            .apply(frame);
+    StackFrame stdlib =
+        StackFrameTransformers.convertStdLibUrlToExternalUrl.apply(
+            new StackFrame("pkl:base", null, List.of(), 7, 1, 7, 2));
+    PklSettings settings =
+        PklSettings.load(
+            ModuleSource.path(fixtures.resolve("project/settings.pkl")));
+    StackFrame configured = StackFrameTransformers.createDefault(settings).apply(frame);
+    return "identity="
+        + (StackFrameTransformers.empty.apply(frame) == frame)
+        + ":"
+        + (StackFrameTransformers.fromServiceProviders.apply(frame) == frame)
+        + "|composition="
+        + composed.apply(frame).getModuleUri()
+        + "|file="
+        + converted.getModuleUri()
+        + "|relative="
+        + relative.getModuleUri()
+        + "|stdlib="
+        + (stdlib.getModuleUri().contains("stdlib/base.pkl#L7"))
+        + "|configured="
+        + (!configured.getModuleUri().equals(frame.getModuleUri()))
+        + "|equality="
+        + (frame.equals(same) && frame.hashCode() == same.hashCode() && !frame.equals(frame.withModuleUri("other:")));
+  }
+
+  private static String observeExceptions() {
+    var cause = new IllegalArgumentException("cause");
+    var pkl = new PklException("message", cause);
+    var causeOnly = new PklException(cause);
+    var bug = new PklBugException(cause);
+    var missing = new NoSuchPropertyException("missing", "bird");
+    var renderer = new RendererException("render");
+    var security = new SecurityManagerException("denied");
+    return "types="
+        + pkl.getClass().getSimpleName()
+        + ":"
+        + bug.getClass().getSimpleName()
+        + ":"
+        + missing.getClass().getSimpleName()
+        + ":"
+        + renderer.getClass().getSimpleName()
+        + ":"
+        + security.getClass().getSimpleName()
+        + "|metadata="
+        + pkl.getMessage()
+        + ":"
+        + (pkl.getCause() == cause)
+        + ":"
+        + causeOnly.getMessage().contains("cause")
+        + ":"
+        + bug.getMessage().startsWith("An unexpected error")
+        + ":"
+        + missing.getPropertyName()
+        + ":"
+        + PklBugException.unreachableCode().getMessage();
+  }
+
+  private static String observePlatformAndRelease() {
+    Platform platform = Platform.current();
+    Platform platformCopy =
+        new Platform(
+            platform.language(),
+            platform.runtime(),
+            platform.virtualMachine(),
+            platform.operatingSystem(),
+            platform.processor());
+    Release release = Release.current();
+    Release releaseCopy =
+        new Release(
+            release.version(),
+            release.os(),
+            release.flavor(),
+            release.versionInfo(),
+            release.commitId(),
+            release.sourceCode(),
+            release.documentation(),
+            release.standardLibrary());
+    return "identity="
+        + (platform == Platform.current())
+        + ":"
+        + (release == Release.current())
+        + "|equality="
+        + (platform.equals(platformCopy) && platform.hashCode() == platformCopy.hashCode())
+        + ":"
+        + (release.equals(releaseCopy) && release.hashCode() == releaseCopy.hashCode())
+        + "|metadata="
+        + (!platform.language().version().isBlank())
+        + ":"
+        + (!platform.runtime().name().isBlank())
+        + ":"
+        + (!platform.operatingSystem().name().isBlank())
+        + ":"
+        + release.versionInfo().startsWith("Pkl ")
+        + ":"
+        + !release.standardLibrary().modules().isEmpty()
+        + ":"
+        + release.sourceCode().sourceCodeUrlScheme().contains("%{path}");
+  }
+
+  @FunctionalInterface
+  private interface ThrowingAction {
+    void run() throws Exception;
+  }
+
+  private static String exceptionName(ThrowingAction action) {
+    try {
+      action.run();
+      return "none";
+    } catch (Exception exception) {
+      return exception.getClass().getSimpleName();
     }
   }
 

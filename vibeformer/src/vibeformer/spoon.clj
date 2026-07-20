@@ -876,11 +876,17 @@
   "Selects real frontend bodies required for a selected type to remain a
   concrete implementation in C#. Java permits those bodies to sit outside the
   call graph that first reached the type, but the destination compiler still
-  requires every abstract/interface contract. Default interface bodies are
-  retained for the same reason."
-  [^CtType declaration]
+  requires every selected abstract/interface contract. Default interface
+  bodies are retained for the same reason. Contract-seeded public types carry
+  an exact member selector, so excluded public members must not be reintroduced
+  as compilation obligations."
+  [^CtType declaration expansion members]
   (->> (.getMethods declaration)
        (remove #(.isImplicit ^CtMethod %))
+       (filter #(or (not= :public-api expansion)
+                    (nil? members)
+                    (not (public-api-declaration? %))
+                    (members (public-member-selector %))))
        (mapcat
         (fn [^CtMethod method]
           (let [all-definitions (.getTopDefinitions method)
@@ -1001,13 +1007,13 @@
                             (if (= :public-api expand) :shell expand))
                   occurrences (add-distinct-occurrences seen occurrences resolved)
                   dependencies (mapcat dependency-items resolved)
-                  members (if (instance? CtType declaration)
-                            (member-items declaration expand members)
-                            nil)
+                  member-additions (if (instance? CtType declaration)
+                                     (member-items declaration expand members)
+                                     nil)
                   obligations (when (instance? CtType declaration)
-                                (compilation-obligation-items declaration))
+                                (compilation-obligation-items declaration expand members))
                   owners (owner-type-items declaration)
-                  additions (->> (concat dependencies members obligations owners)
+                  additions (->> (concat dependencies member-additions obligations owners)
                                  (remove #(nil? (:key %)))
                                  (sort-by (juxt :key #(expansion-rank (:expand %))))
                                  vec)

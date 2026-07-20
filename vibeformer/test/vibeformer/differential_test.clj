@@ -78,12 +78,12 @@
                   (paths/resolve-path fixtures "ContractEvidence.tsv")
                   (paths/resolve-path fixtures "ContractExpectations.tsv"))
         summary (:summary contract)]
-    (is (= 62 (:families summary)))
-    (is (= 62 (:existing-evidence summary)))
+    (is (= 67 (:families summary)))
+    (is (= 67 (:existing-evidence summary)))
     (is (zero? (:pending-in-scope summary)))
-    (is (= 54 (:jvm-shared-families summary)))
+    (is (= 59 (:jvm-shared-families summary)))
     (is (= 8 (:dotnet-adaptation-families summary)))
-    (is (= 20 (:jvm-shared-observations summary)))
+    (is (= 25 (:jvm-shared-observations summary)))
     (is (= 7 (:dotnet-adaptation-observations summary)))
     (is (some #(= "package.cache-offline" (:family %)) (:evidence contract)))
     (is (some #(= "adaptation.assembly-modules" (:family %)) (:evidence contract)))
@@ -96,7 +96,7 @@
 (deftest loading-public-surface-audit-is-fail-closed
   (let [clean (public-surface-root "public int Value() { return 1; }\n")
         summary (#'differential/audit-loading-public-surface! clean)]
-    (is (= 15 (:files summary)))
+    (is (= 32 (:files summary)))
     (is (= [:translation-error :not-implemented :todo
             :null-or-default-body :null-or-default-expression]
            (:patterns summary))))

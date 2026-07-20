@@ -404,7 +404,11 @@
    "java.io.Reader" ["global::System.IO.TextReader" :dotnet.type/text-reader]
    "java.io.StringReader" ["global::System.IO.StringReader" :dotnet.type/string-reader]
    "java.io.Writer" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
-   "java.io.PrintWriter" ["global::Pkl.Core.Runtime.JavaPrintWriter" :pkl-core.type/print-writer]
+   ;; PrintWriter is a formatting facade over Writer. TextWriter already owns
+   ;; the corresponding WriteLine/Flush contract and is the consumer-facing
+   ;; .NET abstraction, so public logger factories must not leak a translated
+   ;; Java wrapper type.
+   "java.io.PrintWriter" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
    "java.io.Serializable" ["object" :dotnet.type/serializable-marker]
    "java.io.Serial" ["object" :dotnet.annotation/compile-time-metadata]
    "java.net.URI" ["global::System.Uri" :dotnet.type/uri]
@@ -820,7 +824,7 @@
            :pkl-core.type/property-function]
 
           (= "org.pkl.core.StackFrameTransformer" (.getQualifiedName reference))
-          [(raw "global::System.Func<global::Pkl.Core.StackFrame, global::Pkl.Core.StackFrame>")
+          [(raw "global::Pkl.Core.StackFrameTransformer")
            :pkl-core.type/stack-frame-transformer]
 
           (and (= "org.pkl.core.runtime.VmCollection$Builder" (.getQualifiedName reference))
@@ -916,8 +920,15 @@
 
 (defn- destination-declaration
   [ctx ^CtElement element kind name rule]
+  (let [stack-frame-composition?
+        (and (instance? CtMethod element)
+             (= "org.pkl.core.StackFrameTransformer"
+                (some-> ^CtMethod element .getDeclaringType .getQualifiedName))
+             (= "andThen" (.getSimpleName ^CtMethod element)))]
   {:assembly (get-in ctx [:configuration :project :assembly-name])
-   :owner (destination-owner-name ctx element)
+   :owner (if stack-frame-composition?
+            "Pkl.Core.StackFrameTransformerExtensions"
+            (destination-owner-name ctx element))
    :kind (case kind
            :type "type"
            :constructor "constructor"
@@ -932,9 +943,11 @@
            (= :constructor kind) ".ctor"
            (= :dotnet.declaration/functional-interface-method rule) "Invoke"
            :else name)
-   :parameter-count (str (if (instance? CtExecutable element)
-                           (count (.getParameters ^CtExecutable element))
-                           0))})
+   :parameter-count (str (if stack-frame-composition?
+                           2
+                           (if (instance? CtExecutable element)
+                             (count (.getParameters ^CtExecutable element))
+                             0)))}))
 
 (defn- register! [ctx ^CtElement element kind owner name signature rule]
   (let [id (declaration-id element kind)
@@ -1541,6 +1554,9 @@
 (defn- method-node [ctx owner-type ^CtMethod method]
   (let [owner (executable-owner method)
         name (method-name ctx method)
+        loggers-stream?
+        (= "executable:org.pkl.core.Loggers#stream(java.io.PrintStream)"
+           (spoon/declaration-key method))
         record-object-equals?
         (and (instance? CtRecord owner-type)
              (= "equals" (.getSimpleName method))
@@ -1550,9 +1566,12 @@
         {:keys [parameters node]} (formals ctx owner method)
         params (mapv #(parameter-node
                        ctx owner %
-                       (when record-object-equals?
+                       (cond
+                         loggers-stream? (raw "global::System.IO.Stream")
+                         record-object-equals?
                          (sequence-node [(raw (identifier (.getSimpleName owner-type)))
-                                         (raw "?")])))
+                                         (raw "?")])
+                         :else nil))
                      (.getParameters method))
         body (.getBody method)
         words (method-modifiers ctx owner-type method body name)
@@ -1647,6 +1666,14 @@
         (cond
           rrb-nested-split?
           (sequence-node [(raw "{\nreturn base.Split(splitIndex);\n}")])
+
+          (= "executable:org.pkl.core.Loggers#stdErr()"
+             (spoon/declaration-key method))
+          (raw "{\nreturn Loggers.Writer(global::System.Console.Error);\n}")
+
+          loggers-stream?
+          (raw
+           "{\nvar writer = new global::System.IO.StreamWriter(stream, new global::System.Text.UTF8Encoding(false), 1024, true) { AutoFlush = true };\nreturn Loggers.Writer(writer);\n}")
 
           (= "executable:org.pkl.core.externalreader.ExternalReaderProcessImpl#getTransport()"
              (spoon/declaration-key method))
@@ -2514,6 +2541,7 @@
   (let [owner (some-> type .getDeclaringType .getQualifiedName)
         name (pascal (.getSimpleName type))
         qualified (.getQualifiedName type)
+        stack-frame-transformer? (= "org.pkl.core.StackFrameTransformer" qualified)
         functional-method (functional-interface-method ctx type)
         member-ctx (type-body-context (assoc ctx :current-type type) type)
         {:keys [parameters node]} (formals ctx qualified type)
@@ -2563,7 +2591,7 @@
                           (empty? (.getParameters ^CtMethod member))))
                    raw-members))
         selected-members (distinct-selected-members ctx type)
-        members (if functional-method
+        members (if (or functional-method stack-frame-transformer?)
                   []
                   (if-let [emit-members (:emit-members ctx)]
                     (emit-members ctx type selected-members)
@@ -2625,7 +2653,38 @@
                            (sequence-node [(raw " : ") (sequence-node bases ", ")]))
                          (constraints-node ctx parameters)]))
         declaration
-        (if functional-method
+        (cond
+          stack-frame-transformer?
+          (let [^CtMethod and-then
+                (some #(when (and (instance? CtMethod %)
+                                  (= "andThen" (.getSimpleName ^CtMethod %)))
+                         %)
+                      selected-members)
+                _ (when-not and-then
+                    (throw (ex-info "StackFrameTransformer composition contract is missing"
+                                    {:kind :missing-stack-frame-composition-contract})))
+                extension
+                (attach-declaration
+                 ctx
+                 (raw (str
+                       "public static class StackFrameTransformerExtensions\n"
+                       "{\n"
+                       "public static StackFrameTransformer AndThen(\n"
+                       "    this StackFrameTransformer transformer,\n"
+                       "    StackFrameTransformer next)\n"
+                       "{\n"
+                       "global::System.ArgumentNullException.ThrowIfNull(transformer);\n"
+                       "global::System.ArgumentNullException.ThrowIfNull(next);\n"
+                       "return frame => next(transformer(frame));\n"
+                       "}\n"
+                       "}"))
+                 and-then :method qualified "AndThen" (.getSignature and-then)
+                 :dotnet.declaration/stack-frame-transformer-extension)]
+            (sequence-node
+             [(raw "public delegate global::Pkl.Core.StackFrame StackFrameTransformer(global::Pkl.Core.StackFrame frame);\n\n")
+              extension]))
+
+          functional-method
           (let [method-owner (executable-owner functional-method)
                 method-name (method-name ctx functional-method)
                 signature (.getSignature functional-method)
@@ -2643,6 +2702,7 @@
             (attach-declaration ctx delegate-node functional-method :method
                                 qualified method-name signature
                                 :dotnet.declaration/functional-interface-method))
+          :else
           (sequence-node
            [header (raw "\n{\n")
             (sequence-node members "\n\n")

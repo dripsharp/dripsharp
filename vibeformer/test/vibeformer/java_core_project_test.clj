@@ -105,39 +105,39 @@
                      :worker-threads :worker-participation :elapsed-millis))))
 
     (testing "the entire selected declaration and body closure is accounted for"
-      (is (= 658 (:compilation-units summary)))
-      (is (= 663 (:generated-files summary)))
+      (is (= 656 (:compilation-units summary)))
+      (is (= 661 (:generated-files summary)))
       (is (= 28 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
       (is (= 0 (:missing-source-mappings summary)))
-      (is (= 30979 (:declarations summary)))
-      (is (= {:constructor 1179
+      (is (= 30671 (:declarations summary)))
+      (is (= {:constructor 1172
               :enum-value 101
-              :field 3601
+              :field 3544
               :initializer 24
-              :method 9361
-              :parameter 14114
-              :record-component 232
-              :type 2214
-              :type-parameter 153}
+              :method 9283
+              :parameter 14013
+              :record-component 194
+              :type 2188
+              :type-parameter 152}
              (:declaration-kinds summary)))
-      (is (= 658 (count (:sources manifest))))
+      (is (= 656 (count (:sources manifest))))
       (is (= 28 (count (:resources manifest))))
       (is (empty? diagnostics)))
 
     (testing "every executable root has accepted recursive Spoon coverage"
-      (is (= 11233 (:executable-roots summary)))
+      (is (= 11109 (:executable-roots summary)))
       (is (= 0 (:hard-failures summary)))
-      (is (= {:semantic 468712
+      (is (= {:semantic 459699
               :fallback 0
-              :visited 1077183
+              :visited 1057200
               :missing-mappings 0
               :unsupported-elements 0
               :missing-occurrences 0
-              :structural 608471
+              :structural 597501
               :blocked 0
-              :covered 1077183}
+              :covered 1057200}
              (:executable-coverage summary)))
       (let [sources (->> (:artifacts manifest)
                          (filter #(nil? (:strategy %)))
