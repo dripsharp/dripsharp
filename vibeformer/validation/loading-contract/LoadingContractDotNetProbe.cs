@@ -2310,7 +2310,7 @@ static class LoadingContractDotNetProbe
         {
             get { lock (headerRuleOrderLock) return headerRuleOrder; }
         }
-        internal Uri ProxyUri => new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}");
+        internal Uri ProxyUri => new($"http://127.0.0.1:{((IPEndPoint)plain.LocalEndpoint).Port}");
         internal Uri PlainUri(string path) =>
             new($"http://localhost:{((IPEndPoint)plain.LocalEndpoint).Port}{path}");
         internal Uri TlsUri(string path) =>
