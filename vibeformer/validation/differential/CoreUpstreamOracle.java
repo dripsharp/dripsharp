@@ -19,6 +19,7 @@ import org.pkl.core.Evaluator;
 import org.pkl.core.EvaluatorBuilder;
 import org.pkl.core.FileOutput;
 import org.pkl.core.ModuleSource;
+import org.pkl.core.NoSuchPropertyException;
 import org.pkl.core.PClassInfo;
 import org.pkl.core.PModule;
 import org.pkl.core.PNull;
@@ -123,7 +124,10 @@ public final class CoreUpstreamOracle {
             + ",display="
             + encode(classInfo.getDisplayName())
             + ",equal="
-            + PClassInfo.String.equals(classInfo));
+            + PClassInfo.String.equals(classInfo)
+            + ",duration-type="
+            + (PClassInfo.get("pkl.base", "Duration", URI.create("pkl:base")).getJavaClass()
+                == Duration.class));
 
     write(writer, "@value-visitation", "VALUE", observeValueVisitation());
     write(writer, "@value-conversion", "VALUE", observeValueConversion());
@@ -261,12 +265,23 @@ public final class CoreUpstreamOracle {
             "equality.module",
             PClassInfo.forModuleClass("equality.module", URI.create("repl:equality")),
             rightProperties);
+    var typedPair = new Pair<Long, String>(1L, "a");
+    var erasedPair = new Pair<Object, Object>(1L, "a");
+    String missingProperty;
+    try {
+      left.getProperty("missing");
+      missingProperty = "no-error";
+    } catch (NoSuchPropertyException error) {
+      missingProperty = error.getMessage();
+    }
     return "object="
         + (left.equals(right) && left.hashCode() == right.hashCode())
         + "|module="
         + (module.equals(moduleCopy) && module.hashCode() == moduleCopy.hashCode())
         + "|pair="
         + new Pair<>("a", 1L).equals(new Pair<>("a", 1L))
+        + "|pair-erased="
+        + (typedPair.equals(erasedPair) && erasedPair.equals(typedPair))
         + "|duration="
         + Duration.ofSeconds(90).equals(Duration.ofMinutes(1.5))
         + "|size="
@@ -277,6 +292,8 @@ public final class CoreUpstreamOracle {
         + String.join(",", left.getProperties().keySet())
         + "|identity="
         + (left.getProperties() == leftProperties)
+        + "|missing="
+        + encode(missingProperty)
         + "|render="
         + encode(module.toString());
   }

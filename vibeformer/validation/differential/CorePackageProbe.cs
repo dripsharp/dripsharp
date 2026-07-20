@@ -64,7 +64,7 @@ static class CorePackageProbe
         PClassInfo<object> classInfo = PClassInfo<object>.Get(
             "pkl.base", "String", new Uri("pkl:base"));
         Write(writer, "@class-info", "VALUE",
-            $"qualified={Encode(classInfo.GetQualifiedName())},display={Encode(classInfo.GetDisplayName())},equal={Lower(PClassInfo<object>.String.Equals(classInfo))}");
+            $"qualified={Encode(classInfo.GetQualifiedName())},display={Encode(classInfo.GetDisplayName())},equal={Lower(PClassInfo<object>.String.Equals(classInfo))},duration-type={Lower(PClassInfo<object>.Get("pkl.base", "Duration", new Uri("pkl:base")).ValueType == typeof(Duration))}");
 
         Write(writer, "@value-visitation", "VALUE", ObserveValueVisitation());
         Write(writer, "@value-conversion", "VALUE", ObserveValueConversion());
@@ -149,14 +149,28 @@ static class CorePackageProbe
         bool protectedIdentity = !ReferenceEquals(exportedProperties, leftProperties) &&
             (exportedProperties is not IDictionary<string, object> mutableProperties ||
              RejectsMutation(() => mutableProperties.Add("other", 2L)));
+        var typedPair = new Pair<long, string>(1L, "a");
+        var erasedPair = new Pair<object, object>(1L, "a");
+        string missingProperty;
+        try
+        {
+            _ = left.GetProperty("missing");
+            missingProperty = "no-error";
+        }
+        catch (NoSuchPropertyException error)
+        {
+            missingProperty = error.Message;
+        }
         return $"object={Lower(left.Equals(right) && left.GetHashCode() == right.GetHashCode())}" +
             $"|module={Lower(module.Equals(moduleCopy) && module.GetHashCode() == moduleCopy.GetHashCode())}" +
             $"|pair={Lower(new Pair<object, object>("a", 1L).Equals(new Pair<object, object>("a", 1L)))}" +
+            $"|pair-erased={Lower(typedPair.Equals(erasedPair) && erasedPair.Equals(typedPair))}" +
             $"|duration={Lower(Duration.OfSeconds(90).Equals(Duration.OfMinutes(1.5)))}" +
             $"|size={Lower(DataSize.OfKibibytes(2).Equals(DataSize.OfBytes(2048)))}" +
             $"|class={Lower(PClassInfo<object>.String.Equals(PClassInfo<object>.Get("pkl.base", "String", new Uri("pkl:base"))))}" +
             $"|order={string.Join(",", left.GetProperties().Keys)}" +
             $"|identity={Lower(protectedIdentity)}" +
+            $"|missing={Encode(missingProperty)}" +
             $"|render={Encode(module.ToString())}";
     }
 

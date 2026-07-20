@@ -45,11 +45,11 @@
         kinds (set (map :kind rows))]
     (testing "all independently extracted declarations and package rows are classified"
       (is (= 6353 (:upstream-rows summary)))
-      (is (= 2749 (:package-rows summary)))
+      (is (= 2911 (:package-rows summary)))
       (is (= 20 (:behavior-rows summary)))
       (is (zero? (:failing-controls summary)))
       (is (= 6353 (reduce + (vals (:classifications summary)))))
-      (is (= 2749 (reduce + (vals (:package-classifications summary)))))
+      (is (= 2911 (reduce + (vals (:package-classifications summary)))))
       (is (zero? (get (:package-classifications summary)
                       "public-implementation-internal" 0))))
 
@@ -107,7 +107,7 @@
                    [:mismatch :kind]))))
 
   (testing "package reflection"
-    (is (= {:matched 2749}
+    (is (= {:matched 2911}
            (contract/compare-package-surface @package @package)))
     (is (= :package-public-surface-drift
            (get-in (contract/compare-package-surface @package (pop @package))
@@ -273,12 +273,14 @@
 
 (deftest whole-public-body-audit-is-reviewed-and-perturbation-sensitive
   (let [rows @body-candidates]
-    (is (= 11 (count rows)))
-    (is (= {"constant-zero" 2
+    (is (= 17 (count rows)))
+    (is (= {"constant-zero" 4
+            "constant-null" 3
+            "constant-empty" 1
             "empty-no-op" 5
             "unconditional-unsupported" 4}
            (frequencies (map :finding rows))))
-    (is (= {:matched 11} (contract/compare-body-audit rows rows)))
+    (is (= {:matched 17} (contract/compare-body-audit rows rows)))
     (is (= :public-body-audit-drift
            (get-in (contract/compare-body-audit rows (pop rows))
                    [:mismatch :kind])))
@@ -295,8 +297,8 @@
         summary (contract/write-strong-contract-keys! @workspace output)
         lines (->> (str/split-lines (Files/readString output))
                    (remove #(str/starts-with? % "#")) vec)]
-    (is (= {:rows 2707 :keys 2648} summary))
-    (is (= 2648 (count lines)))
+    (is (= {:rows 2860 :keys 2788} summary))
+    (is (= 2788 (count lines)))
     (is (= (sort lines) lines))
     (is (some #(str/includes? % "Pkl.Core\tPkl.Core.ConfigBinder\tmethod\tBind")
               lines))

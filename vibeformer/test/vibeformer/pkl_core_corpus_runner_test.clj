@@ -26,6 +26,7 @@
 
 (def ^:private cases
   [{:case-id "case/a" :junit-unique-id "[engine:junit]/[class:A]/[method:a()]"
+    :source-class "A"
     :source-path "pkl-core/src/test/kotlin/A.kt"
     :source-sha256 (apply str (repeat 64 "a")) :source-line "10"
     :behavior-family "evaluation-runtime"
@@ -33,6 +34,7 @@
     :execution-owner "complete-pkl-core-runner"
     :expected-outcome "assertions-succeed" :platform-conditions "all-supported-hosts"}
    {:case-id "case/b" :junit-unique-id "[engine:junit]/[class:B]/[method:b()]"
+    :source-class "B"
     :source-path "pkl-core/src/test/kotlin/B.kt"
     :source-sha256 (apply str (repeat 64 "b")) :source-line "20"
     :behavior-family "loading-security-project-package"
@@ -40,6 +42,7 @@
     :execution-owner "complete-pkl-core-runner"
     :expected-outcome "assertions-succeed" :platform-conditions "all-supported-hosts"}
    {:case-id "case/c" :junit-unique-id "[engine:junit]/[class:C]/[method:c()]"
+    :source-class "C"
     :source-path "pkl-core/src/test/kotlin/C.kt"
     :source-sha256 (apply str (repeat 64 "c")) :source-line "30"
     :behavior-family "excluded-format-transport"
@@ -47,6 +50,7 @@
     :execution-owner "approved-exclusion-audit"
     :expected-outcome "assertions-succeed" :platform-conditions "all-supported-hosts"}
    {:case-id "case/d" :junit-unique-id "[engine:junit]/[class:D]/[method:d()]"
+    :source-class "D"
     :source-path "pkl-core/src/test/kotlin/D.kt"
     :source-sha256 (apply str (repeat 64 "d")) :source-line "40"
     :behavior-family "test-infrastructure"
@@ -54,6 +58,7 @@
     :execution-owner "test-infrastructure-audit"
     :expected-outcome "assertions-succeed" :platform-conditions "all-supported-hosts"}
    {:case-id "case/e" :junit-unique-id "[engine:junit]/[class:E]/[method:e()]"
+    :source-class "E"
     :source-path "pkl-core/src/test/kotlin/E.kt"
     :source-sha256 (apply str (repeat 64 "e")) :source-line "50"
     :behavior-family "public-api-platform"
@@ -158,6 +163,33 @@
                           (result-file root "missing-audit.tsv"
                                        (assoc-in rows [3 :status] "PASS"))))))))
 
+(deftest completed-partitions-fail-closed-on-count-and-status-perturbations
+  (let [root (temp-directory)
+        rows (package-rows)
+        partition {:name :focused-value-runtime
+                   :source-classes #{"A"}
+                   :expected-count 1}]
+    (is (= {:partition :focused-value-runtime :passed 1}
+           (runner/validate-completed-partition!
+            validated "package-dotnet" (result-file root "partition.tsv" rows)
+            partition)))
+    (is (= :pkl-core-completed-partition-failed
+           (thrown-kind
+            #(runner/validate-completed-partition!
+              validated "package-dotnet"
+              (result-file root "partition-failed.tsv"
+                           (-> rows
+                               (assoc-in [0 :status] "FAIL")
+                               (assoc-in [0 :observation-base64] "")
+                               (assoc-in [0 :diagnostic-base64]
+                                         (b64 "deliberate partition failure"))))
+              partition))))
+    (is (= :pkl-core-completed-partition-contract-drift
+           (thrown-kind
+            #(runner/validate-completed-partition!
+              validated "package-dotnet" (result-file root "partition-drift.tsv" rows)
+              (assoc partition :expected-count 2)))))))
+
 (deftest comparison-retains-failures-and-repetition-is-byte-exact
   (let [root (temp-directory)
         upstream (result-file root "upstream.tsv" (upstream-rows))
@@ -203,6 +235,7 @@
     (doseq [[name forbidden]
             [["project" "<ProjectReference Include=\"outside.csproj\" />"]
              ["runtime" "using Pkl.Core.Runtime;"]
+             ["yaml" "using Pkl.Core.Yaml;"]
              ["generated" "const string path = \"target/generated\";"]]]
       (let [bad (write! (.resolve root (str name ".cs")) forbidden)]
         (is (= :pkl-core-corpus-source-isolation

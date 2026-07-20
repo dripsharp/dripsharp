@@ -81,7 +81,32 @@
     "Pkl.Core.CSharpGenerator"})
 
 (def ^:private native-core-owners
-  #{"Pkl.Core.Module.AssemblyModuleKeyFactory"
+  #{"Pkl.Core.IPklPair"
+    "Pkl.Core.PklAnsiBuilder"
+    "Pkl.Core.PklAnsiCode"
+    "Pkl.Core.PklClassInfos"
+    "Pkl.Core.PklCommandArgument"
+    "Pkl.Core.PklCommandBooleanFlag"
+    "Pkl.Core.PklCommandCountedFlag"
+    "Pkl.Core.PklCommandFlag"
+    "Pkl.Core.PklCommandOption"
+    "Pkl.Core.PklCommandOptionException"
+    "Pkl.Core.PklCommandSpec"
+    "Pkl.Core.PklExceptions"
+    "Pkl.Core.PklGlob"
+    "Pkl.Core.PklHttp"
+    "Pkl.Core.PklImportGraphs"
+    "Pkl.Core.PklParserUtilities"
+    "Pkl.Core.PklPath"
+    "Pkl.Core.PklStrings"
+    "Pkl.Core.PklTextEscaper"
+    "Pkl.Core.PklTextEscaper$Builder"
+    "Pkl.Core.PklUris"
+    "Pkl.Core.PklValuePathPart"
+    "Pkl.Core.PklValuePathPartKind"
+    "Pkl.Core.PklValuePaths"
+    "Pkl.Core.PklValueRenderer"
+    "Pkl.Core.Module.AssemblyModuleKeyFactory"
     "Pkl.Core.Resource.EmbeddedResourceReader"
     "Pkl.Core.StackFrameTransformerExtensions"})
 
@@ -836,6 +861,8 @@
         (filter #(and (contains? #{"product-api-current" "product-api-native"}
                                  (:classification %))
                       (not= "<Clone>$" (:name %))
+                      (not (and (= "field" (:kind %))
+                                (= "value__" (:name %))))
                       (not (and (delegate-owners (:owner %))
                                 (not= "type" (:kind %)))))
                 (map #(merge % (classify-package-row target-keys %)) package-rows))

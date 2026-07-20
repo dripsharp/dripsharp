@@ -655,6 +655,58 @@ internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K :
     }
 }
 
+internal sealed class JavaMapKeySet<K, V> : ISet<K> where K : notnull
+{
+    private readonly IDictionary<K, V> source;
+
+    private sealed class KeyComparer : IEqualityComparer<K>
+    {
+        public bool Equals(K? left, K? right) => JavaCompat.Equals(left, right);
+        public int GetHashCode(K value) => JavaCompat.HashCode(value);
+    }
+
+    internal JavaMapKeySet(IDictionary<K, V> source) => this.source = source;
+
+    private HashSet<K> Snapshot() => new(source.Keys, new KeyComparer());
+    public int Count => source.Count;
+    public bool IsReadOnly => false;
+    bool ISet<K>.Add(K item) =>
+        throw new NotSupportedException("Java Map.keySet does not support add().");
+    void ICollection<K>.Add(K item) =>
+        throw new NotSupportedException("Java Map.keySet does not support add().");
+    public void Clear() => source.Clear();
+    public bool Contains(K item) => source.ContainsKey(item);
+    public void CopyTo(K[] array, int arrayIndex)
+    {
+        foreach (var item in source.Keys) array[arrayIndex++] = item;
+    }
+    public bool Remove(K item) => source.Remove(item);
+    public IEnumerator<K> GetEnumerator() => source.Keys.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    public void ExceptWith(IEnumerable<K> other)
+    {
+        foreach (var item in other.ToList()) source.Remove(item);
+    }
+    public void IntersectWith(IEnumerable<K> other)
+    {
+        var retained = new HashSet<K>(other, new KeyComparer());
+        foreach (var item in source.Keys.Where(item => !retained.Contains(item)).ToList())
+            source.Remove(item);
+    }
+    public bool IsProperSubsetOf(IEnumerable<K> other) => Snapshot().IsProperSubsetOf(other);
+    public bool IsProperSupersetOf(IEnumerable<K> other) => Snapshot().IsProperSupersetOf(other);
+    public bool IsSubsetOf(IEnumerable<K> other) => Snapshot().IsSubsetOf(other);
+    public bool IsSupersetOf(IEnumerable<K> other) => Snapshot().IsSupersetOf(other);
+    public bool Overlaps(IEnumerable<K> other) => Snapshot().Overlaps(other);
+    public bool SetEquals(IEnumerable<K> other) => Snapshot().SetEquals(other);
+    public void SymmetricExceptWith(IEnumerable<K> other) =>
+        throw new NotSupportedException("Java Map.keySet does not support adding keys.");
+    public void UnionWith(IEnumerable<K> other) =>
+        throw new NotSupportedException("Java Map.keySet does not support adding keys.");
+    public override string ToString() =>
+        "[" + string.Join(", ", source.Keys.Select(item => JavaCompat.StringValueOf(item))) + "]";
+}
+
 internal static class JavaCompat
 {
     private sealed class ReadOnlyAdapterCache
@@ -2106,6 +2158,9 @@ internal static class JavaCompat
             ? value.AbsoluteUri
             : value.OriginalString;
 
+    internal static bool UriUsesSingleSlashFileSyntax(Uri value) =>
+        SingleSlashFileUris.TryGetValue(value, out _);
+
     private static bool IsUriUnreserved(char value) =>
         value is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or
             '-' or '.' or '_' or '~';
@@ -2450,7 +2505,7 @@ internal static class JavaCompat
     internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull =>
         map is JavaLinkedHashMap<K, V> linked
             ? linked.KeySet()
-            : new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
+            : new JavaMapKeySet<K, V>(map);
     internal static ISet<K> MapKeySet<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull =>
         new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
     internal static int MapCount<K, V>(IDictionary<K, V> map) where K : notnull => map.Count;
@@ -2538,10 +2593,12 @@ internal static class JavaCompat
                 var moduleName = sourceType.GetMethod("GetModuleName")!.Invoke(rawValue, null);
                 var className = sourceType.GetMethod("GetSimpleName")!.Invoke(rawValue, null);
                 var moduleUri = sourceType.GetMethod("GetModuleUri")!.Invoke(rawValue, null);
+                var javaType = sourceType.GetField("javaClass",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(rawValue);
                 value = (V)Activator.CreateInstance(typeof(V),
                     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
                     binder: null,
-                    args: new[] { moduleName, className, typeof(object), moduleUri },
+                    args: new[] { moduleName, className, javaType, moduleUri },
                     culture: null)!;
             }
             else
@@ -5267,6 +5324,8 @@ class JavaLinkedHashMap<K, V> : IDictionary<K, V>, IDictionary where K : notnull
         public bool Remove(K item) => source.Remove(item);
         public IEnumerator<K> GetEnumerator() => source.Keys.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+        public override string ToString() =>
+            "[" + string.Join(", ", source.Keys.Select(item => JavaCompat.StringValueOf(item))) + "]";
     }
 }
 

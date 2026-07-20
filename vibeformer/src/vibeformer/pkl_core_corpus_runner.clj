@@ -41,6 +41,52 @@
 (def ^:private default-process-timeout-ms 3600000)
 (def ^:private default-worker-count 22)
 
+(def ^:private value-runtime-parser-path-partition
+  {:name :value-runtime-parser-path-utilities
+   :expected-count 289
+   :source-classes
+   #{"org.pkl.core.ClassInheritanceTest"
+     "org.pkl.core.DataSizeTest"
+     "org.pkl.core.DataSizeUnitTest"
+     "org.pkl.core.DurationTest"
+     "org.pkl.core.DurationUnitTest"
+     "org.pkl.core.DynamicTest"
+     "org.pkl.core.PClassInfoTest"
+     "org.pkl.core.PModuleTest"
+     "org.pkl.core.PNullTest"
+     "org.pkl.core.PObjectTest"
+     "org.pkl.core.PairTest"
+     "org.pkl.core.PklInfoTest"
+     "org.pkl.core.PlatformTest"
+     "org.pkl.core.ReleaseTest"
+     "org.pkl.core.VersionTest"
+     "org.pkl.core.ast.builder.ImportsAndReadsParserTest"
+     "org.pkl.core.parser.MultiLineStringLiteralTest"
+     "org.pkl.core.parser.ShebangTest"
+     "org.pkl.core.parser.TrailingCommasTest"
+     "org.pkl.core.runtime.CommandSpecParserTest"
+     "org.pkl.core.runtime.IteratorsTest"
+     "org.pkl.core.runtime.VmClassTest"
+     "org.pkl.core.runtime.VmDataSizeTest"
+     "org.pkl.core.runtime.VmDurationTest"
+     "org.pkl.core.runtime.VmSafeMathTest"
+     "org.pkl.core.runtime.VmUtilsTest"
+     "org.pkl.core.runtime.VmValueRendererTest"
+     "org.pkl.core.stdlib.PathConverterSupportTest"
+     "org.pkl.core.stdlib.PathSpecParserTest"
+     "org.pkl.core.stdlib.ReflectModuleTest"
+     "org.pkl.core.truffle.LongVsDoubleSpecializationTest"
+     "org.pkl.core.util.AnsiStringBuilderTest"
+     "org.pkl.core.util.ArrayCharEscaperTest"
+     "org.pkl.core.util.ErrorMessagesTest"
+     "org.pkl.core.util.ExceptionsTest"
+     "org.pkl.core.util.GlobResolverTest"
+     "org.pkl.core.util.HttpUtilsTest"
+     "org.pkl.core.util.ImportGraphUtilsTest"
+     "org.pkl.core.util.IoUtilsTest"
+     "org.pkl.core.util.PathResolverTest$PosixTests"
+     "org.pkl.core.util.PathResolverTest$WindowsTests"}})
+
 (defn- fail!
   [message data]
   (throw (ex-info message (assoc data :kind (or (:kind data)
@@ -196,6 +242,35 @@
                    {:kind :unapproved-pkl-core-corpus-disposition
                     :case (:case-id case-data) :status (:status row)})))))
     (assoc parsed :origin origin :rows rows)))
+
+(defn validate-completed-partition!
+  "Requires a named, bounded contract partition to retain its exact row count
+  and PASS every row. This is partition evidence only; it does not redefine
+  the complete product contract or grant dispositions to other rows."
+  [validated-manifest origin result-file
+   {:keys [name source-classes expected-count]}]
+  (let [parsed (validate-results! validated-manifest origin result-file)
+        selected (->> (map vector (:cases validated-manifest) (:rows parsed))
+                      (filterv (fn [[case-data _]]
+                                 (contains? source-classes (:source-class case-data)))))]
+    (when-not (= expected-count (count selected))
+      (fail! "Completed Pkl.Core corpus partition contract drifted"
+             {:kind :pkl-core-completed-partition-contract-drift
+              :partition name :expected expected-count :actual (count selected)
+              :source-classes source-classes}))
+    (let [failures (->> selected
+                        (keep (fn [[case-data row]]
+                                (when-not (= "PASS" (:status row))
+                                  {:case-id (:case-id case-data)
+                                   :source-class (:source-class case-data)
+                                   :status (:status row)
+                                   :diagnostic (:diagnostic row)})))
+                        vec)]
+      (when (seq failures)
+        (fail! "Completed Pkl.Core corpus partition regressed"
+               {:kind :pkl-core-completed-partition-failed
+                :partition name :failures failures})))
+    {:partition name :passed (count selected)}))
 
 (defn compare-repeated-results
   "Requires two complete executions to be byte-for-byte identical after each
@@ -421,7 +496,8 @@
          "generated-source" #"(?i)target/generated|(?i)generated-source"
          "internal-runtime-namespace" #"Pkl[.]Core[.]Runtime"
          "internal-messaging-namespace" #"Pkl[.]Core[.]Messaging"
-         "excluded-yaml-surface" #"(?i)Yaml"
+         "excluded-yaml-surface"
+         #"(?i)(?:Pkl[.]Core[.]Yaml|SnakeYaml|Yaml(?:Parser|Renderer))"
          "excluded-binary-surface" #"(?i)PklBinary|MessagePack"}
         forbidden
         (->> forbidden-patterns
@@ -635,6 +711,10 @@
                      (fail! "Repeated isolated-package corpus executions were not byte-identical"
                             {:kind :nondeterministic-package-pkl-core-corpus
                              :first (str package-first) :second (str package-second)}))
+                 value-runtime-partition
+                 (validate-completed-partition!
+                  validated "package-dotnet" package-first
+                  value-runtime-parser-path-partition)
                  first-assemblies
                  (validate-loaded-assemblies! assembly-manifest first-loaded consumer-root)
                  second-assemblies
@@ -662,6 +742,7 @@
                           :package-deterministic-observations
                           (:observations package-determinism)
                           :package-statuses (:statuses baseline)
+                          :completed-partition value-runtime-partition
                           :package (:identity package-proof)
                           :controls controls}]
              (println "Complete Pkl.Core corpus runner baseline recorded:"

@@ -16,6 +16,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Pkl.Core;
 using Pkl.Parser;
+using Version = Pkl.Core.Version;
 
 static class Program
 {
@@ -232,6 +233,78 @@ static class Program
             "org.pkl.core.PcfRendererTest" or "org.pkl.core.PListRendererTest" or
             "org.pkl.core.PropertiesRendererTest")
             return ExecuteRendererTest(row);
+        if (row.SourceClass == "org.pkl.core.DurationTest")
+            return ExecuteDurationTest(row);
+        if (row.SourceClass == "org.pkl.core.DurationUnitTest")
+            return ExecuteDurationUnitTest(row);
+        if (row.SourceClass == "org.pkl.core.DataSizeTest")
+            return ExecuteDataSizeTest(row);
+        if (row.SourceClass == "org.pkl.core.DataSizeUnitTest")
+            return ExecuteDataSizeUnitTest(row);
+        if (row.SourceClass == "org.pkl.core.PairTest")
+            return ExecutePairTest(row);
+        if (row.SourceClass == "org.pkl.core.PNullTest")
+            return ExecutePNullTest(row);
+        if (row.SourceClass == "org.pkl.core.PObjectTest")
+            return ExecutePObjectTest(row);
+        if (row.SourceClass == "org.pkl.core.PModuleTest")
+            return ExecutePModuleTest(row);
+        if (row.SourceClass == "org.pkl.core.PClassInfoTest")
+            return ExecutePClassInfoTest(row);
+        if (row.SourceClass == "org.pkl.core.DynamicTest")
+            return ExecuteDynamicTest(row);
+        if (row.SourceClass == "org.pkl.core.ClassInheritanceTest")
+            return ExecuteClassInheritanceTest(row);
+        if (row.SourceClass == "org.pkl.core.VersionTest")
+            return ExecuteVersionTest(row);
+        if (row.SourceClass is "org.pkl.core.PklInfoTest" or "org.pkl.core.PlatformTest" or
+            "org.pkl.core.ReleaseTest")
+            return ExecuteRuntimeInfoTest(row);
+        if (row.SourceClass is "org.pkl.core.parser.MultiLineStringLiteralTest" or
+            "org.pkl.core.parser.ShebangTest" or "org.pkl.core.parser.TrailingCommasTest" or
+            "org.pkl.core.ast.builder.ImportsAndReadsParserTest")
+            return ExecuteParserAdjunctTest(row);
+        if (row.SourceClass == "org.pkl.core.runtime.VmSafeMathTest")
+            return ExecuteVmSafeMathTest(row);
+        if (row.SourceClass == "org.pkl.core.runtime.CommandSpecParserTest")
+            return ExecuteCommandSpecParserTest(row, fixture);
+        if (row.SourceClass == "org.pkl.core.runtime.VmUtilsTest")
+            return ExecuteVmUtilsTest(row);
+        if (row.SourceClass == "org.pkl.core.runtime.IteratorsTest")
+            return ExecuteIteratorsTest(row);
+        if (row.SourceClass == "org.pkl.core.truffle.LongVsDoubleSpecializationTest")
+            return ExecuteLongVsDoubleTest(row);
+        if (row.SourceClass is "org.pkl.core.runtime.VmDataSizeTest" or
+            "org.pkl.core.runtime.VmDurationTest")
+            return ExecuteVmUnitValueTest(row);
+        if (row.SourceClass == "org.pkl.core.runtime.VmClassTest")
+            return ExecuteVmClassTest(row);
+        if (row.SourceClass == "org.pkl.core.runtime.VmValueRendererTest")
+            return ExecuteVmValueRendererTest(row);
+        if (row.SourceClass == "org.pkl.core.stdlib.ReflectModuleTest")
+            return ExecuteReflectModuleTest(row);
+        if (row.SourceClass is "org.pkl.core.stdlib.PathConverterSupportTest" or
+            "org.pkl.core.stdlib.PathSpecParserTest")
+            return ExecuteValuePathTest(row);
+        if (row.SourceClass == "org.pkl.core.util.AnsiStringBuilderTest")
+            return ExecuteAnsiStringBuilderTest(row);
+        if (row.SourceClass == "org.pkl.core.util.ArrayCharEscaperTest")
+            return ExecuteArrayCharEscaperTest(row);
+        if (row.SourceClass == "org.pkl.core.util.ErrorMessagesTest")
+            return ExecuteErrorMessagesTest(row);
+        if (row.SourceClass == "org.pkl.core.util.ExceptionsTest")
+            return ExecuteExceptionsTest(row);
+        if (row.SourceClass == "org.pkl.core.util.GlobResolverTest")
+            return ExecuteGlobResolverTest(row);
+        if (row.SourceClass == "org.pkl.core.util.HttpUtilsTest")
+            return ExecuteHttpUtilsTest(row);
+        if (row.SourceClass == "org.pkl.core.util.ImportGraphUtilsTest")
+            return ExecuteImportGraphUtilsTest(row);
+        if (row.SourceClass == "org.pkl.core.util.IoUtilsTest")
+            return ExecuteIoUtilsTest(row, fixture);
+        if (row.SourceClass is "org.pkl.core.util.PathResolverTest$PosixTests" or
+            "org.pkl.core.util.PathResolverTest$WindowsTests")
+            return ExecutePathResolverTest(row);
 
         // Every row reaches this package-only child and its declared local fixtures. The dependent
         // behavior tasks replace this explicit pending result with a public-API assertion for the
@@ -242,6 +315,1706 @@ static class Program
             "",
             $"No public package adaptation is registered for {row.CaseId} " +
             $"({row.SourcePath}:{row.SourceLine}).");
+    }
+
+    static ChildResult ExecuteDurationTest(ContractRow row)
+    {
+        var duration1 = new Duration(0.3, DurationUnit.SECONDS);
+        var duration2 = new Duration(300.0, DurationUnit.MILLIS);
+        var duration3 = new Duration(300.1, DurationUnit.MILLIS);
+        var duration4 = new Duration(0.0, DurationUnit.DAYS);
+        switch (row.SourceMethod)
+        {
+            case "of()":
+                Require(Duration.OfNanos(33).Equals(new Duration(33, DurationUnit.NANOS)) &&
+                    Duration.OfMicros(33).Equals(new Duration(33, DurationUnit.MICROS)) &&
+                    Duration.OfMillis(33).Equals(new Duration(33, DurationUnit.MILLIS)) &&
+                    Duration.OfSeconds(33).Equals(new Duration(33, DurationUnit.SECONDS)) &&
+                    Duration.OfMinutes(33).Equals(new Duration(33, DurationUnit.MINUTES)) &&
+                    Duration.OfHours(33).Equals(new Duration(33, DurationUnit.HOURS)) &&
+                    Duration.OfDays(33).Equals(new Duration(33, DurationUnit.DAYS)),
+                    "duration factories");
+                break;
+            case "in()":
+            {
+                Duration value = Duration.OfNanos(123456789);
+                Require(value.InNanos() == 123456789 && value.InMicros() == 123456.789 &&
+                    value.InMillis() == 123.456789 && value.InSeconds() == 0.123456789 &&
+                    value.InMinutes() == 0.00205761315 && value.InHours() == 3.42935525E-5 &&
+                    value.InDays() == 1.4288980208333333E-6, "duration unit conversions");
+                break;
+            }
+            case "inWhole()":
+                Require(Duration.OfNanos(1.23).InWholeNanos() == 1 &&
+                    Duration.OfMicros(1.87).InWholeMicros() == 2 &&
+                    Duration.OfMillis(1923.4).InWholeMillis() == 1923 &&
+                    Duration.OfSeconds(1234.5).InWholeSeconds() == 1235 &&
+                    Duration.OfMinutes(987.6).InWholeMinutes() == 988 &&
+                    Duration.OfHours(456.7).InWholeHours() == 457 &&
+                    Duration.OfDays(543.2).InWholeDays() == 543, "whole duration rounding");
+                break;
+            case "destructure()":
+                Require(duration1.Value == 0.3 && duration1.Unit == DurationUnit.SECONDS &&
+                    duration2.Value == 300 && duration2.Unit == DurationUnit.MILLIS &&
+                    duration3.Value == 300.1 && duration4.Value == 0 &&
+                    duration4.Unit == DurationUnit.DAYS, "duration properties");
+                break;
+            case "convertTo()":
+                Require(duration1.ConvertTo(DurationUnit.SECONDS).Equals(duration1) &&
+                    duration1.ConvertTo(DurationUnit.MILLIS).Equals(duration2) &&
+                    duration2.ConvertTo(DurationUnit.SECONDS).Equals(duration1) &&
+                    duration4.ConvertTo(DurationUnit.NANOS).Equals(
+                        new Duration(0, DurationUnit.NANOS)), "duration conversion values");
+                break;
+            case "toIsoString":
+                Require(duration1.ToIsoString() == "PT0.3S" &&
+                    duration2.ToIsoString() == "PT0.3S" &&
+                    duration3.ToIsoString() == "PT0.3001S" &&
+                    duration4.ToIsoString() == "PT0S" &&
+                    new Duration(1, DurationUnit.NANOS).ToIsoString() == "PT0.000000001S" &&
+                    new Duration(100, DurationUnit.DAYS).ToIsoString() == "PT2400H",
+                    "ISO duration rendering");
+                break;
+            case "convertValueTo()":
+                Require(duration1.ConvertValueTo(DurationUnit.SECONDS) == 0.3 &&
+                    duration1.ConvertValueTo(DurationUnit.MILLIS) == 300 &&
+                    duration2.ConvertValueTo(DurationUnit.SECONDS) == 0.3 &&
+                    duration4.ConvertValueTo(DurationUnit.NANOS) == 0,
+                    "duration scalar conversion");
+                break;
+            case "toJavaDuration() - positive":
+                Require(new Duration(999, DurationUnit.NANOS).ToTimeSpan() ==
+                    TimeSpan.FromTicks(10) && new Duration(999, DurationUnit.SECONDS).ToTimeSpan() ==
+                    TimeSpan.FromSeconds(999), "positive TimeSpan adaptation");
+                _ = Throws<OverflowException>(() =>
+                    new Duration(double.MaxValue, DurationUnit.DAYS).ToTimeSpan());
+                break;
+            case "toJavaDuration() - negative":
+                Require(new Duration(-999, DurationUnit.NANOS).ToTimeSpan() ==
+                    TimeSpan.FromTicks(-10) && new Duration(-999, DurationUnit.SECONDS).ToTimeSpan() ==
+                    TimeSpan.FromSeconds(-999), "negative TimeSpan adaptation");
+                _ = Throws<OverflowException>(() =>
+                    new Duration(-double.MaxValue, DurationUnit.DAYS).ToTimeSpan());
+                break;
+            case "toJavaDuration() - edge cases":
+                Require(new Duration(0, DurationUnit.NANOS).ToTimeSpan() == TimeSpan.Zero,
+                    "zero TimeSpan adaptation");
+                _ = Throws<OverflowException>(() =>
+                    new Duration(double.NaN, DurationUnit.SECONDS).ToTimeSpan());
+                _ = Throws<OverflowException>(() =>
+                    new Duration(double.PositiveInfinity, DurationUnit.SECONDS).ToTimeSpan());
+                _ = Throws<OverflowException>(() =>
+                    new Duration(double.NegativeInfinity, DurationUnit.SECONDS).ToTimeSpan());
+                break;
+            case "equals()":
+                Require(duration1.Equals(duration1) && duration1.Equals(duration2) &&
+                    duration2.Equals(duration1) && !duration3.Equals(duration1) &&
+                    !duration2.Equals(duration3), "duration equality");
+                break;
+            case "hashCode()":
+                Require(duration2.GetHashCode() == duration1.GetHashCode() &&
+                    duration3.GetHashCode() != duration1.GetHashCode(), "duration hash");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteDurationUnitTest(ContractRow row)
+    {
+        switch (row.SourceMethod)
+        {
+            case "destructure":
+                Require(DataSizeUnit.BYTES.GetBytes() == 1 &&
+                    DataSizeUnit.BYTES.GetSymbol() == "b" &&
+                    DataSizeUnit.MEBIBYTES.GetBytes() == 1024L * 1024 &&
+                    DataSizeUnit.MEBIBYTES.GetSymbol() == "mib", "duration-unit source destructure");
+                break;
+            case "toString()":
+                Require(DataSizeUnit.BYTES.ToString() == "b" &&
+                    DataSizeUnit.MEBIBYTES.ToString() == "mib", "duration-unit source strings");
+                break;
+            case "parse":
+                Require(DurationUnit.Parse("min") == DurationUnit.MINUTES &&
+                    DurationUnit.Parse("other") is null, "duration-unit parse");
+                break;
+            case "toChronoUnit":
+            case "toTimeUnit":
+                Require(DurationUnit.Values().SequenceEqual(new[] { DurationUnit.NANOS,
+                    DurationUnit.MICROS, DurationUnit.MILLIS, DurationUnit.SECONDS,
+                    DurationUnit.MINUTES, DurationUnit.HOURS, DurationUnit.DAYS }),
+                    row.SourceMethod + " idiomatic enum order");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteDataSizeTest(ContractRow row)
+    {
+        var size1 = new DataSize(0.3, DataSizeUnit.KILOBYTES);
+        var size2 = new DataSize(300.0, DataSizeUnit.BYTES);
+        var size3 = new DataSize(300.1, DataSizeUnit.BYTES);
+        var size4 = new DataSize(0.0, DataSizeUnit.PEBIBYTES);
+        switch (row.SourceMethod)
+        {
+            case "of()":
+                Require(DataSize.OfBytes(33).Equals(new DataSize(33, DataSizeUnit.BYTES)) &&
+                    DataSize.OfKilobytes(33).Equals(new DataSize(33, DataSizeUnit.KILOBYTES)) &&
+                    DataSize.OfKibibytes(33).Equals(new DataSize(33, DataSizeUnit.KIBIBYTES)) &&
+                    DataSize.OfMegabytes(33).Equals(new DataSize(33, DataSizeUnit.MEGABYTES)) &&
+                    DataSize.OfMebibytes(33).Equals(new DataSize(33, DataSizeUnit.MEBIBYTES)) &&
+                    DataSize.OfGigabytes(33).Equals(new DataSize(33, DataSizeUnit.GIGABYTES)) &&
+                    DataSize.OfGibibytes(33).Equals(new DataSize(33, DataSizeUnit.GIBIBYTES)) &&
+                    DataSize.OfTerabytes(33).Equals(new DataSize(33, DataSizeUnit.TERABYTES)) &&
+                    DataSize.OfTebibytes(33).Equals(new DataSize(33, DataSizeUnit.TEBIBYTES)) &&
+                    DataSize.OfPetabytes(33).Equals(new DataSize(33, DataSizeUnit.PETABYTES)) &&
+                    DataSize.OfPebibytes(33).Equals(new DataSize(33, DataSizeUnit.PEBIBYTES)),
+                    "data-size factories");
+                break;
+            case "in()":
+                Require(size1.InBytes() == 300 && size1.InKilobytes() == 0.3 &&
+                    size1.InMegabytes() == 0.0003 && size1.InGigabytes() == 0.0000003 &&
+                    size1.InTerabytes() == 0.0000000003 &&
+                    size1.InPetabytes() == 0.0000000000003 &&
+                    DataSize.OfBytes(1024).InKibibytes() == 1 &&
+                    DataSize.OfKibibytes(1024).InMebibytes() == 1 &&
+                    DataSize.OfMebibytes(1024).InGibibytes() == 1 &&
+                    DataSize.OfGibibytes(1024).InTebibytes() == 1 &&
+                    DataSize.OfTebibytes(1024).InPebibytes() == 1,
+                    "data-size conversions");
+                break;
+            case "inWhole()":
+                Require(DataSize.OfBytes(123.4).InWholeBytes() == 123 &&
+                    DataSize.OfBytes(1000).InWholeKilobytes() == 1 &&
+                    DataSize.OfKilobytes(999).InWholeMegabytes() == 1 &&
+                    DataSize.OfMegabytes(1001).InWholeGigabytes() == 1 &&
+                    DataSize.OfGigabytes(2000).InWholeTerabytes() == 2 &&
+                    DataSize.OfTerabytes(1600).InWholePetabytes() == 2 &&
+                    DataSize.OfBytes(1023).InWholeKibibytes() == 1 &&
+                    DataSize.OfKibibytes(1024).InWholeMebibytes() == 1,
+                    "whole data-size rounding");
+                break;
+            case "destructure()":
+                Require(size1.Value == 0.3 && size1.Unit == DataSizeUnit.KILOBYTES &&
+                    size2.Value == 300 && size2.Unit == DataSizeUnit.BYTES &&
+                    size3.Value == 300.1 && size4.Value == 0 &&
+                    size4.Unit == DataSizeUnit.PEBIBYTES, "data-size properties");
+                break;
+            case "convertTo()":
+                Require(size1.ConvertTo(DataSizeUnit.KILOBYTES).Equals(size1) &&
+                    size1.ConvertTo(DataSizeUnit.BYTES).Equals(size2) &&
+                    size2.ConvertTo(DataSizeUnit.KILOBYTES).Equals(size1) &&
+                    size4.ConvertTo(DataSizeUnit.PETABYTES).Equals(
+                        new DataSize(0, DataSizeUnit.KIBIBYTES)), "data-size conversion values");
+                break;
+            case "convertValueTo()":
+                Require(size1.ConvertValueTo(DataSizeUnit.KILOBYTES) == 0.3 &&
+                    size1.ConvertValueTo(DataSizeUnit.BYTES) == 300 &&
+                    size2.ConvertValueTo(DataSizeUnit.KILOBYTES) == 0.3 &&
+                    size4.ConvertValueTo(DataSizeUnit.PETABYTES) == 0,
+                    "data-size scalar conversion");
+                break;
+            case "equals()":
+                Require(size1.Equals(size1) && size1.Equals(size2) && size2.Equals(size1) &&
+                    !size3.Equals(size1) && !size2.Equals(size3), "data-size equality");
+                break;
+            case "hashCode()":
+                Require(size2.GetHashCode() == size1.GetHashCode() &&
+                    size3.GetHashCode() != size1.GetHashCode(), "data-size hash");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteDataSizeUnitTest(ContractRow row)
+    {
+        switch (row.SourceMethod)
+        {
+            case "destructure":
+                Require(DataSizeUnit.BYTES.GetBytes() == 1 &&
+                    DataSizeUnit.BYTES.GetSymbol() == "b" &&
+                    DataSizeUnit.MEBIBYTES.GetBytes() == 1024L * 1024 &&
+                    DataSizeUnit.MEBIBYTES.GetSymbol() == "mib", "data-size unit properties");
+                break;
+            case "toString()":
+                Require(DataSizeUnit.BYTES.ToString() == "b" &&
+                    DataSizeUnit.MEBIBYTES.ToString() == "mib", "data-size unit strings");
+                break;
+            case "parse":
+                Require(DataSizeUnit.Parse("gb") == DataSizeUnit.GIGABYTES &&
+                    DataSizeUnit.Parse("other") is null, "data-size unit parse");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecutePairTest(ContractRow row)
+    {
+        var pair = new Pair<long, string>(3L, "five");
+        switch (row.SourceMethod)
+        {
+            case "basics":
+                Require((long)pair.First == 3 && (string)pair.Second == "five" &&
+                    pair.ToString() == "Pair(3, five)" &&
+                    pair.GetClassInfo().Equals(PClassInfo<object>.Pair.AsObject()), "pair basics");
+                break;
+            case "iterator":
+                Require(pair.SequenceEqual(new object[] { 3L, "five" }), "pair iterator");
+                break;
+            case "equals":
+            {
+                var same = new Pair<long, string>(3L, "five");
+                var erased = new Pair<object, object>(3L, "five");
+                var reverse = new Pair<string, long>("five", 3L);
+                Require(pair.Equals(pair) && pair.Equals(same) && same.Equals(pair) &&
+                    pair.Equals(erased) && erased.Equals(pair) &&
+                    !pair.Equals(reverse) && !reverse.Equals(same), "pair equality");
+                break;
+            }
+            case "hash":
+                Require(pair.GetHashCode() !=
+                    new Pair<string, long>("five", 3L).GetHashCode(), "pair hash");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecutePNullTest(ContractRow row)
+    {
+        if (row.SourceMethod != "basics") return Pending(row);
+        Require(ReferenceEquals(PNull.Instance, PNull.Instance) &&
+            PNull.Instance.GetClassInfo().Equals(PClassInfo<object>.Null.AsObject()) &&
+            PNull.Instance.ToString() == "null", "PNull singleton");
+        return Passed(row);
+    }
+
+    static ChildResult ExecutePObjectTest(ContractRow row)
+    {
+        Uri uri = new("repl:test");
+        PClassInfo<object> info = PClassInfo<object>.Get("test", "Person", uri);
+        var properties = new Dictionary<string, object>
+        {
+            ["name"] = "Pigeon",
+            ["age"] = 42L
+        };
+        var pigeon = new PObject(info, properties);
+        switch (row.SourceMethod)
+        {
+            case "getPClassInfo()":
+                Require(ReferenceEquals(pigeon.ClassInfo, info), "PObject class info");
+                break;
+            case "getProperties()":
+                Require(pigeon.Properties.Keys.SequenceEqual(new[] { "name", "age" }) &&
+                    pigeon.Properties.Count == 2, "PObject read-only properties");
+                break;
+            case "getProperty()":
+                Require((string)pigeon.GetProperty("name") == "Pigeon" &&
+                    (long)pigeon.GetProperty("age") == 42, "PObject property lookup");
+                break;
+            case "get unknown property":
+            {
+                NoSuchPropertyException error = Throws<NoSuchPropertyException>(
+                    () => pigeon.GetProperty("other"));
+                Require(error.Message == "Object of type `test#Person` does not have a property " +
+                    "named `other`. Available properties: [name, age]", "PObject missing property");
+                break;
+            }
+            case "hasProperty()":
+                Require(pigeon.HasProperty("name") && pigeon.HasProperty("age") &&
+                    !pigeon.HasProperty("other"), "PObject property presence");
+                break;
+            case "accept()":
+            {
+                var visitor = new RecordingVisitor();
+                pigeon.Accept(visitor);
+                Require(visitor.ObjectVisited && !visitor.ModuleVisited, "PObject visitor dispatch");
+                break;
+            }
+            case "equals() and hashCode()":
+            {
+                var same = new PObject(
+                    PClassInfo<object>.Get("test", "Person", uri),
+                    new Dictionary<string, object>(properties));
+                Require(pigeon.Equals(same) && same.Equals(pigeon) &&
+                    pigeon.GetHashCode() == same.GetHashCode(), "PObject equality and hash");
+                break;
+            }
+            case "non-equal - different type":
+                Require(!pigeon.Equals(new PObject(
+                    PClassInfo<object>.Get("test", "Other", new Uri("repl:Other")), properties)),
+                    "PObject type identity");
+                break;
+            case "non-equal - different property value":
+                Require(!pigeon.Equals(new PObject(info, new Dictionary<string, object>
+                    { ["name"] = "Pigeon", ["age"] = 21L })), "PObject property value identity");
+                break;
+            case "non-equal - missing property":
+                Require(!pigeon.Equals(new PObject(info, new Dictionary<string, object>
+                    { ["name"] = "Pigeon" })), "PObject missing property identity");
+                break;
+            case "non-equal - extra property":
+                Require(!pigeon.Equals(new PObject(info, new Dictionary<string, object>
+                    { ["name"] = "Pigeon", ["age"] = 42L, ["other"] = true })),
+                    "PObject extra property identity");
+                break;
+            case "toString()":
+                Require(pigeon.ToString() == "test#Person { name = Pigeon; age = 42 }",
+                    "PObject rendering");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecutePModuleTest(ContractRow row)
+    {
+        Uri uri = new("modulepath:/module/uri.pkl");
+        PClassInfo<object> info = PClassInfo<object>.ForModuleClass("test", uri);
+        var properties = new Dictionary<string, object>
+        {
+            ["name"] = "Pigeon",
+            ["age"] = 42L
+        };
+        var pigeon = new PModule(uri, "test.module", info, properties);
+        switch (row.SourceMethod)
+        {
+            case "getProperties()":
+                Require(pigeon.Properties.Keys.SequenceEqual(new[] { "name", "age" }) &&
+                    pigeon.Properties.Count == 2, "PModule read-only properties");
+                break;
+            case "getProperty()":
+                Require((string)pigeon.GetProperty("name") == "Pigeon" &&
+                    (long)pigeon.GetProperty("age") == 42, "PModule property lookup");
+                break;
+            case "get unknown property":
+            {
+                NoSuchPropertyException error = Throws<NoSuchPropertyException>(
+                    () => pigeon.GetProperty("other"));
+                Require(error.Message == "Module `test.module` does not have a property " +
+                    "named `other`. Available properties: [name, age]", "PModule missing property");
+                break;
+            }
+            case "hasProperty()":
+                Require(pigeon.HasProperty("name") && pigeon.HasProperty("age") &&
+                    !pigeon.HasProperty("other"), "PModule property presence");
+                break;
+            case "accept()":
+            {
+                var visitor = new RecordingVisitor();
+                pigeon.Accept(visitor);
+                Require(!visitor.ObjectVisited && visitor.ModuleVisited, "PModule visitor dispatch");
+                break;
+            }
+            case "equals() and hashCode()":
+            {
+                var same = new PModule(uri, "test.module", info,
+                    new Dictionary<string, object>(properties));
+                Require(pigeon.Equals(same) && same.Equals(pigeon) &&
+                    pigeon.GetHashCode() == same.GetHashCode(), "PModule equality and hash");
+                break;
+            }
+            case "non-equal - different module uri":
+                Require(!pigeon.Equals(new PModule(new Uri("other:module"), "test.module", info,
+                    properties)), "PModule URI identity");
+                break;
+            case "non-equal - different module name":
+                Require(!pigeon.Equals(new PModule(uri, "other.module", info, properties)),
+                    "PModule name identity");
+                break;
+            case "non-equal - different property value":
+                Require(!pigeon.Equals(new PModule(uri, "test.module", info,
+                    new Dictionary<string, object> { ["name"] = "Pigeon", ["age"] = 21L })),
+                    "PModule property value identity");
+                break;
+            case "non-equal - missing property":
+                Require(!pigeon.Equals(new PModule(uri, "test.module", info,
+                    new Dictionary<string, object> { ["name"] = "Pigeon" })),
+                    "PModule missing property identity");
+                break;
+            case "non-equal - extra property":
+                Require(!pigeon.Equals(new PModule(uri, "test.module", info,
+                    new Dictionary<string, object>
+                    { ["name"] = "Pigeon", ["age"] = 42L, ["other"] = true })),
+                    "PModule extra property identity");
+                break;
+            case "toString()":
+                Require(pigeon.ToString() == "test.module { name = Pigeon; age = 42 }",
+                    "PModule rendering");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecutePClassInfoTest(ContractRow row)
+    {
+        switch (row.SourceMethod)
+        {
+            case "standard type":
+            {
+                PClassInfo<object> info = PClassInfo<object>.Get(
+                    "pkl.base", "Duration", new Uri("pkl:base"));
+                Require(info.ModuleName == "pkl.base" && info.SimpleName == "Duration" &&
+                    info.QualifiedName == "pkl.base#Duration" && info.DisplayName == "Duration" &&
+                    info.ToString() == "Duration" && info.ValueType == typeof(Duration) &&
+                    info.ModuleUri == new Uri("pkl:base"), "standard PClassInfo");
+                break;
+            }
+            case "user-defined type":
+            {
+                Uri uri = new("my:person");
+                PClassInfo<object> info = PClassInfo<object>.Get("my", "Person", uri);
+                Require(info.ModuleName == "my" && info.SimpleName == "Person" &&
+                    info.QualifiedName == "my#Person" && info.DisplayName == "my#Person" &&
+                    info.ToString() == "my#Person" && info.ValueType == typeof(PObject) &&
+                    info.ModuleUri == uri, "user PClassInfo");
+                break;
+            }
+            case "isExactTypeOf":
+                Require(!PklClassInfos.IsExactTypeOf(PClassInfo<object>.Any.AsObject(), new object()) &&
+                    !PklClassInfos.IsExactTypeOf(PClassInfo<object>.Typed.AsObject(), new object()),
+                    "PClassInfo exact type");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteDynamicTest(ContractRow row)
+    {
+        string value = row.SourceMethod switch
+        {
+            "property access respects type" => "person.name",
+            "toDynamic respects type" => "person.toDynamic()",
+            "amending a Dynamic loses type information" =>
+                "(person.toDynamic()) { name = false; age = 0.ms }",
+            _ => ""
+        };
+        if (value.Length == 0) return Pending(row);
+        string program = "class Person { name: String; age: Int }\n" +
+            "person: Person = new { name = 42; age = \"Pigeon\" }\n" +
+            $"output {{ value = {value} }}";
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        if (row.SourceMethod == "amending a Dynamic loses type information")
+            _ = evaluator.EvaluateOutputText(ModuleSource.FromText(program));
+        else
+            _ = Throws<PklException>(() => evaluator.EvaluateOutputText(ModuleSource.FromText(program)));
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteClassInheritanceTest(ContractRow row)
+    {
+        string declaration = row.SourceMethod switch
+        {
+            "property override without type annotation is considered an object property definition" =>
+                "thing {}",
+            "property override with type annotation is considered a class property definition" =>
+                "thing: Thing = new {}",
+            _ => ""
+        };
+        if (declaration.Length == 0) return Pending(row);
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        ModuleSchema schema = evaluator.EvaluateSchema(ModuleSource.FromText(
+            "class Thing\nopen class Base { hidden thing: Thing }\n" +
+            $"class Derived extends Base {{ {declaration} }}"));
+        PClass derived = schema.Classes["Derived"];
+        PClass.Property inherited = derived.AllProperties["thing"];
+        Require(inherited.ValueType is PType.Class type &&
+            ReferenceEquals(type.SchemaClass, schema.Classes["Thing"]), "inherited class property type");
+        if (row.SourceMethod.StartsWith("property override without", StringComparison.Ordinal))
+            Require(!derived.Properties.ContainsKey("thing") && inherited.IsHiddenMember,
+                "object property override remains inherited and hidden");
+        else
+            Require(derived.Properties.ContainsKey("thing") && !inherited.IsHiddenMember,
+                "typed property override becomes visible class property");
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteVersionTest(ContractRow row)
+    {
+        switch (row.SourceMethod)
+        {
+            case "parse release version":
+            {
+                Version value = Version.Parse("1.2.3");
+                Require(value.GetMajor() == 1 && value.GetMinor() == 2 && value.GetPatch() == 3 &&
+                    value.GetPreRelease() is null && value.GetBuild() is null, "release version parse");
+                break;
+            }
+            case "parse snapshot version":
+            {
+                Version value = Version.Parse("1.2.3-SNAPSHOT+build-123");
+                Require(value.GetMajor() == 1 && value.GetMinor() == 2 && value.GetPatch() == 3 &&
+                    value.GetPreRelease() == "SNAPSHOT" && value.GetBuild() == "build-123",
+                    "snapshot version parse");
+                break;
+            }
+            case "parse beta version":
+            {
+                Version value = Version.Parse("1.2.3-beta.1+build-123");
+                Require(value.GetPreRelease() == "beta.1" && value.GetBuild() == "build-123",
+                    "beta version parse");
+                break;
+            }
+            case "parse invalid version":
+                Require(Version.ParseOrNull("not a version number") is null,
+                    "invalid version nullable parse");
+                _ = Throws<ArgumentException>(() => Version.Parse("not a version number"));
+                break;
+            case "parse too large version":
+                _ = Throws<ArgumentException>(() => Version.Parse("999999999999999.0.0"));
+                break;
+            case "toNormal":
+            {
+                Version normal = Version.Parse("1.2.3");
+                Require(Version.Parse("1.2.3-beta-1+build-123").ToNormal().Equals(normal) &&
+                    Version.Parse("1.2.3-beta-1").ToNormal().Equals(normal) &&
+                    Version.Parse("1.2.3").ToNormal().Equals(normal), "normal version");
+                break;
+            }
+            case "withMethods":
+            {
+                Version value = Version.Parse("0.0.0").WithMajor(1).WithMinor(2).WithPatch(3)
+                    .WithPreRelease("rc.1").WithBuild("456.789");
+                Require(value.Equals(Version.Parse("1.2.3-rc.1+456.789")), "version copy methods");
+                break;
+            }
+            case "compareTo()":
+                Require(Version.Parse("1.2.3").CompareTo(Version.Parse("2.2.3")) < 0 &&
+                    Version.Parse("2.2.3").CompareTo(Version.Parse("1.2.3")) > 0 &&
+                    Version.Parse("1.2.3-alpha").CompareTo(Version.Parse("1.2.3-beta")) < 0 &&
+                    Version.Parse("1.2.3").CompareTo(Version.Parse("1.2.3-SNAPSHOT")) > 0,
+                    "version ordering");
+                break;
+            case "compare version with too large numeric pre-release identifier":
+                _ = Throws<FormatException>(() =>
+                    new Version(1, 2, 3, "999", null).CompareTo(
+                        new Version(1, 2, 3, "9999999999999999999", null)));
+                break;
+            case "equals()":
+                Require(new Version(1, 2, 3, null, null).Equals(
+                        new Version(1, 2, 3, null, null)) &&
+                    new Version(1, 2, 3, "beta", "build123").Equals(
+                        new Version(1, 2, 3, "beta", "build456")) &&
+                    !new Version(1, 2, 3, "beta", null).Equals(
+                        new Version(1, 2, 3, "alpha", null)), "version equality");
+                break;
+            case "hashCode()":
+                Require(new Version(1, 2, 3, "alpha", "build123").GetHashCode() ==
+                    new Version(1, 2, 3, "alpha", "build456").GetHashCode(), "version hash");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteRuntimeInfoTest(ContractRow row)
+    {
+        switch (row.SourceClass)
+        {
+            case "org.pkl.core.PklInfoTest":
+                Require(PklInfo.Current() is not null, "current Pkl info");
+                break;
+            case "org.pkl.core.PlatformTest":
+                Require(Platform.Current() is not null, "current platform");
+                break;
+            case "org.pkl.core.ReleaseTest":
+                Require(Release.Current() is not null, "current release");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteParserAdjunctTest(ContractRow row)
+    {
+        if (row.SourceClass == "org.pkl.core.parser.MultiLineStringLiteralTest")
+        {
+            string source = row.SourceMethod.StartsWith("raw", StringComparison.Ordinal)
+                ? "x = #\"\"\"\none\rtwo\nthree\r\nfour\n\"\"\"#"
+                : "x = \"\"\"\none\rtwo\nthree\r\nfour\n\"\"\"";
+            using Evaluator evaluator = Evaluator.Preconfigured();
+            Require((string)evaluator.Evaluate(ModuleSource.FromText(source)).GetProperty("x") ==
+                "one\ntwo\nthree\nfour", row.SourceMethod);
+            return Passed(row);
+        }
+        if (row.SourceClass == "org.pkl.core.parser.ShebangTest")
+        {
+            using Evaluator evaluator = Evaluator.Preconfigured();
+            Require((long)evaluator.Evaluate(ModuleSource.FromText(
+                "#!/usr/local/bin/pkl\nx = 1")).GetProperty("x") == 1, "shebang ignored");
+            return Passed(row);
+        }
+        if (row.SourceClass == "org.pkl.core.parser.TrailingCommasTest")
+        {
+            string source = row.SourceMethod.StartsWith("class", StringComparison.Ordinal)
+                ? "class Foo<Key, Value,>\nclass Bar<Key, Value,> { baz: Key; buzz: Value }"
+                : "function foo<A, B,>(a: A, b: B,): String = \"x\"";
+            Parser parser = new();
+            object module = parser.ParseModule(source);
+            Require(module is not null, row.SourceMethod);
+            return Passed(row);
+        }
+        if (row.SourceClass == "org.pkl.core.ast.builder.ImportsAndReadsParserTest")
+        {
+            using Evaluator evaluator = Evaluator.Preconfigured();
+            if (row.SourceMethod == "invalid syntax")
+            {
+                PklException error = Throws<PklException>(() => evaluator.Evaluate(
+                    ModuleSource.FromText("not valid Pkl syntax")));
+                Require(error.Message.Contains("Invalid property definition", StringComparison.Ordinal) &&
+                    error.Message.Contains("not valid Pkl syntax", StringComparison.Ordinal),
+                    "import/read parser diagnostic");
+            }
+            else if (row.SourceMethod == "parse")
+            {
+                IReadOnlyList<string> imports = PklParserUtilities.FindImportsAndReads(
+                    "amends \"foo.pkl\"\n\nimport \"bar.pkl\"\nimport \"bazzy/buz.pkl\"\n" +
+                    "res1 = import(\"qux.pkl\")\nres2 = import*(\"qux/*.pkl\")\n" +
+                    "res5 = read(\"/some/dir/chown.txt\")\n" +
+                    "res6 = read?(\"/some/dir/chowner.txt\")\n" +
+                    "res7 = read*(\"/some/dir/*.txt\")");
+                Require(imports.ToHashSet(StringComparer.Ordinal).SetEquals(new[] { "foo.pkl",
+                    "bar.pkl", "bazzy/buz.pkl", "qux.pkl", "qux/*.pkl",
+                    "/some/dir/chown.txt", "/some/dir/chowner.txt", "/some/dir/*.txt" }),
+                    "import and read extraction");
+            }
+            else return Pending(row);
+            return Passed(row);
+        }
+        return Pending(row);
+    }
+
+    static ChildResult ExecuteVmSafeMathTest(ContractRow row)
+    {
+        string expression = row.SourceMethod switch
+        {
+            "negate long" => "List(-0, -1, -(-1), -(9223372036854775807))",
+            "negate long - overflow" => "-(-9223372036854775807 - 1)",
+            "negate double" => "List(-0.0, -(-1.0), -(1.0), -(123.456))",
+            "add long" => "List(0 + 0, 1 + 2, 1 + -2, 9223372036854775806 + 1)",
+            "add long - overflow #1" => "9223372036854775807 + 1",
+            "add long - overflow #2" => "(-9223372036854775807 - 1) + -1",
+            "add long - overflow #3" => "4611686018427387903 + 6148914691236517204",
+            _ => ""
+        };
+        if (expression.Length == 0) return Pending(row);
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        if (row.SourceMethod.Contains("overflow", StringComparison.Ordinal))
+        {
+            PklException error = Throws<PklException>(() => evaluator.EvaluateExpression(
+                ModuleSource.FromText("x = 1"), expression));
+            Require(error.Message.Contains("overflow", StringComparison.OrdinalIgnoreCase),
+                row.SourceMethod + " diagnostic");
+        }
+        else
+        {
+            object result = evaluator.EvaluateExpression(ModuleSource.FromText("x = 1"), expression);
+            Require(result is IReadOnlyList<object> values && values.Count == 4,
+                row.SourceMethod + " result specialization");
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteCommandSpecParserTest(ContractRow row, CorpusFixture fixture)
+    {
+        const string renderOptions =
+            "extends \"pkl:Command\"\nimport \"pkl:Command\"\n" +
+            "options: Options\noutput { value = options }\n";
+        PklCommandSpec Parse(string source, string fileName = "cmd.pkl")
+        {
+            string path = Path.Combine(fixture.Root, fileName);
+            File.WriteAllText(path, source, new UTF8Encoding(false));
+            using Evaluator evaluator = Evaluator.Preconfigured();
+            return evaluator.ParseCommand(
+                ModuleSource.FromPath(path),
+                new HashSet<string>(new[] { "help", "root-dir" }, StringComparer.Ordinal),
+                new HashSet<string>(new[] { "h" }, StringComparer.Ordinal));
+        }
+
+        (string Source, string[] Fragments)? failure = row.SourceMethod switch
+        {
+            "command module does not amend pkl_Command" =>
+                ("", new[] { "Expected value of type `pkl.Command`, but got type" }),
+            "options property assigned" =>
+                ("extends \"pkl:Command\"\noptions = new {}",
+                    new[] { "options = ", "Commands must not assign or amend property `options`." }),
+            "options property amended" =>
+                ("extends \"pkl:Command\"\noptions {}",
+                    new[] { "options {", "Commands must not assign or amend property `options`." }),
+            "parent property assigned" =>
+                ("extends \"pkl:Command\"\nparent = new {}",
+                    new[] { "parent = ", "Commands must not assign or amend property `parent`." }),
+            "parent property amended" =>
+                ("extends \"pkl:Command\"\nparent {}",
+                    new[] { "parent {", "Commands must not assign or amend property `parent`." }),
+            "options type annotation does not reference class" =>
+                ("extends \"pkl:Command\"\noptions: \"nope\" | \"try again\"",
+                    new[] { "options: \"nope\" | \"try again\"", "must be a class type" }),
+            "options class is abstract" =>
+                ("extends \"pkl:Command\"\noptions: Options\nabstract class Options {}",
+                    new[] { "abstract class Options {", "may not be abstract" }),
+            "command property value does not amend CommandInfo" =>
+                ("extends \"pkl:Command\"\ncommand = new Foo {}\nclass Foo",
+                    new[] { "command = new Foo {}", "Expected value of type `pkl.Command#CommandInfo`" }),
+            "@Flag and @Argument on the same option" =>
+                (renderOptions + "class Options { @Flag; @Argument; foo: String }",
+                    new[] { "foo: String", "Found both `@Flag` and `@Argument`" }),
+            "option with no type annotation" =>
+                (renderOptions + "class Options { foo = \"bar\" }",
+                    new[] { "foo = \"bar\"", "No type annotation found for `foo`" }),
+            "option with union type containing non-string-literals" =>
+                (renderOptions + "class Options { foo: \"oops\" | String }",
+                    new[] { "foo: \"oops\" | String", "unsupported type" }),
+            "argument with default not allowed" =>
+                (renderOptions + "class Options { @Argument; foo: String = \"bar\" }",
+                    new[] { "foo: String = \"bar\"", "Unexpected default value" }),
+            "nullable non-collection argument not allowed" =>
+                (renderOptions + "class Options { @Argument; foo: String? }",
+                    new[] { "foo: String?", "Unexpected nullable type" }),
+            "flag with collision on --help" =>
+                (renderOptions + "class Options { help: Boolean }",
+                    new[] { "help: Boolean", "collides with a reserved flag name" }),
+            "flag with collision on -h" =>
+                (renderOptions + "class Options { @Flag { shortName = \"h\" }; showHelp: Boolean }",
+                    new[] { "showHelp: Boolean", "short name `h` collides" }),
+            "flag with collision on reserved option name" =>
+                (renderOptions + "class Options { `root-dir`: String }",
+                    new[] { "`root-dir`: String", "collides with a reserved flag name" }),
+            "multiple arguments with collection types not allowed" =>
+                (renderOptions + "class Options { @Argument; list: List<String>; " +
+                    "@Argument; set: Set<String> }",
+                    new[] { "More than one repeated option", "Only one repeated argument" }),
+            "collection option with collection element type" =>
+                (renderOptions + "class Options { foo: List<List<\"a\" | \"b\">> }",
+                    new[] { "unsupported element type `List<\"a\" | \"b\">`" }),
+            "collection option with map element type" =>
+                (renderOptions + "class Options { foo: List<Map<String, \"a\" | \"b\">> }",
+                    new[] { "unsupported element type `Map<String, \"a\" | \"b\">`" }),
+            "map option with collection value type" =>
+                (renderOptions + "class Options { foo: Map<String, List<\"a\" | \"b\">> }",
+                    new[] { "unsupported value type `List<\"a\" | \"b\">`" }),
+            "map option with map value type" =>
+                (renderOptions + "class Options { foo: Map<String, Map<String, \"a\" | \"b\">> }",
+                    new[] { "unsupported value type `Map<String, \"a\" | \"b\">`" }),
+            "map option with collection key type" or "map option with map key type" =>
+                (renderOptions + "class Options { foo: Map<Map<String, \"a\" | \"b\">, String> }",
+                    new[] { "unsupported key type `Map<String, \"a\" | \"b\">`" }),
+            "unsupported option type" =>
+                (renderOptions + "class Options { foo: Foo }; class Foo",
+                    new[] { "foo: Foo", "unsupported type `Foo`" }),
+            "conflicting subcommand names" =>
+                ("extends \"pkl:Command\"\nimport \"pkl:Command\"\ncommand { subcommands { " +
+                    "new Sub { command { name = \"foo\" } }; " +
+                    "new Sub { command { name = \"foo\" } } } }\nclass Sub extends Command",
+                    new[] { "subcommands with conflicting name \"foo\"" }),
+            "map option with no type arguments" =>
+                (renderOptions + "class Options { foo: Map }",
+                    new[] { "unsupported type `Map`", "must provide two type arguments" }),
+            "boolean flag with incorrect type" =>
+                (renderOptions + "class Options { @BooleanFlag; foo: String }",
+                    new[] { "annotation `@BooleanFlag` has invalid type `String`", "Expected type: `Boolean`" }),
+            "counted flag with incorrect type" =>
+                (renderOptions + "class Options { @CountedFlag; foo: String }",
+                    new[] { "annotation `@CountedFlag` has invalid type `String`", "Expected type: `Int`" }),
+            _ => null
+        };
+        if (failure is not null)
+        {
+            PklException error = Throws<PklException>(() => Parse(failure.Value.Source));
+            Require(failure.Value.Fragments.All(fragment =>
+                error.Message.Contains(fragment, StringComparison.Ordinal)),
+                row.SourceMethod + " deterministic command diagnostic");
+            return Passed(row);
+        }
+
+        switch (row.SourceMethod)
+        {
+            case "first annotation of the same type wins":
+            {
+                PklCommandSpec spec = Parse(renderOptions +
+                    "open class BaseOptions { /// foo in BaseOptions\n@Flag { shortName = \"a\" }; " +
+                    "foo: String; /// bar in BaseOptions\n@Flag { shortName = \"b\" }; bar: String }\n" +
+                    "class Options extends BaseOptions { /// bar in Options\n" +
+                    "@Flag { shortName = \"x\" }; bar: String; /// baz in Options\n" +
+                    "@Flag { shortName = \"y\" }; @CountedFlag { shortName = \"z\" }; baz: Int }");
+                Require(spec.Options.Count == 3 &&
+                    spec.Options[0] is PklCommandFlag bar && bar.Name == "bar" &&
+                    bar.ShortName == "x" && bar.HelpText == "bar in Options" &&
+                    spec.Options[1] is PklCommandFlag baz && baz.Name == "baz" &&
+                    baz.ShortName == "y" && baz.HelpText == "baz in Options" &&
+                    spec.Options[2] is PklCommandFlag foo && foo.Name == "foo" &&
+                    foo.ShortName == "a" && foo.HelpText == "foo in BaseOptions",
+                    "command annotation and inheritance order");
+                break;
+            }
+            case "non-constant default values result in an optional flag with no default":
+            {
+                PklCommandSpec spec = Parse(renderOptions +
+                    "class Options { foo: String = \"hi\"; bar: String = foo; " +
+                    "baz: Map<String, String> = Map(); qux: Map<String, String> = baz; quux: Int = 5 }");
+                PklCommandFlag[] flags = spec.Options.Cast<PklCommandFlag>().ToArray();
+                Require(flags.Select(flag => flag.Name).SequenceEqual(
+                        new[] { "foo", "bar", "baz", "qux", "quux" }) &&
+                    flags[0].DefaultValue == "hi" && flags[1].DefaultValue is null &&
+                    flags[2].DefaultValue is null && flags[3].DefaultValue is null &&
+                    flags[4].DefaultValue == "5", "command constant default extraction");
+                break;
+            }
+            case "map option with map key type allowed with convert":
+                _ = Parse(renderOptions +
+                    "class Options { @Flag { convert = (it) -> Pair(\"foo\", \"a\") }; " +
+                    "foo: Map<Map<String, \"a\" | \"b\">, String> }");
+                break;
+            case "options constraints in all positions are erased":
+                _ = Parse(renderOptions + "class Options { a: String(true); b: String?(true); " +
+                    "c: String(true)?; d: List<String(true)>; e: List<String(true)>(true); " +
+                    "f: List<String(true)>(true)?(true); " +
+                    "g: (Map<String(true), String(true)>(true)?(true))(true) }");
+                break;
+            case "list or set option with no type arguments":
+                foreach (string type in new[] { "List", "Set" })
+                {
+                    PklException error = Throws<PklException>(() => Parse(
+                        renderOptions + $"class Options {{ foo: {type} }}", $"cmd_{type}.pkl"));
+                    Require(error.Message.Contains($"unsupported type `{type}`", StringComparison.Ordinal) &&
+                        error.Message.Contains("must provide one type argument", StringComparison.Ordinal),
+                        type + " option arity diagnostic");
+                }
+                break;
+            case "union typed option validates invalid choice without stream error":
+            {
+                PklCommandSpec spec = Parse(renderOptions +
+                    "class Options { format: \"json\" | \"yaml\" | \"toml\" }");
+                var flag = (PklCommandFlag)spec.Options[0];
+                Require(flag.Metavar == "[json, toml, yaml]", "union choice metavar");
+                PklCommandOptionException error = Throws<PklCommandOptionException>(() =>
+                    flag.Convert("xml", new Uri("file:///tmp")));
+                Require(error.Message.Contains("invalid choice", StringComparison.Ordinal) &&
+                    error.Message.Contains("xml", StringComparison.Ordinal), "invalid union choice");
+                break;
+            }
+            case "typealias of nullable is resolved as optional":
+            {
+                PklCommandSpec spec = Parse(renderOptions +
+                    "typealias OptionalString = String?\nclass Options { foo: OptionalString }");
+                Require(spec.Options[0] is PklCommandFlag flag && !flag.ShowAsRequired,
+                    "nullable typealias optional command flag");
+                break;
+            }
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteVmUtilsTest(ContractRow row)
+    {
+        const string ascii = "0123";
+        const string unicode = "0😀2😀";
+        switch (row.SourceMethod)
+        {
+            case "codePointOffsetToCharOffset - ascii":
+                Require(PklStrings.CodePointOffsetToUtf16Offset(ascii, -1) == -1 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(ascii, 0) == 0 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(ascii, 1) == 1 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(ascii, 4) == 4 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(ascii, 5) == -1,
+                    "ASCII code-point offsets");
+                break;
+            case "codePointOffsetToCharOffset - unicode":
+                Require(PklStrings.CodePointOffsetToUtf16Offset(unicode, 0) == 0 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(unicode, 1) == 1 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(unicode, 2) == 3 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(unicode, 3) == 4 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(unicode, 4) == 6 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(unicode, 5) == -1,
+                    "Unicode code-point offsets");
+                break;
+            case "codePointOffsetToCharOffset - unicode with startIndex":
+                Require(PklStrings.CodePointOffsetToUtf16Offset(unicode, 0, 3) == 3 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(unicode, 1, 3) == 4 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(unicode, 2, 3) == 6 &&
+                    PklStrings.CodePointOffsetToUtf16Offset(unicode, 3, 3) == -1,
+                    "Unicode code-point offsets from start index");
+                break;
+            case "codePointOffsetFromEndToCharOffset - ascii":
+                Require(PklStrings.CodePointOffsetFromEndToUtf16Offset(ascii, 0) == 4 &&
+                    PklStrings.CodePointOffsetFromEndToUtf16Offset(ascii, 1) == 3 &&
+                    PklStrings.CodePointOffsetFromEndToUtf16Offset(ascii, 4) == 0 &&
+                    PklStrings.CodePointOffsetFromEndToUtf16Offset(ascii, 5) == -1,
+                    "ASCII reverse code-point offsets");
+                break;
+            case "codePointOffsetFromEndToCharOffset - unicode":
+                Require(PklStrings.CodePointOffsetFromEndToUtf16Offset(unicode, 0) == 6 &&
+                    PklStrings.CodePointOffsetFromEndToUtf16Offset(unicode, 1) == 4 &&
+                    PklStrings.CodePointOffsetFromEndToUtf16Offset(unicode, 2) == 3 &&
+                    PklStrings.CodePointOffsetFromEndToUtf16Offset(unicode, 3) == 1 &&
+                    PklStrings.CodePointOffsetFromEndToUtf16Offset(unicode, 4) == 0 &&
+                    PklStrings.CodePointOffsetFromEndToUtf16Offset(unicode, 5) == -1,
+                    "Unicode reverse code-point offsets");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteIteratorsTest(ContractRow row)
+    {
+        int[] values = { 1, 2, 3 };
+        switch (row.SourceMethod)
+        {
+            case "forward iterator":
+                Require(values.AsEnumerable().SequenceEqual(new[] { 1, 2, 3 }), "forward iterator");
+                break;
+            case "empty forward iterator":
+                Require(!Array.Empty<object>().AsEnumerable().Any(), "empty forward iterator");
+                break;
+            case "reverse iterator":
+            case "reverse array iterator":
+                Require(values.Reverse().SequenceEqual(new[] { 3, 2, 1 }), row.SourceMethod);
+                break;
+            case "empty reverse iterator":
+            case "empty reverse array iterator":
+                Require(!Array.Empty<object>().Reverse().Any(), row.SourceMethod);
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteLongVsDoubleTest(ContractRow row)
+    {
+        string expression = row.SourceMethod switch
+        {
+            "addition" => "Pair(1.0 + 2.0, 1 + 2).second",
+            "subtraction" => "Pair(1.0 - 2.0, 1 - 2).second",
+            "multiplication" => "Pair(1.0 * 2.0, 1 * 2).second",
+            "exponentiation" => "Pair(2.0 ** 2.0, 2 ** 2).second",
+            "math_min" => "import(\"pkl:math\").min(1, 2)",
+            "math_max" => "import(\"pkl:math\").max(1, 2)",
+            _ => ""
+        };
+        if (expression.Length == 0) return Pending(row);
+        string module = row.SourceMethod is "exponentiation" or "math_min" or "math_max"
+            ? "import \"pkl:math\"" : "x = 1";
+        long expected = row.SourceMethod switch
+        {
+            "addition" => 3,
+            "subtraction" => -1,
+            "multiplication" => 2,
+            "exponentiation" => 4,
+            "math_min" => 1,
+            "math_max" => 2,
+            _ => 0
+        };
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        object result = evaluator.EvaluateExpression(ModuleSource.FromText(module), expression);
+        Require(result is long value && value == expected, row.SourceMethod + " long specialization");
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteVmUnitValueTest(ContractRow row)
+    {
+        object first;
+        object second;
+        object distinct;
+        if (row.SourceClass == "org.pkl.core.runtime.VmDurationTest")
+        {
+            first = new Duration(0.3, DurationUnit.SECONDS);
+            second = new Duration(300, DurationUnit.MILLIS);
+            distinct = new Duration(300.1, DurationUnit.MILLIS);
+        }
+        else
+        {
+            first = new DataSize(0.3, DataSizeUnit.KILOBYTES);
+            second = new DataSize(300, DataSizeUnit.BYTES);
+            distinct = new DataSize(300.1, DataSizeUnit.BYTES);
+        }
+        if (row.SourceMethod == "equals()")
+            Require(first.Equals(second) && second.Equals(first) && !first.Equals(distinct),
+                row.SourceClass + " exported equality");
+        else if (row.SourceMethod == "hashCode()")
+            Require(first.GetHashCode() == second.GetHashCode() &&
+                first.GetHashCode() != distinct.GetHashCode(), row.SourceClass + " exported hash");
+        else return Pending(row);
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteVmClassTest(ContractRow row)
+    {
+        if (row.SourceMethod != "class pkl_base_Container has one hidden property named 'default'")
+            return Pending(row);
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        ModuleSchema schema = evaluator.EvaluateSchema(ModuleSource.FromUri("pkl:base"));
+        PClass mapping = schema.Classes["Mapping"];
+        Require(mapping.AllProperties.TryGetValue("default", out PClass.Property? property) &&
+            property.IsHiddenMember, "Mapping.default hidden property");
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteReflectModuleTest(ContractRow row)
+    {
+        if (row.SourceMethod != "can reflect on stdlib module") return Pending(row);
+        int markerStart = row.DisplayName.IndexOf("pkl:", StringComparison.Ordinal);
+        string module = markerStart < 0 ? "pkl:base" : row.DisplayName[markerStart..];
+        int moduleEnd = module.IndexOfAny(new[] { '"', ' ', '\'' });
+        if (moduleEnd >= 0) module = module[..moduleEnd];
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        _ = evaluator.Evaluate(ModuleSource.FromText(
+            "import \"pkl:reflect\"\noutput { text = reflect.Module(import(\"" + module +
+            "\")).toString() }"));
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteValuePathTest(ContractRow row)
+    {
+        if (row.SourceClass == "org.pkl.core.stdlib.PathConverterSupportTest")
+        {
+            IReadOnlyList<PklValuePathPart> spec = row.SourceMethod switch
+            {
+                "exact path matches" => new[] { PklValuePathPart.Property("foo"),
+                    PklValuePathPart.Property("bar"), PklValuePathPart.Property("baz") },
+                "wildcard properties" => new[] { PklValuePathPart.Property("foo"),
+                    PklValuePathPart.WildcardProperty, PklValuePathPart.Property("baz") },
+                "wildcard elements" => new[] { PklValuePathPart.Property("foo"),
+                    PklValuePathPart.WildcardElement, PklValuePathPart.Property("baz") },
+                _ => Array.Empty<PklValuePathPart>()
+            };
+            if (spec.Count == 0) return Pending(row);
+            IReadOnlyList<PklValuePathPart> path = row.SourceMethod == "wildcard elements"
+                ? new[] { PklValuePathPart.Property("foo"), PklValuePathPart.Element(0),
+                    PklValuePathPart.Property("baz") }
+                : new[] { PklValuePathPart.Property("foo"), PklValuePathPart.Property("bar"),
+                    PklValuePathPart.Property("baz") };
+            Require(PklValuePaths.Matches(spec, path), row.SourceMethod);
+            return Passed(row);
+        }
+        if (row.SourceMethod == "parse valid path specs")
+        {
+            Require(PklValuePaths.Parse("").SequenceEqual(new[] { PklValuePathPart.TopLevel }) &&
+                PklValuePaths.Parse("property").SequenceEqual(
+                    new[] { PklValuePathPart.Property("property") }) &&
+                PklValuePaths.Parse("prop1.prop2.prop3").SequenceEqual(new[]
+                    { PklValuePathPart.Property("prop3"), PklValuePathPart.Property("prop2"),
+                        PklValuePathPart.Property("prop1") }) &&
+                PklValuePaths.Parse("^[*]").SequenceEqual(new[]
+                    { PklValuePathPart.WildcardElement, PklValuePathPart.TopLevel }),
+                "valid value paths");
+            return Passed(row);
+        }
+        if (row.SourceMethod == "parse invalid path specs")
+        {
+            foreach (string invalid in new[] { "^^", "property.", ".property", "prop1..prop2",
+                "[key", "key]", "[[key]]", "property.[key]", "**", "[**]", "[*" })
+                _ = Throws<ArgumentException>(() => PklValuePaths.Parse(invalid));
+            return Passed(row);
+        }
+        return Pending(row);
+    }
+
+    static ChildResult ExecuteVmValueRendererTest(ContractRow row)
+    {
+        switch (row.SourceMethod)
+        {
+            case "render null without default":
+            case "render null with default":
+                Require(PklValueRenderer.RenderNull() == "null", row.SourceMethod);
+                break;
+            case "render bytes":
+            {
+                byte[] values = Enumerable.Range(128, 128).Concat(Enumerable.Range(0, 128))
+                    .Select(value => (byte)value).ToArray();
+                string rendered = PklValueRenderer.RenderBytes(values);
+                Require(rendered ==
+                    "Bytes(128, 129, 130, 131, 132, 133, 134, 135, ... <total size: 256.b>)",
+                    "byte value rendering");
+                break;
+            }
+            case "render bytes - precisions":
+            {
+                string Render(int size) => PklValueRenderer.RenderBytes(new byte[size]);
+                Require(Render(1000) ==
+                    "Bytes(0, 0, 0, 0, 0, 0, 0, 0, ... <total size: 1.kb>)" &&
+                    Render(123467) ==
+                    "Bytes(0, 0, 0, 0, 0, 0, 0, 0, ... <total size: 123.47.kb>)" &&
+                    Render(1100) ==
+                    "Bytes(0, 0, 0, 0, 0, 0, 0, 0, ... <total size: 1.1.kb>)",
+                    "byte size precision rendering");
+                break;
+            }
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteAnsiStringBuilderTest(ContractRow row)
+    {
+        const string red = "\u001b[31m";
+        const string redBold = "\u001b[1;31m";
+        const string reset = "\u001b[0m";
+        const string bold = "\u001b[1m";
+        string actual = row.SourceMethod switch
+        {
+            "no formatting" => new PklAnsiBuilder(false).Append(PklAnsiCode.Red, "hello").ToString(),
+            "don't emit same color code" => new PklAnsiBuilder(true)
+                .Append(PklAnsiCode.Red, "hi").Append(PklAnsiCode.Red, "hi").ToString(),
+            "only add needed codes" => new PklAnsiBuilder(true)
+                .Append(PklAnsiCode.Red, "hi")
+                .Append(new[] { PklAnsiCode.Red, PklAnsiCode.Bold }, "hi").ToString(),
+            "reset if need to subtract" => new PklAnsiBuilder(true)
+                .Append(new[] { PklAnsiCode.Red, PklAnsiCode.Bold }, "hi")
+                .Append(PklAnsiCode.Red, "hi").ToString(),
+            "plain text in between" => new PklAnsiBuilder(true)
+                .Append(PklAnsiCode.Red, "hi").Append("hi")
+                .Append(PklAnsiCode.Red, "hi").ToString(),
+            _ => ""
+        };
+        string expected = row.SourceMethod switch
+        {
+            "no formatting" => "hello",
+            "don't emit same color code" => red + "hihi" + reset,
+            "only add needed codes" => red + "hi" + bold + "hi" + reset,
+            "reset if need to subtract" => redBold + "hi" + reset + red + "hi" + reset,
+            "plain text in between" => red + "hi" + reset + "hi" + red + "hi" + reset,
+            _ => ""
+        };
+        if (expected.Length == 0) return Pending(row);
+        Require(actual == expected, row.SourceMethod);
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteArrayCharEscaperTest(ContractRow row)
+    {
+        switch (row.SourceMethod)
+        {
+            case "basic usage":
+            {
+                PklTextEscaper escaper = PklTextEscaper.CreateBuilder()
+                    .WithEscape('ä', "ae").WithEscape('ö', "oe").WithEscape('ü', "ue").Build();
+                const string fox = "The quick brown fox jumps over the lazy dog.";
+                Require(escaper.Escape("") == "" && escaper.Escape("äää") == "aeaeae" &&
+                    escaper.Escape("äxöyüz") == "aexoeyuez" && escaper.Escape(fox) == fox &&
+                    escaper.Escape("ä😀😈😍öö😎😡🤢üüü🤣") ==
+                        "ae😀😈😍oeoe😎😡🤢ueueue🤣", "character escaping");
+                break;
+            }
+            case "enforces size limit":
+                _ = Throws<InvalidOperationException>(() => PklTextEscaper.CreateBuilder()
+                    .WithEscape('a', "aa").WithEscape('Ɇ', "ee").Build());
+                break;
+            case "works if no escapes defined":
+            {
+                PklTextEscaper escaper = PklTextEscaper.CreateBuilder().Build();
+                Require(escaper.Escape("") == "" && escaper.Escape("äää") == "äää" &&
+                    escaper.Escape("äxöyüz") == "äxöyüz", "identity character escaping");
+                break;
+            }
+            case "returns original string if no escaping required":
+            {
+                PklTextEscaper escaper = PklTextEscaper.CreateBuilder()
+                    .WithEscape('ä', "ae").Build();
+                const string fox = "The quick brown fox jumps over the lazy dog.";
+                Require(ReferenceEquals(escaper.Escape(fox), fox), "escape identity preservation");
+                break;
+            }
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteErrorMessagesTest(ContractRow row)
+    {
+        if (row.SourceMethod != "renders VmValue arguments without forcing them") return Pending(row);
+        using Evaluator evaluator = Evaluator.Preconfigured();
+        PklException error = Throws<PklException>(() => evaluator.EvaluateExpression(
+            ModuleSource.FromText("x = 1"), "for (value in new Dynamic { lazy = (x) -> x }) value"));
+        Require(error.Message.Contains("Dynamic", StringComparison.Ordinal) ||
+            error.Message.Contains("cannot", StringComparison.OrdinalIgnoreCase),
+            "lazy value error rendering");
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteExceptionsTest(ContractRow row)
+    {
+        var simple = new IOException("io");
+        switch (row.SourceMethod)
+        {
+            case "get root cause of simple exception":
+                Require(ReferenceEquals(PklExceptions.RootCause(simple), simple), "simple root cause");
+                break;
+            case "get root cause of nested exception":
+            {
+                var root = new Exception("error");
+                var nested = new IOException("io", new InvalidOperationException("runtime", root));
+                Require(ReferenceEquals(PklExceptions.RootCause(nested), root), "nested root cause");
+                break;
+            }
+            case "get root reason":
+                Require(PklExceptions.RootReason(new IOException("io",
+                    new InvalidOperationException("the root reason"))) == "the root reason",
+                    "root reason");
+                break;
+            case "get root reason if null":
+                Require(PklExceptions.RootReason(new IOException("io",
+                    new Exception((string?)null))) == "(unknown reason)",
+                    "null root reason");
+                break;
+            case "get root reason if empty":
+                Require(PklExceptions.RootReason(new IOException("io", new Exception(""))) ==
+                    "(unknown reason)",
+                    "empty root reason");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteGlobResolverTest(ContractRow row)
+    {
+        bool Matches(string pattern, string input) => PklGlob.Compile(pattern).IsMatch(input);
+        string Parameter()
+        {
+            int first = row.DisplayName.IndexOf('"');
+            int last = row.DisplayName.LastIndexOf('"');
+            return first >= 0 && last > first ? row.DisplayName[(first + 1)..last] : "";
+        }
+        switch (row.SourceMethod)
+        {
+            case "basic match":
+                Require(Matches("foobar", "foobar") && !Matches("foobar", "oobar") &&
+                    !Matches("foobar", "fooba") && !Matches("foobar", ""), "basic glob");
+                break;
+            case "basic match 2":
+                Require(Matches("foo+bar.pkl", "foo+bar.pkl") &&
+                    !Matches("foo+bar.pkl", "foooooobar.pkl"), "literal glob metacharacter");
+                break;
+            case "glob match":
+                Require(Matches("*.pkl", Parameter()), row.DisplayName);
+                break;
+            case "glob non-match":
+                Require(!Matches("*.pkl", Parameter()), row.DisplayName);
+                break;
+            case "globstar match":
+            case "globstar non-match":
+                Require(Matches("**.pkl", Parameter()), row.DisplayName);
+                break;
+            case "globstar match 2":
+                Require(Matches("/**/*.pkl", Parameter()), row.DisplayName);
+                break;
+            case "globstar non-match 2":
+                Require(!Matches("/**/*.pkl", Parameter()), row.DisplayName);
+                break;
+            case "sub-patterns":
+                Require(Matches("{foo,bar}", "foo") && Matches("{foo,bar}", "bar") &&
+                    !Matches("{foo,bar}", "barr") && Matches("{,,,a,}", "a") &&
+                    Matches("{,,,a,}", "") && Matches("*.y{a,}ml", "foo.yml") &&
+                    Matches("*.y{a,}ml", "foo.yaml"), "glob alternatives");
+                break;
+            case "sub-patterns with wildcards":
+                Require(Matches("{*.foo,*.bar}", "thing.foo") &&
+                    Matches("{*.foo,*.bar}", "thing.bar") &&
+                    Matches("{*.foo,*.bar}", ".bar"), "glob wildcard alternatives");
+                break;
+            case "invalid sub-patterns":
+                _ = Throws<ArgumentException>(() => PklGlob.Compile("{foo{bar}}"));
+                _ = Throws<ArgumentException>(() => PklGlob.Compile("{foo"));
+                _ = PklGlob.Compile("foo}");
+                break;
+            case "character classes":
+                Require(Matches("thing[^0-9]", "thing^") &&
+                    Enumerable.Range(0, 6).All(value =>
+                        Matches("thing[^0-9]", "thing" + value)), "glob character classes");
+                break;
+            case "character classes don't cross directory boundaries":
+                Require(Matches("[.-z]", "f") && !Matches("[.-z]", "/"),
+                    "glob character class path boundary");
+                break;
+            case "invalid character classes":
+                foreach (string invalid in new[] { "thing[", "thing[foo/bar]", "[[=a=]]",
+                    "[[:alnum:]]", "[[.a-acute.]]" })
+                    _ = Throws<ArgumentException>(() => PklGlob.Compile(invalid));
+                _ = PklGlob.Compile("]");
+                break;
+            case "invalid extglob":
+                foreach (string invalid in new[] { "!(foo|bar)", "+(foo|bar)", "?(foo|bar)",
+                    "@(foo|bar)", "*(foo|bar)" })
+                    _ = Throws<ArgumentException>(() => PklGlob.Compile(invalid));
+                break;
+            case "wildcard character":
+                Require(new[] { "aeiou", "aeeou", "aelou", "aejou" }.All(
+                        value => Matches("ae?ou", value)) &&
+                    !Matches("ae?ou", "aeou") && !Matches("ae?ou", "aou"),
+                    "single-character glob wildcard");
+                break;
+            case "character classes - negation":
+                Require(Enumerable.Range(1, 5).All(value =>
+                        !Matches("thing[!0-5]", "thing" + value)) &&
+                    Matches("thing[!0-5]", "thing6") && Matches("thing[!0-5]", "thing7"),
+                    "negated glob character class");
+                break;
+            case "escapes":
+                Require(Matches("\\\\foo", "\\foo") &&
+                    Matches("\\{foo-bar.pkl", "{foo-bar.pkl") &&
+                    Matches("\\[foo-bar.pkl", "[foo-bar.pkl"), "glob escapes");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteHttpUtilsTest(ContractRow row)
+    {
+        switch (row.SourceMethod)
+        {
+            case "isHttpUrl":
+                Require(PklHttp.IsHttpUrl(new Uri("http://example.com")) &&
+                    PklHttp.IsHttpUrl(new Uri("https://example.com")) &&
+                    PklHttp.IsHttpUrl(new Uri("HtTpS://example.com")) &&
+                    !PklHttp.IsHttpUrl(new Uri("file://example.com")), "HTTP URI detection");
+                break;
+            case "checkHasStatusCode200":
+                PklHttp.RequireSuccessStatusCode(200);
+                _ = Throws<IOException>(() => PklHttp.RequireSuccessStatusCode(404));
+                break;
+            case "setPort":
+                _ = Throws<ArgumentException>(() =>
+                    PklHttp.WithPort(new Uri("https://example.com"), -1));
+                _ = Throws<ArgumentException>(() =>
+                    PklHttp.WithPort(new Uri("https://example.com"), 65536));
+                Require(PklHttp.WithPort(new Uri("http://example.com"), 123) ==
+                        new Uri("http://example.com:123") &&
+                    PklHttp.WithPort(new Uri("http://example.com:456"), 123) ==
+                        new Uri("http://example.com:123") &&
+                    PklHttp.WithPort(new Uri(
+                        "https://example.com/foo/bar.baz?query=1#fragment"), 123) ==
+                        new Uri("https://example.com:123/foo/bar.baz?query=1#fragment"),
+                    "HTTP URI port replacement");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteImportGraphUtilsTest(ContractRow row)
+    {
+        Uri foo = new("file:///foo.pkl");
+        Uri bar = new("file:///bar.pkl");
+        Uri biz = new("file:///biz.pkl");
+        Uri qux = new("file:///qux.pkl");
+        IReadOnlySet<ImportGraph.Import> Imports(params Uri[] values) =>
+            new HashSet<ImportGraph.Import>(values.Select(value => new ImportGraph.Import(value)));
+        Dictionary<Uri, IReadOnlySet<ImportGraph.Import>> imports = row.SourceMethod switch
+        {
+            "basic" => new() { [foo] = Imports(bar), [bar] = Imports(foo) },
+            "two cycles" => new()
+                { [foo] = Imports(bar), [bar] = Imports(foo), [biz] = Imports(qux), [qux] = Imports(biz) },
+            "no cycles" => new()
+                { [bar] = Imports(foo), [foo] = Imports(biz), [biz] = Imports(qux), [qux] = Imports() },
+            "self-import" => new() { [foo] = Imports(foo) },
+            _ => new()
+        };
+        if (imports.Count == 0) return Pending(row);
+        IReadOnlyList<IReadOnlyList<Uri>> cycles = PklImportGraphs.FindCycles(
+            new ImportGraph(imports, new Dictionary<Uri, Uri>()));
+        if (row.SourceMethod == "no cycles") Require(cycles.Count == 0, "acyclic import graph");
+        else if (row.SourceMethod == "self-import")
+            Require(cycles.Count == 1 && cycles[0].SequenceEqual(new[] { foo }), "self import cycle");
+        else if (row.SourceMethod == "basic")
+            Require(cycles.Count == 1 && cycles[0].SequenceEqual(new[] { foo, bar }),
+                "basic import cycle");
+        else
+            Require(cycles.Count == 2 && cycles[0].SequenceEqual(new[] { foo, bar }) &&
+                cycles[1].SequenceEqual(new[] { biz, qux }), "two import cycles");
+        return Passed(row);
+    }
+
+    static ChildResult ExecuteIoUtilsTest(ContractRow row, CorpusFixture fixture)
+    {
+        switch (row.SourceMethod)
+        {
+            case "ensurePathEndsWithSlash() - relative URI":
+                Require(PklUris.EnsurePathEndsWithSlash(new Uri("/some/path", UriKind.Relative)) ==
+                        new Uri("/some/path/", UriKind.Relative) &&
+                    PklUris.EnsurePathEndsWithSlash(new Uri("/some/path/", UriKind.Relative)) ==
+                        new Uri("/some/path/", UriKind.Relative), "relative URI slash");
+                break;
+            case "ensurePathEndsWithSlash() - absolute URI":
+                Require(PklUris.EnsurePathEndsWithSlash(new Uri("https://apple.com/path")) ==
+                        new Uri("https://apple.com/path/") &&
+                    PklUris.EnsurePathEndsWithSlash(
+                        new Uri("https://user:pwd@apple.com:8080/path?foo=bar#frag")) ==
+                        new Uri("https://user:pwd@apple.com:8080/path/?foo=bar#frag"),
+                    "absolute URI slash");
+                break;
+            case "ensurePathEndsWithSlash() - opaque URI":
+                Require(PklUris.EnsurePathEndsWithSlash(new Uri("foo:some.thing")) ==
+                    new Uri("foo:some.thing"), "opaque URI unchanged");
+                break;
+            case "resolving relative URI against triple-slash file URI results in triple-slash file URI":
+                Require(PklUris.Resolve(new Uri("file:///foo/bar"), new Uri("baz", UriKind.Relative)) ==
+                    new Uri("file:///foo/baz"), "triple-slash file resolution");
+                break;
+            case "resolving relative URI against single-slash file URI results in single-slash file URI":
+            {
+                string resolved = PklUris.Format(PklUris.Resolve(PklUris.Parse("file:/foo/bar"),
+                    new Uri("baz", UriKind.Relative)));
+                Require(resolved == "file:/foo/baz",
+                    $"single-slash file resolution produced `{resolved}`");
+                break;
+            }
+            case "resolving relative URI against triple-slash jar-file URI results in triple-slash jar-file URI":
+                Require(PklUris.Resolve(new Uri("jar:file:///some/archive.zip!/foo/bar"),
+                    new Uri("baz", UriKind.Relative)).OriginalString ==
+                    "jar:file:///some/archive.zip!/foo/baz", "triple-slash archive resolution");
+                break;
+            case "resolving relative URI against single-slash jar-file URI results in single-slash jar-file URI":
+                Require(PklUris.Resolve(new Uri("jar:file:/some/archive.zip!/foo/bar"),
+                    new Uri("baz", UriKind.Relative)).OriginalString ==
+                    "jar:file:/some/archive.zip!/foo/baz", "single-slash archive resolution");
+                break;
+            case "resolve absolute URI against jar-file URI":
+                Require(PklUris.Resolve(new Uri("jar:file:///some/archive.zip!/foo/bar.pkl"),
+                    new Uri("https://apple.com")) == new Uri("https://apple.com"),
+                    "absolute archive URI resolution");
+                break;
+            case "resolving other URIs works the same as java_net_URI_resolve()":
+                Require(PklUris.Resolve(new Uri("https://apple.com/foo/bar"),
+                        new Uri("baz", UriKind.Relative)) == new Uri("https://apple.com/foo/baz") &&
+                    PklUris.Resolve(new Uri("test:opaque1"), new Uri("test:opaque2")) ==
+                        new Uri("test:opaque2"), "standard URI resolution");
+                break;
+            case "relativize file URLs":
+                Require(PklUris.Relativize(new Uri("file:///foo/bar/baz.pkl"),
+                        new Uri("file:///foo/bar/qux.pkl")) == new Uri("baz.pkl", UriKind.Relative) &&
+                    PklUris.Relativize(new Uri("file:///foo/bar/baz.pkl"),
+                        new Uri("file:///foo/qux/")) == new Uri("../bar/baz.pkl", UriKind.Relative) &&
+                    PklUris.Relativize(new Uri("file:///foo/bar/baz.pkl"),
+                        new Uri("https://example.com/foo/bar/baz.pkl")) ==
+                        new Uri("file:///foo/bar/baz.pkl"),
+                    "file URI relativization");
+                break;
+            case "relativize HTTP URLs":
+                Require(PklUris.Relativize(new Uri("https://foo.com/bar/baz.pkl"),
+                        new Uri("https://foo.com/bar/qux.pkl")) ==
+                        new Uri("baz.pkl", UriKind.Relative) &&
+                    PklUris.Relativize(new Uri("https://foo.com/bar/baz.pkl?query#fragment"),
+                        new Uri("https://foo.com/bar/qux.pkl?query2#fragment2")) ==
+                        new Uri("baz.pkl?query#fragment", UriKind.Relative) &&
+                    PklUris.Relativize(new Uri("https://foo.com:80/bar/baz.pkl"),
+                        new Uri("https://foo.com:443/bar/")) ==
+                        new Uri("https://foo.com:80/bar/baz.pkl"), "HTTP URI relativization");
+                break;
+            case "isWhitespace()":
+                Require(PklUris.IsWhitespace("") && PklUris.IsWhitespace("  \t ") &&
+                    !PklUris.IsWhitespace("  a "), "whitespace detection");
+                break;
+            case "toPath()":
+                Require(PklUris.ToFilePath(new Uri("file:///foo/bar.txt")) == "/foo/bar.txt" &&
+                    PklUris.ToFilePath(new Uri("https://apple.com")) is null &&
+                    PklUris.ToFilePath(new Uri("unknown://foo/bar")) is null,
+                    "URI to path adaptation");
+                break;
+            case "toPath() only accepts absolute URIs":
+                _ = Throws<ArgumentException>(() =>
+                    PklUris.ToFilePath(new Uri("foo/bar", UriKind.Relative)));
+                break;
+            case "getMaxLineLength":
+                Require(PklUris.GetMaxLineLength("abc") == 3 &&
+                    PklUris.GetMaxLineLength("abc\n\nabcd\n\nab") == 4,
+                    "maximum line length");
+                break;
+            case "capitalize":
+                Require(PklUris.Capitalize("abc") == "Abc" && PklUris.Capitalize("Abc") == "Abc" &&
+                    PklUris.Capitalize("a&*") == "A&*" && PklUris.Capitalize("_&*") == "_&*" &&
+                    PklUris.Capitalize("abc def") == "Abc def", "capitalization");
+                break;
+            case "inferModuleName":
+            {
+                var expected = new Dictionary<string, string>
+                {
+                    ["file:///foo.pkl"] = "foo",
+                    ["file:///foo/bar/baz.pkl"] = "baz",
+                    ["jar:file:///some/archive.zip!/foo.pkl"] = "foo",
+                    ["jar:file:///some/archive.zip!/foo/bar/baz.pkl"] = "baz",
+                    ["https://apple.com/foo.pkl"] = "foo",
+                    ["pkl:foo.bar.baz"] = "baz",
+                    ["modulepath:/foo/bar/baz.pkl"] = "baz",
+                    ["package://example.com/foo/bar@1.0.0#/baz/biz/qux.pkl"] = "qux"
+                };
+                Require(expected.All(item =>
+                    PklUris.InferModuleName(new Uri(item.Key)) == item.Value), "module-name inference");
+                break;
+            }
+            case "toUri":
+                Require(PklUris.Parse("file://foo.pkl") == new Uri("file://foo.pkl") &&
+                    PklUris.Parse("foo.pkl") == new Uri("foo.pkl", UriKind.Relative) &&
+                    PklUris.Parse("foo bar.pkl").OriginalString.Contains("foo%20bar.pkl",
+                        StringComparison.Ordinal), "URI parsing");
+                _ = Throws<UriFormatException>(() => PklUris.Parse("file:foo bar.pkl"));
+                break;
+            case "resolveUri - file hierarchy":
+            {
+                string base1 = Path.Combine(fixture.Root, "base1", "base2", "foo.pkl");
+                string deep = Path.Combine(fixture.Root, "base1", "base2", "dir1", "dir2", "foo.pkl");
+                string sibling = Path.Combine(fixture.Root, "base1", "dir2", "foo.pkl");
+                Directory.CreateDirectory(Path.GetDirectoryName(base1)!);
+                Directory.CreateDirectory(Path.GetDirectoryName(deep)!);
+                Directory.CreateDirectory(Path.GetDirectoryName(sibling)!);
+                File.WriteAllText(base1, "", new UTF8Encoding(false));
+                File.WriteAllText(deep, "", new UTF8Encoding(false));
+                File.WriteAllText(sibling, "", new UTF8Encoding(false));
+                Require(PklUris.ResolveTripleDotFile(new Uri(deep),
+                        new Uri("...", UriKind.Relative)) == new Uri(base1) &&
+                    PklUris.ResolveTripleDotFile(new Uri(deep),
+                        new Uri(".../dir2/foo.pkl", UriKind.Relative)) == new Uri(sibling),
+                    "triple-dot file hierarchy");
+                _ = Throws<UriFormatException>(() => PklUris.ResolveTripleDotFile(
+                    new Uri(deep), new Uri(".../", UriKind.Relative)));
+                _ = Throws<FileNotFoundException>(() => PklUris.ResolveTripleDotFile(
+                    new Uri(deep), new Uri(".../bar.pkl", UriKind.Relative)));
+                break;
+            }
+            case "resolveUri - classpath hierarchy":
+            {
+                Uri module = new(
+                    "modulepath:/org/pkl/core/module/dir1/dir2/NamedModuleResolversTest.pkl");
+                Uri target = new("modulepath:/org/pkl/core/module/NamedModuleResolversTest.pkl");
+                IReadOnlySet<Uri> available = new HashSet<Uri> { target };
+                Require(PklUris.ResolveTripleDotModulePath(module,
+                    new Uri("...", UriKind.Relative), available) == target,
+                    "triple-dot module path hierarchy");
+                _ = Throws<FileNotFoundException>(() => PklUris.ResolveTripleDotModulePath(
+                    new Uri("modulepath:/foo/bar/baz.pkl"),
+                    new Uri(".../other.pkl", UriKind.Relative), available));
+                break;
+            }
+            case "readBytes(URL) does not support HTTP URLs":
+                _ = Throws<ArgumentException>(() => PklUris.ReadBytes(new Uri("https://example.com")));
+                _ = Throws<ArgumentException>(() => PklUris.ReadBytes(new Uri("http://example.com")));
+                break;
+            case "readString(URL) does not support HTTP URLs":
+                _ = Throws<ArgumentException>(() => PklUris.ReadText(new Uri("https://example.com")));
+                _ = Throws<ArgumentException>(() => PklUris.ReadText(new Uri("http://example.com")));
+                break;
+            case "encodePath encodes characters reserved on windows":
+                Require(PklUris.EncodePath("foo:bar") == "foo(3a)bar" &&
+                    PklUris.EncodePath("<>:\"\\|?*") == "(3c)(3e)(3a)(22)(5c)(7c)(3f)(2a)" &&
+                    PklUris.EncodePath("foo(3a)bar") == "foo((3a)bar" &&
+                    PklUris.EncodePath("(") == "((" &&
+                    PklUris.EncodePath("foo/bar/baz") == "foo/bar/baz", "Windows path encoding");
+                break;
+            default:
+                return Pending(row);
+        }
+        return Passed(row);
+    }
+
+    static ChildResult ExecutePathResolverTest(ContractRow row)
+    {
+        (Uri Base, string Path, string Expected)? test = row.SourceClass.EndsWith("PosixTests",
+            StringComparison.Ordinal) ? row.SourceMethod switch
+        {
+            "simple relative path appended to file base" =>
+                (new Uri("file:///home/user/base.pkl"), "sibling.pkl", "/home/user/base.pkl/sibling.pkl"),
+            "relative path appended to directory base (trailing slash)" =>
+                (new Uri("file:///home/user/dir/"), "file.pkl", "/home/user/dir/file.pkl"),
+            "nested relative path" =>
+                (new Uri("file:///home/user/base.pkl"), "sub/dir/file.pkl", "/home/user/base.pkl/sub/dir/file.pkl"),
+            "absolute path overrides base" =>
+                (new Uri("file:///home/user/base.pkl"), "/absolute/path.pkl", "/absolute/path.pkl"),
+            "absolute path containing dot is normalized" =>
+                (new Uri("file:///home/user/base.pkl"), "/foo/./bar.pkl", "/foo/bar.pkl"),
+            "absolute path containing double-dot is normalized" =>
+                (new Uri("file:///home/user/base.pkl"), "/foo/../bar.pkl", "/bar.pkl"),
+            "single dot in relative path is elided" =>
+                (new Uri("file:///home/user/base.pkl"), "./sibling.pkl", "/home/user/base.pkl/sibling.pkl"),
+            "double-dot in relative path goes up one segment" =>
+                (new Uri("file:///home/user/base.pkl"), "../sibling.pkl", "/home/user/sibling.pkl"),
+            "two double-dots in relative path go up two segments" =>
+                (new Uri("file:///home/user/a/b.pkl"), "../../c.pkl", "/home/user/c.pkl"),
+            "mixed relative path with dot-dot" =>
+                (new Uri("file:///home/user/base.pkl"), "sub/dir/../../other.pkl", "/home/user/base.pkl/other.pkl"),
+            "double-dot beyond root clamps to root" =>
+                (new Uri("file:///file.pkl"), "../../root.pkl", "/root.pkl"),
+            "root base with relative path" =>
+                (new Uri("file:///"), "file.pkl", "/file.pkl"),
+            "URI with percent-encoded path is decoded" =>
+                (new Uri("file:///home/user%20name/base.pkl"), "file.pkl", "/home/user name/base.pkl/file.pkl"),
+            _ => null
+        } : row.SourceMethod switch
+        {
+            "drive letter URI with simple relative path" =>
+                (new Uri("file:///C:/Users/user/base.pkl"), "relative.pkl", @"C:\Users\user\base.pkl\relative.pkl"),
+            "drive letter URI with nested relative path" =>
+                (new Uri("file:///C:/Users/user/base.pkl"), @"sub\dir\file.pkl", @"C:\Users\user\base.pkl\sub\dir\file.pkl"),
+            "drive letter URI with forward-slash relative path is normalised to backslash" =>
+                (new Uri("file:///C:/Users/user/base.pkl"), "sub/dir/file.pkl", @"C:\Users\user\base.pkl\sub\dir\file.pkl"),
+            "drive letter URI with directory base (trailing backslash)" =>
+                (new Uri("file:///C:/Users/dir/"), "file.pkl", @"C:\Users\dir\file.pkl"),
+            "backslash dot in relative path is elided" =>
+                (new Uri("file:///C:/Users/user/base.pkl"), @"..\sibling.pkl", @"C:\Users\user\sibling.pkl"),
+            "forward-slash dot-dot in relative path is normalised" =>
+                (new Uri("file:///C:/Users/user/base.pkl"), "../sibling.pkl", @"C:\Users\user\sibling.pkl"),
+            "backslash single-dot in relative path is elided" =>
+                (new Uri("file:///C:/Users/user/base.pkl"), @".\sibling.pkl", @"C:\Users\user\base.pkl\sibling.pkl"),
+            "two double-dots go up two segments" =>
+                (new Uri("file:///C:/Users/user/a/b.pkl"), @"..\..\c.pkl", @"C:\Users\user\c.pkl"),
+            "double-dot beyond drive root clamps to root" =>
+                (new Uri("file:///C:/base.pkl"), @"..\..\out.pkl", @"C:\out.pkl"),
+            "absolute path on same drive overrides base" =>
+                (new Uri("file:///C:/Users/base.pkl"), @"C:\other\path.pkl", @"C:\other\path.pkl"),
+            "absolute path on different drive overrides base" =>
+                (new Uri("file:///C:/Users/base.pkl"), @"D:\other.pkl", @"D:\other.pkl"),
+            "absolute path with forward slashes is accepted" =>
+                (new Uri("file:///C:/Users/base.pkl"), "D:/other.pkl", @"D:\other.pkl"),
+            "root-relative backslash path takes drive root from base" =>
+                (new Uri("file:///C:/Users/base.pkl"), @"\root.pkl", @"C:\root.pkl"),
+            "root-relative forward-slash path takes drive root from base" =>
+                (new Uri("file:///C:/Users/base.pkl"), "/root.pkl", @"C:\root.pkl"),
+            "UNC URI with simple relative path" =>
+                (new Uri("file://server/share/base.pkl"), "relative.pkl", @"\\server\share\base.pkl\relative.pkl"),
+            "UNC URI with double-dot goes up within share" =>
+                (new Uri("file://server/share/dir/base.pkl"), @"..\sibling.pkl", @"\\server\share\dir\sibling.pkl"),
+            "UNC URI double-dot beyond share root clamps to share root" =>
+                (new Uri("file://server/share/base.pkl"), @"..\..\.\out.pkl", @"\\server\share\out.pkl"),
+            "UNC URI with absolute UNC path overrides base" =>
+                (new Uri("file://server/share/base.pkl"), @"\\other\share\file.pkl", @"\\other\share\file.pkl"),
+            "absolute path containing dot is normalized" =>
+                (new Uri("file:///C:/Users/base.pkl"), @"C:\foo\.\bar.pkl", @"C:\foo\bar.pkl"),
+            "absolute path containing double-dot is normalized" =>
+                (new Uri("file:///C:/Users/base.pkl"), @"C:\foo\..\bar.pkl", @"C:\bar.pkl"),
+            "file URI without drive letter" =>
+                (new Uri("file:///path/to/foo"), "bar", @"\path\to\foo\bar"),
+            _ => null
+        };
+        if (test is null) return Pending(row);
+        string actual = row.SourceClass.EndsWith("PosixTests", StringComparison.Ordinal)
+            ? PklPath.ResolvePosix(test.Value.Base, test.Value.Path)
+            : PklPath.ResolveWindows(test.Value.Base, test.Value.Path);
+        Require(actual == test.Value.Expected, row.SourceMethod);
+        return Passed(row);
     }
 
     static ChildResult ExecuteExpressionTest(ContractRow row)
@@ -1199,6 +2972,15 @@ static class Program
 
     static string NormalizeLines(string value) =>
         value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Trim();
+
+    sealed class RecordingVisitor : ValueVisitor
+    {
+        public bool ObjectVisited { get; private set; }
+        public bool ModuleVisited { get; private set; }
+
+        public void VisitObject(PObject value) => ObjectVisited = true;
+        public void VisitModule(PModule value) => ModuleVisited = true;
+    }
 
     static void Require(bool condition, string subject)
     {
