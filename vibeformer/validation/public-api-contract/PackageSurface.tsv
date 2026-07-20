@@ -1650,6 +1650,7 @@ Pkl.Core	Pkl.Core.DurationUnit	method	GetSymbol	0	System.String GetSymbol()	-	re
 Pkl.Core	Pkl.Core.DurationUnit	method	Parse	1	Pkl.Core.DurationUnit Parse(System.String symbol)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.DurationUnit	method	ToChronoUnit	0	Pkl.Core.Runtime.JavaTemporalUnit ToChronoUnit()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.DurationUnit	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.DurationUnit	method	ToTimeUnit	0	Vibeformer.Runtime.JavaTimeUnit ToTimeUnit()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.DurationUnit	method	ValueOf	1	Pkl.Core.DurationUnit ValueOf(System.String name)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.DurationUnit	method	Values	0	Pkl.Core.DurationUnit[] Values()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.DurationUnit	type	DurationUnit	0	class DurationUnit	-	type=oblivious	-	-	-
@@ -1813,15 +1814,27 @@ Pkl.Core	Pkl.Core.EvaluatorSettings.TraceMode	method	ToString	0	System.String To
 Pkl.Core	Pkl.Core.EvaluatorSettings.TraceMode	method	ValueOf	1	Pkl.Core.EvaluatorSettings.TraceMode ValueOf(System.String name)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.EvaluatorSettings.TraceMode	method	Values	0	Pkl.Core.EvaluatorSettings.TraceMode[] Values()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.EvaluatorSettings.TraceMode	type	TraceMode	0	class TraceMode	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalModuleResolver	method	HasElement	2	System.Boolean HasElement(Pkl.Core.SecurityManager securityManager,System.Uri elementUri)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalModuleResolver	method	ListElements	2	System.Collections.Generic.IList<Pkl.Core.Module.PathElement> ListElements(Pkl.Core.SecurityManager securityManager,System.Uri baseUri)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalModuleResolver	method	Of	2	Pkl.Core.Externalreader.ExternalModuleResolver Of(Pkl.Core.Messaging.MessageTransport transport,System.Int64 evaluatorId)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalModuleResolver	method	ResolveModule	2	System.String ResolveModule(Pkl.Core.SecurityManager securityManager,System.Uri uri)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalModuleResolver	type	ExternalModuleResolver	0	interface ExternalModuleResolver	-	type=oblivious	-	interface	-
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcess	method	Close	0	System.Void Close()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcess	method	Dispose	0	System.Void Dispose()	-	return=non-null	not-representable-in-cli-metadata	-	dispose
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcess	method	GetModuleReaderSpec	1	Pkl.Core.Externalreader.ModuleReaderSpec GetModuleReaderSpec(System.String scheme)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcess	method	GetModuleResolver	1	Pkl.Core.Externalreader.ExternalModuleResolver GetModuleResolver(System.Int64 evaluatorId)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcess	method	GetResourceReaderSpec	1	Pkl.Core.Externalreader.ResourceReaderSpec GetResourceReaderSpec(System.String scheme)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcess	method	GetResourceResolver	1	Pkl.Core.Externalreader.ExternalResourceResolver GetResourceResolver(System.Int64 evaluatorId)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcess	method	Of	1	Pkl.Core.Externalreader.ExternalReaderProcess Of(Pkl.Core.EvaluatorSettings.PklEvaluatorSettings$ExternalReader spec)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcess	type	ExternalReaderProcess	0	interface ExternalReaderProcess : System.IDisposable	-	type=oblivious	-	interface	disposable
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcessException	constructor	.ctor	1	ExternalReaderProcessException .ctor(System.Exception cause)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcessException	constructor	.ctor	1	ExternalReaderProcessException .ctor(System.String msg)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Externalreader.ExternalReaderProcessException	type	ExternalReaderProcessException	0	class ExternalReaderProcessException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalResourceResolver	method	HasElement	2	System.Boolean HasElement(Pkl.Core.SecurityManager securityManager,System.Uri elementUri)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalResourceResolver	method	ListElements	2	System.Collections.Generic.IList<Pkl.Core.Module.PathElement> ListElements(Pkl.Core.SecurityManager securityManager,System.Uri baseUri)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalResourceResolver	method	Of	2	Pkl.Core.Externalreader.ExternalResourceResolver Of(Pkl.Core.Messaging.MessageTransport transport,System.Int64 evaluatorId)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalResourceResolver	method	Read	1	Pkl.Core.Runtime.JavaOptional<System.Object> Read(System.Uri uri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Externalreader.ExternalResourceResolver	type	ExternalResourceResolver	0	interface ExternalResourceResolver	-	type=oblivious	-	interface	-
 Pkl.Core	Pkl.Core.Externalreader.ModuleReaderSpec	constructor	.ctor	4	ModuleReaderSpec .ctor(System.String Scheme,System.Boolean HasHierarchicalUris,System.Boolean IsLocal,System.Boolean IsGlobbable)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Externalreader.ModuleReaderSpec	method	<Clone>$	0	Pkl.Core.Externalreader.ModuleReaderSpec <Clone>$()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Externalreader.ModuleReaderSpec	method	Deconstruct	4	System.Void Deconstruct(out System.String Scheme,out System.Boolean HasHierarchicalUris,out System.Boolean IsLocal,out System.Boolean IsGlobbable)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null;param3=non-null	not-representable-in-cli-metadata	-	-
@@ -1874,6 +1887,7 @@ Pkl.Core	Pkl.Core.Http.HttpClient$HttpRequestChecker	method	BeginInvoke	3	System
 Pkl.Core	Pkl.Core.Http.HttpClient$HttpRequestChecker	method	EndInvoke	1	System.Void EndInvoke(System.IAsyncResult result)	-	return=non-null;param0=unspecified	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Http.HttpClient$HttpRequestChecker	method	Invoke	1	System.Void Invoke(System.Uri uri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	invoke	-
 Pkl.Core	Pkl.Core.Http.HttpClient$HttpRequestChecker	type	HttpRequestChecker	0	delegate HttpRequestChecker : System.ICloneable,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	delegate	-
+Pkl.Core	Pkl.Core.Http.HttpClientException	constructor	.ctor	1	HttpClientException .ctor(System.Exception cause)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Http.HttpClientException	constructor	.ctor	1	HttpClientException .ctor(System.String message)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Http.HttpClientException	constructor	.ctor	2	HttpClientException .ctor(System.String message,System.Exception cause)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Http.HttpClientException	type	HttpClientException	0	class HttpClientException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
@@ -1885,6 +1899,7 @@ Pkl.Core	Pkl.Core.ImportGraph	method	Deconstruct	2	System.Void Deconstruct(out S
 Pkl.Core	Pkl.Core.ImportGraph	method	Equals	1	System.Boolean Equals(Pkl.Core.ImportGraph other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ImportGraph	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ImportGraph	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ImportGraph	method	ParseFromJson	1	Pkl.Core.ImportGraph ParseFromJson(System.String input)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ImportGraph	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ImportGraph	property	Imports	0	System.Collections.Generic.IDictionary<System.Uri,System.Collections.Generic.ISet<Pkl.Core.ImportGraph$Import>> Imports {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.ImportGraph	property	ResolvedImports	0	System.Collections.Generic.IDictionary<System.Uri,System.Uri> ResolvedImports {get;set}	-	value=non-null	-	-	-
@@ -1906,6 +1921,7 @@ Pkl.Core	Pkl.Core.Loggers	constructor	.ctor	0	Loggers .ctor()	-	-	not-representa
 Pkl.Core	Pkl.Core.Loggers	method	Noop	0	Pkl.Core.Logger Noop()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Loggers	method	StdErr	0	Pkl.Core.Logger StdErr()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Loggers	method	Stream	1	Pkl.Core.Logger Stream(System.IO.TextWriter stream)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Loggers	method	Writer	1	Pkl.Core.Logger Writer(Pkl.Core.Runtime.JavaPrintWriter writer)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Loggers	type	Loggers	0	class Loggers	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Member	constructor	.ctor	5	Member .ctor(System.String docComment,Pkl.Core.Member$SourceLocation sourceLocation,System.Collections.Generic.ISet<Pkl.Core.Modifier> modifiers,System.Collections.Generic.IList<Pkl.Core.PObject> annotations,System.String simpleName)	-	param0=nullable;param1=non-null;param2=non-null;param3=non-null;param4=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Member	method	GetAnnotations	0	System.Collections.Generic.IList<Pkl.Core.PObject> GetAnnotations()	-	return=non-null	not-representable-in-cli-metadata	-	-
@@ -1932,6 +1948,62 @@ Pkl.Core	Pkl.Core.Member$SourceLocation	method	ToString	0	System.String ToString
 Pkl.Core	Pkl.Core.Member$SourceLocation	property	EndLine	0	System.Int32 EndLine {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Member$SourceLocation	property	StartLine	0	System.Int32 StartLine {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Member$SourceLocation	type	SourceLocation	0	class SourceLocation : System.IEquatable<Pkl.Core.Member$SourceLocation>	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message	method	CreateType	0	Pkl.Core.Messaging.Message$Type CreateType()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.Message	type	Message	0	interface Message	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$Client	type	Client	0	interface Client : Pkl.Core.Messaging.Message	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$Client$Response	type	Response	0	interface Response : Pkl.Core.Messaging.Message,Pkl.Core.Messaging.Message$Client,Pkl.Core.Messaging.Message$Response	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$OneWay	type	OneWay	0	interface OneWay : Pkl.Core.Messaging.Message	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$Request	property	RequestId	0	System.Int64 RequestId {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Request	type	Request	0	interface Request : Pkl.Core.Messaging.Message	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$Response	property	RequestId	0	System.Int64 RequestId {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Response	type	Response	0	interface Response : Pkl.Core.Messaging.Message	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$Server	type	Server	0	interface Server : Pkl.Core.Messaging.Message	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$Server$OneWay	type	OneWay	0	interface OneWay : Pkl.Core.Messaging.Message,Pkl.Core.Messaging.Message$OneWay,Pkl.Core.Messaging.Message$Server	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$Server$Request	type	Request	0	interface Request : Pkl.Core.Messaging.Message,Pkl.Core.Messaging.Message$Request,Pkl.Core.Messaging.Message$Server	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	CLOSE_EXTERNAL_PROCESS	0	Pkl.Core.Messaging.Message$Type CLOSE_EXTERNAL_PROCESS	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	INITIALIZE_MODULE_READER_REQUEST	0	Pkl.Core.Messaging.Message$Type INITIALIZE_MODULE_READER_REQUEST	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	INITIALIZE_MODULE_READER_RESPONSE	0	Pkl.Core.Messaging.Message$Type INITIALIZE_MODULE_READER_RESPONSE	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	INITIALIZE_RESOURCE_READER_REQUEST	0	Pkl.Core.Messaging.Message$Type INITIALIZE_RESOURCE_READER_REQUEST	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	INITIALIZE_RESOURCE_READER_RESPONSE	0	Pkl.Core.Messaging.Message$Type INITIALIZE_RESOURCE_READER_RESPONSE	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	LIST_MODULES_REQUEST	0	Pkl.Core.Messaging.Message$Type LIST_MODULES_REQUEST	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	LIST_MODULES_RESPONSE	0	Pkl.Core.Messaging.Message$Type LIST_MODULES_RESPONSE	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	LIST_RESOURCES_REQUEST	0	Pkl.Core.Messaging.Message$Type LIST_RESOURCES_REQUEST	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	LIST_RESOURCES_RESPONSE	0	Pkl.Core.Messaging.Message$Type LIST_RESOURCES_RESPONSE	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	READ_MODULE_REQUEST	0	Pkl.Core.Messaging.Message$Type READ_MODULE_REQUEST	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	READ_MODULE_RESPONSE	0	Pkl.Core.Messaging.Message$Type READ_MODULE_RESPONSE	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	READ_RESOURCE_REQUEST	0	Pkl.Core.Messaging.Message$Type READ_RESOURCE_REQUEST	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	field	READ_RESOURCE_RESPONSE	0	Pkl.Core.Messaging.Message$Type READ_RESOURCE_RESPONSE	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	method	FromInt	1	Pkl.Core.Messaging.Message$Type FromInt(System.Int32 val)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	method	GetCode	0	System.Int32 GetCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	method	ValueOf	1	Pkl.Core.Messaging.Message$Type ValueOf(System.String name)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	method	Values	0	Pkl.Core.Messaging.Message$Type[] Values()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.Message$Type	type	Type	0	class Type	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport	method	Close	0	System.Void Close()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport	method	Dispose	0	System.Void Dispose()	-	return=non-null	not-representable-in-cli-metadata	-	dispose
+Pkl.Core	Pkl.Core.Messaging.MessageTransport	method	Send	1	System.Void Send(Pkl.Core.Messaging.Message$OneWay message)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport	method	Send	2	System.Void Send(Pkl.Core.Messaging.Message$Request message,Pkl.Core.Messaging.MessageTransport$ResponseHandler responseHandler)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport	method	Send	1	System.Void Send(Pkl.Core.Messaging.Message$Response message)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport	method	Start	2	System.Void Start(Pkl.Core.Messaging.MessageTransport$OneWayHandler oneWayHandler,Pkl.Core.Messaging.MessageTransport$RequestHandler requestHandler)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport	type	MessageTransport	0	interface MessageTransport : System.IDisposable	-	type=oblivious	-	interface	disposable
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$OneWayHandler	constructor	.ctor	2	OneWayHandler .ctor(System.Object object,System.IntPtr method)	-	param0=unspecified;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$OneWayHandler	method	BeginInvoke	3	System.IAsyncResult BeginInvoke(Pkl.Core.Messaging.Message$OneWay msg,System.AsyncCallback callback,System.Object object)	-	return=unspecified;param0=non-null;param1=unspecified;param2=unspecified	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$OneWayHandler	method	EndInvoke	1	System.Void EndInvoke(System.IAsyncResult result)	-	return=non-null;param0=unspecified	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$OneWayHandler	method	Invoke	1	System.Void Invoke(Pkl.Core.Messaging.Message$OneWay msg)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	invoke	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$OneWayHandler	type	OneWayHandler	0	delegate OneWayHandler : System.ICloneable,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	delegate	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$RequestHandler	constructor	.ctor	2	RequestHandler .ctor(System.Object object,System.IntPtr method)	-	param0=unspecified;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$RequestHandler	method	BeginInvoke	3	System.IAsyncResult BeginInvoke(Pkl.Core.Messaging.Message$Request msg,System.AsyncCallback callback,System.Object object)	-	return=unspecified;param0=non-null;param1=unspecified;param2=unspecified	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$RequestHandler	method	EndInvoke	1	System.Void EndInvoke(System.IAsyncResult result)	-	return=non-null;param0=unspecified	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$RequestHandler	method	Invoke	1	System.Void Invoke(Pkl.Core.Messaging.Message$Request msg)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	invoke	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$RequestHandler	type	RequestHandler	0	delegate RequestHandler : System.ICloneable,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	delegate	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$ResponseHandler	constructor	.ctor	2	ResponseHandler .ctor(System.Object object,System.IntPtr method)	-	param0=unspecified;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$ResponseHandler	method	BeginInvoke	3	System.IAsyncResult BeginInvoke(Pkl.Core.Messaging.Message$Response msg,System.AsyncCallback callback,System.Object object)	-	return=unspecified;param0=non-null;param1=unspecified;param2=unspecified	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$ResponseHandler	method	EndInvoke	1	System.Void EndInvoke(System.IAsyncResult result)	-	return=non-null;param0=unspecified	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$ResponseHandler	method	Invoke	1	System.Void Invoke(Pkl.Core.Messaging.Message$Response msg)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	invoke	-
+Pkl.Core	Pkl.Core.Messaging.MessageTransport$ResponseHandler	type	ResponseHandler	0	delegate ResponseHandler : System.ICloneable,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	delegate	-
+Pkl.Core	Pkl.Core.Messaging.ProtocolException	constructor	.ctor	1	ProtocolException .ctor(System.String msg)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Messaging.ProtocolException	constructor	.ctor	2	ProtocolException .ctor(System.String msg,System.Exception cause)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Messaging.ProtocolException	type	ProtocolException	0	class ProtocolException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Modifier	field	ABSTRACT	0	Pkl.Core.Modifier ABSTRACT	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Modifier	field	EXTERNAL	0	Pkl.Core.Modifier EXTERNAL	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Modifier	field	HIDDEN	0	Pkl.Core.Modifier HIDDEN	-	value=non-null	-	-	-
@@ -1965,9 +2037,11 @@ Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	field	http	0	Pkl.Core.Module.ModuleK
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	field	pkg	0	Pkl.Core.Module.ModuleKeyFactory pkg	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	field	projectpackage	0	Pkl.Core.Module.ModuleKeyFactory projectpackage	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	field	standardLibrary	0	Pkl.Core.Module.ModuleKeyFactory standardLibrary	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	method	CloseQuietly	1	System.Void CloseQuietly(System.Collections.Generic.IEnumerable<Pkl.Core.Module.ModuleKeyFactory> factories)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	method	CreateAssembly	3	Pkl.Core.Module.ModuleKeyFactory CreateAssembly(System.Reflection.Assembly assembly,System.String resourcePrefix,System.String uriScheme)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	method	CreateClassPath	1	Pkl.Core.Module.ModuleKeyFactory CreateClassPath(System.Reflection.Assembly classLoader)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	method	CreateExternalProcess	2	Pkl.Core.Module.ModuleKeyFactory CreateExternalProcess(System.String scheme,Pkl.Core.Externalreader.ExternalReaderProcess process)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	method	CreateExternalProcess	3	Pkl.Core.Module.ModuleKeyFactory CreateExternalProcess(System.String scheme,Pkl.Core.Externalreader.ExternalReaderProcess process,System.Int64 evaluatorId)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	method	CreateFromServiceProviders	0	System.Collections.Generic.IList<Pkl.Core.Module.ModuleKeyFactory> CreateFromServiceProviders()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	method	CreateModulePath	1	Pkl.Core.Module.ModuleKeyFactory CreateModulePath(Pkl.Core.Module.ModulePathResolver resolver)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeyFactories	type	ModuleKeyFactories	0	class ModuleKeyFactories	-	type=oblivious	-	-	-
@@ -1978,6 +2052,7 @@ Pkl.Core	Pkl.Core.Module.ModuleKeyFactory	type	ModuleKeyFactory	0	interface Modu
 Pkl.Core	Pkl.Core.Module.ModuleKeys	constructor	.ctor	0	ModuleKeys .ctor()	-	-	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	Cached	2	Pkl.Core.Module.ModuleKey Cached(Pkl.Core.Module.ModuleKey delegate,System.String text)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateClassPath	2	Pkl.Core.Module.ModuleKey CreateClassPath(System.Uri uri,System.Reflection.Assembly classLoader)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateExternalResolver	3	Pkl.Core.Module.ModuleKey CreateExternalResolver(System.Uri uri,Pkl.Core.Externalreader.ModuleReaderSpec spec,Pkl.Core.Externalreader.ExternalModuleResolver resolver)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateFile	1	Pkl.Core.Module.ModuleKey CreateFile(System.String path)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateFile	1	Pkl.Core.Module.ModuleKey CreateFile(System.Uri uri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateGenericUrl	1	Pkl.Core.Module.ModuleKey CreateGenericUrl(System.Uri url)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
@@ -1985,6 +2060,7 @@ Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateHttp	1	Pkl.Core.Module.ModuleKe
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateModulePath	2	Pkl.Core.Module.ModuleKey CreateModulePath(System.Uri uri,Pkl.Core.Module.ModulePathResolver resolver)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateStandardLibrary	1	Pkl.Core.Module.ModuleKey CreateStandardLibrary(System.Uri uri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateSynthetic	2	Pkl.Core.Module.ModuleKey CreateSynthetic(System.Uri uri,System.String sourceText)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Module.ModuleKeys	method	CreateSynthetic	5	Pkl.Core.Module.ModuleKey CreateSynthetic(System.Uri uri,System.Uri importBaseUri,System.Uri resolvedUri,System.String sourceText,System.Boolean isCached)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	IsBaseModule	1	System.Boolean IsBaseModule(Pkl.Core.Module.ModuleKey module)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	IsStdLibModule	1	System.Boolean IsStdLibModule(Pkl.Core.Module.ModuleKey module)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModuleKeys	method	Pkg	1	Pkl.Core.Module.ModuleKey Pkg(System.Uri uri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
@@ -2023,6 +2099,7 @@ Pkl.Core	Pkl.Core.Module.ModuleKeys$ProjectPackage	type	ProjectPackage	0	class P
 Pkl.Core	Pkl.Core.Module.ModulePathResolver	constructor	.ctor	1	ModulePathResolver .ctor(System.Collections.Generic.IEnumerable<System.String> modulePath)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Module.ModulePathResolver	method	Close	0	System.Void Close()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModulePathResolver	method	Dispose	0	System.Void Dispose()	-	return=non-null	not-representable-in-cli-metadata	-	dispose
+Pkl.Core	Pkl.Core.Module.ModulePathResolver	method	Empty	0	Pkl.Core.Module.ModulePathResolver Empty()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModulePathResolver	method	HasElement	1	System.Boolean HasElement(System.Uri elementUri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModulePathResolver	method	Resolve	1	System.String Resolve(System.Uri uri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ModulePathResolver	type	ModulePathResolver	0	class ModulePathResolver : System.IDisposable	-	type=oblivious	-	-	disposable
@@ -2034,6 +2111,7 @@ Pkl.Core	Pkl.Core.Module.PathElement	method	GetName	0	System.String GetName()	-	
 Pkl.Core	Pkl.Core.Module.PathElement	method	IsDirectory	0	System.Boolean IsDirectory()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.PathElement	method	Opaque	1	Pkl.Core.Module.PathElement Opaque(System.String name)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.PathElement	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Module.PathElement	method	WithName	1	Pkl.Core.Module.PathElement WithName(System.String name)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.PathElement	type	PathElement	0	class PathElement	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Module.PathElement$TreePathElement	constructor	.ctor	2	TreePathElement .ctor(System.String name,System.Boolean isDirectory)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Module.PathElement$TreePathElement	method	GetChildren	0	Pkl.Core.Runtime.GraalCollections.EconomicMap<System.String,Pkl.Core.Module.PathElement$TreePathElement> GetChildren()	-	return=non-null	not-representable-in-cli-metadata	-	-
@@ -2044,6 +2122,8 @@ Pkl.Core	Pkl.Core.Module.PathElement$TreePathElement	method	PutIfAbsent	2	Pkl.Co
 Pkl.Core	Pkl.Core.Module.PathElement$TreePathElement	type	TreePathElement	0	class TreePathElement : Pkl.Core.Module.PathElement	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Module.ProjectDependenciesManager	constructor	.ctor	3	ProjectDependenciesManager .ctor(Pkl.Core.Project.DeclaredDependencies declaredDependencies,Pkl.Core.Runtime.ModuleResolver moduleResolver,Pkl.Core.SecurityManager securityManager)	-	param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Module.ProjectDependenciesManager	field	PKL_PROJECT_DEPS_FILENAME	0	System.String PKL_PROJECT_DEPS_FILENAME	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Module.ProjectDependenciesManager	field	PKL_PROJECT_FILENAME	0	System.String PKL_PROJECT_FILENAME	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Module.ProjectDependenciesManager	method	GetDeclaredDependencies	0	Pkl.Core.Project.DeclaredDependencies GetDeclaredDependencies()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ProjectDependenciesManager	method	GetDependencies	0	System.Collections.Generic.IDictionary<System.String,Pkl.Core.Packages.Dependency> GetDependencies()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ProjectDependenciesManager	method	GetLocalPackageDependencies	1	System.Collections.Generic.IDictionary<System.String,Pkl.Core.Packages.Dependency> GetLocalPackageDependencies(Pkl.Core.Packages.PackageUri packageUri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Module.ProjectDependenciesManager	method	GetProjectBaseUri	0	System.Uri GetProjectBaseUri()	-	return=non-null	not-representable-in-cli-metadata	-	-
@@ -2094,6 +2174,7 @@ Pkl.Core	Pkl.Core.ModuleSource	method	Uri	1	Pkl.Core.ModuleSource Uri(System.Str
 Pkl.Core	Pkl.Core.ModuleSource	method	Uri	1	Pkl.Core.ModuleSource Uri(System.Uri uri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ModuleSource	type	ModuleSource	0	class ModuleSource	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.NoSuchPropertyException	constructor	.ctor	2	NoSuchPropertyException .ctor(System.String message,System.String propertyName)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.NoSuchPropertyException	method	GetPropertyName	0	System.String GetPropertyName()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.NoSuchPropertyException	type	NoSuchPropertyException	0	class NoSuchPropertyException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.OutputFormat	field	JSON	0	Pkl.Core.OutputFormat JSON	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.OutputFormat	field	JSONNET	0	Pkl.Core.OutputFormat JSONNET	-	value=non-null	-	-	-
@@ -2162,6 +2243,7 @@ Pkl.Core	Pkl.Core.PClassInfo`1	field	MODULE_CLASS_NAME	0	System.String MODULE_CL
 Pkl.Core	Pkl.Core.PClassInfo`1	field	Map	0	Pkl.Core.PClassInfo<System.Collections.Generic.Dictionary<System.Object,System.Object>> Map	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	Mapping	0	Pkl.Core.PClassInfo<System.Collections.Generic.Dictionary<System.Object,System.Object>> Mapping	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	Module	0	Pkl.Core.PClassInfo<Pkl.Core.PModule> Module	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.PClassInfo`1	field	ModuleInfo	0	Pkl.Core.PClassInfo<Pkl.Core.PObject> ModuleInfo	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	ModuleOutput	0	Pkl.Core.PClassInfo<Pkl.Core.PObject> ModuleOutput	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	Null	0	Pkl.Core.PClassInfo<Pkl.Core.PNull> Null	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	Number	0	Pkl.Core.PClassInfo<System.Object> Number	-	value=non-null	-	-	-
@@ -2176,7 +2258,9 @@ Pkl.Core	Pkl.Core.PClassInfo`1	field	Settings	0	Pkl.Core.PClassInfo<Pkl.Core.POb
 Pkl.Core	Pkl.Core.PClassInfo`1	field	String	0	Pkl.Core.PClassInfo<System.String> String	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	TypeAlias	0	Pkl.Core.PClassInfo<Pkl.Core.TypeAlias> TypeAlias	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	Typed	0	Pkl.Core.PClassInfo<Pkl.Core.PObject> Typed	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.PClassInfo`1	field	Unavailable	0	Pkl.Core.PClassInfo<System.Object> Unavailable	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	Unlisted	0	Pkl.Core.PClassInfo<Pkl.Core.PObject> Unlisted	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.PClassInfo`1	field	Version	0	Pkl.Core.PClassInfo<Pkl.Core.PObject> Version	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	pklBaseUri	0	System.Uri pklBaseUri	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	pklProjectUri	0	System.Uri pklProjectUri	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	field	pklRefUri	0	System.Uri pklRefUri	-	value=non-null	-	-	-
@@ -2190,10 +2274,14 @@ Pkl.Core	Pkl.Core.PClassInfo`1	method	ForValueCompat	1	<TValue> Pkl.Core.PClassI
 Pkl.Core	Pkl.Core.PClassInfo`1	method	Get	3	Pkl.Core.PClassInfo<System.Object> Get(System.String moduleName,System.String className,System.Uri moduleUri)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	GetDisplayName	0	System.String GetDisplayName()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PClassInfo`1	method	GetJavaClass	0	System.Type GetJavaClass()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	GetModuleName	0	System.String GetModuleName()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	GetModuleUri	0	System.Uri GetModuleUri()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	GetQualifiedName	0	System.String GetQualifiedName()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	GetSimpleName	0	System.String GetSimpleName()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PClassInfo`1	method	IsConcreteCollectionClass	0	System.Boolean IsConcreteCollectionClass()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PClassInfo`1	method	IsExactClassOf	1	System.Boolean IsExactClassOf(System.Object value)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.PClassInfo`1	method	IsExternalClass	0	System.Boolean IsExternalClass()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	IsModuleClass	0	System.Boolean IsModuleClass()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	IsStandardLibraryClass	0	System.Boolean IsStandardLibraryClass()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PClassInfo`1	method	Retype	0	<TValue> Pkl.Core.PClassInfo<TValue> Retype()	TValue	return=non-null	not-representable-in-cli-metadata	-	-
@@ -2389,6 +2477,7 @@ Pkl.Core	Pkl.Core.PklBugException	constructor	.ctor	1	PklBugException .ctor(Syst
 Pkl.Core	Pkl.Core.PklBugException	constructor	.ctor	2	PklBugException .ctor(System.String message,System.Exception cause)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.PklBugException	method	UnreachableCode	0	Pkl.Core.PklBugException UnreachableCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.PklBugException	type	PklBugException	0	class PklBugException : Pkl.Core.PklException,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.PklException	constructor	.ctor	1	PklException .ctor(System.Exception cause)	-	param0=nullable	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.PklException	constructor	.ctor	1	PklException .ctor(System.String message)	-	param0=nullable	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.PklException	constructor	.ctor	2	PklException .ctor(System.String message,System.Exception cause)	-	param0=nullable;param1=nullable	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.PklException	type	PklException	0	class PklException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
@@ -2486,7 +2575,9 @@ Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	Deconstruct	2	System.Void D
 Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	Equals	1	System.Boolean Equals(Pkl.Core.Project.CanonicalPackageUri other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	FromPackageUri	1	Pkl.Core.Project.CanonicalPackageUri FromPackageUri(Pkl.Core.Packages.PackageUri packageUri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	GetBaseUri	0	System.Uri GetBaseUri()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	GetMajorVersion	0	System.Int32 GetMajorVersion()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	Of	1	Pkl.Core.Project.CanonicalPackageUri Of(System.String uriStr)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.CanonicalPackageUri	property	BaseUri	0	System.Uri BaseUri {get;set}	-	value=non-null	-	-	-
@@ -2498,6 +2589,10 @@ Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	Deconstruct	4	System.Void 
 Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	Equals	1	System.Boolean Equals(Pkl.Core.Project.DeclaredDependencies other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	GetLocalDependencies	0	System.Collections.Generic.IDictionary<System.String,Pkl.Core.Project.DeclaredDependencies> GetLocalDependencies()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	GetMyPackageUri	0	Pkl.Core.Packages.PackageUri GetMyPackageUri()	-	return=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	GetProjectFileUri	0	System.Uri GetProjectFileUri()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	GetRemoteDependencies	0	System.Collections.Generic.IDictionary<System.String,Pkl.Core.Packages.Dependency$RemoteDependency> GetRemoteDependencies()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.DeclaredDependencies	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.DeclaredDependencies	property	LocalDependencies	0	System.Collections.Generic.IDictionary<System.String,Pkl.Core.Project.DeclaredDependencies> LocalDependencies {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Project.DeclaredDependencies	property	MyPackageUri	0	Pkl.Core.Packages.PackageUri MyPackageUri {get;set}	-	value=nullable	-	-	-
@@ -2585,8 +2680,10 @@ Pkl.Core	Pkl.Core.Project.ProjectDeps	constructor	.ctor	1	ProjectDeps .ctor(Pkl.
 Pkl.Core	Pkl.Core.Project.ProjectDeps	method	Equals	1	System.Boolean Equals(System.Object o)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.ProjectDeps	method	Get	1	Pkl.Core.Packages.Dependency Get(Pkl.Core.Project.CanonicalPackageUri canonicalPackageUri)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.ProjectDeps	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Project.ProjectDeps	method	ParseFromPath	1	Pkl.Core.Project.ProjectDeps ParseFromPath(System.String path)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.ProjectDeps	method	ParseFromString	1	Pkl.Core.Project.ProjectDeps ParseFromString(System.String input)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.ProjectDeps	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Project.ProjectDeps	method	WriteTo	1	System.Void WriteTo(System.IO.Stream out)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Project.ProjectDeps	type	ProjectDeps	0	class ProjectDeps	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Project.ProjectPackager	constructor	.ctor	9	ProjectPackager .ctor(System.Collections.Generic.IList<Pkl.Core.Project.Project> projects,System.String workingDir,System.String outputPathPattern,System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> stackFrameTransformer,System.Boolean color,Pkl.Core.SecurityManager securityManager,Pkl.Core.Http.HttpClient httpClient,System.Boolean skipPublishCheck,System.IO.TextWriter outputWriter)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=non-null;param6=non-null;param7=non-null;param8=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Project.ProjectPackager	method	CreatePackages	0	System.Void CreatePackages()	-	return=non-null	not-representable-in-cli-metadata	-	-
@@ -2616,7 +2713,11 @@ Pkl.Core	Pkl.Core.Reference	method	Accept	1	<T> T Accept(Pkl.Core.ValueConverter
 Pkl.Core	Pkl.Core.Reference	method	Accept	1	System.Void Accept(Pkl.Core.ValueVisitor visitor)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Reference	method	Equals	1	System.Boolean Equals(System.Object o)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Reference	method	GetClassInfo	0	Pkl.Core.PClassInfo<System.Object> GetClassInfo()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Reference	method	GetData	0	System.Object GetData()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Reference	method	GetDomain	0	Pkl.Core.Composite GetDomain()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Reference	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Reference	method	GetPath	0	System.Collections.Generic.IList<Pkl.Core.Composite> GetPath()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Reference	method	GetReferentType	0	Pkl.Core.PType GetReferentType()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Reference	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Reference	type	Reference	0	class Reference : Pkl.Core.Value	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Release	constructor	.ctor	8	Release .ctor(Pkl.Core.Version Version,System.String Os,System.String Flavor,System.String VersionInfo,System.String CommitId,Pkl.Core.Release$SourceCode SourceCodeValue,Pkl.Core.Release$Documentation DocumentationValue,Pkl.Core.Release$StandardLibrary StandardLibraryValue)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=non-null;param6=non-null;param7=non-null	not-representable-in-cli-metadata	-	construct
@@ -2652,6 +2753,9 @@ Pkl.Core	Pkl.Core.Release$SourceCode	method	Equals	1	System.Boolean Equals(Pkl.C
 Pkl.Core	Pkl.Core.Release$SourceCode	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Release$SourceCode	method	GetFilePage	1	System.String GetFilePage(System.String path)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Release$SourceCode	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Release$SourceCode	method	GetSourceCodeUrlScheme	0	System.String GetSourceCodeUrlScheme()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Release$SourceCode	method	GetVersion	0	System.String GetVersion()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Release$SourceCode	method	SourceCodeUrlScheme	0	System.String SourceCodeUrlScheme()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Release$SourceCode	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Release$SourceCode	property	Homepage	0	System.String Homepage {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Release$SourceCode	property	Version	0	System.String Version {get;set}	-	value=non-null	-	-	-
@@ -2682,8 +2786,11 @@ Pkl.Core	Pkl.Core.Resource.Resource	method	<Clone>$	0	Pkl.Core.Resource.Resource
 Pkl.Core	Pkl.Core.Resource.Resource	method	Deconstruct	2	System.Void Deconstruct(out System.Uri Uri,out System.SByte[] Bytes)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.Resource	method	Equals	1	System.Boolean Equals(Pkl.Core.Resource.Resource other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.Resource	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Resource.Resource	method	GetBase64	0	System.String GetBase64()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Resource.Resource	method	GetBytes	0	System.SByte[] GetBytes()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.Resource	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.Resource	method	GetText	0	System.String GetText()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Resource.Resource	method	GetUri	0	System.Uri GetUri()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.Resource	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.Resource	property	Bytes	0	System.SByte[] Bytes {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.Resource.Resource	property	Uri	0	System.Uri Uri {get;set}	-	value=non-null	-	-	-
@@ -2698,7 +2805,9 @@ Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	ClassPath	1	Pkl.Core.Resource.
 Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	CreateEmbeddedResources	3	Pkl.Core.Resource.ResourceReader CreateEmbeddedResources(System.Reflection.Assembly assembly,System.String resourcePrefix,System.String uriScheme)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	CreateEnvironmentVariable	0	Pkl.Core.Resource.ResourceReader CreateEnvironmentVariable()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	CreateExternalProcess	2	Pkl.Core.Resource.ResourceReader CreateExternalProcess(System.String scheme,Pkl.Core.Externalreader.ExternalReaderProcess process)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	CreateExternalProcess	3	Pkl.Core.Resource.ResourceReader CreateExternalProcess(System.String scheme,Pkl.Core.Externalreader.ExternalReaderProcess process,System.Int64 evaluatorId)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	CreateExternalProperty	0	Pkl.Core.Resource.ResourceReader CreateExternalProperty()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	CreateExternalResolver	2	Pkl.Core.Resource.ResourceReader CreateExternalResolver(Pkl.Core.Externalreader.ResourceReaderSpec spec,Pkl.Core.Externalreader.ExternalResourceResolver resolver)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	CreateFromServiceProviders	0	System.Collections.Generic.IList<Pkl.Core.Resource.ResourceReader> CreateFromServiceProviders()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	File	0	Pkl.Core.Resource.ResourceReader File()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Resource.ResourceReaders	method	Http	0	Pkl.Core.Resource.ResourceReader Http()	-	return=non-null	not-representable-in-cli-metadata	-	-
@@ -4656,6 +4765,38 @@ Pkl.Core	Pkl.Core.SecurityManagers$StandardBuilder	method	SetAllowedModules	1	Pk
 Pkl.Core	Pkl.Core.SecurityManagers$StandardBuilder	method	SetAllowedResources	1	Pkl.Core.SecurityManagers$StandardBuilder SetAllowedResources(System.Collections.Generic.ICollection<System.Text.RegularExpressions.Regex> patterns)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.SecurityManagers$StandardBuilder	method	SetRootDir	1	Pkl.Core.SecurityManagers$StandardBuilder SetRootDir(System.String rootDir)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.SecurityManagers$StandardBuilder	type	StandardBuilder	0	class StandardBuilder : Pkl.Core.SecurityManagerBuilder<Pkl.Core.SecurityManagers$StandardBuilder>	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiException	constructor	.ctor	2	ExecutorSpiException .ctor(System.String message,System.Exception cause)	-	param0=nullable;param1=nullable	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Service.ExecutorSpiException	type	ExecutorSpiException	0	class ExecutorSpiException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiImpl	constructor	.ctor	0	ExecutorSpiImpl .ctor()	-	-	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Service.ExecutorSpiImpl	method	EvaluatePath	2	System.String EvaluatePath(System.String modulePath,Pkl.Core.Service.ExecutorSpiOptions options)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiImpl	method	GetPklVersion	0	System.String GetPklVersion()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiImpl	type	ExecutorSpiImpl	0	class ExecutorSpiImpl : Pkl.Core.Service.IExecutorSpi	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	constructor	.ctor	10	ExecutorSpiOptions .ctor(System.Collections.Generic.IList<System.String> allowedModules,System.Collections.Generic.IList<System.String> allowedResources,System.Collections.Generic.IDictionary<System.String,System.String> environmentVariables,System.Collections.Generic.IDictionary<System.String,System.String> externalProperties,System.Collections.Generic.IList<System.String> modulePath,System.String rootDir,System.Nullable<System.TimeSpan> timeout,System.String outputFormat,System.String moduleCacheDir,System.String projectDir)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=nullable;param6=nullable;param7=nullable;param8=nullable;param9=nullable	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetAllowedModules	0	System.Collections.Generic.IList<System.String> GetAllowedModules()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetAllowedResources	0	System.Collections.Generic.IList<System.String> GetAllowedResources()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetEnvironmentVariables	0	System.Collections.Generic.IDictionary<System.String,System.String> GetEnvironmentVariables()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetExternalProperties	0	System.Collections.Generic.IDictionary<System.String,System.String> GetExternalProperties()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetModuleCacheDir	0	System.String GetModuleCacheDir()	-	return=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetModulePath	0	System.Collections.Generic.IList<System.String> GetModulePath()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetOutputFormat	0	System.String GetOutputFormat()	-	return=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetProjectDir	0	System.String GetProjectDir()	-	return=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetRootDir	0	System.String GetRootDir()	-	return=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	method	GetTimeout	0	System.Nullable<System.TimeSpan> GetTimeout()	-	return=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions	type	ExecutorSpiOptions	0	class ExecutorSpiOptions	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions2	constructor	.ctor	13	ExecutorSpiOptions2 .ctor(System.Collections.Generic.IList<System.String> allowedModules,System.Collections.Generic.IList<System.String> allowedResources,System.Collections.Generic.IDictionary<System.String,System.String> environmentVariables,System.Collections.Generic.IDictionary<System.String,System.String> externalProperties,System.Collections.Generic.IList<System.String> modulePath,System.String rootDir,System.Nullable<System.TimeSpan> timeout,System.String outputFormat,System.String moduleCacheDir,System.String projectDir,System.Collections.Generic.IList<System.String> certificateFiles,System.Collections.Generic.IList<System.SByte[]> certificateBytes,System.Int32 testPort)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=nullable;param6=nullable;param7=nullable;param8=nullable;param9=nullable;param10=non-null;param11=non-null;param12=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions2	method	GetCertificateBytes	0	System.Collections.Generic.IList<System.SByte[]> GetCertificateBytes()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions2	method	GetCertificateFiles	0	System.Collections.Generic.IList<System.String> GetCertificateFiles()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions2	method	GetTestPort	0	System.Int32 GetTestPort()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions2	type	ExecutorSpiOptions2	0	class ExecutorSpiOptions2 : Pkl.Core.Service.ExecutorSpiOptions	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions3	constructor	.ctor	14	ExecutorSpiOptions3 .ctor(System.Collections.Generic.IList<System.String> allowedModules,System.Collections.Generic.IList<System.String> allowedResources,System.Collections.Generic.IDictionary<System.String,System.String> environmentVariables,System.Collections.Generic.IDictionary<System.String,System.String> externalProperties,System.Collections.Generic.IList<System.String> modulePath,System.String rootDir,System.Nullable<System.TimeSpan> timeout,System.String outputFormat,System.String moduleCacheDir,System.String projectDir,System.Collections.Generic.IList<System.String> certificateFiles,System.Collections.Generic.IList<System.SByte[]> certificateBytes,System.Int32 testPort,System.Collections.Generic.IDictionary<System.Uri,System.Uri> httpRewrites)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=nullable;param6=nullable;param7=nullable;param8=nullable;param9=nullable;param10=non-null;param11=non-null;param12=non-null;param13=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions3	method	GetHttpRewrites	0	System.Collections.Generic.IDictionary<System.Uri,System.Uri> GetHttpRewrites()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions3	type	ExecutorSpiOptions3	0	class ExecutorSpiOptions3 : Pkl.Core.Service.ExecutorSpiOptions2	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions4	constructor	.ctor	15	ExecutorSpiOptions4 .ctor(System.Collections.Generic.IList<System.String> allowedModules,System.Collections.Generic.IList<System.String> allowedResources,System.Collections.Generic.IDictionary<System.String,System.String> environmentVariables,System.Collections.Generic.IDictionary<System.String,System.String> externalProperties,System.Collections.Generic.IList<System.String> modulePath,System.String rootDir,System.Nullable<System.TimeSpan> timeout,System.String outputFormat,System.String moduleCacheDir,System.String projectDir,System.Collections.Generic.IList<System.String> certificateFiles,System.Collections.Generic.IList<System.SByte[]> certificateBytes,System.Int32 testPort,System.Collections.Generic.IDictionary<System.Uri,System.Uri> httpRewrites,System.Collections.Generic.IDictionary<System.String,System.Collections.Generic.IDictionary<System.String,System.Collections.Generic.IList<System.String>>> httpHeaders)	-	param0=non-null;param1=non-null;param2=non-null;param3=non-null;param4=non-null;param5=nullable;param6=nullable;param7=nullable;param8=nullable;param9=nullable;param10=non-null;param11=non-null;param12=non-null;param13=non-null;param14=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions4	method	GetHttpHeaders	0	System.Collections.Generic.IDictionary<System.String,System.Collections.Generic.IDictionary<System.String,System.Collections.Generic.IList<System.String>>> GetHttpHeaders()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.ExecutorSpiOptions4	type	ExecutorSpiOptions4	0	class ExecutorSpiOptions4 : Pkl.Core.Service.ExecutorSpiOptions3	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.Service.IExecutorSpi	method	EvaluatePath	2	System.String EvaluatePath(System.String modulePath,Pkl.Core.Service.ExecutorSpiOptions options)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.IExecutorSpi	method	GetPklVersion	0	System.String GetPklVersion()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Service.IExecutorSpi	type	IExecutorSpi	0	interface IExecutorSpi	-	type=oblivious	-	interface	-
 Pkl.Core	Pkl.Core.Settings.PklSettings	constructor	.ctor	2	PklSettings .ctor(Pkl.Core.Settings.PklSettings$Editor EditorValue,Pkl.Core.EvaluatorSettings.PklEvaluatorSettings$Http Http)	-	param0=non-null;param1=nullable	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Settings.PklSettings	method	<Clone>$	0	Pkl.Core.Settings.PklSettings <Clone>$()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Settings.PklSettings	method	Deconstruct	2	System.Void Deconstruct(out Pkl.Core.Settings.PklSettings$Editor EditorValue,out Pkl.Core.EvaluatorSettings.PklEvaluatorSettings$Http Http)	-	return=non-null;param0=non-null;param1=nullable	not-representable-in-cli-metadata	-	-
@@ -4699,12 +4840,15 @@ Pkl.Core	Pkl.Core.StackFrame	method	WithModuleUri	1	Pkl.Core.StackFrame WithModu
 Pkl.Core	Pkl.Core.StackFrame	type	StackFrame	0	class StackFrame	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.StackFrameTransformer	method	AndThen	1	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> AndThen(System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> transformer)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.StackFrameTransformer	type	StackFrameTransformer	0	interface StackFrameTransformer	-	type=oblivious	-	interface	-
-Pkl.Core	Pkl.Core.StackFrameTransformers	constructor	.ctor	0	StackFrameTransformers .ctor()	-	-	not-representable-in-cli-metadata	-	construct
-Pkl.Core	Pkl.Core.StackFrameTransformers	field	convertStdLibUrlToExternalUrl	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> convertStdLibUrlToExternalUrl	-	value=non-null	-	-	-
-Pkl.Core	Pkl.Core.StackFrameTransformers	field	defaultTransformer	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> defaultTransformer	-	value=non-null	-	-	-
-Pkl.Core	Pkl.Core.StackFrameTransformers	field	fromServiceProviders	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> fromServiceProviders	-	value=non-null	-	-	-
-Pkl.Core	Pkl.Core.StackFrameTransformers	field	replacePackageUriWithSourceCodeUrl	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> replacePackageUriWithSourceCodeUrl	-	value=non-null	-	-	-
-Pkl.Core	Pkl.Core.StackFrameTransformers	type	StackFrameTransformers	0	class StackFrameTransformers	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	method	ConvertFilePathToUriScheme	1	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> ConvertFilePathToUriScheme(System.String scheme)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	method	CreateDefault	1	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> CreateDefault(Pkl.Core.Settings.PklSettings settings)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	method	RelativizeModuleUri	1	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> RelativizeModuleUri(System.Uri baseUri)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	property	ConvertStdLibUrlToExternalUrl	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> ConvertStdLibUrlToExternalUrl {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	property	DefaultTransformer	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> DefaultTransformer {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	property	Empty	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> Empty {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	property	FromServiceProviders	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> FromServiceProviders {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	property	ReplacePackageUriWithSourceCodeUrl	0	System.Func<Pkl.Core.StackFrame,Pkl.Core.StackFrame> ReplacePackageUriWithSourceCodeUrl {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.StackFrameTransformers	type	StackFrameTransformers	0	static-class StackFrameTransformers	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Stdlib.AbstractRenderer	method	RenderDocument	1	System.Void RenderDocument(System.Object value)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Stdlib.AbstractRenderer	method	RenderValue	1	System.Void RenderValue(System.Object value)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Stdlib.AbstractRenderer	method	Visit	1	System.Void Visit(System.Object value)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
@@ -7767,6 +7911,8 @@ Pkl.Core	Pkl.Core.TestResults$TestResult	method	Deconstruct	5	System.Void Decons
 Pkl.Core	Pkl.Core.TestResults$TestResult	method	Equals	1	System.Boolean Equals(Pkl.Core.TestResults$TestResult other)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestResult	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestResult	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	HasErrors	0	System.Boolean HasErrors()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestResult	method	HasFailures	0	System.Boolean HasFailures()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestResult	method	IsFailure	0	System.Boolean IsFailure()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestResult	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestResult	method	TotalAssertsFailedOrErrored	0	System.Int32 TotalAssertsFailedOrErrored()	-	return=non-null	not-representable-in-cli-metadata	-	-
@@ -7797,6 +7943,7 @@ Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	Equals	1	System.Boolean 
 Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	Failed	0	System.Boolean Failed()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	GetHashCode	0	System.Int32 GetHashCode()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	HasError	0	System.Boolean HasError()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	TotalAsserts	0	System.Int32 TotalAsserts()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.TestResults$TestSectionResults	method	TotalAssertsFailedOrErrored	0	System.Int32 TotalAssertsFailedOrErrored()	-	return=non-null	not-representable-in-cli-metadata	-	-
@@ -7918,7 +8065,7 @@ Pkl.Core	Pkl.Core.Util.CodeGeneratorUtils	type	CodeGeneratorUtils	0	class CodeGe
 Pkl.Core	Pkl.Core.Util.CollectionUtils	constructor	.ctor	0	CollectionUtils .ctor()	-	-	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.Util.CollectionUtils	method	NewHashSet	0	<T> System.Collections.Generic.HashSet<T> NewHashSet()	T	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Util.CollectionUtils	method	NewHashSet	1	<T> System.Collections.Generic.HashSet<T> NewHashSet(System.Int32 expectedSize)	T	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
-Pkl.Core	Pkl.Core.Util.CollectionUtils	method	NewLinkedHashMap	1	<K,V> System.Collections.Generic.Dictionary<K,V> NewLinkedHashMap(System.Int32 expectedSize)	K;V	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Util.CollectionUtils	method	NewLinkedHashMap	1	<K,V> Vibeformer.Runtime.JavaLinkedHashMap<K,V> NewLinkedHashMap(System.Int32 expectedSize)	K;V	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Util.CollectionUtils	method	NewLinkedHashSet	1	<T> System.Collections.Generic.HashSet<T> NewLinkedHashSet(System.Int32 expectedSize)	T	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Util.CollectionUtils	type	CollectionUtils	0	class CollectionUtils	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.Util.DurationUtils	constructor	.ctor	0	DurationUtils .ctor()	-	-	not-representable-in-cli-metadata	-	construct
@@ -8144,6 +8291,7 @@ Pkl.Core	Pkl.Core.Util.Json.JsonWriter	method	NullValue	0	Pkl.Core.Util.Json.Jso
 Pkl.Core	Pkl.Core.Util.Json.JsonWriter	method	SetIndent	1	System.Void SetIndent(System.String indent)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Util.Json.JsonWriter	method	Value	1	Pkl.Core.Util.Json.JsonWriter Value(System.Double value)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Util.Json.JsonWriter	method	Value	1	Pkl.Core.Util.Json.JsonWriter Value(System.IConvertible value)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Util.Json.JsonWriter	method	Value	1	Pkl.Core.Util.Json.JsonWriter Value(System.Int64 value)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Util.Json.JsonWriter	method	Value	1	Pkl.Core.Util.Json.JsonWriter Value(System.Nullable<System.Boolean> value)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Util.Json.JsonWriter	method	Value	1	Pkl.Core.Util.Json.JsonWriter Value(System.String value)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Util.Json.JsonWriter	type	JsonWriter	0	class JsonWriter : System.IDisposable	-	type=oblivious	-	-	disposable
@@ -8406,6 +8554,7 @@ Pkl.Core	Pkl.Core.ValueVisitor	method	VisitString	1	System.Void VisitString(Syst
 Pkl.Core	Pkl.Core.ValueVisitor	method	VisitTypeAlias	1	System.Void VisitTypeAlias(Pkl.Core.TypeAlias value)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ValueVisitor	type	ValueVisitor	0	interface ValueVisitor	-	type=oblivious	-	interface	-
 Pkl.Core	Pkl.Core.Version	constructor	.ctor	5	Version .ctor(System.Int32 major,System.Int32 minor,System.Int32 patch,System.String preRelease,System.String build)	-	param0=non-null;param1=non-null;param2=non-null;param3=nullable;param4=nullable	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.Version	method	Comparator	0	System.Comparison<Pkl.Core.Version> Comparator()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	CompareTo	1	System.Int32 CompareTo(Pkl.Core.Version other)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	Equals	1	System.Boolean Equals(System.Object obj)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	GetBuild	0	System.String GetBuild()	-	return=nullable	not-representable-in-cli-metadata	-	-
@@ -8415,10 +8564,16 @@ Pkl.Core	Pkl.Core.Version	method	GetMinor	0	System.Int32 GetMinor()	-	return=non
 Pkl.Core	Pkl.Core.Version	method	GetPatch	0	System.Int32 GetPatch()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	GetPreRelease	0	System.String GetPreRelease()	-	return=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	IsNormal	0	System.Boolean IsNormal()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Version	method	IsStable	0	System.Boolean IsStable()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	Parse	1	Pkl.Core.Version Parse(System.String version)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	ParseOrNull	1	Pkl.Core.Version ParseOrNull(System.String version)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	ToNormal	0	Pkl.Core.Version ToNormal()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	method	ToString	0	System.String ToString()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Version	method	WithBuild	1	Pkl.Core.Version WithBuild(System.String build)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Version	method	WithMajor	1	Pkl.Core.Version WithMajor(System.Int32 major)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Version	method	WithMinor	1	Pkl.Core.Version WithMinor(System.Int32 minor)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Version	method	WithPatch	1	Pkl.Core.Version WithPatch(System.Int32 patch)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Version	method	WithPreRelease	1	Pkl.Core.Version WithPreRelease(System.String preRelease)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Version	type	Version	0	class Version : System.IComparable<Pkl.Core.Version>	-	type=oblivious	-	-	-
 Pkl.Parser	Pkl.Parser.BaseParserVisitor`1	method	VisitAmendsExpr	1	T VisitAmendsExpr(Pkl.Parser.Syntax.Expr$AmendsExpr expr)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Parser	Pkl.Parser.BaseParserVisitor`1	method	VisitAnnotation	1	T VisitAnnotation(Pkl.Parser.Syntax.Annotation annotation)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
@@ -9416,8 +9571,15 @@ Pkl.Parser	Pkl.Parser.Token	method	ToString	0	System.String ToString()	-	return=
 Pkl.Parser	Pkl.Parser.Token	method	ValueOf	1	Pkl.Parser.Token ValueOf(System.String name)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Parser	Pkl.Parser.Token	method	Values	0	Pkl.Parser.Token[] Values()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Parser	Pkl.Parser.Token	type	Token	0	class Token	-	type=oblivious	-	-	-
+Pkl.Parser	Pkl.Parser.Util.ErrorMessages	constructor	.ctor	0	ErrorMessages .ctor()	-	-	not-representable-in-cli-metadata	-	construct
 Pkl.Parser	Pkl.Parser.Util.ErrorMessages	method	Create	2	System.String Create(System.String messageName,System.Object[] args)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Parser	Pkl.Parser.Util.ErrorMessages	type	ErrorMessages	0	class ErrorMessages	-	type=oblivious	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaLinkedHashMap`2	constructor	.ctor	0	JavaLinkedHashMap .ctor()	-	-	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Vibeformer.Runtime.JavaLinkedHashMap`2	constructor	.ctor	1	JavaLinkedHashMap .ctor(System.Int32 initialCapacity)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Vibeformer.Runtime.JavaLinkedHashMap`2	constructor	.ctor	2	JavaLinkedHashMap .ctor(System.Int32 initialCapacity,System.Single loadFactor)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Vibeformer.Runtime.JavaLinkedHashMap`2	constructor	.ctor	3	JavaLinkedHashMap .ctor(System.Int32 initialCapacity,System.Single loadFactor,System.Boolean accessOrder)	-	param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Vibeformer.Runtime.JavaLinkedHashMap`2	method	Size	0	System.Int32 Size()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Vibeformer.Runtime.JavaLinkedHashMap`2	type	JavaLinkedHashMap	0	class JavaLinkedHashMap : System.Collections.Generic.Dictionary<K,V>,System.Collections.Generic.ICollection<System.Collections.Generic.KeyValuePair<K,V>>,System.Collections.Generic.IDictionary<K,V>,System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<K,V>>,System.Collections.Generic.IReadOnlyCollection<System.Collections.Generic.KeyValuePair<K,V>>,System.Collections.Generic.IReadOnlyDictionary<K,V>,System.Collections.ICollection,System.Collections.IDictionary,System.Collections.IEnumerable,System.Runtime.Serialization.IDeserializationCallback,System.Runtime.Serialization.ISerializable	K;V	type=oblivious	-	-	-
 Pkl.Core	Vibeformer.Runtime.JavaLinkedList`1	constructor	.ctor	0	JavaLinkedList .ctor()	-	-	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Vibeformer.Runtime.JavaLinkedList`1	method	Add	1	System.Void Add(T item)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Vibeformer.Runtime.JavaLinkedList`1	method	AddFirst	1	System.Void AddFirst(T item)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
@@ -9441,3 +9603,12 @@ Pkl.Core	Vibeformer.Runtime.JavaMapEntry`2	property	Key	0	K Key {get}	-	value=no
 Pkl.Core	Vibeformer.Runtime.JavaMapEntry`2	property	Value	0	V Value {get}	-	value=nullable	-	-	-
 Pkl.Core	Vibeformer.Runtime.JavaMapEntry`2	type	JavaMapEntry	0	class JavaMapEntry	K;V	type=oblivious	-	-	-
 Pkl.Core	Vibeformer.Runtime.JavaRegexMatcher	type	JavaRegexMatcher	0	class JavaRegexMatcher	-	type=oblivious	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	enum-value	DAYS	0	Vibeformer.Runtime.JavaTimeUnit DAYS	-	value=non-null	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	enum-value	HOURS	0	Vibeformer.Runtime.JavaTimeUnit HOURS	-	value=non-null	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	enum-value	MICROSECONDS	0	Vibeformer.Runtime.JavaTimeUnit MICROSECONDS	-	value=non-null	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	enum-value	MILLISECONDS	0	Vibeformer.Runtime.JavaTimeUnit MILLISECONDS	-	value=non-null	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	enum-value	MINUTES	0	Vibeformer.Runtime.JavaTimeUnit MINUTES	-	value=non-null	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	enum-value	NANOSECONDS	0	Vibeformer.Runtime.JavaTimeUnit NANOSECONDS	-	value=non-null	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	enum-value	SECONDS	0	Vibeformer.Runtime.JavaTimeUnit SECONDS	-	value=non-null	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	field	value__	0	System.Int32 value__	-	value=non-null	-	-	-
+Pkl.Core	Vibeformer.Runtime.JavaTimeUnit	type	JavaTimeUnit	0	enum JavaTimeUnit : System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable	-	type=not-null	-	-	-

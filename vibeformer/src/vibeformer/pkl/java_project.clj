@@ -75,7 +75,8 @@
                           [:output [:project-directory :source-directory
                                     :resource-directory :project-file
                                     :source-map-file :diagnostics-file
-                                    :manifest-file :annotation-decisions-file]]]]
+                                    :manifest-file :public-metadata-file
+                                    :annotation-decisions-file]]]]
     (when-not (map? (get configuration section))
       (destination-error (str "Missing destination " (name section) " section")
                          {:section section}))
@@ -91,7 +92,7 @@
                            {:section :package :setting key :value value}))))
   (doseq [key [:project-directory :source-directory :resource-directory
                :project-file :source-map-file :diagnostics-file :manifest-file
-               :annotation-decisions-file]]
+               :public-metadata-file :annotation-decisions-file]]
     (relative-path! (get-in configuration [:output key]) (name key)))
   (when-not (contains? #{"enable" "disable"}
                        (get-in configuration [:project :nullable]))
@@ -376,6 +377,7 @@
    "java.lang.Error" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.StackOverflowError" ["global::System.StackOverflowException" :dotnet.type/stack-overflow]
    "java.lang.OutOfMemoryError" ["global::System.OutOfMemoryException" :dotnet.type/out-of-memory]
+   "java.lang.NoClassDefFoundError" ["global::System.TypeLoadException" :dotnet.type/type-load-exception]
    "java.lang.ArithmeticException" ["global::System.ArithmeticException" :dotnet.type/arithmetic-exception]
    "java.lang.ExceptionInInitializerError" ["global::System.TypeInitializationException" :dotnet.type/type-initialization-exception]
    "java.lang.UnsupportedOperationException" ["global::System.NotSupportedException" :dotnet.type/not-supported-exception]
@@ -509,7 +511,7 @@
    "java.util.Map" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
    "java.util.HashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/dictionary]
    "java.util.IdentityHashMap" ["global::Pkl.Core.Runtime.JavaIdentityDictionary" :pkl-core.type/identity-map]
-   "java.util.LinkedHashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/linked-dictionary]
+   "java.util.LinkedHashMap" ["global::Vibeformer.Runtime.JavaLinkedHashMap" :dotnet.type/linked-dictionary]
    "java.util.WeakHashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/weak-map]
    "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary" :dotnet.type/sorted-dictionary]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet" :dotnet.type/sorted-set]
@@ -649,6 +651,12 @@
    "org.msgpack.value.MapValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
    "org.msgpack.value.StringValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
    "org.msgpack.value.impl.ImmutableStringValueImpl" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.pkl.executor.spi.v1.ExecutorSpi" ["global::Pkl.Core.Service.IExecutorSpi" :pkl-core.type/executor-spi]
+   "org.pkl.executor.spi.v1.ExecutorSpiException" ["global::Pkl.Core.Service.ExecutorSpiException" :pkl-core.type/executor-spi-exception]
+   "org.pkl.executor.spi.v1.ExecutorSpiOptions" ["global::Pkl.Core.Service.ExecutorSpiOptions" :pkl-core.type/executor-spi-options]
+   "org.pkl.executor.spi.v1.ExecutorSpiOptions2" ["global::Pkl.Core.Service.ExecutorSpiOptions2" :pkl-core.type/executor-spi-options-2]
+   "org.pkl.executor.spi.v1.ExecutorSpiOptions3" ["global::Pkl.Core.Service.ExecutorSpiOptions3" :pkl-core.type/executor-spi-options-3]
+   "org.pkl.executor.spi.v1.ExecutorSpiOptions4" ["global::Pkl.Core.Service.ExecutorSpiOptions4" :pkl-core.type/executor-spi-options-4]
    "org.jspecify.annotations.Nullable" ["object" :dotnet.annotation/nullable]
    "org.jspecify.annotations.NonNull" ["object" :dotnet.annotation/non-null]
    "org.jspecify.annotations.NullMarked" ["object" :dotnet.annotation/null-marked]})
@@ -875,9 +883,64 @@
     (str (name kind) ":" (or file "implicit") ":" (or line 0) ":" (or column 0)
          ":" (.getName (class element)))))
 
+(defn- declaration-owner-type
+  [^CtElement element]
+  (cond
+    (instance? CtType element) element
+    (instance? CtExecutable element) (.getDeclaringType ^CtExecutable element)
+    (instance? CtField element) (.getDeclaringType ^CtField element)
+    :else
+    (loop [current element]
+      (when (and current (.isParentInitialized current))
+        (let [parent (.getParent current)]
+          (if (instance? CtType parent)
+            parent
+            (recur parent)))))))
+
+(defn- destination-owner-name
+  [ctx ^CtElement element]
+  (when-let [^CtType owner (declaration-owner-type element)]
+    (str (destination-namespace ctx owner) "."
+         (str/join "$" (map #(pascal (.getSimpleName ^CtType %))
+                            (declaring-types owner))))))
+
+(defn- public-static-property-field?
+  [^CtElement element]
+  (and (instance? CtField element)
+       (not (instance? CtEnumValue element))
+       (= "org.pkl.core.StackFrameTransformers"
+          (some-> ^CtField element .getDeclaringType .getQualifiedName))
+       (modifier? element ModifierKind/PUBLIC)
+       (modifier? element ModifierKind/STATIC)
+       (modifier? element ModifierKind/FINAL)))
+
+(defn- destination-declaration
+  [ctx ^CtElement element kind name rule]
+  {:assembly (get-in ctx [:configuration :project :assembly-name])
+   :owner (destination-owner-name ctx element)
+   :kind (case kind
+           :type "type"
+           :constructor "constructor"
+           :record-component "property"
+           :enum-value "field"
+           :field (if (public-static-property-field? element)
+                    "property"
+                    "field")
+           :method "method"
+           nil)
+   :name (cond
+           (= :constructor kind) ".ctor"
+           (= :dotnet.declaration/functional-interface-method rule) "Invoke"
+           :else name)
+   :parameter-count (str (if (instance? CtExecutable element)
+                           (count (.getParameters ^CtExecutable element))
+                           0))})
+
 (defn- register! [ctx ^CtElement element kind owner name signature rule]
   (let [id (declaration-id element kind)
         entry {:id id :kind kind :owner owner :name name :signature signature
+               :java-key (spoon/declaration-key element)
+               :destination (destination-declaration ctx element kind name rule)
                :source (source-ref element rule)}]
     (when (.containsKey ^IdentityHashMap (:emitted ctx) element)
       (throw (ex-info "A live Spoon declaration was emitted more than once"
@@ -1201,14 +1264,21 @@
                   (and (= "write" name)
                        (= ["java.lang.String" "int" "int"] parameter-types))))))))
 
+(defn- public-messaging-contract?
+  [qualified-name]
+  (or (= "org.pkl.core.messaging.MessageTransport" qualified-name)
+      (str/starts-with? qualified-name "org.pkl.core.messaging.MessageTransport$")
+      (= "org.pkl.core.messaging.Message" qualified-name)
+      (str/starts-with? qualified-name "org.pkl.core.messaging.Message$")
+      (= "org.pkl.core.messaging.ProtocolException" qualified-name)))
+
 (defn- destination-internal-type? [^CtTypeReference reference]
   (when reference
     (let [qualified-name (.getQualifiedName reference)]
-      (or (contains? #{"java.util.Deque" "java.util.ArrayDeque"
-                       "org.pkl.core.externalreader.ExternalModuleResolver"
-                       "org.pkl.core.externalreader.ExternalResourceResolver"}
+      (or (contains? #{"java.util.Deque" "java.util.ArrayDeque"}
                      qualified-name)
-          (str/starts-with? qualified-name "org.pkl.core.messaging.")
+          (and (str/starts-with? qualified-name "org.pkl.core.messaging.")
+               (not (public-messaging-contract? qualified-name)))
           (when (.isArray reference)
             (destination-internal-type? (.getComponentType reference)))
           (some destination-internal-type? (.getActualTypeArguments reference))))))
@@ -1651,7 +1721,7 @@
           ;; the catchable cycle signal used by the JVM implementation.
           ;; Analyze first so project cycles retain the upstream diagnostics.
           (raw
-           "{\nvar cycles = Project.FindImportCycle(moduleSource);\nvar onlyDirectSelfCycle = global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1 && global::Vibeformer.Runtime.JavaCompat.ListCount(global::Vibeformer.Runtime.JavaCompat.ListGet(global::Vibeformer.Runtime.JavaCompat.ToListValues(cycles), 0)) == 1;\nif (!global::Vibeformer.Runtime.JavaCompat.ListIsEmpty(cycles) && !onlyDirectSelfCycle) {\nglobal::Pkl.Core.Runtime.VmException vmException;\nif (global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1) {\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesSingle\", Project.RenderCycle(global::Vibeformer.Runtime.JavaCompat.ListGet(global::Vibeformer.Runtime.JavaCompat.ToListValues(cycles), 0))).Build();\n} else {\nvar renderedCycles = Project.RenderMultipleCycles(cycles);\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesMultiple\", renderedCycles).Build();\n}\nthrow vmException.ToPklException(global::Pkl.Core.StackFrameTransformers.defaultTransformer, false);\n}\ntry {\nvar output = evaluator.EvaluateOutputValueAs<global::Pkl.Core.PObject>(moduleSource, global::Pkl.Core.PClassInfo<object>.Project);\nreturn Project.ParseProject(output);\n} catch (global::System.UriFormatException e) {\nthrow new global::Pkl.Core.PklException(e.Message, e);\n}\n}")
+           "{\nvar cycles = Project.FindImportCycle(moduleSource);\nvar onlyDirectSelfCycle = global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1 && global::Vibeformer.Runtime.JavaCompat.ListCount(global::Vibeformer.Runtime.JavaCompat.ListGet(global::Vibeformer.Runtime.JavaCompat.ToListValues(cycles), 0)) == 1;\nif (!global::Vibeformer.Runtime.JavaCompat.ListIsEmpty(cycles) && !onlyDirectSelfCycle) {\nglobal::Pkl.Core.Runtime.VmException vmException;\nif (global::Vibeformer.Runtime.JavaCompat.ListCount(cycles) == 1) {\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesSingle\", Project.RenderCycle(global::Vibeformer.Runtime.JavaCompat.ListGet(global::Vibeformer.Runtime.JavaCompat.ToListValues(cycles), 0))).Build();\n} else {\nvar renderedCycles = Project.RenderMultipleCycles(cycles);\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesMultiple\", renderedCycles).Build();\n}\nthrow vmException.ToPklException(global::Pkl.Core.StackFrameTransformers.DefaultTransformer, false);\n}\ntry {\nvar output = evaluator.EvaluateOutputValueAs<global::Pkl.Core.PObject>(moduleSource, global::Pkl.Core.PClassInfo<object>.Project);\nreturn Project.ParseProject(output);\n} catch (global::System.UriFormatException e) {\nthrow new global::Pkl.Core.PklException(e.Message, e);\n}\n}")
 
           (= "executable:org.pkl.core.Pair#iterator()"
              (spoon/declaration-key method))
@@ -1764,7 +1834,9 @@
                         :java.declaration/constructor)))
 
 (defn- field-name [^CtField field]
-  (identifier (.getSimpleName field)))
+  (if (public-static-property-field? field)
+    (pascal (.getSimpleName field))
+    (identifier (.getSimpleName field))))
 
 (defn- private-type-component? [^CtTypeReference reference]
   (when reference
@@ -1812,14 +1884,17 @@
                            (and (modifier? field ModifierKind/PRIVATE)
                                 (not (.isTopLevel owner-type))) "internal"
                            :else (visibility field (if enum-value? "public" "internal")))
+        property? (public-static-property-field? field)
         words [field-visibility
                (when (or enum-value? (modifier? field ModifierKind/STATIC)) "static")
-               (when (or enum-value? (modifier? field ModifierKind/FINAL)) "readonly")
+               (when (and (not property?)
+                          (or enum-value? (modifier? field ModifierKind/FINAL))) "readonly")
                (when (modifier? field ModifierKind/VOLATILE) "volatile")]
         declaration
         (sequence-node
          [(raw (join-words words)) (type-node ctx (.getType field))
           (raw (str " " name))
+          (when property? (raw " { get; }"))
           (if (and initializer
                    (or (not (:defer-field-initializers? ctx))
                        (modifier? field ModifierKind/STATIC))
@@ -2390,14 +2465,13 @@
         declaring-type (.getDeclaringType type)
         visibility (cond
                      ;; MessagePack transport is a user-approved exclusion.
-                     ;; The transport and configured-process resolver that
-                     ;; depends on it remain assembly-internal implementation
-                     ;; detail; the public evaluator settings stay selected.
-                     (or (str/starts-with? (.getQualifiedName type)
-                                           "org.pkl.core.messaging.")
-                         (contains? #{"org.pkl.core.externalreader.ExternalModuleResolver"
-                                      "org.pkl.core.externalreader.ExternalResourceResolver"}
-                                    (.getQualifiedName type)))
+                     ;; The transport remains assembly-internal implementation
+                     ;; detail. Public external-reader contracts are independent
+                     ;; of that excluded wire format and stay publicly visible.
+                     (and (str/starts-with? (.getQualifiedName type)
+                                            "org.pkl.core.messaging.")
+                          (not (public-messaging-contract?
+                                (.getQualifiedName type))))
                      "internal"
                      (public-nested-subtype? type) "public"
                      (and declaring-type
@@ -2406,6 +2480,9 @@
                      "internal"
                      :else (visibility type "internal"))]
     (cond
+      (= "org.pkl.core.StackFrameTransformers" (.getQualifiedName type))
+      [visibility "static" "partial" "class"]
+
       (instance? CtInterface type) [visibility "partial" "interface"]
       (instance? CtRecord type) [visibility "sealed" "partial" "record" "class"]
       (instance? CtEnum type) [visibility "sealed" "partial" "class"]
@@ -3116,6 +3193,7 @@
        :summary summary
        :emission-profile @emission-profile
        :diagnostics @(:diagnostics ctx)
+       :declarations @(:declarations ctx)
        :artifacts artifacts
        :source-accounts accounts
        :resource-artifacts resource-artifacts})))

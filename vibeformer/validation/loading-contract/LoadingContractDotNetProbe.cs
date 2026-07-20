@@ -212,7 +212,7 @@ static class LoadingContractDotNetProbe
         var factory = new CountingModuleFactory();
         var reader = new CountingResourceReader();
         using (Evaluator evaluator = EvaluatorBuilder.Unconfigured()
-            .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+            .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
             .SetAllowedModules(new List<Regex> { new("custom:"), new("pkl:") })
             .SetAllowedResources(new List<Regex> { new("contractres:") })
             .AddModuleKeyFactory(ModuleKeyFactories.standardLibrary)
@@ -255,7 +255,7 @@ static class LoadingContractDotNetProbe
         string cache = Path.Combine(work, "builder-cache");
         EvaluatorBuilder builder = EvaluatorBuilder.Unconfigured()
             .SetColor(true)
-            .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+            .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
             .SetAllowedModules(new List<Regex> { new("file:") })
             .SetAllowedResources(new List<Regex> { new("env:") })
             .SetRootDir(work)
@@ -348,7 +348,7 @@ static class LoadingContractDotNetProbe
         try
         {
             using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
-                .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+                .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
                 .SetAllowedModules(new List<Regex> { new("repl:"), new("pkl:") })
                 .SetAllowedResources(new List<Regex>())
                 .AddModuleKeyFactory(ModuleKeyFactories.standardLibrary)
@@ -365,7 +365,7 @@ static class LoadingContractDotNetProbe
         try
         {
             using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
-                .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+                .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
                 .SetSecurityManager(SecurityManagers.CreateStandard(
                     new List<Regex> { new("custom:"), new("file:"), new("pkl:") },
                     new List<Regex>(),
@@ -983,7 +983,7 @@ static class LoadingContractDotNetProbe
         try
         {
             using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
-                .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+                .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
                 .SetAllowedModules(new List<Regex> { new("repl:"), new("iofail:") })
                 .SetAllowedResources(Array.Empty<Regex>())
                 .AddModuleKeyFactory(new FailingModuleFactory())
@@ -1418,7 +1418,7 @@ static class LoadingContractDotNetProbe
 
     static EvaluatorBuilder TimeoutBuilder(TimeSpan timeout) =>
         EvaluatorBuilder.Unconfigured()
-            .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+            .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
             .SetAllowedModules(new List<Regex>
                 { new("timeoutmod:"), new("repl:"), new("pkl:") })
             .SetAllowedResources(new List<Regex> { new("timeoutres:") })
@@ -1511,7 +1511,7 @@ static class LoadingContractDotNetProbe
         var factory = (AssemblyModuleKeyFactory)ModuleKeyFactories.CreateAssembly(
             Assembly.GetExecutingAssembly(), "Contract.Modules");
         using (Evaluator evaluator = EvaluatorBuilder.Unconfigured()
-            .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+            .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
             .SetAllowedModules(new List<Regex> { new("assembly:"), new("pkl:") })
             .SetAllowedResources(new List<Regex>())
             .AddModuleKeyFactory(ModuleKeyFactories.standardLibrary)
@@ -1565,7 +1565,7 @@ static class LoadingContractDotNetProbe
         try
         {
             using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
-                .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+                .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
                 .SetAllowedModules(new List<Regex> { new("repl:"), new("pkl:") })
                 .SetAllowedResources(new List<Regex>())
                 .AddModuleKeyFactory(ModuleKeyFactories.standardLibrary)
@@ -1583,7 +1583,7 @@ static class LoadingContractDotNetProbe
         try
         {
             using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
-                .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+                .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
                 .SetAllowedModules(new List<Regex> { new("repl:"), new("pkl:") })
                 .SetAllowedResources(new List<Regex> { new("embedded:") })
                 .AddModuleKeyFactory(ModuleKeyFactories.standardLibrary)
@@ -1636,7 +1636,7 @@ static class LoadingContractDotNetProbe
         var factory = new CountingModuleFactory();
         var reader = new CountingResourceReader();
         using (Evaluator evaluator = EvaluatorBuilder.Unconfigured()
-            .SetStackFrameTransformer(StackFrameTransformers.defaultTransformer)
+            .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
             .SetAllowedModules(new List<Regex> { new("repl:"), new("pkl:") })
             .SetAllowedResources(new List<Regex>())
             .AddModuleKeyFactory(ModuleKeyFactories.standardLibrary)

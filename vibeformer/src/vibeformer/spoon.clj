@@ -739,11 +739,36 @@
   [^CtType type]
   (->> (concat (when (instance? CtEnum type)
                  (.getEnumValues ^CtEnum type))
+               (when (instance? CtRecord type)
+                 (.getRecordComponents ^CtRecord type))
                (.getTypeMembers type))
        (remove #(and (.isImplicit ^CtElement %)
-                     (not (instance? CtEnumValue %))))
+                     (not (instance? CtEnumValue %))
+                     (not (instance? CtRecordComponent %))))
        (filter public-api-declaration?)
        (sort-by declaration-key)))
+
+(defn- public-member-selector
+  [^CtElement member]
+  (cond
+    (instance? CtRecordComponent member)
+    ["property" (.getSimpleName ^CtRecordComponent member) "0"]
+
+    (instance? CtEnumValue member)
+    ["enum-value" (.getSimpleName ^CtEnumValue member) "0"]
+
+    (instance? CtField member)
+    ["field" (.getSimpleName ^CtField member) "0"]
+
+    (instance? CtExecutable member)
+    [(if (.isConstructor (.getReference ^CtExecutable member))
+       "constructor" "method")
+     (if (.isConstructor (.getReference ^CtExecutable member))
+       ".ctor" (.getSimpleName ^CtExecutable member))
+     (str (count (.getParameters ^CtExecutable member)))]
+
+    (instance? CtType member)
+    ["type" (.getSimpleName ^CtType member) "0"]))
 
 (defn- type-shell-element?
   [^CtType root ^CtElement element]
@@ -838,13 +863,14 @@
               (owner-type-items declaration))))))
 
 (defn- member-items
-  [^CtType declaration expansion]
+  [^CtType declaration expansion members]
   (when (= :public-api expansion)
-    (mapv (fn [^CtElement member]
-            {:key (declaration-key member)
-             :declaration member
-             :expand (if (instance? CtType member) :public-api :body)})
-          (direct-public-members declaration))))
+    (->> (direct-public-members declaration)
+         (filter #(or (nil? members) (members (public-member-selector %))))
+         (mapv (fn [^CtElement member]
+                 {:key (declaration-key member)
+                  :declaration member
+                  :expand (if (instance? CtType member) :public-api :body)})))))
 
 (defn- compilation-obligation-items
   "Selects real frontend bodies required for a selected type to remain a
@@ -936,23 +962,30 @@
         _ (when-not (= (count seed-specs) (count (distinct (map :key seed-specs))))
             (throw (ex-info "Closure seed identities must be unique"
                             {:kind :duplicate-closure-seed})))
-        _ (doseq [{:keys [key expand]} seed-specs]
+        _ (doseq [{:keys [key expand members]} seed-specs]
             (when-not (contains? expansion-rank expand)
               (throw (ex-info "Invalid closure seed expansion"
                               {:kind :invalid-closure-expansion
-                               :key key :expand expand}))))
-        seeds (mapv (fn [{:keys [key expand]}]
+                               :key key :expand expand})))
+            (when-not (or (nil? members)
+                          (and (= :public-api expand) (set? members)))
+              (throw (ex-info "Invalid public member selector set"
+                              {:kind :invalid-public-member-selectors
+                               :key key :expand expand :members members}))))
+        seeds (mapv (fn [{:keys [key expand members] :as specification}]
                       (let [declaration (exact-declaration! index key :closure-seed)]
-                        {:key key :expand expand :declaration declaration
-                         :location (source-location declaration)}))
+                        (cond-> {:key key :expand expand :declaration declaration
+                                 :location (source-location declaration)}
+                          (contains? specification :members)
+                          (assoc :members members))))
                     seed-specs)
-        queue (mapv #(select-keys % [:key :expand :declaration]) seeds)
+        queue (mapv #(select-keys % [:key :expand :members :declaration]) seeds)
         seen (IdentityHashMap.)]
     (loop [queue queue
            processed (sorted-map)
            declarations (sorted-map)
            occurrences []]
-      (if-let [{:keys [key expand declaration]} (first queue)]
+      (if-let [{:keys [key expand members declaration]} (first queue)]
         (let [previous (get processed key)
               remaining (subvec queue 1)]
           (if (and previous
@@ -969,7 +1002,7 @@
                   occurrences (add-distinct-occurrences seen occurrences resolved)
                   dependencies (mapcat dependency-items resolved)
                   members (if (instance? CtType declaration)
-                            (member-items declaration expand)
+                            (member-items declaration expand members)
                             nil)
                   obligations (when (instance? CtType declaration)
                                 (compilation-obligation-items declaration))

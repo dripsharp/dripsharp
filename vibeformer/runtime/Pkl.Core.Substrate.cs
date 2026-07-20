@@ -2793,9 +2793,162 @@ namespace Pkl.Core
     }
 }
 
+namespace Pkl.Core.Service
+{
+    // Product-owned .NET representation of the versioned executor SPI used by
+    // the upstream service implementation. It avoids exposing ServiceLoader or
+    // a JVM distribution contract while preserving the ordinary provider body.
+    public interface IExecutorSpi
+    {
+        string GetPklVersion();
+        string EvaluatePath(string modulePath, ExecutorSpiOptions options);
+    }
+
+    public sealed class ExecutorSpiException : Exception
+    {
+        public ExecutorSpiException(string? message, Exception? cause) : base(message, cause) { }
+    }
+
+    public class ExecutorSpiOptions
+    {
+        private readonly IList<string> allowedModules;
+        private readonly IList<string> allowedResources;
+        private readonly IDictionary<string, string> environmentVariables;
+        private readonly IDictionary<string, string> externalProperties;
+        private readonly IList<string> modulePath;
+        private readonly string? rootDir;
+        private readonly TimeSpan? timeout;
+        private readonly string? outputFormat;
+        private readonly string? moduleCacheDir;
+        private readonly string? projectDir;
+
+        public ExecutorSpiOptions(
+            IList<string> allowedModules,
+            IList<string> allowedResources,
+            IDictionary<string, string> environmentVariables,
+            IDictionary<string, string> externalProperties,
+            IList<string> modulePath,
+            string? rootDir,
+            TimeSpan? timeout,
+            string? outputFormat,
+            string? moduleCacheDir,
+            string? projectDir)
+        {
+            this.allowedModules = allowedModules;
+            this.allowedResources = allowedResources;
+            this.environmentVariables = environmentVariables;
+            this.externalProperties = externalProperties;
+            this.modulePath = modulePath;
+            this.rootDir = rootDir;
+            this.timeout = timeout;
+            this.outputFormat = outputFormat;
+            this.moduleCacheDir = moduleCacheDir;
+            this.projectDir = projectDir;
+        }
+
+        public IList<string> GetAllowedModules() => allowedModules;
+        public IList<string> GetAllowedResources() => allowedResources;
+        public IDictionary<string, string> GetEnvironmentVariables() => environmentVariables;
+        public IDictionary<string, string> GetExternalProperties() => externalProperties;
+        public IList<string> GetModulePath() => modulePath;
+        public string? GetRootDir() => rootDir;
+        public TimeSpan? GetTimeout() => timeout;
+        public string? GetOutputFormat() => outputFormat;
+        public string? GetModuleCacheDir() => moduleCacheDir;
+        public string? GetProjectDir() => projectDir;
+    }
+
+    public class ExecutorSpiOptions2 : ExecutorSpiOptions
+    {
+        private readonly IList<string> certificateFiles;
+        private readonly IList<sbyte[]> certificateBytes;
+        private readonly int testPort;
+
+        public ExecutorSpiOptions2(
+            IList<string> allowedModules,
+            IList<string> allowedResources,
+            IDictionary<string, string> environmentVariables,
+            IDictionary<string, string> externalProperties,
+            IList<string> modulePath,
+            string? rootDir,
+            TimeSpan? timeout,
+            string? outputFormat,
+            string? moduleCacheDir,
+            string? projectDir,
+            IList<string> certificateFiles,
+            IList<sbyte[]> certificateBytes,
+            int testPort)
+            : base(allowedModules, allowedResources, environmentVariables, externalProperties,
+                   modulePath, rootDir, timeout, outputFormat, moduleCacheDir, projectDir)
+        {
+            this.certificateFiles = certificateFiles;
+            this.certificateBytes = certificateBytes;
+            this.testPort = testPort;
+        }
+
+        public IList<string> GetCertificateFiles() => certificateFiles;
+        public IList<sbyte[]> GetCertificateBytes() => certificateBytes;
+        public int GetTestPort() => testPort;
+    }
+
+    public class ExecutorSpiOptions3 : ExecutorSpiOptions2
+    {
+        private readonly IDictionary<Uri, Uri> httpRewrites;
+
+        public ExecutorSpiOptions3(
+            IList<string> allowedModules,
+            IList<string> allowedResources,
+            IDictionary<string, string> environmentVariables,
+            IDictionary<string, string> externalProperties,
+            IList<string> modulePath,
+            string? rootDir,
+            TimeSpan? timeout,
+            string? outputFormat,
+            string? moduleCacheDir,
+            string? projectDir,
+            IList<string> certificateFiles,
+            IList<sbyte[]> certificateBytes,
+            int testPort,
+            IDictionary<Uri, Uri> httpRewrites)
+            : base(allowedModules, allowedResources, environmentVariables, externalProperties,
+                   modulePath, rootDir, timeout, outputFormat, moduleCacheDir, projectDir,
+                   certificateFiles, certificateBytes, testPort) => this.httpRewrites = httpRewrites;
+
+        public IDictionary<Uri, Uri> GetHttpRewrites() => httpRewrites;
+    }
+
+    public class ExecutorSpiOptions4 : ExecutorSpiOptions3
+    {
+        private readonly IDictionary<string, IDictionary<string, IList<string>>> httpHeaders;
+
+        public ExecutorSpiOptions4(
+            IList<string> allowedModules,
+            IList<string> allowedResources,
+            IDictionary<string, string> environmentVariables,
+            IDictionary<string, string> externalProperties,
+            IList<string> modulePath,
+            string? rootDir,
+            TimeSpan? timeout,
+            string? outputFormat,
+            string? moduleCacheDir,
+            string? projectDir,
+            IList<string> certificateFiles,
+            IList<sbyte[]> certificateBytes,
+            int testPort,
+            IDictionary<Uri, Uri> httpRewrites,
+            IDictionary<string, IDictionary<string, IList<string>>> httpHeaders)
+            : base(allowedModules, allowedResources, environmentVariables, externalProperties,
+                   modulePath, rootDir, timeout, outputFormat, moduleCacheDir, projectDir,
+                   certificateFiles, certificateBytes, testPort, httpRewrites) =>
+            this.httpHeaders = httpHeaders;
+
+        public IDictionary<string, IDictionary<string, IList<string>>> GetHttpHeaders() => httpHeaders;
+    }
+}
+
 namespace Pkl.Core.Messaging
 {
-    internal partial interface MessageTransport
+    public partial interface MessageTransport
     {
         // Destination-only lifecycle hook. The upstream transport drops its
         // response-handler map on EOF/close; .NET external readers instead use

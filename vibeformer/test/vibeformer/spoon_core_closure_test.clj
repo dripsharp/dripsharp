@@ -9,112 +9,6 @@
            [java.security MessageDigest]
            [spoon.reflect.declaration CtElement CtType]))
 
-(def ^:private expected-seeds
-  [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
-    :expand :body}
-   {:key "initializer:org.pkl.core.runtime.BaseModule#static@26:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.AnalyzeModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.BenchmarkModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.CommandModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.JsonnetModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.PklBinaryModule#static@23:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.ReleaseModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.XmlModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.RefModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.MathModule#static@23:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.MirrorFactories#static@109:10" :expand :body}
-   {:key "initializer:org.pkl.core.stdlib.base.RegexMatchFactory#static@36:10" :expand :body}
-   {:key "initializer:org.pkl.core.util.xml.Xml10Validator#static@28:10" :expand :body}
-   {:key "initializer:org.pkl.core.util.xml.Xml11Validator#static@28:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.PlatformModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.ProjectModule#static@23:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.ReflectModule#static@24:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.SemVerModule#static@25:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.SettingsModule#static@23:10" :expand :body}
-   {:key "initializer:org.pkl.core.runtime.TestModule#static@23:10" :expand :body}
-   {:key "initializer:org.pkl.core.util.json.JsonEscaper#static@38:10" :expand :body}
-   {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpression(org.pkl.core.ModuleSource,java.lang.String)"
-    :expand :body}
-   {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpressionPklBinary(org.pkl.core.ModuleSource,java.lang.String)"
-    :expand :body}
-   {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValue(org.pkl.core.ModuleSource)"
-    :expand :body}
-   {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValueAs(org.pkl.core.ModuleSource,org.pkl.core.PClassInfo)"
-    :expand :body}
-   {:key "initializer:org.pkl.core.Release#static@52:10" :expand :body}
-   {:key "initializer:org.pkl.core.module.ModuleKeyFactories$FromServiceProviders#static@255:12"
-    :expand :body}
-   {:key "initializer:org.pkl.core.resource.ResourceReaders$FromServiceProviders#static@651:12"
-    :expand :body}
-   {:key "executable:org.pkl.core.runtime.VmValue#export()" :expand :body}
-   {:key "executable:org.pkl.core.runtime.VmValue#export(java.lang.Object)" :expand :body}
-   {:key "executable:org.pkl.core.runtime.VmValue#exportNullable(java.lang.Object)" :expand :body}
-   {:key "executable:org.pkl.core.runtime.VmTyped#export()" :expand :body}
-   {:key "executable:org.pkl.core.runtime.VmNull#export()" :expand :body}
-   {:key "executable:org.pkl.core.runtime.VmDuration#export()" :expand :body}
-   {:key "executable:org.pkl.core.runtime.VmDataSize#export()" :expand :body}
-   {:key "executable:org.pkl.core.runtime.VmPair#export()" :expand :body}
-   {:key "type:org.pkl.core.Value" :expand :public-api}
-   {:key "type:org.pkl.core.ValueVisitor" :expand :public-api}
-   {:key "type:org.pkl.core.ValueConverter" :expand :public-api}
-   {:key "type:org.pkl.core.PModule" :expand :public-api}
-   {:key "type:org.pkl.core.PObject" :expand :public-api}
-   {:key "type:org.pkl.core.PNull" :expand :public-api}
-   {:key "type:org.pkl.core.Duration" :expand :public-api}
-   {:key "type:org.pkl.core.DataSize" :expand :public-api}
-   {:key "type:org.pkl.core.Pair" :expand :public-api}
-   {:key "type:org.pkl.core.EvaluatorBuilder" :expand :public-api}
-   {:key "type:org.pkl.core.http.HttpClient" :expand :public-api}
-   {:key "type:org.pkl.core.ModuleSource" :expand :public-api}
-   {:key "type:org.pkl.core.SecurityManager" :expand :public-api}
-   {:key "type:org.pkl.core.SecurityManagerBuilder" :expand :public-api}
-   {:key "type:org.pkl.core.SecurityManagers" :expand :public-api}
-   {:key "type:org.pkl.core.Analyzer" :expand :public-api}
-   {:key "type:org.pkl.core.Closeables" :expand :public-api}
-   {:key "type:org.pkl.core.OutputFormat" :expand :public-api}
-   {:key "type:org.pkl.core.PklInfo" :expand :public-api}
-   {:key "type:org.pkl.core.RendererException" :expand :public-api}
-   {:key "type:org.pkl.core.ValueRenderers" :expand :shell}
-   {:key "executable:org.pkl.core.ValueRenderers#pcf(java.io.Writer,java.lang.String,boolean,boolean)"
-    :expand :body}
-   {:key "executable:org.pkl.core.ValueRenderers#json(java.io.Writer,java.lang.String,boolean)"
-    :expand :body}
-   {:key "executable:org.pkl.core.ValueRenderers#plist(java.io.Writer,java.lang.String)"
-    :expand :body}
-   {:key "executable:org.pkl.core.ValueRenderers#properties(java.io.Writer,boolean,boolean)"
-    :expand :body}
-   {:key "type:org.pkl.core.ast.expression.primary.GetEnclosingOwnerNode" :expand :public-api}
-   {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode" :expand :public-api}
-   {:key "executable:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode#<init>(com.oracle.truffle.api.source.SourceSection,org.pkl.core.module.ModuleKey)"
-    :expand :body}
-   {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNodeGen" :expand :public-api}
-   {:key "executable:org.pkl.core.evaluatorSettings.Color#hasColor()" :expand :body}
-   {:key "type:org.pkl.core.evaluatorSettings.PklEvaluatorSettings" :expand :public-api}
-   {:key "type:org.pkl.core.packages.Checksums" :expand :public-api}
-   {:key "type:org.pkl.core.packages.Dependency" :expand :public-api}
-   {:key "type:org.pkl.core.packages.DependencyMetadata" :expand :public-api}
-   {:key "type:org.pkl.core.packages.PackageAssetUri" :expand :public-api}
-   {:key "type:org.pkl.core.packages.PackageUri" :expand :public-api}
-   {:key "type:org.pkl.core.project.Package" :expand :public-api}
-   {:key "type:org.pkl.core.project.Project" :expand :public-api}
-   {:key "type:org.pkl.core.project.ProjectDependenciesResolver" :expand :public-api}
-   {:key "type:org.pkl.core.project.ProjectPackager" :expand :public-api}
-   {:key "type:org.pkl.core.settings.PklSettings" :expand :public-api}
-   {:key "type:org.pkl.core.runtime.VmFileDetector" :expand :public-api}
-   {:key "type:org.pkl.core.stdlib.test.report.TestReporter" :expand :public-api}
-   {:key "type:org.pkl.core.stdlib.test.report.BaseReporter" :expand :public-api}
-   {:key "type:org.pkl.core.stdlib.test.report.JUnitReporter" :expand :public-api}
-   {:key "type:org.pkl.core.stdlib.test.report.MinimalReporter" :expand :public-api}
-   {:key "type:org.pkl.core.stdlib.test.report.SpecReporter" :expand :public-api}
-   {:key "type:org.pkl.core.util.CodeGeneratorUtils" :expand :public-api}
-   {:key "type:org.pkl.core.ModuleSchema" :expand :public-api}
-   {:key "type:org.pkl.core.PClass" :expand :public-api}
-   {:key "type:org.pkl.core.PType" :expand :public-api}
-   {:key "type:org.pkl.core.TypeAlias" :expand :public-api}
-   {:key "type:org.pkl.core.TypeParameter" :expand :public-api}
-   {:key "type:org.pkl.core.Member" :expand :public-api}
-   {:key "type:org.pkl.core.Modifier" :expand :public-api}])
-
 (defn- sha-256
   [values]
   (let [digest (MessageDigest/getInstance "SHA-256")
@@ -157,7 +51,7 @@
     (is (= status-before status-after))))
 
 (deftest evaluator-value-model-seeds-and-closure-are-exact
-  (let [{:keys [root configuration discovery first]} (fixture/models)
+  (let [{:keys [root configuration discovery surface first]} (fixture/models)
         source-paths (map #(relative-to-upstream root %)
                           (keys (:source-inputs first)))
         declaration-keys (keys (:declarations first))
@@ -165,45 +59,35 @@
         project-roots (java/project-roots first)
         discovery-sources (set (map #(str (.toFile ^Path %))
                                     (:java-sources discovery)))]
-    (testing "the bounded entry paths are exact live declaration identities"
-      (is (= (sort-by :key expected-seeds)
-             (mapv #(select-keys % [:key :expand]) (:seeds first))))
-      (is (= (set expected-seeds) (set (:seeds configuration))))
+    (testing "the contract-derived entry paths are exact live declaration identities"
+      (is (= 1254 (count (:required-rows surface))))
+      (is (= 1254 (count (:selection-evidence surface))))
+      (is (= 188 (count (:seeds configuration))))
+      (is (= (sort-by :key (:seeds configuration))
+             (mapv #(select-keys % [:key :expand :members]) (:seeds first))))
       (is (every? #(instance? CtElement (:declaration %)) (:seeds first))))
 
     (testing "the recursively resolved project declaration and source sets are exact"
-      (is (= {:ambiguous-symbols 0
-              :executable-references 32289
-              :seeds 92
-              :constructor-references 4869
-              :shadow-symbols 0
-              :public-api-declarations 7742
-              :type-references 479833
-              :fallback-symbols 0
-              :guessed-symbols 0
-              :source-inputs 657
-              :intrinsic-occurrences 100780
-              :dependency-occurrences 58488
-              :type-parameter-occurrences 5039
-              :annotations 10958
-              :jdk-occurrences 109492
-              :unresolved-symbols 0
-              :declarations 17234
-              :project-occurrences 272191
-              :symbols 16866
-              :field-references 18041}
-             (:totals first)))
-      (is (= "924747d1d79a5f25c267fbe181271368ed0a2c4c13627bfa2cc08c95c89d9756"
+      (is (= {:seeds 188 :declarations 17323 :source-inputs 658
+              :public-api-declarations 7802 :shadow-symbols 0
+              :unresolved-symbols 0 :ambiguous-symbols 0
+              :fallback-symbols 0 :guessed-symbols 0}
+             (select-keys (:totals first)
+                          [:seeds :declarations :source-inputs
+                           :public-api-declarations :shadow-symbols
+                           :unresolved-symbols :ambiguous-symbols
+                           :fallback-symbols :guessed-symbols])))
+      (is (= "e7af1400f8bcd2381f2783b68fb8cd3172fc86b4b8a04be04748c0dc414eb29e"
              (sha-256 declaration-keys)))
-      (is (= "d7e0f8f71a71a88392d290867b50459f4737307ed1c6de2882bc6241a6332cf0"
+      (is (= "4178c1f25c335c4e5cc84424727ae907bb702e64c0e69ff5968df53e07cd5b6c"
              (sha-256 source-paths)))
-      (is (= "a70ff93986a8e387aee8e5c83c2fd3716b7d259654e312b067c57a17e9e04652"
+      (is (= "68a9d4c69b5533f5c8f9b3cd28fe0fd98f3043fd7b2031961a9e6b4cfaf99e62"
              (sha-256 public-api-keys)))
       (is (= discovery-sources (set (:compilation-units (:frontend first)))))
       (is (every? discovery-sources (keys (:source-inputs first))))
       (is (every? #(instance? CtElement (:declaration %))
                   (vals (:declarations first))))
-      (is (= 657 (count project-roots)))
+      (is (= 658 (count project-roots)))
       (is (every? #(.isTopLevel ^CtType %) project-roots))
       (is (every? #(contains? (:declarations first)
                               (str "type:" (.getQualifiedName ^CtType %)))
@@ -234,7 +118,7 @@
                    "field:org.pkl.core.OutputFormat#JSON"])))))
 
 (deftest closure-occurrences-are-resolved-located-and-deterministic
-  (let [{:keys [root first second]} (fixture/models)
+  (let [{:keys [root surface second-surface first second]} (fixture/models)
         first-occurrences (stable-occurrences root first)
         second-occurrences (stable-occurrences root second)
         declarations (:declarations first)
@@ -244,8 +128,14 @@
     (is (= (keys source-inputs) (keys (:source-inputs second))))
     (is (= (keys (:public-api-declarations first))
            (keys (:public-api-declarations second))))
+    (is (= (mapv #(select-keys % [:declaration-key :generated-declaration-key
+                                  :representation])
+                 (:selection-evidence surface))
+           (mapv #(select-keys % [:declaration-key :generated-declaration-key
+                                  :representation])
+                 (:selection-evidence second-surface))))
     (is (= first-occurrences second-occurrences))
-    (is (= "c6d6c8ba26f73aaf2c394b8d2f7068a9b7922ba82dcca956bae71a6171f9b0bf"
+    (is (= "3934ae0529c6317df0e1fd8ea5a2208d223394713d8ab74d721e1fcd99d489e6"
            (sha-256 (map pr-str first-occurrences))))
     (is (every? #(and (string? (:key %))
                       (not (str/blank? (:key %)))

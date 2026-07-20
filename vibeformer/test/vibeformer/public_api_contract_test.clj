@@ -2,9 +2,9 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.paths :as paths]
+            [vibeformer.process :as process]
             [vibeformer.public-api-contract :as contract])
   (:import [clojure.lang ExceptionInfo]
-           [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -42,11 +42,11 @@
         kinds (set (map :kind rows))]
     (testing "all independently extracted declarations and package rows are classified"
       (is (= 6353 (:upstream-rows summary)))
-      (is (= 9441 (:package-rows summary)))
+      (is (= 9612 (:package-rows summary)))
       (is (= 14 (:behavior-rows summary)))
-      (is (= 10 (:failing-controls summary)))
+      (is (zero? (:failing-controls summary)))
       (is (= 6353 (reduce + (vals (:classifications summary)))))
-      (is (= 9441 (reduce + (vals (:package-classifications summary))))))
+      (is (= 9612 (reduce + (vals (:package-classifications summary))))))
 
     (testing "member metadata covers every required declaration dimension"
       (is (every? kinds ["type" "constructor" "property" "field" "method"
@@ -102,7 +102,7 @@
                    [:mismatch :kind]))))
 
   (testing "package reflection"
-    (is (= {:matched 9441}
+    (is (= {:matched 9612}
            (contract/compare-package-surface @package @package)))
     (is (= :package-public-surface-drift
            (get-in (contract/compare-package-surface @package (pop @package))
@@ -127,15 +127,49 @@
                           (conj @policies (assoc parser-policy :rule-id "duplicate-first"))
                           parser-row))))))
 
-(deftest known-current-gaps-are-explicit-failing-controls
-  (let [ids (set (map :control-id @controls))]
-    (is (ids "import-graph-parse-json"))
-    (is (ids "stack-empty"))
-    (is (ids "stack-create-default"))
-    (is (= #{"missing" "non-idiomatic"} (set (map :failure @controls))))
-    (is (every? #(not (str/blank? (:desired-adaptation %))) @controls))
-    (is (every? #(str/starts-with? (:upstream-provenance %) "research/pkl/")
-                @controls))))
+(deftest generation-surfaces-derive-every-product-member-from-the-contract
+  (let [parser (contract/generation-surface!
+                @workspace {:source-module "pkl-parser"})
+        core (contract/generation-surface!
+              @workspace {:source-module "pkl-core"})]
+    (is (= [958 1254] (mapv #(count (:required-rows %)) [parser core])))
+    (is (= [102 139] (mapv #(count (:seeds %)) [parser core])))
+    (is (every? #(and (= :public-api (:expand %)) (set? (:members %)))
+                (concat (:seeds parser) (:seeds core))))
+    (is (some #(and (= "org.pkl.core.ImportGraph" (:owner %))
+                    (= "parseFromJson" (:name %)))
+              (:required-rows core)))
+    (is (some #(and (= "org.pkl.core.StackFrameTransformers" (:owner %))
+                    (= "createDefault" (:name %)))
+              (:required-rows core)))
+    (is (not-any? #(and (= "org.pkl.core.ValueRenderers" (:owner %))
+                        (= "yaml" (:name %)))
+                  (:required-rows core)))
+    (is (empty? @controls))))
+
+(deftest generated-to-compiled-comparator-rejects-absent-collapsed-and-unmapped-members
+  (let [destination {:assembly "Pkl.Core" :owner "Pkl.Core.Example"
+                     :kind "method" :name "Parse" :parameter-count "1"}
+        evidence (fn [key signature]
+                   {:declaration-key key
+                    :row {:signature signature}
+                    :generated {:destination destination}})
+        metadata {:schema-version 2
+                  :rows [(evidence "executable:Example#parse(string)" "Parse(String)")
+                         (evidence "executable:Example#parse(uri)" "Parse(URI)")]}
+        actual-row {:assembly "Pkl.Core" :owner "Pkl.Core.Example"
+                    :kind "method" :name "Parse" :parameter-count "1"}]
+    (is (= {:matched 2 :distinct-shapes 1}
+           (contract/compare-generated-package-surface
+            metadata [actual-row (assoc actual-row :signature "second")])))
+    (is (= :compiled-public-api-contract-mismatch
+           (get-in (contract/compare-generated-package-surface metadata [actual-row])
+                   [:mismatch :kind])))
+    (is (= :source-unmapped-generated-public-metadata
+           (get-in (contract/compare-generated-package-surface
+                    (assoc-in metadata [:rows 0 :generated :destination :owner] "")
+                    [actual-row actual-row])
+                   [:mismatch :kind])))))
 
 (deftest behavior-comparator-detects-coverage-execution-and-observation-drift
   (let [results (mapv (fn [row]
@@ -174,9 +208,9 @@
 
 (deftest package-probe-reflects-generic-nullable-delegate-and-lifecycle-metadata
   (let [project (paths/resolve-path (:root @fixtures) "PackageProbeFixture.csproj")
-        _ (vibeformer.process/run! {:command ["dotnet" "build" project
-                                              "--configuration" "Release" "--nologo"]
-                                    :directory @workspace})
+        _ (process/run! {:command ["dotnet" "build" project
+                                   "--configuration" "Release" "--nologo"]
+                         :directory @workspace})
         assembly (paths/resolve-path (:root @fixtures) "bin" "Release" "net10.0"
                                      "PackageProbeFixture.dll")
         output (temp-file "package.tsv")]

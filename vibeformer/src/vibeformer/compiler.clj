@@ -4,7 +4,8 @@
             [clojure.string :as str]
             [vibeformer.harness :as harness]
             [vibeformer.paths :as paths]
-            [vibeformer.process :as process])
+            [vibeformer.process :as process]
+            [vibeformer.public-api-contract :as public-api])
   (:import [clojure.lang ExceptionInfo]
            [java.nio.file Path]))
 
@@ -65,8 +66,10 @@
   "Regenerates all disposable output and then builds exactly that fresh project.
   Compiler failures retain correlations to live-Spoon source mappings."
   ([] (verify-clean-build! {}))
-  ([{:keys [profile build-configuration generate-fn run-command!]
-     :or {generate-fn harness/generate! run-command! process/run!}}]
+  ([{:keys [profile workspace-root build-configuration generate-fn run-command!
+            verify-public-surface-fn]
+     :or {generate-fn harness/generate! run-command! process/run!
+          verify-public-surface-fn public-api/verify-generated-packages!}}]
    (let [build-configuration (or build-configuration "Release")
          generation (if profile
                       (generate-fn {:profile profile})
@@ -91,9 +94,13 @@
                            {:kind :compiler-diagnostics
                             :diagnostics (map-diagnostics project-root source-map diagnostics)
                             :output (:output result)})))
-         (println (str "Clean " package-id " compilation: 0 warnings, 0 errors"))
-         {:generation generation :build result :build-configuration build-configuration
-          :diagnostics []})
+         (let [public-surface
+               (verify-public-surface-fn
+                (or workspace-root (paths/workspace-root)) generation build-configuration)]
+           (println (str "Clean " package-id " compilation: 0 warnings, 0 errors"))
+           (println (str "Compiled public contract: " (pr-str public-surface)))
+           {:generation generation :build result :build-configuration build-configuration
+            :diagnostics [] :public-surface public-surface}))
        (catch ExceptionInfo error
          (let [data (ex-data error)]
            (if (= :command-failed (:kind data))

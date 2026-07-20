@@ -1817,6 +1817,7 @@
                      "com.oracle.truffle."
                      "org.graalvm.collections."
                      "org.graalvm.polyglot."
+                     "org.pkl.executor.spi.v1."
                      "org.organicdesign.fp."
                      "org.msgpack."
                      "org.snakeyaml.engine.v2."])
@@ -1905,7 +1906,8 @@
                          "java.util.HashMap"
                          (sequence-node [(raw "new ") type (raw "(") (first args) (raw ")")])
                          "java.util.LinkedHashMap"
-                         (sequence-node [(raw "new ") type (raw "(") (first args) (raw ")")])
+                         (sequence-node [(raw "new ") type (raw "(")
+                                         (sequence-node args ", ") (raw ")")])
                          "java.util.TreeMap"
                          (invoke
                           (csharp/generic-name
@@ -2773,6 +2775,11 @@
                          (:declaration occurrence))]
       ((:record-component-name services) (enclosing-type component) component)
       ((:pascal services) (.getSimpleName reference)))
+    (and (instance? CtField (:declaration occurrence))
+         (= "org.pkl.core.StackFrameTransformers"
+            (some-> ^CtField (:declaration occurrence)
+                    .getDeclaringType .getQualifiedName)))
+    ((:pascal services) (.getSimpleName reference))
     :else (identifier services (.getSimpleName reference))))
 
 (defn- registry-entry [id emit]

@@ -9,11 +9,14 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [vibeformer.paths :as paths]
-            [vibeformer.process :as process])
+            [vibeformer.process :as process]
+            [vibeformer.spoon :as spoon])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]))
+           [java.security MessageDigest]
+           [spoon.reflect.declaration CtConstructor CtElement CtEnumValue CtField
+            CtMethod CtRecordComponent CtType]))
 
 (def pinned-upstream-revision
   "f7cac257ade5775c1dfc255f4fda2eacc296e9d0")
@@ -345,6 +348,314 @@
                    :dotnet-name "-" :parameter-count (:parameter-count row)}))))
    upstream-rows))
 
+(declare implicit-record-constructor?)
+
+(defn generation-surface!
+  "Builds the deterministic generation selection for one translated source
+  module from the executable contract. Product types, rather than a maintained
+  source list, become :public-api closure seeds. Every required member owner
+  must itself have one product type row."
+  [workspace {:keys [source-module] :as specification}]
+  (when-not (and (= #{:source-module} (set (keys specification)))
+                 (contains? #{"pkl-parser" "pkl-core"} source-module))
+    (fail! "Invalid generation public API contract specification"
+           {:kind :invalid-generation-public-api-contract
+            :specification specification}))
+  (let [{:keys [upstream policy]} (contract-paths workspace)
+        upstream-rows (:rows (read-tsv upstream upstream-columns))
+        policies (read-policy policy)
+        classified (contract-rows upstream-rows policies)
+        module-rows (->> classified
+                         (filter #(= source-module (:source-module %)))
+                         vec)
+        required-rows (->> module-rows
+                           (filter #(= "product-api" (:classification %)))
+                           vec)
+        type-rows (->> required-rows
+                       (filter #(= "type" (:kind %)))
+                       (sort-by :owner)
+                       vec)
+        duplicate-types (->> type-rows (group-by :owner) vals
+                             (filter #(< 1 (count %)))
+                             (mapv #(mapv :upstream-provenance %)))
+        type-owners (set (map :owner type-rows))
+        missing-owner-types (->> required-rows
+                                 (remove #(type-owners (:owner %)))
+                                 (map :owner) distinct sort vec)]
+    (when-not (seq module-rows)
+      (fail! "The public API contract has no rows for a generation source module"
+             {:kind :missing-generation-source-module :source-module source-module}))
+    (when (seq duplicate-types)
+      (fail! "The public API contract has duplicate product type rows"
+             {:kind :duplicate-generation-product-types :rows duplicate-types}))
+    (when (seq missing-owner-types)
+      (fail! "A required product member owner has no required product type row"
+             {:kind :missing-generation-product-type
+              :source-module source-module :owners missing-owner-types}))
+    (let [member-selectors
+          (->> required-rows
+               (remove #(or (= "type" (:kind %))
+                            (implicit-record-constructor? %)))
+               (group-by :owner)
+               (reduce-kv
+                (fn [result owner rows]
+                  (assoc result owner
+                         (set (map (juxt :kind :name :parameter-count) rows))))
+                {}))]
+      {:source-module source-module
+       :classified-rows module-rows
+       :required-rows required-rows
+       :seeds (mapv (fn [row]
+                      {:key (str "type:" (:owner row))
+                       :expand :public-api
+                       :members (get member-selectors (:owner row) #{})})
+                    type-rows)})))
+
+(defn- parent-type
+  [^CtElement element]
+  (loop [current element]
+    (when (and current (.isParentInitialized current))
+      (let [parent (.getParent current)]
+        (if (instance? CtType parent)
+          parent
+          (recur parent))))))
+
+(defn- live-surface-shape
+  [^CtElement declaration]
+  (let [location (spoon/source-location declaration)
+        ^CtType owner (if (instance? CtType declaration)
+                        declaration
+                        (parent-type declaration))]
+    (when (and location owner)
+      (cond
+        (instance? CtType declaration)
+        {:file (:file location) :line (:line location)
+         :owner (.getQualifiedName owner) :kind "type"
+         :name (.getSimpleName ^CtType declaration) :parameter-count "0"}
+
+        (instance? CtRecordComponent declaration)
+        {:file (:file location) :line (:line location)
+         :owner (.getQualifiedName owner) :kind "property"
+         :name (.getSimpleName ^CtRecordComponent declaration) :parameter-count "0"}
+
+        (instance? CtConstructor declaration)
+        {:file (:file location) :line (:line location)
+         :owner (.getQualifiedName owner) :kind "constructor" :name ".ctor"
+         :parameter-count (str (count (.getParameters ^CtConstructor declaration)))}
+
+        (instance? CtMethod declaration)
+        {:file (:file location) :line (:line location)
+         :owner (.getQualifiedName owner) :kind "method"
+         :name (.getSimpleName ^CtMethod declaration)
+         :parameter-count (str (count (.getParameters ^CtMethod declaration)))}
+
+        (instance? CtEnumValue declaration)
+        {:file (:file location) :line (:line location)
+         :owner (.getQualifiedName owner) :kind "enum-value"
+         :name (.getSimpleName ^CtEnumValue declaration) :parameter-count "0"}
+
+        (instance? CtField declaration)
+        {:file (:file location) :line (:line location)
+         :owner (.getQualifiedName owner) :kind "field"
+         :name (.getSimpleName ^CtField declaration) :parameter-count "0"}))))
+
+(defn- broad-shape-key
+  [shape]
+  (mapv shape [:file :owner :kind :name :parameter-count]))
+
+(defn- contract-row-shape
+  [workspace row]
+  (let [[_ file line] (re-matches #"^(.*):(\d+)$" (:upstream-provenance row))]
+    (when-not (and file line)
+      (fail! "A generation contract row has no exact source line"
+             {:kind :missing-generation-contract-source-line
+              :owner (:owner row) :member (:name row)
+              :provenance (:upstream-provenance row)}))
+    {:file (str (paths/absolute (paths/resolve-path workspace file)))
+     :line (parse-long line)
+     :owner (:owner row)
+     :kind (:kind row)
+     :name (:name row)
+     :parameter-count (:parameter-count row)}))
+
+(defn- implicit-record-constructor?
+  [row]
+  (and (= "constructor" (:kind row))
+       (= "implicit-record-canonical" (:javadoc row))))
+
+(defn- selected-extra-classification
+  [^CtElement declaration]
+  (let [file (:file (spoon/source-location declaration))]
+    (cond
+      (and file (str/includes? (str/replace file "\\" "/") "/generated/"))
+      :generated-implementation-declaration
+
+      (.isImplicit declaration)
+      :compiler-implicit-implementation-declaration)))
+
+(defn validate-selected-surface!
+  "Joins every required independently extracted row to exactly one selected
+  live Spoon declaration. It also rejects any selected public declaration that
+  has no policy-classified contract row. Implicit record canonical constructors
+  are represented by their selected record declaration and components."
+  [workspace surface resolved-model]
+  (when-not (and (:declarations resolved-model)
+                 (:public-api-declarations resolved-model))
+    (fail! "Contract-backed generation requires a selected Spoon closure"
+           {:kind :public-api-selection-requires-closure
+            :source-module (:source-module surface)}))
+  (let [selected (:public-api-declarations resolved-model)
+        selected-by-shape
+        (->> selected
+             vals
+             (map (fn [{:keys [declaration] :as entry}]
+                    [(some-> declaration live-surface-shape broad-shape-key) entry]))
+             (remove (comp nil? first))
+             (group-by first))
+        classified-shapes
+        (->> (:classified-rows surface)
+             (map #(broad-shape-key (contract-row-shape workspace %)))
+             set)
+        extras (->> selected-by-shape
+                    (remove #(classified-shapes (key %)))
+                    (mapcat (fn [[shape entries]]
+                              (map (fn [[_ {:keys [declaration]}]]
+                                     {:shape shape
+                                      :classification
+                                      (selected-extra-classification declaration)
+                                      :declaration-key (spoon/declaration-key declaration)
+                                      :location (spoon/source-location declaration)})
+                                   entries)))
+                    vec)
+        unclassified-extras (->> extras (remove :classification) (take 50) vec)
+        evidence
+        (mapv
+         (fn [row]
+           (let [implicit? (implicit-record-constructor? row)
+                 row-shape (contract-row-shape workspace row)
+                 constructor-matches (when implicit?
+                                       (mapv second
+                                             (get selected-by-shape
+                                                  (broad-shape-key row-shape))))
+                 lookup-shape (if (and implicit? (empty? constructor-matches))
+                                (assoc row-shape :kind "type"
+                                       :name (last (str/split (:owner row) #"[$.]"))
+                                       :parameter-count "0")
+                                row-shape)
+                 broad-matches (or (seq constructor-matches)
+                                   (mapv second
+                                         (get selected-by-shape
+                                              (broad-shape-key lookup-shape))))
+                 distances (when (< 1 (count broad-matches))
+                             (group-by #(Math/abs
+                                         (long (- (:line row-shape)
+                                                  (get-in % [:location :line]))))
+                                       broad-matches))
+                 matches (if distances
+                           (get distances (reduce min (keys distances)))
+                           broad-matches)]
+             (when-not (= 1 (count matches))
+               (fail! "A required contract row does not map to exactly one selected live declaration"
+                      {:kind (if (seq matches)
+                               :ambiguous-selected-public-api-member
+                               :absent-selected-public-api-member)
+                       :source-module (:source-module surface)
+                       :owner (:owner row) :member (:name row)
+                       :declaration-kind (:kind row)
+                       :signature (:signature row)
+                       :provenance (:upstream-provenance row)
+                       :match-count (count matches)}))
+             (let [{:keys [declaration expansion]} (first matches)
+                   expected-expansion (if (instance? CtType declaration)
+                                        :public-api :body)]
+               (when (< ({:shell 0 :body 1 :public-api 2} expansion -1)
+                        ({:shell 0 :body 1 :public-api 2} expected-expansion))
+                 (fail! "A required public API declaration was selected as a shell"
+                        {:kind :shell-only-selected-public-api-member
+                         :owner (:owner row) :member (:name row)
+                         :signature (:signature row) :expansion expansion
+                         :expected-expansion expected-expansion}))
+               {:row (select-keys row (map keyword upstream-columns))
+                :classification (:classification row)
+                :declaration-key (spoon/declaration-key declaration)
+                :generated-declaration-key (if implicit?
+                                             (str "type:" (:owner row))
+                                             (spoon/declaration-key declaration))
+                :expansion expansion
+                :representation (if implicit? :implicit-record-canonical :live-declaration)})))
+         (:required-rows surface))]
+    (when (seq unclassified-extras)
+      (fail! "Selected public Spoon declarations have no contract classification"
+             {:kind :extra-unclassified-selected-public-api
+              :source-module (:source-module surface)
+              :declarations unclassified-extras}))
+    (assoc surface :selection-evidence evidence :classified-extras extras)))
+
+(defn validate-generated-surface!
+  "Compares selected contract identities with the declaration metadata emitted
+  from those exact Spoon objects and rejects coverage counters that make the
+  comparison non-authoritative."
+  [surface emission]
+  (let [declarations (:declarations emission)
+        by-java-key (group-by :java-key (filter :java-key declarations))
+        ordinary (remove #(= :implicit-record-canonical (:representation %))
+                         (:selection-evidence surface))
+        collapsed (->> ordinary (group-by :declaration-key)
+                       (filter (fn [[_ rows]] (< 1 (count rows))))
+                       (mapv (fn [[key rows]]
+                               {:declaration-key key
+                                :signatures (mapv #(get-in % [:row :signature]) rows)})))
+        generated
+        (mapv (fn [evidence]
+                (let [generated-key (or (:generated-declaration-key evidence)
+                                        (:declaration-key evidence))
+                      matches (get by-java-key generated-key)]
+                  (when-not (= 1 (count matches))
+                    (fail! "A selected contract declaration does not map to exactly one generated declaration"
+                           {:kind (if (seq matches)
+                                    :ambiguous-generated-public-api-member
+                                    :absent-generated-public-api-member)
+                            :declaration-key generated-key
+                            :signature (get-in evidence [:row :signature])
+                            :match-count (count matches)}))
+                  (let [declaration (first matches)
+                        generated (select-keys declaration
+                                               [:id :kind :owner :name :signature
+                                                :destination :source])]
+                    (if (= :implicit-record-canonical (:representation evidence))
+                      (assoc evidence :generated
+                             (-> generated
+                                 (assoc :representation :record-primary-constructor)
+                                 (assoc :destination
+                                        (assoc (:destination declaration)
+                                               :kind "constructor"
+                                               :name ".ctor"
+                                               :parameter-count
+                                               (get-in evidence [:row :parameter-count])))))
+                      (assoc evidence :generated generated)))))
+              (:selection-evidence surface))
+        summary (:summary emission)
+        coverage (:executable-coverage summary)
+        counters {:missing-source-mappings (:missing-source-mappings summary)
+                  :hard-failures (:hard-failures summary)
+                  :collisions (:collisions summary)
+                  :skipped-source-units (:skipped-source-units summary)
+                  :unsupported-elements (:unsupported-elements coverage)
+                  :missing-mappings (:missing-mappings coverage)
+                  :blocked (:blocked coverage)
+                  :fallback (:fallback coverage)}
+        nonzero (into (sorted-map) (filter (comp pos? val)) counters)]
+    (when (seq collapsed)
+      (fail! "Distinct contract signatures collapsed onto one generated declaration"
+             {:kind :signature-collapsed-generated-public-api :members collapsed}))
+    (when (seq nonzero)
+      (fail! "Generated public metadata is not authoritative while generation counters are nonzero"
+             {:kind :nonzero-generated-public-api-counters :counters nonzero}))
+    {:schema-version 2
+     :source-module (:source-module surface)
+     :required-rows (count generated)
+     :rows generated}))
+
 (defn- normalized-owner
   [owner]
   (str/replace owner #"`[0-9]+" ""))
@@ -427,6 +738,106 @@
                       :missing-count (count missing)
                       :unexpected-count (count unexpected)}})))))
 
+(defn- generated-package-key
+  [{:keys [assembly owner kind name parameter-count]}]
+  [assembly (normalized-owner owner) kind name parameter-count])
+
+(defn compare-generated-package-surface
+  "Checks that every contract-backed generated declaration is present in the
+  reflected package metadata. Multiplicity is significant so same-arity
+  overload collapse cannot pass as one member. Unexpected public metadata is
+  handled by the exact PackageSurface.tsv comparison, where every row has an
+  explicit product/native/implementation classification."
+  [public-metadata actual-rows]
+  (let [metadata (if (sequential? public-metadata)
+                   public-metadata [public-metadata])
+        rows (mapcat :rows metadata)
+        missing-destinations
+        (->> rows
+             (keep (fn [row]
+                     (let [destination (get-in row [:generated :destination])]
+                       (when (some #(str/blank? (str (destination %)))
+                                   [:assembly :owner :kind :name :parameter-count])
+                         {:declaration-key (:declaration-key row)
+                          :signature (get-in row [:row :signature])
+                          :destination destination}))))
+             (take 20) vec)
+        expected (frequencies (map #(generated-package-key
+                                     (get-in % [:generated :destination]))
+                                   rows))
+        actual (frequencies
+                (map (fn [row]
+                       [(:assembly row) (normalized-owner (:owner row))
+                        (:kind row) (:name row) (:parameter-count row)])
+                     actual-rows))
+        shortages
+        (->> expected
+             (keep (fn [[key required]]
+                     (let [present (get actual key 0)]
+                       (when (< present required)
+                         {:key key :required required :actual present
+                          :failure (if (zero? present)
+                                     :absent-compiled-public-api-member
+                                     :signature-collapsed-compiled-public-api-member)}))))
+             (sort-by :key) vec)]
+    (cond
+      (seq missing-destinations)
+      {:mismatch {:kind :source-unmapped-generated-public-metadata
+                  :rows missing-destinations}}
+
+      (seq shortages)
+      {:mismatch {:kind :compiled-public-api-contract-mismatch
+                  :members (vec (take 30 shortages))
+                  :member-count (count shortages)}}
+
+      :else
+      {:matched (reduce + (vals expected))
+       :distinct-shapes (count expected)})))
+
+(defn verify-generated-packages!
+  "Reflects the assemblies produced by a clean generation/build, rejects exact
+  package drift, and joins every contract row through generated declaration
+  metadata to a live public CLR member."
+  [workspace generation build-configuration]
+  (let [workspace (paths/absolute workspace)
+        main (assoc (:emission generation) :destination (:destination generation))
+        emissions (vec (concat (:dependency-emissions generation) [main]))
+        packages
+        (mapv (fn [{:keys [project-root destination public-metadata] :as emission}]
+                (let [assembly (get-in destination [:project :assembly-name])
+                      framework (get-in destination [:project :target-framework])]
+                  (when-not (and assembly framework public-metadata)
+                    (fail! "Clean package verification requires generated public metadata"
+                           {:kind :missing-clean-build-public-metadata
+                            :profile (:profile emission)
+                            :assembly assembly :framework framework}))
+                  {:assembly assembly
+                   :metadata public-metadata
+                   :file (paths/resolve-path project-root "bin" build-configuration
+                                             framework (str assembly ".dll"))}))
+              emissions)
+        actual-file (.resolve (temp-directory "vibeformer-generated-package-api")
+                              "actual.tsv")
+        _ (reflect-packages! workspace (mapv :file packages) actual-file)
+        actual-rows (:rows (read-tsv actual-file package-columns))
+        assemblies (set (map :assembly packages))
+        expected-rows (->> (:rows (read-tsv (:package (contract-paths workspace))
+                                            package-columns))
+                           (filter #(assemblies (:assembly %))) vec)
+        snapshot (compare-package-surface expected-rows actual-rows)
+        generated (compare-generated-package-surface (mapv :metadata packages)
+                                                     actual-rows)]
+    (when-let [mismatch (:mismatch snapshot)]
+      (fail! "Reflected clean-build package public metadata drifted"
+             (assoc mismatch :kind :package-public-api-surface-drift)))
+    (when-let [mismatch (:mismatch generated)]
+      (fail! "A generated contract member is absent from compiled public metadata"
+             mismatch))
+    {:assemblies (sort assemblies)
+     :package-rows (:matched snapshot)
+     :contract-members (:matched generated)
+     :contract-shapes (:distinct-shapes generated)}))
+
 (defn compare-upstream-surface
   "Exact source-declaration comparator used to reject missing, duplicate, and
   perturbed upstream rows before policy is applied."
@@ -500,10 +911,6 @@
     (when-not (= (count ids) (count (distinct ids)))
       (fail! "Failing control fixture has duplicate rows"
              {:kind :duplicate-public-api-failing-control}))
-    (when-not (and (some #{"import-graph-parse-json"} ids)
-                   (some #(str/starts-with? % "stack-") ids))
-      (fail! "Known ImportGraph and StackFrameTransformers controls are not pinned"
-             {:kind :missing-known-public-api-controls}))
     (doseq [row controls]
       (let [provenance (paths/resolve-path workspace
                                            (evidence-path (:upstream-provenance row)))
@@ -516,6 +923,10 @@
         (when (and (= "missing" (:failure row)) (package-keys expected))
           (fail! "A control marked missing is already present in the package snapshot"
                  {:kind :stale-missing-public-api-control
+                  :control-id (:control-id row)}))
+        (when (and (not= "missing" (:failure row)) (package-keys expected))
+          (fail! "A non-idiomatic control's desired adaptation is already present"
+                 {:kind :stale-resolved-public-api-control
                   :control-id (:control-id row)}))
         (when-not (= "-" (:current-owner row))
           (let [current [(normalized-owner (:current-owner row)) (:current-kind row)

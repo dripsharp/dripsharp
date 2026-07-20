@@ -20,6 +20,7 @@
           :source-map-file "source-map.edn"
           :diagnostics-file "diagnostics.edn"
           :manifest-file "generation-manifest.edn"
+          :public-metadata-file "public-metadata.edn"
           :annotation-decisions-file "annotation-decisions.edn"}
  :namespaces {"org.pkl.parser" "Pkl.Parser"
               "org.pkl.parser.syntax" "Pkl.Parser.Syntax"

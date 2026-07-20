@@ -55,6 +55,7 @@
         source-map (paths/resolve-path root "source-map.edn")
         generated-options (atom nil)
         command (atom nil)
+        verified (atom nil)
         _ (Files/writeString project-file "<Project />" (make-array OpenOption 0))
         _ (Files/writeString source-map "{:schema-version 1 :mappings []}\n"
                              (make-array OpenOption 0))
@@ -70,8 +71,14 @@
           :run-command!
           (fn [request]
             (reset! command (:command request))
-            {:exit 0 :output ""})})]
+            {:exit 0 :output ""})
+          :verify-public-surface-fn
+          (fn [workspace generation configuration]
+            (reset! verified [workspace generation configuration])
+            {:contract-members 2})})]
     (is (= {:profile "pkl-core-value-model"} @generated-options))
     (is (= ["--configuration" "Release"]
            (->> @command (drop-while #(not= "--configuration" %)) (take 2) vec)))
+    (is (= "Release" (nth @verified 2)))
+    (is (= {:contract-members 2} (:public-surface result)))
     (is (= "Release" (:build-configuration result)))))

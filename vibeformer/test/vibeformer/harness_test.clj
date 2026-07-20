@@ -62,6 +62,7 @@
                    {:schema-version 1
                     :fixture true
                     :config-file config-file})
+                 :read-public-surface-fn (fn [_ _] nil)
                  :build-resolved-model-fn
                  (fn [_ _]
                    (spoon/map->ResolvedJavaModel
@@ -109,6 +110,7 @@
                  :read-destination-fn (fn [_ file]
                                         (swap! captured assoc :destination-file file)
                                         {:schema-version 1 :fixture true})
+                 :read-public-surface-fn (fn [_ _] nil)
                  :build-resolved-closure-fn
                  (fn [_ _ seeds]
                    (swap! captured assoc :seeds seeds)
@@ -127,13 +129,28 @@
     (is (= ":pkl-core" (get-in @captured [:discovery-options :gradle-project])))
     (is (= "vibeformer/config/pkl-core-value-model-destination.edn"
            (:destination-file @captured)))
-    (is (= 92 (count (:seeds @captured))))
+    (is (= 49 (count (:seeds @captured))))
     (is (instance? vibeformer.spoon.ResolvedJavaClosure (:resolved-model @captured)))
     (is (= "pkl-core-value-model" (get-in result [:generation-profile :profile])))
     (let [written (edn/read-string
                    (slurp (str (paths/resolve-path root "vibeformer" "target"
-                                                  "generation-config.edn"))))]
+                                                   "generation-config.edn"))))]
       (is (= (:generation-profile result) (:generation-profile written))))))
+
+(deftest contract-and-behavior-seeds-merge-at-the-strongest-expansion
+  (let [merged (harness/merge-seeds
+                [{:key "type:Example" :expand :shell}
+                 {:key "executable:Example#run()" :expand :body}]
+                [{:key "type:Example" :expand :public-api
+                  :members #{["method" "run" "0"]}}
+                 {:key "type:Other" :expand :public-api
+                  :members #{["field" "value" "0"]}}])]
+    (is (= [{:key "executable:Example#run()" :expand :body}
+            {:key "type:Example" :expand :public-api
+             :members #{["method" "run" "0"]}}
+            {:key "type:Other" :expand :public-api
+             :members #{["field" "value" "0"]}}]
+           merged))))
 
 (deftest unknown-profile-fails-before-cleaning-output
   (let [root (temp-directory)

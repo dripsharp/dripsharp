@@ -1,9 +1,11 @@
 (ns vibeformer.complete-core-closure-fixture
   (:require [clojure.edn :as edn]
             [vibeformer.concurrency :as concurrency]
+            [vibeformer.harness :as harness]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
             [vibeformer.project :as project]
+            [vibeformer.public-api-contract :as public-api]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -29,18 +31,25 @@
                    {:workspace-root root
                     :manifest manifest
                     :gradle-project (:gradle-project configuration)})
+        surface (public-api/generation-surface!
+                 root (:public-api-contract configuration))
+        seeds (harness/merge-seeds (:seeds configuration) (:seeds surface))
         frontend (spoon/build-frontend-model! root discovery)
         first-closure (concurrency/call-with-executor
                        {:worker-count 1}
                        #(spoon/select-resolved-closure!
-                         frontend (:seeds configuration)))
+                         frontend seeds))
         second-closure (concurrency/call-with-executor
                         {:worker-count 4}
                         #(spoon/select-resolved-closure!
-                          frontend (:seeds configuration)))
+                          frontend seeds))
+        first-surface (public-api/validate-selected-surface! root surface first-closure)
+        second-surface (public-api/validate-selected-surface! root surface second-closure)
         status-after (research-status root)]
     {:root root
-     :configuration configuration
+     :configuration (assoc configuration :seeds seeds)
+     :surface first-surface
+     :second-surface second-surface
      :submodule submodule
      :discovery discovery
      :frontend frontend

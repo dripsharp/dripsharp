@@ -26,7 +26,12 @@ internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
 internal delegate long JavaToLongFunction<in TValue>(TValue value);
 internal delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight right);
-internal enum JavaTimeUnit { MILLISECONDS }
+#if VIBEFORMER_PKL_CORE
+public
+#else
+internal
+#endif
+enum JavaTimeUnit { NANOSECONDS, MICROSECONDS, MILLISECONDS, SECONDS, MINUTES, HOURS, DAYS }
 internal enum JavaProcessRedirect { INHERIT }
 
 // C# forbids goto from a finally clause, while Java permits a labeled break or
@@ -2379,6 +2384,7 @@ internal static class JavaCompat
     }
     internal static V ComputeIfAbsent<K, V>(IDictionary<K, V> map, K key, Func<K, V> factory) where K : notnull
     {
+        if (map is JavaLinkedHashMap<K, V> linked) return linked.ComputeIfAbsent(key, factory);
         if (map.TryGetValue(key, out var value)) return value;
         value = factory(key);
         map[key] = value;
@@ -2403,6 +2409,7 @@ internal static class JavaCompat
 
     internal static V MapPut<K, V>(IDictionary<K, V> map, K key, V value) where K : notnull
     {
+        if (map is JavaLinkedHashMap<K, V> linked) return linked.Put(key, value);
         var previous = map.TryGetValue(key, out var oldValue) ? oldValue : default!;
         map[key] = value;
         return previous;
@@ -4203,6 +4210,7 @@ internal static class JavaCompat
     }
     internal static void CreateDirectories(string path) => Directory.CreateDirectory(path);
     internal static FileStream NewInputStream(string path, params object?[] _) => OpenFileRead(path);
+    internal static string ReadString(string path) => File.ReadAllText(path, Encoding.UTF8);
     internal static string ReadString(string path, Encoding encoding)
     {
         if (Directory.Exists(path)) throw new IOException("Is a directory");
@@ -4687,6 +4695,54 @@ internal sealed class JavaDeque<T> : ICollection<T>
     public bool Remove(T item) => values.Remove(item);
     public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+#if VIBEFORMER_PKL_CORE
+public
+#else
+internal
+#endif
+class JavaLinkedHashMap<K, V> : Dictionary<K, V> where K : notnull
+{
+    private readonly bool accessOrder;
+
+    public JavaLinkedHashMap() { }
+    public JavaLinkedHashMap(int initialCapacity) : base(initialCapacity) { }
+    public JavaLinkedHashMap(int initialCapacity, float loadFactor) : base(initialCapacity) { }
+    public JavaLinkedHashMap(int initialCapacity, float loadFactor, bool accessOrder)
+        : base(initialCapacity) => this.accessOrder = accessOrder;
+
+    protected internal virtual bool RemoveEldestEntry(JavaMapEntry<K, V> eldest) => false;
+    public int Size() => Count;
+
+    internal V ComputeIfAbsent(K key, Func<K, V> factory)
+    {
+        if (TryGetValue(key, out var value))
+        {
+            if (accessOrder)
+            {
+                Remove(key);
+                base[key] = value;
+            }
+            return value;
+        }
+        value = factory(key);
+        Put(key, value);
+        return value;
+    }
+
+    internal V Put(K key, V value)
+    {
+        var previous = TryGetValue(key, out var oldValue) ? oldValue : default!;
+        if (accessOrder && ContainsKey(key)) Remove(key);
+        base[key] = value;
+        if (Count > 0)
+        {
+            var eldestKey = Keys.First();
+            if (RemoveEldestEntry(new JavaMapEntry<K, V>(this, eldestKey))) Remove(eldestKey);
+        }
+        return previous;
+    }
 }
 
 #if VIBEFORMER_PKL_CORE

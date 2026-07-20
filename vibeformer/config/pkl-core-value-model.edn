@@ -4,6 +4,7 @@
  :gradle-project ":pkl-core"
  :destination-config "vibeformer/config/pkl-core-value-model-destination.edn"
  :dependency-profiles ["pkl-parser"]
+ :public-api-contract {:source-module "pkl-core"}
  :seeds
  [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
    :expand :body}
@@ -58,74 +59,19 @@
   {:key "executable:org.pkl.core.runtime.VmDuration#export()" :expand :body}
   {:key "executable:org.pkl.core.runtime.VmDataSize#export()" :expand :body}
   {:key "executable:org.pkl.core.runtime.VmPair#export()" :expand :body}
-  {:key "type:org.pkl.core.Value" :expand :public-api}
-  {:key "type:org.pkl.core.ValueVisitor" :expand :public-api}
-  {:key "type:org.pkl.core.ValueConverter" :expand :public-api}
-  {:key "type:org.pkl.core.PModule" :expand :public-api}
-  {:key "type:org.pkl.core.PObject" :expand :public-api}
-  {:key "type:org.pkl.core.PNull" :expand :public-api}
-  {:key "type:org.pkl.core.Duration" :expand :public-api}
-  {:key "type:org.pkl.core.DataSize" :expand :public-api}
-  {:key "type:org.pkl.core.Pair" :expand :public-api}
-  ;; Evaluator construction is a first-class package capability. Select the
-  ;; complete live public bodies instead of retaining only methods reached by
-  ;; EvaluatorImpl, so mutation/getter, source-factory, and policy contracts
-  ;; cannot silently disappear from the generated package.
-  {:key "type:org.pkl.core.EvaluatorBuilder" :expand :public-api}
-  {:key "type:org.pkl.core.ModuleSource" :expand :public-api}
-  {:key "type:org.pkl.core.SecurityManager" :expand :public-api}
-  {:key "type:org.pkl.core.SecurityManagerBuilder" :expand :public-api}
-  {:key "type:org.pkl.core.SecurityManagers" :expand :public-api}
-  ;; HTTP and package loading are normal independently consumable library
-  ;; capabilities. Keep their value/metadata APIs dependency-closed even when
-  ;; a particular evaluator path does not call every useful public member.
-  {:key "type:org.pkl.core.http.HttpClient" :expand :public-api}
-  {:key "type:org.pkl.core.packages.PackageUri" :expand :public-api}
-  {:key "type:org.pkl.core.packages.PackageAssetUri" :expand :public-api}
-  {:key "type:org.pkl.core.packages.Checksums" :expand :public-api}
-  {:key "type:org.pkl.core.packages.Dependency" :expand :public-api}
-  {:key "type:org.pkl.core.packages.DependencyMetadata" :expand :public-api}
-  {:key "type:org.pkl.core.Analyzer" :expand :public-api}
-  {:key "type:org.pkl.core.Closeables" :expand :public-api}
-  {:key "type:org.pkl.core.OutputFormat" :expand :public-api}
-  {:key "type:org.pkl.core.PklInfo" :expand :public-api}
-  {:key "type:org.pkl.core.RendererException" :expand :public-api}
-  {:key "type:org.pkl.core.ValueRenderers" :expand :shell}
-  {:key "executable:org.pkl.core.ValueRenderers#pcf(java.io.Writer,java.lang.String,boolean,boolean)"
-   :expand :body}
-  {:key "executable:org.pkl.core.ValueRenderers#json(java.io.Writer,java.lang.String,boolean)"
-   :expand :body}
-  {:key "executable:org.pkl.core.ValueRenderers#plist(java.io.Writer,java.lang.String)"
-   :expand :body}
-  {:key "executable:org.pkl.core.ValueRenderers#properties(java.io.Writer,boolean,boolean)"
-   :expand :body}
+  ;; Product API types and their complete public bodies are derived from the
+  ;; executable surface contract above. The remaining explicit type seeds are
+  ;; implementation behavior entry points, not a curated product API list.
   {:key "type:org.pkl.core.ast.expression.primary.GetEnclosingOwnerNode" :expand :public-api}
   {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode" :expand :public-api}
   {:key "executable:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode#<init>(com.oracle.truffle.api.source.SourceSection,org.pkl.core.module.ModuleKey)"
    :expand :body}
   {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNodeGen" :expand :public-api}
   {:key "executable:org.pkl.core.evaluatorSettings.Color#hasColor()" :expand :body}
-  {:key "type:org.pkl.core.evaluatorSettings.PklEvaluatorSettings" :expand :public-api}
-  {:key "type:org.pkl.core.project.Package" :expand :public-api}
-  {:key "type:org.pkl.core.project.Project" :expand :public-api}
-  {:key "type:org.pkl.core.project.ProjectDependenciesResolver" :expand :public-api}
-  {:key "type:org.pkl.core.project.ProjectPackager" :expand :public-api}
-  {:key "type:org.pkl.core.settings.PklSettings" :expand :public-api}
   {:key "type:org.pkl.core.runtime.VmFileDetector" :expand :public-api}
   {:key "type:org.pkl.core.stdlib.test.report.TestReporter" :expand :public-api}
   {:key "type:org.pkl.core.stdlib.test.report.BaseReporter" :expand :public-api}
   {:key "type:org.pkl.core.stdlib.test.report.JUnitReporter" :expand :public-api}
   {:key "type:org.pkl.core.stdlib.test.report.MinimalReporter" :expand :public-api}
   {:key "type:org.pkl.core.stdlib.test.report.SpecReporter" :expand :public-api}
-  {:key "type:org.pkl.core.util.CodeGeneratorUtils" :expand :public-api}
-
-  ;; Schema traversal is a packaged product capability used by the tracked
-  ;; destination-side C# generator. Keep this seed set focused on the exact
-  ;; dependency-closed model rather than selecting unrelated library APIs.
-  {:key "type:org.pkl.core.ModuleSchema" :expand :public-api}
-  {:key "type:org.pkl.core.PClass" :expand :public-api}
-  {:key "type:org.pkl.core.PType" :expand :public-api}
-  {:key "type:org.pkl.core.TypeAlias" :expand :public-api}
-  {:key "type:org.pkl.core.TypeParameter" :expand :public-api}
-  {:key "type:org.pkl.core.Member" :expand :public-api}
-  {:key "type:org.pkl.core.Modifier" :expand :public-api}]}
+  {:key "type:org.pkl.core.util.CodeGeneratorUtils" :expand :public-api}]}
