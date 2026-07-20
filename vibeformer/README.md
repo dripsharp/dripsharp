@@ -68,6 +68,7 @@ clojure -J-Xmx8g -M:run package pkl-core-value-model
 clojure -M:run differential
 clojure -M:run language-snippet-contract
 clojure -J-Xmx8g -M:run language-snippet-package
+clojure -J-Xmx8g -M:run pkl-core-corpus
 clojure -M:test
 clojure -M:test --namespace vibeformer.harness-test
 ```
@@ -203,3 +204,16 @@ Two complete runs must be byte-for-byte deterministic. Rich case results, a
 family baseline, and every oracle mismatch are retained under
 `validation-output/language-snippet-package`; mismatches remain pending product
 implementation rather than accepted results or new exclusions.
+
+`pkl-core-corpus` executes every row of the pinned non-language Pkl.Core test
+contract twice through independent bounded JVM children, then performs a fresh
+deterministic package gate and executes the same ordered rows twice from a
+package-reference-only .NET consumer. The consumer recreates temporary-file,
+archive, module-path, local HTTP/TLS/proxy/package, environment/property,
+service, subprocess, and platform-path fixtures without uncontrolled network
+access. It verifies the exact loaded package assembly paths and hashes. Missing,
+duplicate, stale, skipped, unowned, crashed, or timed-out rows remain explicit
+and fail closed; byte-for-byte repetition and deliberate JVM/package,
+coverage, provenance, crash, and timeout controls are retained under
+`validation-output/pkl-core-corpus`. Pending product adaptations remain
+mismatches for the dependent behavior work and do not become exclusions.

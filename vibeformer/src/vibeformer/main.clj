@@ -6,6 +6,7 @@
             [vibeformer.language-snippet-contract :as language-snippet-contract]
             [vibeformer.language-snippet-runner :as language-snippet-runner]
             [vibeformer.packaging :as packaging]
+            [vibeformer.pkl-core-corpus-runner :as pkl-core-corpus-runner]
             [vibeformer.pkl-core-test-contract :as pkl-core-test-contract])
   (:import [clojure.lang ExceptionInfo]))
 
@@ -19,11 +20,11 @@
   [& args]
   (if-not (or (contains? #{["generate"] ["verify"] ["pack"] ["package"] ["differential"]
                            ["language-snippet-contract"] ["language-snippet-package"]
-                           ["pkl-core-test-contract"]}
+                           ["pkl-core-test-contract"] ["pkl-core-corpus"]}
                          (vec args))
               (and (= 2 (count args))
                    (contains? #{"generate" "verify" "pack" "package"} (first args))))
-    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract" 2)
+    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus" 2)
     (try
       (case (first args)
         "generate" (harness/generate! {:profile (or (second args) "pkl-parser")})
@@ -35,7 +36,8 @@
         "differential" (differential/verify-differential!)
         "language-snippet-contract" (language-snippet-contract/verify-contract!)
         "language-snippet-package" (language-snippet-runner/verify-package-runner!)
-        "pkl-core-test-contract" (pkl-core-test-contract/verify-contract!))
+        "pkl-core-test-contract" (pkl-core-test-contract/verify-contract!)
+        "pkl-core-corpus" (pkl-core-corpus-runner/verify-corpus-runner!))
       (catch ExceptionInfo error
         (let [{:keys [output]} (ex-data error)]
           (fail! (str "Vibeformer command failed: " (.getMessage error)

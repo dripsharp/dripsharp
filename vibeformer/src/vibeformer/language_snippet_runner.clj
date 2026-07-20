@@ -358,7 +358,10 @@
     (let [rows (update (:rows parsed) index assoc :payload-base64 "UFJPVkU=")]
       (write-text! (paths/absolute output) (render-package-results rows)))))
 
-(defn- write-packed-assembly-manifest!
+(defn write-packed-assembly-manifest!
+  "Writes the exact assembly identities and payload hashes proven by the
+  deterministic package gate. Shared corpus runners use this manifest instead
+  of reconstructing package provenance independently."
   [^Path output packages]
   (let [assemblies
         (mapv (fn [package]
@@ -379,7 +382,9 @@
                           (str name "\t" sha256 "\n"))))
     {:path output :assemblies (vec (sort-by :name assemblies))}))
 
-(defn- verify-source-isolation!
+(defn verify-source-isolation!
+  "Rejects source/project escape hatches in a freshly restored package-only
+  consumer."
   [^Path consumer-root ^Path project ^Path source]
   (let [root (.toRealPath consumer-root (make-array LinkOption 0))
         source-path (.toRealPath source (make-array LinkOption 0))
@@ -563,7 +568,8 @@
             :family-baseline family-output
             :mismatches mismatch-output}))))))
 
-(defn- read-packed-assembly-manifest
+(defn read-packed-assembly-manifest
+  "Reads an assembly manifest emitted from the deterministic package proof."
   [manifest]
   (mapv (fn [line]
           (let [[name sha256] (str/split line #"\t" -1)]
