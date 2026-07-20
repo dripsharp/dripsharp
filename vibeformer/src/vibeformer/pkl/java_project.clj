@@ -714,11 +714,14 @@
 
 (def ^:private idiomatic-byte-array-declarations
   #{"field:org.pkl.core.PClassInfo#Bytes"
+    "record-component:org.pkl.core.resource.Resource#bytes"
     "executable:org.pkl.core.Evaluator#evaluateOutputBytes(org.pkl.core.ModuleSource)"
     "executable:org.pkl.core.EvaluatorImpl#evaluateOutputBytes(org.pkl.core.ModuleSource)"
     "executable:org.pkl.core.EvaluatorImpl#evaluateOutputBytes(org.pkl.core.runtime.VmTyped)"
     "executable:org.pkl.core.FileOutput#getBytes()"
     "executable:org.pkl.core.FileOutputImpl#getBytes()"
+    "executable:org.pkl.core.http.HttpClient$Builder#addCertificates(byte[])"
+    "executable:org.pkl.core.http.HttpClientBuilder#addCertificates(byte[])"
     "executable:org.pkl.core.JsonRenderer$Visitor#visitBytes(byte[])"
     "executable:org.pkl.core.PListRenderer$Visitor#visitBytes(byte[])"
     "executable:org.pkl.core.PcfRenderer$Visitor#visitBytes(byte[])"
@@ -727,6 +730,7 @@
     "executable:org.pkl.core.ValueVisitor#visit(byte[])"
     "executable:org.pkl.core.ValueVisitor#visit(java.lang.Object)"
     "executable:org.pkl.core.ValueVisitor#visitBytes(byte[])"
+    "executable:org.pkl.core.resource.Resource#getBytes()"
     "executable:org.pkl.core.runtime.VmBytes#export()"})
 
 (def ^:private idiomatic-list-dispatch-declarations
@@ -744,6 +748,13 @@
     (cond
       (or (instance? CtExecutable current) (instance? CtField current))
       (spoon/declaration-key current)
+
+      (instance? CtRecordComponent current)
+      (let [parent (.getParent ^CtRecordComponent current)]
+        (str "record-component:"
+             (when (instance? CtType parent)
+               (.getQualifiedName ^CtType parent))
+             "#" (.getSimpleName ^CtRecordComponent current)))
 
       (and current (.isParentInitialized current))
       (recur (.getParent current))

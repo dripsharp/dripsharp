@@ -148,11 +148,12 @@ checked `toFixed` cases. Each core case gets a
 fresh evaluator, and neither package probe loads generated sources or shares
 runtime state with its oracle. The core gate also executes a source-backed
 loading, security-policy, and evaluator-configuration contract against the
-upstream JVM. Its 67 behavior families distinguish 59 directly comparable JVM
-families from eight .NET-specific assembly, embedded-resource, path, disposal,
-configured-external-process/failure-lifecycle, and timeout-cancellation/cleanup adaptations; every family in this contract has
+upstream JVM. Its 73 behavior families distinguish 64 directly comparable JVM
+families from nine .NET-specific assembly, embedded-resource, path, disposal,
+idiomatic loading-surface, configured-external-process/failure-lifecycle, and
+timeout-cancellation/cleanup adaptations; every family in this contract has
 implementation evidence without redefining broader product completion. A
-package-reference-only .NET consumer independently exercises 32 normalized
+package-reference-only .NET consumer independently exercises 38 normalized
 observations, including HTTP/TLS and proxy behavior, package and projectpackage
 resolution, verified cache/offline behavior, assembly-relative loading, embedded
 resources, configured external readers, canonical policy checks, errors,

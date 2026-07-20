@@ -28,6 +28,11 @@ namespace Pkl.Core.Runtime
     {
         internal static VmList Create(IEnumerable<object> values) => CreateFromUnmodIterable(values);
     }
+    public sealed partial class VmBytes
+    {
+        internal VmBytes(byte[] bytes) :
+            this(bytes.Select(value => unchecked((sbyte)value)).ToArray()) { }
+    }
     public sealed partial class VmSet
     {
         internal static VmSet Create(ISet<object> values, global::Pkl.Core.Util.Paguro.RrbTree<object> order) =>

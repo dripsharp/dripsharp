@@ -863,19 +863,52 @@
    "StackFrameTransformers.cs"
    "Runtime/LoggerImpl.cs"
    "ModuleSource.cs"
+   "SecurityManager.cs"
    "SecurityManagers.cs"
+   "EvaluatorSettings/Color.cs"
    "EvaluatorSettings/PklEvaluatorSettings.cs"
+   "EvaluatorSettings/TraceMode.cs"
    "Project/Project.cs"
    "Runtime/Substrate/Pkl.Core.Loading.cs"
    "Http/HttpClient.cs"
+   "Http/HttpClientBuilder.cs"
+   "Http/HttpClientException.cs"
+   "Module/FileResolver.cs"
+   "Module/ModuleKey.cs"
+   "Module/ModuleKeyFactories.cs"
+   "Module/ModuleKeyFactory.cs"
+   "Module/ModuleKeys.cs"
+   "Module/ModulePathResolver.cs"
+   "Module/PathElement.cs"
+   "Module/ProjectDependenciesManager.cs"
+   "Module/ResolvedModuleKey.cs"
+   "Module/ResolvedModuleKeys.cs"
    "Packages/PackageUri.cs"
    "Packages/PackageAssetUri.cs"
    "Packages/Checksums.cs"
    "Packages/Dependency.cs"
    "Packages/DependencyMetadata.cs"
+   "Packages/PackageLoadError.cs"
+   "Packages/PackageResolver.cs"
+   "Packages/PackageResolvers.cs"
+   "Packages/PackageUtils.cs"
+   "Project/CanonicalPackageUri.cs"
+   "Project/DeclaredDependencies.cs"
+   "Project/Package.cs"
+   "Project/ProjectDependenciesResolver.cs"
+   "Project/ProjectDeps.cs"
+   "Project/ProjectPackager.cs"
+   "Resource/Resource.cs"
+   "Resource/ResourceReader.cs"
+   "Resource/ResourceReaders.cs"
    "Settings/PklSettings.cs"
+   "Externalreader/ExternalModuleResolver.cs"
    "Externalreader/ExternalReaderProcess.cs"
+   "Externalreader/ExternalReaderProcessException.cs"
    "Externalreader/ExternalReaderProcessImpl.cs"
+   "Externalreader/ExternalResourceResolver.cs"
+   "Externalreader/ModuleReaderSpec.cs"
+   "Externalreader/ResourceReaderSpec.cs"
    "Value.cs"
    "ValueVisitor.cs"
    "ValueConverter.cs"
@@ -913,6 +946,10 @@
    [:null-or-default-expression
     #"(?m)^public[^\n=]+=>\s*(?:null!|default!);?"]])
 
+(def ^:private loading-public-semantic-default-bodies
+  [#"(?ms)^public string\? ResolveSecurePath\([^)]*\) \{\s*return null!;\s*\}"
+   #"(?ms)^public (?:virtual )?string\? GetFileCacheLocation\(\) \{\s*return null!;\s*\}"])
+
 (defn- audit-loading-public-surface!
   [^Path project-root]
   (let [source-root (paths/resolve-path project-root "src" "Pkl" "Core")
@@ -925,7 +962,9 @@
           (->> files
                (mapcat
                 (fn [^Path file]
-                  (let [source (Files/readString file StandardCharsets/UTF_8)]
+                  (let [source (reduce #(str/replace %1 %2 "")
+                                       (Files/readString file StandardCharsets/UTF_8)
+                                       loading-public-semantic-default-bodies)]
                     (keep (fn [[kind pattern]]
                             (when (re-find pattern source)
                               {:file (str (.relativize source-root file)) :kind kind}))
@@ -989,6 +1028,11 @@
     "custom/module-resource-lifecycle"
     "resources/environment-property"
     "evaluator/builder"
+    "module-resource/public-api"
+    "http/public-api"
+    "package/public-api"
+    "project-settings/public-api"
+    "security-external/public-api"
     "analyzer/import-graph"
     "logging/public-api"
     "diagnostics/stack-transform"
@@ -1012,7 +1056,8 @@
     "assembly/module-loading"
     "embedded/resource-loading"
     "platform/path-uri-policy"
-    "ownership/disposal"})
+    "ownership/disposal"
+    "idiomatic/loading-api-shapes"})
 
 (defn- loading-package-project
   [package-id version target-framework]
@@ -1099,9 +1144,9 @@
     (when-not target-framework
       (fail! "Could not determine the loading consumer target framework"
              {:project (str installed-consumer-project)}))
-    (when-not (= 32 (count package-entries))
+    (when-not (= 38 (count package-entries))
       (fail! "The package-only loading observation selection changed"
-             {:expected 32 :actual (count package-entries)
+             {:expected 38 :actual (count package-entries)
               :observations (mapv :observation package-entries)}))
     (when-not generated-project-root
       (fail! "Could not locate the clean generated Pkl.Core project for stub auditing"

@@ -42,11 +42,11 @@
         kinds (set (map :kind rows))]
     (testing "all independently extracted declarations and package rows are classified"
       (is (= 6353 (:upstream-rows summary)))
-      (is (= 9551 (:package-rows summary)))
-      (is (= 14 (:behavior-rows summary)))
+      (is (= 9653 (:package-rows summary)))
+      (is (= 20 (:behavior-rows summary)))
       (is (zero? (:failing-controls summary)))
       (is (= 6353 (reduce + (vals (:classifications summary)))))
-      (is (= 9551 (reduce + (vals (:package-classifications summary))))))
+      (is (= 9653 (reduce + (vals (:package-classifications summary))))))
 
     (testing "member metadata covers every required declaration dimension"
       (is (every? kinds ["type" "constructor" "property" "field" "method"
@@ -102,7 +102,7 @@
                    [:mismatch :kind]))))
 
   (testing "package reflection"
-    (is (= {:matched 9551}
+    (is (= {:matched 9653}
            (contract/compare-package-surface @package @package)))
     (is (= :package-public-surface-drift
            (get-in (contract/compare-package-surface @package (pop @package))
@@ -177,7 +177,7 @@
                          :status "EXECUTED"
                          :observation (:normalized-expectation row)})
                       @behavior)]
-    (is (= {:matched 14}
+    (is (= {:matched 20}
            (contract/compare-behavior-results @behavior results)))
     (is (= :public-api-behavior-coverage
            (get-in (contract/compare-behavior-results @behavior (pop results))

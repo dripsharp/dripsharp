@@ -64,6 +64,7 @@ import org.pkl.core.StackFrameTransformer;
 import org.pkl.core.StackFrameTransformers;
 import org.pkl.core.evaluatorSettings.PklEvaluatorSettings;
 import org.pkl.core.evaluatorSettings.TraceMode;
+import org.pkl.core.externalreader.ExternalReaderProcess;
 import org.pkl.core.http.HttpClient;
 import org.pkl.core.module.ModuleKey;
 import org.pkl.core.module.ModuleKeyFactories;
@@ -71,8 +72,12 @@ import org.pkl.core.module.ModuleKeyFactory;
 import org.pkl.core.module.ModuleKeys;
 import org.pkl.core.module.ModulePathResolver;
 import org.pkl.core.module.ResolvedModuleKey;
+import org.pkl.core.module.ResolvedModuleKeys;
+import org.pkl.core.packages.Checksums;
+import org.pkl.core.packages.Dependency;
 import org.pkl.core.packages.DependencyMetadata;
 import org.pkl.core.packages.PackageAssetUri;
+import org.pkl.core.packages.PackageResolver;
 import org.pkl.core.packages.PackageUri;
 import org.pkl.core.project.Project;
 import org.pkl.core.resource.Resource;
@@ -106,6 +111,11 @@ public final class LoadingContractUpstreamOracle {
       write(writer, "custom/module-resource-lifecycle", "LOADING", observeCustomReaders());
       write(writer, "resources/environment-property", "LOADING", observeEnvironmentAndProperties());
       write(writer, "evaluator/builder", "API", observeEvaluatorBuilder(work));
+      write(writer, "module-resource/public-api", "API", observeModuleAndResourceApi(work));
+      write(writer, "http/public-api", "HTTP", observeHttpApi());
+      write(writer, "package/public-api", "PACKAGE", observePackageApi());
+      write(writer, "project-settings/public-api", "SETTINGS", observeProjectAndSettingsApi(fixtures));
+      write(writer, "security-external/public-api", "POLICY", observeSecurityAndExternalApi());
       write(writer, "analyzer/import-graph", "API", observeAnalyzerAndImportGraph(work));
       write(writer, "logging/public-api", "LOGGING", observeLogging());
       write(writer, "diagnostics/stack-transform", "DIAGNOSTIC", observeStackTransforms(fixtures));
@@ -127,6 +137,250 @@ public final class LoadingContractUpstreamOracle {
       write(writer, "lifecycle/close", "LIFECYCLE", observeLifecycle());
       write(writer, "evaluator/timeout", "TIMEOUT", observeTimeout(work));
     }
+  }
+
+  private static String observeModuleAndResourceApi(Path work) throws Exception {
+    Path source = work.resolve("public-api-module.pkl");
+    Files.writeString(source, "value = 42\n", StandardCharsets.UTF_8);
+    ModuleKey file = ModuleKeyFactories.file.create(source.toUri()).orElseThrow();
+    boolean unsupported = ModuleKeyFactories.http.create(source.toUri()).isEmpty();
+    ModuleKey synthetic = ModuleKeys.synthetic(URI.create("repl:public-api"), "value = 1\n");
+    ResolvedModuleKey resolved =
+        ResolvedModuleKeys.virtual(
+            synthetic, URI.create("repl:resolved-public-api"), "value = 2\n", true);
+    var resource =
+        new Resource(URI.create("memory:payload"), new byte[] {0, 127, (byte) 128, (byte) 255});
+    ResourceReader reader =
+        new ResourceReader() {
+          @Override
+          public String getUriScheme() {
+            return "api-resource";
+          }
+
+          @Override
+          public Optional<Object> read(URI uri) {
+            return Optional.empty();
+          }
+
+          @Override
+          public boolean hasHierarchicalUris() {
+            return false;
+          }
+
+          @Override
+          public boolean isGlobbable() {
+            return false;
+          }
+        };
+    boolean missing = reader.read(URI.create("api-resource:/missing.txt")).isEmpty();
+    reader.close();
+    String invalid = exceptionName(() -> ModuleKeys.pkg(URI.create("https://example.test/pkg")));
+    return "factory="
+        + file.getUri().getScheme()
+        + ":"
+        + file.isLocal()
+        + ":"
+        + unsupported
+        + "|synthetic="
+        + synthetic.getUri()
+        + ":"
+        + resolved.getOriginal().getUri()
+        + ":"
+        + resolved.getUri()
+        + ":"
+        + escaped(resolved.loadSource())
+        + "|resource="
+        + resource.uri()
+        + ":"
+        + java.util.HexFormat.of().formatHex(resource.bytes())
+        + ":"
+        + resource.getBase64()
+        + ":"
+        + missing
+        + "|invalid="
+        + !invalid.equals("none");
+  }
+
+  private static String observeHttpApi() throws Exception {
+    boolean byteOverload =
+        HttpClient.Builder.class.getMethod("addCertificates", byte[].class).getParameterTypes()[0]
+            == byte[].class;
+    String invalidCertificate =
+        exceptionName(
+            () -> {
+              try (HttpClient client =
+                  HttpClient.builder().addCertificates(new byte[] {1, 2, 3, 4}).build()) {}
+            });
+    HttpClient dummy = HttpClient.dummyClient();
+    boolean dummyFailure;
+    try {
+      dummy.send(
+          HttpRequest.newBuilder(URI.create("https://example.test/")).build(),
+          HttpResponse.BodyHandlers.ofByteArray(),
+          ignored -> {});
+      dummyFailure = false;
+    } catch (AssertionError expected) {
+      dummyFailure = true;
+    }
+    dummy.close();
+    return "bytes="
+        + byteOverload
+        + "|invalid="
+        + invalidCertificate.equals("HttpClientException")
+        + "|dummy="
+        + dummyFailure
+        + "|dispose=true";
+  }
+
+  private static String observePackageApi() throws Exception {
+    var packageUri = new PackageUri("package://example.test/birds@1.2.3");
+    var checksums = new Checksums("abc123");
+    var dependency = new Dependency.RemoteDependency(packageUri, checksums);
+    var dependencies = new LinkedHashMap<String, Dependency.RemoteDependency>();
+    dependencies.put("birds", dependency);
+    var metadata =
+        new DependencyMetadata(
+            "catalog",
+            packageUri,
+            org.pkl.core.Version.parse("1.2.3"),
+            URI.create("https://example.test/birds@1.2.3.zip"),
+            checksums,
+            dependencies,
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of("Pkl"),
+            null,
+            "birds",
+            List.of());
+    var output = new ByteArrayOutputStream();
+    metadata.writeTo(output);
+    PackageAssetUri asset =
+        packageUri.toPackageAssetUri("/catalog/Bird.pkl").resolve("../Ostrich.pkl");
+    String invalid =
+        exceptionName(() -> new PackageUri("https://example.test/birds@1.2.3"));
+    boolean byteApi =
+        PackageResolver.class
+                .getMethod("getBytes", PackageAssetUri.class, boolean.class, Checksums.class)
+                .getReturnType()
+            == byte[].class;
+    return "uri="
+        + packageUri.getUri()
+        + ":"
+        + packageUri.getVersion()
+        + ":"
+        + packageUri.getDisplayName()
+        + "|asset="
+        + asset.getPackageUri().getVersion()
+        + ":"
+        + asset.getAssetPath()
+        + "|metadata="
+        + metadata.getName()
+        + ":"
+        + packageUri
+        + ":"
+        + metadata.getPackageZipChecksums().getSha256()
+        + ":"
+        + metadata.getDependencies().size()
+        + ":"
+        + metadata.getAuthors().size()
+        + ":"
+        + output.toString(StandardCharsets.UTF_8).contains("packageUri")
+        + "|bytes="
+        + byteApi
+        + "|invalid="
+        + !invalid.equals("none");
+  }
+
+  private static String observeProjectAndSettingsApi(Path fixtures) {
+    Project project = Project.loadFromPath(fixtures.resolve("project/PklProject"));
+    PklEvaluatorSettings settings = project.getResolvedEvaluatorSettings();
+    var proxy =
+        new PklEvaluatorSettings.Proxy(
+            URI.create("http://localhost:8080"), List.of("localhost"));
+    var http =
+        new PklEvaluatorSettings.Http(
+            proxy,
+            Map.of(
+                URI.create("https://source.test/"), URI.create("https://target.test/")),
+            null);
+    var external = new PklEvaluatorSettings.ExternalReader("reader", List.of("one", "two"), "work");
+    PklSettings user =
+        PklSettings.load(ModuleSource.path(fixtures.resolve("project/settings.pkl")));
+    String invalid =
+        exceptionName(() -> Project.load(ModuleSource.text("value = 1\n")));
+    return "project="
+        + project.getProjectFileUri().getScheme()
+        + ":"
+        + project.getProjectDir().isAbsolute()
+        + ":"
+        + project.getDependencies().getRemoteDependencies().size()
+        + ":"
+        + project.getLocalProjectDependencies().size()
+        + ":"
+        + project.getTests().size()
+        + "|settings="
+        + settings.env().size()
+        + ":"
+        + settings.modulePath().size()
+        + ":"
+        + (settings.http() != null)
+        + ":"
+        + settings.externalModuleReaders().size()
+        + "|http="
+        + http.rewrites().size()
+        + ":"
+        + proxy.noProxy().size()
+        + ":"
+        + external.arguments().size()
+        + "|user="
+        + user.editor().urlScheme().equals(user.getEditor().urlScheme())
+        + ":"
+        + (user.http() != null)
+        + "|invalid="
+        + !invalid.equals("none");
+  }
+
+  private static String observeSecurityAndExternalApi() {
+    SecurityManagers.StandardBuilder builder =
+        SecurityManagers.standardBuilder()
+            .addAllowedModule(Pattern.compile("^repl:"))
+            .addAllowedResource(Pattern.compile("^env:"))
+            .setRootDir(null);
+    SecurityManager manager = builder.build();
+    String allowed =
+        exceptionName(() -> manager.checkResolveModule(URI.create("repl:module")));
+    String denied =
+        exceptionName(() -> manager.checkResolveModule(URI.create("file:/denied.pkl")));
+    String empty = exceptionName(() -> SecurityManagers.standardBuilder().build());
+    var specification =
+        new PklEvaluatorSettings.ExternalReader(
+            "/definitely/missing/pkl-reader", List.of(), null);
+    boolean processFailure;
+    try (ExternalReaderProcess process = ExternalReaderProcess.of(specification)) {
+      processFailure =
+          !exceptionName(() -> process.getModuleReaderSpec("missing")).equals("none");
+    }
+    return "defaults="
+        + SecurityManagers.defaultAllowedModules.size()
+        + ":"
+        + SecurityManagers.defaultAllowedResources.size()
+        + ":"
+        + (SecurityManagers.defaultManager != null)
+        + "|builder="
+        + builder.getAllowedModules().size()
+        + ":"
+        + builder.getAllowedResources().size()
+        + ":"
+        + (builder.getRootDir() == null && allowed.equals("none"))
+        + "|denied="
+        + denied.equals("SecurityManagerException")
+        + "|empty="
+        + empty.equals("IllegalStateException")
+        + "|external="
+        + processFailure;
   }
 
   private static String observeAnalyzerAndImportGraph(Path work) throws Exception {

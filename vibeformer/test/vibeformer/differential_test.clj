@@ -78,13 +78,13 @@
                   (paths/resolve-path fixtures "ContractEvidence.tsv")
                   (paths/resolve-path fixtures "ContractExpectations.tsv"))
         summary (:summary contract)]
-    (is (= 67 (:families summary)))
-    (is (= 67 (:existing-evidence summary)))
+    (is (= 73 (:families summary)))
+    (is (= 73 (:existing-evidence summary)))
     (is (zero? (:pending-in-scope summary)))
-    (is (= 59 (:jvm-shared-families summary)))
-    (is (= 8 (:dotnet-adaptation-families summary)))
-    (is (= 25 (:jvm-shared-observations summary)))
-    (is (= 7 (:dotnet-adaptation-observations summary)))
+    (is (= 64 (:jvm-shared-families summary)))
+    (is (= 9 (:dotnet-adaptation-families summary)))
+    (is (= 30 (:jvm-shared-observations summary)))
+    (is (= 8 (:dotnet-adaptation-observations summary)))
     (is (some #(= "package.cache-offline" (:family %)) (:evidence contract)))
     (is (some #(= "adaptation.assembly-modules" (:family %)) (:evidence contract)))
     (is (some #(= "evaluator.timeout-cancellation" (:family %)) (:evidence contract)))
@@ -96,10 +96,17 @@
 (deftest loading-public-surface-audit-is-fail-closed
   (let [clean (public-surface-root "public int Value() { return 1; }\n")
         summary (#'differential/audit-loading-public-surface! clean)]
-    (is (= 59 (:files summary)))
+    (is (= 92 (:files summary)))
     (is (= [:translation-error :not-implemented :todo
             :null-or-default-body :null-or-default-expression]
            (:patterns summary))))
+  (testing "translated nullable defaults with upstream semantics are not stubs"
+    (let [semantic-defaults
+          (public-surface-root
+           (str "public string? ResolveSecurePath(Uri uri) { return null!; }\n"
+                "public virtual string? GetFileCacheLocation() { return null!; }\n"))]
+      (is (= 92 (:files (#'differential/audit-loading-public-surface!
+                         semantic-defaults))))))
   (let [stubbed (public-surface-root
                  "public object Missing() {\nreturn default!;\n}\n")
         error (try

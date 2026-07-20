@@ -7,7 +7,37 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Reflection;
+using System.Text.RegularExpressions;
+
+namespace Pkl.Core
+{
+    internal static class DotNetBytes
+    {
+        internal static byte[] Unsigned(sbyte[] values) =>
+            values.Select(value => unchecked((byte)value)).ToArray();
+    }
+
+    public sealed partial class SecurityManagers
+    {
+        public static IReadOnlyList<Regex> DefaultAllowedModules =>
+            DotNetCollections.ReadOnly(defaultAllowedModules);
+        public static IReadOnlyList<Regex> DefaultAllowedResources =>
+            DotNetCollections.ReadOnly(defaultAllowedResources);
+        public static Func<Uri, int> DefaultTrustLevels => defaultTrustLevels;
+        public static SecurityManager DefaultManager => defaultManager;
+
+        public partial class StandardBuilder
+        {
+            public IReadOnlyList<Regex> AllowedModules =>
+                DotNetCollections.ReadOnly(GetAllowedModules());
+            public IReadOnlyList<Regex> AllowedResources =>
+                DotNetCollections.ReadOnly(GetAllowedResources());
+            public string? RootDirectory => GetRootDir();
+        }
+    }
+}
 
 namespace Pkl.Core
 {
@@ -96,8 +126,40 @@ namespace Pkl.Core.Http
 
 namespace Pkl.Core.Module
 {
+    public partial interface ModuleKey
+    {
+        public Uri Uri => GetUri();
+        public bool Cached => IsCached();
+        public bool Local => IsLocal();
+        public string? FileCachePath => GetFileCacheLocation();
+    }
+
+    public partial interface ResolvedModuleKey
+    {
+        public ModuleKey Original => GetOriginal();
+        public Uri Uri => GetUri();
+        public string Source => LoadSource();
+    }
+
+    public partial interface ModuleKeyFactory
+    {
+        public ModuleKey? TryCreate(Uri uri)
+        {
+            ArgumentNullException.ThrowIfNull(uri);
+            var result = Create(uri);
+            return result.IsPresent() ? result.Get() : null;
+        }
+    }
+
     public sealed partial class ModuleKeyFactories
     {
+        public static ModuleKeyFactory StandardLibraryFactory => standardLibrary;
+        public static ModuleKeyFactory FileFactory => file;
+        public static ModuleKeyFactory HttpFactory => http;
+        public static ModuleKeyFactory GenericUrlFactory => genericUrl;
+        public static ModuleKeyFactory PackageFactory => pkg;
+        public static ModuleKeyFactory ProjectPackageFactory => projectpackage;
+
         /// <summary>
         /// Creates a caller-owned factory that exposes manifest resources in
         /// <paramref name="assembly"/> as local, globbable Pkl modules.
@@ -114,6 +176,44 @@ namespace Pkl.Core.Module
             string resourcePrefix = "",
             string uriScheme = "assembly") =>
             new AssemblyModuleKeyFactory(assembly, resourcePrefix, uriScheme);
+    }
+
+    public sealed partial class ModuleKeys
+    {
+        public static ModuleKey CreatePackage(Uri uri) => Pkg(uri);
+        public static ModuleKey CreateProjectPackage(Uri uri) => Projectpackage(uri);
+        public static ModuleKey CreateCached(ModuleKey original, string source) =>
+            Cached(original, source);
+    }
+
+    public sealed partial class ResolvedModuleKeys
+    {
+        public static ResolvedModuleKey CreateFile(
+            ModuleKey original, Uri uri, string path, bool noFollowLinks = false) =>
+            File(original, uri, path, noFollowLinks);
+    }
+
+    public partial class PathElement
+    {
+        public string Name => GetName();
+        public bool Directory => IsDirectory();
+
+        public sealed partial class TreePathElement
+        {
+            public IReadOnlyList<PathElement> Children =>
+                Pkl.Core.DotNetCollections.ReadOnly(GetChildrenValues());
+        }
+    }
+
+    public sealed partial class ProjectDependenciesManager
+    {
+        public IReadOnlyDictionary<string, Pkl.Core.Packages.Dependency> Dependencies =>
+            Pkl.Core.DotNetCollections.ReadOnly(GetDependencies());
+        public Pkl.Core.Project.DeclaredDependencies DeclaredDependencies =>
+            GetDeclaredDependencies();
+        public Uri ProjectBaseUri => GetProjectBaseUri();
+        public Uri ProjectDependenciesFileUri => GetProjectDepsFileUri();
+        public Uri ProjectFileUri => GetProjectFileUri();
     }
 
     public sealed class AssemblyModuleKeyFactory : ModuleKeyFactory
@@ -208,8 +308,32 @@ namespace Pkl.Core.Module
 
 namespace Pkl.Core.Resource
 {
+    public sealed partial record class Resource
+    {
+        internal Resource(Uri uri, sbyte[] bytes) : this(uri, Pkl.Core.DotNetBytes.Unsigned(bytes)) { }
+
+        public string Text => GetText();
+        public string Base64 => GetBase64();
+    }
+
+    public partial interface ResourceReader
+    {
+        public object? TryRead(Uri uri)
+        {
+            ArgumentNullException.ThrowIfNull(uri);
+            var result = Read(uri);
+            return result.IsPresent() ? result.Get() : null;
+        }
+    }
+
     public sealed partial class ResourceReaders
     {
+        public static ResourceReader CreateFile() => File();
+        public static ResourceReader CreateHttp() => Http();
+        public static ResourceReader CreateHttps() => Https();
+        public static ResourceReader CreatePackage() => Pkg();
+        public static ResourceReader CreateProjectPackage() => Projectpackage();
+
         /// <summary>
         /// Creates a caller-owned reader for manifest resources in a .NET
         /// assembly. The resource-prefix mapping matches
@@ -248,8 +372,7 @@ namespace Pkl.Core.Resource
             if (!string.Equals(uri.Scheme, uriScheme, StringComparison.OrdinalIgnoreCase) ||
                 !resources.TryRead(uri, out var bytes))
                 return Runtime.JavaOptional<object>.Empty();
-            return Runtime.JavaOptional<object>.Of(new Resource(
-                uri, bytes.Select(value => unchecked((sbyte)value)).ToArray()));
+            return Runtime.JavaOptional<object>.Of(new Resource(uri, bytes));
         }
 
         public bool HasElement(SecurityManager securityManager, Uri elementUri)
@@ -271,6 +394,245 @@ namespace Pkl.Core.Resource
 
         public void Close() => disposed = true;
         public void Dispose() => Close();
+    }
+}
+
+namespace Pkl.Core.Http
+{
+    public partial interface HttpClient
+    {
+        public byte[] Send(
+            HttpRequestMessage request,
+            HttpRequestChecker requestChecker)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(requestChecker);
+            return Send(
+                new Runtime.JavaHttpRequest(request),
+                response => response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult(),
+                requestChecker).Body();
+        }
+
+        public Stream OpenRead(
+            HttpRequestMessage request,
+            HttpRequestChecker requestChecker)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(requestChecker);
+            return Send(
+                new Runtime.JavaHttpRequest(request),
+                Runtime.JavaHttpBodyHandlers.OfInputStream(),
+                requestChecker).Body();
+        }
+
+        public partial interface Builder
+        {
+            public Builder AddCertificate(byte[] certificateBytes) =>
+                AddCertificates(certificateBytes);
+
+            public Builder AddCertificate(string path) => AddCertificates(path);
+        }
+    }
+}
+
+namespace Pkl.Core.Packages
+{
+    public sealed partial class Checksums
+    {
+        public string Sha256 => GetSha256();
+    }
+
+    public abstract partial class Dependency
+    {
+        public PackageUri PackageUri => GetPackageUri();
+        public Pkl.Core.Version Version => GetVersion();
+
+        public sealed partial class LocalDependency
+        {
+            public string Path => GetPath();
+        }
+
+        public sealed partial class RemoteDependency
+        {
+            public Checksums? Checksums => GetChecksums();
+        }
+    }
+
+    public sealed partial class PackageUri
+    {
+        public Uri Uri => GetUri();
+        public Pkl.Core.Version Version => GetVersion();
+        public Checksums? Checksums => GetChecksums();
+        public Uri MetadataRequestUri => GetMetadataRequestUri();
+        public string DisplayName => GetDisplayName();
+    }
+
+    public sealed partial class PackageAssetUri
+    {
+        public Uri Uri => GetUri();
+        public PackageUri PackageUri => GetPackageUri();
+        public Pkl.Core.Version Version => GetVersion();
+        public string AssetPath => GetAssetPath();
+    }
+
+    public sealed partial class DependencyMetadata
+    {
+        public string Name => GetName();
+        public PackageUri PackageUri => packageUri;
+        public Pkl.Core.Version Version => GetVersion();
+        public Uri PackageArchiveUri => GetPackageZipUrl();
+        public Checksums PackageArchiveChecksums => GetPackageZipChecksums();
+        public IReadOnlyDictionary<string, Dependency.RemoteDependency> Dependencies =>
+            Pkl.Core.DotNetCollections.ReadOnly(GetDependencies());
+        public IReadOnlyList<Pkl.Core.PObject> Annotations =>
+            Pkl.Core.DotNetCollections.ReadOnly(GetAnnotations());
+        public IReadOnlyList<string>? Authors => GetAuthors() is { } values
+            ? Pkl.Core.DotNetCollections.ReadOnly(values)
+            : null;
+    }
+
+    public partial interface PackageResolver
+    {
+        public byte[] GetAssetBytes(
+            PackageAssetUri uri, bool allowDirectories = false, Checksums? checksums = null) =>
+            Pkl.Core.DotNetBytes.Unsigned(GetBytes(uri, allowDirectories, checksums));
+
+        public IReadOnlyList<Pkl.Core.Module.PathElement> GetElements(
+            PackageAssetUri uri, Checksums? checksums = null) =>
+            Pkl.Core.DotNetCollections.ReadOnly(ListElements(uri, checksums));
+    }
+
+    public sealed partial class PackageLoadError
+    {
+        public string ErrorName => GetMessageName();
+        public IReadOnlyList<object>? ErrorArguments => GetArguments() is { } values
+            ? Array.AsReadOnly(values)
+            : null;
+    }
+}
+
+namespace Pkl.Core.Project
+{
+    public sealed partial record class DeclaredDependencies
+    {
+        public IReadOnlyDictionary<string, Pkl.Core.Packages.Dependency.RemoteDependency>
+            RemoteDependenciesReadOnly =>
+                Pkl.Core.DotNetCollections.ReadOnly(GetRemoteDependencies());
+        public IReadOnlyDictionary<string, DeclaredDependencies> LocalDependenciesReadOnly =>
+            Pkl.Core.DotNetCollections.ReadOnly(GetLocalDependencies());
+    }
+
+    public sealed partial class Project
+    {
+        public Package? PackageMetadata => GetPackage();
+        public DeclaredDependencies DeclaredDependencies => GetDependencies();
+        public Pkl.Core.EvaluatorSettings.PklEvaluatorSettings EvaluatorConfiguration =>
+            GetEvaluatorSettings();
+        public Pkl.Core.EvaluatorSettings.PklEvaluatorSettings ResolvedEvaluatorConfiguration =>
+            GetResolvedEvaluatorSettings();
+        public Uri ProjectFileUri => GetProjectFileUri();
+        public string ProjectDirectory => GetProjectDir();
+        public IReadOnlyList<string> Tests =>
+            Pkl.Core.DotNetCollections.ReadOnly(GetTests());
+        public IReadOnlyDictionary<string, Project> LocalProjectDependencies =>
+            Pkl.Core.DotNetCollections.ReadOnly(GetLocalProjectDependencies());
+        public IReadOnlyList<Pkl.Core.PObject> Annotations =>
+            Pkl.Core.DotNetCollections.ReadOnly(GetAnnotations());
+
+        public partial class EvaluatorSettings
+        {
+            public IReadOnlyDictionary<string, string>? ExternalProperties =>
+                GetExternalProperties() is { } values
+                    ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                    : null;
+            public IReadOnlyDictionary<string, string>? Environment =>
+                GetEnv() is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+            public IReadOnlyList<Regex>? AllowedModules =>
+                GetAllowedModules() is { } values
+                    ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                    : null;
+            public IReadOnlyList<Regex>? AllowedResources =>
+                GetAllowedResources() is { } values
+                    ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                    : null;
+            public IReadOnlyList<string>? ModulePaths =>
+                GetModulePath() is { } values
+                    ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                    : null;
+        }
+    }
+}
+
+namespace Pkl.Core.EvaluatorSettings
+{
+    public sealed partial record class PklEvaluatorSettings
+    {
+        public IReadOnlyDictionary<string, string>? ExternalPropertiesReadOnly =>
+            ExternalProperties is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+        public IReadOnlyDictionary<string, string>? Environment =>
+            Env is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+        public IReadOnlyList<Regex>? AllowedModulesReadOnly =>
+            AllowedModules is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+        public IReadOnlyList<Regex>? AllowedResourcesReadOnly =>
+            AllowedResources is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+        public IReadOnlyList<string>? ModulePaths =>
+            ModulePath is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+        public IReadOnlyDictionary<string, ExternalReader>? ExternalModuleReadersReadOnly =>
+            ExternalModuleReaders is { } values
+                ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                : null;
+        public IReadOnlyDictionary<string, ExternalReader>? ExternalResourceReadersReadOnly =>
+            ExternalResourceReaders is { } values
+                ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                : null;
+        public Http? HttpSettings => HttpValue;
+
+        public sealed partial record class Http
+        {
+            public IReadOnlyDictionary<Uri, Uri>? RewritesReadOnly =>
+                Rewrites is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+        }
+
+        public sealed partial record class Proxy
+        {
+            public IReadOnlyList<string>? NoProxyReadOnly =>
+                NoProxy is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+        }
+
+        public sealed partial record class ExternalReader
+        {
+            public IReadOnlyList<string>? ArgumentsReadOnly =>
+                Arguments is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+        }
+    }
+}
+
+namespace Pkl.Core.Settings
+{
+    public sealed partial record class PklSettings
+    {
+        public Editor EditorSettings => GetEditor();
+        public Pkl.Core.EvaluatorSettings.PklEvaluatorSettings.Http? HttpSettings => Http;
+    }
+}
+
+namespace Pkl.Core.Externalreader
+{
+    public partial interface ExternalReaderProcess
+    {
+        public static ExternalReaderProcess Start(
+            Pkl.Core.EvaluatorSettings.PklEvaluatorSettings.ExternalReader specification) =>
+            Of(specification);
+    }
+
+    public partial interface ExternalResourceResolver
+    {
+        public object? TryRead(Uri uri)
+        {
+            ArgumentNullException.ThrowIfNull(uri);
+            var result = Read(uri);
+            return result.IsPresent() ? result.Get() : null;
+        }
     }
 }
 

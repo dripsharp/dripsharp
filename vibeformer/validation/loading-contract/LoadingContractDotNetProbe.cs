@@ -7,6 +7,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Reflection;
@@ -89,6 +90,11 @@ static class LoadingContractDotNetProbe
         Write(writer, "custom/module-resource-lifecycle", "LOADING", ObserveCustomReaders());
         Write(writer, "resources/environment-property", "LOADING", ObserveEnvironmentAndProperties());
         Write(writer, "evaluator/builder", "API", ObserveEvaluatorBuilder(work));
+        Write(writer, "module-resource/public-api", "API", ObserveModuleAndResourceApi(work));
+        Write(writer, "http/public-api", "HTTP", ObserveHttpApi());
+        Write(writer, "package/public-api", "PACKAGE", ObservePackageApi());
+        Write(writer, "project-settings/public-api", "SETTINGS", ObserveProjectAndSettingsApi(fixtures));
+        Write(writer, "security-external/public-api", "POLICY", ObserveSecurityAndExternalApi());
         Write(writer, "analyzer/import-graph", "API", ObserveAnalyzerAndImportGraph(work));
         Write(writer, "logging/public-api", "LOGGING", ObserveLogging());
         Write(writer, "diagnostics/stack-transform", "DIAGNOSTIC", ObserveStackTransforms(fixtures));
@@ -112,12 +118,153 @@ static class LoadingContractDotNetProbe
         Write(writer, "embedded/resource-loading", "DOTNET", ObserveEmbeddedResources());
         Write(writer, "platform/path-uri-policy", "DOTNET", ObservePlatformPolicy(work));
         Write(writer, "ownership/disposal", "DOTNET", ObserveOwnership(fixtures, work));
+        Write(writer, "idiomatic/loading-api-shapes", "DOTNET", ObserveIdiomaticLoadingApiShapes());
         Write(writer, "external/configured-process-loading", "DOTNET",
             ObserveConfiguredExternalReader(work));
         Write(writer, "external/failure-lifecycle", "DOTNET",
             ObserveExternalReaderFailureLifecycle(work));
         Write(writer, "evaluator/timeout-cleanup", "DOTNET", timeouts.Cleanup);
         Console.WriteLine("Package-only loading, package, and policy validation passed.");
+    }
+
+    static string ObserveModuleAndResourceApi(string work)
+    {
+        string sourcePath = Path.Combine(work, "public-api-module.pkl");
+        File.WriteAllText(sourcePath, "value = 42\n", new UTF8Encoding(false));
+        Uri sourceUri = new Uri(sourcePath);
+        ModuleKey? file = ModuleKeyFactories.FileFactory.TryCreate(sourceUri);
+        ModuleKey? unsupported = ModuleKeyFactories.HttpFactory.TryCreate(sourceUri);
+        ModuleKey synthetic = ModuleKeys.CreateSynthetic(new Uri("repl:public-api"), "value = 1\n");
+        ResolvedModuleKey resolved = ResolvedModuleKeys.CreateVirtual(
+            synthetic, new Uri("repl:resolved-public-api"), "value = 2\n", true);
+        var resource = new Resource(new Uri("memory:payload"), new byte[] { 0, 127, 128, 255 });
+        using ResourceReader reader = ResourceReaders.CreateEmbeddedResources(
+            Assembly.GetExecutingAssembly(), "Contract.Resources", "api-resource");
+        object? missing = reader.TryRead(new Uri("api-resource:/missing.txt"));
+        string invalid = ExceptionName(() => ModuleKeys.CreatePackage(new Uri("https://example.test/pkg")));
+        return $"factory={file?.Uri.Scheme}:{Lower(file?.Local == true)}:{Lower(unsupported is null)}" +
+            $"|synthetic={synthetic.Uri}:{resolved.Original.Uri}:{resolved.Uri}:{Escape(resolved.Source)}" +
+            $"|resource={resource.Uri}:{Convert.ToHexString(resource.Bytes).ToLowerInvariant()}:" +
+            $"{resource.Base64}:{Lower(missing is null)}|invalid={Lower(invalid != "none")}";
+    }
+
+    static string ObserveHttpApi()
+    {
+        bool byteOverload = typeof(PklHttpClient.Builder).GetMethods()
+            .Any(method => method.Name == "AddCertificates" &&
+                method.GetParameters() is [{ ParameterType: var type }] && type == typeof(byte[]));
+        string invalidCertificate = ExceptionName(() =>
+        {
+            using PklHttpClient client = PklHttpClient.CreateBuilder()
+                .AddCertificate(new byte[] { 1, 2, 3, 4 })
+                .Build();
+        });
+        using PklHttpClient dummy = PklHttpClient.DummyClient();
+        string dummyFailure = ExceptionName(() => dummy.Send(
+            new HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://example.test/"),
+            _ => { }));
+        dummy.Dispose();
+        return $"bytes={Lower(byteOverload)}|invalid={Lower(invalidCertificate == nameof(HttpClientException))}" +
+            $"|dummy={Lower(dummyFailure != "none")}|dispose=true";
+    }
+
+    static string ObservePackageApi()
+    {
+        var packageUri = new PackageUri("package://example.test/birds@1.2.3");
+        var checksums = new Checksums("abc123");
+        var dependency = new Dependency.RemoteDependency(packageUri, checksums);
+        var dependencies = new Dictionary<string, Dependency.RemoteDependency>
+        {
+            ["birds"] = dependency
+        };
+        var metadata = new DependencyMetadata(
+            "catalog", packageUri, Pkl.Core.Version.Parse("1.2.3"),
+            new Uri("https://example.test/birds@1.2.3.zip"), checksums, dependencies,
+            null, null, null, null, null, new List<string> { "Pkl" }, null, "birds",
+            new List<PObject>());
+        using var output = new MemoryStream();
+        metadata.WriteTo(output);
+        PackageAssetUri asset = packageUri.ToPackageAssetUri("/catalog/Bird.pkl")
+            .Resolve("../Ostrich.pkl");
+        string invalid = ExceptionName(() => _ = new PackageUri("https://example.test/birds@1.2.3"));
+        bool byteFacade = typeof(PackageResolver).GetMethod("GetAssetBytes")?.ReturnType == typeof(byte[]);
+        return $"uri={packageUri.Uri}:{packageUri.Version}:{packageUri.DisplayName}" +
+            $"|asset={asset.PackageUri.Version}:{asset.AssetPath}" +
+            $"|metadata={metadata.Name}:{metadata.PackageUri}:{metadata.PackageArchiveChecksums.Sha256}:" +
+            $"{metadata.Dependencies.Count}:{metadata.Authors?.Count}:" +
+            $"{Lower(Encoding.UTF8.GetString(output.ToArray()).Contains("packageUri", StringComparison.Ordinal))}" +
+            $"|bytes={Lower(byteFacade)}|invalid={Lower(invalid != "none")}";
+    }
+
+    static string ObserveProjectAndSettingsApi(string fixtures)
+    {
+        Project project = Project.LoadFromPath(Path.Combine(fixtures, "project", "PklProject"));
+        PklEvaluatorSettings settings = project.ResolvedEvaluatorConfiguration;
+        var proxy = new PklEvaluatorSettings.Proxy(
+            new Uri("http://localhost:8080"), new List<string> { "localhost" });
+        var http = new PklEvaluatorSettings.Http(
+            proxy,
+            new Dictionary<Uri, Uri>
+            {
+                [new Uri("https://source.test/")] = new Uri("https://target.test/")
+            },
+            null);
+        var external = new PklEvaluatorSettings.ExternalReader(
+            "reader", new List<string> { "one", "two" }, "work");
+        PklSettings user = PklSettings.Load(ModuleSource.FromPath(
+            Path.Combine(fixtures, "project", "settings.pkl")));
+        string invalid = ExceptionName(() => Project.Load(ModuleSource.FromText("value = 1\n")));
+        return $"project={project.ProjectFileUri.Scheme}:{Lower(Path.IsPathFullyQualified(project.ProjectDirectory))}:" +
+            $"{project.DeclaredDependencies.RemoteDependenciesReadOnly.Count}:" +
+            $"{project.LocalProjectDependencies.Count}:{project.Tests.Count}" +
+            $"|settings={settings.Environment?.Count}:{settings.ModulePaths?.Count}:" +
+            $"{Lower(settings.HttpSettings is not null)}:{settings.ExternalModuleReadersReadOnly?.Count}" +
+            $"|http={http.RewritesReadOnly?.Count}:{proxy.NoProxyReadOnly?.Count}:" +
+            $"{external.ArgumentsReadOnly?.Count}|user={Lower(user.EditorSettings.UrlScheme == user.GetEditor().UrlScheme)}:" +
+            $"{Lower(user.HttpSettings is not null)}|invalid={Lower(invalid != "none")}";
+    }
+
+    static string ObserveSecurityAndExternalApi()
+    {
+        SecurityManagers.StandardBuilder builder = SecurityManagers.CreateStandardBuilder()
+            .AddAllowedModule(new Regex("^repl:"))
+            .AddAllowedResource(new Regex("^env:"))
+            .SetRootDir(null);
+        SecurityManager manager = builder.Build();
+        manager.CheckResolveModule(new Uri("repl:module"));
+        string denied = ExceptionName(() => manager.CheckResolveModule(new Uri("file:///denied.pkl")));
+        string empty = ExceptionName(() => SecurityManagers.CreateStandardBuilder().Build());
+        var specification = new PklEvaluatorSettings.ExternalReader(
+            "/definitely/missing/pkl-reader", new List<string>(), null);
+        bool processFailure;
+        using (ExternalReaderProcess process = ExternalReaderProcess.Start(specification))
+        {
+            processFailure = ExceptionName(() => process.GetModuleReaderSpec("missing")) != "none";
+        }
+        return $"defaults={SecurityManagers.DefaultAllowedModules.Count}:" +
+            $"{SecurityManagers.DefaultAllowedResources.Count}:{Lower(SecurityManagers.DefaultManager is not null)}" +
+            $"|builder={builder.AllowedModules.Count}:{builder.AllowedResources.Count}:" +
+            $"{Lower(builder.RootDirectory is null)}|denied={Lower(denied == nameof(SecurityManagerException))}" +
+            $"|empty={Lower(empty == nameof(InvalidOperationException))}|external={Lower(processFailure)}";
+    }
+
+    static string ObserveIdiomaticLoadingApiShapes()
+    {
+        bool readOnly = ExceptionName(() =>
+            ((IList<Regex>)SecurityManagers.DefaultAllowedModules).Add(new Regex("never"))) ==
+            nameof(NotSupportedException);
+        bool nullable = ModuleKeyFactories.HttpFactory.TryCreate(new Uri("file:///not-http.pkl")) is null;
+        bool disposables = typeof(IDisposable).IsAssignableFrom(typeof(ModuleKeyFactory)) &&
+            typeof(IDisposable).IsAssignableFrom(typeof(ResourceReader)) &&
+            typeof(IDisposable).IsAssignableFrom(typeof(PklHttpClient)) &&
+            typeof(IDisposable).IsAssignableFrom(typeof(PackageResolver)) &&
+            typeof(IDisposable).IsAssignableFrom(typeof(ExternalReaderProcess));
+        return $"byte={Lower(typeof(Resource).GetProperty("Bytes")?.PropertyType == typeof(byte[]))}" +
+            $"|uri={Lower(typeof(ModuleKey).GetProperty("Uri")?.PropertyType == typeof(Uri))}" +
+            $"|stream={Lower(typeof(PklHttpClient).GetMethod("OpenRead")?.ReturnType == typeof(Stream))}" +
+            $"|collection={Lower(readOnly)}|nullable={Lower(nullable)}" +
+            $"|exceptions={Lower(typeof(Exception).IsAssignableFrom(typeof(HttpClientException)) && typeof(Exception).IsAssignableFrom(typeof(PackageLoadError)))}" +
+            $"|disposable={Lower(disposables)}";
     }
 
     static string ObserveAnalyzerAndImportGraph(string work)

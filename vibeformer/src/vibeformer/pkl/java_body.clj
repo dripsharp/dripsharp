@@ -1489,6 +1489,9 @@
           (invoke (member target "WriteLine") args)
           "executable:java.io.PrintStream#println(java.lang.String)"
           (invoke (member target "WriteLine") args)
+          "executable:org.pkl.core.http.HttpClient$Builder#addCertificates(byte[])"
+          (invoke (member target "AddCertificates")
+                  [(compat-call "ToUnsignedBytes" [(arg 0)])])
           "executable:java.lang.invoke.MethodHandle#invoke(java.lang.Object[])" (invoke (member target "DynamicInvoke") args)
           "executable:java.net.InetAddress#getAddress()" (call-member "GetAddressBytes")
           "executable:java.util.Iterator#forEachRemaining(java.util.function.Consumer)" (compat-call "ForEachRemaining" (into [target] args))
