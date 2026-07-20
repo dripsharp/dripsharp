@@ -64,6 +64,10 @@ internal static class RegexCompatPackageProbe
                 int.Parse(argument, CultureInfo.InvariantCulture))!),
             "REPLACE_ALL" => (string)Invoke(matcher, "ReplaceAll", argument)!,
             "REPLACE_FIRST" => (string)Invoke(matcher, "ReplaceFirst", argument)!,
+            "REPLACE_LAST" => ReplaceLast(matcher, input, argument),
+            "REPLACE_ALL_MAPPED" => ReplaceAllMapped(matcher, input, argument),
+            "REPLACE_FIRST_MAPPED" => ReplaceFirstMapped(matcher, input, argument),
+            "REPLACE_LAST_MAPPED" => ReplaceLastMapped(matcher, input, argument),
             "APPEND" => Append(matcher, argument, input),
             _ => throw new ArgumentException("unknown operation: " + operation)
         };
@@ -96,6 +100,61 @@ internal static class RegexCompatPackageProbe
     {
         var result = new StringBuilder();
         while ((bool)Invoke(matcher, "Find")!) Invoke(matcher, "AppendReplacement", result, replacement);
+        Invoke(matcher, "AppendTail", result);
+        return result.ToString();
+    }
+
+    private static bool FindLast(object matcher)
+    {
+        if (!(bool)Invoke(matcher, "Find")!) return false;
+        object last;
+        do
+        {
+            last = Invoke(matcher, "ToMatchResult")!;
+        } while ((bool)Invoke(matcher, "Find")!);
+        Invoke(matcher, "Region", (int)Invoke(last, "Start")!, (int)Invoke(last, "End")!);
+        return (bool)Invoke(matcher, "LookingAt")!;
+    }
+
+    private static string ReplaceLast(object matcher, string input, string replacement)
+    {
+        if (!FindLast(matcher)) return input;
+        var result = new StringBuilder();
+        Invoke(matcher, "AppendReplacement", result, replacement);
+        Invoke(matcher, "AppendTail", result);
+        return result.ToString();
+    }
+
+    private static string MappedReplacement(object matcher, string template) =>
+        (string)InvokeStatic("QuoteReplacement",
+            template.Replace("{}", (string)Invoke(matcher, "Group")!, StringComparison.Ordinal))!;
+
+    private static string ReplaceAllMapped(object matcher, string input, string template)
+    {
+        if (!(bool)Invoke(matcher, "Find")!) return input;
+        var result = new StringBuilder();
+        do
+        {
+            Invoke(matcher, "AppendReplacement", result, MappedReplacement(matcher, template));
+        } while ((bool)Invoke(matcher, "Find")!);
+        Invoke(matcher, "AppendTail", result);
+        return result.ToString();
+    }
+
+    private static string ReplaceFirstMapped(object matcher, string input, string template)
+    {
+        if (!(bool)Invoke(matcher, "Find")!) return input;
+        var result = new StringBuilder();
+        Invoke(matcher, "AppendReplacement", result, MappedReplacement(matcher, template));
+        Invoke(matcher, "AppendTail", result);
+        return result.ToString();
+    }
+
+    private static string ReplaceLastMapped(object matcher, string input, string template)
+    {
+        if (!FindLast(matcher)) return input;
+        var result = new StringBuilder();
+        Invoke(matcher, "AppendReplacement", result, MappedReplacement(matcher, template));
         Invoke(matcher, "AppendTail", result);
         return result.ToString();
     }

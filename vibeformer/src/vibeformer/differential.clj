@@ -221,6 +221,24 @@
    ["regex/replace/missing-group" "REPLACE_ALL" 0 "a" "a" "$4"]
    ["regex/replace/quote" "QUOTE_REPLACEMENT" 0 "a$\\b" "" ""]])
 
+(def ^:private astral-regex-capture-cases
+  [["regex/astral-capture/literal-plus" "FIND" 0 "(😀+)😈" "😀😀😈" ""]
+   ["regex/astral-capture/codepoint-plus" "FIND" 0 "(\\x{1F600}+)😈" "😀😀😈" ""]
+   ["regex/astral-capture/name-plus" "FIND" 0 "(\\N{GRINNING FACE}+)😈" "😀😀😈" ""]
+   ["regex/astral-capture/singleton-class-plus" "FIND" 0 "([😀]+)😈" "😀😀😈" ""]
+   ["regex/astral-replace/all" "REPLACE_ALL" 0 "(😀+)😈"
+    "😀😀😈😈😍😍😀😀😈😈😍😍" "($0|$1)"]
+   ["regex/astral-replace/first" "REPLACE_FIRST" 0 "(😀+)😈"
+    "😀😀😈😈😍😍😀😀😈😈😍😍" "($0|$1)"]
+   ["regex/astral-replace/last" "REPLACE_LAST" 0 "(😀+)😈"
+    "😀😀😈😈😍😍😀😀😈😈😍😍" "($0|$1)"]
+   ["regex/astral-replace/all-mapped" "REPLACE_ALL_MAPPED" 0 "(😀+)😈"
+    "😀😀😈😈😍😍😀😀😈😈😍😍" "├{}┤"]
+   ["regex/astral-replace/first-mapped" "REPLACE_FIRST_MAPPED" 0 "(😀+)😈"
+    "😀😀😈😈😍😍😀😀😈😈😍😍" "├{}┤"]
+   ["regex/astral-replace/last-mapped" "REPLACE_LAST_MAPPED" 0 "(😀+)😈"
+    "😀😀😈😈😍😍😀😀😈😈😍😍" "├{}┤"]])
+
 (def ^:private base-core-cases
   [["evaluation/module-export" "EVALUATE"
     (str "name = \"pigeon\"\n"
@@ -449,6 +467,26 @@
       (fail! "Differential comparator did not detect a deliberate perturbation"
              {:oracle (str oracle) :perturbed (str perturbed)}))
     comparison))
+
+(defn- prove-astral-capture-perturbation! [^Path oracle ^Path perturbed]
+  (let [target-id "regex/astral-capture/literal-plus"
+        expected-match (str "0,6," (b64 "😀😀😈") ";0,4," (b64 "😀😀"))
+        expected-line (str target-id "\tOK\t" (b64 (str "1:" (b64 expected-match))))
+        historical-match (str "2,6," (b64 "😀😈") ";2,4," (b64 "😀"))
+        historical-line (str target-id "\tOK\t" (b64 (str "1:" (b64 historical-match))))
+        lines (str/split-lines (Files/readString oracle StandardCharsets/UTF_8))
+        target-index (.indexOf lines expected-line)]
+    (when (neg? target-index)
+      (fail! "Quantified astral capture oracle did not retain the pinned JVM boundaries"
+             {:oracle (str oracle) :expected-line expected-line}))
+    (write-text! perturbed
+                 (str (str/join "\n" (assoc lines target-index historical-line)) "\n"))
+    (let [comparison (compare-results oracle perturbed)]
+      (when-not (= (inc target-index) (get-in comparison [:mismatch :line]))
+        (fail! "Differential comparator did not detect the historical astral capture mismatch"
+               {:oracle (str oracle) :perturbed (str perturbed)
+                :comparison comparison :historical-line historical-line}))
+      comparison)))
 
 (defn- run-independent-probes!
   [run-command! probes]
@@ -1278,6 +1316,61 @@
                  :generator-dependencies generator-dependencies
                  :consumer-dependencies consumer-dependencies}))))))))
 
+(defn- verify-astral-regex-captures!
+  [{:keys [root run-command! java oracle-classes consumer-root consumer-project]}]
+  (let [proof-root (harness/clean-directory!
+                    (paths/resolve-path root "vibeformer" "validation-output"
+                                        "differential-proof" "astral-regex-captures"))
+        manifest (write-regex-compat-manifest!
+                  (paths/resolve-path proof-root "cases.tsv") astral-regex-capture-cases)
+        oracle-first (paths/resolve-path proof-root "upstream-first.tsv")
+        oracle-second (paths/resolve-path proof-root "upstream-second.tsv")
+        package-first (paths/resolve-path proof-root "package-first.tsv")
+        package-second (paths/resolve-path proof-root "package-second.tsv")
+        perturbed (paths/resolve-path proof-root "historical-boundary-perturbed.tsv")
+        ids (mapv first astral-regex-capture-cases)
+        operations (set (map second astral-regex-capture-cases))]
+    (when-not (and (= 10 (count ids))
+                   (= (count ids) (count (set ids)))
+                   (= #{"FIND" "REPLACE_ALL" "REPLACE_FIRST" "REPLACE_LAST"
+                        "REPLACE_ALL_MAPPED" "REPLACE_FIRST_MAPPED" "REPLACE_LAST_MAPPED"}
+                      operations))
+      (fail! "The quantified astral capture/replacement fixture is incomplete or duplicated"
+             {:cases (count ids) :unique-ids (count (set ids)) :operations operations}))
+    (run-independent-probes!
+     run-command!
+     [{:name :upstream-astral-regex-oracle-first
+       :command [(str java) "-cp" (str oracle-classes) "RegexCompatOracle"
+                 (str manifest) (str oracle-first)]
+       :directory root}
+      {:name :upstream-astral-regex-oracle-second
+       :command [(str java) "-cp" (str oracle-classes) "RegexCompatOracle"
+                 (str manifest) (str oracle-second)]
+       :directory root}
+      {:name :packaged-astral-regex-probe-first
+       :command ["dotnet" "run" "--project" (str consumer-project)
+                 "--no-build" "--no-restore" "--" (str manifest) (str package-first)]
+       :directory consumer-root}
+      {:name :packaged-astral-regex-probe-second
+       :command ["dotnet" "run" "--project" (str consumer-project)
+                 "--no-build" "--no-restore" "--" (str manifest) (str package-second)]
+       :directory consumer-root}])
+    (assert-pinned! "Repeated upstream JVM quantified astral regex" oracle-first oracle-second)
+    (assert-pinned! "Repeated package-only quantified astral regex" package-first package-second)
+    (let [comparison (assert-equal! "quantified astral Java Pattern/Matcher"
+                                    oracle-first package-first)
+          perturbation (prove-astral-capture-perturbation! oracle-first perturbed)
+          summary {:cases (count astral-regex-capture-cases)
+                   :capture-span-cases 4
+                   :replacement-operations 6
+                   :observations (:matched comparison)
+                   :historical-perturbation-detected-at
+                   (get-in perturbation [:mismatch :line])}]
+      (println "Independent quantified astral JVM/package regex differential passed:"
+               (pr-str summary))
+      {:summary summary :manifest manifest :oracle-output oracle-first
+       :package-output package-first :perturbed-output perturbed})))
+
 (defn- verify-regex-compatibility!
   [{:keys [root package-proof run-command! java-release java-home]}]
   (let [proof-root (harness/clean-directory!
@@ -1371,17 +1464,23 @@
     (assert-pinned! "Repeated package-only regex" package-first package-second)
     (let [comparison (assert-equal! "Java Pattern/Matcher" oracle-first package-first)
           perturbation (prove-perturbation! oracle-first perturbed)
+          astral-captures
+          (verify-astral-regex-captures!
+           {:root root :run-command! run-command! :java java
+            :oracle-classes oracle-classes :consumer-root consumer-root
+            :consumer-project consumer-project})
           summary {:cases (count regex-compat-cases)
                    :observations (:matched comparison)
                    :operations (count operations)
                    :compile-flags (sort flags)
+                   :quantified-astral-captures (:summary astral-captures)
                    :unicode-data {:blocks 338 :block-names 338 :scripts-and-aliases 342
                                   :properties 368 :case-folds 2933 :character-names 38196
                                   :grapheme-types 15 :indic-conjunct-types 3}
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
       (println "Independent Java Pattern/package regex differential passed:" (pr-str summary))
       {:summary summary :manifest manifest :oracle-output oracle-first
-       :package-output package-first})))
+       :package-output package-first :quantified-astral-captures astral-captures})))
 
 (defn- verify-core-differential!
   "Runs representative evaluator/value-model cases in isolated upstream and package processes."

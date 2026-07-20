@@ -174,3 +174,25 @@
                     "regex/split/captures-not-returned"
                     "regex/replace/missing-group"]]
       (is (some #{family} ids)))))
+
+(deftest quantified-astral-regex-contract-pins-captures-and-every-replacement-mode
+  (let [cases (var-get #'differential/astral-regex-capture-cases)
+        ids (mapv first cases)
+        operations (set (map second cases))]
+    (is (= 10 (count cases)))
+    (is (= (count ids) (count (set ids))))
+    (is (= 4 (count (filter #(= "FIND" (second %)) cases))))
+    (is (= #{"FIND" "REPLACE_ALL" "REPLACE_FIRST" "REPLACE_LAST"
+             "REPLACE_ALL_MAPPED" "REPLACE_FIRST_MAPPED" "REPLACE_LAST_MAPPED"}
+           operations))
+    (doseq [family ["regex/astral-capture/literal-plus"
+                    "regex/astral-capture/codepoint-plus"
+                    "regex/astral-capture/name-plus"
+                    "regex/astral-capture/singleton-class-plus"
+                    "regex/astral-replace/all"
+                    "regex/astral-replace/first"
+                    "regex/astral-replace/last"
+                    "regex/astral-replace/all-mapped"
+                    "regex/astral-replace/first-mapped"
+                    "regex/astral-replace/last-mapped"]]
+      (is (some #{family} ids)))))

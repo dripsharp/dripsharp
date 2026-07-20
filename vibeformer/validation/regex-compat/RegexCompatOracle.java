@@ -56,6 +56,10 @@ public final class RegexCompatOracle {
       case "SPLIT" -> sequence(pattern.split(input, Integer.parseInt(argument)));
       case "REPLACE_ALL" -> matcher.replaceAll(argument);
       case "REPLACE_FIRST" -> matcher.replaceFirst(argument);
+      case "REPLACE_LAST" -> replaceLast(matcher, input, argument);
+      case "REPLACE_ALL_MAPPED" -> replaceAllMapped(matcher, input, argument);
+      case "REPLACE_FIRST_MAPPED" -> replaceFirstMapped(matcher, input, argument);
+      case "REPLACE_LAST_MAPPED" -> replaceLastMapped(matcher, input, argument);
       case "APPEND" -> append(matcher, argument);
       default -> throw new IllegalArgumentException("unknown operation: " + operation);
     };
@@ -79,6 +83,53 @@ public final class RegexCompatOracle {
   private static String append(Matcher matcher, String replacement) {
     var result = new StringBuffer();
     while (matcher.find()) matcher.appendReplacement(result, replacement);
+    matcher.appendTail(result);
+    return result.toString();
+  }
+
+  private static boolean findLast(Matcher matcher) {
+    if (!matcher.find()) return false;
+    java.util.regex.MatchResult last;
+    do {
+      last = matcher.toMatchResult();
+    } while (matcher.find());
+    return matcher.region(last.start(), last.end()).lookingAt();
+  }
+
+  private static String replaceLast(Matcher matcher, String input, String replacement) {
+    if (!findLast(matcher)) return input;
+    var result = new StringBuffer();
+    matcher.appendReplacement(result, replacement);
+    matcher.appendTail(result);
+    return result.toString();
+  }
+
+  private static String mappedReplacement(Matcher matcher, String template) {
+    return Matcher.quoteReplacement(template.replace("{}", matcher.group()));
+  }
+
+  private static String replaceAllMapped(Matcher matcher, String input, String template) {
+    if (!matcher.find()) return input;
+    var result = new StringBuffer();
+    do {
+      matcher.appendReplacement(result, mappedReplacement(matcher, template));
+    } while (matcher.find());
+    matcher.appendTail(result);
+    return result.toString();
+  }
+
+  private static String replaceFirstMapped(Matcher matcher, String input, String template) {
+    if (!matcher.find()) return input;
+    var result = new StringBuffer();
+    matcher.appendReplacement(result, mappedReplacement(matcher, template));
+    matcher.appendTail(result);
+    return result.toString();
+  }
+
+  private static String replaceLastMapped(Matcher matcher, String input, String template) {
+    if (!findLast(matcher)) return input;
+    var result = new StringBuffer();
+    matcher.appendReplacement(result, mappedReplacement(matcher, template));
     matcher.appendTail(result);
     return result.toString();
   }

@@ -3054,18 +3054,23 @@ internal static class JavaCompat
                 }
             }
             if (quantifier is null) return atom;
+            // A Java regex atom can translate to more than one .NET regex atom.
+            // Supplementary code points are the important example: .NET regexes
+            // operate on UTF-16 units, so their translated surrogate pair must
+            // remain one unit when Java applies a quantifier.
+            var quantified = "(?:" + atom + ")" + quantifier;
             SkipIgnored(mode);
             if (index < pattern.Length && pattern[index] == '?')
             {
                 index++;
-                return atom + quantifier + "?";
+                return quantified + "?";
             }
             if (index < pattern.Length && pattern[index] == '+')
             {
                 index++;
-                return "(?>" + atom + quantifier + ")";
+                return "(?>" + quantified + ")";
             }
-            return atom + quantifier;
+            return quantified;
         }
 
         private string TranslateEscape(int mode)
