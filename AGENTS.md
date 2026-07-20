@@ -26,6 +26,11 @@ blocks the current issue, record the dependency and do not close the current
 issue prematurely. Beads issues must not narrow the product goal or introduce
 new exclusions.
 
+# Resource Safety
+
+Before any full test, differential, corpus, package, or clean-generation gate,
+check available RAM/CPU. Set `VIBEFORMER_WORKERS` to 22, and  and 28 GiB for the JVM heap. Be careful about running workloads that more than an hour. Consider using clj-nrepl-eval on specific parts instead.
+
 # Clojure Parenthesis Repair
 
 The command `clj-paren-repair` is installed on your path.
