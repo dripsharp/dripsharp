@@ -331,17 +331,24 @@
       (require-exact-children!
        metadata
        (concat (map first configured-elements)
-               (when (:license-expression package) ["license"])
+               (when (:license-expression package) ["license" "licenseUrl"])
                ["repository" "dependencies"])
        "package/metadata")
       (when-let [expected-license (:license-expression package)]
-        (let [license (exactly-one-child! metadata "license" "package/metadata")]
+        (let [license (exactly-one-child! metadata "license" "package/metadata")
+              license-url (exactly-one-child! metadata "licenseUrl" "package/metadata")
+              expected-url (str "https://licenses.nuget.org/" expected-license)]
           (require-exact-attributes! license {"type" "expression"}
                                      "package/metadata/license")
           (require-exact-children! license [] "package/metadata/license")
           (when-not (= expected-license (.getTextContent license))
             (fail! "NuGet license metadata does not match the configured expression"
-                   {:expected expected-license :actual (.getTextContent license)}))))
+                   {:expected expected-license :actual (.getTextContent license)}))
+          (require-exact-attributes! license-url {} "package/metadata/licenseUrl")
+          (require-exact-children! license-url [] "package/metadata/licenseUrl")
+          (when-not (= expected-url (.getTextContent license-url))
+            (fail! "NuGet license URL does not match the configured expression"
+                   {:expected expected-url :actual (.getTextContent license-url)}))))
       (let [repository (exactly-one-child! metadata "repository" "package/metadata")
             expected-repository {"type" (:repository-type package)
                                  "url" (:repository-url package)
@@ -526,7 +533,8 @@
   ([artifact package target-framework assembly-name]
    (inspect-package! artifact package target-framework assembly-name []))
   ([artifact {:keys [id version title description authors tags project-url
-                     repository-url repository-type repository-commit]}
+                     repository-url repository-type repository-commit
+                     license-expression]}
     target-framework assembly-name
     expected-dependencies]
    (with-open [archive (ZipFile. (str artifact))]
@@ -555,7 +563,8 @@
                             :authors authors :tags tags :project-url project-url
                             :repository-url repository-url
                             :repository-type repository-type
-                            :repository-commit repository-commit}
+                            :repository-commit repository-commit
+                            :license-expression license-expression}
                            target-framework expected-dependencies)]
          (when (seq forbidden)
            (fail! "NuGet package contains translator, test, or generated-source internals"

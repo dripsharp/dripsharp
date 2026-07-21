@@ -1,0 +1,6 @@
+VIBEFORMER_RAWHTTP_BODY_REVIEW_V1
+assembly	owner	member	parameter-count	signature	finding	evidence	evidence-sha256	disposition
+RawHttp.Core	RawHttp.Core.Body.ChunkedBody	getContentLength	0	System.Nullable<System.Int64> getContentLength()	constant-default	research/rawhttp/rawhttp-core/src/main/java/rawhttp/core/body/ChunkedBody.java:90	d61ad11d9d256ff969a40cab69ba77d4680983f82fa63dd0cd68c2b5fd0eae1e	authoritative-java-body
+RawHttp.Core	RawHttp.Core.Body.InputStreamChunkEncoder	markSupported	0	System.Boolean markSupported()	constant-zero	research/rawhttp/rawhttp-core/src/main/java/rawhttp/core/body/InputStreamChunkEncoder.java:73	a75ff8c29abbecd9a80f3d368a8e27ebf49d140ac3a11a784795073d0cf90004	authoritative-java-body
+RawHttp.Core	RawHttp.Core.Client.TcpRawHttpClient$TcpRawHttpClientOptions	Dispose	0	System.Void Dispose()	empty-no-op	research/rawhttp/rawhttp-core/src/main/java/rawhttp/core/client/TcpRawHttpClient.java:289	09e859f372f3290b081b9f484234c024d265fe4d21604feeb63725fbd1e2a7a9	authoritative-java-body
+RawHttp.Core	RawHttp.Core.Client.TcpRawHttpClient$TcpRawHttpClientOptions	removeSocket	1	System.Void removeSocket(System.Net.Sockets.Socket)	empty-no-op	research/rawhttp/rawhttp-core/src/main/java/rawhttp/core/client/TcpRawHttpClient.java:299	09e859f372f3290b081b9f484234c024d265fe4d21604feeb63725fbd1e2a7a9	authoritative-java-body

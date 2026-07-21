@@ -15,6 +15,7 @@
    :description "Disposable parser package."
    :authors "Vibeformer"
    :tags "pkl parser vibeformer"
+   :license-expression "Apache-2.0"
    :project-url "https://example.test/pkl"
    :repository-url "https://example.test/pkl.git"
    :repository-type "git"
@@ -46,6 +47,9 @@
        "<description>" (:description package) "</description>"
        "<authors>" (:authors package) "</authors>"
        "<tags>" (:tags package) "</tags>"
+       "<license type=\"expression\">" (:license-expression package) "</license>"
+       "<licenseUrl>https://licenses.nuget.org/" (:license-expression package)
+       "</licenseUrl>"
        "<projectUrl>" (:project-url package) "</projectUrl>"
        "<repository type=\"" (:repository-type package) "\" url=\""
        (:repository-url package) "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />"
@@ -70,10 +74,10 @@
 
 (defn- archive! [entries]
   (let [directory (Files/createTempDirectory "vibeformer-package-test"
-                                              (make-array FileAttribute 0))
+                                             (make-array FileAttribute 0))
         archive (.resolve directory "Pkl.Parser.0.0.0-development.nupkg")]
     (with-open [output (ZipOutputStream. (Files/newOutputStream archive
-                                                               (make-array OpenOption 0)))]
+                                                                (make-array OpenOption 0)))]
       (doseq [[name contents] entries]
         (.putNextEntry output (ZipEntry. name))
         (.write output (.getBytes contents StandardCharsets/UTF_8))
@@ -113,10 +117,10 @@
   (let [nuspec-name (first (filter #(str/ends-with? % ".nuspec") (keys entries)))
         metadata (if (= "Pkl.Core.nuspec" nuspec-name) core-package package)]
     (archive! (merge {"[Content_Types].xml" (content-types)
-                    "_rels/.rels" (relationships nuspec-name)
-                    "package/services/metadata/core-properties/core-properties.psmdcp"
-                    (core-properties metadata)}
-                   entries))))
+                      "_rels/.rels" (relationships nuspec-name)
+                      "package/services/metadata/core-properties/core-properties.psmdcp"
+                      (core-properties metadata)}
+                     entries))))
 
 (defn- write-file! [^Path file contents]
   (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
@@ -182,7 +186,7 @@
 
 (deftest package-reproducibility-requires-two-independent-clean-builds
   (let [root (Files/createTempDirectory "vibeformer-clean-build-reproducibility"
-                                         (make-array FileAttribute 0))
+                                        (make-array FileAttribute 0))
         {:keys [verification-count verify-fn run-command!]}
         (reproducibility-fixture root false)
         proof (packaging/pack-verified-profile!
@@ -200,7 +204,7 @@
 
 (deftest package-reproducibility-rejects-divergent-clean-builds
   (let [root (Files/createTempDirectory "vibeformer-clean-build-divergence"
-                                         (make-array FileAttribute 0))
+                                        (make-array FileAttribute 0))
         {:keys [verification-count verify-fn run-command!]}
         (reproducibility-fixture root true)
         error (try
@@ -272,10 +276,10 @@
           artifact (package-archive!
                     (assoc base entry
                            (alter (get (merge {"[Content_Types].xml" (content-types)
-                                              "_rels/.rels" (relationships "Pkl.Parser.nuspec")
-                                              "package/services/metadata/core-properties/core-properties.psmdcp"
-                                              (core-properties package)}
-                                             base)
+                                               "_rels/.rels" (relationships "Pkl.Parser.nuspec")
+                                               "package/services/metadata/core-properties/core-properties.psmdcp"
+                                               (core-properties package)}
+                                              base)
                                        entry))))
           error (try
                   (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
@@ -404,7 +408,21 @@
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (is (= :package-consumption-failed (:kind (ex-data error))))
       (is (= "net8.0" (:expected (ex-data error))))
-      (is (= "net9.0" (:actual (ex-data error)))))))
+      (is (= "net9.0" (:actual (ex-data error))))))
+  (testing "license URL must be the exact canonical expression URL"
+    (let [wrong-license-url (str/replace
+                             (nuspec)
+                             "https://licenses.nuget.org/Apache-2.0"
+                             "https://example.test/Apache-2.0")
+          artifact (package-archive! {"Pkl.Parser.nuspec" wrong-license-url
+                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          error (try
+                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :package-consumption-failed (:kind (ex-data error))))
+      (is (= "https://licenses.nuget.org/Apache-2.0"
+             (:expected (ex-data error)))))))
 
 (deftest package-inspection-rejects-unexpected-metadata-and-attributes
   (doseq [[label altered]
@@ -452,7 +470,7 @@
 
 (deftest independent-consumer-dependency-proof-pins-package-only-closure
   (let [root (Files/createTempDirectory "vibeformer-consumer-proof"
-                                         (make-array FileAttribute 0))
+                                        (make-array FileAttribute 0))
         project (write-file!
                  (.resolve root "Consumer.csproj")
                  (str "<Project><ItemGroup>"
@@ -483,7 +501,7 @@
 
 (deftest independent-consumer-dependency-proof-rejects-project-reference
   (let [root (Files/createTempDirectory "vibeformer-consumer-leak"
-                                         (make-array FileAttribute 0))
+                                        (make-array FileAttribute 0))
         project (write-file!
                  (.resolve root "Consumer.csproj")
                  (str "<Project><ItemGroup>"
@@ -501,7 +519,7 @@
 
 (deftest independent-consumer-dependency-proof-rejects-wrong-artifact-or-extra-version
   (let [root (Files/createTempDirectory "vibeformer-consumer-identity"
-                                         (make-array FileAttribute 0))
+                                        (make-array FileAttribute 0))
         project (write-file!
                  (.resolve root "Consumer.csproj")
                  (str "<Project><ItemGroup>"
@@ -541,7 +559,7 @@
 
 (deftest package-assembly-inspection-binds-generated-package-identities
   (let [root (Files/createTempDirectory "vibeformer-assembly-inspection"
-                                         (make-array FileAttribute 0))
+                                        (make-array FileAttribute 0))
         packed (archive! {"lib/net8.0/Pkl.Core.dll" "verified assembly"})
         artifact (.resolve root "Pkl.Core.0.0.0-development.nupkg")
         _ (Files/move packed artifact (make-array java.nio.file.CopyOption 0))
@@ -586,7 +604,7 @@
 
 (deftest package-assembly-inspection-rejects-substituted-build-output
   (let [root (Files/createTempDirectory "vibeformer-assembly-substitution"
-                                         (make-array FileAttribute 0))
+                                        (make-array FileAttribute 0))
         packed (archive! {"lib/net8.0/Pkl.Core.dll" "substituted assembly"})
         artifact (.resolve root "Pkl.Core.0.0.0-development.nupkg")
         _ (Files/move packed artifact (make-array java.nio.file.CopyOption 0))

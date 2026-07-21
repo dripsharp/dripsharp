@@ -15,6 +15,7 @@ destination-file	vibeformer/config/rawhttp-core-destination.edn
 inventory-file	vibeformer/validation/rawhttp-core/GradleInventory.tsv
 observations-file	vibeformer/validation/rawhttp-core/JavaObservations.tsv
 public-surface-file	vibeformer/validation/rawhttp-core/PublicSurface.tsv
+body-review-file	vibeformer/validation/rawhttp-core/BodyReview.tsv
 oracle-source	vibeformer/validation/rawhttp-core/RawHttpContractOracle.java
 java-release	8
 oracle-runtime-major	17
@@ -43,5 +44,5 @@ destination-resource-strategy	embedded-resource-preserve-path
 destination-project-dependencies	none
 destination-external-dependency-policy	jsr305 compile-only annotations become nullable metadata and add no runtime package
 public-surface-strategy	all accessible public and protected declared types and members from every compiled production class; synthetic and bridge members omitted
-normalization	UTF-8; LF output; rows sorted by stable identity; payloads base64; exception class, message, and RawHTTP line number only; no stack traces, paths, ports, clocks, or locale-sensitive text
+normalization	UTF-8; LF output; rows sorted by stable identity; payloads base64; Java exception identities and boolean spellings; URI original text; exception class, message, and RawHTTP line number only; no stack traces, paths, ports, clocks, or locale-sensitive text
 scope-statement	This is bounded evidence for translator reuse; unsupported production behavior remains blocking implementation work and is not excluded.

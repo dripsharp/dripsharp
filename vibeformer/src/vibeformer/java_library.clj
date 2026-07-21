@@ -2000,6 +2000,9 @@
               "executable:java.net.URI#<init>(java.lang.String,java.lang.String,java.lang.String,int,java.lang.String,java.lang.String,java.lang.String)"
               (compat-call "NewUri" arguments)
 
+              "executable:java.net.URI#<init>(java.lang.String)"
+              (compat-call "NewUri" arguments)
+
               "executable:java.io.ByteArrayInputStream#<init>(byte[])"
               (sequence-node
                [(raw "global::Vibeformer.Runtime.JavaCompat.NewMemoryStream(")

@@ -1,6 +1,6 @@
 // Ordinary generated-product support for Java contracts with no direct .NET API.
 // This file is copied unchanged into disposable projects; it is not a second AST
-// and contains no Pkl parser behavior.
+// and contains no destination-product behavior.
 #nullable enable
 
 using System;
@@ -116,8 +116,8 @@ internal sealed class NoSuchFileException : IOException
 internal sealed class JavaFileNotFoundException : FileNotFoundException
 {
     // Java's no-argument FileNotFoundException has a null message. The CLR
-    // supplies a generic fallback message, which would become a spurious Pkl
-    // cause line unless the Java contract is retained explicitly.
+    // supplies a generic fallback message, which would become a spurious
+    // destination diagnostic unless the Java contract is retained explicitly.
     public override string Message => null!;
 }
 
@@ -483,6 +483,7 @@ internal sealed class JavaInflaterOutputStream : Stream
 {
     private readonly Stream destination;
     private readonly MemoryStream compressed = new();
+    private int emitted;
     private bool disposed;
 
     internal JavaInflaterOutputStream(Stream destination) => this.destination = destination;
@@ -497,7 +498,22 @@ internal sealed class JavaInflaterOutputStream : Stream
         set => throw new NotSupportedException();
     }
 
-    public override void Flush() => destination.Flush();
+    public override void Flush()
+    {
+        var position = compressed.Position;
+        compressed.Position = 0;
+        using (var inflater = new ZLibStream(compressed, CompressionMode.Decompress, leaveOpen: true))
+        using (var decoded = new MemoryStream())
+        {
+            inflater.CopyTo(decoded);
+            var bytes = decoded.ToArray();
+            if (bytes.Length > emitted)
+                destination.Write(bytes, emitted, bytes.Length - emitted);
+            emitted = bytes.Length;
+        }
+        compressed.Position = position;
+        destination.Flush();
+    }
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
@@ -507,11 +523,7 @@ internal sealed class JavaInflaterOutputStream : Stream
     {
         if (!disposing || disposed) return;
         disposed = true;
-        compressed.Position = 0;
-        using (var inflater = new ZLibStream(compressed, CompressionMode.Decompress, leaveOpen: true))
-        {
-            inflater.CopyTo(destination);
-        }
+        Flush();
         compressed.Dispose();
         destination.Dispose();
         base.Dispose(disposing);
@@ -527,7 +539,8 @@ public class JavaFilterOutputStream : JavaOutputStream
     public override void write(int value) => @out.WriteByte(unchecked((byte)value));
     public override void write(sbyte[] buffer, int offset, int count) =>
         @out.Write(JavaCompat.ToUnsignedBytes(buffer), offset, count);
-    public override void flush() => @out.Flush();
+    public override void Flush() => @out.Flush();
+    public override void flush() => Flush();
     public override void close() => @out.Dispose();
 
     protected override void Dispose(bool disposing)
@@ -812,11 +825,23 @@ internal sealed class JavaKeyStore
         using var contents = new MemoryStream();
         input.CopyTo(contents);
         certificates.Clear();
+        var flags =
+            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet |
+            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable;
+#if NET9_0_OR_GREATER
+        certificates.AddRange(
+            System.Security.Cryptography.X509Certificates.X509CertificateLoader
+                .LoadPkcs12Collection(
+                    contents.ToArray(),
+                    password is null ? null : new string(password),
+                    flags,
+                    System.Security.Cryptography.X509Certificates.Pkcs12LoaderLimits.Defaults));
+#else
         certificates.Import(
             contents.ToArray(),
             password is null ? null : new string(password),
-            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet |
-            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable);
+            flags);
+#endif
     }
 
     internal System.Security.Cryptography.X509Certificates.X509Certificate2Collection Certificates =>
@@ -2151,7 +2176,7 @@ internal static class JavaCompat
 
     // Port of java.lang.FdLibm.Pow from OpenJDK 21. StrictMath.pow is defined
     // in terms of this fdlibm implementation, and System.Math.Pow can differ
-    // by one ulp for ordinary Pkl expressions.
+    // by one ulp for ordinary translated Java expressions.
     internal static double StrictPow(double x, double y)
     {
         double z, r, s, t, u, v, w;
@@ -2337,7 +2362,7 @@ internal static class JavaCompat
 
     // Ports of the corresponding OpenJDK fdlibm routines. StrictMath is
     // specified in terms of these algorithms; platform libm functions can
-    // differ by one ulp, which is observable in rendered Pkl values.
+    // differ by one ulp, which is observable in rendered values.
     internal static double StrictLog(double x)
     {
         const double two54 = 1.80143985094819840000e+16;
@@ -3207,7 +3232,7 @@ internal static class JavaCompat
         if (Regex.IsMatch(value, @"(?i)^file:[^/]"))
         {
             // System.Uri rejects Java's opaque `file:path` form before the
-            // translated file reader can apply Pkl's purpose-built diagnostic.
+            // translated file reader can apply its purpose-built diagnostic.
             // Keep a valid CLR carrier while retaining the Java URI spelling
             // and opaque semantics through the compatibility accessors.
             var opaqueFile = new Uri("file:///" + value["file:".Length..], UriKind.Absolute);
@@ -3225,6 +3250,20 @@ internal static class JavaCompat
             var driveOnly = new Uri(value + "/", UriKind.Absolute);
             _ = OriginalUriTexts.GetValue(driveOnly, _ => new JavaUriText(value));
             return driveOnly;
+        }
+        if (Regex.IsMatch(value, @"^[A-Za-z][A-Za-z0-9+.-]*:///"))
+        {
+            // java.net.URI accepts an absolute hierarchical URI with an empty
+            // authority (for example, `http:///path`). System.Uri rejects the
+            // same spelling because HTTP requires a host. Preserve the Java
+            // text and its empty authority on an otherwise valid CLR carrier;
+            // the URI accessors below read the preserved spelling.
+            var authority = value.IndexOf(":///", StringComparison.Ordinal);
+            var carrier = new Uri(
+                value[..(authority + 3)] + "vibeformer.invalid/" + value[(authority + 4)..],
+                UriKind.Absolute);
+            _ = OriginalUriTexts.GetValue(carrier, _ => new JavaUriText(value));
+            return carrier;
         }
         if (Regex.IsMatch(value, @"(?i)(?:^|/)%2e(?:%2e)?(?:/|$)"))
         {
@@ -3414,7 +3453,12 @@ internal static class JavaCompat
 
     internal static string? UriAuthority(Uri uri) => DecodeUriComponent(UriRawAuthority(uri));
 
-    internal static string? UriHost(Uri uri) => uri.IsAbsoluteUri && !string.IsNullOrEmpty(uri.Host) ? uri.Host : null;
+    internal static string? UriHost(Uri uri)
+    {
+        if (OriginalUriTexts.TryGetValue(uri, out _) && UriRawAuthority(uri) is null)
+            return null;
+        return uri.IsAbsoluteUri && !string.IsNullOrEmpty(uri.Host) ? uri.Host : null;
+    }
 
     internal static string? UriRawUserInfo(Uri uri)
     {
@@ -3469,7 +3513,7 @@ internal static class JavaCompat
             return new Uri("file:///", UriKind.Absolute);
         // java.net.URI.resolve leaves a relative reference relative when the
         // base URI is opaque. System.Uri instead interprets it as a new opaque
-        // scheme-specific part (for example, `repl:foo.pkl`).
+        // scheme-specific part (for example, `repl:foo.config`).
         if (basis.IsAbsoluteUri && UriIsOpaque(basis)) return value;
         if (basis.IsAbsoluteUri) return new Uri(basis, value);
         var basisText = basis.OriginalString;

@@ -7,6 +7,8 @@ internal static class Program
 {
     private const BindingFlags DeclaredPublic = BindingFlags.Public | BindingFlags.Instance |
         BindingFlags.Static | BindingFlags.DeclaredOnly;
+    private const BindingFlags DeclaredAccessible = BindingFlags.Public | BindingFlags.NonPublic |
+        BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
     private static readonly NullabilityInfoContext Nullability = new();
     private static readonly Dictionary<short, OpCode> OpCodesByValue = BuildOpCodes();
 
@@ -26,11 +28,12 @@ internal static class Program
 
     private static int Main(string[] args)
     {
-        if (args.Length < 3 || args[0] is not ("generate" or "audit"))
+        if (args.Length < 3 || args[0] is not ("generate" or "audit" or "audit-accessible"))
         {
             Console.Error.WriteLine(
                 "Usage: PublicContractCompiler generate <output.cs> <strong-keys.tsv> <assembly> [<assembly> ...]\n" +
-                "   or: PublicContractCompiler audit <output.tsv> <assembly> [<assembly> ...]");
+                "   or: PublicContractCompiler audit <output.tsv> <assembly> [<assembly> ...]\n" +
+                "   or: PublicContractCompiler audit-accessible <output.tsv> <assembly> [<assembly> ...]");
             return 2;
         }
 
@@ -55,7 +58,8 @@ internal static class Program
         var assemblies = assemblyPaths.Select(Assembly.LoadFrom).ToArray();
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         if (args[0] == "generate") Generate(output, Path.GetFullPath(args[2]), assemblies, assemblyPaths);
-        else Audit(output, assemblies);
+        else if (args[0] == "audit") Audit(output, assemblies);
+        else AuditAccessible(output, assemblies);
         return 0;
     }
 
@@ -617,6 +621,50 @@ internal static class Program
         Console.WriteLine($"Audited {methodCount} public method bodies; found {candidates.Count} review candidates.");
     }
 
+    private static void AuditAccessible(string output, IEnumerable<Assembly> assemblies)
+    {
+        var rows = new List<string>();
+        foreach (var assembly in assemblies.OrderBy(item => item.GetName().Name, StringComparer.Ordinal))
+        foreach (var type in AccessibleTypes(assembly).OrderBy(TypeName, StringComparer.Ordinal))
+        {
+            var methods = type.GetConstructors(DeclaredAccessible).Cast<MethodBase>()
+                .Concat(type.GetMethods(DeclaredAccessible))
+                .Where(IsExternallyAccessible);
+            foreach (var method in methods.OrderBy(MethodKey, StringComparer.Ordinal))
+            {
+                var finding = BodyFinding(method) ?? (method.IsAbstract ? "abstract-contract" : "implemented");
+                rows.Add(string.Join('\t', new[]
+                {
+                    Clean(assembly.GetName().Name ?? "-"), Clean(TypeName(type)), Clean(method.Name),
+                    method.GetParameters().Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    Clean(MethodDisplay(method)), finding
+                }));
+            }
+        }
+
+        rows.Sort(StringComparer.Ordinal);
+        if (rows.Count != rows.Distinct(StringComparer.Ordinal).Count())
+            throw new InvalidOperationException("Accessible body audit produced duplicate rows.");
+        var text = new StringBuilder("# VIBEFORMER_ACCESSIBLE_BODY_AUDIT_V1\n");
+        text.AppendLine("assembly\towner\tmember\tparameter-count\tsignature\tfinding");
+        foreach (var row in rows) text.AppendLine(row);
+        File.WriteAllText(output, text.ToString(), new UTF8Encoding(false));
+        Console.WriteLine($"Audited {rows.Count} public/protected method bodies.");
+    }
+
+    private static bool IsExternallyAccessible(MethodBase method) =>
+        method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly;
+
+    private static bool IsExternallyVisible(Type type)
+    {
+        if (!(type.IsPublic || type.IsNestedPublic || type.IsNestedFamily || type.IsNestedFamORAssem))
+            return false;
+        return type.DeclaringType is null || IsExternallyVisible(type.DeclaringType);
+    }
+
+    private static IEnumerable<Type> AccessibleTypes(Assembly assembly) =>
+        AllTypes(assembly).Where(IsExternallyVisible);
+
     private static string? BodyFinding(MethodBase method)
     {
         if (method.IsAbstract ||
@@ -796,6 +844,17 @@ internal static class Program
             var loaderErrors = string.Join(" | ", error.LoaderExceptions.Where(item => item is not null)
                 .Select(item => item!.GetType().Name + ": " + item.Message));
             throw new InvalidOperationException("Could not load every public package type: " + loaderErrors, error);
+        }
+    }
+
+    private static IEnumerable<Type> AllTypes(Assembly assembly)
+    {
+        try { return assembly.GetTypes(); }
+        catch (ReflectionTypeLoadException error)
+        {
+            var loaderErrors = string.Join(" | ", error.LoaderExceptions.Where(item => item is not null)
+                .Select(item => item!.GetType().Name + ": " + item.Message));
+            throw new InvalidOperationException("Could not load every package type: " + loaderErrors, error);
         }
     }
 

@@ -36,10 +36,9 @@
    (or
     (some (fn [^Path candidate]
             (when (and (exists? (resolve-path candidate ".git"))
-                       (regular-file? (resolve-path candidate "vibeformer" "deps.edn"))
-                       (exists? (resolve-path candidate "research" "pkl")))
+                       (regular-file? (resolve-path candidate "vibeformer" "deps.edn")))
               candidate))
           (take-while some? (iterate #(.getParent ^Path %) (absolute start))))
     (throw (ex-info
-            "Could not find the checkout root containing vibeformer and research/pkl"
+            "Could not find the checkout root containing vibeformer"
             {:kind :workspace-not-found :start (str (absolute start))})))))

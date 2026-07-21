@@ -43,6 +43,7 @@ destination_file="$workspace_root/$(contract_value destination-file)"
 inventory_file="$workspace_root/$(contract_value inventory-file)"
 observations_file="$workspace_root/$(contract_value observations-file)"
 surface_file="$workspace_root/$(contract_value public-surface-file)"
+body_review_file="$workspace_root/$(contract_value body-review-file)"
 oracle_source="$workspace_root/$(contract_value oracle-source)"
 inventory_script="$workspace_root/$(contract_value gradle-inventory-script)"
 gradle_project=$(contract_value gradle-project)
@@ -98,7 +99,9 @@ if [ -z "$java_home" ]; then
 fi
 [ -x "$java_home/bin/java" ] && [ -x "$java_home/bin/javac" ] \
   || fail "set VIBEFORMER_JAVA_HOME to a JDK 17 installation"
-java_major=$("$java_home/bin/java" -version 2>&1 | sed -n '1{s/.*version "\([0-9][0-9]*\).*/\1/p;}')
+java_major=$("$java_home/bin/java" -version 2>&1 \
+  | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p' \
+  | sed -n '1p')
 assert_equal "oracle Java runtime major" "$(contract_value oracle-runtime-major)" "$java_major"
 
 work=$(mktemp -d /tmp/vibeformer-rawhttp-contract.XXXXXX)
@@ -152,6 +155,11 @@ awk -F '\t' -v wanted="$external_dependency" -v scope="$external_dependency_scop
 resource_record=$(contract_value resource)
 awk -F '\t' -v wanted="$resource_record" '$1 == "resource" && $2 == wanted { found=1 } END { exit !found }' \
   "$actual_inventory" || fail "pinned production resource is absent from live Gradle discovery"
+
+[ "$(sed -n '1p' "$body_review_file")" = "VIBEFORMER_RAWHTTP_BODY_REVIEW_V1" ] \
+  || fail "unsupported RawHTTP body-review contract header"
+body_review_count=$(awk 'NR > 2 && NF { count++ } END { print count + 0 }' "$body_review_file")
+assert_equal "authoritative Java body review count" "4" "$body_review_count"
 
 oracle_classes="$work/oracle-classes"
 mkdir -p "$oracle_classes"
