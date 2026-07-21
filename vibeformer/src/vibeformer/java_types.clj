@@ -151,6 +151,8 @@
                     :dotnet.type/map-interface]
    "java.util.Map$Entry" ["global::Vibeformer.Runtime.JavaMapEntry"
                           :dotnet.type/map-entry]
+   "java.util.AbstractMap$SimpleEntry" ["global::Vibeformer.Runtime.JavaSimpleEntry"
+                                        :dotnet.type/simple-map-entry]
    "java.util.NoSuchElementException" ["global::System.InvalidOperationException"
                                        :dotnet.type/invalid-operation]
    "java.util.Objects" ["global::Vibeformer.Runtime.JavaCompat"
@@ -212,8 +214,8 @@
 
    "java.util.zip.GZIPInputStream" ["global::System.IO.Compression.GZipStream"
                                     :dotnet.type/gzip-stream]
-   "java.util.zip.InflaterOutputStream" ["global::System.IO.Compression.DeflateStream"
-                                         :dotnet.type/deflate-stream]
+   "java.util.zip.InflaterOutputStream" ["global::Vibeformer.Runtime.JavaInflaterOutputStream"
+                                         :dotnet.type/inflater-output-stream]
 
    "javax.annotation.Nullable" ["global::System.Diagnostics.CodeAnalysis.MaybeNullAttribute"
                                 :dotnet.type/nullable-annotation]

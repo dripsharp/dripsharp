@@ -388,6 +388,45 @@ internal sealed class JavaPushbackInputStream : Stream
     }
 }
 
+internal sealed class JavaInflaterOutputStream : Stream
+{
+    private readonly Stream destination;
+    private readonly MemoryStream compressed = new();
+    private bool disposed;
+
+    internal JavaInflaterOutputStream(Stream destination) => this.destination = destination;
+
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => !disposed;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush() => destination.Flush();
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => compressed.Write(buffer, offset, count);
+
+    protected override void Dispose(bool disposing)
+    {
+        if (!disposing || disposed) return;
+        disposed = true;
+        compressed.Position = 0;
+        using (var inflater = new ZLibStream(compressed, CompressionMode.Decompress, leaveOpen: true))
+        {
+            inflater.CopyTo(destination);
+        }
+        compressed.Dispose();
+        destination.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
 internal class JavaFilterOutputStream : Stream
 {
     protected readonly Stream @out;
@@ -1006,11 +1045,12 @@ internal sealed class JavaOptional<T> : IJavaOptional
 // A Java Map.Entry is a reference object whose value can remain backed by the
 // source map. KeyValuePair cannot model setValue(), so translated declarations
 // use this reusable compatibility type instead of taking an entry snapshot.
-internal sealed class JavaMapEntry<K, V> where K : notnull
+internal class JavaMapEntry<K, V> where K : notnull
 {
     private readonly IDictionary<K, V>? source;
     private readonly K key;
     private V value;
+    private readonly bool mutable;
 
     internal JavaMapEntry(IDictionary<K, V> source, K key)
     {
@@ -1020,9 +1060,15 @@ internal sealed class JavaMapEntry<K, V> where K : notnull
     }
 
     internal JavaMapEntry(K key, V value)
+        : this(key, value, mutable: false)
+    {
+    }
+
+    protected JavaMapEntry(K key, V value, bool mutable)
     {
         this.key = key;
         this.value = value;
+        this.mutable = mutable;
     }
 
     public K Key => key;
@@ -1033,7 +1079,12 @@ internal sealed class JavaMapEntry<K, V> where K : notnull
     public V SetValue(V replacement)
     {
         if (source is null)
-            throw new NotSupportedException("This Java map entry is immutable.");
+        {
+            if (!mutable) throw new NotSupportedException("This Java map entry is immutable.");
+            var previousValue = value;
+            value = replacement;
+            return previousValue;
+        }
         var previous = Value;
         if (source is JavaLinkedHashMap<K, V> linked)
             linked.ReplaceValueWithoutAccess(key, replacement);
@@ -1045,18 +1096,20 @@ internal sealed class JavaMapEntry<K, V> where K : notnull
 
     public override bool Equals(object? other)
     {
-        if (other is null) return false;
-        var type = other.GetType();
-        if (!type.IsGenericType || type.GetGenericTypeDefinition() != typeof(JavaMapEntry<,>))
-            return false;
-        return JavaCompat.Equals(Key, type.GetProperty(nameof(Key))!.GetValue(other)) &&
-               JavaCompat.Equals(Value, type.GetProperty(nameof(Value))!.GetValue(other));
+        return other is JavaMapEntry<K, V> entry &&
+               JavaCompat.Equals(Key, entry.Key) &&
+               JavaCompat.Equals(Value, entry.Value);
     }
 
     public override int GetHashCode() =>
         JavaCompat.HashCode(Key) ^ JavaCompat.HashCode(Value);
 
     public override string ToString() => $"{Key}={Value}";
+}
+
+internal sealed class JavaSimpleEntry<K, V> : JavaMapEntry<K, V> where K : notnull
+{
+    internal JavaSimpleEntry(K key, V value) : base(key, value, mutable: true) { }
 }
 
 internal interface JavaRemovableIterator
@@ -2713,6 +2766,10 @@ internal static class JavaCompat
         Array.Copy((Array)source, sourceIndex, (Array)destination, destinationIndex, length);
 
     internal static T[] ArrayCopy<T>(T[] source, int length, Type? _) => CopyOf(source, length);
+
+    internal static bool ArrayEquals<T>(T[]? left, T[]? right) =>
+        ReferenceEquals(left, right) ||
+        (left is not null && right is not null && left.AsSpan().SequenceEqual(right));
 
     internal static IDictionary<string, string> GetEnvironment() =>
         Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
@@ -4688,8 +4745,9 @@ internal static class JavaCompat
         }
     }
 
-    internal static int ArrayHash(Array values)
+    internal static int ArrayHash(Array? values)
     {
+        if (values is null) return 0;
         unchecked
         {
             var result = 1;
