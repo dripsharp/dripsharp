@@ -2,20 +2,25 @@
   "Fail-closed destination foundation for ordinary Java libraries.
 
   This bundle intentionally contains no product identities. It accepts the
-  simplest structural Java class today and rejects every unimplemented shape
-  with its live Spoon identity. Subsequent reusable translation work extends
-  these rules; unsupported declarations never become generated stubs."
+  product-neutral structural Java declarations and resolved type identities,
+  and rejects every unimplemented shape with its live Spoon identity.
+  Subsequent reusable translation work extends these rules; unsupported
+  declarations never become generated stubs."
   (:require [clojure.string :as str]
             [vibeformer.csharp :as csharp]
             [vibeformer.java-project :as project-emission]
+            [vibeformer.java-types :as java-types]
             [vibeformer.java-translate :as java]
             [vibeformer.paths :as paths]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files]
-           [java.util Base64]
-           [spoon.reflect.declaration CtClass CtConstructor CtElement CtEnum
-            CtEnumValue CtField CtMethod CtModifiable CtType ModifierKind]))
+           [java.util Base64 IdentityHashMap]
+           [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement
+            CtEnum CtEnumValue CtExecutable CtField CtInterface CtMethod
+            CtModifiable CtParameter CtType ModifierKind]
+           [spoon.reflect.reference CtArrayTypeReference CtTypeParameterReference
+            CtTypeReference CtWildcardReference]))
 
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind (or (:kind data)
@@ -25,7 +30,8 @@
   (throw (ex-info message
                   {:kind :unsupported-destination-rule
                    :source-element element
-                   :source-identity (spoon/declaration-key element)
+                   :source-identity (or (spoon/declaration-key element)
+                                        (spoon/frontend-identity element))
                    :source-location (spoon/source-location element)})))
 
 (defn- source-ref [^CtElement element rule extra]
@@ -43,6 +49,14 @@
 (defn- pascal [value]
   (let [value (identifier value)]
     (str (str/upper-case (subs value 0 1)) (subs value 1))))
+
+(defn- sequence-node
+  ([nodes] (csharp/sequence-node (vec (remove nil? nodes))))
+  ([nodes separator]
+   (csharp/sequence-node (vec (remove nil? nodes)) separator)))
+
+(defn- raw [text]
+  (csharp/raw text))
 
 (defn- package-name [^CtType type]
   (some-> type .getPackage .getQualifiedName))
@@ -64,11 +78,19 @@
 
 (defn- context [options]
   (assoc options
+         :emitted (IdentityHashMap.)
          :declarations (atom [])
          :diagnostics (atom [])
          :body-translations (atom [])))
 
 (defn- merge-context! [target source]
+  (doseq [entry (.entrySet ^IdentityHashMap (:emitted source))]
+    (let [element (.getKey ^java.util.Map$Entry entry)
+          declaration (.getValue ^java.util.Map$Entry entry)]
+      (when (.containsKey ^IdentityHashMap (:emitted target) element)
+        (fail! "A Java library declaration was emitted more than once"
+               {:kind :duplicate-source-declaration :declaration declaration}))
+      (.put ^IdentityHashMap (:emitted target) element declaration)))
   (swap! (:declarations target) into @(:declarations source))
   (swap! (:diagnostics target) into @(:diagnostics source))
   (swap! (:body-translations target) into @(:body-translations source)))
@@ -78,35 +100,336 @@
    :diagnostics @(:diagnostics ctx)
    :body-translations @(:body-translations ctx)})
 
-(defn- supported-empty-class? [^CtType type]
-  (and (instance? CtClass type)
-       (empty? (.getFormalCtTypeParameters type))
-       (or (nil? (.getSuperclass ^CtClass type))
-           (= "java.lang.Object" (.getQualifiedName (.getSuperclass ^CtClass type))))
-       (empty? (.getSuperInterfaces type))
-       (empty? (remove #(.isImplicit ^CtElement %) (.getTypeMembers type)))))
+(defn- occurrence! [ctx ^CtElement element expected-kind]
+  (let [occurrence (.get ^IdentityHashMap (:occurrence-index ctx) element)]
+    (when-not occurrence
+      (throw (ex-info "Live Spoon object is absent from the resolved occurrence index"
+                      {:kind :missing-resolved-occurrence
+                       :expected expected-kind
+                       :source-element element
+                       :source-identity (spoon/frontend-identity element)
+                       :source-location (spoon/source-location element)})))
+    (when-not (= expected-kind (:kind occurrence))
+      (throw (ex-info "Resolved occurrence has the wrong semantic kind"
+                      {:kind :resolved-occurrence-kind-mismatch
+                       :expected expected-kind :actual (:kind occurrence)
+                       :key (:key occurrence)
+                       :source-element element
+                       :source-identity (spoon/frontend-identity element)
+                       :source-location (spoon/source-location element)})))
+    occurrence))
+
+(defn- declaring-types [^CtType type]
+  (loop [current type result ()]
+    (if current
+      (recur (.getDeclaringType current) (conj result current))
+      (vec result))))
+
+(defn- project-type-base [ctx ^CtType declaration]
+  (str "global::" (destination-namespace ctx declaration) "."
+       (str/join "." (map #(pascal (.getSimpleName ^CtType %))
+                          (declaring-types declaration)))))
+
+(declare type-node)
+
+(defn- mapped-type-base [ctx ^CtTypeReference reference occurrence]
+  (let [qualified (.getQualifiedName reference)]
+    (cond
+      (instance? CtTypeParameterReference reference)
+      [(identifier (.getSimpleName reference)) :dotnet.type/type-parameter]
+
+      (= :project (:origin occurrence))
+      (if-let [declaration (.getTypeDeclaration reference)]
+        [(project-type-base ctx declaration) :dotnet.type/project]
+        (unsupported! "Resolved project type has no live declaration" reference))
+
+      :else
+      (or (java-types/mapping qualified)
+          (unsupported! "Java library resolved type has no neutral mapping"
+                        reference)))))
+
+(defn- type-node [ctx ^CtTypeReference reference]
+  (let [occurrence (occurrence! ctx reference :type)
+        node
+        (cond
+          (instance? CtArrayTypeReference reference)
+          (sequence-node [(type-node ctx (.getComponentType
+                                          ^CtArrayTypeReference reference))
+                          (raw "[]")])
+
+          (instance? CtWildcardReference reference)
+          (if-let [bound (.getBoundingType ^CtWildcardReference reference)]
+            (type-node ctx bound)
+            (raw "object"))
+
+          :else
+          (let [[target _rule] (mapped-type-base ctx reference occurrence)
+                arguments (vec (.getActualTypeArguments reference))]
+            (if (seq arguments)
+              (csharp/generic-name (raw target)
+                                   (mapv #(type-node ctx %) arguments))
+              (raw target))))
+        [_target rule] (if (or (instance? CtArrayTypeReference reference)
+                               (instance? CtWildcardReference reference))
+                         [nil (if (instance? CtArrayTypeReference reference)
+                                :dotnet.type/array
+                                :dotnet.type/wildcard-bound)]
+                         (mapped-type-base ctx reference occurrence))]
+    (csharp/with-source
+      node
+      (source-ref reference rule
+                  {:mapping {:registry :types
+                             :identity rule
+                             :resolved-key (:key occurrence)
+                             :origin (:origin occurrence)
+                             :resolution (:resolution occurrence)}}))))
+
+(defn- declaration-id [^CtElement element kind]
+  (let [{:keys [file line column]} (spoon/source-location element)]
+    (str (name kind) ":" (or file "implicit") ":" (or line 0) ":"
+         (or column 0) ":" (.getName (class element)))))
+
+(defn- destination-owner-name [ctx ^CtType type]
+  (str (destination-namespace ctx type) "."
+       (str/join "." (map #(pascal (.getSimpleName ^CtType %))
+                          (declaring-types type)))))
+
+(defn- register-type! [ctx ^CtType type name rule]
+  (let [id (declaration-id type :type)
+        entry {:id id :java-key (spoon/declaration-key type) :kind :type
+               :owner (some-> type .getDeclaringType spoon/declaration-key)
+               :name name :signature (.getQualifiedName type)
+               :destination {:assembly (get-in ctx [:configuration :project :assembly-name])
+                             :namespace (destination-namespace ctx type)
+                             :owner (destination-owner-name ctx type)
+                             :kind "type" :name name :parameter-count "0"}
+               :source (source-ref type rule nil)}]
+    (when (.containsKey ^IdentityHashMap (:emitted ctx) type)
+      (fail! "A Java library declaration was emitted more than once"
+             {:kind :duplicate-source-declaration :declaration entry}))
+    (.put ^IdentityHashMap (:emitted ctx) type entry)
+    (swap! (:declarations ctx) conj entry)
+    id))
+
+(defn- member-kind [^CtElement member]
+  (cond
+    (instance? CtConstructor member) :constructor
+    (instance? CtMethod member) :method
+    (instance? CtField member) :field
+    (instance? CtType member) :type
+    :else :member))
+
+(defn- register-member! [ctx ^CtType owner ^CtElement member name rule]
+  (let [kind (member-kind member)
+        id (declaration-id member kind)
+        parameter-count (if (instance? CtExecutable member)
+                          (count (.getParameters ^CtExecutable member))
+                          0)
+        entry {:id id :java-key (spoon/declaration-key member) :kind kind
+               :owner (spoon/declaration-key owner) :name name
+               :signature (or (when (instance? CtExecutable member)
+                                (.getSignature ^CtExecutable member))
+                              (.getSimpleName member))
+               :destination {:assembly (get-in ctx [:configuration :project :assembly-name])
+                             :namespace (destination-namespace ctx owner)
+                             :owner (destination-owner-name ctx owner)
+                             :kind (case kind
+                                     :constructor "constructor"
+                                     :method "method"
+                                     :field "field"
+                                     :type "type"
+                                     "member")
+                             :name (if (= :constructor kind) ".ctor" name)
+                             :parameter-count (str parameter-count)}
+               :source (source-ref member rule nil)}]
+    (when (.containsKey ^IdentityHashMap (:emitted ctx) member)
+      (fail! "A Java library declaration was emitted more than once"
+             {:kind :duplicate-source-declaration :declaration entry}))
+    (.put ^IdentityHashMap (:emitted ctx) member entry)
+    (swap! (:declarations ctx) conj entry)
+    id))
+
+(defn- explicit-members [^CtType type]
+  (vec (remove #(.isImplicit ^CtElement %) (.getTypeMembers type))))
+
+(defn- visibility [^CtModifiable element default]
+  (cond
+    (.hasModifier element ModifierKind/PUBLIC) "public"
+    (.hasModifier element ModifierKind/PROTECTED) "protected"
+    (.hasModifier element ModifierKind/PRIVATE) "private"
+    :else default))
+
+(defn- type-formals-node [^CtType type]
+  (let [parameters (vec (.getFormalCtTypeParameters type))]
+    (when (seq parameters)
+      (sequence-node [(raw "<")
+                      (sequence-node
+                       (mapv #(raw (identifier (.getSimpleName ^CtElement %)))
+                             parameters)
+                       ", ")
+                      (raw ">")]))))
+
+(defn- executable-formals-node [^CtExecutable executable]
+  (let [parameters (vec (.getFormalCtTypeParameters executable))]
+    (when (seq parameters)
+      (sequence-node [(raw "<")
+                      (sequence-node
+                       (mapv #(raw (identifier (.getSimpleName ^CtElement %)))
+                             parameters)
+                       ", ")
+                      (raw ">")]))))
+
+(defn- parameter-node [ctx ^CtParameter parameter]
+  (sequence-node
+   [(when (.isVarArgs parameter) (raw "params "))
+    (type-node ctx (.getType parameter))
+    (raw (str " " (identifier (.getSimpleName parameter))))]))
+
+(defn- base-type-references [^CtType type]
+  (vec
+   (concat
+    (when (instance? CtClass type)
+      (when-let [superclass (.getSuperclass ^CtClass type)]
+        (when-not (= "java.lang.Object" (.getQualifiedName superclass))
+          [superclass])))
+    (sort-by #(.getQualifiedName ^CtTypeReference %)
+             (.getSuperInterfaces type)))))
+
+(defn- type-words [^CtType type]
+  (let [visibility (if (.hasModifier ^CtModifiable type ModifierKind/PUBLIC)
+                     "public" "internal")]
+    (cond
+      (instance? CtInterface type) [visibility "interface"]
+      (instance? CtClass type)
+      (remove nil?
+              [visibility
+               (when (.hasModifier ^CtModifiable type ModifierKind/ABSTRACT)
+                 "abstract")
+               (when (.hasModifier ^CtModifiable type ModifierKind/FINAL)
+                 "sealed")
+               "class"])
+      :else nil)))
+
+(defn- method-words [^CtType owner ^CtMethod method]
+  (remove nil?
+          [(visibility method (if (instance? CtInterface owner) "public" "internal"))
+           (when (.hasModifier method ModifierKind/STATIC) "static")
+           (when (and (not (instance? CtInterface owner))
+                      (.hasModifier method ModifierKind/ABSTRACT))
+             "abstract")]))
+
+(declare member-node emit-root)
+
+(defn- field-node [ctx ^CtType owner ^CtField field]
+  (when-let [initializer (.getDefaultExpression field)]
+    (unsupported! "Java library field initializer translation is not implemented"
+                  initializer))
+  (let [name (identifier (.getSimpleName field))
+        rule :java-library.declaration/field
+        id (register-member! ctx owner field name rule)]
+    (csharp/with-source
+      (sequence-node
+       [(raw (str (str/join " "
+                            (remove nil?
+                                    [(visibility field "internal")
+                                     (when (.hasModifier field ModifierKind/STATIC)
+                                       "static")
+                                     (when (.hasModifier field ModifierKind/FINAL)
+                                       "readonly")]))
+                  " "))
+        (type-node ctx (.getType field))
+        (raw (str " " name ";"))])
+      (source-ref field rule {:declaration-id id :declaration-kind :field}))))
+
+(defn- method-node [ctx ^CtType owner ^CtMethod method]
+  (when-let [body (.getBody method)]
+    (unsupported! "Java library executable body translation is not implemented" body))
+  (let [name (identifier (.getSimpleName method))
+        rule :java-library.declaration/method
+        id (register-member! ctx owner method name rule)]
+    (csharp/with-source
+      (sequence-node
+       [(raw (str (str/join " " (method-words owner method)) " "))
+        (type-node ctx (.getType method))
+        (raw (str " " name))
+        (executable-formals-node method)
+        (raw "(")
+        (sequence-node (mapv #(parameter-node ctx %) (.getParameters method)) ", ")
+        (raw ");")])
+      (source-ref method rule {:declaration-id id :declaration-kind :method}))))
+
+(defn- constructor-node [_ctx _owner ^CtConstructor constructor]
+  (unsupported! "Java library constructor body translation is not implemented"
+                (or (.getBody constructor) constructor)))
+
+(defn- member-node [ctx ^CtType owner member]
+  (cond
+    (instance? CtField member) (field-node ctx owner member)
+    (instance? CtMethod member) (method-node ctx owner member)
+    (instance? CtConstructor member) (constructor-node ctx owner member)
+    (instance? CtType member) (emit-root ctx member)
+    :else (unsupported! "Java library member shape is not implemented" member)))
+
+(defn- annotation-decisions [ctx]
+  (->> (:occurrences (:resolved-model ctx))
+       (filter #(= :annotation (:kind %)))
+       (map :reference)
+       (sort-by (fn [^CtAnnotation annotation]
+                  (let [{:keys [file line column]}
+                        (spoon/source-location annotation)]
+                    [file line column
+                     (.getQualifiedName (.getAnnotationType annotation))])))
+       (mapv
+        (fn [^CtAnnotation annotation]
+          (let [occurrence (occurrence! ctx annotation :annotation)
+                key (:key occurrence)
+                strategy
+                (case key
+                  "annotation:javax.annotation.Nullable"
+                  :csharp-nullable-metadata
+                  "annotation:javax.annotation.Nonnull"
+                  :csharp-nonnullable-metadata
+                  "annotation:java.lang.Override"
+                  :csharp-language-semantics
+                  "annotation:java.lang.FunctionalInterface"
+                  :csharp-functional-contract
+                  "annotation:java.lang.SuppressWarnings"
+                  :source-analysis-only
+                  (unsupported! "Java library annotation has no neutral mapping"
+                                annotation))]
+            {:source (source-ref annotation :java-library.annotation/resolved nil)
+             :resolved-key key
+             :origin (:origin occurrence)
+             :strategy strategy
+             :emitted-runtime-attribute false})))))
 
 (defn- emit-root [ctx ^CtType type]
-  (when-not (supported-empty-class? type)
+  (when-not (or (instance? CtClass type) (instance? CtInterface type))
     (unsupported! "Java library declaration shape is not implemented" type))
-  (let [qualified (.getQualifiedName type)
-        name (identifier (.getSimpleName type))
-        id (str "type:" qualified)
-        namespace (destination-namespace ctx type)
-        assembly (get-in ctx [:configuration :project :assembly-name])
-        visibility (if (.hasModifier ^CtModifiable type ModifierKind/PUBLIC)
-                     "public" "internal")
-        source (source-ref type :java-library.declaration/class
+  (let [name (pascal (.getSimpleName type))
+        rule (if (instance? CtInterface type)
+               :java-library.declaration/interface
+               :java-library.declaration/class)
+        id (register-type! ctx type name rule)
+        bases (base-type-references type)
+        members (explicit-members type)
+        member-nodes (if-let [emit-members (:emit-members ctx)]
+                       (emit-members ctx type members)
+                       (mapv #(member-node ctx type %) members))
+        source (source-ref type rule
                            {:declaration-id id :declaration-kind :type})]
-    (swap! (:declarations ctx)
-           conj {:id id :java-key id :kind :type :owner nil :name name
-                 :signature qualified
-                 :destination {:assembly assembly :namespace namespace
-                               :owner (str namespace "." name)
-                               :kind "type" :name name :parameter-count "0"}
-                 :source (source-ref type :java-library.declaration/class nil)})
     (csharp/with-source
-      (csharp/raw (str visibility " sealed class " name " {}"))
+      (sequence-node
+       [(raw (str (str/join " " (type-words type)) " " name))
+        (type-formals-node type)
+        (when (seq bases)
+          (sequence-node [(raw " : ")
+                          (sequence-node (mapv #(type-node ctx %) bases) ", ")]))
+        (if (seq member-nodes)
+          (sequence-node [(raw " {\n")
+                          (sequence-node member-nodes "\n\n")
+                          (raw "\n}")])
+          (raw " {}"))])
       source)))
 
 (def ^:private bridge-capabilities
@@ -182,16 +505,13 @@
      :create-context context
      :emit-root-node emit-root
      :translate-member
-     (fn [_ _ ^CtElement member]
-       (unsupported! "Java library member shape is not implemented" member))
+     member-node
      :merge-context! merge-context!
      :context-results context-results}
     :resolved-mappings
-    {:type-node
-     (fn [_ ^CtElement reference]
-       (unsupported! "Java library resolved type mapping is not implemented" reference))
+    {:type-node type-node
      :create-body-context (fn [_ _] nil)
-     :annotation-decisions (constantly [])}
+     :annotation-decisions annotation-decisions}
     :namespace-policy
     {:destination-namespace destination-namespace
      :destination-file-name
@@ -200,9 +520,8 @@
     :resource-policy project-emission/common-resource-policy
     :destination-bridges {:assets bridge-assets}}})
 
-(def ^:private surface-headers
-  #{"VIBEFORMER_JAVA_LIBRARY_PUBLIC_SURFACE_V1"
-    "VIBEFORMER_RAWHTTP_PUBLIC_SURFACE_V1"})
+(def ^:private surface-header
+  "VIBEFORMER_JAVA_LIBRARY_PUBLIC_SURFACE_V1")
 
 (defn- parameter-count [value]
   (let [value (str/replace value #"^parameters=" "")]
@@ -257,7 +576,7 @@
                          (parse-surface-row encoded)))
                      (remove str/blank? lines))
           identities (mapv :identity rows)]
-      (when-not (contains? surface-headers header)
+      (when-not (= surface-header header)
         (fail! "Unsupported Java library public-surface contract"
                {:kind :unsupported-java-library-surface :header header}))
       (when-not (and (seq rows)

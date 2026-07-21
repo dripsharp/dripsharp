@@ -57,7 +57,7 @@ import rawhttp.core.errors.InvalidHttpResponse;
  */
 public final class RawHttpContractOracle {
   private static final String OBSERVATION_HEADER = "VIBEFORMER_RAWHTTP_OBSERVATIONS_V1";
-  private static final String SURFACE_HEADER = "VIBEFORMER_RAWHTTP_PUBLIC_SURFACE_V1";
+  private static final String SURFACE_HEADER = "VIBEFORMER_JAVA_LIBRARY_PUBLIC_SURFACE_V1";
   private static final Base64.Encoder BASE64 = Base64.getEncoder();
 
   private RawHttpContractOracle() {}
