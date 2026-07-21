@@ -20,6 +20,7 @@ Pkl.Core	Pkl.Core.CSharpGeneratorOptions	constructor	.ctor	0	CSharpGeneratorOpti
 Pkl.Core	Pkl.Core.CSharpGeneratorOptions	method	MapNamespace	2	Pkl.Core.CSharpGeneratorOptions MapNamespace(System.String moduleName,System.String namespace)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.CSharpGeneratorOptions	property	EmitDocComments	0	System.Boolean EmitDocComments {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.CSharpGeneratorOptions	property	EmitGeneratedLoaders	0	System.Boolean EmitGeneratedLoaders {get;set}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.CSharpGeneratorOptions	property	EmitValueSemantics	0	System.Boolean EmitValueSemantics {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.CSharpGeneratorOptions	property	Namespace	0	System.String Namespace {get;set}	-	value=nullable	-	-	-
 Pkl.Core	Pkl.Core.CSharpGeneratorOptions	property	NamespaceMappings	0	System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> NamespaceMappings {get}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.CSharpGeneratorOptions	type	CSharpGeneratorOptions	0	class CSharpGeneratorOptions	-	type=oblivious	-	-	-

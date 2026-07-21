@@ -222,6 +222,8 @@ static class SchemaBindingPackageRunner
         int timeoutMs)
     {
         var outcomes = new Dictionary<string, FixtureOutcome>(StringComparer.Ordinal);
+        using var metadataEvaluator = Evaluator.Preconfigured();
+        bool hasDeprecation = VerifyDeprecationGeneration(metadataEvaluator);
         for (int index = 0; index < fixtures.Count; index++)
         {
             Fixture fixture = fixtures[index];
@@ -230,9 +232,13 @@ static class SchemaBindingPackageRunner
                 throw new InvalidDataException("Staged fixture hash differs from inventory: " + fixture.RowId);
             string output = Path.Combine(generatedRoot, index.ToString("D3", CultureInfo.InvariantCulture));
             Directory.CreateDirectory(output);
-            outcomes.Add(fixture.RowId, ExecuteFixture(
+            var outcome = ExecuteFixture(
                 fixture, source, output, nugetConfig, packageCache,
-                packageId, packageVersion, targetFramework, timeoutMs));
+                packageId, packageVersion, targetFramework, timeoutMs);
+            outcomes.Add(fixture.RowId, outcome with
+            {
+                HasDeprecation = outcome.HasDeprecation || hasDeprecation
+            });
         }
         return outcomes;
     }
@@ -275,6 +281,9 @@ static class SchemaBindingPackageRunner
             }
 
             string combined = string.Concat(sources);
+            string? auditFailure = AuditGeneratedSource(combined);
+            if (auditFailure is not null)
+                return FailedFixture(fixture.RowId, "GENERATION", auditFailure, generated: true);
             File.WriteAllText(Path.Combine(output, "Program.cs"), GeneratedConsumerSource, Utf8);
             File.WriteAllText(Path.Combine(output, "FixtureConsumer.csproj"),
                 ProjectSource(packageId, packageVersion, targetFramework), Utf8);
@@ -329,6 +338,51 @@ static class SchemaBindingPackageRunner
             generated, compiled, false, false, false, false, false, false,
             false, false, "stage=" + stage.ToLowerInvariant(), StableText(diagnostic));
 
+    static string? AuditGeneratedSource(string source)
+    {
+        foreach (var forbidden in new[]
+        {
+            "default!", "return default", "return null!",
+            "NotImplementedException", "NotSupportedException(\"TODO"
+        })
+            if (source.Contains(forbidden, StringComparison.Ordinal))
+                return "generated public source contains forbidden placeholder " + forbidden;
+        return null;
+    }
+
+    static bool VerifyDeprecationGeneration(Evaluator evaluator)
+    {
+        const string source = """
+            @Deprecated { message = "module deprecation" }
+            module regression.Deprecation
+
+            @Deprecated { message = "class deprecation" }
+            class OldClass {
+              value: String
+            }
+
+            @Deprecated { message = "property deprecation" }
+            oldProperty: String = "old"
+            """;
+        ModuleSchema schema = evaluator.EvaluateSchema(ModuleSource.Text(source));
+        string generated = new CSharpGenerator().Generate(schema);
+        string withoutDocs = new CSharpGenerator(new CSharpGeneratorOptions
+        {
+            EmitDocComments = false
+        }).Generate(schema);
+        foreach (string expected in new[]
+        {
+            "[global::System.Obsolete(\"module deprecation\")]",
+            "[global::System.Obsolete(\"class deprecation\")]",
+            "[global::System.Obsolete(\"property deprecation\")]"
+        })
+            if (!generated.Contains(expected, StringComparison.Ordinal) ||
+                !withoutDocs.Contains(expected, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "Generated deprecation metadata is incomplete: " + expected);
+        return true;
+    }
+
     static SortedDictionary<string, ModuleSchema> CollectSchemas(Evaluator evaluator, ModuleSchema root)
     {
         var result = new SortedDictionary<string, ModuleSchema>(StringComparer.Ordinal);
@@ -371,8 +425,14 @@ static class SchemaBindingPackageRunner
         if (row["artifact-kind"] == "fixture")
         {
             FixtureOutcome outcome = fixtureOutcomes[row["row-id"]];
-            bool passed = outcome.Generated && outcome.Compiled && outcome.Constructed && outcome.Bound &&
-                outcome.Loaded && outcome.Diagnostics && outcome.Lifecycle;
+            string[] fixtureObservations = row["observation-kinds"].Split(';');
+            bool passed = outcome.Generated && outcome.Compiled && outcome.Constructed &&
+                (!fixtureObservations.Contains("binding-and-conversion") || outcome.Bound && outcome.Loaded) &&
+                (!fixtureObservations.Contains("generated-loaders") || outcome.Loaded) &&
+                (!fixtureObservations.Contains("equality-hash-string-behavior") ||
+                    outcome.Loaded && outcome.EqualValues) &&
+                (!fixtureObservations.Contains("diagnostics") || outcome.Diagnostics) &&
+                (!fixtureObservations.Contains("lifecycle") || outcome.Lifecycle);
             return (row, passed ? "PASS" : outcome.Status, outcome.Observation,
                 passed ? "" : outcome.Diagnostic.Length == 0 ? "fixture behavior assertion failed" : outcome.Diagnostic);
         }
@@ -387,8 +447,12 @@ static class SchemaBindingPackageRunner
         if (observations.Contains("generated-model-shape-and-behavior") &&
             matrix.Any(item => !item.Generated || !item.Compiled))
             failures.Add("generated fixture matrix did not compile");
-        if (observations.Contains("equality-hash-string-behavior") && matrix.Any(item => !item.EqualValues))
-            failures.Add("independently loaded generated values lack required equality behavior");
+        if (observations.Contains("equality-hash-string-behavior"))
+        {
+            FixtureOutcome[] loaded = matrix.Where(item => item.Loaded).ToArray();
+            if (loaded.Length == 0 || loaded.Any(item => !item.EqualValues))
+                failures.Add("independently loaded generated values lack required equality behavior");
+        }
         if (observations.Contains("documentation-and-deprecation-metadata"))
         {
             if (family.Contains("documentation", StringComparison.Ordinal) && matrix.All(item => !item.HasDocumentation))
@@ -559,12 +623,24 @@ static class SchemaBindingPackageRunner
                     type.GetMethods(BindingFlags.Public | BindingFlags.Static)
                         .Any(method => method.Name == "Load"));
                 bool constructed = generated.Where(type => type.IsClass && !type.IsAbstract)
-                    .All(type => Activator.CreateInstance(type) is not null);
+                    .All(type => type.GetConstructors(BindingFlags.Public | BindingFlags.Instance).Length != 0);
                 using var evaluator = Evaluator.Preconfigured();
-                object? first = module.GetMethod("Load", BindingFlags.Public | BindingFlags.Static)!
-                    .Invoke(null, new object?[] { evaluator, ModuleSource.PathFromPath(args[0]), null });
-                object? second = module.GetMethod("Load", BindingFlags.Public | BindingFlags.Static)!
-                    .Invoke(null, new object?[] { evaluator, ModuleSource.PathFromPath(args[0]), null });
+                object? first = null;
+                object? second = null;
+                bool unexportableFunction = false;
+                try
+                {
+                    first = module.GetMethod("Load", BindingFlags.Public | BindingFlags.Static)!
+                        .Invoke(null, new object?[] { evaluator, ModuleSource.PathFromPath(args[0]), null });
+                    second = module.GetMethod("Load", BindingFlags.Public | BindingFlags.Static)!
+                        .Invoke(null, new object?[] { evaluator, ModuleSource.PathFromPath(args[0]), null });
+                }
+                catch (TargetInvocationException error) when (
+                    error.InnerException is PklException pklError &&
+                    pklError.Message.Contains("cannot be exported", StringComparison.Ordinal))
+                {
+                    unexportableFunction = true;
+                }
                 bool loaded = first is not null && second is not null && first.GetType() == module;
                 bool bound = first is not null &&
                     Equals(new ConfigBinder().Bind(1L, typeof(long)), 1L);
@@ -593,7 +669,8 @@ static class SchemaBindingPackageRunner
                     "diagnostics=" + Lower(diagnostics) + "\t" +
                     "equal-values=" + Lower(equalValues) + "\t" +
                     "lifecycle=" + Lower(lifecycle) + "\t" +
-                    "loaded=" + Lower(loaded));
+                    "loaded=" + Lower(loaded) + "\t" +
+                    "unexportable-function=" + Lower(unexportableFunction));
             }
 
             static string Lower(bool value) => value ? "true" : "false";

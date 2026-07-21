@@ -67,7 +67,8 @@ static class SchemaGeneratorProbe
         {
             Namespace = "Pinned.Generated",
             EmitDocComments = false,
-            EmitGeneratedLoaders = false
+            EmitGeneratedLoaders = false,
+            EmitValueSemantics = false
         });
         string exact = exactGenerator.Generate(generatedMemberSchema);
         string expectedExact = File.ReadAllText(
@@ -85,7 +86,7 @@ static class SchemaGeneratorProbe
             "namespace Pinned.Main;",
             "public sealed partial class Main : global::Pinned.Base.Base",
             "public sealed partial class Service : global::Pinned.Base.Entity",
-            "public required global::Pinned.Imported.Endpoint Endpoint"
+            "public global::Pinned.Imported.Endpoint Endpoint { get; }"
         }) Check(mapped.Contains(expected, StringComparison.Ordinal), "missing configured namespace mapping: " + expected);
         Console.WriteLine("Package-only schema traversal and deterministic C# generation passed.");
     }
@@ -201,10 +202,18 @@ static class SchemaGeneratorProbe
             "public readonly partial record struct Transform<Input, Output>(global::System.Delegate Value)",
             "global::System.Collections.Generic.IReadOnlyDictionary<string, long>",
             "global::Pkl.Core.Pair<string, long>",
+            "[global::System.Obsolete(\"Use contract.next.\")]",
+            "[global::System.Obsolete(\"Use ApplicationService.\")]",
+            "[global::System.Obsolete(\"Use displayName.\")]",
             "[global::Pkl.Core.PklName(\"first-name\")]",
             "[global::Pkl.Core.PklQualifiedName(\"contract.main#Service\")]",
-            "IPklGeneratedLoader<Main>"
+            "IPklGeneratedLoader<Main>",
+            "public override bool Equals(object? obj)",
+            "public override int GetHashCode()",
+            "public override string ToString()"
         }) Check(source.Contains(expected, StringComparison.Ordinal), "missing generated contract: " + expected);
+        Check(!source.Contains("default!", StringComparison.Ordinal),
+            "generated contract contains an unsafe default placeholder");
     }
 
     static void CheckPolymorphicOutput(string source)
@@ -227,7 +236,7 @@ static class SchemaGeneratorProbe
             "namespace Com.Example.OverriddenProperty;",
             "public abstract partial class BaseClass",
             "public sealed partial class TheClass : BaseClass",
-            "public new required global::System.Collections.Generic.IReadOnlyList<Bar> Bar",
+            "public new global::System.Collections.Generic.IReadOnlyList<Bar> Bar { get; }",
             "public sealed partial class Bar : BaseBar"
         }) Check(source.Contains(expected, StringComparison.Ordinal), "missing overridden generated contract: " + expected);
     }

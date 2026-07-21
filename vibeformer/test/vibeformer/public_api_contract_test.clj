@@ -46,11 +46,11 @@
         kinds (set (map :kind rows))]
     (testing "all independently extracted declarations and package rows are classified"
       (is (= 6353 (:upstream-rows summary)))
-      (is (= 2724 (:package-rows summary)))
+      (is (= 2725 (:package-rows summary)))
       (is (= 20 (:behavior-rows summary)))
       (is (zero? (:failing-controls summary)))
       (is (= 6353 (reduce + (vals (:classifications summary)))))
-      (is (= 2724 (reduce + (vals (:package-classifications summary)))))
+      (is (= 2725 (reduce + (vals (:package-classifications summary)))))
       (is (zero? (get (:package-classifications summary)
                       "public-implementation-internal" 0))))
 
@@ -133,7 +133,7 @@
                    [:mismatch :kind]))))
 
   (testing "package reflection"
-    (is (= {:matched 2724}
+    (is (= {:matched 2725}
            (contract/compare-package-surface @package @package)))
     (is (= :package-public-surface-drift
            (get-in (contract/compare-package-surface @package (pop @package))
@@ -323,8 +323,8 @@
         summary (contract/write-strong-contract-keys! @workspace output)
         lines (->> (str/split-lines (Files/readString output))
                    (remove #(str/starts-with? % "#")) vec)]
-    (is (= {:rows 2682 :keys 2623} summary))
-    (is (= 2623 (count lines)))
+    (is (= {:rows 2683 :keys 2624} summary))
+    (is (= 2624 (count lines)))
     (is (= (sort lines) lines))
     (is (some #(str/includes? % "Pkl.Core\tPkl.Core.ConfigBinder\tmethod\tBind")
               lines))

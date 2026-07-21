@@ -9,18 +9,26 @@ public sealed partial class GeneratedMemberCollision
 {
     [global::Pkl.Core.PklName("pklLoader")]
     [global::Pkl.Core.PklRequired]
-    public required string PklLoader { get; init; }
+    public string PklLoader { get; }
 
     [global::Pkl.Core.PklName("generatedLoader")]
     [global::Pkl.Core.PklRequired]
-    public required string GeneratedLoader { get; init; }
+    public string GeneratedLoader { get; }
 
     [global::Pkl.Core.PklName("fromPkl")]
     [global::Pkl.Core.PklRequired]
-    public required string FromPkl { get; init; }
+    public string FromPkl { get; }
 
     [global::Pkl.Core.PklName("load")]
     [global::Pkl.Core.PklRequired]
-    public required string Load { get; init; }
+    public string Load { get; }
+
+    public GeneratedMemberCollision([global::Pkl.Core.PklName("pklLoader")] string pklPklLoader, [global::Pkl.Core.PklName("generatedLoader")] string pklGeneratedLoader, [global::Pkl.Core.PklName("fromPkl")] string pklFromPkl, [global::Pkl.Core.PklName("load")] string pklLoad)
+    {
+        PklLoader = pklPklLoader;
+        GeneratedLoader = pklGeneratedLoader;
+        FromPkl = pklFromPkl;
+        Load = pklLoad;
+    }
 
 }

@@ -14,6 +14,8 @@ using Poly = Com.Example.PolymorphicModuleTest;
 using PolyLib = Com.Example.Lib;
 using OverrideFixture = Com.Example.OverriddenProperty;
 
+#pragma warning disable CS0618 // This consumer deliberately validates generated deprecation metadata.
+
 /** Compiles with emitted C# and executes binding through package-only references. */
 static class GeneratedConsumer
 {
@@ -105,6 +107,7 @@ static class GeneratedConsumer
         using var evaluator = Evaluator.Preconfigured();
         var source = ModuleSource.PathFromPath(sourceFile);
         var generated = global::Contract.Main.Main.Load(evaluator, source);
+        var equivalentGenerated = global::Contract.Main.Main.Load(evaluator, source);
         var polymorphic = Poly.PolymorphicModuleTest.Load(evaluator,
             ModuleSource.PathFromPath(Path.Combine(Path.GetFullPath(args[0]), "PolymorphicModuleTest.pkl")));
         var overridden = OverrideFixture.OverriddenProperty.Load(evaluator,
@@ -123,6 +126,16 @@ static class GeneratedConsumer
             "generic pair binding");
         Check(generated.Service.Bytes.SequenceEqual(new byte[] { 0, 127, 128, 255 }), "byte binding");
         Check(generated.Class.Event == "created" && generated.Class.FirstName == "Ada", "quoted identifiers");
+        Check(generated.Equals(equivalentGenerated) &&
+              generated.GetHashCode() == equivalentGenerated.GetHashCode(),
+            "generated models use structural equality and consistent hashing");
+        Check(generated.Service.Equals(equivalentGenerated.Service) &&
+              generated.Service.Bytes.SequenceEqual(equivalentGenerated.Service.Bytes) &&
+              generated.Service.Pattern.ToString() == equivalentGenerated.Service.Pattern.ToString(),
+            "nested generated models compare bytes, regex, and collections by value");
+        Check(generated.ToString().Contains("service =", StringComparison.Ordinal) &&
+              generated.Service.ToString().Contains("bytes =", StringComparison.Ordinal),
+            "generated models expose stable property-oriented string representations");
         Check(polymorphic.Desserts[0] is Poly.Strudel { NumberOfRolls: 3 } &&
               polymorphic.Desserts[1] is Poly.TurkishDelight { IsOfferedToEdmund: true },
             "local polymorphic generated binding");
