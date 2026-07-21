@@ -1,5 +1,5 @@
 {:schema-version 1
- :destination-bundle :java-library
+ :destination-bundle vibeformer.java-library/rule-bundle
  :project {:assembly-name "RawHttp.Core"
            :root-namespace "RawHttp.Core"
            :target-framework "net8.0"

@@ -4,7 +4,7 @@
  :gradle-wrapper "gradlew"
  :gradle-project ":rawhttp-core"
  :revision "947cfdc619100a23f5e429ccb3c42ba6fedc8141"
- :destination-bundle :java-library
+ :destination-bundle vibeformer.java-library/rule-bundle
  :destination-config "vibeformer/config/rawhttp-core-destination.edn"
  :project-contract "vibeformer/validation/rawhttp-core/ProjectContract.tsv"
  :public-surface-contract "vibeformer/validation/rawhttp-core/PublicSurface.tsv"}

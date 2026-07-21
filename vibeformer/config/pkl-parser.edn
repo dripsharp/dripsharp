@@ -1,4 +1,5 @@
 {:schema-version 1
+ :destination-bundle vibeformer.pkl.java-project/rule-bundle
  :project {:assembly-name "Pkl.Parser"
            :root-namespace "Pkl.Parser"
            :target-framework "net8.0"

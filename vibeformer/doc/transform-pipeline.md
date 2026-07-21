@@ -87,6 +87,14 @@ Project emission derives namespaces, output paths, project references, package
 references, resources, target framework, and helper/runtime references from the
 resolved source projects and explicit destination mappings.
 
+`vibeformer.java-project` owns the product-neutral scheduling, source and
+declaration accounting, collision gates, resource copying, and deterministic
+project files. A destination supplies one explicit rule bundle with structural
+declaration rules, resolved Java/JDK mappings, namespace/project/resource
+policy, destination bridges, and optional product runtime assets. Pkl selects
+its bundle from Pkl-owned configuration; the reusable emitter neither imports
+nor falls back to that bundle.
+
 Generation is from scratch. Compiler failures are mapped to source elements and
 translation rules; generated C# is never edited in place.
 

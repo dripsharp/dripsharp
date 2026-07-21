@@ -2,7 +2,7 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [vibeformer.concurrency :as concurrency]
-            [vibeformer.pkl.java-project :as java-project]
+            [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths]
             [vibeformer.project :as project]
             [vibeformer.public-api-contract :as public-api]

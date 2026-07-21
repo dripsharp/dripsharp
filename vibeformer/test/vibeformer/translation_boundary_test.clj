@@ -152,11 +152,15 @@
 
 (deftest pkl-rules-depend-inward-on-the-reusable-kernel
   (let [body-rules (source "pkl/java_body")
-        project-rules (source "pkl/java_project")]
+        project-rules (source "pkl/java_project")
+        project-emission (source "java_project")]
     (is (str/includes? body-rules "(ns vibeformer.pkl.java-body"))
     (is (str/includes? project-rules "(ns vibeformer.pkl.java-project"))
     (is (str/includes? body-rules "[vibeformer.java-translate :as java]"))
-    (is (str/includes? project-rules "[vibeformer.java-translate :as java]"))))
+    (is (str/includes? project-rules
+                       "[vibeformer.java-project :as project-emission]"))
+    (is (str/includes? project-emission
+                       "[vibeformer.java-translate :as java]"))))
 
 (deftest pkl-runtime-identities-stay-in-the-destination-bridge
   (let [body-rules (source "pkl/java_body")

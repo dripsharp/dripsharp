@@ -6,16 +6,13 @@
   a reconstructed Java AST. Every declaration is reached recursively through
   its live Spoon owner, and every type is selected through the resolver's exact
   occurrence identity."
-  (:require [clojure.edn :as edn]
-            [clojure.string :as str]
-            [vibeformer.concurrency :as concurrency]
+  (:require [clojure.string :as str]
             [vibeformer.csharp :as csharp]
-            [vibeformer.pkl.java-body :as java-body]
-            [vibeformer.java-translate :as java]
+            [vibeformer.java-project :as project-emission]
             [vibeformer.paths :as paths]
+            [vibeformer.pkl.java-body :as java-body]
             [vibeformer.spoon :as spoon])
-  (:import [java.nio.file Files Path StandardCopyOption]
-           [java.util IdentityHashMap]
+  (:import [java.util IdentityHashMap]
            [spoon.reflect.code CtConstructorCall CtExpression CtLambda CtLiteral CtLocalVariable
             CtThisAccess CtVariableAccess]
            [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass
@@ -40,133 +37,15 @@
     "this" "throw" "true" "try" "typeof" "uint" "ulong" "unchecked"
     "unsafe" "ushort" "using" "virtual" "void" "volatile" "while"})
 
-(defn- destination-error [message data]
-  (throw (ex-info message (assoc data :kind :invalid-destination-configuration))))
-
-(defn- relative-path! [value label]
-  (let [value (str value)
-        path (paths/path value)]
-    (when (or (str/blank? value) (.isAbsolute path)
-              (some #(= ".." (str %)) (iterator-seq (.iterator path))))
-      (destination-error (str label " must be a safe relative path")
-                         {:field label :value value}))
-    value))
-
-(defn- project-reference! [value]
-  (let [value (str value)
-        path (paths/path value)
-        segments (mapv str (iterator-seq (.iterator path)))]
-    (when (or (str/blank? value) (.isAbsolute path)
-              (some #(= ".." %) (rest segments))
-              (not (str/ends-with? value ".csproj")))
-      (destination-error "Project reference must name a sibling or child csproj"
-                         {:field :project-references :value value}))
-    value))
-
 (defn validate-configuration!
   [configuration]
-  (when-not (= 1 (:schema-version configuration))
-    (destination-error "Unsupported destination configuration schema"
-                       {:schema-version (:schema-version configuration)}))
-  (doseq [[section keys] [[:project [:assembly-name :root-namespace
-                                    :target-framework :nullable :implicit-usings]]
-                          [:package [:id :version :title :description :authors :tags
-                                     :project-url :repository-url :repository-type]]
-                          [:output [:project-directory :source-directory
-                                    :resource-directory :project-file
-                                    :source-map-file :diagnostics-file
-                                    :manifest-file :public-metadata-file
-                                    :annotation-decisions-file]]]]
-    (when-not (map? (get configuration section))
-      (destination-error (str "Missing destination " (name section) " section")
-                         {:section section}))
-    (doseq [key keys]
-      (when-not (contains? (get configuration section) key)
-        (destination-error (str "Missing destination setting " section "/" key)
-                           {:section section :setting key}))))
-  (doseq [key [:id :version :title :description :authors :tags
-               :project-url :repository-url :repository-type]]
-    (let [value (get-in configuration [:package key])]
-      (when-not (and (string? value) (not (str/blank? value)))
-        (destination-error "Destination package metadata must be a non-blank string"
-                           {:section :package :setting key :value value}))))
-  (doseq [key [:project-directory :source-directory :resource-directory
-               :project-file :source-map-file :diagnostics-file :manifest-file
-               :public-metadata-file :annotation-decisions-file]]
-    (relative-path! (get-in configuration [:output key]) (name key)))
-  (when-not (contains? #{"enable" "disable"}
-                       (get-in configuration [:project :nullable]))
-    (destination-error "Destination nullable setting must be enable or disable"
-                       {:nullable (get-in configuration [:project :nullable])}))
-  (when-not (or (nil? (get-in configuration [:project :define-constants]))
-                (and (vector? (get-in configuration [:project :define-constants]))
-                     (every? #(and (string? %)
-                                   (re-matches #"[A-Za-z_][A-Za-z0-9_]*" %))
-                             (get-in configuration [:project :define-constants]))))
-    (destination-error "Destination define constants must be C# identifiers"
-                       {:define-constants (get-in configuration [:project :define-constants])}))
-  (when-not (and (map? (:namespaces configuration))
-                 (every? #(and (string? %) (not (str/blank? %)))
-                         (mapcat identity (:namespaces configuration))))
-    (destination-error "Destination namespace mappings must be non-blank strings"
-                       {:namespaces (:namespaces configuration)}))
-  (when-not (or (nil? (:namespace-prefixes configuration))
-                (and (map? (:namespace-prefixes configuration))
-                     (every? #(and (string? %) (not (str/blank? %)))
-                             (mapcat identity (:namespace-prefixes configuration)))))
-    (destination-error "Destination namespace-prefix mappings must be non-blank strings"
-                       {:namespace-prefixes (:namespace-prefixes configuration)}))
-  (when-not (and (map? (:resources configuration))
-                 (every? (fn [[source {:keys [strategy destination logical-name]}]]
-                           (and (= :embedded-resource strategy)
-                                (string? source) (string? logical-name)
-                                (relative-path! destination "resource destination")))
-                         (:resources configuration)))
-    (destination-error "Invalid destination resource mapping"
-                       {:resources (:resources configuration)}))
-  (when-not (or (nil? (:resource-policy configuration))
-                (= {:strategy :embedded-resource-preserve-path}
-                   (:resource-policy configuration)))
-    (destination-error "Invalid destination resource policy"
-                       {:resource-policy (:resource-policy configuration)}))
-  (when-not (or (nil? (:project-references configuration))
-                (and (vector? (:project-references configuration))
-                     (every? project-reference! (:project-references configuration))))
-    (destination-error "Invalid destination project references"
-                       {:project-references (:project-references configuration)}))
-  (when-not (or (nil? (:runtime-sources configuration))
-                (and (vector? (:runtime-sources configuration))
-                     (every? #(relative-path! % "runtime source")
-                             (:runtime-sources configuration))))
-    (destination-error "Invalid destination runtime sources"
-                       {:runtime-sources (:runtime-sources configuration)}))
-  configuration)
+  (project-emission/validate-configuration! configuration))
 
 (defn read-configuration
   ([workspace-root]
    (read-configuration workspace-root default-config-file))
   ([workspace-root config-file]
-   (let [file (paths/resolve-path (paths/absolute workspace-root) config-file)]
-     (when-not (paths/regular-file? file)
-       (destination-error "Destination configuration is missing" {:path (str file)}))
-     (validate-configuration! (edn/read-string (slurp (str file)))))))
-
-(defn- canonicalize [value]
-  (cond
-    (map? value) (into (sorted-map-by #(compare (pr-str %1) (pr-str %2)))
-                       (map (fn [[key item]] [key (canonicalize item)]) value))
-    (set? value) (mapv canonicalize (sort-by pr-str value))
-    (sequential? value) (mapv canonicalize value)
-    :else value))
-
-(defn- edn-text [value]
-  (str (pr-str (canonicalize value)) "\n"))
-
-(defn- write-text! [^Path file text]
-  (Files/createDirectories (.getParent file)
-                           (make-array java.nio.file.attribute.FileAttribute 0))
-  (Files/writeString file text (make-array java.nio.file.OpenOption 0))
-  file)
+   (project-emission/read-configuration workspace-root config-file)))
 
 (defn- source-ref
   ([^CtElement element rule]
@@ -3128,29 +3007,6 @@
                           (instance? CtEnum type) :java.declaration/enum
                           :else :java.declaration/class))))
 
-(defn- collision-errors [declarations]
-  (let [nested-types (filter #(and (= :type (:kind %)) (:owner %)) declarations)
-        values (filter #(contains? #{:field :enum-value :record-component} (:kind %)) declarations)
-        methods (filter #(= :method (:kind %)) declarations)
-        constructors (filter #(= :constructor (:kind %)) declarations)
-        parameters (filter #(= :parameter (:kind %)) declarations)
-        type-parameters (filter #(= :type-parameter (:kind %)) declarations)
-        non-callable (concat nested-types values)
-        non-callable-names (set (map (juxt :owner :name) non-callable))
-        duplicate-groups
-        (concat
-         (filter #(< 1 (count %)) (vals (group-by (juxt :owner :name) non-callable)))
-         (filter #(< 1 (count %)) (vals (group-by (juxt :owner :name :signature) methods)))
-         (filter #(< 1 (count %)) (vals (group-by (juxt :owner :signature) constructors)))
-         (filter #(< 1 (count %)) (vals (group-by (juxt :owner :name) parameters)))
-         (filter #(< 1 (count %)) (vals (group-by (juxt :owner :name) type-parameters)))
-         (map (fn [method]
-                [method {:kind :conflicting-non-callable
-                         :owner (:owner method) :name (:name method)}])
-              (filter #(contains? non-callable-names [(:owner %) (:name %)]) methods)))]
-    (mapv #(mapv (fn [entry] (select-keys entry [:id :kind :owner :name :signature])) %)
-          duplicate-groups)))
-
 (defn- annotation-decisions [ctx]
   (->> (:occurrences (:resolved-model ctx))
        (filter #(= :annotation (:kind %)))
@@ -3177,116 +3033,10 @@
                   :resolved-key key :origin (:origin occurrence)
                   :strategy strategy :emitted-runtime-attribute false})))))
 
-(defn- xml-escape [value]
-  (-> (str value) (str/replace "&" "&amp;") (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;") (str/replace "\"" "&quot;")
-      (str/replace "'" "&apos;")))
-
-(defn- project-text [configuration resource-artifacts]
-  (let [project (:project configuration)
-        package (:package configuration)
-        output (:output configuration)]
-    (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
-         "  <PropertyGroup>\n"
-         "    <TargetFramework>" (xml-escape (:target-framework project)) "</TargetFramework>\n"
-         "    <Nullable>" (xml-escape (:nullable project)) "</Nullable>\n"
-         "    <ImplicitUsings>" (if (:implicit-usings project) "enable" "disable") "</ImplicitUsings>\n"
-         (when (seq (:no-warn project))
-           (str "    <NoWarn>" (xml-escape (str/join ";" (sort (:no-warn project)))) "</NoWarn>\n"))
-         (when (seq (:define-constants project))
-           (str "    <DefineConstants>$(DefineConstants);"
-                (xml-escape (str/join ";" (sort (:define-constants project))))
-                "</DefineConstants>\n"))
-         "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
-         "    <AssemblyName>" (xml-escape (:assembly-name project)) "</AssemblyName>\n"
-         "    <RootNamespace>" (xml-escape (:root-namespace project)) "</RootNamespace>\n"
-         "    <Deterministic>true</Deterministic>\n"
-         "    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>\n"
-         "    <PackageId>" (xml-escape (:id package)) "</PackageId>\n"
-         "    <Version>" (xml-escape (:version package)) "</Version>\n"
-         "    <Title>" (xml-escape (:title package)) "</Title>\n"
-         "    <Description>" (xml-escape (:description package)) "</Description>\n"
-         "    <Authors>" (xml-escape (:authors package)) "</Authors>\n"
-         "    <PackageTags>" (xml-escape (:tags package)) "</PackageTags>\n"
-         "    <PackageProjectUrl>" (xml-escape (:project-url package)) "</PackageProjectUrl>\n"
-         "    <RepositoryUrl>" (xml-escape (:repository-url package)) "</RepositoryUrl>\n"
-         "    <RepositoryType>" (xml-escape (:repository-type package)) "</RepositoryType>\n"
-         "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
-         "    <IsPackable>true</IsPackable>\n"
-         "  </PropertyGroup>\n"
-         "  <ItemGroup>\n"
-         "    <Compile Include=\"" (xml-escape (:source-directory output)) "/**/*.cs\" />\n"
-         (apply str
-                (for [reference (sort (:project-references configuration))]
-                  (str "    <ProjectReference Include=\"" (xml-escape reference) "\" />\n")))
-         (apply str
-                (for [{:keys [destination logical-name]}
-                      (sort-by :destination resource-artifacts)]
-                  (str "    <EmbeddedResource Include=\""
-                       (xml-escape destination)
-                       "\" LogicalName=\"" (xml-escape logical-name) "\" />\n")))
-         "  </ItemGroup>\n"
-         "</Project>\n")))
-
-(defn- resource-relative [^Path resource-root ^Path resource]
-  (let [root (.normalize resource-root)
-        resource (.normalize resource)]
-    (when-not (.startsWith resource root)
-      (throw (ex-info "Production resource is outside the Gradle resource output root"
-                      {:kind :unmapped-production-resource
-                       :root (str root)
-                       :path (str resource)})))
-    (str/replace (str (.relativize root resource)) "\\" "/")))
-
-(defn- portable [^Path root value]
-  (let [path (paths/absolute value)]
-    (str/replace (if (.startsWith path root) (str (.relativize root path)) (str path)) "\\" "/")))
-
-(defn- source-accounting [ctx workspace-root files]
-  (let [root (paths/absolute workspace-root)
-        diagnostics @(:diagnostics ctx)
-        by-file (group-by #(get-in % [:source :location :file]) diagnostics)
-        outputs-by-file
-        (group-by #(get-in % [:source :location :file])
-                  (filter #(and (= :type (:kind %)) (nil? (:owner %)))
-                          @(:declarations ctx)))]
-    (mapv
-     (fn [source]
-       (let [canonical (.getCanonicalPath (.toFile ^Path source))
-             types (get outputs-by-file canonical)
-             package-info? (= "package-info.java" (str (.getFileName ^Path source)))]
-         (when-not (or (seq types) package-info?)
-           (throw (ex-info "Production source has no emitted declaration or package mapping"
-                           {:kind :unaccounted-production-source :path canonical})))
-         {:source (portable root source)
-          :strategy (if package-info? :package-nullability-metadata :generated-csharp)
-          :top-level-declarations (mapv :name types)
-          :hard-failures (count (get by-file canonical))}))
-     (sort-by str files))))
-
-(defn- selected-source-files [resolved-model discovery]
-  (if-let [source-inputs (:source-inputs resolved-model)]
-    (mapv (comp paths/path key) source-inputs)
-    (:java-sources discovery)))
-
-(defn- selected-declaration-index [resolved-model]
-  (when-let [declarations (:declarations resolved-model)]
-    (let [index (IdentityHashMap.)]
-      (doseq [[_ {:keys [declaration]}] declarations]
-        (.put index declaration true))
-      index)))
-
-(defn- resource-mapping [configuration relative]
-  (or (get-in configuration [:resources relative])
-      (when (= :embedded-resource-preserve-path
-               (get-in configuration [:resource-policy :strategy]))
-        {:strategy :embedded-resource
-         :destination relative
-         :logical-name (str/replace relative "/" ".")})))
-
 (defn- emission-template
-  [resolved-model]
-  (let [ctx-holder (atom nil)
+  [resolved-model resolved-mappings]
+  (let [destination-type-node (:type-node resolved-mappings)
+        ctx-holder (atom nil)
         top-definitions-cache (IdentityHashMap.)
         base-services {:identifier identifier
                        :pascal pascal
@@ -3311,14 +3061,14 @@
                             @ctx-holder reference)))
                        :read-only-product-type-node
                        (fn [reference]
-                         (type-node (assoc @ctx-holder
-                                          :force-product-signature? true)
-                                    reference))
+                         (destination-type-node
+                          (assoc @ctx-holder :force-product-signature? true)
+                          reference))
                        :mutable-product-type-node
                        (fn [reference]
-                         (type-node (assoc @ctx-holder
-                                          :suppress-product-signature? true)
-                                    reference))
+                         (destination-type-node
+                          (assoc @ctx-holder :suppress-product-signature? true)
+                          reference))
                        :anonymous-class-name anonymous-class-name
                        :record-component-name record-component-name
                        :local-name (fn [^CtElement element]
@@ -3328,7 +3078,9 @@
                                              (.getSimpleName
                                               ^spoon.reflect.declaration.CtNamedElement element))
                                             "__" (or line 0) "_" (or column 0))))
-                       :type-node (fn [reference] (type-node @ctx-holder reference))}
+                       :type-node
+                       (fn [reference]
+                         (destination-type-node @ctx-holder reference))}
         base-services (assoc base-services :record-component-contract?
                              #(record-component-contract? @ctx-holder %))
         base-services (assoc base-services :functional-interface-method?
@@ -3367,35 +3119,35 @@
                                      (catch Exception _ false))) (raw "this")
                            (same-type? current-outer call-owner) (raw "this.__outer")
                            :else nil)))))))
-        body-context (java-body/context resolved-model services)]
+        body-context ((:create-body-context resolved-mappings)
+                      resolved-model services)]
     {:ctx-holder ctx-holder
      :top-definitions-cache top-definitions-cache
      :services services
      :body-context body-context}))
 
 (defn- root-emission-context
-  [template configuration resolved-model occurrence-index selected-declarations
-   public-api-type-keys public-api-declaration-keys blocker-start]
-  (let [ctx {:configuration configuration
-             :resolved-model resolved-model
-             :ctx-holder (:ctx-holder template)
-             :top-definitions-cache (:top-definitions-cache template)
-             :occurrence-index occurrence-index
-             :selected-declarations selected-declarations
-             :public-api-type-keys public-api-type-keys
-             :public-api-declaration-keys public-api-declaration-keys
-             :emitted (IdentityHashMap.)
-             :declarations (atom [])
-             :diagnostics (atom [])
-             :blocker-counter (atom blocker-start)
-             :body-translations (atom [])
-             :body-context (:body-context template)
-             :services (:services template)}]
+  [{:keys [template configuration resolved-model occurrence-index
+           selected-declarations public-api-type-keys
+           public-api-declaration-keys blocker-start emit-members]}]
+  (let [ctx (cond-> {:configuration configuration
+                     :resolved-model resolved-model
+                     :ctx-holder (:ctx-holder template)
+                     :top-definitions-cache (:top-definitions-cache template)
+                     :occurrence-index occurrence-index
+                     :selected-declarations selected-declarations
+                     :public-api-type-keys public-api-type-keys
+                     :public-api-declaration-keys public-api-declaration-keys
+                     :emitted (IdentityHashMap.)
+                     :declarations (atom [])
+                     :diagnostics (atom [])
+                     :blocker-counter (atom blocker-start)
+                     :body-translations (atom [])
+                     :body-context (:body-context template)
+                     :services (:services template)}
+              emit-members (assoc :emit-members emit-members))]
     (reset! (:ctx-holder template) ctx)
     ctx))
-
-(defn- element-weight [^CtElement element]
-  (count (.getElements element (TypeFilter. CtElement))))
 
 (defn- merge-emission-context! [target source]
   (doseq [entry (.entrySet ^IdentityHashMap (:emitted source))]
@@ -3408,312 +3160,73 @@
       (.put ^IdentityHashMap (:emitted target) element declaration)))
   (swap! (:declarations target) into @(:declarations source))
   (swap! (:diagnostics target) into @(:diagnostics source))
-  (swap! (:body-translations target) into @(:body-translations source)))
+  (swap! (:body-translations target) into @(:body-translations source))
+  ;; A single-worker job can replace the shared holder while translating a
+  ;; member. Restore the owning context before its root continues rendering.
+  (reset! (:ctx-holder target) target))
 
-(defn- balanced-work-order
-  "Places largest jobs at the front of separate executor chunks while keeping
-  the returned order deterministic. Results are reassembled by canonical job
-  indexes, so this ordering affects scheduling only."
-  [jobs]
-  (let [jobs (vec (sort-by (juxt (comp - :weight) :kind :index) jobs))
-        chunk-size (max 1 (long (Math/ceil
-                                 (/ (double (count jobs))
-                                    (* 16.0 (concurrency/current-worker-count))))))
-        chunk-count (max 1 (long (Math/ceil (/ (double (count jobs)) chunk-size))))
-        chunks (reduce (fn [result [index job]]
-                         (update result (mod index chunk-count) conj job))
-                       (vec (repeat chunk-count []))
-                       (map-indexed vector jobs))]
-    (vec (mapcat identity chunks))))
+(defn- context-results [ctx]
+  {:declarations @(:declarations ctx)
+   :diagnostics @(:diagnostics ctx)
+   :body-translations @(:body-translations ctx)})
+
+(defn- bridge-assets
+  [_]
+  [{:source "vibeformer/runtime/Vibeformer.JavaCompat.cs"
+    :destination "Vibeformer/Runtime/JavaCompat.cs"
+    :strategy :reviewable-java-compatibility-source
+    :missing-kind :missing-java-compatibility-source
+    :missing-message "Java compatibility source is missing"}
+   {:source "vibeformer/runtime/Vibeformer.JavaRegexUnicodeData.cs"
+    :destination "Vibeformer/Runtime/JavaRegexUnicodeData.cs"
+    :strategy :generated-java-compatibility-data
+    :missing-kind :missing-java-compatibility-source
+    :missing-message "Java compatibility source is missing"}])
+
+(defn- product-runtime-assets
+  [{:keys [configuration]}]
+  (mapv
+   (fn [relative]
+     {:source relative
+      :destination (str "Pkl/Core/Runtime/Substrate/"
+                        (.getFileName (paths/path relative)))
+      :strategy :reviewable-product-runtime-source
+      :missing-kind :missing-runtime-source
+      :missing-message "Configured runtime source is missing"})
+   (:runtime-sources configuration)))
+
+(defn rule-bundle
+  "Returns the Pkl-owned declaration, mapping, visibility, bridge, and runtime
+  rules composed with the product-neutral project and resource policies."
+  []
+  {:schema-version 1
+   :id :pkl
+   :rules
+   {:structural-declarations
+    {:create-template emission-template
+     :create-context root-emission-context
+     :emit-root-node type-node-declaration
+     :translate-member
+     (fn [ctx owner member]
+       (let [member-ctx (type-body-context (assoc ctx :current-type owner) owner)]
+         (member-node member-ctx owner member)))
+     :merge-context! merge-emission-context!
+     :context-results context-results}
+    :resolved-mappings
+    {:type-node type-node
+     :create-body-context java-body/context
+     :annotation-decisions annotation-decisions}
+    :namespace-policy
+    {:destination-namespace destination-namespace
+     :destination-file-name
+     (fn [_ type] (str (identifier (.getSimpleName ^CtType type)) ".cs"))}
+    :project-policy project-emission/common-project-policy
+    :resource-policy project-emission/common-resource-policy
+    :destination-bridges {:assets bridge-assets}
+    :product-runtime-assets {:assets product-runtime-assets}}})
 
 (defn emit-project!
-  "Emits declaration-complete, body-blocked C# project inputs from a live model."
-  [{:keys [workspace-root target discovery resolved-model configuration
-           public-api-boundary]}]
-  (let [configuration (validate-configuration! configuration)
-        root (paths/absolute workspace-root)
-        project-root (paths/resolve-path target (get-in configuration [:output :project-directory]))
-        source-root (paths/resolve-path project-root (get-in configuration [:output :source-directory]))
-        occurrence-index (java/resolved-occurrence-index resolved-model)
-        selected-declarations (selected-declaration-index resolved-model)
-        public-api-type-keys
-        (when public-api-boundary
-          (->> (:selection-evidence public-api-boundary)
-               (filter #(= "type" (get-in % [:row :kind])))
-               (map :declaration-key)
-               set))
-        public-api-declaration-keys
-        (when public-api-boundary
-          (set (map :declaration-key (:selection-evidence public-api-boundary))))
-        roots (java/project-roots resolved-model)
-        scheduled-roots
-        (->> roots
-             (map-indexed
-              (fn [index ^CtType type]
-                {:index index
-                 :type type
-                 :weight (element-weight type)
-                 :member-count (+ (count (.getTypeMembers type))
-                                  (if (instance? CtEnum type)
-                                    (count (.getEnumValues ^CtEnum type))
-                                    0))}))
-             vec)
-        average-root-weight (if (seq scheduled-roots)
-                              (/ (double (reduce + (map :weight scheduled-roots)))
-                                 (count scheduled-roots))
-                              0.0)
-        dominant-root
-        (let [candidate (first (sort-by (juxt (comp - :weight) :index) scheduled-roots))]
-          (when (and candidate
-                     (<= 8 (:member-count candidate))
-                     (<= (* 4.0 average-root-weight) (:weight candidate)))
-            candidate))
-        worker-template
-        (proxy [ThreadLocal] []
-          (initialValue [] (emission-template resolved-model)))
-        emission-profile (atom {:root-count (count scheduled-roots)
-                                :average-root-weight average-root-weight
-                                :largest-root
-                                (when-let [{:keys [^CtType type weight member-count]}
-                                           (first (sort-by (juxt (comp - :weight) :index)
-                                                           scheduled-roots))]
-                                  {:name (.getQualifiedName type)
-                                   :weight weight
-                                   :member-count member-count})
-                                :dominant-root nil})
-        declaration-results
-        (let [ordinary-results (atom [])]
-          (letfn [(emit-root!
-                    [{:keys [index type]} emit-members]
-                    (let [^CtType type type
-                          template (.get ^ThreadLocal worker-template)
-                          base-ctx (root-emission-context
-                                    template configuration resolved-model occurrence-index
-                                    selected-declarations public-api-type-keys
-                                    public-api-declaration-keys
-                                    (* index 1000000000))
-                          ctx (cond-> base-ctx emit-members (assoc :emit-members emit-members))
-                          _ (reset! (:ctx-holder template) ctx)
-                          namespace (destination-namespace ctx type)
-                          relative (str (str/replace namespace "." "/") "/"
-                                        (identifier (.getSimpleName type)) ".cs")
-                          file (paths/resolve-path source-root relative)
-                          node (sequence-node
-                                [(raw (str "// <auto-generated />\n#nullable "
-                                           (get-in configuration [:project :nullable])
-                                           "\nnamespace " namespace ";\n\n"))
-                                 (type-node-declaration ctx type) (raw "\n")])
-                          rendered (csharp/render node)]
-                      (write-text! file (:text rendered))
-                      {:index index
-                       :artifact {:file (portable project-root file)
-                                  :source (spoon/source-location type)
-                                  :mappings
-                                  (mapv #(assoc % :file (portable project-root file))
-                                        (:mappings rendered))}
-                       :declarations @(:declarations ctx)
-                       :diagnostics @(:diagnostics ctx)
-                       :body-translations @(:body-translations ctx)}))
-                  (translate-member!
-                    [root-index ^CtType owner index member]
-                    (let [template (.get ^ThreadLocal worker-template)
-                          ctx (root-emission-context
-                               template configuration resolved-model occurrence-index
-                               selected-declarations public-api-type-keys
-                               public-api-declaration-keys
-                               (+ (* root-index 1000000000) (* (inc index) 1000000)))
-                          member-ctx (type-body-context (assoc ctx :current-type owner) owner)
-                          node (member-node member-ctx owner member)]
-                      {:kind :member
-                       :index index
-                       :node node
-                       :ctx ctx
-                       :thread (.getName (Thread/currentThread))}))
-                  (emit-dominant-members
-                    [dominant-ctx ^CtType owner members]
-                    (let [started (System/nanoTime)
-                          root-index (:index dominant-root)
-                          member-jobs
-                          (mapv (fn [index member]
-                                  {:kind :member :index index :member member
-                                   :weight (element-weight member)})
-                                (range) members)
-                          root-jobs
-                          (->> scheduled-roots
-                               (remove #(= root-index (:index %)))
-                               (mapv #(assoc % :kind :root)))
-                          jobs (balanced-work-order (into root-jobs member-jobs))
-                          results
-                          (concurrency/mapv-ordered
-                           :root-and-member-translation
-                           (fn [{:keys [kind index member] :as job}]
-                             (case kind
-                               :root {:kind :root :index index
-                                      :result (emit-root! job nil)}
-                               :member (translate-member! root-index owner index member)))
-                           jobs)
-                          member-results (sort-by :index (filter #(= :member (:kind %)) results))
-                          roots (mapv :result (sort-by :index (filter #(= :root (:kind %)) results)))
-                          threads (->> member-results (map :thread) set sort vec)
-                          elapsed (- (System/nanoTime) started)]
-                      (reset! ordinary-results roots)
-                      (doseq [{member-ctx :ctx} member-results]
-                        (merge-emission-context! dominant-ctx member-ctx))
-                      ;; Single-worker execution runs the jobs on this same
-                      ;; thread and therefore changes its template holder.
-                      (reset! (:ctx-holder dominant-ctx) dominant-ctx)
-                      (swap! emission-profile assoc
-                             :dominant-root
-                             {:name (.getQualifiedName owner)
-                              :weight (:weight dominant-root)
-                              :member-count (count members)
-                              :member-weight (reduce + (map :weight member-jobs))
-                              :largest-member-weight (reduce max 0 (map :weight member-jobs))
-                              :worker-threads threads
-                              :worker-participation (count threads)
-                              :elapsed-millis (/ elapsed 1000000.0)})
-                      (mapv :node member-results)))]
-            (if dominant-root
-              (let [dominant-result (emit-root! dominant-root emit-dominant-members)]
-                (conj @ordinary-results dominant-result))
-              (concurrency/mapv-ordered
-               :declaration-translation-and-emission
-               #(emit-root! % nil)
-               (balanced-work-order
-                (mapv #(assoc % :kind :root) scheduled-roots))))))
-        declaration-results (vec (sort-by :index declaration-results))
-        declaration-artifacts (mapv :artifact declaration-results)
-        ctx {:configuration configuration
-             :resolved-model resolved-model
-             :occurrence-index occurrence-index
-             :selected-declarations selected-declarations
-             :public-api-type-keys public-api-type-keys
-             :public-api-declaration-keys public-api-declaration-keys
-             :declarations (atom (vec (mapcat :declarations declaration-results)))
-             :diagnostics (atom (vec (mapcat :diagnostics declaration-results)))
-             :body-translations (atom (vec (mapcat :body-translations declaration-results)))}
-        helper-artifacts
-        (mapv (fn [[source-name destination-name strategy]]
-                (let [source (paths/resolve-path root "vibeformer/runtime" source-name)
-                      destination (paths/resolve-path source-root "Vibeformer/Runtime"
-                                                      destination-name)]
-                  (when-not (paths/regular-file? source)
-                    (throw (ex-info "Java compatibility source is missing"
-                                    {:kind :missing-java-compatibility-source
-                                     :source (portable root source)})))
-                  (Files/createDirectories (.getParent destination)
-                                           (make-array java.nio.file.attribute.FileAttribute 0))
-                  (Files/copy source destination
-                              (into-array java.nio.file.CopyOption
-                                          [StandardCopyOption/REPLACE_EXISTING]))
-                  {:file (portable project-root destination)
-                   :source {:file (portable root source) :line 1 :column 1}
-                   :mappings []
-                   :strategy strategy}))
-              [["Vibeformer.JavaCompat.cs" "JavaCompat.cs"
-                :reviewable-java-compatibility-source]
-               ["Vibeformer.JavaRegexUnicodeData.cs" "JavaRegexUnicodeData.cs"
-                :generated-java-compatibility-data]])
-        runtime-artifacts
-        (mapv (fn [relative]
-                (let [source (paths/resolve-path root relative)
-                      destination (paths/resolve-path source-root "Pkl/Core/Runtime/Substrate"
-                                                      (str (.getFileName ^Path source)))]
-                  (when-not (paths/regular-file? source)
-                    (throw (ex-info "Configured runtime source is missing"
-                                    {:kind :missing-runtime-source :source relative})))
-                  (Files/createDirectories (.getParent destination)
-                                           (make-array java.nio.file.attribute.FileAttribute 0))
-                  (Files/copy source destination
-                              (into-array java.nio.file.CopyOption
-                                          [StandardCopyOption/REPLACE_EXISTING]))
-                  {:file (portable project-root destination)
-                   :source {:file (portable root source) :line 1 :column 1}
-                   :mappings []
-                   :strategy :reviewable-product-runtime-source}))
-              (:runtime-sources configuration))
-        artifacts (into declaration-artifacts (concat helper-artifacts runtime-artifacts))
-        artifact-collisions (->> artifacts (group-by :file) vals (filter #(< 1 (count %))) vec)
-        declaration-collisions (collision-errors @(:declarations ctx))]
-    (when (or (seq artifact-collisions) (seq declaration-collisions))
-      (throw (ex-info "Generated declaration names or files collide"
-                      {:kind :generated-declaration-collision
-                       :file-collisions (mapv #(mapv :file %) artifact-collisions)
-                       :declaration-collisions declaration-collisions})))
-    (let [resource-artifacts
-          (mapv
-           (fn [^Path source]
-             (let [relative (resource-relative (:resource-root discovery) source)
-                   mapping (resource-mapping configuration relative)]
-               (when-not mapping
-                 (throw (ex-info "Production resource has no explicit destination mapping"
-                                 {:kind :unmapped-production-resource :resource relative})))
-               (let [destination (paths/resolve-path project-root
-                                                     (get-in configuration [:output :resource-directory])
-                                                     (:destination mapping))]
-                 (Files/createDirectories (.getParent destination)
-                                          (make-array java.nio.file.attribute.FileAttribute 0))
-                 (Files/copy source destination
-                             (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
-                 {:source (portable root source)
-                  :destination (portable project-root destination)
-                  :strategy (:strategy mapping)
-                  :logical-name (:logical-name mapping)})))
-           (sort-by str (:resources discovery)))
-          project-file (paths/resolve-path project-root (get-in configuration [:output :project-file]))
-          source-map-file (paths/resolve-path project-root (get-in configuration [:output :source-map-file]))
-          diagnostics-file (paths/resolve-path project-root (get-in configuration [:output :diagnostics-file]))
-          manifest-file (paths/resolve-path project-root (get-in configuration [:output :manifest-file]))
-          annotations-file (paths/resolve-path project-root (get-in configuration [:output :annotation-decisions-file]))
-          mappings (vec (mapcat :mappings artifacts))
-          declaration-ids (set (map :id @(:declarations ctx)))
-          mapped-declaration-ids (set (keep #(get-in % [:source :declaration-id]) mappings))
-          missing-mappings (sort (remove mapped-declaration-ids declaration-ids))
-          accounts (source-accounting ctx root
-                                      (selected-source-files resolved-model discovery))
-          counts (frequencies (map :kind @(:declarations ctx)))
-          body-results @(:body-translations ctx)
-          body-coverage (reduce (fn [totals result]
-                                  (merge-with + totals (java/coverage-totals result)))
-                                {:visited 0 :covered 0 :blocked 0 :structural 0
-                                 :semantic 0 :unsupported-elements 0
-                                 :missing-mappings 0 :missing-occurrences 0 :fallback 0}
-                                body-results)
-          summary {:compilation-units (count accounts)
-                   :generated-files (count artifacts)
-                   :resources (count resource-artifacts)
-                   :declarations (count @(:declarations ctx))
-                   :declaration-kinds (into (sorted-map) counts)
-                   :source-mappings (count mappings)
-                   :missing-source-mappings (count missing-mappings)
-                   :hard-failures (count @(:diagnostics ctx))
-                   :executable-roots (count body-results)
-                   :executable-coverage body-coverage
-                   :collisions 0
-                   :skipped-source-units 0}]
-      (when (seq missing-mappings)
-        (throw (ex-info "Generated declarations are missing Spoon source mappings"
-                        {:kind :missing-declaration-source-mapping
-                         :declaration-ids missing-mappings})))
-      (write-text! project-file (project-text configuration resource-artifacts))
-      (write-text! source-map-file (edn-text {:schema-version 1 :mappings mappings}))
-      (write-text! diagnostics-file (edn-text {:schema-version 1 :diagnostics @(:diagnostics ctx)}))
-      (write-text! annotations-file
-                   (edn-text {:schema-version 1 :decisions (annotation-decisions ctx)}))
-      (write-text! manifest-file
-                   (edn-text {:schema-version 1
-                              :configuration configuration
-                              :sources accounts
-                              :resources resource-artifacts
-                              :artifacts (mapv #(dissoc % :mappings) artifacts)
-                              :summary summary}))
-      {:project-root project-root
-       :project-file project-file
-       :manifest-file manifest-file
-       :summary summary
-       :emission-profile @emission-profile
-       :diagnostics @(:diagnostics ctx)
-       :declarations @(:declarations ctx)
-       :artifacts artifacts
-       :source-accounts accounts
-       :resource-artifacts resource-artifacts})))
+  "Compatibility entry point for the Pkl destination. All project orchestration
+  is delegated to the product-neutral emitter with this Pkl-owned rule bundle."
+  [options]
+  (project-emission/emit-project! (assoc options :rule-bundle (rule-bundle))))

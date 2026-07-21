@@ -4,8 +4,9 @@
             [clojure.test :refer [deftest is testing]]
             [vibeformer.complete-parser-fixture :as fixture]
             [vibeformer.concurrency :as concurrency]
-            [vibeformer.pkl.java-project :as java-project]
-            [vibeformer.paths :as paths])
+            [vibeformer.java-project :as project-emission]
+            [vibeformer.paths :as paths]
+            [vibeformer.pkl.java-project :as pkl-project])
   (:import [java.nio.file FileVisitOption Files Path]
            [java.nio.file.attribute FileAttribute]))
 
@@ -25,17 +26,18 @@
   (let [{:keys [root discovery first]} (fixture/models)]
     (concurrency/call-with-executor
      {:worker-count worker-count}
-     #(java-project/emit-project!
+     #(project-emission/emit-project!
        {:workspace-root root
         :target target
         :discovery discovery
         :resolved-model first
-        :configuration (java-project/read-configuration root)}))))
+        :configuration (pkl-project/read-configuration root)
+        :rule-bundle (pkl-project/rule-bundle)}))))
 
 (deftest destination-package-metadata-must-be-non-blank
-  (let [configuration (java-project/read-configuration (paths/workspace-root))
+  (let [configuration (pkl-project/read-configuration (paths/workspace-root))
         error (try
-                (java-project/validate-configuration!
+                (pkl-project/validate-configuration!
                  (assoc-in configuration [:package :title] " \t"))
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
@@ -52,6 +54,9 @@
         first-profile (:emission-profile first-emission)
         second-profile (:emission-profile second-emission)
         manifest (edn/read-string (slurp (str (:manifest-file first-emission))))]
+    (is (= :pkl (:rule-bundle first-emission)
+           (:rule-bundle second-emission)
+           (:rule-bundle manifest)))
     (testing "the dominant root is partitioned across the bounded worker pool"
       (is (= {:name "org.pkl.parser.ParserImpl"
               :weight 29708
@@ -111,22 +116,22 @@
         (is (not-any? #(re-find #"#error VIBEFORMER_|NotImplementedException|TODO" %)
                       sources))
         (is (some #(str/includes? %
-                                 "GenericParserError(string msg, global::Pkl.Parser.Syntax.Generic.FullSpan span) : base(msg)")
+                                  "GenericParserError(string msg, global::Pkl.Parser.Syntax.Generic.FullSpan span) : base(msg)")
                   sources))
         (is (some #(str/includes? % "global::Vibeformer.Runtime.JavaCompat.CodePointAt")
                   sources))
         (is (some #(str/includes? % "global::Vibeformer.Runtime.JavaCompat.SubList")
                   sources))
         (is (some #(str/includes? %
-                                 "JavaCompat.CastList<global::Pkl.Parser.Syntax.Identifier>(base.children)")
+                                  "JavaCompat.CastList<global::Pkl.Parser.Syntax.Identifier>(base.children)")
                   sources))
         (is (some #(str/includes? %
-                                 "public abstract T Accept<T>(global::Pkl.Parser.ParserVisitor<T> visitor);")
+                                  "public abstract T Accept<T>(global::Pkl.Parser.ParserVisitor<T> visitor);")
                   sources))
         (is (some #(str/includes? % "public virtual string Text(char[] source)")
                   sources))
         (is (some #(str/includes? %
-                                 "public override global::System.Collections.Generic.IList<global::Pkl.Parser.Syntax.StringPart> GetParts()")
+                                  "public override global::System.Collections.Generic.IList<global::Pkl.Parser.Syntax.StringPart> GetParts()")
                   sources))
         (is (some #(str/includes? % "public override string ToString()")
                   sources))
