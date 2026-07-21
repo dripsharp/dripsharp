@@ -90,7 +90,8 @@
                                :dotnet.type/piped-input-stream]
    "java.io.PipedOutputStream" ["global::Vibeformer.Runtime.JavaPipedOutputStream"
                                 :dotnet.type/piped-output-stream]
-   "java.io.PushbackInputStream" ["global::System.IO.Stream" :dotnet.type/stream]
+   "java.io.PushbackInputStream" ["global::Vibeformer.Runtime.JavaPushbackInputStream"
+                                  :dotnet.type/pushback-input-stream]
    "java.io.File" ["string" :dotnet.type/path]
 
    "java.net.URI" ["global::System.Uri" :dotnet.type/uri]
@@ -190,12 +191,20 @@
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.Function" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.LongConsumer" ["global::System.Action<long>"
+                                      :dotnet.type/long-consumer]
    "java.util.function.Predicate" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Supplier" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.ToLongFunction" ["global::Vibeformer.Runtime.JavaToLongFunction"
+                                        :dotnet.type/to-long-function]
    "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex"
                               :dotnet.type/regex]
+   "java.util.regex.Matcher" ["global::Vibeformer.Runtime.JavaRegexMatcher"
+                              :dotnet.type/regex-matcher]
    "java.util.stream.Stream" ["global::System.Collections.Generic.IEnumerable"
                               :dotnet.type/enumerable]
+   "java.util.stream.LongStream" ["global::System.Collections.Generic.IEnumerable<long>"
+                                  :dotnet.type/long-stream]
    "java.util.stream.Collector" ["global::Vibeformer.Runtime.JavaCollector"
                                  :dotnet.type/java-collector]
    "java.util.stream.Collectors" ["global::Vibeformer.Runtime.JavaCompat"

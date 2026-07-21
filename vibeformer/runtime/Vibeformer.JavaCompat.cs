@@ -93,12 +93,14 @@ internal sealed class JavaUriSyntaxException : UriFormatException
 {
     internal string InputText { get; }
     internal string Reason { get; }
+    internal int Index { get; }
 
     internal JavaUriSyntaxException(string input, string reason, int index = -1)
         : base(index < 0 ? $"{reason}: {input}" : $"{reason} at index {index}: {input}")
     {
         InputText = input;
         Reason = reason;
+        Index = index;
     }
 }
 
@@ -325,6 +327,63 @@ internal sealed class JavaPipedInputStream : Stream
     protected override void Dispose(bool disposing)
     {
         if (disposing) pipe.CloseReader();
+        base.Dispose(disposing);
+    }
+}
+
+internal sealed class JavaPushbackInputStream : Stream
+{
+    private readonly Stream source;
+    private int pushedBack = -1;
+
+    internal JavaPushbackInputStream(Stream source) =>
+        this.source = JavaCompat.RequireNonNull(source);
+
+    internal void Unread(int value)
+    {
+        if (pushedBack >= 0) throw new IOException("Push back buffer is full");
+        pushedBack = value & 0xff;
+    }
+
+    public override int ReadByte()
+    {
+        if (pushedBack < 0) return source.ReadByte();
+        var value = pushedBack;
+        pushedBack = -1;
+        return value;
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        if (count == 0) return 0;
+        var copied = 0;
+        if (pushedBack >= 0)
+        {
+            buffer[offset++] = (byte)pushedBack;
+            pushedBack = -1;
+            count--;
+            copied = 1;
+        }
+        if (count == 0) return copied;
+        return copied + source.Read(buffer, offset, count);
+    }
+
+    public override bool CanRead => source.CanRead;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) source.Dispose();
         base.Dispose(disposing);
     }
 }
@@ -1521,6 +1580,8 @@ internal static class JavaCompat
     internal static string StringValueOf(bool value) => value ? "true" : "false";
     internal static string StringValueOf(int value) => value.ToString(CultureInfo.InvariantCulture);
     internal static string StringValueOf(long value) => value.ToString(CultureInfo.InvariantCulture);
+    internal static string StringJoin(string delimiter, IEnumerable<string> values) =>
+        string.Join(delimiter, values);
     internal static string StringValueOf(float value) => JavaFloatingString(value);
     internal static string StringValueOf(double value) => JavaFloatingString(value);
     internal static StringBuilder AppendValue(StringBuilder builder, object? value)
@@ -2789,6 +2850,8 @@ internal static class JavaCompat
         new JavaUriSyntaxException(input, reason, index);
     internal static string UriSyntaxReason(UriFormatException error) =>
         error is JavaUriSyntaxException syntax ? syntax.Reason : error.Message;
+    internal static int UriSyntaxIndex(UriFormatException error) =>
+        error is JavaUriSyntaxException syntax ? syntax.Index : -1;
     internal static string UriSyntaxInput(UriFormatException error)
     {
         if (error is JavaUriSyntaxException syntax) return syntax.InputText;
@@ -5053,6 +5116,10 @@ internal static class JavaCompat
     internal static IEnumerable<T> DropValues<T>(IEnumerable<T> values, long count) => values.Skip(checked((int)count));
     internal static JavaOptional<int> MaxOptional(IEnumerable<int> values) =>
         values.Any() ? JavaOptional<int>.Of(values.Max()) : JavaOptional<int>.Empty();
+    internal static void OptionalLongIfPresent(long? value, Action<long> consumer)
+    {
+        if (value.HasValue) consumer(value.Value);
+    }
     internal static JavaOptional<T> ReduceOptional<T>(IEnumerable<T> values, Func<T, T, T> reducer)
     {
         using var iterator = values.GetEnumerator();

@@ -24,7 +24,7 @@
             CtNewArray CtOperatorAssignment CtReturn CtStatement CtThisAccess CtThrow CtTry
             CtSwitch CtTryWithResource CtTypeAccess CtUnaryOperator CtVariableAccess CtWhile
             CtVariableRead CtVariableWrite]
-           [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement
+           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtConstructor CtElement
             CtEnum CtEnumValue CtExecutable CtField CtInterface CtMethod
             CtModifiable CtParameter CtType ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtCatchVariableReference
@@ -405,6 +405,7 @@
        "executable:java.net.URI#getRawPath()"
        "executable:java.net.URI#getRawQuery()"
        "executable:java.net.URI#getRawFragment()"
+       "executable:java.net.URI#equals(java.lang.Object)"
        "executable:java.net.URI#toString()"
        "executable:java.net.URI#create(java.lang.String)"
        "executable:java.lang.String#toUpperCase()"
@@ -425,8 +426,15 @@
        "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
        "executable:java.lang.String#toCharArray()"
        "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
+       "executable:java.lang.String#getBytes()"
+       "executable:java.lang.String#join(java.lang.CharSequence,java.lang.Iterable)"
+       "executable:java.lang.Integer#toString(int)"
+       "executable:java.lang.Integer#toString(int,int)"
        "executable:java.lang.Long#parseLong(java.lang.String)"
+       "executable:java.lang.Long#toString(long)"
        "executable:java.lang.Math#min(long,long)"
+       "executable:java.lang.Math#toIntExact(long)"
+       "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)"
        "executable:java.net.Socket#getInputStream()"
        "executable:java.net.Socket#getOutputStream()"
        "executable:java.net.Socket#getRemoteSocketAddress()"
@@ -460,6 +468,8 @@
        "executable:java.lang.Throwable#getCause()"
        "executable:java.lang.Throwable#getMessage()"
        "executable:java.net.URISyntaxException#getMessage()"
+       "executable:java.net.URISyntaxException#getReason()"
+       "executable:java.net.URISyntaxException#getIndex()"
        "executable:java.lang.Throwable#printStackTrace()"
        "executable:java.time.Duration#ofSeconds(long)"
        "executable:java.time.Duration#toMillis()"
@@ -495,6 +505,7 @@
        "executable:java.util.Map$Entry#getValue()"
        "executable:java.util.Map$Entry#setValue(java.lang.Object)"
        "executable:java.util.List#get(int)"
+       "executable:java.util.List#contains(java.lang.Object)"
        "executable:java.util.List#equals(java.lang.Object)"
        "executable:java.util.List#hashCode()"
        "executable:java.util.List#isEmpty()"
@@ -521,17 +532,25 @@
        "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)"
        "executable:java.util.OptionalInt#isPresent()"
        "executable:java.util.OptionalInt#getAsInt()"
+       "executable:java.util.OptionalLong#empty()"
+       "executable:java.util.OptionalLong#of(long)"
+       "executable:java.util.OptionalLong#ifPresent(java.util.function.LongConsumer)"
        "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
        "executable:java.util.function.Consumer#accept(java.lang.Object)"
        "executable:java.util.Set#contains(java.lang.Object)"
        "executable:java.util.Set#equals(java.lang.Object)"
        "executable:java.util.Set#add(java.lang.Object)"
        "executable:java.util.Set#removeAll(java.util.Collection)"
+       "executable:java.util.regex.Pattern#compile(java.lang.String)"
+       "executable:java.util.regex.Pattern#matcher(java.lang.CharSequence)"
+       "executable:java.util.regex.Matcher#matches()"
        "executable:java.util.stream.Collectors#toList()"
        "executable:java.util.stream.Collectors#toSet()"
        "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
        "executable:java.util.stream.Stream#flatMap(java.util.function.Function)"
        "executable:java.util.stream.Stream#map(java.util.function.Function)"
+       "executable:java.util.stream.Stream#mapToLong(java.util.function.ToLongFunction)"
+       "executable:java.util.stream.LongStream#sum()"
        "executable:java.util.stream.Stream#of(java.lang.Object[])"
        "executable:java.io.OutputStream#write(byte[])"
        "executable:java.io.OutputStream#write(byte[],int,int)"
@@ -543,6 +562,10 @@
        "executable:java.io.InputStream#read()"
        "executable:java.io.InputStream#read(byte[])"
        "executable:java.io.InputStream#read(byte[],int,int)"
+       "executable:java.io.ByteArrayInputStream#read()"
+       "executable:java.io.PushbackInputStream#read()"
+       "executable:java.io.PushbackInputStream#unread(int)"
+       "executable:java.io.PushbackInputStream#close()"
        "executable:java.io.InputStream#close()"
        "executable:java.util.zip.GZIPInputStream#read(byte[],int,int)"
        "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
@@ -639,6 +662,8 @@
 
                  (contains?
                   #{"executable:java.lang.Object#<init>()"
+                    "executable:java.io.InputStream#<init>()"
+                    "executable:java.io.OutputStream#<init>()"
                     "executable:java.io.IOException#<init>()"
                     "executable:java.io.IOException#<init>(java.lang.String)"
                     "executable:java.io.IOException#<init>(java.lang.Throwable)"
@@ -654,12 +679,14 @@
                     "executable:java.lang.StringBuilder#<init>(int)"
                     "executable:java.lang.StringBuilder#<init>(java.lang.String)"
                     "executable:java.lang.String#<init>(char[])"
+                    "executable:java.lang.String#<init>(char[],int,int)"
                     "executable:java.lang.String#<init>(byte[],java.nio.charset.Charset)"
                     "executable:java.io.ByteArrayOutputStream#<init>()"
                     "executable:java.io.ByteArrayOutputStream#<init>(int)"
                     "executable:java.io.ByteArrayInputStream#<init>(byte[])"
                     "executable:java.io.PipedInputStream#<init>()"
                     "executable:java.io.PipedOutputStream#<init>()"
+                    "executable:java.io.PushbackInputStream#<init>(java.io.InputStream)"
                     "executable:java.util.zip.GZIPInputStream#<init>(java.io.InputStream)"
                     "executable:java.net.URI#<init>(java.lang.String)"
                     "executable:java.util.HashMap#<init>()"
@@ -874,6 +901,9 @@
                "executable:java.net.URI#getRawFragment()"
                (compat-call "UriRawFragment" [target-node])
 
+               "executable:java.net.URI#equals(java.lang.Object)"
+               (compat-call "Equals" (into [target-node] arguments))
+
                "executable:java.net.URI#toString()"
                (sequence-node [target-node (raw ".OriginalString")])
 
@@ -937,12 +967,34 @@
                "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
                (compat-call "StringGetBytes" (into [target-node] arguments))
 
+               "executable:java.lang.String#getBytes()"
+               (compat-call "StringGetBytes"
+                            [target-node (raw "global::System.Text.Encoding.UTF8")])
+
+               "executable:java.lang.String#join(java.lang.CharSequence,java.lang.Iterable)"
+               (compat-call "StringJoin" arguments)
+
+               "executable:java.lang.Integer#toString(int,int)"
+               (compat-call "ToStringRadix" arguments)
+
+               "executable:java.lang.Integer#toString(int)"
+               (compat-call "StringValueOf" arguments)
+
                "executable:java.lang.Long#parseLong(java.lang.String)"
                (compat-call "ParseLong" arguments)
+
+               "executable:java.lang.Long#toString(long)"
+               (compat-call "StringValueOf" arguments)
 
                "executable:java.lang.Math#min(long,long)"
                (sequence-node [(raw "global::System.Math.Min(")
                                (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.lang.Math#toIntExact(long)"
+               (compat-call "ToIntExact" arguments)
+
+               "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)"
+               (compat-call "ArrayCopy" arguments)
 
                "executable:java.lang.Integer#parseInt(java.lang.String,int)"
                (compat-call "ParseInt" arguments)
@@ -1045,6 +1097,19 @@
                "executable:java.io.InputStream#read(byte[],int,int)"
                (compat-call "InputStreamRead" (into [target-node] arguments))
 
+               "executable:java.io.ByteArrayInputStream#read()"
+               (compat-call "InputStreamRead" [target-node])
+
+               "executable:java.io.PushbackInputStream#read()"
+               (compat-call "InputStreamRead" [target-node])
+
+               "executable:java.io.PushbackInputStream#unread(int)"
+               (sequence-node [target-node (raw ".Unread(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.io.PushbackInputStream#close()"
+               (sequence-node [target-node (raw ".Close()")])
+
                "executable:java.util.zip.GZIPInputStream#read(byte[],int,int)"
                (compat-call "InputStreamRead" (into [target-node] arguments))
 
@@ -1083,6 +1148,12 @@
 
                "executable:java.net.URISyntaxException#getMessage()"
                (sequence-node [target-node (raw ".Message")])
+
+               "executable:java.net.URISyntaxException#getReason()"
+               (compat-call "UriSyntaxReason" [target-node])
+
+               "executable:java.net.URISyntaxException#getIndex()"
+               (compat-call "UriSyntaxIndex" [target-node])
 
                "executable:java.lang.Throwable#printStackTrace()"
                (compat-call "PrintStackTrace" [target-node])
@@ -1215,6 +1286,9 @@
                "executable:java.util.List#get(int)"
                (compat-call "ListGet" (into [target-node] arguments))
 
+               "executable:java.util.List#contains(java.lang.Object)"
+               (compat-call "CollectionContains" (into [target-node] arguments))
+
                "executable:java.util.List#size()"
                (sequence-node [target-node (raw ".Count")])
 
@@ -1282,6 +1356,15 @@
                "executable:java.util.OptionalInt#getAsInt()"
                (sequence-node [target-node (raw ".Value")])
 
+               "executable:java.util.OptionalLong#empty()"
+               (raw "(long?)null")
+
+               "executable:java.util.OptionalLong#of(long)"
+               (first arguments)
+
+               "executable:java.util.OptionalLong#ifPresent(java.util.function.LongConsumer)"
+               (compat-call "OptionalLongIfPresent" (into [target-node] arguments))
+
                "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
                (sequence-node [target-node (raw "(")
                                (sequence-node arguments ", ") (raw ")")])
@@ -1303,6 +1386,15 @@
                "executable:java.util.Set#removeAll(java.util.Collection)"
                (compat-call "RemoveAll" (into [target-node] arguments))
 
+               "executable:java.util.regex.Pattern#compile(java.lang.String)"
+               (compat-call "CompileRegex" arguments)
+
+               "executable:java.util.regex.Pattern#matcher(java.lang.CharSequence)"
+               (compat-call "RegexMatcher" (into [target-node] arguments))
+
+               "executable:java.util.regex.Matcher#matches()"
+               (sequence-node [target-node (raw ".Matches()")])
+
                "executable:java.util.stream.Stream#of(java.lang.Object[])"
                (compat-call "StreamOf" arguments)
 
@@ -1311,6 +1403,12 @@
 
                "executable:java.util.stream.Stream#map(java.util.function.Function)"
                (compat-call "Map" (into [target-node] arguments))
+
+               "executable:java.util.stream.Stream#mapToLong(java.util.function.ToLongFunction)"
+               (compat-call "MapToLong" (into [target-node] arguments))
+
+               "executable:java.util.stream.LongStream#sum()"
+               (compat-call "Sum" [target-node])
 
                "executable:java.util.stream.Collectors#toList()"
                (raw "global::Vibeformer.Runtime.JavaCompat.ToList<object>()")
@@ -1403,7 +1501,9 @@
                (sequence-node [(raw "global::Vibeformer.Runtime.JavaThread.Sleep(")
                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.Object#<init>()"
+               ("executable:java.lang.Object#<init>()"
+                "executable:java.io.InputStream#<init>()"
+                "executable:java.io.OutputStream#<init>()")
                (raw "")
 
                (sequence-node
@@ -1415,7 +1515,10 @@
                  (raw ")")]))
              node (expression-cast-node @ctx-holder element raw-node)]
          {:node
-          (if (= "executable:java.lang.Object#<init>()" (:key occurrence))
+          (if (contains? #{"executable:java.lang.Object#<init>()"
+                           "executable:java.io.InputStream#<init>()"
+                           "executable:java.io.OutputStream#<init>()"}
+                         (:key occurrence))
             node
             (invocation-statement element node))}))}
 
@@ -1500,11 +1603,14 @@
      :class CtExecutableReferenceExpression
      :emit
      (fn [{:keys [context ^CtExecutableReferenceExpression element children]}]
-       (let [target (child-node children (.getTarget element))
+       (let [target-element (.getTarget element)
+             target (child-node children target-element)
              executable (child-node children (.getExecutable element))
              occurrence (.get ^IdentityHashMap (:occurrence-index context)
                               (.getExecutable element))
              declaration (:declaration occurrence)
+             static? (and (instance? CtMethod declaration)
+                          (.hasModifier ^CtMethod declaration ModifierKind/STATIC))
              parameter-count (count (.getParameters (.getExecutable element)))
              parameters (mapv #(raw (str "value" %)) (range parameter-count))
              functional-type (some-> element .getType .getQualifiedName)
@@ -1538,6 +1644,19 @@
             (= "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"
                (:key occurrence))
             (sequence-node [target (raw ".Set")])
+
+            (and (instance? CtTypeAccess target-element) (not static?))
+            (let [receiver (raw "value0")
+                  invocation-parameters
+                  (mapv #(raw (str "value" %)) (range 1 (inc parameter-count)))]
+              (sequence-node
+               (vec
+                (concat
+                 [(raw "(") receiver]
+                 (when (seq invocation-parameters)
+                   [(raw ", ") (sequence-node invocation-parameters ", ")])
+                 [(raw ") => ") receiver (raw ".") executable (raw "(")
+                  (sequence-node invocation-parameters ", ") (raw ")")]))))
 
             discards-result?
             (sequence-node
@@ -2033,6 +2152,7 @@
     (instance? CtMethod member) :method
     (instance? CtField member) :field
     (instance? CtType member) :type
+    (instance? CtAnonymousExecutable member) :initializer
     :else :member))
 
 (defn- register-member! [ctx ^CtType owner ^CtElement member name rule]
@@ -2054,6 +2174,7 @@
                                      :method "method"
                                      :field "field"
                                      :type "type"
+                                     :initializer "initializer"
                                      "member")
                              :name (if (= :constructor kind) ".ctor" name)
                              :parameter-count (str parameter-count)}
@@ -2255,12 +2376,28 @@
       (source-ref constructor rule
                   {:declaration-id id :declaration-kind :constructor}))))
 
+(defn- static-initializer-node
+  [ctx ^CtType owner ^CtAnonymousExecutable initializer]
+  (when-not (.hasModifier initializer ModifierKind/STATIC)
+    (unsupported! "Java library instance initializer lowering is not implemented"
+                  initializer))
+  (let [name (pascal (.getSimpleName owner))
+        rule :java-library.declaration/static-initializer
+        id (register-member! ctx owner initializer ".cctor" rule)]
+    (csharp/with-source
+      (sequence-node [(raw (str "static " name "() "))
+                      (translated-node ctx (.getBody initializer))])
+      (source-ref initializer rule
+                  {:declaration-id id :declaration-kind :initializer}))))
+
 (defn- member-node [ctx ^CtType owner member]
   (cond
     (instance? CtField member) (field-node ctx owner member)
     (instance? CtMethod member) (method-node ctx owner member)
     (instance? CtConstructor member) (constructor-node ctx owner member)
     (instance? CtType member) (emit-root ctx member)
+    (instance? CtAnonymousExecutable member)
+    (static-initializer-node ctx owner member)
     :else (unsupported! "Java library member shape is not implemented" member)))
 
 (defn- derived-body-context [ctx additions]
