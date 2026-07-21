@@ -40,7 +40,8 @@
         "language-snippet-package" (language-snippet-runner/verify-package-runner!)
         "pkl-core-test-contract" (pkl-core-test-contract/verify-contract!)
         "pkl-core-corpus" (pkl-core-corpus-runner/verify-corpus-runner!)
-        "schema-binding-suite" (schema-binding-runner/verify-full-suite!))
+        "schema-binding-suite" (schema-binding-runner/verify-full-suite!
+                                {:require-conformant? true}))
       (catch ExceptionInfo error
         (let [{:keys [output]} (ex-data error)]
           (fail! (str "Vibeformer command failed: " (.getMessage error)

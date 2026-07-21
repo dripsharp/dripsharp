@@ -198,7 +198,10 @@
                                     "SchemaBindingPackageRunner.cs"))
         clojure (Files/readString
                  (paths/resolve-path root "vibeformer" "src" "vibeformer"
-                                     "schema_binding_runner.clj"))]
+                                     "schema_binding_runner.clj"))
+        main (Files/readString
+              (paths/resolve-path root "vibeformer" "src" "vibeformer"
+                                  "main.clj"))]
     (doseq [required ["ReadInventory" "ValidateFixtureCoverage" "ExecuteFixtureMatrix"
                       "CSharpGenerator" "<Nullable>enable</Nullable>"
                       "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
@@ -213,4 +216,6 @@
     (is (.contains clojure "upstream-test-classes"))
     (is (.contains clojure "GRADLE_OPTS=-Xmx28g"))
     (is (.contains clojure "VIBEFORMER_WORKERS="))
-    (is (not (.contains clojure "EvaluateSchemaTest#")))))
+    (is (not (.contains clojure "EvaluateSchemaTest#")))
+    (is (.contains main
+                   "\"schema-binding-suite\" (schema-binding-runner/verify-full-suite!\n                                {:require-conformant? true})"))))
