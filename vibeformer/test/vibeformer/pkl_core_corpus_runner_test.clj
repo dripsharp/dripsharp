@@ -35,12 +35,12 @@
     :execution-owner "complete-pkl-core-runner"
     :expected-outcome "assertions-succeed" :platform-conditions "all-supported-hosts"}
    {:case-id "case/b" :junit-unique-id "[engine:junit]/[class:B]/[method:b()]"
-    :source-class "B"
-    :source-method "b"
+    :source-class "org.pkl.core.EvaluatorTest"
+    :source-method "nested pkl-binary rendering produces correct results"
     :source-path "pkl-core/src/test/kotlin/B.kt"
     :source-sha256 (apply str (repeat 64 "b")) :source-line "20"
-    :behavior-family "loading-security-project-package"
-    :product-classification "idiomatic-dotnet-adaptation"
+    :behavior-family "evaluation-runtime"
+    :product-classification "in-scope-mixed-excluded-surface"
     :execution-owner "complete-pkl-core-runner"
     :expected-outcome "assertions-succeed" :platform-conditions "all-supported-hosts"}
    {:case-id "case/c" :junit-unique-id "[engine:junit]/[class:C]/[method:c()]"
@@ -173,7 +173,9 @@
                    :expected-count 1}
         method-partition {:name :focused-loading
                           :source-classes #{}
-                          :source-methods-by-class {"B" #{"b"}}
+                          :source-methods-by-class
+                          {"org.pkl.core.EvaluatorTest"
+                           #{"nested pkl-binary rendering produces correct results"}}
                           :expected-count 1}]
     (is (= {:partition :focused-value-runtime :passed 1}
            (runner/validate-completed-partition!
@@ -213,13 +215,16 @@
         result (result-file root "complete-matrix.tsv" rows)
         partitions [{:name :a :source-classes #{"A"} :expected-count 1}
                     {:name :b :source-classes #{}
-                     :source-methods-by-class {"B" #{"b"}}
+                     :source-methods-by-class
+                     {"org.pkl.core.EvaluatorTest"
+                      #{"nested pkl-binary rendering produces correct results"}}
                      :expected-count 1}
                     {:name :e :source-classes #{"E"} :expected-count 1}]
         boundary {:cases 5
                   :classifications
                   {"jvm-shared-product-behavior" 1
-                   "idiomatic-dotnet-adaptation" 2
+                   "idiomatic-dotnet-adaptation" 1
+                   "in-scope-mixed-excluded-surface" 1
                    "user-approved-excluded-surface" 1
                    "test-infrastructure-only-mechanics" 1}
                   :package-statuses
@@ -272,7 +277,8 @@
   (let [controls (runner/prove-fail-closed-controls!
                   validated (.resolve (temp-directory) "controls"))]
     (is (= #{:jvm-perturbation :package-perturbation :crash :timeout
-             :missing :duplicate :stale :classification}
+             :missing :duplicate :stale :classification
+             :mixed-whole-case-exclusion}
            (set (keys controls))))
     (is (every? true? (vals controls)))))
 
@@ -310,6 +316,8 @@
       (is (.contains java required)))
     (doseq [required ["ZipFile.Open" "TcpListener" "CertificateRequest" "WebProxy"
                       "environment-value" "property-value" "module-key-factory"
+                      "Base64RequestResourceReader" "reader.RequestKinds.SequenceEqual"
+                      "without Pkl-binary transport"
                       "WaitForExitAsync" "entireProcessTree" "TIMEOUT" "CRASH"]]
       (is (.contains csharp required)))))
 
@@ -325,4 +333,6 @@
     (is (.contains corpus "packages-root (:packages-root package-proof)"))
     (is (.contains corpus "Corpus.Resources.payload.txt"))
     (is (.contains corpus ":expected-count 215"))
-    (is (.contains corpus ":expected-count 54"))))
+    (is (.contains corpus ":expected-count 55"))
+    (is (.contains corpus "\"in-scope-mixed-excluded-surface\" 1"))
+    (is (.contains corpus "\"APPROVED_EXCLUSION\" 79"))))

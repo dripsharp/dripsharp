@@ -82,6 +82,10 @@
 (deftest product-scope-is-fail-closed-and-mixed-observations-stay-in-scope
   (let [yaml (case-by #(= "org.pkl.core.YamlRendererTest" (:source-class %)))
         binary (case-by #(= "org.pkl.core.PklBinaryDecoderTest" (:source-class %)))
+        mixed-binary
+        (case-by #(and (= "org.pkl.core.EvaluatorTest" (:source-class %))
+                       (= "nested pkl-binary rendering produces correct results"
+                          (:source-method %))))
         repl (case-by #(= "org.pkl.core.ReplServerTest" (:source-class %)))
         command (case-by #(= "org.pkl.core.runtime.CommandSpecParserTest"
                              (:source-class %)))
@@ -100,6 +104,14 @@
                          "port-scope.md#explicit-scope-decisions")))
     (is (= "excluded-cli-command" (:behavior-family command)))
     (is (= "excluded-cli-test-reporting" (:behavior-family report)))
+    (is (= "evaluation-runtime" (:behavior-family mixed-binary)))
+    (is (= "in-scope-mixed-excluded-surface"
+           (:product-classification mixed-binary)))
+    (is (= "complete-pkl-core-runner" (:execution-owner mixed-binary)))
+    (is (str/includes? (:scope-basis mixed-binary)
+                       "in-scope-evaluator+value-model+custom-resource-observation"))
+    (is (str/includes? (:scope-basis mixed-binary)
+                       "excluded-pkl-binary-transport-is-not-a-case-exclusion"))
     (is (= "test-infrastructure-only-mechanics" (:product-classification hygiene)))
     (is (= "jvm-shared-product-behavior" (:product-classification disabled)))
     (is (= "upstream-explicitly-disabled" (:expected-outcome disabled)))
@@ -148,6 +160,24 @@
                             (assoc parsed :cases
                                    (assoc cases 0 (assoc first-case
                                                          :execution-owner "-"))))))))
+
+    (testing "the mixed evaluator row cannot revert to a whole-case exclusion"
+      (let [mixed-index
+            (first
+             (keep-indexed
+              (fn [index case-data]
+                (when (= "nested pkl-binary rendering produces correct results"
+                         (:source-method case-data))
+                  index))
+              cases))]
+        (is (some? mixed-index))
+        (is (= :pkl-core-mixed-evaluator-whole-case-exclusion
+               (thrown-kind
+                #(#'contract/validate-rows!
+                  (assoc parsed :cases
+                         (update cases mixed-index assoc
+                                 :product-classification
+                                 "user-approved-excluded-surface"))))))))
 
     (testing "silent skips and undiscovered active declarations fail closed"
       (is (= :silent-pkl-core-skip

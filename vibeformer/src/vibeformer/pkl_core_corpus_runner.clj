@@ -38,7 +38,9 @@
   #{"FAIL" "TIMEOUT" "CRASH" "PENDING"})
 
 (def ^:private in-scope-classifications
-  #{"jvm-shared-product-behavior" "idiomatic-dotnet-adaptation"})
+  #{"jvm-shared-product-behavior"
+    "idiomatic-dotnet-adaptation"
+    "in-scope-mixed-excluded-surface"})
 
 (def ^:private default-case-timeout-ms 60000)
 (def ^:private default-process-timeout-ms 3600000)
@@ -46,7 +48,7 @@
 
 (def ^:private evaluator-diagnostic-renderer-partition
   {:name :evaluator-analyzer-test-reporting-diagnostic-renderer
-   :expected-count 54
+   :expected-count 55
    :source-classes
    #{"org.pkl.core.EvaluateExpressionTest"
      "org.pkl.core.EvaluateMultipleFileOutputTest"
@@ -72,6 +74,7 @@
       "constraint failures activate instrumentation"
       "union single-member constraint failures do not activate instrumentation"
       "type test failures do not activate instrumentation"
+      "nested pkl-binary rendering produces correct results"
       "power assertions work with test facts with unavailable source section"
       "eval schema when property has a ConvertProperty annotation"}}})
 
@@ -193,11 +196,12 @@
    :classifications
    {"jvm-shared-product-behavior" 251
     "idiomatic-dotnet-adaptation" 272
-    "user-approved-excluded-surface" 80
+    "in-scope-mixed-excluded-surface" 1
+    "user-approved-excluded-surface" 79
     "test-infrastructure-only-mechanics" 2}
    :package-statuses
-   {"PASS" 523
-    "APPROVED_EXCLUSION" 80
+   {"PASS" 524
+    "APPROVED_EXCLUSION" 79
     "TEST_INFRASTRUCTURE" 2}})
 
 (defn- fail!
@@ -401,7 +405,7 @@
 
 (defn validate-complete-package-matrix!
   "Requires the three implementation partitions to be disjoint, exhaustive,
-  and entirely PASS across the pinned 523-row product matrix. The remaining
+  and entirely PASS across the pinned 524-row product matrix. The remaining
   rows must retain only their source-controlled approved-exclusion or
   test-infrastructure dispositions."
   ([validated-manifest result-file]
@@ -584,6 +588,22 @@
   (let [output-root (paths/absolute output-root)
         upstream-rows (synthetic-upstream-rows validated)
         package-rows (conformant-package-rows validated upstream-rows)
+        mixed-evaluator-index
+        (first
+         (keep-indexed
+          (fn [index case-data]
+            (when (and (= "org.pkl.core.EvaluatorTest" (:source-class case-data))
+                       (= "nested pkl-binary rendering produces correct results"
+                          (:source-method case-data)))
+              index))
+          (:cases validated)))
+        _ (when-not (and (some? mixed-evaluator-index)
+                         (= "in-scope-mixed-excluded-surface"
+                            (:product-classification
+                             (nth (:cases validated) mixed-evaluator-index))))
+            (fail! "The mixed Pkl-binary evaluator control lost its in-scope row"
+                   {:kind :pkl-core-mixed-evaluator-whole-case-exclusion
+                    :case-index mixed-evaluator-index}))
         executable-index (first (keep-indexed
                                  (fn [index case-data]
                                    (when (contains? in-scope-classifications
@@ -642,6 +662,13 @@
                         (:product-classification (nth package-rows executable-index)))
                    "idiomatic-dotnet-adaptation"
                    "jvm-shared-product-behavior")))
+        mixed-whole-case-exclusion-file
+        (write-results!
+         (paths/resolve-path output-root
+                             "control-package-mixed-whole-case-exclusion.tsv")
+         (update package-rows mixed-evaluator-index assoc
+                 :status "APPROVED_EXCLUSION"
+                 :observation-base64 (b64 "")))
         controls
         {:jvm-perturbation (= :pkl-core-corpus-mismatch
                               (thrown-kind #(require-conformant!
@@ -665,7 +692,12 @@
          :classification (= :stale-pkl-core-corpus-provenance
                             (thrown-kind
                              #(validate-results! validated "package-dotnet"
-                                                 classification-file)))}]
+                                                 classification-file)))
+         :mixed-whole-case-exclusion
+         (= :unapproved-pkl-core-corpus-disposition
+            (thrown-kind
+             #(validate-results! validated "package-dotnet"
+                                 mixed-whole-case-exclusion-file)))}]
     (when-not (every? true? (vals controls))
       (fail! "Pkl.Core corpus fail-closed controls did not all trigger"
              {:kind :pkl-core-corpus-control-failed :controls controls}))

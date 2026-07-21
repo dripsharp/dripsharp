@@ -3647,6 +3647,33 @@ static class Program
                 Require(module.GetProperty("foo") is false, "type-test constraint evaluation");
                 break;
             }
+            case "nested pkl-binary rendering produces correct results":
+            {
+                using var reader = new Base64RequestResourceReader();
+                EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured();
+                builder.SetAllowedResources(builder.GetAllowedResources()
+                    .Concat(new[] { new Regex("b64:") }).ToArray());
+                using Evaluator evaluator = builder.AddResourceReader(reader).Build();
+                PModule module = evaluator.Evaluate(ModuleSource.FromText(
+                    "abstract class Base {\n" +
+                    "  fixed kind: String\n" +
+                    "  input: String\n" +
+                    "  local encodedRequest = \"\\(kind):\\(input)\".base64\n" +
+                    "  hidden fixed requestUri: String = \"b64:\\(encodedRequest)\"\n" +
+                    "  hidden fixed result: Resource = read(requestUri) as Resource\n" +
+                    "}\n" +
+                    "class Enc extends Base { fixed kind: \"enc\" }\n" +
+                    "class Dec extends Base { fixed kind: \"dec\" }\n" +
+                    "local enc = new Enc { input = \"hello world\" }\n" +
+                    "local dec = new Dec { input = enc.result.text }\n" +
+                    "roundTrip = dec.result.text\n" +
+                    "valid = enc.input == roundTrip\n"));
+                Require(module.GetProperty("valid") is true &&
+                    (string)module.GetProperty("roundTrip") == "hello world" &&
+                    reader.RequestKinds.SequenceEqual(new[] { "enc", "dec" }),
+                    "nested evaluator/custom-resource round trip without Pkl-binary transport");
+                break;
+            }
             case "power assertions work with test facts with unavailable source section":
             {
                 using Evaluator evaluator = EvaluatorBuilder.Preconfigured()
@@ -4733,6 +4760,41 @@ static class Program
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             return uri.Scheme == scheme ? value : null;
+        }
+        public void Close() => disposed = true;
+        public void Dispose() => Close();
+    }
+
+    sealed class Base64RequestResourceReader : ResourceReader
+    {
+        readonly List<string> requestKinds = new();
+        bool disposed;
+
+        internal IReadOnlyList<string> RequestKinds => requestKinds.AsReadOnly();
+
+        public string GetUriScheme() => "b64";
+        public bool HasHierarchicalUris() => false;
+        public bool IsGlobbable() => false;
+        public object? Read(Uri uri)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (uri.Scheme != "b64") return null;
+            string encoded = uri.OriginalString[(uri.Scheme.Length + 1)..];
+            string request = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+            int separator = request.IndexOf(':');
+            if (separator <= 0)
+                throw new InvalidOperationException("Malformed base64 resource request");
+            string kind = request[..separator];
+            string input = request[(separator + 1)..];
+            byte[] result = kind switch
+            {
+                "enc" => Encoding.UTF8.GetBytes(
+                    Convert.ToBase64String(Encoding.UTF8.GetBytes(input))),
+                "dec" => Convert.FromBase64String(input),
+                _ => throw new InvalidOperationException("Unknown base64 resource request kind")
+            };
+            requestKinds.Add(kind);
+            return new Resource(uri, result);
         }
         public void Close() => disposed = true;
         public void Dispose() => Close();

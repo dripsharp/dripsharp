@@ -90,6 +90,7 @@
 
 (def ^:private product-classifications
   #{"idiomatic-dotnet-adaptation"
+    "in-scope-mixed-excluded-surface"
     "jvm-shared-product-behavior"
     "test-infrastructure-only-mechanics"
     "user-approved-excluded-surface"})
@@ -362,8 +363,6 @@
     (and (= source-class "org.pkl.core.EvaluateOutputTextTest")
          (= source-method "render YAML")) :yaml
     (= source-class "org.pkl.core.PklBinaryDecoderTest") :binary
-    (and (= source-class "org.pkl.core.EvaluatorTest")
-         (= source-method "nested pkl-binary rendering produces correct results")) :binary
     (contains? #{"org.pkl.core.messaging.BaseMessagePackCodecTest"
                  "org.pkl.core.externalreader.MessagePackCodecTest"}
                source-class) :messagepack-server
@@ -373,6 +372,11 @@
                  "org.pkl.core.stdlib.SimpleReportTest"}
                source-class) :cli-test-reporting
     :else nil))
+
+(defn- mixed-pkl-binary-evaluator?
+  [source-class source-method]
+  (and (= source-class "org.pkl.core.EvaluatorTest")
+       (= source-method "nested pkl-binary rendering produces correct results")))
 
 (defn- behavior-family
   [source-class source-method]
@@ -433,6 +437,16 @@
        :scope-basis
        "product-goal.md#user-approved-product-exclusions:build-benchmark-and-test-infrastructure-as-shipped-product-surface;test-evidence-retained"
        :execution-owner "test-infrastructure-audit"}
+
+      (mixed-pkl-binary-evaluator? source-class source-method)
+      {:product-classification "in-scope-mixed-excluded-surface"
+       :scope-basis
+       (str "product-goal.md#product-target:core-Pkl-evaluation+value-model+runtime+custom-resource-loading;"
+            "product-goal.md#user-approved-product-exclusions:MessagePack-and-Pkl-binary-transport-support-only;"
+            "port-scope.md#explicit-scope-decisions:MessagePack-support-is-out-of-scope;"
+            "in-scope-evaluator+value-model+custom-resource-observation;"
+            "excluded-pkl-binary-transport-is-not-a-case-exclusion")
+       :execution-owner "complete-pkl-core-runner"}
 
       (= excluded :yaml)
       {:product-classification "user-approved-excluded-surface"
@@ -884,6 +898,23 @@
         (when-not (product-classifications (:product-classification case-data))
           (fail! "A Pkl.Core case has no recognized product classification"
                  {:kind :unclassified-pkl-core-product-scope :case (:case-id case-data)}))
+        (when (mixed-pkl-binary-evaluator? (:source-class case-data)
+                                           (:source-method case-data))
+          (when-not (= "in-scope-mixed-excluded-surface"
+                       (:product-classification case-data))
+            (fail! "The mixed Pkl-binary evaluator case lost its in-scope observations"
+                   {:kind :pkl-core-mixed-evaluator-whole-case-exclusion
+                    :case (:case-id case-data)
+                    :classification (:product-classification case-data)})))
+        (when (= "in-scope-mixed-excluded-surface"
+                 (:product-classification case-data))
+          (when-not (and (str/includes? (:scope-basis case-data)
+                                        "in-scope-evaluator+value-model+custom-resource-observation")
+                         (str/includes? (:scope-basis case-data)
+                                        "excluded-pkl-binary-transport-is-not-a-case-exclusion"))
+            (fail! "A mixed Pkl.Core case does not retain its in-scope observation basis"
+                   {:kind :invalid-pkl-core-mixed-scope-basis
+                    :case (:case-id case-data)})))
         (when-not (expected-outcomes (:expected-outcome case-data))
           (fail! "A Pkl.Core case has no recognized expected outcome"
                  {:kind :unclassified-pkl-core-expected-outcome :case (:case-id case-data)}))
