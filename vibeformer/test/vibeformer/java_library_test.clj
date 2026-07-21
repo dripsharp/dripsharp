@@ -1,5 +1,6 @@
 (ns vibeformer.java-library-test
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.concurrency :as concurrency]
             [vibeformer.java-library :as java-library]
@@ -202,3 +203,40 @@
     (is (= "annotation"
            (get-in (ex-data error) [:source-identity :role])))
     (is (pos? (get-in (ex-data error) [:source-location :line])))))
+
+(deftest neutral-field-initializers-use-live-recursive-and-resolved-rules
+  (let [fixture
+        (model! {"example/Factory.java"
+                 (str "package example; import java.util.Collections; "
+                      "import java.util.List; public abstract class Factory { "
+                      "public static final Factory VALUE = create().with(\"x\"); "
+                      "public static final List<String> EMPTY = Collections.emptyList(); "
+                      "public static native Factory create(); "
+                      "public abstract Factory with(String value); }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        source (slurp (str (paths/resolve-path (:project-root first)
+                                               "src/Example/Java/Library/Factory.cs")))]
+    (is (str/includes? source
+                       "public static readonly global::Example.Java.Library.Factory VALUE = global::Example.Java.Library.Factory.create().with(\"x\");"))
+    (is (str/includes? source
+                       "public static readonly global::System.Collections.Generic.IList<string> EMPTY = global::System.Array.Empty<string>();"))
+    (is (= source
+           (slurp (str (paths/resolve-path (:project-root second)
+                                           "src/Example/Java/Library/Factory.cs")))))
+    (is (= 2 (get-in first [:summary :executable-roots])
+           (get-in second [:summary :executable-roots])))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))))
+
+(deftest unmapped-jdk-field-initializer-fails-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.Collections; "
+                      "import java.util.List; public class Unsupported { "
+                      "public static final List<String> VALUE = "
+                      "Collections.singletonList(\"x\"); }")})
+        error (caught #(emit! fixture 1))]
+    (is (some? error))
+    (is (str/includes? (ex-message error)
+                       "Java library executable or field has no neutral mapping"))))

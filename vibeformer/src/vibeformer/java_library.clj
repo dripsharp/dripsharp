@@ -16,11 +16,13 @@
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.util Base64 IdentityHashMap]
+           [spoon.reflect.code CtConstructorCall CtFieldRead CtInvocation CtLiteral
+            CtThisAccess CtTypeAccess CtVariableRead]
            [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement
             CtEnum CtEnumValue CtExecutable CtField CtInterface CtMethod
             CtModifiable CtParameter CtType ModifierKind]
-           [spoon.reflect.reference CtArrayTypeReference CtTypeParameterReference
-            CtTypeReference CtWildcardReference]))
+           [spoon.reflect.reference CtArrayTypeReference CtPackageReference
+            CtTypeParameterReference CtTypeReference CtWildcardReference]))
 
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind (or (:kind data)
@@ -76,12 +78,19 @@
                        (get-in ctx [:configuration :namespace-prefixes])))
         (unsupported! "Java library has no destination namespace mapping" type))))
 
+(declare type-node body-context)
+
 (defn- context [options]
-  (assoc options
-         :emitted (IdentityHashMap.)
-         :declarations (atom [])
-         :diagnostics (atom [])
-         :body-translations (atom [])))
+  (let [ctx-holder (atom nil)
+        ctx (assoc options
+                   :emitted (IdentityHashMap.)
+                   :declarations (atom [])
+                   :diagnostics (atom [])
+                   :body-translations (atom []))
+        ctx (assoc ctx :body-context (body-context ctx-holder
+                                                   (:resolved-model options)))]
+    (reset! ctx-holder ctx)
+    ctx))
 
 (defn- merge-context! [target source]
   (doseq [entry (.entrySet ^IdentityHashMap (:emitted source))]
@@ -129,8 +138,6 @@
   (str "global::" (destination-namespace ctx declaration) "."
        (str/join "." (map #(pascal (.getSimpleName ^CtType %))
                           (declaring-types declaration)))))
-
-(declare type-node)
 
 (defn- mapped-type-base [ctx ^CtTypeReference reference occurrence]
   (let [qualified (.getQualifiedName reference)]
@@ -183,6 +190,200 @@
                              :resolved-key (:key occurrence)
                              :origin (:origin occurrence)
                              :resolution (:resolution occurrence)}}))))
+
+(defn- child-node [children ^CtElement element]
+  (:node (java/child-result children element)))
+
+(defn- escape-string [value]
+  (str "\""
+       (-> (str value)
+           (str/replace "\\" "\\\\")
+           (str/replace "\"" "\\\"")
+           (str/replace "\r" "\\r")
+           (str/replace "\n" "\\n")
+           (str/replace "\t" "\\t"))
+       "\""))
+
+(defn- literal-node [^CtLiteral literal]
+  (let [value (.getValue literal)]
+    (raw
+     (cond
+       (nil? value) "null"
+       (string? value) (escape-string value)
+       (instance? Character value)
+       (str "'" (case value
+                  \' "\\'"
+                  \\ "\\\\"
+                  \newline "\\n"
+                  \return "\\r"
+                  \tab "\\t"
+                  (str value)) "'")
+       (instance? Boolean value) (if value "true" "false")
+       (instance? Long value) (str value "L")
+       (instance? Float value) (str value "F")
+       (instance? Double value) (str value "D")
+       :else (str value)))))
+
+(defn- resolved-name [occurrence reference]
+  (cond
+    (= :project (:origin occurrence))
+    (identifier (.getSimpleName ^CtElement reference))
+
+    (= "executable:java.util.Collections#emptyList()" (:key occurrence))
+    "emptyList"
+
+    :else
+    (unsupported! "Java library executable or field has no neutral mapping"
+                  reference)))
+
+(defn- registry-entry [id emit]
+  {:id id :emit emit})
+
+(defn- semantic-mappings [resolved-model ctx-holder]
+  (reduce
+   (fn [registries occurrence]
+     (let [category (case (:kind occurrence)
+                      :type :types
+                      :executable :executables
+                      :constructor :constructors
+                      :field :fields
+                      :annotation :annotations
+                      nil)
+           key (:key occurrence)]
+       (if (or (nil? category) (get-in registries [category key]))
+         registries
+         (assoc-in
+          registries [category key]
+          (case category
+            :types
+            (registry-entry
+             (keyword "java-library.resolved.type" (name (:origin occurrence)))
+             (fn [{:keys [element]}]
+               {:node (type-node @ctx-holder element)}))
+
+            :executables
+            (registry-entry
+             (keyword "java-library.resolved.executable"
+                      (name (:origin occurrence)))
+             (fn [{:keys [element occurrence]}]
+               {:node (raw (resolved-name occurrence element))}))
+
+            :constructors
+            (registry-entry
+             (keyword "java-library.resolved.constructor"
+                      (name (:origin occurrence)))
+             (fn [{:keys [element occurrence]}]
+               (if (= :project (:origin occurrence))
+                 {:node (raw "<init>")}
+                 (unsupported! "Java library constructor has no neutral mapping"
+                               element))))
+
+            :fields
+            (registry-entry
+             (keyword "java-library.resolved.field"
+                      (name (:origin occurrence)))
+             (fn [{:keys [element occurrence]}]
+               {:node (raw (resolved-name occurrence element))}))
+
+            :annotations
+            (registry-entry
+             :java-library.resolved.annotation/source-only
+             (fn [_] {:node (raw "")})))))))
+   {:types {} :executables {} :constructors {} :fields {} :annotations {}}
+   (:occurrences resolved-model)))
+
+(defn- invocation-occurrence [translation-context ^CtInvocation invocation]
+  (.get ^IdentityHashMap (:occurrence-index translation-context)
+        (.getExecutable invocation)))
+
+(defn- collection-element-type [^CtInvocation invocation]
+  (or (first (.getActualTypeArguments (.getType invocation)))
+      (unsupported! "Generic Java collection invocation has no resolved element type"
+                    invocation)))
+
+(defn- body-rules [ctx-holder]
+  (java/structural-rules
+   [{:id :java-library.expression/invocation
+     :class CtInvocation
+     :emit
+     (fn [{:keys [context ^CtInvocation element children]}]
+       (let [target (.getTarget element)
+             occurrence (invocation-occurrence context element)]
+         {:node
+          (case (:key occurrence)
+            "executable:java.util.Collections#emptyList()"
+            (sequence-node
+             [(raw "global::System.Array.Empty<")
+              (type-node @ctx-holder (collection-element-type element))
+              (raw ">()")])
+
+            (sequence-node
+             [(when target
+                (sequence-node [(child-node children target) (raw ".")]))
+              (child-node children (.getExecutable element))
+              (raw "(")
+              (sequence-node (mapv #(child-node children %) (.getArguments element))
+                             ", ")
+              (raw ")")]))}))}
+
+    {:id :java-library.expression/constructor-call
+     :class CtConstructorCall
+     :emit
+     (fn [{:keys [^CtConstructorCall element children]}]
+       {:node
+        (sequence-node
+         [(raw "new ") (type-node @ctx-holder (.getType element)) (raw "(")
+          (sequence-node (mapv #(child-node children %) (.getArguments element))
+                         ", ")
+          (raw ")")])})}
+
+    {:id :java-library.expression/literal
+     :class CtLiteral
+     :emit (fn [{:keys [element]}] {:node (literal-node element)})}
+
+    {:id :java-library.expression/type-access
+     :class CtTypeAccess
+     :emit
+     (fn [{:keys [^CtTypeAccess element children]}]
+       {:node (child-node children (.getAccessedType element))})}
+
+    {:id :java-library.expression/field-read
+     :class CtFieldRead
+     :emit
+     (fn [{:keys [^CtFieldRead element children]}]
+       (let [target (.getTarget element)]
+         {:node
+          (sequence-node
+           [(when target
+              (sequence-node [(child-node children target) (raw ".")]))
+            (child-node children (.getVariable element))])}))}
+
+    {:id :java-library.expression/variable-read
+     :class CtVariableRead
+     :emit
+     (fn [{:keys [^CtVariableRead element children]}]
+       {:node (child-node children (.getVariable element))})}
+
+    {:id :java-library.expression/this
+     :class CtThisAccess
+     :emit (fn [_] {:node (raw "this")})}
+
+    {:id :java-library.reference/package
+     :class CtPackageReference
+     :emit (fn [_] {:node (raw "")})}]))
+
+(defn- body-context [ctx-holder resolved-model]
+  (java/context resolved-model
+    {:mode :accepted
+     :rules (body-rules ctx-holder)
+     :mappings (semantic-mappings resolved-model ctx-holder)}))
+
+(defn- translated-node [ctx ^CtElement element]
+  (let [translation (-> (:body-context ctx)
+                        (java/translate-element element)
+                        java/coverage-gate!)]
+    (swap! (:body-translations ctx) conj translation)
+    (:node translation)))
 
 (defn- declaration-id [^CtElement element kind]
   (let [{:keys [file line column]} (spoon/source-location element)]
@@ -321,10 +522,9 @@
 (declare member-node emit-root)
 
 (defn- field-node [ctx ^CtType owner ^CtField field]
-  (when-let [initializer (.getDefaultExpression field)]
-    (unsupported! "Java library field initializer translation is not implemented"
-                  initializer))
-  (let [name (identifier (.getSimpleName field))
+  (let [initializer (.getDefaultExpression field)
+        initializer-node (when initializer (translated-node ctx initializer))
+        name (identifier (.getSimpleName field))
         rule :java-library.declaration/field
         id (register-member! ctx owner field name rule)]
     (csharp/with-source
@@ -338,7 +538,10 @@
                                        "readonly")]))
                   " "))
         (type-node ctx (.getType field))
-        (raw (str " " name ";"))])
+        (raw (str " " name))
+        (when initializer-node
+          (sequence-node [(raw " = ") initializer-node]))
+        (raw ";")])
       (source-ref field rule {:declaration-id id :declaration-kind :field}))))
 
 (defn- method-node [ctx ^CtType owner ^CtMethod method]
