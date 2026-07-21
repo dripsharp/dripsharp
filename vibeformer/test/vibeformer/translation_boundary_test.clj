@@ -146,9 +146,7 @@
                   label (.getName asset)]]
       (testing label
         (is (str/includes? content "namespace Vibeformer.Runtime"))
-        (is (not (re-find #"(?i)org\\.pkl" content)))
-        (is (not (re-find #"(?i)(?:global::|using\\s+|namespace\\s+)Pkl\\.(?:Core|Parser)"
-                          content)))
+        (is (not (re-find #"(?i)org\\.pkl|Pkl\\.(?:Core|Parser)" content)))
         (is (not (re-find #"(?i)#if[^\n]*PKL" content)))))
     (is (= "OK" (compile-and-run-generic-runtime! assets)))))
 
@@ -159,6 +157,21 @@
     (is (str/includes? project-rules "(ns vibeformer.pkl.java-project"))
     (is (str/includes? body-rules "[vibeformer.java-translate :as java]"))
     (is (str/includes? project-rules "[vibeformer.java-translate :as java]"))))
+
+(deftest pkl-runtime-identities-stay-in-the-destination-bridge
+  (let [body-rules (source "pkl/java_body")
+        project-rules (source "pkl/java_project")
+        bridge (slurp "runtime/Pkl.Core.RuntimeBridge.cs")]
+    (is (str/includes? body-rules
+                       "Pkl.Core.Runtime.PklRuntimeBridge.IsRrbTreeLeaf"))
+    (is (str/includes? body-rules
+                       "result-generic-arguments-pkl-runtime-call services element \"MapOfEntriesLoose\""))
+    (is (str/includes? bridge "internal static bool IsRrbTreeLeaf(object? value)"))
+    (is (str/includes? bridge "PClassInfoEquals<T>"))
+    (is (str/includes? bridge "MapOfEntriesLoose<K, V>"))
+    (is (str/includes? project-rules
+                       "PklRuntimeBridge.PClassInfoEquals(this, obj)"))
+    (is (str/includes? bridge "Pkl.Core.Util.Paguro"))))
 
 (deftest java-uri-component-mappings-retain-decoded-and-raw-api-pairs
   (let [body-rules (source "pkl/java_body")

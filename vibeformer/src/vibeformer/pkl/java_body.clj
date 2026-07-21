@@ -498,7 +498,7 @@
                   (= "org.pkl.core.util.paguro.RrbTree$Leaf"
                      (.getQualifiedName ^CtTypeReference reference))
                   (empty? (.getActualTypeArguments ^CtTypeReference reference)))))
-      (invoke (raw "global::Vibeformer.Runtime.JavaCompat.IsRrbTreeLeaf") [left])
+      (invoke (raw "global::Pkl.Core.Runtime.PklRuntimeBridge.IsRrbTreeLeaf") [left])
 
       (= kind "INSTANCEOF")
       (csharp/binary "is" 40 left right)
@@ -1408,7 +1408,8 @@
           "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)" (compat-call "MapPut" (into [target] args))
           "executable:java.util.LinkedHashMap#remove(java.lang.Object)" (compat-call "MapRemove" (into [target] args))
           "executable:java.util.Map#entry(java.lang.Object,java.lang.Object)" (compat-call "MapEntry" args)
-          "executable:java.util.Map#ofEntries(java.util.Map$Entry[])" (result-generic-arguments-compat-call services element "MapOfEntriesLoose" args)
+          "executable:java.util.Map#ofEntries(java.util.Map$Entry[])"
+          (result-generic-arguments-pkl-runtime-call services element "MapOfEntriesLoose" args)
           "executable:java.util.Map#of()" (result-generic-arguments-compat-call services element "MapOf" args)
           "executable:java.util.Map#of(java.lang.Object,java.lang.Object)" (result-generic-arguments-compat-call services element "MapOf" args)
           "executable:java.util.Map#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)" (result-generic-arguments-compat-call services element "MapOf" args)

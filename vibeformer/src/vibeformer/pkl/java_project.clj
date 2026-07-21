@@ -2050,7 +2050,7 @@
           (= "executable:org.pkl.core.PClassInfo#equals(java.lang.Object)"
              (spoon/declaration-key method))
           (sequence-node
-           [(raw "{\nreturn global::Vibeformer.Runtime.JavaCompat.Equals(this, obj);\n}")])
+           [(raw "{\nreturn global::Pkl.Core.Runtime.PklRuntimeBridge.PClassInfoEquals(this, obj);\n}")])
 
           (= "executable:org.pkl.core.Pair#equals(java.lang.Object)"
              (spoon/declaration-key method))

@@ -2584,43 +2584,6 @@ internal static class JavaCompat
 
     internal static IDictionary<K, V> MapOfEntries<K, V>(params JavaMapEntry<K, V>[] entries) where K : notnull =>
         entries.ToDictionary(entry => entry.Key, entry => entry.Value);
-    internal static IDictionary<K, V> MapOfEntriesLoose<K, V>(params object[] entries) where K : notnull
-    {
-        var result = new Dictionary<K, V>();
-        foreach (var entry in entries)
-        {
-            var type = entry.GetType();
-            var key = (K)type.GetProperty("Key")!.GetValue(entry)!;
-            var rawValue = type.GetProperty("Value")!.GetValue(entry)!;
-            V value;
-            if (rawValue is V converted)
-            {
-                value = converted;
-            }
-            else if (rawValue.GetType().IsGenericType && typeof(V).IsGenericType &&
-                     rawValue.GetType().GetGenericTypeDefinition().FullName == "Pkl.Core.PClassInfo`1" &&
-                     typeof(V).GetGenericTypeDefinition().FullName == "Pkl.Core.PClassInfo`1")
-            {
-                var sourceType = rawValue.GetType();
-                var moduleName = sourceType.GetMethod("GetModuleName")!.Invoke(rawValue, null);
-                var className = sourceType.GetMethod("GetSimpleName")!.Invoke(rawValue, null);
-                var moduleUri = sourceType.GetMethod("GetModuleUri")!.Invoke(rawValue, null);
-                var javaType = sourceType.GetField("javaClass",
-                    BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(rawValue);
-                value = (V)Activator.CreateInstance(typeof(V),
-                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
-                    binder: null,
-                    args: new[] { moduleName, className, javaType, moduleUri },
-                    culture: null)!;
-            }
-            else
-            {
-                value = (V)rawValue;
-            }
-            result[key] = value;
-        }
-        return result;
-    }
     internal static IDictionary<K, V> MapOf<K, V>(params object[] values) where K : notnull
     {
         var result = new Dictionary<K, V>();
@@ -3802,16 +3765,6 @@ internal static class JavaCompat
         .Replace("$", "\\$", StringComparison.Ordinal);
     internal static string Encode(string value, Encoding encoding) => Uri.EscapeDataString(value);
 
-    internal static bool IsRrbTreeLeaf(object? value)
-    {
-        if (value is null) return false;
-        var type = value.GetType();
-        return type.IsGenericType && type.Name.StartsWith("Leaf`", StringComparison.Ordinal) &&
-               type.DeclaringType?.IsGenericType == true &&
-               type.DeclaringType.Name.StartsWith("RrbTree`", StringComparison.Ordinal) &&
-               type.Namespace == "Pkl.Core.Util.Paguro";
-    }
-
     internal static ReadOnlyCollection<T> ListOf<T>(params T[] values) => new(values);
 
     internal static IList<T> AsList<T>(params T[] values) => new JavaArrayList<T>(values);
@@ -4038,9 +3991,6 @@ internal static class JavaCompat
         if (left is null || right is null) return false;
         if (left is Uri leftUri)
             return right is Uri rightUri && UriEquals(leftUri, rightUri);
-        if (IsPClassInfo(left))
-            return IsPClassInfo(right) &&
-                   string.Equals(PClassInfoName(left), PClassInfoName(right), StringComparison.Ordinal);
         if (IsJavaList(left)) return IsJavaList(right) && ListsEqual((IEnumerable)left, (IEnumerable)right);
         if (IsJavaSet(left)) return IsJavaSet(right) && SetsEqual((IEnumerable)left, (IEnumerable)right);
         if (left is IDictionary leftMap)
@@ -4103,17 +4053,6 @@ internal static class JavaCompat
              type.GetGenericTypeDefinition() == typeof(IReadOnlySet<>)));
 
     internal static bool IsSet(object? value) => value is not null && IsJavaSet(value);
-
-    private static bool IsPClassInfo(object value)
-    {
-        var type = value.GetType();
-        return type.IsGenericType &&
-               type.GetGenericTypeDefinition().FullName == "Pkl.Core.PClassInfo`1";
-    }
-
-    private static string? PClassInfoName(object value) =>
-        value.GetType().GetMethod("GetQualifiedName", BindingFlags.Instance | BindingFlags.Public)!
-            .Invoke(value, null) as string;
 
     private static bool ListsEqual(IEnumerable left, IEnumerable right)
     {

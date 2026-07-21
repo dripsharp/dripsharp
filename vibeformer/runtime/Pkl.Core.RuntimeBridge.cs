@@ -38,6 +38,71 @@ internal static class PklRuntimeBridge
     internal static GraalCollections.UnmodifiableEconomicMap<K, V> EmptyEconomicMap<K, V>()
         where K : notnull => new GraalCollections.EconomicMap<K, V>();
 
+    internal static global::System.Collections.Generic.IDictionary<K, V>
+        MapOfEntriesLoose<K, V>(params object[] entries) where K : notnull
+    {
+        var result = new global::System.Collections.Generic.Dictionary<K, V>();
+        foreach (var entry in entries)
+        {
+            var entryType = entry.GetType();
+            var key = (K)entryType.GetProperty("Key")!.GetValue(entry)!;
+            var rawValue = entryType.GetProperty("Value")!.GetValue(entry)!;
+            if (rawValue is V converted)
+            {
+                result[key] = converted;
+                continue;
+            }
+            var rawType = rawValue.GetType();
+            if (!rawType.IsGenericType || !typeof(V).IsGenericType ||
+                rawType.GetGenericTypeDefinition() != typeof(global::Pkl.Core.PClassInfo<>) ||
+                typeof(V).GetGenericTypeDefinition() != typeof(global::Pkl.Core.PClassInfo<>))
+            {
+                result[key] = (V)rawValue;
+                continue;
+            }
+            var moduleName = rawType.GetMethod("GetModuleName")!.Invoke(rawValue, null);
+            var className = rawType.GetMethod("GetSimpleName")!.Invoke(rawValue, null);
+            var moduleUri = rawType.GetMethod("GetModuleUri")!.Invoke(rawValue, null);
+            var javaType = rawType.GetField(
+                "javaClass",
+                global::System.Reflection.BindingFlags.Instance |
+                global::System.Reflection.BindingFlags.NonPublic)!.GetValue(rawValue);
+            result[key] = (V)global::System.Activator.CreateInstance(
+                typeof(V),
+                global::System.Reflection.BindingFlags.Instance |
+                global::System.Reflection.BindingFlags.NonPublic,
+                binder: null,
+                args: new[] { moduleName, className, javaType, moduleUri },
+                culture: null)!;
+        }
+        return result;
+    }
+
+    internal static bool PClassInfoEquals<T>(
+        global::Pkl.Core.PClassInfo<T> left, object? right)
+    {
+        if (global::System.Object.ReferenceEquals(left, right)) return true;
+        if (right is null) return false;
+        var rightType = right.GetType();
+        if (!rightType.IsGenericType ||
+            rightType.GetGenericTypeDefinition() != typeof(global::Pkl.Core.PClassInfo<>))
+            return false;
+        var rightName = rightType.GetMethod("GetQualifiedName")!.Invoke(right, null) as string;
+        return global::System.String.Equals(
+            left.GetQualifiedName(), rightName, global::System.StringComparison.Ordinal);
+    }
+
+    internal static bool IsRrbTreeLeaf(object? value)
+    {
+        if (value is null) return false;
+        var type = value.GetType();
+        return type.IsGenericType &&
+               type.Name.StartsWith("Leaf`", global::System.StringComparison.Ordinal) &&
+               type.DeclaringType?.IsGenericType == true &&
+               type.DeclaringType.Name.StartsWith("RrbTree`", global::System.StringComparison.Ordinal) &&
+               type.Namespace == "Pkl.Core.Util.Paguro";
+    }
+
     internal static global::System.Net.WebProxy NewWebProxy(
         JavaProxyType type, global::System.Net.IPEndPoint endpoint) =>
         new(new global::System.UriBuilder(
