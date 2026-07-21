@@ -43,6 +43,7 @@ destination_file="$workspace_root/$(contract_value destination-file)"
 inventory_file="$workspace_root/$(contract_value inventory-file)"
 observations_file="$workspace_root/$(contract_value observations-file)"
 surface_file="$workspace_root/$(contract_value public-surface-file)"
+compiled_surface_file="$workspace_root/$(contract_value compiled-public-surface-file)"
 body_review_file="$workspace_root/$(contract_value body-review-file)"
 oracle_source="$workspace_root/$(contract_value oracle-source)"
 inventory_script="$workspace_root/$(contract_value gradle-inventory-script)"
@@ -195,6 +196,18 @@ assert_equal "observation count" "$(contract_value observation-count)" "$observa
 assert_equal "successful observation count" "$(contract_value successful-observation-count)" "$success_count"
 assert_equal "failure observation count" "$(contract_value failure-observation-count)" "$failure_count"
 assert_equal "public surface row count" "$(contract_value public-surface-row-count)" "$surface_count"
+
+[ "$(sed -n '1p' "$compiled_surface_file")" = "# VIBEFORMER_DOTNET_ACCESSIBLE_CONTRACT_V1" ] \
+  || fail "unsupported compiled .NET public-surface contract header"
+compiled_type_count=$(awk -F '\t' '$1 == "RawHttp.Core" && $3 == "type" { count++ } END { print count + 0 }' "$compiled_surface_file")
+compiled_member_count=$(awk -F '\t' '$1 == "RawHttp.Core" && $3 != "type" { count++ } END { print count + 0 }' "$compiled_surface_file")
+compiled_row_count=$((compiled_type_count + compiled_member_count))
+assert_equal "compiled public type count" \
+  "$(contract_value compiled-public-surface-type-count)" "$compiled_type_count"
+assert_equal "compiled public member count" \
+  "$(contract_value compiled-public-surface-member-count)" "$compiled_member_count"
+assert_equal "compiled public surface row count" \
+  "$(contract_value compiled-public-surface-row-count)" "$compiled_row_count"
 
 perturbed="$work/observations-perturbed.tsv"
 awk 'NR == 2 { sub(/\tSUCCESS\t/, "\tFAILURE\t") } { print }' \

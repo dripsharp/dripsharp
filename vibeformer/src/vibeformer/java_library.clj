@@ -8,6 +8,7 @@
   declarations never become generated stubs."
   (:require [clojure.string :as str]
             [vibeformer.csharp :as csharp]
+            [vibeformer.dotnet-surface :as dotnet-surface]
             [vibeformer.java-project :as project-emission]
             [vibeformer.java-types :as java-types]
             [vibeformer.java-translate :as java]
@@ -3799,15 +3800,23 @@
                  {:kind :unknown-java-library-surface-kind :row decoded}))]
     (assoc row :identity decoded)))
 
-(defn- read-surface! [workspace {:keys [contract-file] :as specification}]
-  (when-not (= #{:contract-file} (set (keys specification)))
+(defn- read-surface!
+  [workspace {:keys [contract-file compiled-contract-file] :as specification}]
+  (when-not (= #{:contract-file :compiled-contract-file}
+               (set (keys specification)))
     (fail! "Invalid Java library public-surface specification"
            {:kind :invalid-java-library-surface-specification
             :specification specification}))
-  (let [file (paths/resolve-path (paths/absolute workspace) contract-file)]
+  (let [workspace (paths/absolute workspace)
+        file (paths/resolve-path workspace contract-file)
+        compiled-file (paths/resolve-path workspace compiled-contract-file)]
     (when-not (paths/regular-file? file)
       (fail! "Java library public-surface contract is missing"
              {:kind :missing-java-library-surface :file (str file)}))
+    (when-not (paths/regular-file? compiled-file)
+      (fail! "Java library compiled public-surface contract is missing"
+             {:kind :missing-compiled-java-library-surface-contract
+              :file (str compiled-file)}))
     (let [[header & lines] (str/split-lines (Files/readString file StandardCharsets/UTF_8))
           rows (mapv (fn [line]
                        (let [[record encoded extra] (str/split line #"\t" -1)]
@@ -3829,7 +3838,8 @@
         (fail! "Java library public-surface rows are empty, duplicate, or unsorted"
                {:kind :nondeterministic-java-library-surface
                 :rows (count rows)}))
-      {:contract-file file :rows rows :seeds []})))
+      {:contract-file file :compiled-contract-file compiled-file
+       :rows rows :seeds []})))
 
 (defn- canonical-owner [value]
   (str/replace (str value) "$" "."))
@@ -3979,9 +3989,10 @@
                                           :parameter-count "0")))))))
          (:selection-evidence surface))]
     {:schema-version 1 :strategy :complete-accessible-gradle-library
-     :required-rows (count rows) :rows rows}))
+     :required-rows (count rows) :rows rows
+     :compiled-contract-file (str (:compiled-contract-file surface))}))
 
-(defn- verify-compiled! [_workspace generation build-configuration]
+(defn- verify-compiled! [workspace generation build-configuration]
   (let [emissions (concat (:dependency-emissions generation)
                           [(assoc (:emission generation)
                                   :destination (:destination generation))])
@@ -3993,11 +4004,14 @@
                  file (paths/resolve-path project-root "bin" build-configuration framework
                                           (str assembly ".dll"))]
              (when-not (and (paths/regular-file? file) public-metadata
-                            (pos? (:required-rows public-metadata)))
+                            (:compiled-contract-file public-metadata))
                (fail! "Clean Java library build lacks its compiled public-surface evidence"
                       {:kind :missing-compiled-java-library-surface
                        :assembly assembly :file (str file)}))
-             {:assembly assembly :contract-members (:required-rows public-metadata)}))
+             (assoc (dotnet-surface/verify!
+                     workspace (:compiled-contract-file public-metadata)
+                     file public-metadata)
+                    :assembly assembly :file (str file))))
          emissions)]
     {:strategy :complete-accessible-gradle-library :assemblies audits}))
 

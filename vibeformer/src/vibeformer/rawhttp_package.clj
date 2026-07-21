@@ -3,6 +3,7 @@
   (:require [clojure.edn :as edn]
             [clojure.set :as set]
             [clojure.string :as str]
+            [vibeformer.dotnet-surface :as dotnet-surface]
             [vibeformer.packaging :as packaging]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process])
@@ -302,7 +303,8 @@
 
 (defn audit-selected-surface!
   "Audits every selected accessible declaration/source mapping and every
-  compiled public/protected executable body from the exact consumed assembly."
+  compiled public/protected row and executable body from the exact consumed
+  assembly."
   [root package-proof provenance contract]
   (let [generation (get-in package-proof [:verification :generation])
         emission (:emission generation)
@@ -338,7 +340,21 @@
                                      "public-contract-compiler"
                                      "PublicContractCompiler.csproj")
         audit-file (paths/resolve-path (:proof-root package-proof)
-                                       "rawhttp-accessible-body-audit.tsv")]
+                                       "rawhttp-accessible-body-audit.tsv")
+        compiled-surface
+        (dotnet-surface/verify!
+         root (paths/resolve-path root (get contract "compiled-public-surface-file"))
+         (:location provenance) metadata)
+        expected-compiled-surface
+        {:types (parse-long (get contract "compiled-public-surface-type-count"))
+         :members (parse-long (get contract "compiled-public-surface-member-count"))
+         :rows (parse-long (get contract "compiled-public-surface-row-count"))
+         :surface-sha256 (get contract "compiled-public-surface-sha256")}]
+    (when-not (= expected-compiled-surface
+                 (select-keys compiled-surface (keys expected-compiled-surface)))
+      (fail! "RawHTTP exact compiled-surface summary differs from its pinned contract"
+             {:reason :compiled-surface-summary-drift
+              :expected expected-compiled-surface :actual compiled-surface}))
     (when-not (and (= 1 (:schema-version source-map))
                    (= expected-rows (:required-rows metadata))
                    (= expected-rows (count selected))
@@ -400,6 +416,7 @@
                 :expected (mapv review-key reviews)
                 :actual (mapv review-key candidates)}))
       {:selected-rows (count selected)
+       :compiled-surface compiled-surface
        :selected-executable-bodies (count executable-rows)
        :source-mappings (count (:mappings source-map))
        :source-files (count source-files)
@@ -523,7 +540,14 @@
                     (= first-provenance second-provenance)
                     (pos? (:types package-surface))
                     (pos? (:members package-surface))
-                    (re-matches #"[0-9a-f]{64}" (:sha256 package-surface)))
+                    (re-matches #"[0-9a-f]{64}" (:sha256 package-surface))
+                    (= {:types (parse-long (get contract
+                                                "compiled-public-surface-type-count"))
+                        :members (parse-long (get contract
+                                                  "compiled-public-surface-member-count"))
+                        :sha256 (get contract
+                                     "package-inspector-public-surface-sha256")}
+                       package-surface))
        (fail! "RawHTTP repeated package-only evidence is inconsistent"
               {:reason :inconsistent-package-proof}))
      (let [summary

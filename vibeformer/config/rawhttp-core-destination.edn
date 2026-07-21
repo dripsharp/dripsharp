@@ -44,7 +44,8 @@
    :destination-semantics :nullable-metadata
    :runtime-package false}}
  :public-surface {:strategy vibeformer.java-library/public-surface-strategy
-                  :contract-file "vibeformer/validation/rawhttp-core/PublicSurface.tsv"}
+                  :contract-file "vibeformer/validation/rawhttp-core/PublicSurface.tsv"
+                  :compiled-contract-file "vibeformer/validation/rawhttp-core/CompiledPublicSurface.tsv"}
  :package-consumer {:strategy :source-file
                     :project-file "RawHttp.Core.PackageConsumer.csproj"
                     :fixture-file "RawHttp.Core.Program.cs"

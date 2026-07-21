@@ -54,6 +54,28 @@
                       (encoded (str "type|class|public final|example.Greeting|"
                                     "type-parameters=|extends=java.lang.Object|implements="))
                       "\n"))
+        compiled-surface
+        (write-file!
+         fixture "CompiledPublicSurface.tsv"
+         (str "# VIBEFORMER_DOTNET_ACCESSIBLE_CONTRACT_V1\n"
+              "assembly\towner\tkind\tname\tparameter-count\tvisibility\t"
+              "metadata-flags\tsignature\tgeneric-constraints\tnullability\t"
+              "source-provenance\t"
+              "source-declaration\ttranslation-rule\n"
+              "Example.Profile.Library\tExample.Profile.Library.Greeting\tconstructor\t"
+              ".ctor\t0\tpublic\t0x1886\tGreeting .ctor()\t-\t-\t"
+              (str (.toRealPath
+                    (paths/resolve-path fixture "src/main/java/example/Greeting.java")
+                    (make-array java.nio.file.LinkOption 0)))
+              ":1\tconstructor|example.Greeting|public|type-parameters=|parameters=|"
+              "throws=\tjava-implicit-constructor\n"
+              "Example.Profile.Library\tExample.Profile.Library.Greeting\ttype\tGreeting\t"
+              "0\tpublic\t0x100101\tclass Greeting\t-\ttype=oblivious\t"
+              (str (.toRealPath
+                    (paths/resolve-path fixture "src/main/java/example/Greeting.java")
+                    (make-array java.nio.file.LinkOption 0)))
+              ":1\ttype|class|public final|example.Greeting|type-parameters=|"
+              "extends=java.lang.Object|implements=\tjava-declaration\n"))
         destination
         {:schema-version 1
          :product-family :java-library
@@ -89,7 +111,8 @@
          :external-dependencies {}
          :public-surface
          {:strategy 'vibeformer.java-library/public-surface-strategy
-          :contract-file (str surface)}
+          :contract-file (str surface)
+          :compiled-contract-file (str compiled-surface)}
          :package-consumer
          {:strategy :compile-only
           :project-file "Example.Profile.Library.PackageConsumer.csproj"
@@ -127,6 +150,8 @@
            (:destination-bundle profile)
            (:destination-bundle destination)))
     (is (= 510 (count (:rows surface))))
+    (is (= "vibeformer/validation/rawhttp-core/CompiledPublicSurface.tsv"
+           (get-in destination [:public-surface :compiled-contract-file])))
     (is (empty? (:seeds surface))
         "the complete independent project is audited without a source allowlist")
     (is (= true (get-in destination [:project :warnings-as-errors])))
@@ -165,7 +190,11 @@
                           {:workspace-root workspace :profile profile})]
         (is (empty? (:diagnostics verification)))
         (is (= 2 (get-in verification
-                         [:public-surface :assemblies 0 :contract-members])))))
+                         [:public-surface :assemblies 0 :contract-members])))
+        (is (= {:types 1 :members 1 :rows 2}
+               (select-keys (get-in verification
+                                    [:public-surface :assemblies 0])
+                            [:types :members :rows])))))
     (testing "pack repeats clean builds and publishes one byte-stable package"
       (let [proof (packaging/pack-verified-profile!
                    {:workspace-root workspace :profile profile})]
