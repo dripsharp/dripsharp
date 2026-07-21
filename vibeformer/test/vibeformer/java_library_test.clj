@@ -2573,7 +2573,7 @@
                                         "src/Example/Java/Library/TlsClient.cs")))]
     (is (str/includes?
          first-source
-         (str "return context.GetSocketFactory().CreateSocket(host, port);")))
+         "return context.GetSocketFactory().CreateSocket(host, port);"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
