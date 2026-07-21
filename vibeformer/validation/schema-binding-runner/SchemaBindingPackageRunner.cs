@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Pkl.Core;
 
@@ -103,11 +104,13 @@ static class SchemaBindingPackageRunner
         ValidateFixtureCoverage(inventory, fixtures);
         var packedAssemblies = ReadAssemblyManifest(assemblyManifest);
         VerifyPackageCache(packedAssemblies, packageCache);
+        string bindingContractObservation = VerifyConfigurationBindingApi();
 
         var fixtureOutcomes = ExecuteFixtureMatrix(
             fixtures, fixtureRoot, generatedRoot, nugetConfig, packageCache,
-            packageId, packageVersion, targetFramework, timeoutMs);
-        var rows = inventory.Select(row => ExecuteRow(row, revision, fixtureOutcomes)).ToArray();
+            packageId, packageVersion, targetFramework, timeoutMs, bindingContractObservation);
+        var rows = inventory.Select(row => ExecuteRow(
+            row, revision, fixtureOutcomes, bindingContractObservation)).ToArray();
         WriteResults(resultFile, revision, rows);
         WriteLoadedAssemblies(loadedEvidence, packedAssemblies);
         Console.WriteLine(
@@ -219,7 +222,8 @@ static class SchemaBindingPackageRunner
         string packageId,
         string packageVersion,
         string targetFramework,
-        int timeoutMs)
+        int timeoutMs,
+        string bindingContractObservation)
     {
         var outcomes = new Dictionary<string, FixtureOutcome>(StringComparer.Ordinal);
         using var metadataEvaluator = Evaluator.Preconfigured();
@@ -234,7 +238,8 @@ static class SchemaBindingPackageRunner
             Directory.CreateDirectory(output);
             var outcome = ExecuteFixture(
                 fixture, source, output, nugetConfig, packageCache,
-                packageId, packageVersion, targetFramework, timeoutMs);
+                packageId, packageVersion, targetFramework, timeoutMs,
+                bindingContractObservation);
             outcomes.Add(fixture.RowId, outcome with
             {
                 HasDeprecation = outcome.HasDeprecation || hasDeprecation
@@ -252,7 +257,8 @@ static class SchemaBindingPackageRunner
         string packageId,
         string packageVersion,
         string targetFramework,
-        int timeoutMs)
+        int timeoutMs,
+        string bindingContractObservation)
     {
         try
         {
@@ -315,6 +321,7 @@ static class SchemaBindingPackageRunner
                 observed["equal-values"] == "true", observed["diagnostics"] == "true",
                 observed["lifecycle"] == "true", combined.Contains("/// <summary>", StringComparison.Ordinal),
                 combined.Contains("global::System.Obsolete", StringComparison.Ordinal),
+                bindingContractObservation + ";" +
                 string.Join(";", observed.OrderBy(item => item.Key, StringComparer.Ordinal)
                     .Select(item => item.Key + "=" + item.Value)), "");
         }
@@ -414,7 +421,8 @@ static class SchemaBindingPackageRunner
     }
 
     static (Row Row, string Status, string Observation, string Diagnostic) ExecuteRow(
-        Row row, string revision, IReadOnlyDictionary<string, FixtureOutcome> fixtureOutcomes)
+        Row row, string revision, IReadOnlyDictionary<string, FixtureOutcome> fixtureOutcomes,
+        string bindingContractObservation)
     {
         string classification = row["product-classification"];
         if (classification == "non-shipping-test-infrastructure")
@@ -472,13 +480,465 @@ static class SchemaBindingPackageRunner
             failures.Add("fixture diagnostic observation failed");
 
         string observation = "revision=" + revision + ";fixture-count=" + matrix.Length +
-            ";observations=" + string.Join(",", observations.OrderBy(value => value, StringComparer.Ordinal));
+            ";observations=" + string.Join(",", observations.OrderBy(value => value, StringComparer.Ordinal)) +
+            ";" + bindingContractObservation;
         return executionFailure is not null
             ? (row, executionFailure, observation,
                 "complete fixture matrix contains " + executionFailure.ToLowerInvariant())
             : failures.Count == 0
             ? (row, "PASS", observation, "")
             : (row, "FAIL", observation, string.Join("; ", failures.OrderBy(value => value, StringComparer.Ordinal)));
+    }
+
+    static string VerifyConfigurationBindingApi()
+    {
+        const string sourceText = """
+            module qfk.Config
+
+            import "pkl:semver"
+
+            abstract class Animal {
+              name: String
+            }
+
+            class Dog extends Animal {}
+
+            pigeon {
+              name = "Pigeon"
+              age = 42
+              hobbies = Set("swimming", "reading")
+              address { street = "Fuzzy St." }
+            }
+            numbers = List(1, 2, 3)
+            mapping = Map("one", 1, "two", 2)
+            nullValue = null
+            animal: Animal = new Dog { name = "Rex" }
+            bytes = Bytes(0, 127, 255)
+            pair = Pair(1, "two")
+            duration = 3.s
+            size = 2.mb
+            version = semver.Version("1.2.3-rc.1+build.5")
+            pattern = Regex("(?i)ab+")
+            relativePath = "relative/path"
+            uri = "https://example.invalid/a"
+            """;
+
+        Config retained;
+        using (var evaluator = ConfigEvaluator.Preconfigured())
+        {
+            retained = evaluator.Evaluate(ModuleSource.Text(sourceText));
+            Require(retained.QualifiedName == "", "configuration root qualified name");
+            Require(retained["pigeon"].QualifiedName == "pigeon", "qualified child path");
+            Require(retained.GetPath("pigeon", "address", "street").QualifiedName ==
+                "pigeon.address.street", "qualified nested path");
+            Require(retained.GetPath("pigeon", "address", "street").As<string>() == "Fuzzy St.",
+                "nested navigation value");
+            Require(retained["numbers"][1].QualifiedName == "numbers[1]" &&
+                retained["numbers"][1].As<int>() == 2, "indexed navigation");
+            Require(retained["mapping"].Get("two").As<int>() == 2, "map-key navigation");
+            Require(retained["pigeon"].TryGet("name", out Config? name) &&
+                name!.As<string>() == "Pigeon", "try navigation");
+            Require(!retained["pigeon"].TryGet("missing", out _), "try missing navigation");
+            var missing = Expect<NoSuchChildException>(
+                () => retained["pigeon"].Get("missing"), "missing child");
+            Require(missing.QualifiedName == "pigeon" && missing.ChildName == "missing" &&
+                missing.Message.Contains("pigeon", StringComparison.Ordinal),
+                "missing child diagnostics");
+
+            PersonModel pigeon = retained["pigeon"].As<PersonModel>();
+            Require(pigeon.Name == "Pigeon" && pigeon.Age == 42 &&
+                pigeon.Hobbies.SetEquals(new[] { Hobby.Swimming, Hobby.Reading }) &&
+                pigeon.Address.Street == "Fuzzy St.", "constructor and enum binding");
+            Require(retained["pigeon"].As(typeof(PersonModel)) is PersonModel,
+                "Type-based config binding");
+            Require(retained["pigeon"].As<Dictionary<string, object?>>()["name"] is string,
+                "Pkl object to map binding");
+            Require(retained["nullValue"].AsNullable<string>() is null,
+                "nullable config binding");
+            var nullFailure = Expect<PklBindException>(
+                () => retained["nullValue"].As<string>(), "non-null config binding");
+            Require(nullFailure.PklPath == "$.nullValue" && nullFailure.TargetType == typeof(string),
+                "nullable config diagnostics");
+
+            Require(evaluator.EvaluateExpression<PersonModel>(
+                    ModuleSource.Text(sourceText), "pigeon").Age == 42,
+                "typed expression evaluation");
+            Require(evaluator.EvaluateExpression(
+                    ModuleSource.Text(sourceText), "pigeon", typeof(PersonModel)) is PersonModel,
+                "Type-based expression evaluation");
+            Config output = evaluator.EvaluateOutputValue(ModuleSource.Text(
+                "output { value = new Dynamic { answer = 42 } }"));
+            Require(output["answer"].As<int>() == 42, "output value evaluation");
+        }
+        Require(retained["pigeon"]["age"].As<int>() == 42,
+            "configuration remains valid after evaluator disposal");
+
+        VerifyBuilderAndLifecycle();
+        VerifyBinderConversions(retained);
+        VerifyBindingFailures();
+        VerifyPolymorphismAndGeneratedLoaders(retained);
+
+        return "binding=true;builder=true;conversions=true;diagnostics=true;" +
+            "lifecycle=true;navigation=true;polymorphism=true;reflection-nullability=true";
+    }
+
+    static void VerifyBuilderAndLifecycle()
+    {
+        ConfigEvaluatorBuilder empty = ConfigEvaluatorBuilder.Unconfigured();
+        Require(empty.EnvironmentVariables.Count == 0 && empty.ExternalProperties.Count == 0,
+            "unconfigured evaluator builder");
+
+        ConfigEvaluatorBuilder configured = ConfigEvaluatorBuilder.Preconfigured()
+            .SetEnvironmentVariables(new Dictionary<string, string> { ["QFK_ENV"] = "environment" })
+            .SetExternalProperties(new Dictionary<string, string> { ["qfk.property"] = "external" })
+            .SetAllowedModules(new[] { new Regex(".*", RegexOptions.CultureInvariant) })
+            .SetAllowedResources(new[] { new Regex(".*", RegexOptions.CultureInvariant) })
+            .SetTimeout(TimeSpan.FromSeconds(30))
+            .ConfigureBinder(options => options.PropertyNamesCaseInsensitive = false);
+        Require(configured.EnvironmentVariables.SequenceEqual(
+                new[] { new KeyValuePair<string, string>("QFK_ENV", "environment") }) &&
+            configured.ExternalProperties.SequenceEqual(
+                new[] { new KeyValuePair<string, string>("qfk.property", "external") }) &&
+            configured.EvaluatorBuilder.GetAllowedModules().Count == 1 &&
+            configured.EvaluatorBuilder.GetAllowedResources().Count == 1 &&
+            configured.EvaluatorBuilder.GetTimeout() == TimeSpan.FromSeconds(30),
+            "builder policy propagation");
+        using (ConfigEvaluator evaluator = configured.Build())
+        {
+            Config config = evaluator.Evaluate(ModuleSource.Text(
+                "environment = read(\"env:QFK_ENV\")\nexternalValue = read(\"prop:qfk.property\")"));
+            Require(config["environment"].As<string>() == "environment" &&
+                config["externalValue"].As<string>() == "external" && evaluator.OwnsEvaluator,
+                "builder evaluator settings");
+        }
+
+        using var borrowedEvaluator = Evaluator.Preconfigured();
+        var borrowed = new ConfigEvaluator(borrowedEvaluator);
+        Require(!borrowed.OwnsEvaluator, "borrowed evaluator ownership");
+        borrowed.Dispose();
+        borrowed.Dispose();
+        Require(borrowed.IsDisposed, "idempotent config evaluator disposal");
+        Expect<ObjectDisposedException>(() => _ = borrowed.Binder, "disposed binder access");
+        Expect<ObjectDisposedException>(() => _ = borrowed.Evaluator, "disposed evaluator access");
+        Expect<ObjectDisposedException>(
+            () => borrowed.Evaluate(ModuleSource.Text("value = 1")), "disposed evaluation");
+        Require((long)borrowedEvaluator.EvaluateExpression(
+                ModuleSource.Text("value = 1"), "value") == 1L,
+            "borrowed evaluator survives wrapper disposal");
+
+        var ownedEvaluator = Evaluator.Preconfigured();
+        var owned = new ConfigEvaluator(ownedEvaluator, null, ownsEvaluator: true);
+        Require(owned.OwnsEvaluator, "owned evaluator ownership");
+        owned.Dispose();
+        Expect<Exception>(() => ownedEvaluator.Evaluate(ModuleSource.Text("value = 1")),
+            "owned evaluator disposal propagation");
+    }
+
+    static void VerifyBinderConversions(Config config)
+    {
+        var binder = new ConfigBinder();
+        Require(binder.Bind<int[]>(new object[] { 1L, 2L, 3L }).SequenceEqual(new[] { 1, 2, 3 }),
+            "array binding");
+        Require(binder.Bind<IReadOnlySet<string>>(new object[] { "a", "b", "a" })
+                .SetEquals(new[] { "a", "b" }), "set binding");
+        var nestedSource = new Dictionary<string, object?>
+        {
+            ["values"] = new object?[] { 1L, null, 3L }
+        };
+        Dictionary<string, List<int?>> nested =
+            binder.Bind<Dictionary<string, List<int?>>>(nestedSource);
+        Require(nested["values"].SequenceEqual(new int?[] { 1, null, 3 }),
+            "nested generic collection binding");
+        var numericMap = binder.Bind<Dictionary<int, string>>(
+            new Dictionary<object, object?> { [1L] = "one", [2L] = "two" });
+        Require(numericMap.Count == 2 && numericMap[2] == "two", "map key/value binding");
+
+        var pair = new Pair<object, object>(1L, "two");
+        (int Number, string Text) tuple = binder.Bind<(int, string)>(pair);
+        KeyValuePair<int, string> keyValue = binder.Bind<KeyValuePair<int, string>>(pair);
+        Require(tuple == (1, "two") && keyValue.Key == 1 && keyValue.Value == "two",
+            "pair equivalents");
+
+        Require(binder.BindNullable<string>(PNull.Instance) is null,
+            "explicit nullable root binding");
+        var requiredNull = Expect<PklBindException>(
+            () => binder.BindRequired<string>(PNull.Instance), "required null root");
+        Require(requiredNull.PklPath == "$" && requiredNull.TargetType == typeof(string),
+            "required null diagnostics");
+        Require(binder.Bind<Hobby>("swimming") == Hobby.Swimming, "enum binding");
+
+        byte[] bytes = binder.Bind<byte[]>(new sbyte[] { 0, 127, -1 });
+        ReadOnlyMemory<byte> memory = binder.Bind<ReadOnlyMemory<byte>>(new sbyte[] { 1, -1 });
+        Require(bytes.SequenceEqual(new byte[] { 0, 127, 255 }) &&
+            memory.ToArray().SequenceEqual(new byte[] { 1, 255 }), "byte binding");
+        Require(config["bytes"].As<byte[]>().SequenceEqual(new byte[] { 0, 127, 255 }),
+            "evaluated Pkl Bytes binding");
+
+        Require(binder.Bind<FileInfo>("relative/path").Name == "path" &&
+            binder.Bind<DirectoryInfo>("relative/path").Name == "path" &&
+            binder.Bind<Uri>("https://example.invalid/a").AbsolutePath == "/a" &&
+            binder.Bind<Regex>("(?i)ab+").IsMatch("ABBB"), "path URI and regex binding");
+        Require(config["pattern"].As<Regex>().IsMatch("ABBB"), "evaluated Regex binding");
+
+        var duration = new Duration(3, DurationUnit.SECONDS);
+        var dataSize = new DataSize(2, DataSizeUnit.MEGABYTES);
+        Require(binder.Bind<TimeSpan>(duration) == TimeSpan.FromSeconds(3) &&
+            ReferenceEquals(binder.Bind<DataSize>(dataSize), dataSize) &&
+            config["duration"].As<TimeSpan>() == TimeSpan.FromSeconds(3) &&
+            config["size"].As<DataSize>().Unit == DataSizeUnit.MEGABYTES,
+            "duration and data-size binding");
+        Require(binder.Bind<Pkl.Core.Version>("1.2.3-rc.1").ToString() == "1.2.3-rc.1" &&
+            config["version"].As<Pkl.Core.Version>().ToString() == "1.2.3-rc.1+build.5",
+            "semantic version binding");
+
+        Require(binder.Bind<UserId>(12L).Value == 12L, "type alias binding");
+        Require(binder.Bind<RecordModel>(new Dictionary<string, object?>
+            { ["name"] = "record", ["age"] = 7L }) == new RecordModel("record", 7),
+            "record binding");
+        var init = binder.Bind<InitModel>(new Dictionary<string, object?>
+            { ["name"] = "init", ["optional"] = null });
+        Require(init.Name == "init" && init.Optional is null, "init and settable member binding");
+        var derived = binder.Bind<DerivedModel>(new Dictionary<string, object?> { ["value"] = "derived" });
+        Require(derived.Value == "derived" && derived.SetCount == 1,
+            "most-derived override binding");
+    }
+
+    static void VerifyBindingFailures()
+    {
+        var binder = new ConfigBinder();
+        var missing = Expect<PklBindException>(
+            () => binder.Bind<RequiredModel>(new Dictionary<string, object?>()),
+            "missing required member");
+        Require(missing.PklPath == "$.value" && missing.TargetType == typeof(string),
+            "missing member diagnostics");
+
+        var unknown = Expect<PklBindException>(
+            () => binder.Bind<RecordModel>(new Dictionary<string, object?>
+                { ["name"] = "x", ["age"] = 1L, ["extra"] = true }),
+            "unknown member");
+        Require(unknown.PklPath == "$" && unknown.Reason!.Contains("extra", StringComparison.Ordinal),
+            "unknown member diagnostics");
+        var lenient = new ConfigBinder(new ConfigBinderOptions { IgnoreUnknownProperties = true });
+        Require(lenient.Bind<RecordModel>(new Dictionary<string, object?>
+            { ["name"] = "x", ["age"] = 1L, ["extra"] = true }).age == 1,
+            "unknown member option");
+
+        var incompatible = Expect<PklBindException>(
+            () => binder.Bind<AgeModel>(new Dictionary<string, object?> { ["age"] = "old" }),
+            "incompatible member");
+        Require(incompatible.PklPath == "$.age" && incompatible.TargetType == typeof(int) &&
+            incompatible.SourceType == typeof(string), "incompatible type diagnostics");
+        Expect<PklBindException>(() => binder.Bind<byte>(256L), "numeric overflow");
+        Expect<PklBindException>(() => binder.Bind<double>(9_007_199_254_740_993L),
+            "lossy numeric conversion");
+        var lossy = new ConfigBinder(new ConfigBinderOptions { AllowLossyNumericConversions = true });
+        Require(lossy.Bind<double>(9_007_199_254_740_993L) == 9_007_199_254_740_992d,
+            "lossy numeric option");
+
+        Expect<PklBindException>(() => binder.Bind<AmbiguousModel>(
+            new Dictionary<string, object?> { ["value"] = "x" }), "constructor ambiguity");
+        var caseInsensitive = new ConfigBinder(new ConfigBinderOptions
+            { PropertyNamesCaseInsensitive = true });
+        Expect<PklBindException>(() => caseInsensitive.Bind<InitModel>(
+            new Dictionary<string, object?> { ["name"] = "a", ["Name"] = "b" }),
+            "case-insensitive ambiguity");
+
+        var converters = new ConfigBinderOptions()
+            .AddConversion<IComparable, string>((value, _) => value.ToString()!)
+            .AddConversion<IFormattable, string>((value, _) => value.ToString(null, CultureInfo.InvariantCulture));
+        Expect<PklBindException>(() => new ConfigBinder(converters).Bind<string>(1L),
+            "custom conversion ambiguity");
+        var failingConverter = new ConfigBinderOptions()
+            .AddConversion<long, ConvertedModel>((_, _) =>
+                throw new InvalidOperationException("deliberate converter failure"));
+        var converterFailure = Expect<PklBindException>(
+            () => new ConfigBinder(failingConverter).Bind<ConvertedModel>(1L),
+            "custom converter failure");
+        Require(converterFailure.InnerException is InvalidOperationException &&
+            converterFailure.Reason == "the custom conversion failed",
+            "custom converter diagnostics");
+
+        var cycle = new Dictionary<string, object?>();
+        cycle["child"] = cycle;
+        var cycleFailure = Expect<PklBindException>(
+            () => binder.Bind<CycleModel>(cycle), "binding cycle");
+        Require(cycleFailure.PklPath == "$.child" &&
+            cycleFailure.Reason!.Contains("cyclic", StringComparison.Ordinal),
+            "cycle diagnostics");
+
+        var nonNullable = Expect<PklBindException>(() => binder.Bind<NonNullableModel>(
+            new Dictionary<string, object?> { ["value"] = null }), "non-nullable metadata");
+        Require(nonNullable.PklPath == "$.value", "non-nullable member path");
+        Require(binder.Bind<NullableModel>(new Dictionary<string, object?> { ["value"] = null }).Value is null,
+            "nullable member metadata");
+        Expect<PklBindException>(() => binder.Bind<RequiredListModel>(
+            new Dictionary<string, object?> { ["values"] = new object?[] { "ok", null } }),
+            "nested non-nullable metadata");
+        Require(binder.Bind<NullableListModel>(new Dictionary<string, object?>
+            { ["values"] = new object?[] { "ok", null } }).Values[1] is null,
+            "nested nullable metadata");
+    }
+
+    static void VerifyPolymorphismAndGeneratedLoaders(Config config)
+    {
+        var polymorphic = new ConfigBinder(new ConfigBinderOptions()
+            .AddTypeMapping<AnimalModel, DogModel>("qfk.Config#Dog"));
+        AnimalModel animal = polymorphic.Bind<AnimalModel>(config["animal"].RawValue);
+        Require(animal is DogModel { Name: "Rex" }, "configured polymorphic binding");
+
+        GeneratedTargetLoader.Count = 0;
+        var generated = new ConfigBinder().Bind<GeneratedTarget>(
+            new Dictionary<string, object?> { ["value"] = 9L });
+        Require(generated.Value == 9 && GeneratedTargetLoader.Count == 1,
+            "generated loader binding");
+        var withoutGenerated = new ConfigBinder(new ConfigBinderOptions { UseGeneratedLoaders = false })
+            .Bind<GeneratedTarget>(new Dictionary<string, object?> { ["value"] = 10L });
+        Require(withoutGenerated.Value == 10 && GeneratedTargetLoader.Count == 1,
+            "generated loader option");
+    }
+
+    static void Require(bool condition, string behavior)
+    {
+        if (!condition) throw new InvalidOperationException(
+            "Configuration/binding package assertion failed: " + behavior + ".");
+    }
+
+    static TException Expect<TException>(Action action, string behavior)
+        where TException : Exception
+    {
+        try { action(); }
+        catch (TException error) { return error; }
+        throw new InvalidOperationException(
+            "Configuration/binding package assertion did not fail: " + behavior + ".");
+    }
+
+    public enum Hobby
+    {
+        [PklName("swimming")] Swimming,
+        [PklName("reading")] Reading,
+        [PklName("surfing")] Surfing
+    }
+
+    public sealed class AddressModel
+    {
+        public AddressModel(string street) => Street = street;
+        public string Street { get; }
+    }
+
+    public sealed class PersonModel
+    {
+        public PersonModel(string name, int age, IReadOnlySet<Hobby> hobbies, AddressModel address)
+            => (Name, Age, Hobbies, Address) = (name, age, hobbies, address);
+        public string Name { get; }
+        public int Age { get; }
+        public IReadOnlySet<Hobby> Hobbies { get; }
+        public AddressModel Address { get; }
+    }
+
+    public sealed record RecordModel(string name, int age);
+
+    [PklTypeAlias]
+    public readonly record struct UserId(long Value);
+
+    public sealed class InitModel
+    {
+        [PklName("name")] public string Name { get; init; } = "";
+        [PklName("optional")] public string? Optional { get; set; }
+    }
+
+    public class BaseModel
+    {
+        [PklName("value")] public virtual string Value { get; set; } = "";
+    }
+
+    public sealed class DerivedModel : BaseModel
+    {
+        private string value = "";
+        public int SetCount { get; private set; }
+        [PklName("value")]
+        public override string Value
+        {
+            get => value;
+            set { this.value = value; SetCount++; }
+        }
+    }
+
+    public sealed class RequiredModel
+    {
+        [PklName("value"), PklRequired] public string Value { get; init; } = "";
+    }
+
+    public sealed class AgeModel
+    {
+        public AgeModel(int age) => Age = age;
+        public int Age { get; }
+    }
+
+    public sealed class AmbiguousModel
+    {
+        public AmbiguousModel(string value) { }
+        public AmbiguousModel(Uri value) { }
+    }
+
+    public sealed class ConvertedModel { }
+
+    public sealed class CycleModel
+    {
+        [PklName("child")] public CycleModel? Child { get; set; }
+    }
+
+    public sealed class NonNullableModel
+    {
+        public NonNullableModel(string value) => Value = value;
+        public string Value { get; }
+    }
+
+    public sealed class NullableModel
+    {
+        public NullableModel(string? value) => Value = value;
+        public string? Value { get; }
+    }
+
+    public sealed class RequiredListModel
+    {
+        public RequiredListModel(List<string> values) => Values = values;
+        public List<string> Values { get; }
+    }
+
+    public sealed class NullableListModel
+    {
+        public NullableListModel(List<string?> values) => Values = values;
+        public List<string?> Values { get; }
+    }
+
+    public abstract class AnimalModel
+    {
+        protected AnimalModel(string name) => Name = name;
+        public string Name { get; }
+    }
+
+    [PklQualifiedName("qfk.Config#Dog")]
+    public sealed class DogModel : AnimalModel
+    {
+        public DogModel(string name) : base(name) { }
+    }
+
+    public sealed class GeneratedTarget
+    {
+        public GeneratedTarget(int value) => Value = value;
+        public int Value { get; }
+        public static IPklGeneratedLoader<GeneratedTarget> PklLoader { get; } =
+            new GeneratedTargetLoader();
+    }
+
+    public sealed class GeneratedTargetLoader : IPklGeneratedLoader<GeneratedTarget>
+    {
+        public static int Count { get; set; }
+        public GeneratedTarget Load(object? value, ConfigBinder binder)
+        {
+            Count++;
+            return binder.BindGenerated<GeneratedTarget>(value);
+        }
     }
 
     static void WriteResults(

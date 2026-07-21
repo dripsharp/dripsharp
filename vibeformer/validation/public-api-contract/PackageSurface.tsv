@@ -33,10 +33,29 @@ Pkl.Core	Pkl.Core.Composite	method	GetProperty	1	System.Object GetProperty(Syste
 Pkl.Core	Pkl.Core.Composite	method	GetPropertyOrNull	1	System.Object GetPropertyOrNull(System.String name)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Composite	method	HasProperty	1	System.Boolean HasProperty(System.String name)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.Composite	type	Composite	0	interface Composite : Pkl.Core.Value	-	type=oblivious	-	interface	-
+Pkl.Core	Pkl.Core.Config	method	As	0	<T> T As()	T	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	As	1	System.Object As(System.Type targetType)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	AsNullable	0	<T> T AsNullable()	T	return=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	AsNullable	1	System.Object AsNullable(System.Type targetType)	-	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	Get	1	Pkl.Core.Config Get(System.Int32 index)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	Get	1	Pkl.Core.Config Get(System.Object key)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	Get	1	Pkl.Core.Config Get(System.String childName)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	GetKey	1	Pkl.Core.Config GetKey(System.Object key)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	GetPath	1	Pkl.Core.Config GetPath(System.Object[] path)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	method	TryGet	2	System.Boolean TryGet(System.String childName,out Pkl.Core.Config child)	-	return=non-null;param0=non-null;param1=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.Config	property	ChildNames	0	System.Collections.Generic.IReadOnlyList<System.String> ChildNames {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Config	property	Item	1	Pkl.Core.Config Item[System.Int32 index] {get}	-	value=non-null;param0=non-null	-	-	-
+Pkl.Core	Pkl.Core.Config	property	Item	1	Pkl.Core.Config Item[System.String childName] {get}	-	value=non-null;param0=non-null	-	-	-
+Pkl.Core	Pkl.Core.Config	property	QualifiedName	0	System.String QualifiedName {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.Config	property	RawValue	0	System.Object RawValue {get}	-	value=nullable	-	-	-
+Pkl.Core	Pkl.Core.Config	type	Config	0	class Config	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.ConfigBinder	constructor	.ctor	1	ConfigBinder .ctor(Pkl.Core.ConfigBinderOptions options)	-	param0=nullable	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.ConfigBinder	method	Bind	1	<T> T Bind(System.Object value)	T	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ConfigBinder	method	Bind	2	System.Object Bind(System.Object value,System.Type targetType)	-	return=nullable;param0=nullable;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigBinder	method	Bind	3	System.Object Bind(System.Object value,System.Type targetType,System.Boolean allowNull)	-	return=nullable;param0=nullable;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ConfigBinder	method	BindGenerated	1	<T> T BindGenerated(System.Object value)	T	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigBinder	method	BindNullable	1	<T> T BindNullable(System.Object value)	T	return=nullable;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigBinder	method	BindRequired	1	<T> T BindRequired(System.Object value)	T	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ConfigBinder	property	Options	0	Pkl.Core.ConfigBinderOptions Options {get}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.ConfigBinder	type	ConfigBinder	0	class ConfigBinder	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.ConfigBinderOptions	constructor	.ctor	0	ConfigBinderOptions .ctor()	-	-	not-representable-in-cli-metadata	-	construct
@@ -49,13 +68,47 @@ Pkl.Core	Pkl.Core.ConfigBinderOptions	property	PropertyNamesCaseInsensitive	0	Sy
 Pkl.Core	Pkl.Core.ConfigBinderOptions	property	UseGeneratedLoaders	0	System.Boolean UseGeneratedLoaders {get;set}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.ConfigBinderOptions	type	ConfigBinderOptions	0	class ConfigBinderOptions	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.ConfigEvaluator	constructor	.ctor	2	ConfigEvaluator .ctor(Pkl.Core.Evaluator evaluator,Pkl.Core.ConfigBinder binder)	-	param0=nullable;param1=nullable	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.ConfigEvaluator	constructor	.ctor	3	ConfigEvaluator .ctor(Pkl.Core.Evaluator evaluator,Pkl.Core.ConfigBinder binder,System.Boolean ownsEvaluator)	-	param0=nullable;param1=nullable;param2=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.ConfigEvaluator	method	Dispose	0	System.Void Dispose()	-	return=non-null	not-representable-in-cli-metadata	-	dispose
-Pkl.Core	Pkl.Core.ConfigEvaluator	method	Evaluate	1	<T> T Evaluate(Pkl.Core.ModuleSource source)	T	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
-Pkl.Core	Pkl.Core.ConfigEvaluator	method	EvaluateExpression	2	<T> T EvaluateExpression(Pkl.Core.ModuleSource source,System.String expression)	T	return=nullable;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
-Pkl.Core	Pkl.Core.ConfigEvaluator	method	EvaluateOutputValue	1	<T> T EvaluateOutputValue(Pkl.Core.ModuleSource source)	T	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	Evaluate	1	<T> T Evaluate(Pkl.Core.ModuleSource source)	T	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	Evaluate	1	Pkl.Core.Config Evaluate(Pkl.Core.ModuleSource source)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	Evaluate	2	System.Object Evaluate(Pkl.Core.ModuleSource source,System.Type targetType)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	EvaluateExpression	2	<T> T EvaluateExpression(Pkl.Core.ModuleSource source,System.String expression)	T	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	EvaluateExpression	2	Pkl.Core.Config EvaluateExpression(Pkl.Core.ModuleSource source,System.String expression)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	EvaluateExpression	3	System.Object EvaluateExpression(Pkl.Core.ModuleSource source,System.String expression,System.Type targetType)	-	return=non-null;param0=non-null;param1=non-null;param2=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	EvaluateOutputValue	1	<T> T EvaluateOutputValue(Pkl.Core.ModuleSource source)	T	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	EvaluateOutputValue	1	Pkl.Core.Config EvaluateOutputValue(Pkl.Core.ModuleSource source)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	EvaluateOutputValue	2	System.Object EvaluateOutputValue(Pkl.Core.ModuleSource source,System.Type targetType)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	method	Preconfigured	0	Pkl.Core.ConfigEvaluator Preconfigured()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.ConfigEvaluator	property	Binder	0	Pkl.Core.ConfigBinder Binder {get}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.ConfigEvaluator	property	Evaluator	0	Pkl.Core.Evaluator Evaluator {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	property	IsDisposed	0	System.Boolean IsDisposed {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluator	property	OwnsEvaluator	0	System.Boolean OwnsEvaluator {get}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.ConfigEvaluator	type	ConfigEvaluator	0	class ConfigEvaluator : System.IDisposable	-	type=oblivious	-	-	disposable
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	AddEnvironmentVariable	2	Pkl.Core.ConfigEvaluatorBuilder AddEnvironmentVariable(System.String name,System.String value)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	AddEnvironmentVariables	1	Pkl.Core.ConfigEvaluatorBuilder AddEnvironmentVariables(System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> values)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	AddExternalProperties	1	Pkl.Core.ConfigEvaluatorBuilder AddExternalProperties(System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> values)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	AddExternalProperty	2	Pkl.Core.ConfigEvaluatorBuilder AddExternalProperty(System.String name,System.String value)	-	return=non-null;param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	Build	0	Pkl.Core.ConfigEvaluator Build()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	ConfigureBinder	1	Pkl.Core.ConfigEvaluatorBuilder ConfigureBinder(System.Action<Pkl.Core.ConfigBinderOptions> configure)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	Preconfigured	0	Pkl.Core.ConfigEvaluatorBuilder Preconfigured()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetAllowedModules	1	Pkl.Core.ConfigEvaluatorBuilder SetAllowedModules(System.Collections.Generic.IReadOnlyCollection<System.Text.RegularExpressions.Regex> patterns)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetAllowedResources	1	Pkl.Core.ConfigEvaluatorBuilder SetAllowedResources(System.Collections.Generic.IReadOnlyCollection<System.Text.RegularExpressions.Regex> patterns)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetBinderOptions	1	Pkl.Core.ConfigEvaluatorBuilder SetBinderOptions(Pkl.Core.ConfigBinderOptions options)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetEnvironmentVariables	1	Pkl.Core.ConfigEvaluatorBuilder SetEnvironmentVariables(System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> values)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetEvaluatorBuilder	1	Pkl.Core.ConfigEvaluatorBuilder SetEvaluatorBuilder(Pkl.Core.EvaluatorBuilder builder)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetExternalProperties	1	Pkl.Core.ConfigEvaluatorBuilder SetExternalProperties(System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> values)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetModuleCacheDirectory	1	Pkl.Core.ConfigEvaluatorBuilder SetModuleCacheDirectory(System.String path)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetRootDirectory	1	Pkl.Core.ConfigEvaluatorBuilder SetRootDirectory(System.String path)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetSecurityManager	1	Pkl.Core.ConfigEvaluatorBuilder SetSecurityManager(Pkl.Core.SecurityManager manager)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetTimeout	1	Pkl.Core.ConfigEvaluatorBuilder SetTimeout(System.Nullable<System.TimeSpan> timeout)	-	return=non-null;param0=nullable	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	SetTraceMode	1	Pkl.Core.ConfigEvaluatorBuilder SetTraceMode(Pkl.Core.EvaluatorSettings.TraceMode mode)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	method	Unconfigured	0	Pkl.Core.ConfigEvaluatorBuilder Unconfigured()	-	return=non-null	not-representable-in-cli-metadata	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	property	BinderOptions	0	Pkl.Core.ConfigBinderOptions BinderOptions {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	property	EnvironmentVariables	0	System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> EnvironmentVariables {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	property	EvaluatorBuilder	0	Pkl.Core.EvaluatorBuilder EvaluatorBuilder {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	property	ExternalProperties	0	System.Collections.Generic.IReadOnlyDictionary<System.String,System.String> ExternalProperties {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.ConfigEvaluatorBuilder	type	ConfigEvaluatorBuilder	0	class ConfigEvaluatorBuilder	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.DataSize	constructor	.ctor	2	DataSize .ctor(System.Double value,Pkl.Core.DataSizeUnit unit)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.DataSize	method	Accept	1	<T> T Accept(Pkl.Core.ValueConverter<T> converter)	T	return=nullable;param0=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.DataSize	method	Accept	1	System.Void Accept(Pkl.Core.ValueVisitor visitor)	-	return=non-null;param0=non-null	not-representable-in-cli-metadata	-	-
@@ -672,6 +725,10 @@ Pkl.Core	Pkl.Core.ModuleSource	method	Uri	1	Pkl.Core.ModuleSource Uri(System.Uri
 Pkl.Core	Pkl.Core.ModuleSource	property	Contents	0	System.String Contents {get}	-	value=nullable	-	-	-
 Pkl.Core	Pkl.Core.ModuleSource	property	SourceUri	0	System.Uri SourceUri {get}	-	value=non-null	-	-	-
 Pkl.Core	Pkl.Core.ModuleSource	type	ModuleSource	0	class ModuleSource	-	type=oblivious	-	-	-
+Pkl.Core	Pkl.Core.NoSuchChildException	constructor	.ctor	2	NoSuchChildException .ctor(System.String qualifiedName,System.String childName)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.NoSuchChildException	property	ChildName	0	System.String ChildName {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.NoSuchChildException	property	QualifiedName	0	System.String QualifiedName {get}	-	value=non-null	-	-	-
+Pkl.Core	Pkl.Core.NoSuchChildException	type	NoSuchChildException	0	class NoSuchChildException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.NoSuchPropertyException	constructor	.ctor	2	NoSuchPropertyException .ctor(System.String message,System.String propertyName)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.NoSuchPropertyException	method	GetPropertyName	0	System.String GetPropertyName()	-	return=non-null	not-representable-in-cli-metadata	-	-
 Pkl.Core	Pkl.Core.NoSuchPropertyException	type	NoSuchPropertyException	0	class NoSuchPropertyException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
@@ -1042,6 +1099,10 @@ Pkl.Core	Pkl.Core.Pair`2	property	Second	0	S Second {get}	-	value=nullable	-	-	-
 Pkl.Core	Pkl.Core.Pair`2	type	Pair	0	class Pair : Pkl.Core.Value,System.Collections.Generic.IEnumerable<System.Object>,System.Collections.IEnumerable	F;S	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.PklBindException	constructor	.ctor	1	PklBindException .ctor(System.String message)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.PklBindException	constructor	.ctor	2	PklBindException .ctor(System.String message,System.Exception innerException)	-	param0=non-null;param1=non-null	not-representable-in-cli-metadata	-	construct
+Pkl.Core	Pkl.Core.PklBindException	property	PklPath	0	System.String PklPath {get}	-	value=nullable	-	-	-
+Pkl.Core	Pkl.Core.PklBindException	property	Reason	0	System.String Reason {get}	-	value=nullable	-	-	-
+Pkl.Core	Pkl.Core.PklBindException	property	SourceType	0	System.Type SourceType {get}	-	value=nullable	-	-	-
+Pkl.Core	Pkl.Core.PklBindException	property	TargetType	0	System.Type TargetType {get}	-	value=nullable	-	-	-
 Pkl.Core	Pkl.Core.PklBindException	type	PklBindException	0	class PklBindException : System.Exception,System.Runtime.Serialization.ISerializable	-	type=oblivious	-	-	-
 Pkl.Core	Pkl.Core.PklBugException	constructor	.ctor	1	PklBugException .ctor(System.Exception cause)	-	param0=non-null	not-representable-in-cli-metadata	-	construct
 Pkl.Core	Pkl.Core.PklBugException	constructor	.ctor	1	PklBugException .ctor(System.String message)	-	param0=non-null	not-representable-in-cli-metadata	-	construct

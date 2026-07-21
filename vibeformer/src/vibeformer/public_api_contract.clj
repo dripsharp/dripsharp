@@ -73,6 +73,9 @@
     "Pkl.Core.IPklGeneratedLoader`1"
     "Pkl.Core.ConfigBinderOptions"
     "Pkl.Core.ConfigBinder"
+    "Pkl.Core.Config"
+    "Pkl.Core.NoSuchChildException"
+    "Pkl.Core.ConfigEvaluatorBuilder"
     "Pkl.Core.ConfigEvaluator"})
 
 (def ^:private native-codegen-owners
