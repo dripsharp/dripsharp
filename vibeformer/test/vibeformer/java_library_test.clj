@@ -240,3 +240,69 @@
     (is (some? error))
     (is (str/includes? (ex-message error)
                        "Java library executable or field has no neutral mapping"))))
+
+(deftest neutral-constructors-translate-blocks-assignments-and-branches
+  (let [fixture
+        (model! {"example/Choice.java"
+                 (str "package example; public final class Choice { "
+                      "private final String value; "
+                      "public Choice(String value, boolean selected) { "
+                      "String chosen; "
+                      "if (selected) { chosen = value; } "
+                      "else { chosen = \"fallback\"; } "
+                      "this.value = chosen; } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Choice.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Choice.cs")))]
+    (is (str/includes? first-source
+                       (str "public Choice(string value, bool selected) {\n"
+                            "string chosen;\n"
+                            "if (selected) {\n"
+                            "chosen = value;\n"
+                            "} else {\n"
+                            "chosen = \"fallback\";\n"
+                            "}\n"
+                            "this.value = chosen;\n}")))
+    (is (= first-source second-source))
+    (is (= 1 (get-in first [:summary :executable-roots])
+           (get-in second [:summary :executable-roots])))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest unsupported-constructor-statements-fail-closed
+  (let [fixture
+        (model! {"example/Loop.java"
+                 (str "package example; public final class Loop { "
+                      "public Loop(boolean running) { while (running) { } } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= :unsupported-java-element
+           (get-in (ex-data error) [:diagnostic :kind])))
+    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
+                       "CtWhile"))
+    (is (pos? (get-in (ex-data error) [:diagnostic :location :line])))))
+
+(deftest unmapped-jdk-constructor-in-body-fails-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "public final class Unsupported { public Unsupported() { "
+                      "new ArrayList<String>(); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= :translation-rule-failed
+           (get-in (ex-data error) [:diagnostic :kind])))
+    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
+                       "Java library constructor has no neutral mapping"))
+    (is (= "executable:java.util.ArrayList#<init>()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
