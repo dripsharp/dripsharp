@@ -1,6 +1,6 @@
 (ns vibeformer.project-test
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is]]
             [vibeformer.paths :as paths]
             [vibeformer.project :as project])
   (:import [java.nio.file Files OpenOption Path]
@@ -142,6 +142,8 @@
         error (try
                 (project/discover-main!
                  {:workspace-root root
+                  :project-root "research/pkl"
+                  :gradle-project ":pkl-parser"
                   :manifest (paths/resolve-path root "target/manifest.tsv")
                   :run-command! (fn [_]
                                   (throw (ex-info "toolchain unavailable"
@@ -166,6 +168,7 @@
         seen-command (atom nil)
         discovery (project/discover-main!
                    {:workspace-root root
+                    :project-root "research/pkl"
                     :manifest (paths/resolve-path root "target/manifest.tsv")
                     :gradle-project ":pkl-core"
                     :run-command!
@@ -198,6 +201,16 @@
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :invalid-gradle-project (:kind (ex-data error))))))
+
+(deftest gradle-discovery-requires-an-explicit-source-root
+  (let [error (try
+                (project/discover-main!
+                 {:workspace-root (temp-directory)
+                  :manifest "unused"
+                  :gradle-project ":library"})
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :missing-gradle-project-root (:kind (ex-data error))))))
 
 (deftest configurable-non-pkl-gradle-project-discovers-complete-inputs
   (let [workspace (paths/workspace-root)
@@ -244,12 +257,42 @@
     (is (some #(str/ends-with? % "/Application.java") sources))
     (is (some #(str/ends-with? % "/Generated.java") sources))
     (is (some #(str/ends-with? % "/example/message.txt") resources))
-    (is (some #(str/ends-with? % "/library/build/classes/java/main") classpath))))
+    (is (some #(str/ends-with? % "/library/build/classes/java/main") classpath))
+    (is (= #{{:scope :compile :project ":library"}
+             {:scope :runtime :project ":library"}}
+           (set (:project-dependencies discovery))))
+    (is (empty? (:external-dependencies discovery)))
+    (is (empty? (:external-artifacts discovery)))))
+
+(deftest complete-independent-profile-discovers-resources-and-pinned-package-dependency
+  (let [workspace (paths/workspace-root)
+        discovery
+        (project/discover-main!
+         {:workspace-root workspace
+          :project-root "research/rawhttp"
+          :gradle-wrapper "gradlew"
+          :gradle-java-major 17
+          :gradle-project ":rawhttp-core"
+          :manifest (paths/resolve-path (temp-directory) "rawhttp-main.tsv")})]
+    (is (= ":rawhttp-core" (:gradle-project discovery)))
+    (is (= 62 (count (:java-sources discovery))))
+    (is (= 1 (count (:resources discovery))))
+    (is (str/ends-with? (str (first (:resources discovery)))
+                        "/META-INF/services/rawhttp.core.body.encoding.HttpMessageDecoder"))
+    (is (empty? (:project-dependencies discovery)))
+    (is (= [{:scope :compile
+             :coordinate "com.google.code.findbugs:jsr305:3.0.2"}]
+           (:external-dependencies discovery)))
+    (is (= [{:scope :compile
+             :coordinate "com.google.code.findbugs:jsr305:3.0.2"
+             :sha256 "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"}]
+           (:external-artifacts discovery)))))
 
 (deftest complete-pkl-core-main-discovery
   (let [workspace (paths/workspace-root)
         discovery (project/discover-main!
                    {:workspace-root workspace
+                    :project-root "research/pkl"
                     :manifest (paths/resolve-path (temp-directory) "pkl-core-main.tsv")
                     :gradle-project ":pkl-core"})
         sources (mapv str (:java-sources discovery))

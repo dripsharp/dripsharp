@@ -17,7 +17,7 @@
 (defn run!
   "Runs a command and returns its merged output. Throws on start, timeout, or
   exit failure. `timeout-ms` is optional and must be a positive integer."
-  [{:keys [command directory timeout-ms]}]
+  [{:keys [command directory timeout-ms environment]}]
   (when-not (seq command)
     (throw (ex-info "Cannot run an empty command" {:kind :empty-command})))
   (when (and (some? timeout-ms)
@@ -28,6 +28,15 @@
         builder (doto (ProcessBuilder. command)
                   (.directory (File. (str directory)))
                   (.redirectErrorStream true))]
+    (when environment
+      (when-not (and (map? environment)
+                     (every? #(and (string? %) (string? %))
+                             (mapcat identity environment)))
+        (throw (ex-info "Process environment overrides must be string pairs"
+                        {:kind :invalid-command-environment
+                         :environment environment})))
+      (doseq [[name value] environment]
+        (.put (.environment builder) name value)))
     (try
       (let [process (.start builder)
             output-future

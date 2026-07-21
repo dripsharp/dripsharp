@@ -5,7 +5,7 @@
             [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths]
             [vibeformer.project :as project]
-            [vibeformer.public-api-contract :as public-api]
+            [vibeformer.public-surface :as public-surface]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file FileVisitOption Files Path]))
 
@@ -13,9 +13,11 @@
   {"pkl-parser"
    {:schema-version 1
     :profile "pkl-parser"
+    :product-family :pkl
     :project-root "research/pkl"
+    :source-verifier 'vibeformer.project/verify-submodule!
     :gradle-project ":pkl-parser"
-    :public-api-contract {:source-module "pkl-parser"}
+    :destination-bundle 'vibeformer.pkl.java-project/rule-bundle
     :destination-config "vibeformer/config/pkl-parser.edn"}
    "pkl-core-value-model"
    {:configuration-file "vibeformer/config/pkl-core-value-model.edn"}})
@@ -48,28 +50,47 @@
                          (= profile-name (:profile profile)))
                      (string? (:profile profile))
                      (not (str/blank? (:profile profile)))
+                     (keyword? (:product-family profile))
+                     (string? (:project-root profile))
+                     (not (str/blank? (:project-root profile)))
+                     (let [selector (:destination-bundle profile)]
+                       (and (symbol? selector) (namespace selector)))
                      (re-matches #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$"
-                                 (or (:gradle-project profile) ""))
-                     (or (nil? (:project-root profile))
-                         (and (string? (:project-root profile))
-                              (not (str/blank? (:project-root profile)))))
+                                 (:gradle-project profile))
                      (or (nil? (:gradle-wrapper profile))
                          (and (string? (:gradle-wrapper profile))
                               (not (str/blank? (:gradle-wrapper profile)))))
+                     (or (nil? (:gradle-java-major profile))
+                         (and (integer? (:gradle-java-major profile))
+                              (pos? (:gradle-java-major profile))))
                      (or (nil? (:revision profile))
                          (and (string? (:revision profile))
                               (not (str/blank? (:revision profile)))))
+                     (or (nil? (:require-clean-source profile))
+                         (boolean? (:require-clean-source profile)))
+                     (or (nil? (:source-verifier profile))
+                         (let [selector (:source-verifier profile)]
+                           (and (symbol? selector) (namespace selector))))
                      (string? (:destination-config profile))
-                     (or (nil? (:dependency-profiles profile))
-                         (and (vector? (:dependency-profiles profile))
-                              (every? string? (:dependency-profiles profile))))
-                     (or (nil? (:public-api-contract profile))
-                         (and (map? (:public-api-contract profile))
-                              (= #{:source-module}
-                                 (set (keys (:public-api-contract profile))))
-                              (contains? #{"pkl-parser" "pkl-core"}
-                                         (get-in profile [:public-api-contract
-                                                          :source-module]))))
+                     (let [dependencies (:dependency-profiles profile)]
+                       (or (nil? dependencies)
+                           (and (vector? dependencies)
+                                (every? #(and (string? %)
+                                              (not (str/blank? %)))
+                                        dependencies)
+                                (= (count dependencies)
+                                   (count (distinct dependencies)))
+                                (not (some #{(:profile profile)}
+                                           dependencies)))))
+                     (or (nil? (:identity-guard profile))
+                         (and (map? (:identity-guard profile))
+                              (= #{:forbidden-fragments}
+                                 (set (keys (:identity-guard profile))))
+                              (vector? (get-in profile [:identity-guard
+                                                        :forbidden-fragments]))
+                              (every? #(and (string? %) (not (str/blank? %)))
+                                      (get-in profile [:identity-guard
+                                                       :forbidden-fragments]))))
                      (or (nil? (:seeds profile)) (vector? (:seeds profile))))
         (throw (ex-info "Invalid Vibeformer generation profile"
                         {:kind :invalid-generation-profile
@@ -105,8 +126,14 @@
    (let [root (paths/absolute workspace-root)
          source-project (if (map? revision)
                           revision
-                          {:path (or (:project-root discovery) "research/pkl")
+                          {:path (:project-root discovery)
                            :revision revision})
+         _ (when-not (:path source-project)
+             (throw (ex-info "Generation configuration has no source project path"
+                             {:kind :missing-source-project-path
+                              :discovery (select-keys discovery
+                                                      [:gradle-project
+                                                       :project-root])})))
          source-path (let [path (paths/path (:path source-project))]
                        (paths/absolute
                         (if (.isAbsolute path) path (paths/resolve-path root path))))
@@ -114,8 +141,7 @@
                           :revision (:revision source-project)}
          render-many #(->> % (map (partial portable-path root)) sort vec)]
      (cond-> {:schema-version 1
-              :project (keyword (or (not-empty (subs (or (:gradle-project discovery)
-                                                         ":pkl-parser") 1))
+              :project (keyword (or (not-empty (subs (:gradle-project discovery) 1))
                                     "root"))
               :source-project rendered-source
               :toolchain {:java-home (portable-path root (:java-home discovery))
@@ -125,13 +151,14 @@
                            :resource-root (portable-path root (:resource-root discovery))
                            :resources (render-many (:resources discovery))
                            :classpath (render-many (:classpath discovery))}}
-       (= "research/pkl" (:path rendered-source))
-       (assoc :submodule {:path "research/pkl" :revision (:revision source-project)})
+       (:submodule source-project)
+       (assoc :submodule (:submodule source-project))
        destination (assoc :destination destination)))))
 
 (defn- project-options
   [profile]
-  (select-keys profile [:project-root :gradle-wrapper :gradle-project]))
+  (select-keys profile [:project-root :gradle-wrapper :gradle-project
+                        :gradle-java-major]))
 
 (defn- manifest-name
   [prefix profile-name]
@@ -180,132 +207,219 @@
 
 (defn- source-project!
   [root profile verify-submodule-fn]
-  (let [configured-root (or (:project-root profile) "research/pkl")
+  (let [configured-root (:project-root profile)
         project-root (let [path (paths/path configured-root)]
                        (paths/absolute
                         (if (.isAbsolute path) path (paths/resolve-path root path))))]
-    (if (= (paths/resolve-path root "research" "pkl") project-root)
-      (verify-submodule-fn {:workspace-root root})
-      {:path project-root :revision (:revision profile)})))
+    (if-let [selector (:source-verifier profile)]
+      (let [verifier (if (= selector 'vibeformer.project/verify-submodule!)
+                       verify-submodule-fn
+                       (try
+                         (requiring-resolve selector)
+                         (catch Throwable error
+                           (throw (ex-info "Source verifier selection failed"
+                                           {:kind :unsupported-source-verifier
+                                            :source-verifier selector}
+                                           error)))))]
+        (when-not (ifn? verifier)
+          (throw (ex-info "Source verifier selector is not callable"
+                          {:kind :invalid-source-verifier
+                           :source-verifier selector})))
+        (verifier {:workspace-root root :project-root project-root
+                   :profile profile}))
+      (project/verify-checkout! {:workspace-root root
+                                 :project-root project-root
+                                 :revision (:revision profile)
+                                 :require-clean? (:require-clean-source profile)}))))
+
+(defn- identity-values [profile destination]
+  {:source [(:project-root profile)]
+   :output (vals (:output destination))
+   :package [(get-in destination [:package :id])]
+   :namespace (concat [(get-in destination [:project :assembly-name])
+                       (get-in destination [:project :root-namespace])]
+                      (vals (:namespaces destination))
+                      (vals (:namespace-prefixes destination)))})
+
+(defn- validate-identity-guard! [profile destination]
+  (doseq [fragment (get-in profile [:identity-guard :forbidden-fragments])
+          [area values] (identity-values profile destination)
+          value values
+          :when (str/includes? (str/lower-case (str value))
+                               (str/lower-case fragment))]
+    (throw (ex-info "Profile or destination leaks a forbidden product identity"
+                    {:kind :forbidden-product-identity
+                     :profile (:profile profile) :area area
+                     :fragment fragment :value value}))))
+
+(defn- prepare-profile!
+  [root profile-name read-profile-fn read-destination-fn]
+  (let [profile (read-profile-fn root profile-name)
+        destination (read-destination-fn root (:destination-config profile))
+        profile-selector (:destination-bundle profile)
+        destination-selector (:destination-bundle destination)]
+    (when-not (= profile-selector destination-selector)
+      (throw (ex-info "Profile and destination select different rule bundles"
+                      {:kind :ambiguous-destination-rule-bundle
+                       :profile (:profile profile)
+                       :profile-selection profile-selector
+                       :destination-selection destination-selector})))
+    (when-not (= (:product-family profile) (:product-family destination))
+      (throw (ex-info "Profile and destination product families differ"
+                      {:kind :product-incompatible-destination
+                       :profile (:profile profile)
+                       :profile-product-family (:product-family profile)
+                       :destination-product-family (:product-family destination)})))
+    (let [bundle (java-project/resolve-rule-bundle!
+                  {:configuration destination :resolved-model nil})]
+      (when-not (= (:product-family profile) (:product-family bundle))
+        (throw (ex-info "Selected destination rule bundle is product-incompatible"
+                        {:kind :product-incompatible-destination-rule-bundle
+                         :profile (:profile profile)
+                         :profile-product-family (:product-family profile)
+                         :bundle (:id bundle)
+                         :bundle-product-family (:product-family bundle)})))
+      (when (and (seq (:runtime-sources destination))
+                 (nil? (get-in bundle [:rules :product-runtime-assets :assets])))
+        (throw (ex-info "Destination requests product runtime assets without that capability"
+                        {:kind :unsupported-product-runtime-assets
+                         :profile (:profile profile) :bundle (:id bundle)
+                         :runtime-sources (:runtime-sources destination)})))
+      (validate-identity-guard! profile destination)
+      (when-let [validate! (get-in bundle [:orchestration :validate-profile!])]
+        (validate! {:workspace-root root :profile profile
+                    :configuration destination}))
+      {:profile profile
+       :destination destination
+       :rule-bundle bundle
+       :public-surface-strategy
+       (public-surface/resolve-strategy! (:product-family profile)
+                                         (:public-surface destination))})))
 
 (defn- finish-emission!
-  [surface emission destination validate-generated-surface-fn]
+  [selection surface emission destination]
   (if-not surface
     emission
-    (let [metadata (validate-generated-surface-fn surface emission)
+    (let [metadata (public-surface/validate-generated! selection surface emission)
           file (paths/resolve-path (:project-root emission)
                                    (get-in destination [:output :public-metadata-file]))]
       (spit (str file) (str (pr-str metadata) "\n"))
       (assoc emission :public-metadata-file file :public-metadata metadata))))
 
 (defn- generate-with-executor!
-  "Cleans disposable output, resolves pkl-parser, and emits disposable project inputs."
+  "Preflights an explicit product/destination plan, then cleans disposable
+  output, discovers the selected Gradle projects, and emits them."
   [{:keys [workspace-root profile generate-dependencies? verify-submodule-fn discover-main-fn
            build-resolved-model-fn build-resolved-closure-fn
-           read-profile-fn read-destination-fn emit-project-fn
-           read-public-surface-fn validate-selected-surface-fn
-           validate-generated-surface-fn]
+           read-profile-fn read-destination-fn emit-project-fn]
     :or {verify-submodule-fn project/verify-submodule!
          discover-main-fn project/discover-main!
          build-resolved-model-fn spoon/build-resolved-model!
          build-resolved-closure-fn spoon/build-resolved-closure!
          read-profile-fn read-profile
          read-destination-fn java-project/read-configuration
-         emit-project-fn java-project/emit-project!
-         read-public-surface-fn public-api/generation-surface!
-         validate-selected-surface-fn public-api/validate-selected-surface!
-         validate-generated-surface-fn public-api/validate-generated-surface!}}]
+         emit-project-fn java-project/emit-project!}}]
   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
         profile-name (or profile "pkl-parser")
-        generation-profile (read-profile-fn root profile-name)
+        prepared (prepare-profile! root profile-name read-profile-fn read-destination-fn)
+        generation-profile (:profile prepared)
+        dependency-prepared
+        (if (= false generate-dependencies?)
+          []
+          (mapv #(prepare-profile! root % read-profile-fn read-destination-fn)
+                (:dependency-profiles generation-profile)))
         target (clean-directory! (paths/resolve-path root "vibeformer" "target"))
         source-project (source-project! root generation-profile verify-submodule-fn)
         manifest (paths/resolve-path target "gradle-main-inputs.tsv")
         discovery (discover-main-fn (merge {:workspace-root root :manifest manifest}
                                            (project-options generation-profile)))
-        destination (read-destination-fn root (:destination-config generation-profile))
+        destination (:destination prepared)
+        _ (when-let [validate! (get-in prepared
+                                       [:rule-bundle :orchestration
+                                        :validate-discovery!])]
+            (validate! {:workspace-root root :profile generation-profile
+                        :configuration destination :discovery discovery}))
         config (assoc (configuration root source-project discovery destination)
                       :generation-profile generation-profile)
-        surface (some->> (:public-api-contract generation-profile)
-                         (read-public-surface-fn root))
+        surface (public-surface/read! (:public-surface-strategy prepared) root)
         seeds (merge-seeds (:seeds generation-profile) (:seeds surface))
         java-model (if (seq seeds)
                      (build-resolved-closure-fn root discovery seeds)
                      (build-resolved-model-fn root discovery))
-        surface (when surface
-                  (validate-selected-surface-fn root surface java-model))
+        surface (public-surface/validate-selected!
+                 (:public-surface-strategy prepared) root surface java-model)
         dependency-emissions
-        (when (not= false generate-dependencies?)
-          (when-not (= (count (:dependency-profiles generation-profile))
-                       (count (distinct (:dependency-profiles generation-profile))))
-            (throw (ex-info "Generation dependency profiles must be unique"
-                            {:kind :duplicate-dependency-profile
-                             :profiles (:dependency-profiles generation-profile)})))
-          (concurrency/mapv-ordered
-           :dependency-profile-generation
-           (fn [dependency-name]
-             (let [dependency-profile (read-profile-fn root dependency-name)
-                   dependency-source-project
-                   (source-project! root dependency-profile verify-submodule-fn)
-                   dependency-manifest (paths/resolve-path
-                                        target (manifest-name "gradle-main-inputs-"
-                                                              dependency-name))
-                   dependency-discovery
-                   (discover-main-fn
-                    (merge {:workspace-root root :manifest dependency-manifest}
-                           (project-options dependency-profile)))
-                   dependency-destination
-                   (read-destination-fn root (:destination-config dependency-profile))
-                   dependency-surface
-                   (some->> (:public-api-contract dependency-profile)
-                            (read-public-surface-fn root))
-                   dependency-seeds
-                   (merge-seeds (:seeds dependency-profile)
-                                (:seeds dependency-surface))
-                   dependency-model
-                   (if (seq dependency-seeds)
-                     (build-resolved-closure-fn root dependency-discovery dependency-seeds)
-                     (build-resolved-model-fn root dependency-discovery))
-                   dependency-surface
-                   (when dependency-surface
-                     (validate-selected-surface-fn root dependency-surface
-                                                   dependency-model))
-                   dependency-emission
-                   (finish-emission!
-                    dependency-surface
-                    (emit-project-fn {:workspace-root root
-                                      :target target
-                                      :discovery dependency-discovery
-                                      :resolved-model dependency-model
-                                      :public-api-boundary dependency-surface
-                                      :configuration dependency-destination})
-                    dependency-destination validate-generated-surface-fn)]
-               (assoc dependency-emission
-                      :profile dependency-name
-                      :source-project dependency-source-project
-                      :public-api-boundary dependency-surface
-                      :destination dependency-destination)))
-           (:dependency-profiles generation-profile)))
+        (concurrency/mapv-ordered
+         :dependency-profile-generation
+         (fn [{dependency-profile :profile
+               dependency-destination :destination
+               dependency-bundle :rule-bundle
+               dependency-selection :public-surface-strategy}]
+           (let [dependency-name (:profile dependency-profile)
+                 dependency-source-project
+                 (source-project! root dependency-profile verify-submodule-fn)
+                 dependency-manifest
+                 (paths/resolve-path target
+                                     (manifest-name "gradle-main-inputs-"
+                                                    dependency-name))
+                 dependency-discovery
+                 (discover-main-fn
+                  (merge {:workspace-root root :manifest dependency-manifest}
+                         (project-options dependency-profile)))
+                 _ (when-let [validate! (get-in dependency-bundle
+                                                [:orchestration
+                                                 :validate-discovery!])]
+                     (validate! {:workspace-root root :profile dependency-profile
+                                 :configuration dependency-destination
+                                 :discovery dependency-discovery}))
+                 dependency-surface (public-surface/read! dependency-selection root)
+                 dependency-seeds
+                 (merge-seeds (:seeds dependency-profile)
+                              (:seeds dependency-surface))
+                 dependency-model
+                 (if (seq dependency-seeds)
+                   (build-resolved-closure-fn root dependency-discovery dependency-seeds)
+                   (build-resolved-model-fn root dependency-discovery))
+                 dependency-surface
+                 (public-surface/validate-selected!
+                  dependency-selection root dependency-surface dependency-model)
+                 dependency-emission
+                 (finish-emission!
+                  dependency-selection dependency-surface
+                  (emit-project-fn {:workspace-root root
+                                    :target target
+                                    :discovery dependency-discovery
+                                    :resolved-model dependency-model
+                                    :public-api-boundary dependency-surface
+                                    :configuration dependency-destination
+                                    :rule-bundle dependency-bundle})
+                  dependency-destination)]
+             (assoc dependency-emission
+                    :profile dependency-name
+                    :source-project dependency-source-project
+                    :public-api-boundary dependency-surface
+                    :public-surface-strategy dependency-selection
+                    :destination dependency-destination)))
+         dependency-prepared)
         emission-public-api-boundary
-        (when surface
-          (update surface :selection-evidence into
-                  (mapcat #(get-in % [:public-api-boundary :selection-evidence])
-                          dependency-emissions)))
+        (public-surface/emission-boundary
+         (:public-surface-strategy prepared) surface dependency-emissions)
         emission (finish-emission!
-                  surface
+                  (:public-surface-strategy prepared) surface
                   (emit-project-fn {:workspace-root root
                                     :target target
                                     :discovery discovery
                                     :resolved-model java-model
                                     :public-api-boundary emission-public-api-boundary
-                                    :configuration destination})
-                  destination validate-generated-surface-fn)
+                                    :configuration destination
+                                    :rule-bundle (:rule-bundle prepared)})
+                  destination)
         config-file (paths/resolve-path target "generation-config.edn")
         source-count (count (get-in config [:production :java-sources]))
         resources (get-in config [:production :resources])]
     (spit (str config-file) (str (pr-str config) "\n"))
     (println (format "Prepared %s: %d production Java files, %d production resource%s, %d classpath entries."
-                     (or (:gradle-project discovery) ":pkl-parser")
+                     (:gradle-project discovery)
                      source-count
                      (count resources)
                      (if (= 1 (count resources)) "" "s")
@@ -317,6 +431,8 @@
     (println "Disposable configuration:" (portable-path root config-file))
     (assoc config
            :java-model java-model
+           :public-api-boundary surface
+           :public-surface-strategy (:public-surface-strategy prepared)
            :dependency-emissions dependency-emissions
            :emission emission)))
 

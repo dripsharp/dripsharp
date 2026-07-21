@@ -1,4 +1,5 @@
 {:schema-version 1
+ :product-family :java-library
  :destination-bundle vibeformer.java-library/rule-bundle
  :project {:assembly-name "RawHttp.Core"
            :root-namespace "RawHttp.Core"
@@ -28,6 +29,7 @@
           :annotation-decisions-file "annotation-decisions.edn"}
  :namespaces {}
  :namespace-prefixes {"rawhttp.core" "RawHttp.Core"}
+ :destination-capabilities #{:java-compat :java-regex-unicode}
  :resources {"META-INF/services/rawhttp.core.body.encoding.HttpMessageDecoder"
              {:strategy :embedded-resource
               :destination "META-INF/services/rawhttp.core.body.encoding.HttpMessageDecoder"
@@ -41,5 +43,9 @@
    :artifact-sha256 "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"
    :destination-semantics :nullable-metadata
    :runtime-package false}}
- :public-surface {:strategy :complete-accessible-gradle-library
-                  :contract-file "vibeformer/validation/rawhttp-core/PublicSurface.tsv"}}
+ :public-surface {:strategy vibeformer.java-library/public-surface-strategy
+                  :contract-file "vibeformer/validation/rawhttp-core/PublicSurface.tsv"}
+ :package-consumer {:strategy :compile-only
+                    :project-file "RawHttp.Core.PackageConsumer.csproj"
+                    :compile-types ["RawHttp.Core.RawHttp"]
+                    :success-message "Independent RawHttp.Core package restore passed."}}

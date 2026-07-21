@@ -1,10 +1,12 @@
 {:schema-version 1
+ :product-family :pkl
  :destination-bundle vibeformer.pkl.java-project/rule-bundle
  :project {:assembly-name "Pkl.Parser"
            :root-namespace "Pkl.Parser"
            :target-framework "net8.0"
            :nullable "enable"
-           :implicit-usings false}
+           :implicit-usings false
+           :warnings-as-errors true}
  :package {:id "Pkl.Parser"
            :version "0.0.0-development"
            :title "Pkl parser for .NET"
@@ -27,6 +29,12 @@
               "org.pkl.parser.syntax" "Pkl.Parser.Syntax"
               "org.pkl.parser.syntax.generic" "Pkl.Parser.Syntax.Generic"
               "org.pkl.parser.util" "Pkl.Parser.Util"}
+ :public-surface {:strategy vibeformer.public-api-contract/strategy
+                  :source-module "pkl-parser"}
+ :package-consumer {:strategy :source-file
+                    :project-file "Pkl.Parser.PackageConsumer.csproj"
+                    :fixture-file "Program.cs"
+                    :success-message "Independent Pkl.Parser package consumer passed."}
  :resources {"org/pkl/parser/errorMessages.properties"
              {:strategy :embedded-resource
               :destination "org/pkl/parser/errorMessages.properties"

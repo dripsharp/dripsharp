@@ -330,8 +330,18 @@
                    {:element name :expected expected :actual actual}))))
       (require-exact-children!
        metadata
-       (concat (map first configured-elements) ["repository" "dependencies"])
+       (concat (map first configured-elements)
+               (when (:license-expression package) ["license"])
+               ["repository" "dependencies"])
        "package/metadata")
+      (when-let [expected-license (:license-expression package)]
+        (let [license (exactly-one-child! metadata "license" "package/metadata")]
+          (require-exact-attributes! license {"type" "expression"}
+                                     "package/metadata/license")
+          (require-exact-children! license [] "package/metadata/license")
+          (when-not (= expected-license (.getTextContent license))
+            (fail! "NuGet license metadata does not match the configured expression"
+                   {:expected expected-license :actual (.getTextContent license)}))))
       (let [repository (exactly-one-child! metadata "repository" "package/metadata")
             expected-repository {"type" (:repository-type package)
                                  "url" (:repository-url package)
@@ -580,15 +590,27 @@
        "  </ItemGroup>\n"
        "</Project>\n"))
 
-(def ^:private consumer-profiles
-  {"pkl-parser"
-   {:project-file "Pkl.Parser.PackageConsumer.csproj"
-    :fixture-file "Program.cs"
-    :success-message "Independent Pkl.Parser package consumer passed."}
-   "pkl-core-value-model"
-   {:project-file "Pkl.Core.PackageConsumer.csproj"
-    :fixture-file "Pkl.Core.Program.cs"
-    :success-message "Independent Pkl.Core package consumer passed."}})
+(defn- csharp-string [value]
+  (str "\""
+       (-> (str value)
+           (str/replace "\\" "\\\\")
+           (str/replace "\"" "\\\"")
+           (str/replace "\r" "\\r")
+           (str/replace "\n" "\\n"))
+       "\""))
+
+(defn- compile-only-consumer [success-message compile-types]
+  (str "using System;\n\n"
+       "internal static class Program\n"
+       "{\n"
+       "    private static void Main()\n"
+       "    {\n"
+       (apply str
+              (for [type (sort compile-types)]
+                (str "        _ = typeof(global::" type ");\n")))
+       "        Console.WriteLine(" (csharp-string success-message) ");\n"
+       "    }\n"
+       "}\n"))
 
 (defn inspect-consumer-dependencies!
   "Proves that the generated consumer project has one package reference, no
@@ -600,8 +622,8 @@
                                    project)
         expected-reference [(:id primary-identity) (:version primary-identity)]
         forbidden-project (->> [#"<ProjectReference\b" #"<Compile\b"
-                                 #"<Reference\b" #"(?i)target/generated"
-                                 #"(?i)\.\./.*\.csproj"]
+                                #"<Reference\b" #"(?i)target/generated"
+                                #"(?i)\.\./.*\.csproj"]
                                (filter #(re-find % project))
                                (mapv str))]
     (when-not (= [expected-reference] (mapv #(vec (rest %)) package-references))
@@ -816,7 +838,8 @@
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          profile (or profile "pkl-parser")
          first-verification
-         (verify-fn {:profile profile :build-configuration "Release"})
+         (verify-fn {:workspace-root root :profile profile
+                     :build-configuration "Release"})
          first-build-configuration (:build-configuration first-verification)
          first-specs (package-specs (:generation first-verification))
          first-output (Files/createTempDirectory
@@ -826,7 +849,8 @@
        (doseq [spec first-specs]
          (pack-project! run-command! first-build-configuration first-output spec))
        (let [verification
-             (verify-fn {:profile profile :build-configuration "Release"})
+             (verify-fn {:workspace-root root :profile profile
+                         :build-configuration "Release"})
              generation (:generation verification)
              build-configuration (:build-configuration verification)
              specs (package-specs generation)
@@ -841,7 +865,9 @@
                    :first first-plan :second second-plan}))
          (let [package-assembly-names
                (mapv #(get-in % [:destination :project :assembly-name]) specs)
-               repository-commit (repository-commit! run-command! root)
+               repository-commit
+               (or (get-in generation [:destination :package :repository-commit])
+                   (repository-commit! run-command! root))
                proof-root (harness/clean-directory!
                            (paths/resolve-path root "vibeformer" "target" "package-proof"))
                second-output (doto (paths/resolve-path proof-root "second-pack")
@@ -947,14 +973,14 @@
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          profile (or profile "pkl-parser")
-         consumer-profile (or (get consumer-profiles profile)
-                              (fail! "Profile has no independent package-consumer fixture"
-                                     {:profile profile :supported (sort (keys consumer-profiles))}))
          package-proof (pack-fn {:workspace-root root :profile profile
                                  :verify-fn verify-fn :run-command! run-command!})
          verification (:verification package-proof)
          generation (:generation verification)
          configuration (:destination generation)
+         consumer-profile (or (:package-consumer configuration)
+                              (fail! "Destination has no independent package-consumer contract"
+                                     {:profile profile}))
          {:keys [id version]} (:package configuration)
          target-framework (get-in configuration [:project :target-framework])
          consumer-target-framework
@@ -967,13 +993,16 @@
          packages (doto (paths/resolve-path proof-root "packages")
                     (Files/createDirectories
                      (make-array java.nio.file.attribute.FileAttribute 0)))
-         consumer-project-file (paths/resolve-path consumer (:project-file consumer-profile))
+         consumer-project-file (paths/resolve-path consumer
+                                                   (:project-file consumer-profile))
          nuget-config-file (paths/resolve-path consumer "NuGet.Config")
          consumer-source (paths/resolve-path consumer "Program.cs")
-         fixture-source (paths/resolve-path root "vibeformer" "validation"
-                                            "package-consumer" (:fixture-file consumer-profile))
+         fixture-source (when (= :source-file (:strategy consumer-profile))
+                          (paths/resolve-path root "vibeformer" "validation"
+                                              "package-consumer"
+                                              (:fixture-file consumer-profile)))
          identities (mapv :identity (:packages package-proof))]
-     (when-not (paths/regular-file? fixture-source)
+     (when (and fixture-source (not (paths/regular-file? fixture-source)))
        (fail! "Independent package-consumer source is missing"
               {:path (str fixture-source)}))
      (let [artifact (:artifact package-proof)
@@ -981,8 +1010,12 @@
        (write-text! consumer-project-file
                     (consumer-project id version consumer-target-framework))
        (write-text! nuget-config-file (nuget-config feed (map :id identities)))
-       (Files/copy fixture-source consumer-source
-                   (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+       (if fixture-source
+         (Files/copy fixture-source consumer-source
+                     (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+         (write-text! consumer-source
+                      (compile-only-consumer (:success-message consumer-profile)
+                                             (:compile-types consumer-profile))))
        (run-command! {:command ["dotnet" "restore" (str consumer-project-file)
                                 "--configfile" (str nuget-config-file)
                                 "--packages" (str packages)
@@ -992,31 +1025,31 @@
              (inspect-consumer-dependencies!
               consumer-project-file (paths/resolve-path consumer "obj" "project.assets.json")
               packages (:identity package-proof) identities)]
-       (run-command! {:command ["dotnet" "build" (str consumer-project-file)
-                                "--nologo" "--verbosity:minimal" "--no-restore"
-                                "--no-incremental" "-warnaserror"]
-                      :directory consumer})
-       (let [run-result
-             (run-command! {:command ["dotnet" "run"
-                                      "--project" (str consumer-project-file)
-                                      "--no-build" "--no-restore"]
-                            :directory consumer})
-             identity {:id id :version version :sha256 (sha256 artifact)
-                       :file (str (.getFileName ^Path artifact))}]
-         (when-not (str/includes? (:output run-result)
-                                  (:success-message consumer-profile))
-           (fail! "Independent package consumer did not report successful behavior checks"
-                  {:output (:output run-result)}))
-         (println "Independent NuGet consumption passed:" (pr-str identity))
-         {:verification verification
-          :artifact artifact
-          :identity identity
-          :inspection inspection
-          :packages (:packages package-proof)
-          :feed feed
-          :packing-summary (:summary package-proof)
-          :dependency-proof dependency-proof
-          :proof-root proof-root
-          :packages-root packages
-          :consumer-root consumer
-          :run run-result}))))))
+         (run-command! {:command ["dotnet" "build" (str consumer-project-file)
+                                  "--nologo" "--verbosity:minimal" "--no-restore"
+                                  "--no-incremental" "-warnaserror"]
+                        :directory consumer})
+         (let [run-result
+               (run-command! {:command ["dotnet" "run"
+                                        "--project" (str consumer-project-file)
+                                        "--no-build" "--no-restore"]
+                              :directory consumer})
+               identity {:id id :version version :sha256 (sha256 artifact)
+                         :file (str (.getFileName ^Path artifact))}]
+           (when-not (str/includes? (:output run-result)
+                                    (:success-message consumer-profile))
+             (fail! "Independent package consumer did not report successful behavior checks"
+                    {:output (:output run-result)}))
+           (println "Independent NuGet consumption passed:" (pr-str identity))
+           {:verification verification
+            :artifact artifact
+            :identity identity
+            :inspection inspection
+            :packages (:packages package-proof)
+            :feed feed
+            :packing-summary (:summary package-proof)
+            :dependency-proof dependency-proof
+            :proof-root proof-root
+            :packages-root packages
+            :consumer-root consumer
+            :run run-result}))))))

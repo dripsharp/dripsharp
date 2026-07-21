@@ -34,11 +34,14 @@
 
 (defn- configuration []
   {:schema-version 1
+   :product-family :java-library
+   :destination-bundle 'vibeformer.project-emission-test/minimal-rule-bundle
    :project {:assembly-name "Example.Library"
              :root-namespace "Example.Library"
              :target-framework "net8.0"
              :nullable "enable"
-             :implicit-usings false}
+             :implicit-usings false
+             :warnings-as-errors true}
    :package {:id "Example.Library"
              :version "1.0.0"
              :title "Example library"
@@ -58,6 +61,7 @@
             :public-metadata-file "public-metadata.edn"
             :annotation-decisions-file "annotation-decisions.edn"}
    :namespaces {"example" "Example.Library"}
+   :public-surface {:strategy 'vibeformer.harness-test/java-library-test-surface-strategy}
    :resources {}})
 
 (defn- source-ref [^CtElement element rule extra]
@@ -71,6 +75,7 @@
 (defn- minimal-rule-bundle []
   {:schema-version 1
    :id :minimal-java-library
+   :product-family :java-library
    :rules
    {:structural-declarations
     {:create-template (fn [_ _] {})
@@ -242,7 +247,8 @@
     (is (= #{:structural-declarations :resolved-mappings :namespace-policy
              :project-policy :resource-policy :destination-bridges}
            (set (keys (:required-components contract)))))
-    (is (= {:product-runtime-assets #{:assets}}
+    (is (= {:product-runtime-assets #{:assets}
+            :orchestration #{:validate-profile! :validate-discovery!}}
            (:optional-components contract)))
     (is (not (re-find #"(?i)vibeformer\\.pkl|org\\.pkl|Pkl\\.(?:Core|Parser)|research/pkl"
                       source)))))

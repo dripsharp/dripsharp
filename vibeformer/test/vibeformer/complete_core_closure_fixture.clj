@@ -2,6 +2,7 @@
   (:require [clojure.edn :as edn]
             [vibeformer.concurrency :as concurrency]
             [vibeformer.harness :as harness]
+            [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
             [vibeformer.project :as project]
@@ -23,6 +24,8 @@
                        (slurp (str (paths/resolve-path
                                     root "vibeformer" "config"
                                     "pkl-core-value-model.edn"))))
+        destination (java-project/read-configuration
+                     root (:destination-config configuration))
         status-before (research-status root)
         manifest (Files/createTempFile "vibeformer-pkl-core-inputs" ".tsv"
                                        (make-array FileAttribute 0))
@@ -30,9 +33,10 @@
         discovery (project/discover-main!
                    {:workspace-root root
                     :manifest manifest
+                    :project-root (:project-root configuration)
                     :gradle-project (:gradle-project configuration)})
         surface (public-api/generation-surface!
-                 root (:public-api-contract configuration))
+                 root (dissoc (:public-surface destination) :strategy))
         seeds (harness/merge-seeds (:seeds configuration) (:seeds surface))
         frontend (spoon/build-frontend-model! root discovery)
         first-closure (concurrency/call-with-executor

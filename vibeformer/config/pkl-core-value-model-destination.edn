@@ -1,10 +1,12 @@
 {:schema-version 1
+ :product-family :pkl
  :destination-bundle vibeformer.pkl.java-project/rule-bundle
  :project {:assembly-name "Pkl.Core"
            :root-namespace "Pkl.Core"
            :target-framework "net8.0"
            :nullable "enable"
            :implicit-usings false
+           :warnings-as-errors true
            :no-warn ["CS0108" "CS0109" "CS0414" "CS0649" "CS0693"
                      "CS8600" "CS8601" "CS8602" "CS8603" "CS8604"
                      "CS8619" "CS8620" "CS8629" "CS8605" "CS0162"
@@ -29,6 +31,12 @@
           :annotation-decisions-file "annotation-decisions.edn"}
  :namespaces {"org.pkl.core" "Pkl.Core"}
  :namespace-prefixes {"org.pkl.core" "Pkl.Core"}
+ :public-surface {:strategy vibeformer.public-api-contract/strategy
+                  :source-module "pkl-core"}
+ :package-consumer {:strategy :source-file
+                    :project-file "Pkl.Core.PackageConsumer.csproj"
+                    :fixture-file "Pkl.Core.Program.cs"
+                    :success-message "Independent Pkl.Core package consumer passed."}
  :resources {}
  :project-references ["../pkl-parser/Pkl.Parser.csproj"]
  :runtime-sources ["vibeformer/runtime/Pkl.Core.Substrate.cs"

@@ -5,7 +5,7 @@
             [vibeformer.harness :as harness]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
-            [vibeformer.public-api-contract :as public-api])
+            [vibeformer.public-surface :as public-surface])
   (:import [clojure.lang ExceptionInfo]
            [java.nio.file Path]))
 
@@ -69,10 +69,13 @@
   ([{:keys [profile workspace-root build-configuration generate-fn run-command!
             verify-public-surface-fn]
      :or {generate-fn harness/generate! run-command! process/run!
-          verify-public-surface-fn public-api/verify-generated-packages!}}]
+          verify-public-surface-fn public-surface/verify-compiled!}}]
    (let [build-configuration (or build-configuration "Release")
-         generation (if profile
-                      (generate-fn {:profile profile})
+         generation-options (cond-> {}
+                              profile (assoc :profile profile)
+                              workspace-root (assoc :workspace-root workspace-root))
+         generation (if (seq generation-options)
+                      (generate-fn generation-options)
                       (generate-fn))
          emission (:emission generation)
          ^Path project-root (:project-root emission)

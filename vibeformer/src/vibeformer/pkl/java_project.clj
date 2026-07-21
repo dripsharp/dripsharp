@@ -204,10 +204,10 @@
       ;; owner, so select one stable object-closed owner at every reference.
       (str "global::" (destination-namespace ctx declaration) ".RrbTree<object>."
            (str/join "." (concat (map raw-generic-segment (rest (butlast declarations)))
-                                  [(pascal (.getSimpleName ^CtType leaf))])))
+                                 [(pascal (.getSimpleName ^CtType leaf))])))
       (str prefix
            (str/join "." (concat (map raw-generic-segment owners)
-                                  [(pascal (.getSimpleName ^CtType leaf))]))))))
+                                 [(pascal (.getSimpleName ^CtType leaf))]))))))
 
 (defn- occurrence! [ctx ^CtElement element expected-kind]
   (let [occurrence (.get ^IdentityHashMap (:occurrence-index ctx) element)]
@@ -673,7 +673,7 @@
 (defn- primitive-byte-array? [^CtTypeReference reference]
   (and (instance? CtArrayTypeReference reference)
        (= "byte" (some-> ^CtArrayTypeReference reference .getComponentType
-                          .getQualifiedName))))
+                         .getQualifiedName))))
 
 (defn- idiomatic-byte-array-reference? [^CtTypeReference reference]
   (and (primitive-byte-array? reference)
@@ -760,7 +760,7 @@
                     (when (< index (count definition-parameters))
                       (exact-product-signature-collection-adaptation
                        ctx (.getType ^CtParameter
-                                     (nth definition-parameters index))))))
+                            (nth definition-parameters index))))))
                 (top-definitions ctx method))))))
 
 (declare type-node)
@@ -1007,29 +1007,29 @@
              (= "org.pkl.core.StackFrameTransformer"
                 (some-> ^CtMethod element .getDeclaringType .getQualifiedName))
              (= "andThen" (.getSimpleName ^CtMethod element)))]
-  {:assembly (get-in ctx [:configuration :project :assembly-name])
-   :owner (if stack-frame-composition?
-            "Pkl.Core.StackFrameTransformerExtensions"
-            (destination-owner-name ctx element))
-   :kind (case kind
-           :type "type"
-           :constructor "constructor"
-           :record-component "property"
-           :enum-value "field"
-           :field (if (public-static-property-field? element)
-                    "property"
-                    "field")
-           :method "method"
-           nil)
-   :name (cond
-           (= :constructor kind) ".ctor"
-           (= :dotnet.declaration/functional-interface-method rule) "Invoke"
-           :else name)
-   :parameter-count (str (if stack-frame-composition?
-                           2
-                           (if (instance? CtExecutable element)
-                             (count (.getParameters ^CtExecutable element))
-                             0)))}))
+    {:assembly (get-in ctx [:configuration :project :assembly-name])
+     :owner (if stack-frame-composition?
+              "Pkl.Core.StackFrameTransformerExtensions"
+              (destination-owner-name ctx element))
+     :kind (case kind
+             :type "type"
+             :constructor "constructor"
+             :record-component "property"
+             :enum-value "field"
+             :field (if (public-static-property-field? element)
+                      "property"
+                      "field")
+             :method "method"
+             nil)
+     :name (cond
+             (= :constructor kind) ".ctor"
+             (= :dotnet.declaration/functional-interface-method rule) "Invoke"
+             :else name)
+     :parameter-count (str (if stack-frame-composition?
+                             2
+                             (if (instance? CtExecutable element)
+                               (count (.getParameters ^CtExecutable element))
+                               0)))}))
 
 (defn- register! [ctx ^CtElement element kind owner name signature rule]
   (let [id (declaration-id element kind)
@@ -1128,12 +1128,12 @@
 (defn- parameter-node
   ([ctx owner parameter] (parameter-node ctx owner parameter nil))
   ([ctx owner ^CtParameter parameter forced-type]
-  (let [name (identifier (.getSimpleName parameter))
-        type (or forced-type (type-node ctx (.getType parameter)))
-        prefix (when (.isVarArgs parameter) "params ")
-        node (sequence-node [(raw (or prefix "")) type (raw (str " " name))])]
-    (attach-declaration ctx node parameter :parameter owner name nil
-                        :java.declaration/parameter))))
+   (let [name (identifier (.getSimpleName parameter))
+         type (or forced-type (type-node ctx (.getType parameter)))
+         prefix (when (.isVarArgs parameter) "params ")
+         node (sequence-node [(raw (or prefix "")) type (raw (str " " name))])]
+     (attach-declaration ctx node parameter :parameter owner name nil
+                         :java.declaration/parameter))))
 
 (defn- formal-node [ctx owner ^CtTypeParameter parameter]
   (let [name (type-parameter-name parameter)
@@ -1175,7 +1175,6 @@
                     :owner owner :source (source-ref element :java.executable/pending)}]
     (swap! (:diagnostics ctx) conj diagnostic)
     id))
-
 
 (defn- current-body-context [ctx]
   ;; The complete semantic mapping registry is intentionally built once. Its
@@ -1358,7 +1357,7 @@
     (when-let [^CtType declaration (some-> superclass .getTypeDeclaration)]
       (let [methods (vec (.getMethods declaration))
             name-and-arity (filterv #(and (= (.getSimpleName method)
-                                               (.getSimpleName ^CtMethod %))
+                                             (.getSimpleName ^CtMethod %))
                                           (= (count (.getParameters method))
                                              (count (.getParameters ^CtMethod %))))
                                     methods)]
@@ -1575,7 +1574,7 @@
               [(raw "<")
                (sequence-node
                 (mapv #(with-source (raw (identifier (.getSimpleName ^CtTypeParameter %)))
-                                    % :dotnet.interface/deferred-type-parameter {})
+                         % :dotnet.interface/deferred-type-parameter {})
                       parameters)
                 ", ")
                (raw ">")]))}))
@@ -1720,7 +1719,7 @@
                              (when (and product-contract-parameters
                                         (< index (count product-contract-parameters)))
                                (.getType ^CtParameter
-                                         (nth product-contract-parameters index)))
+                                (nth product-contract-parameters index)))
                              adapted-contract?
                              (and contract-reference
                                   (or (product-signature-collection-adaptation
@@ -1741,7 +1740,7 @@
         body (.getBody method)
         words (method-modifiers ctx owner-type method body name)
         signature (str name "(" (str/join "," (map #(.getQualifiedName (.getType ^CtParameter %))
-                                                    (.getParameters method))) ")")
+                                                   (.getParameters method))) ")")
         ;; The declaration reference carries Spoon's resolved substitution for
         ;; inherited generic contracts (for example ParserVisitor<Result>
         ;; implemented as BaseParserVisitor<T>).  Top-definition references
@@ -1772,20 +1771,20 @@
         substituted-return (when (and base-definition (not covariant-class-return?))
                              (substituted-direct-base-return owner-type base-definition))
         rrb-nested-split? (and (str/starts-with? (.getQualifiedName owner-type)
-                                                "org.pkl.core.util.paguro.RrbTree$")
+                                                 "org.pkl.core.util.paguro.RrbTree$")
                                (= "split" (.getSimpleName method))
                                (= 1 (count (.getParameters method))))
         return-contract (when-not (or rrb-nested-split? covariant-class-return?)
                           (some (fn [^CtMethod definition]
-                                (when (and definition
-                                           (selected-declaration? ctx definition)
-                                           (not (type-parameter-component?
-                                                 (.getType definition)))
-                                           (.containsKey ^IdentityHashMap (:occurrence-index ctx)
-                                                         (.getType definition))
-                                           (not= (destination-type-key (.getType method))
-                                                 (destination-type-key (.getType definition))))
-                                  definition))
+                                  (when (and definition
+                                             (selected-declaration? ctx definition)
+                                             (not (type-parameter-component?
+                                                   (.getType definition)))
+                                             (.containsKey ^IdentityHashMap (:occurrence-index ctx)
+                                                           (.getType definition))
+                                             (not= (destination-type-key (.getType method))
+                                                   (destination-type-key (.getType definition))))
+                                    definition))
                                 (cons base-definition (top-definitions ctx method))))
         external-object-interface-contract?
         (some (fn [^CtMethod definition]
@@ -1824,9 +1823,9 @@
                           :idiomatic-byte-array
                           (raw "byte[]")
                           (:read-only-product-list :read-only-product-map
-                           :read-only-product-set :read-only-product-collection)
+                                                   :read-only-product-set :read-only-product-collection)
                           (type-node ctx (.getType ^CtMethod
-                                                   (or product-contract method)))
+                                          (or product-contract method)))
                           nil)
                         forced-return
                         (if (and external-object-interface-contract?
@@ -2342,12 +2341,12 @@
                :local-name
                (fn [^CtElement element]
                  (if-let [index (first (keep-indexed
-                                       (fn [index declaration]
-                                         (when (or (identical? element declaration)
-                                                   (= (.getSimpleName element)
-                                                      (.getSimpleName ^CtElement declaration)))
-                                           index))
-                                       capture-declarations))]
+                                        (fn [index declaration]
+                                          (when (or (identical? element declaration)
+                                                    (= (.getSimpleName element)
+                                                       (.getSimpleName ^CtElement declaration)))
+                                            index))
+                                        capture-declarations))]
                    (str "this." (nth capture-names index))
                    ((:local-name original-services) element)))
                :this-node
@@ -2422,7 +2421,7 @@
                    (sequence-node
                     [(raw (str "this." (field-name member) " = "))
                      (translated-node ctx (.getDefaultExpression ^CtField member))
-                     (raw ";")])) )
+                     (raw ";")])))
                (.getTypeMembers anonymous-class)))
         base-reference (.getType call)
         base-name (.getQualifiedName ^CtTypeReference base-reference)
@@ -2984,8 +2983,8 @@
                 delegate-node
                 (sequence-node
                  [(raw (join-words [(if (exported-product-type? ctx type)
-                                     (visibility type "internal")
-                                     "internal")
+                                      (visibility type "internal")
+                                      "internal")
                                     "delegate"]))
                   (type-node ctx (.getType functional-method))
                   (raw (str " " name)) node
@@ -3201,6 +3200,7 @@
   []
   {:schema-version 1
    :id :pkl
+   :product-family :pkl
    :rules
    {:structural-declarations
     {:create-template emission-template

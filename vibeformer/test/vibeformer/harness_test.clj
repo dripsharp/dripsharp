@@ -35,12 +35,66 @@
         resource-root (.getParent ^Path resource)
         classpath (create-file! root "cache/jspecify.jar")]
     {:java-home java-home
+     :project-root (paths/resolve-path root "research/pkl")
+     :gradle-project ":pkl-parser"
      :java-release 17
      :preview-features false
      :java-sources [source-b source-a]
      :resource-root resource-root
      :resources [resource]
      :classpath [classpath]}))
+
+(defn pkl-test-surface-strategy []
+  {:schema-version 1 :id :pkl-test-surface :product-family :pkl
+   :read! (fn [_ _] nil)
+   :validate-selected! (fn [_ surface _] surface)
+   :validate-generated! (fn [_ _] nil)
+   :verify-compiled! (fn [& _] {})})
+
+(defn java-library-test-surface-strategy []
+  {:schema-version 1 :id :java-library-test-surface
+   :product-family :java-library
+   :read! (fn [_ _] nil)
+   :validate-selected! (fn [_ surface _] surface)
+   :validate-generated! (fn [_ _] nil)
+   :verify-compiled! (fn [& _] {})})
+
+(defn- fake-destination [family bundle surface file]
+  {:schema-version 1
+   :product-family family
+   :destination-bundle bundle
+   :public-surface {:strategy surface}
+   :file file})
+
+(defn- preflight-error [profile destination]
+  (let [root (temp-directory)
+        stale (create-file! root "vibeformer/target/stale/output.cs")
+        error (try
+                (harness/generate!
+                 {:workspace-root root
+                  :profile "fixture"
+                  :read-profile-fn (fn [_ _] profile)
+                  :read-destination-fn (fn [_ _] destination)})
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    {:error error :stale? (paths/regular-file? stale)}))
+
+(defn- guarded-profile [bundle]
+  {:schema-version 1 :profile "fixture" :product-family :java-library
+   :project-root "." :gradle-project ":fixture"
+   :destination-bundle bundle :destination-config "fixture.edn"
+   :identity-guard {:forbidden-fragments ["pkl"]}})
+
+(defn- guarded-destination [bundle]
+  {:schema-version 1 :product-family :java-library
+   :destination-bundle bundle
+   :project {:assembly-name "Example.Library"
+             :root-namespace "Example.Library"}
+   :package {:id "Example.Library"}
+   :output {:project-directory "generated/example"}
+   :namespaces {"example" "Example.Library"}
+   :public-surface
+   {:strategy 'vibeformer.harness-test/java-library-test-surface-strategy}})
 
 (deftest generation-cleans-output-and-writes-configuration
   (let [root (temp-directory)
@@ -49,7 +103,9 @@
         saw-clean-target? (atom false)
         config (harness/generate!
                 {:workspace-root root
-                 :verify-submodule-fn (fn [_] {:revision "tracked-revision"})
+                 :verify-submodule-fn
+                 (fn [_] {:path (paths/resolve-path root "research/pkl")
+                          :revision "tracked-revision"})
                  :discover-main-fn
                  (fn [{:keys [manifest gradle-project]}]
                    (reset! saw-clean-target?
@@ -59,10 +115,11 @@
                    (assoc discovery :gradle-project gradle-project))
                  :read-destination-fn
                  (fn [_ config-file]
-                   {:schema-version 1
-                    :fixture true
-                    :config-file config-file})
-                 :read-public-surface-fn (fn [_ _] nil)
+                   (assoc (fake-destination
+                           :pkl 'vibeformer.pkl.java-project/rule-bundle
+                           'vibeformer.harness-test/pkl-test-surface-strategy
+                           config-file)
+                          :fixture true :config-file config-file))
                  :build-resolved-model-fn
                  (fn [_ _]
                    (spoon/map->ResolvedJavaModel
@@ -85,9 +142,8 @@
     (is @saw-clean-target?)
     (is (paths/regular-file? (paths/resolve-path root "vibeformer/target/generation-config.edn")))
     (is (= 2 (count (get-in config [:production :java-sources]))))
-    (is (= {:schema-version 1 :fixture true
-            :config-file "vibeformer/config/pkl-parser.edn"}
-           (:destination config)))
+    (is (= "vibeformer/config/pkl-parser.edn"
+           (get-in config [:destination :config-file])))
     (is (= ["research/pkl/pkl-parser/src/main/java/A.java"
             "research/pkl/pkl-parser/src/main/java/B.java"]
            (get-in config [:production :java-sources])))))
@@ -103,14 +159,20 @@
                  :read-profile-fn (fn [_ profile-name]
                                     (harness/read-profile (paths/workspace-root)
                                                           profile-name))
-                 :verify-submodule-fn (fn [_] {:revision "tracked-revision"})
+                 :verify-submodule-fn
+                 (fn [_] {:path (paths/resolve-path root "research/pkl")
+                          :revision "tracked-revision"})
                  :discover-main-fn (fn [options]
                                      (swap! captured assoc :discovery-options options)
                                      (assoc discovery :gradle-project (:gradle-project options)))
                  :read-destination-fn (fn [_ file]
                                         (swap! captured assoc :destination-file file)
-                                        {:schema-version 1 :fixture true})
-                 :read-public-surface-fn (fn [_ _] nil)
+                                        (assoc (fake-destination
+                                                :pkl
+                                                'vibeformer.pkl.java-project/rule-bundle
+                                                'vibeformer.harness-test/pkl-test-surface-strategy
+                                                file)
+                                               :fixture true))
                  :build-resolved-closure-fn
                  (fn [_ _ seeds]
                    (swap! captured assoc :seeds seeds)
@@ -162,6 +224,61 @@
     (is (= :unknown-generation-profile (:kind (ex-data error))))
     (is (paths/regular-file? stale))))
 
+(deftest missing-destination-selection-fails-before-cleaning-output
+  (let [root (temp-directory)
+        stale (create-file! root "vibeformer/target/stale/output.cs")
+        profile (write-file!
+                 root "profiles/missing-bundle.edn"
+                 (str "{:schema-version 1\n"
+                      " :profile \"missing-bundle\"\n"
+                      " :product-family :java-library\n"
+                      " :project-root \"example\"\n"
+                      " :gradle-project \":library\"\n"
+                      " :destination-config \"config/example.edn\"}\n"))
+        error (try
+                (harness/generate! {:workspace-root root :profile (str profile)})
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :invalid-generation-profile (:kind (ex-data error))))
+    (is (paths/regular-file? stale))))
+
+(deftest destination-selection-fails-closed-before-cleaning-output
+  (let [java-bundle 'vibeformer.java-library/rule-bundle
+        pkl-bundle 'vibeformer.pkl.java-project/rule-bundle
+        cases
+        [[:unknown :unsupported-destination-rule-bundle
+          (guarded-profile 'missing.destination/rule-bundle)
+          (guarded-destination 'missing.destination/rule-bundle)]
+         [:ambiguous :ambiguous-destination-rule-bundle
+          (guarded-profile java-bundle) (guarded-destination pkl-bundle)]
+         [:product-incompatible :product-incompatible-destination-rule-bundle
+          (guarded-profile pkl-bundle) (guarded-destination pkl-bundle)]
+         [:product-runtime :unsupported-product-runtime-assets
+          (guarded-profile java-bundle)
+          (assoc (guarded-destination java-bundle)
+                 :runtime-sources ["vibeformer/runtime/product-only.cs"])]]]
+    (doseq [[label expected profile destination] cases]
+      (let [{:keys [error stale?]} (preflight-error profile destination)]
+        (is (= expected (:kind (ex-data error))) (name label))
+        (is stale? (str (name label) " must fail before output cleanup"))))))
+
+(deftest non-product-identity-guard-covers-source-output-package-and-namespace
+  (let [bundle 'vibeformer.java-library/rule-bundle
+        profile (guarded-profile bundle)
+        destination (guarded-destination bundle)
+        cases
+        [[:source (assoc profile :project-root "research/pkl-shadow") destination]
+         [:output profile
+          (assoc-in destination [:output :project-directory] "generated/pkl-shadow")]
+         [:package profile (assoc-in destination [:package :id] "Pkl.Shadow")]
+         [:namespace profile
+          (assoc-in destination [:project :root-namespace] "Pkl.Shadow")]]]
+    (doseq [[area profile destination] cases]
+      (let [{:keys [error stale?]} (preflight-error profile destination)]
+        (is (= :forbidden-product-identity (:kind (ex-data error))))
+        (is (= area (:area (ex-data error))))
+        (is stale?)))))
+
 (deftest external-profile-configures-a-non-pkl-project
   (let [root (temp-directory)
         project-root (doto (paths/resolve-path root "examples/acme")
@@ -170,9 +287,11 @@
            root "profiles/acme.edn"
            (str "{:schema-version 1\n"
                 " :profile \"acme\"\n"
+                " :product-family :java-library\n"
                 " :project-root \"examples/acme\"\n"
                 " :gradle-wrapper \"tools/gradlew\"\n"
                 " :gradle-project \":library\"\n"
+                " :destination-bundle vibeformer.java-library/rule-bundle\n"
                 " :destination-config \"config/acme.edn\"\n"
                 " :dependency-profiles [\"profiles/dependency.edn\"]}\n"))
         discovery (fixture-discovery root)
@@ -189,7 +308,12 @@
                    (assoc discovery
                           :project-root project-root
                           :gradle-project (:gradle-project options)))
-                 :read-destination-fn (fn [_ file] {:schema-version 1 :file file})
+                 :read-destination-fn
+                 (fn [_ file]
+                   (fake-destination
+                    :java-library 'vibeformer.java-library/rule-bundle
+                    'vibeformer.harness-test/java-library-test-surface-strategy
+                    file))
                  :build-resolved-model-fn
                  (fn [_ _]
                    (spoon/map->ResolvedJavaModel
@@ -233,17 +357,24 @@
           (fn [_ profile-name]
             {:schema-version 1
              :profile profile-name
+             :product-family :java-library
+             :project-root "."
              :gradle-project (str ":" profile-name)
+             :destination-bundle 'vibeformer.java-library/rule-bundle
              :destination-config (str profile-name ".edn")
              :dependency-profiles (when (= "main" profile-name) ["dependency-b" "dependency-a"])})
-          :verify-submodule-fn (fn [_] {:revision "tracked-revision"})
           :discover-main-fn
           (fn [{:keys [gradle-project]}]
             (when-not (= ":main" gradle-project)
               (swap! dependency-threads conj (.getName (Thread/currentThread)))
               (Thread/sleep 30))
             (assoc discovery :gradle-project gradle-project))
-          :read-destination-fn (fn [_ file] {:schema-version 1 :file file})
+          :read-destination-fn
+          (fn [_ file]
+            (fake-destination
+             :java-library 'vibeformer.java-library/rule-bundle
+             'vibeformer.harness-test/java-library-test-surface-strategy
+             file))
           :build-resolved-model-fn
           (fn [_ _]
             (spoon/map->ResolvedJavaModel

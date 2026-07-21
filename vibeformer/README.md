@@ -95,22 +95,35 @@ contract:
 ```clojure
 {:schema-version 1
  :profile "example-library"
+ :product-family :java-library
  :project-root "../example-java"
  :gradle-wrapper "gradlew"
  :gradle-project ":library"
+ :destination-bundle vibeformer.java-library/rule-bundle
  :destination-config "vibeformer/config/example-library.edn"
+ :identity-guard {:forbidden-fragments ["reserved-product-name"]}
  :dependency-profiles []}
 ```
 
 `project-root` may be workspace-relative or absolute, `gradle-wrapper` may be
 project-relative or absolute, and `gradle-project` may be `:` for the build's
-root project. The wrapper runs the selected production compilation and resource
-tasks, so ingestion sees configured and plugin-generated Java sources,
-processed resources, the fully resolved compile classpath, and compiled outputs
-from Gradle project dependencies. Projects without compile dependencies have an
-empty classpath. `dependency-profiles` independently generates translated .NET
+root project. Older wrappers can select a compatible installed runtime with
+`:gradle-java-major`. The profile and destination must name the same qualified
+bundle selector and product family; the selected bundle, public-surface
+strategy, optional runtime assets, and identity guard are validated before
+`target` is cleaned or Gradle is run. The destination also declares nullable
+and warnings-as-errors policy, deterministic package metadata, exact source
+project/external dependencies, resources, an explicit public-surface strategy,
+and either a source-backed or compile-only isolated package consumer.
+
+The wrapper runs the selected production compilation and resource tasks, so
+ingestion sees configured and plugin-generated Java sources, processed
+resources, the fully resolved compile classpath, source project dependencies,
+external coordinates and artifact hashes, and compiled outputs from Gradle
+project dependencies. Projects without compile dependencies have an empty
+classpath. `dependency-profiles` independently generates translated .NET
 project/package dependencies; each referenced profile can select its own Java
-build root and Gradle project.
+build root, Gradle project, destination bundle, and public contract.
 
 `verify` performs that same clean generation and immediately builds the fresh
 project with warnings as errors. Compiler diagnostics are parsed and correlated
@@ -125,9 +138,11 @@ The pkl-core profile currently requires an explicit larger JVM heap, such as
 `package [profile]` first performs the clean `verify` gate, packs that exact generated
 build into a fresh local feed, and restores, builds, and runs a newly created
 consumer with an isolated NuGet package cache. The consumer has no project
-reference or access to generated source. The default profile exercises the
-public parser package; `pkl-core-value-model` exercises the packed evaluator and
-value-model surface plus its exact package dependency on `Pkl.Parser`.
+reference or access to generated source. Consumer selection belongs to the
+destination configuration rather than a profile-name switch. The default Pkl
+profile still exercises the public parser package; `pkl-core-value-model`
+exercises the packed evaluator and value-model surface plus its exact package
+dependency on `Pkl.Parser`.
 
 `differential` performs both complete package gates. It separately builds and
 runs the pinned upstream JVM parser as an oracle, then runs a package-only .NET

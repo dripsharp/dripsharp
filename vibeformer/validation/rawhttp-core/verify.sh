@@ -72,7 +72,12 @@ grep -Fq ":assembly-name \"$(contract_value destination-assembly)\"" "$destinati
   || fail "destination assembly does not match the project contract"
 grep -Fq ":root-namespace \"$(contract_value destination-root-namespace)\"" "$destination_file" \
   || fail "destination namespace does not match the project contract"
-if grep -Eiq '(^|[^[:alpha:]])pkl([^[:alpha:]]|$)' "$profile_file" "$destination_file"; then
+grep -Fq ':identity-guard {:forbidden-fragments ["pkl"]}' "$profile_file" \
+  || fail "profile does not explicitly reject Pkl identity leaks"
+if {
+  sed '/^[[:space:]]*:identity-guard {:forbidden-fragments \["pkl"\]}}$/d' "$profile_file"
+  cat "$destination_file"
+} | grep -Eiq '(^|[^[:alpha:]])pkl([^[:alpha:]]|$)'; then
   fail "the independent profile or destination imports a Pkl identity"
 fi
 

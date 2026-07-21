@@ -61,7 +61,8 @@
                              (make-array OpenOption 0))
         result
         (compiler/verify-clean-build!
-         {:profile "pkl-core-value-model"
+         {:workspace-root root
+          :profile "pkl-core-value-model"
           :generate-fn
           (fn [options]
             (reset! generated-options options)
@@ -76,7 +77,8 @@
           (fn [workspace generation configuration]
             (reset! verified [workspace generation configuration])
             {:contract-members 2})})]
-    (is (= {:profile "pkl-core-value-model"} @generated-options))
+    (is (= {:workspace-root root :profile "pkl-core-value-model"}
+           @generated-options))
     (is (= ["--configuration" "Release"]
            (->> @command (drop-while #(not= "--configuration" %)) (take 2) vec)))
     (is (= "Release" (nth @verified 2)))

@@ -1,10 +1,12 @@
 {:schema-version 1
  :profile "pkl-core-value-model"
+ :product-family :pkl
  :project-root "research/pkl"
+ :source-verifier vibeformer.project/verify-submodule!
  :gradle-project ":pkl-core"
+ :destination-bundle vibeformer.pkl.java-project/rule-bundle
  :destination-config "vibeformer/config/pkl-core-value-model-destination.edn"
  :dependency-profiles ["pkl-parser"]
- :public-api-contract {:source-module "pkl-core"}
  :seeds
  [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
    :expand :body}

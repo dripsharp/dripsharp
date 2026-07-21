@@ -36,7 +36,9 @@
   []
   {:schema-version 1
    :required-components required-rule-components
-   :optional-components {:product-runtime-assets #{:assets}}})
+   :optional-components {:product-runtime-assets #{:assets}
+                         :orchestration #{:validate-profile!
+                                          :validate-discovery!}}})
 
 (defn- destination-error [message data]
   (throw (ex-info message (assoc data :kind :invalid-destination-configuration))))
@@ -68,12 +70,14 @@
   (when-not (= 1 (:schema-version configuration))
     (destination-error "Unsupported destination configuration schema"
                        {:schema-version (:schema-version configuration)}))
-  (when (contains? configuration :destination-bundle)
-    (let [selector (:destination-bundle configuration)]
-      (when-not (and (symbol? selector) (namespace selector))
-        (destination-error
-         "Destination bundle must be an explicit namespace-qualified symbol"
-         {:destination-bundle selector}))))
+  (let [selector (:destination-bundle configuration)]
+    (when-not (and (symbol? selector) (namespace selector))
+      (destination-error
+       "Destination bundle must be an explicit namespace-qualified symbol"
+       {:destination-bundle selector})))
+  (when-not (keyword? (:product-family configuration))
+    (destination-error "Destination product family must be an explicit keyword"
+                       {:product-family (:product-family configuration)}))
   (doseq [[section keys] [[:project [:assembly-name :root-namespace
                                      :target-framework :nullable :implicit-usings]]
                           [:package [:id :version :title :description :authors :tags
@@ -96,6 +100,14 @@
       (when-not (and (string? value) (not (str/blank? value)))
         (destination-error "Destination package metadata must be a non-blank string"
                            {:section :package :setting key :value value}))))
+  (when-let [commit (get-in configuration [:package :repository-commit])]
+    (when-not (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" commit))
+      (destination-error "Destination repository commit must be an exact Git identity"
+                         {:repository-commit commit})))
+  (when-let [license (get-in configuration [:package :license-expression])]
+    (when-not (and (string? license) (not (str/blank? license)))
+      (destination-error "Destination license expression must be non-blank"
+                         {:license-expression license})))
   (doseq [key [:project-directory :source-directory :resource-directory
                :project-file :source-map-file :diagnostics-file :manifest-file
                :public-metadata-file :annotation-decisions-file]]
@@ -104,6 +116,10 @@
                        (get-in configuration [:project :nullable]))
     (destination-error "Destination nullable setting must be enable or disable"
                        {:nullable (get-in configuration [:project :nullable])}))
+  (when-not (boolean? (get-in configuration [:project :warnings-as-errors]))
+    (destination-error "Destination warnings-as-errors policy must be explicit"
+                       {:warnings-as-errors
+                        (get-in configuration [:project :warnings-as-errors])}))
   (when-not (or (nil? (get-in configuration [:project :define-constants]))
                 (and (vector? (get-in configuration [:project :define-constants]))
                      (every? #(and (string? %)
@@ -140,12 +156,69 @@
                      (every? project-reference! (:project-references configuration))))
     (destination-error "Invalid destination project references"
                        {:project-references (:project-references configuration)}))
+  (when-not (or (nil? (:project-dependencies configuration))
+                (and (vector? (:project-dependencies configuration))
+                     (every? #(and (string? %) (not (str/blank? %)))
+                             (:project-dependencies configuration))))
+    (destination-error "Invalid source project-dependency contract"
+                       {:project-dependencies (:project-dependencies configuration)}))
+  (when-not
+   (or (nil? (:external-dependencies configuration))
+       (and
+        (map? (:external-dependencies configuration))
+        (every?
+         (fn [[coordinate {:keys [source-scope artifact-sha256 runtime-package]}]]
+           (and (string? coordinate) (not (str/blank? coordinate))
+                (contains? #{:compile-only :compile-runtime} source-scope)
+                (or (nil? artifact-sha256)
+                    (boolean (re-matches #"[0-9a-f]{64}" artifact-sha256)))
+                (boolean? runtime-package)))
+         (:external-dependencies configuration))))
+    (destination-error "Invalid source external-dependency contract"
+                       {:external-dependencies (:external-dependencies configuration)}))
   (when-not (or (nil? (:runtime-sources configuration))
                 (and (vector? (:runtime-sources configuration))
                      (every? #(relative-path! % "runtime source")
                              (:runtime-sources configuration))))
     (destination-error "Invalid destination runtime sources"
                        {:runtime-sources (:runtime-sources configuration)}))
+  (when-not (or (nil? (:destination-capabilities configuration))
+                (and (set? (:destination-capabilities configuration))
+                     (every? keyword? (:destination-capabilities configuration))))
+    (destination-error "Destination capabilities must be an explicit keyword set"
+                       {:destination-capabilities
+                        (:destination-capabilities configuration)}))
+  (let [surface (:public-surface configuration)]
+    (when-not (and (map? surface)
+                   (let [selector (:strategy surface)]
+                     (and (symbol? selector) (namespace selector))))
+      (destination-error
+       "Destination public surface must select a namespace-qualified strategy"
+       {:public-surface surface})))
+  (when-let [consumer (:package-consumer configuration)]
+    (when-not (and (map? consumer)
+                   (contains? #{:source-file :compile-only} (:strategy consumer))
+                   (string? (:project-file consumer))
+                   (str/ends-with? (:project-file consumer) ".csproj")
+                   (relative-path! (:project-file consumer)
+                                   "package consumer project file")
+                   (string? (:success-message consumer))
+                   (not (str/blank? (:success-message consumer)))
+                   (case (:strategy consumer)
+                     :compile-only
+                     (and (vector? (:compile-types consumer))
+                          (seq (:compile-types consumer))
+                          (every? #(and (string? %)
+                                        (re-matches
+                                         #"[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)*"
+                                         %))
+                                  (:compile-types consumer)))
+                     :source-file
+                     (and (string? (:fixture-file consumer))
+                          (not (str/blank? (:fixture-file consumer))))
+                     false))
+      (destination-error "Invalid independent package-consumer contract"
+                         {:package-consumer consumer})))
   configuration)
 
 (defn read-configuration
@@ -189,6 +262,9 @@
          "    <TargetFramework>" (xml-escape (:target-framework project)) "</TargetFramework>\n"
          "    <Nullable>" (xml-escape (:nullable project)) "</Nullable>\n"
          "    <ImplicitUsings>" (if (:implicit-usings project) "enable" "disable") "</ImplicitUsings>\n"
+         "    <TreatWarningsAsErrors>"
+         (if (:warnings-as-errors project) "true" "false")
+         "</TreatWarningsAsErrors>\n"
          (when (seq (:no-warn project))
            (str "    <NoWarn>" (xml-escape (str/join ";" (sort (:no-warn project)))) "</NoWarn>\n"))
          (when (seq (:define-constants project))
@@ -209,6 +285,12 @@
          "    <PackageProjectUrl>" (xml-escape (:project-url package)) "</PackageProjectUrl>\n"
          "    <RepositoryUrl>" (xml-escape (:repository-url package)) "</RepositoryUrl>\n"
          "    <RepositoryType>" (xml-escape (:repository-type package)) "</RepositoryType>\n"
+         (when-let [commit (:repository-commit package)]
+           (str "    <RepositoryCommit>" (xml-escape commit)
+                "</RepositoryCommit>\n"))
+         (when-let [license (:license-expression package)]
+           (str "    <PackageLicenseExpression>" (xml-escape license)
+                "</PackageLicenseExpression>\n"))
          "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
          "    <IsPackable>true</IsPackable>\n"
          "  </PropertyGroup>\n"
@@ -256,11 +338,12 @@
                          (live-source resolved-model)
                          data))))
 
-(defn- validate-rule-bundle!
+(defn validate-rule-bundle!
   [rule-bundle resolved-model]
   (when-not (and (map? rule-bundle)
                  (= 1 (:schema-version rule-bundle))
                  (keyword? (:id rule-bundle))
+                 (keyword? (:product-family rule-bundle))
                  (map? (:rules rule-bundle)))
     (capability-error! resolved-model "Invalid destination rule bundle"
                        {:rule-bundle (select-keys rule-bundle
@@ -281,9 +364,17 @@
                          {:bundle (:id rule-bundle)
                           :component :product-runtime-assets
                           :capability :assets})))
+  (when-let [orchestration (:orchestration rule-bundle)]
+    (when-not (and (map? orchestration)
+                   (every? (fn [[_ hook]] (fn? hook)) orchestration)
+                   (every? #{:validate-profile! :validate-discovery!}
+                           (keys orchestration)))
+      (capability-error! resolved-model "Destination orchestration capability is invalid"
+                         {:bundle (:id rule-bundle)
+                          :component :orchestration})))
   rule-bundle)
 
-(defn- resolve-rule-bundle!
+(defn resolve-rule-bundle!
   [{:keys [rule-bundle configuration resolved-model]}]
   (if rule-bundle
     (validate-rule-bundle! rule-bundle resolved-model)

@@ -843,41 +843,41 @@
                             set)
         owner (normalized-owner (:owner row))]
     (cond
-    (native-config-owners (:owner row))
-    {:classification "product-api-native" :area "config-binding"
-     :behavior-family "binding.public-api"
-     :upstream-provenance "research/pkl/docs/modules/java-binding/pages/pkl-config-java.adoc"
-     :dotnet-adaptation "Idiomatic .NET binding API backed by upstream Java/Kotlin consumer behavior."}
+      (native-config-owners (:owner row))
+      {:classification "product-api-native" :area "config-binding"
+       :behavior-family "binding.public-api"
+       :upstream-provenance "research/pkl/docs/modules/java-binding/pages/pkl-config-java.adoc"
+       :dotnet-adaptation "Idiomatic .NET binding API backed by upstream Java/Kotlin consumer behavior."}
 
-    (native-codegen-owners (:owner row))
-    {:classification "product-api-native" :area "csharp-generation"
-     :behavior-family "codegen.public-api"
-     :upstream-provenance "research/pkl/docs/modules/java-binding/pages/codegen.adoc"
-     :dotnet-adaptation "Native C# generator API backed by upstream schema/codegen behavior."}
+      (native-codegen-owners (:owner row))
+      {:classification "product-api-native" :area "csharp-generation"
+       :behavior-family "codegen.public-api"
+       :upstream-provenance "research/pkl/docs/modules/java-binding/pages/codegen.adoc"
+       :dotnet-adaptation "Native C# generator API backed by upstream schema/codegen behavior."}
 
-    (native-owner-decisions (:owner row))
-    (merge {:classification "public-implementation-internal" :area "implementation"}
-           (native-owner-decisions (:owner row)))
+      (native-owner-decisions (:owner row))
+      (merge {:classification "public-implementation-internal" :area "implementation"}
+             (native-owner-decisions (:owner row)))
 
-    (target-keys (package-broad-key row))
-    {:classification "product-api-current" :area (if (= "Pkl.Parser" (:assembly row))
-                                                   "parser" "core")
-     :behavior-family "translated.public-api"
-     :upstream-provenance "joined-by-executable-target-shape"
-     :dotnet-adaptation "Exact package metadata is pinned by PackageSurface.tsv."}
+      (target-keys (package-broad-key row))
+      {:classification "product-api-current" :area (if (= "Pkl.Parser" (:assembly row))
+                                                     "parser" "core")
+       :behavior-family "translated.public-api"
+       :upstream-provenance "joined-by-executable-target-shape"
+       :dotnet-adaptation "Exact package metadata is pinned by PackageSurface.tsv."}
 
-    (product-owners owner)
-    {:classification "product-api-native" :area (if (= "Pkl.Parser" (:assembly row))
-                                                   "parser" "core")
-     :behavior-family "translated.native-public-api"
-     :upstream-provenance "derived-from-approved-product-type"
-     :dotnet-adaptation "CLR-synthesized or idiomatic member on an explicitly selected product type; exact metadata is pinned by PackageSurface.tsv."}
+      (product-owners owner)
+      {:classification "product-api-native" :area (if (= "Pkl.Parser" (:assembly row))
+                                                    "parser" "core")
+       :behavior-family "translated.native-public-api"
+       :upstream-provenance "derived-from-approved-product-type"
+       :dotnet-adaptation "CLR-synthesized or idiomatic member on an explicitly selected product type; exact metadata is pinned by PackageSurface.tsv."}
 
-    :else
-    {:classification "public-implementation-internal" :area "implementation"
-     :behavior-family "implementation.runtime"
-     :upstream-provenance "package-reflection"
-     :dotnet-adaptation "Not promised as product API; required behavior remains in scope and this is not an exclusion."})))
+      :else
+      {:classification "public-implementation-internal" :area "implementation"
+       :behavior-family "implementation.runtime"
+       :upstream-provenance "package-reflection"
+       :dotnet-adaptation "Not promised as product API; required behavior remains in scope and this is not an exclusion."})))
 
 (defn validate-package-boundary!
   "Rejects consumer metadata that is not part of the explicit product/native
@@ -1108,9 +1108,9 @@
       (fail! "Whole public source audit found no C# files"
              {:kind :empty-public-source-audit}))
     (when-let [unmapped (first (filter #(or (not (pos? (:source-mappings %)))
-                                             (pos? (:missing-source-mappings %))
-                                             (pos? (:hard-failures %)))
-                                        mapping-audits))]
+                                            (pos? (:missing-source-mappings %))
+                                            (pos? (:hard-failures %)))
+                                       mapping-audits))]
       (fail! "A clean generated package did not retain complete source mappings"
              (assoc unmapped :kind :incomplete-generated-source-mappings)))
     (when (seq source-findings)
@@ -1516,3 +1516,21 @@
         (fail! "Reflected package public metadata drifted"
                (assoc (:mismatch comparison) :kind :package-public-api-surface-drift)))
       comparison)))
+
+(defn strategy
+  "Returns the Pkl-owned public selection and compiled-contract lifecycle.
+  Product-neutral orchestration loads this strategy only for destinations that
+  explicitly select the Pkl product family."
+  []
+  {:schema-version 1
+   :id :pkl-public-api
+   :product-family :pkl
+   :read! generation-surface!
+   :validate-selected! validate-selected-surface!
+   :validate-generated! validate-generated-surface!
+   :emission-boundary
+   (fn [surface dependency-emissions]
+     (update surface :selection-evidence into
+             (mapcat #(get-in % [:public-api-boundary :selection-evidence])
+                     dependency-emissions)))
+   :verify-compiled! verify-generated-packages!})

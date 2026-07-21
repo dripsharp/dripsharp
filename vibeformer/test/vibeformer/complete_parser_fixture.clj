@@ -20,7 +20,10 @@
         manifest (Files/createTempFile "vibeformer-main-inputs" ".tsv"
                                        (make-array FileAttribute 0))
         submodule (project/verify-submodule! {:workspace-root root})
-        discovery (project/discover-main! {:workspace-root root :manifest manifest})
+        discovery (project/discover-main! {:workspace-root root
+                                           :project-root "research/pkl"
+                                           :gradle-project ":pkl-parser"
+                                           :manifest manifest})
         first-model (concurrency/call-with-executor
                      {:worker-count 1}
                      #(spoon/build-resolved-model! root discovery))

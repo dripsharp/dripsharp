@@ -5,9 +5,8 @@
   (:import [clojure.lang ExceptionInfo]
            [java.nio.file Files Path]))
 
-(def ^:private manifest-header "VIBEFORMER_GRADLE_INPUTS_V3")
-(def ^:private default-gradle-project ":pkl-parser")
-(def ^:private default-project-root "research/pkl")
+(def ^:private manifest-headers
+  #{"VIBEFORMER_GRADLE_INPUTS_V3" "VIBEFORMER_GRADLE_INPUTS_V4"})
 (def ^:private gradle-project-pattern
   #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$")
 (def ^:private gitlink-pattern
@@ -41,16 +40,49 @@
                   {:kind :submodule-revision-mismatch
                    :expected expected
                    :actual actual})))
-        {:path submodule :revision expected}))))
+        {:path submodule :revision expected
+         :submodule {:path "research/pkl" :revision expected}}))))
+
+(defn verify-checkout!
+  "Verifies an arbitrary configured source checkout without assuming a product
+  path. A pinned revision is checked against Git HEAD; unpinned directories are
+  accepted as explicit local project inputs."
+  [{:keys [project-root revision require-clean? run-command!]
+    :or {run-command! process/run!}}]
+  (let [project-root (paths/absolute project-root)]
+    (when-not (paths/directory? project-root)
+      (throw (ex-info "Configured source project root is missing"
+                      {:kind :project-root-missing :path (str project-root)})))
+    (if-not revision
+      {:path project-root :revision nil}
+      (let [actual (str/trim
+                    (:output
+                     (run-command! {:command ["git" "rev-parse" "HEAD"]
+                                    :directory project-root})))]
+        (when-not (= revision actual)
+          (throw (ex-info "Configured source checkout revision differs from the profile"
+                          {:kind :source-revision-mismatch
+                           :path (str project-root)
+                           :expected revision :actual actual})))
+        (when require-clean?
+          (let [status (str/trim
+                        (:output
+                         (run-command! {:command ["git" "status" "--porcelain"]
+                                        :directory project-root})))]
+            (when-not (str/blank? status)
+              (throw (ex-info "Configured source checkout contains local changes"
+                              {:kind :source-checkout-dirty
+                               :path (str project-root) :status status})))))
+        {:path project-root :revision actual}))))
 
 (defn- parse-record
   [line]
-  (let [[kind value extra] (str/split line #"\t" 3)]
-    (when (or extra (str/blank? kind) (str/blank? value))
+  (let [[kind & values] (str/split line #"\t" -1)]
+    (when (or (str/blank? kind) (empty? values) (some str/blank? values))
       (throw (ex-info
               (str "Invalid Gradle discovery record: " (pr-str line))
               {:kind :invalid-discovery-manifest :line line})))
-    [(keyword kind) value]))
+    (into [(keyword kind)] values)))
 
 (defn- exactly-one
   [grouped kind message]
@@ -95,11 +127,46 @@
 
 (defn- resolve-project-root
   [^Path workspace-root project-root]
-  (let [path (paths/path (or project-root default-project-root))]
+  (when-not project-root
+    (throw (ex-info "Gradle discovery requires an explicit project root"
+                    {:kind :missing-gradle-project-root})))
+  (let [path (paths/path project-root)]
     (paths/absolute
      (if (.isAbsolute path)
        path
        (paths/resolve-path workspace-root path)))))
+
+(def ^:private java-home-candidates
+  ["/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+   "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+   "/usr/lib/jvm/java-17-openjdk"
+   "/usr/lib/jvm/java-17-openjdk-amd64"])
+
+(defn- java-home-major [^Path java-home]
+  (let [release (paths/resolve-path java-home "release")]
+    (when (paths/regular-file? release)
+      (some->> (re-find #"(?m)^JAVA_VERSION=\"(\d+)" (Files/readString release))
+               second parse-long))))
+
+(defn- gradle-environment! [requested-major]
+  (when requested-major
+    (let [candidates (->> [(System/getenv "VIBEFORMER_JAVA_HOME")
+                           (System/getProperty "java.home")]
+                          (concat java-home-candidates)
+                          (remove str/blank?)
+                          (map paths/path)
+                          (map paths/absolute)
+                          distinct)
+          selected (first (filter #(and (= requested-major (java-home-major %))
+                                        (paths/regular-file?
+                                         (paths/resolve-path % "bin" "java")))
+                                  candidates))]
+      (when-not selected
+        (throw (ex-info "No installed JDK matches the profile's Gradle runtime"
+                        {:kind :gradle-java-runtime-missing
+                         :requested-major requested-major
+                         :candidates (mapv str candidates)})))
+      {"JAVA_HOME" (str selected)})))
 
 (defn read-discovery-manifest
   "Reads and validates the Gradle-derived production input manifest."
@@ -109,12 +176,32 @@
             (str "Gradle did not create its discovery manifest: " manifest)
             {:kind :discovery-manifest-missing :path (str manifest)})))
   (let [[header & lines] (str/split-lines (slurp (str manifest)))]
-    (when-not (= manifest-header header)
+    (when-not (contains? manifest-headers header)
       (throw (ex-info
               (str "Unsupported Gradle discovery manifest header: " (pr-str header))
               {:kind :invalid-discovery-manifest :header header})))
     (let [records (mapv parse-record (remove str/blank? lines))
           grouped (group-by first records)
+          allowed #{:project-path :java-home :java-release :preview-features
+                    :resource-root :source :resource :classpath
+                    :project-dependency :external-dependency :external-artifact}
+          unknown (sort (remove allowed (keys grouped)))
+          invalid-arities
+          (->> records
+               (filter (fn [record]
+                         (not= (count record)
+                               (cond
+                                 (contains? #{:project-dependency
+                                              :external-dependency}
+                                            (first record)) 3
+                                 (= :external-artifact (first record)) 4
+                                 :else 2))))
+               vec)
+          _ (when (or (seq unknown) (seq invalid-arities))
+              (throw (ex-info "Gradle discovery manifest has unknown or malformed records"
+                              {:kind :invalid-discovery-manifest
+                               :unknown-record-kinds unknown
+                               :invalid-records invalid-arities})))
           path-values #(->> (get grouped %)
                             (map (comp paths/absolute second))
                             distinct
@@ -145,6 +232,34 @@
                                      {:kind :invalid-discovery-manifest
                                       :record-kind :preview-features
                                       :value preview-value})))
+          parse-scope
+          (fn [value]
+            (let [scope (keyword value)]
+              (when-not (contains? #{:compile :runtime} scope)
+                (throw (ex-info "Gradle discovery reported an invalid dependency scope"
+                                {:kind :invalid-discovery-manifest
+                                 :scope value})))
+              scope))
+          project-dependencies
+          (->> (get grouped :project-dependency)
+               (map (fn [[_ scope project]]
+                      {:scope (parse-scope scope) :project project}))
+               distinct (sort-by (juxt :project :scope)) vec)
+          external-dependencies
+          (->> (get grouped :external-dependency)
+               (map (fn [[_ scope coordinate]]
+                      {:scope (parse-scope scope) :coordinate coordinate}))
+               distinct (sort-by (juxt :coordinate :scope)) vec)
+          external-artifacts
+          (->> (get grouped :external-artifact)
+               (map (fn [[_ scope coordinate sha256]]
+                      (when-not (re-matches #"[0-9a-f]{64}" sha256)
+                        (throw (ex-info "Gradle discovery reported an invalid artifact hash"
+                                        {:kind :invalid-discovery-manifest
+                                         :coordinate coordinate :sha256 sha256})))
+                      {:scope (parse-scope scope) :coordinate coordinate
+                       :sha256 sha256}))
+               distinct (sort-by (juxt :coordinate :scope :sha256)) vec)
           discovery {:gradle-project gradle-project
                      :java-home java-home
                      :java-release java-release
@@ -152,7 +267,10 @@
                      :resource-root resource-root
                      :java-sources (path-values :source)
                      :resources (path-values :resource)
-                     :classpath (path-values :classpath)}]
+                     :classpath (path-values :classpath)
+                     :project-dependencies project-dependencies
+                     :external-dependencies external-dependencies
+                     :external-artifacts external-artifacts}]
       (when-not (paths/directory? (:java-home discovery))
         (throw (ex-info
                 (str "Gradle-reported Java toolchain is missing: " (:java-home discovery))
@@ -182,13 +300,13 @@
   "Asks a Gradle Java project for its resolved production inputs.
 
   `project-root` may be absolute or workspace-relative. `gradle-wrapper` is
-  project-relative by default and may also be absolute. The defaults retain
-  the tracked Pkl project, while callers can point the same ingestion boundary
-  at an unrelated Gradle build."
+  project-relative by default and may also be absolute. Both project root and
+  Gradle project identity are explicit; product profiles own any defaults."
   [{:keys [workspace-root manifest project-root gradle-wrapper init-script
-           gradle-project run-command!]
-    :or {gradle-project default-gradle-project run-command! process/run!}}]
+           gradle-project gradle-java-major run-command!]
+    :or {run-command! process/run!}}]
   (let [gradle-project (validate-gradle-project! gradle-project)
+        environment (gradle-environment! gradle-java-major)
         root (paths/absolute workspace-root)
         project-root (resolve-project-root root project-root)
         init-script (let [configured (some-> init-script paths/path)]
@@ -219,7 +337,8 @@
                        ":vibeformerDescribeMain")
                   (str "-Pvibeformer.project=" gradle-project)
                   (str "-Pvibeformer.output=" (paths/absolute manifest))]
-        :directory project-root})
+        :directory project-root
+        :environment environment})
       (catch ExceptionInfo error
         (throw (ex-info
                 (str "Gradle source/classpath/toolchain discovery failed: " (.getMessage error))

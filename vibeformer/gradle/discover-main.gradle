@@ -1,8 +1,23 @@
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.JavaVersion
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import java.security.MessageDigest
+
+def vibeformerSha256 = { File input ->
+  MessageDigest digest = MessageDigest.getInstance("SHA-256")
+  input.withInputStream { stream ->
+    byte[] buffer = new byte[8192]
+    int read
+    while ((read = stream.read(buffer)) >= 0) {
+      if (read > 0) digest.update(buffer, 0, read)
+    }
+  }
+  digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+}
 
 gradle.projectsEvaluated {
-  def projectPath = providers.gradleProperty("vibeformer.project").orElse(":pkl-parser").get()
+  def projectPath = gradle.rootProject.providers.gradleProperty("vibeformer.project").orElse(":pkl-parser").get()
   def selectedProject = gradle.rootProject.findProject(projectPath)
   if (selectedProject != null) {
     def compileJavaProvider = selectedProject.tasks.named("compileJava")
@@ -13,7 +28,7 @@ gradle.projectsEvaluated {
       dependsOn(compileJavaProvider, processResourcesProvider)
 
       doLast {
-        def outputProperty = providers.gradleProperty("vibeformer.output")
+        def outputProperty = gradle.rootProject.providers.gradleProperty("vibeformer.output")
         if (!outputProperty.present) {
           throw new GradleException("Missing required -Pvibeformer.output=<path>")
         }
@@ -22,7 +37,9 @@ gradle.projectsEvaluated {
         def main = sourceSets.getByName("main")
         def compileJava = compileJavaProvider.get()
         def processResources = processResourcesProvider.get()
-        def javaHome = compileJava.javaCompiler.get().metadata.installationPath.asFile
+        def javaHome = compileJava.javaCompiler.present
+          ? compileJava.javaCompiler.get().metadata.installationPath.asFile
+          : new File(System.getProperty("java.home"))
         def javaRelease = compileJava.options.release.orNull
         if (javaRelease == null) {
           javaRelease = Integer.parseInt(JavaVersion.toVersion(compileJava.sourceCompatibility).majorVersion)
@@ -59,15 +76,51 @@ gradle.projectsEvaluated {
         main.compileClasspath.files.findAll { it.exists() }.each {
           records.add(["classpath", it])
         }
+        [["compile", selectedProject.configurations.getByName("compileClasspath")],
+         ["runtime", selectedProject.configurations.getByName("runtimeClasspath")]].each { scoped ->
+          def scope = scoped[0]
+          def configuration = scoped[1]
+          def unresolved = configuration.incoming.resolutionResult.allDependencies.findAll {
+            it.metaClass.hasProperty(it, "failure") && it.failure != null
+          }
+          if (!unresolved.empty) {
+            throw new GradleException("Unresolved ${scope} production dependencies: ${unresolved}")
+          }
+          configuration.incoming.resolutionResult.allComponents.each { component ->
+            def id = component.id
+            if (id instanceof ProjectComponentIdentifier) {
+              if (id.projectPath != projectPath) {
+                records.add(["project-dependency", scope, id.projectPath])
+              }
+            } else if (id instanceof ModuleComponentIdentifier) {
+              records.add(["external-dependency", scope,
+                           "${id.group}:${id.module}:${id.version}"])
+            }
+          }
+          configuration.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+            if (artifact.file.isFile()) {
+              def component = artifact.moduleVersion.id
+              records.add(["external-artifact", scope,
+                           "${component.group}:${component.name}:${component.version}",
+                           vibeformerSha256(artifact.file)])
+            }
+          }
+        }
 
         records = records.collect { record ->
-          def value = record[0] in ["project-path", "java-release", "preview-features"]
-            ? record[1].toString()
-            : record[1].canonicalFile.absolutePath
-          if (value.contains("\t") || value.contains("\n") || value.contains("\r")) {
-            throw new GradleException("Vibeformer cannot encode path containing a tab or newline: ${value}")
+          def rendered
+          if (record.size() == 2) {
+            def value = record[0] in ["project-path", "java-release", "preview-features"]
+              ? record[1].toString()
+              : record[1].canonicalFile.absolutePath
+            rendered = [record[0], value]
+          } else {
+            rendered = record.collect { it.toString() }
           }
-          [record[0], value]
+          if (rendered.any { it.contains("\t") || it.contains("\n") || it.contains("\r") }) {
+            throw new GradleException("Vibeformer cannot encode a value containing a tab or newline: ${rendered}")
+          }
+          rendered
         }.sort { left, right ->
           def kindOrder = [
             "project-path": 0,
@@ -78,15 +131,18 @@ gradle.projectsEvaluated {
             "source": 5,
             "resource": 6,
             "classpath": 7,
+            "project-dependency": 8,
+            "external-dependency": 9,
+            "external-artifact": 10,
           ]
-          (kindOrder[left[0]] <=> kindOrder[right[0]]) ?: (left[1] <=> right[1])
+          (kindOrder[left[0]] <=> kindOrder[right[0]]) ?: (left.join("\t") <=> right.join("\t"))
         }
 
         def outputFile = file(outputProperty.get())
         outputFile.parentFile.mkdirs()
         outputFile.withWriter("UTF-8") { writer ->
-          writer.write("VIBEFORMER_GRADLE_INPUTS_V3\n")
-          records.each { record -> writer.write("${record[0]}\t${record[1]}\n") }
+          writer.write("VIBEFORMER_GRADLE_INPUTS_V4\n")
+          records.each { record -> writer.write(record.join("\t") + "\n") }
         }
       }
     }
