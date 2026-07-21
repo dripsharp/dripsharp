@@ -16,16 +16,20 @@
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.util Base64 IdentityHashMap]
-           [spoon.reflect.code CtAssignment CtBinaryOperator CtBlock CtComment
-            CtConstructorCall CtFieldRead CtFieldWrite CtForEach CtIf CtInvocation
-            CtLambda CtLiteral CtLocalVariable CtReturn CtStatement CtThisAccess
-            CtTypeAccess CtUnaryOperator CtVariableRead CtVariableWrite]
+           [spoon.reflect.code CtArrayRead CtArrayWrite CtAssignment
+            CtBinaryOperator CtBlock CtCatch CtCatchVariable CtComment
+            CtConditional CtConstructorCall CtExpression CtFieldRead CtFieldWrite
+            CtFor CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable
+            CtNewArray CtReturn CtStatement CtThisAccess CtThrow CtTry
+            CtTryWithResource CtTypeAccess CtUnaryOperator CtVariableAccess
+            CtVariableRead CtVariableWrite]
            [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement
             CtEnum CtEnumValue CtExecutable CtField CtInterface CtMethod
             CtModifiable CtParameter CtType ModifierKind]
-           [spoon.reflect.reference CtArrayTypeReference CtLocalVariableReference
-            CtPackageReference CtParameterReference CtTypeParameterReference
-            CtTypeReference CtWildcardReference]))
+           [spoon.reflect.reference CtArrayTypeReference CtCatchVariableReference
+            CtLocalVariableReference CtPackageReference CtParameterReference
+            CtTypeParameterReference CtTypeReference CtWildcardReference]
+           [spoon.reflect.visitor.filter TypeFilter]))
 
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind (or (:kind data)
@@ -64,7 +68,12 @@
   (csharp/raw text))
 
 (defn- package-name [^CtType type]
-  (some-> type .getPackage .getQualifiedName))
+  (loop [current type]
+    (when current
+      (let [package (some-> current .getPackage .getQualifiedName)]
+        (if (str/blank? package)
+          (recur (.getDeclaringType ^CtType current))
+          package)))))
 
 (defn- destination-namespace [ctx ^CtType type]
   (let [package (package-name type)]
@@ -204,6 +213,48 @@
   (when (.isParentInitialized element)
     (str (.getRoleInParent element))))
 
+(defn- local-type? [^CtType type]
+  (and (not (.isTopLevel type))
+       (= "statement" (role type))))
+
+(defn- descendant-of? [^CtElement element ^CtElement ancestor]
+  (loop [current element]
+    (cond
+      (nil? current) false
+      (identical? current ancestor) true
+      (.isParentInitialized current) (recur (.getParent current))
+      :else false)))
+
+(defn- captured-local-declarations [^CtType local-type]
+  (->> (.getElements local-type (TypeFilter. CtVariableAccess))
+       (keep (fn [^CtVariableAccess access]
+               (let [declaration (some-> access .getVariable .getDeclaration)]
+                 (when (and declaration
+                            (not (descendant-of? declaration local-type))
+                            (not (and (instance? CtField declaration)
+                                      (.hasModifier ^CtField declaration
+                                                    ModifierKind/STATIC))))
+                   declaration))))
+       distinct
+       (sort-by #(str (spoon/declaration-key %)))
+       vec))
+
+(defn- validate-local-type! [^CtType local-type]
+  (when-let [captures (seq (captured-local-declarations local-type))]
+    (throw
+     (ex-info
+      "Java local class captures declarations that cannot be hoisted safely"
+      {:kind :unsupported-local-class-capture
+       :source-element local-type
+       :source-identity (spoon/declaration-key local-type)
+       :source-location (spoon/source-location local-type)
+       :captures (mapv (fn [^CtElement declaration]
+                         {:identity (or (spoon/declaration-key declaration)
+                                        (spoon/frontend-identity declaration))
+                          :location (spoon/source-location declaration)})
+                       captures)})))
+  local-type)
+
 (defn- statement-expression? [^CtElement element]
   (and (instance? CtStatement element)
        (contains? #{"statement" "then" "else"} (role element))))
@@ -258,31 +309,44 @@
        "executable:java.net.URI#getPort()"
        "executable:java.lang.String#toUpperCase()"
        "executable:java.lang.String#split(java.lang.String)"
+       "executable:java.lang.String#toCharArray()"
+       "executable:java.lang.StringBuilder#append(java.lang.String)"
+       "executable:java.lang.StringBuilder#toString()"
        "executable:java.util.Collection#stream()"
        "executable:java.lang.Object#getClass()"
+       "executable:java.lang.Throwable#getCause()"
        "executable:java.util.Map#entrySet()"
+       "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.Map#forEach(java.util.function.BiConsumer)"
        "executable:java.util.Map#getOrDefault(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#keySet()"
        "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#size()"
        "executable:java.util.Map#get(java.lang.Object)"
+       "executable:java.util.Map#hashCode()"
        "executable:java.util.Map$Entry#getKey()"
        "executable:java.util.Map$Entry#getValue()"
        "executable:java.util.Map$Entry#setValue(java.lang.Object)"
        "executable:java.util.List#get(int)"
        "executable:java.util.List#equals(java.lang.Object)"
        "executable:java.util.List#isEmpty()"
+       "executable:java.util.List#size()"
        "executable:java.util.Optional#empty()"
        "executable:java.util.Optional#of(java.lang.Object)"
+       "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
+       "executable:java.util.function.Consumer#accept(java.lang.Object)"
        "executable:java.util.Set#contains(java.lang.Object)"
        "executable:java.util.Set#equals(java.lang.Object)"
+       "executable:java.util.Set#add(java.lang.Object)"
        "executable:java.util.stream.Collectors#toList()"
        "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
        "executable:java.util.stream.Stream#flatMap(java.util.function.Function)"
        "executable:java.util.stream.Stream#of(java.lang.Object[])"}
      (:key occurrence))
     (identifier (.getSimpleName ^CtElement reference))
+
+    (= "field:<array>#length" (:key occurrence))
+    "Length"
 
     :else
     (unsupported! "Java library executable or field has no neutral mapping"
@@ -331,6 +395,12 @@
 
                  (contains?
                   #{"executable:java.lang.Object#<init>()"
+                    "executable:java.io.IOException#<init>()"
+                    "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
+                    "executable:java.lang.StringBuilder#<init>()"
+                    "executable:java.lang.String#<init>(char[])"
+                    "executable:java.util.HashMap#<init>()"
+                    "executable:java.util.HashSet#<init>(int)"
                     "executable:java.util.ArrayList#<init>(java.util.Collection)"
                     "executable:java.util.LinkedHashMap#<init>(int)"
                     "executable:java.util.LinkedHashMap#<init>(java.util.Map)"}
@@ -358,6 +428,22 @@
 (defn- invocation-occurrence [translation-context ^CtInvocation invocation]
   (.get ^IdentityHashMap (:occurrence-index translation-context)
         (.getExecutable invocation)))
+
+(defn- constructor-occurrence [translation-context ^CtConstructorCall call]
+  (.get ^IdentityHashMap (:occurrence-index translation-context)
+        (.getExecutable call)))
+
+(defn- field-occurrence [translation-context ^CtVariableAccess access]
+  (.get ^IdentityHashMap (:occurrence-index translation-context)
+        (.getVariable access)))
+
+(defn- expression-cast-node [ctx ^CtExpression expression node]
+  (reduce (fn [inner ^CtTypeReference cast]
+            (sequence-node [(raw "(") (type-node ctx cast)
+                            (raw ")(") inner
+                            (raw (if (.isPrimitive cast) ")" "!)"))]))
+          node
+          (.getTypeCasts expression)))
 
 (defn- collection-element-type [^CtInvocation invocation]
   (or (first (.getActualTypeArguments (.getType invocation)))
@@ -396,6 +482,7 @@
     "MUL" "*"
     "DIV" "/"
     "MOD" "%"
+    "INSTANCEOF" "is"
     (unsupported! "Java library binary operator has no neutral mapping"
                   expression)))
 
@@ -422,7 +509,7 @@
              target-node (when target (child-node children target))
              arguments (mapv #(child-node children %) (.getArguments element))
              occurrence (invocation-occurrence context element)
-             node
+             raw-node
              (case (:key occurrence)
                "executable:java.util.Collections#emptyList()"
                (sequence-node
@@ -448,14 +535,30 @@
                "executable:java.lang.String#split(java.lang.String)"
                (compat-call "StringSplit" (into [target-node] (conj arguments (raw "0"))))
 
+               "executable:java.lang.String#toCharArray()"
+               (sequence-node [target-node (raw ".ToCharArray()")])
+
+               "executable:java.lang.StringBuilder#append(java.lang.String)"
+               (sequence-node [target-node (raw ".Append(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.lang.StringBuilder#toString()"
+               (sequence-node [target-node (raw ".ToString()")])
+
                "executable:java.util.Collection#stream()"
                target-node
 
                "executable:java.lang.Object#getClass()"
                (sequence-node [target-node (raw ".GetType()")])
 
+               "executable:java.lang.Throwable#getCause()"
+               (sequence-node [target-node (raw ".InnerException")])
+
                "executable:java.util.Map#entrySet()"
                (compat-call "MapEntrySet" [target-node])
+
+               "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
+               (compat-call "ComputeIfAbsent" (into [target-node] arguments))
 
                "executable:java.util.Map#forEach(java.util.function.BiConsumer)"
                (compat-call "ForEach" (into [target-node] arguments))
@@ -474,6 +577,9 @@
 
                "executable:java.util.Map#get(java.lang.Object)"
                (compat-call "MapGet" (into [target-node] arguments))
+
+               "executable:java.util.Map#hashCode()"
+               (compat-call "HashCode" [target-node])
 
                "executable:java.util.Map$Entry#getKey()"
                (sequence-node [target-node (raw ".Key")])
@@ -497,6 +603,9 @@
                "executable:java.util.List#get(int)"
                (compat-call "ListGet" (into [target-node] arguments))
 
+               "executable:java.util.List#size()"
+               (sequence-node [target-node (raw ".Count")])
+
                "executable:java.util.Optional#empty()"
                (sequence-node [(type-node @ctx-holder (.getType element))
                                (raw ".Empty()")])
@@ -506,11 +615,23 @@
                                (raw ".Of(") (sequence-node arguments ", ")
                                (raw ")")])
 
+               "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
+               (sequence-node [target-node (raw "(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.function.Consumer#accept(java.lang.Object)"
+               (sequence-node [target-node (raw "(")
+                               (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.util.Set#contains(java.lang.Object)"
                (compat-call "CollectionContains" (into [target-node] arguments))
 
                "executable:java.util.Set#equals(java.lang.Object)"
                (compat-call "Equals" (into [target-node] arguments))
+
+               "executable:java.util.Set#add(java.lang.Object)"
+               (sequence-node [target-node (raw ".Add(")
+                               (sequence-node arguments ", ") (raw ")")])
 
                "executable:java.util.stream.Stream#of(java.lang.Object[])"
                (compat-call "StreamOf" arguments)
@@ -533,7 +654,8 @@
                  (child-node children (.getExecutable element))
                  (raw "(")
                  (sequence-node arguments ", ")
-                 (raw ")")]))]
+                 (raw ")")]))
+             node (expression-cast-node @ctx-holder element raw-node)]
          {:node
           (if (= "executable:java.lang.Object#<init>()" (:key occurrence))
             node
@@ -542,13 +664,19 @@
     {:id :java-library.expression/constructor-call
      :class CtConstructorCall
      :emit
-     (fn [{:keys [^CtConstructorCall element children]}]
-       {:node
-        (sequence-node
-         [(raw "new ") (type-node @ctx-holder (.getType element)) (raw "(")
-          (sequence-node (mapv #(child-node children %) (.getArguments element))
-                         ", ")
-          (raw ")")])})}
+     (fn [{:keys [context ^CtConstructorCall element children]}]
+       (let [arguments (mapv #(child-node children %) (.getArguments element))
+             occurrence (constructor-occurrence context element)]
+         {:node
+          (case (:key occurrence)
+            "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
+            (sequence-node [(raw "new global::System.Exception(null, ")
+                            (first arguments) (raw ")")])
+
+            (sequence-node
+             [(raw "new ") (type-node @ctx-holder (.getType element)) (raw "(")
+              (sequence-node arguments ", ")
+              (raw ")")]))}))}
 
     {:id :java-library.expression/lambda
      :class CtLambda
@@ -567,17 +695,58 @@
      :class CtLiteral
      :emit (fn [{:keys [element]}] {:node (literal-node element)})}
 
+    {:id :java-library.expression/new-array
+     :class CtNewArray
+     :emit
+     (fn [{:keys [^CtNewArray element children]}]
+       (let [dimensions (vec (.getDimensionExpressions element))
+             values (vec (.getElements element))
+             ^CtArrayTypeReference array-type (.getType element)]
+         (when-not (and (instance? CtArrayTypeReference array-type)
+                        (or (and (= 1 (count dimensions)) (empty? values))
+                            (and (empty? dimensions) (seq values))))
+           (unsupported! "Java array creation shape requires explicit lowering"
+                         element))
+         {:node
+          (if (seq dimensions)
+            (sequence-node [(raw "new ")
+                            (type-node @ctx-holder (.getComponentType array-type))
+                            (raw "[") (child-node children (first dimensions))
+                            (raw "]")])
+            (sequence-node [(raw "new ")
+                            (type-node @ctx-holder (.getComponentType array-type))
+                            (raw "[] { ")
+                            (sequence-node (mapv #(child-node children %) values) ", ")
+                            (raw " }")]))}))}
+
     {:id :java-library.expression/binary
      :class CtBinaryOperator
      :emit
      (fn [{:keys [^CtBinaryOperator element children]}]
        {:node
-        (sequence-node
-         [(raw "(")
-          (child-node children (.getLeftHandOperand element))
-          (raw (str " " (binary-operator element) " "))
-          (child-node children (.getRightHandOperand element))
-          (raw ")")])})}
+        (expression-cast-node
+         @ctx-holder element
+         (sequence-node
+          [(raw "(")
+           (child-node children (.getLeftHandOperand element))
+           (raw (str " " (binary-operator element) " "))
+           (child-node children (.getRightHandOperand element))
+           (raw ")")]))})}
+
+    {:id :java-library.expression/conditional
+     :class CtConditional
+     :emit
+     (fn [{:keys [^CtConditional element children]}]
+       {:node
+        (expression-cast-node
+         @ctx-holder element
+         (sequence-node [(raw "(")
+                         (child-node children (.getCondition element))
+                         (raw " ? ")
+                         (child-node children (.getThenExpression element))
+                         (raw " : ")
+                         (child-node children (.getElseExpression element))
+                         (raw ")")]))})}
 
     {:id :java-library.expression/unary
      :class CtUnaryOperator
@@ -598,13 +767,16 @@
     {:id :java-library.expression/field-read
      :class CtFieldRead
      :emit
-     (fn [{:keys [^CtFieldRead element children]}]
-       (let [target (.getTarget element)]
+     (fn [{:keys [context ^CtFieldRead element children]}]
+       (let [target (.getTarget element)
+             occurrence (field-occurrence context element)]
          {:node
           (sequence-node
            [(when target
               (sequence-node [(child-node children target) (raw ".")]))
-            (child-node children (.getVariable element))])}))}
+            (if (= "field:<array>#length" (:key occurrence))
+              (raw "Length")
+              (child-node children (.getVariable element)))])}))}
 
     {:id :java-library.expression/field-write
      :class CtFieldWrite
@@ -627,6 +799,26 @@
           (raw " = ")
           (child-node children (.getAssignment element))
           (when (statement-expression? element) (raw ";"))])})}
+
+    {:id :java-library.expression/array-read
+     :class CtArrayRead
+     :emit
+     (fn [{:keys [^CtArrayRead element children]}]
+       {:node
+        (sequence-node [(child-node children (.getTarget element))
+                        (raw "[")
+                        (child-node children (.getIndexExpression element))
+                        (raw "]")])})}
+
+    {:id :java-library.expression/array-write
+     :class CtArrayWrite
+     :emit
+     (fn [{:keys [^CtArrayWrite element children]}]
+       {:node
+        (sequence-node [(child-node children (.getTarget element))
+                        (raw "[")
+                        (child-node children (.getIndexExpression element))
+                        (raw "]")])})}
 
     {:id :java-library.statement/block
      :class CtBlock
@@ -670,6 +862,30 @@
             (raw ") ")
             (statement-node children (.getBody element))])}))}
 
+    {:id :java-library.statement/for
+     :class CtFor
+     :emit
+     (fn [{:keys [^CtFor element children]}]
+       (let [initializers (vec (.getForInit element))
+             updates (vec (.getForUpdate element))]
+         (when-not (= 1 (count initializers))
+           (unsupported! "Java for loop requires one explicit initializer"
+                         element))
+         (let [^CtLocalVariable initializer (first initializers)]
+           (when-not (instance? CtLocalVariable initializer)
+             (unsupported! "Java for initializer is not a local declaration"
+                           initializer))
+           {:node
+            (sequence-node
+             [(raw "for (")
+              (child-node children initializer)
+              (raw "; ")
+              (child-node children (.getExpression element))
+              (raw "; ")
+              (sequence-node (mapv #(child-node children %) updates) ", ")
+              (raw ") ")
+              (statement-node children (.getBody element))])})))}
+
     {:id :java-library.statement/return
      :class CtReturn
      :emit
@@ -681,6 +897,45 @@
             (when returned
               (sequence-node [(raw " ") (child-node children returned)]))
             (raw ";")])}))}
+
+    {:id :java-library.statement/try
+     :class CtTry
+     :emit
+     (fn [{:keys [^CtTry element children]}]
+       (when (and (instance? CtTryWithResource element)
+                  (seq (.getResources ^CtTryWithResource element)))
+         (unsupported! "Java try-with-resources requires explicit lifetime lowering"
+                       element))
+       {:node
+        (sequence-node
+         [(raw "try ")
+          (child-node children (.getBody element))
+          (sequence-node
+           (mapv #(sequence-node [(raw " ") (child-node children %)])
+                 (.getCatchers element)))
+          (when-let [finalizer (.getFinalizer element)]
+            (sequence-node [(raw " finally ")
+                            (child-node children finalizer)]))])})}
+
+    {:id :java-library.statement/catch
+     :class CtCatch
+     :emit
+     (fn [{:keys [^CtCatch element children]}]
+       {:node
+        (sequence-node
+         [(raw "catch (")
+          (child-node children (.getParameter element))
+          (raw ") ")
+          (child-node children (.getBody element))])})}
+
+    {:id :java-library.statement/throw
+     :class CtThrow
+     :emit
+     (fn [{:keys [^CtThrow element children]}]
+       {:node
+        (sequence-node [(raw "throw ")
+                        (child-node children (.getThrownExpression element))
+                        (raw ";")])})}
 
     {:id :java-library.declaration/local-variable
      :class CtLocalVariable
@@ -696,7 +951,8 @@
             (when initializer
               (sequence-node [(raw " = ")
                               (child-node children initializer)]))
-            (raw ";")])}))}
+            (when-not (= "forInit" (role element))
+              (raw ";"))])}))}
 
     {:id :java-library.expression/variable-read
      :class CtVariableRead
@@ -725,9 +981,47 @@
      :emit (fn [{:keys [^CtLocalVariableReference element]}]
              {:node (raw (identifier (.getSimpleName element)))})}
 
+    {:id :java-library.declaration/catch-variable
+     :class CtCatchVariable
+     :emit
+     (fn [{:keys [^CtCatchVariable element]}]
+       (let [types (vec (.getMultiTypes element))]
+         (when-not (= 1 (count types))
+           (unsupported! "Java multi-catch requires explicit union lowering"
+                         element))
+         {:node
+          (sequence-node [(type-node @ctx-holder (first types))
+                          (raw (str " " (identifier (.getSimpleName element))))])}))}
+
+    {:id :java-library.reference/catch-variable
+     :class CtCatchVariableReference
+     :emit (fn [{:keys [^CtCatchVariableReference element]}]
+             {:node (raw (identifier (.getSimpleName element)))})}
+
     {:id :java-library.expression/this
      :class CtThisAccess
      :emit (fn [_] {:node (raw "this")})}
+
+    {:id :java-library.declaration/local-class
+     :class CtClass
+     :emit
+     (fn [{:keys [^CtClass element]}]
+       (if (local-type? element)
+         {:node (raw "")}
+         (unsupported! "Only method-local classes are valid body declarations"
+                       element)))}
+
+    {:id :java-library.declaration/local-constructor-shell
+     :class CtConstructor
+     :emit (fn [_] {:node (raw "")})}
+
+    {:id :java-library.declaration/local-field-shell
+     :class CtField
+     :emit (fn [_] {:node (raw "")})}
+
+    {:id :java-library.declaration/local-method-shell
+     :class CtMethod
+     :emit (fn [_] {:node (raw "")})}
 
     {:id :java-library.trivia/comment
      :class CtComment
@@ -862,8 +1156,10 @@
              (.getSuperInterfaces type)))))
 
 (defn- type-words [^CtType type]
-  (let [visibility (if (.hasModifier ^CtModifiable type ModifierKind/PUBLIC)
-                     "public" "internal")]
+  (let [visibility (cond
+                     (local-type? type) "private"
+                     (.hasModifier ^CtModifiable type ModifierKind/PUBLIC) "public"
+                     :else "internal")]
     (cond
       (instance? CtInterface type) [visibility "interface"]
       (instance? CtClass type)
@@ -885,6 +1181,23 @@
              "abstract")]))
 
 (declare member-node emit-root)
+
+(defn- enclosing-executable [^CtElement element]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (nil? current) nil
+      (instance? CtExecutable current) current
+      (.isParentInitialized ^CtElement current) (recur (.getParent ^CtElement current))
+      :else nil)))
+
+(defn- executable-local-types [^CtExecutable executable]
+  (->> (.getElements executable (TypeFilter. CtType))
+       (filter local-type?)
+       (filter #(identical? executable (enclosing-executable %)))
+       (sort-by (fn [^CtType type]
+                  (let [{:keys [file line column]} (spoon/source-location type)]
+                    [file line column (.getQualifiedName type)])))
+       vec))
 
 (defn- field-node [ctx ^CtType owner ^CtField field]
   (let [initializer (.getDefaultExpression field)
@@ -910,24 +1223,32 @@
       (source-ref field rule {:declaration-id id :declaration-kind :field}))))
 
 (defn- method-node [ctx ^CtType owner ^CtMethod method]
-  (let [body (.getBody method)
+  (let [local-types (mapv validate-local-type!
+                          (executable-local-types method))
+        body (.getBody method)
         body-node (when body (translated-node ctx body))
         name (identifier (.getSimpleName method))
         rule :java-library.declaration/method
-        id (register-member! ctx owner method name rule)]
-    (csharp/with-source
-      (sequence-node
-       [(raw (str (str/join " " (method-words owner method)) " "))
-        (type-node ctx (.getType method))
-        (raw (str " " name))
-        (executable-formals-node method)
-        (raw "(")
-        (sequence-node (mapv #(parameter-node ctx %) (.getParameters method)) ", ")
-        (raw ")")
-        (if body-node
-          (sequence-node [(raw " ") body-node])
-          (raw ";"))])
-      (source-ref method rule {:declaration-id id :declaration-kind :method}))))
+        id (register-member! ctx owner method name rule)
+        method-node
+        (csharp/with-source
+          (sequence-node
+           [(raw (str (str/join " " (method-words owner method)) " "))
+            (type-node ctx (.getType method))
+            (raw (str " " name))
+            (executable-formals-node method)
+            (raw "(")
+            (sequence-node (mapv #(parameter-node ctx %) (.getParameters method)) ", ")
+            (raw ")")
+            (if body-node
+              (sequence-node [(raw " ") body-node])
+              (raw ";"))])
+          (source-ref method rule
+                      {:declaration-id id :declaration-kind :method}))]
+    (sequence-node
+     (into [method-node]
+           (map #(emit-root ctx %) local-types))
+     "\n\n")))
 
 (defn- constructor-node [ctx ^CtType owner ^CtConstructor constructor]
   (let [name (pascal (.getSimpleName owner))

@@ -365,6 +365,162 @@
     (is (= "executable:java.util.Collections#synchronizedMap(java.util.Map)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
 
+(deftest neutral-map-compute-and-consumer-calls-use-exact-jdk-contracts
+  (let [fixture
+        (model! {"example/Indexes.java"
+                 (str "package example; import java.util.HashMap; "
+                      "import java.util.Map; import java.util.function.BiConsumer; "
+                      "public final class Indexes { public static void emit("
+                      "String key, BiConsumer<String, Integer> consumer) { "
+                      "Map<String, Integer> indexes = new HashMap<>(); "
+                      "int value = indexes.computeIfAbsent(key, k -> 0); "
+                      "consumer.accept(key, value); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Indexes.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Indexes.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::System.Collections.Generic.IDictionary<string, int> indexes = "
+              "new global::System.Collections.Generic.Dictionary<string, int>();\n"
+              "int value = global::Vibeformer.Runtime.JavaCompat.ComputeIfAbsent("
+              "indexes, key, (k) => 0);\nconsumer(key, value);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-map-hash-and-string-builder-chains-preserve-java-semantics
+  (let [fixture
+        (model! {"example/Text.java"
+                 (str "package example; import java.util.Map; "
+                      "public final class Text { public static int hash("
+                      "Map<String, String> values) { return values.hashCode(); } "
+                      "public static String render(String name) { "
+                      "StringBuilder builder = new StringBuilder(); "
+                      "builder.append(name).append(\": \"); "
+                      "return builder.toString(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Text.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Text.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::System.Text.StringBuilder builder = "
+              "new global::System.Text.StringBuilder();\n"
+              "builder.Append(name).Append(\": \");\n"
+              "return builder.ToString();")))
+    (is (str/includes?
+         first-source
+         (str "public static int hash("
+              "global::System.Collections.Generic.IDictionary<string, string> values) {\n"
+              "return global::Vibeformer.Runtime.JavaCompat.HashCode(values);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-capacity-set-add-and-list-size-use-direct-dotnet-contracts
+  (let [fixture
+        (model! {"example/Visited.java"
+                 (str "package example; import java.util.HashSet; "
+                      "import java.util.List; import java.util.Set; "
+                      "public final class Visited { public static boolean addFirst("
+                      "List<String> names, String name) { "
+                      "Set<String> visited = new HashSet<>(names.size()); "
+                      "return visited.add(name); } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Visited.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Visited.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::System.Collections.Generic.ISet<string> visited = "
+              "new global::System.Collections.Generic.HashSet<string>(names.Count);\n"
+              "return visited.Add(name);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-primitive-arrays-for-loops-and-conditionals-are-structural
+  (let [fixture
+        (model! {"example/Ascii.java"
+                 (str "package example; public final class Ascii { "
+                      "public static String upper(String text) { "
+                      "char[] source = text.toCharArray(); "
+                      "char[] result = new char[source.length]; "
+                      "for (int i = 0; i < source.length; i++) { "
+                      "result[i] = upper(source[i]); } return new String(result); } "
+                      "private static char upper(char value) { "
+                      "return ('a' <= value && value <= 'z') "
+                      "? (char) (value - 32) : value; } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Ascii.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Ascii.cs")))]
+    (is (str/includes?
+         first-source
+         (str "char[] source = text.ToCharArray();\n"
+              "char[] result = new char[source.Length];\n"
+              "for (int i = 0; (i < source.Length); i++) {\n"
+              "result[i] = global::Example.Java.Library.Ascii.upper(source[i]);\n}\n"
+              "return new string(result);")))
+    (is (str/includes?
+         first-source
+         (str "return ((('a' <= value) && (value <= 'z')) ? "
+              "(char)((value - 32)) : value);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-map-compute-contract-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.Map; "
+                      "public final class Unsupported { public static void run("
+                      "Map<String, Integer> values) { "
+                      "values.compute(\"x\", (key, value) -> 1); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.util.Map#compute(java.lang.Object,java.util.function.BiFunction)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
 (deftest neutral-method-bodies-use-resolved-invocations-and-operators
   (let [fixture
         (model! {"example/Methods.java"
@@ -404,3 +560,105 @@
                                :command ["dotnet" "build" (:project-file first)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-try-catch-casts-and-cause-access-are-structural
+  (let [fixture
+        (model! {"example/Failures.java"
+                 (str "package example; import java.io.IOException; "
+                      "public final class Failures { public static void unwrap("
+                      "RuntimeException failure) throws IOException { "
+                      "try { throw failure; } catch (RuntimeException caught) { "
+                      "if (caught.getCause() instanceof IOException) { "
+                      "throw (IOException) caught.getCause(); } throw caught; } } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Failures.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Failures.cs")))]
+    (is (str/includes?
+         first-source
+         (str "try {\nthrow failure;\n} catch (global::System.Exception caught) {\n"
+              "if ((caught.InnerException is global::System.IO.IOException)) {\n"
+              "throw (global::System.IO.IOException)(caught.InnerException!);\n}\n"
+              "throw caught;\n}")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest try-with-resources-remains-fail-closed-until-lifetime-lowering
+  (let [fixture
+        (model! {"example/Resources.java"
+                 (str "package example; public final class Resources { "
+                      "public static void run() { try (Item item = new Item()) { } } "
+                      "private static final class Item implements AutoCloseable { "
+                      "public void close() { } } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= :translation-rule-failed
+           (get-in (ex-data error) [:diagnostic :kind])))
+    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
+                       "Java try-with-resources requires explicit lifetime lowering"))))
+
+(deftest noncapturing-method-local-classes-are-hoisted-by-resolved-identity
+  (let [fixture
+        (model! {"example/Counter.java"
+                 (str "package example; public final class Counter { "
+                      "public int next() { class Index { "
+                      "private int value = -1; "
+                      "int increment() { return ++value; } } "
+                      "Index index = new Index(); return index.increment(); } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Counter.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Counter.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::Example.Java.Library.Counter._1Index index = "
+              "new global::Example.Java.Library.Counter._1Index();\n"
+              "return index.increment();")))
+    (is (str/includes?
+         first-source
+         (str "private class _1Index {\n"
+              "private int value = -1;\n\n"
+              "internal int increment() {\n"
+              "return ++this.value;\n}\n}")))
+    (is (= first-source second-source))
+    (is (= 3 (get-in first [:summary :executable-roots])
+           (get-in second [:summary :executable-roots])))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest capturing-method-local-classes-remain-fail-closed
+  (let [fixture
+        (model! {"example/Captured.java"
+                 (str "package example; public final class Captured { "
+                      "public int value(int offset) { class Local { "
+                      "int get() { return offset; } } return new Local().get(); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :unsupported-local-class-capture (:kind (ex-data error))))
+    (is (= "type:example.Captured$1Local"
+           (:source-identity (ex-data error))))
+    (is (= ["spoon.support.reflect.declaration.CtParameterImpl"]
+           (mapv #(get-in % [:identity :frontend-class])
+                 (:captures (ex-data error)))))
+    (is (= ["parameter"]
+           (mapv #(get-in % [:identity :role])
+                 (:captures (ex-data error)))))
+    (is (pos? (get-in (ex-data error) [:source-location :line])))))
