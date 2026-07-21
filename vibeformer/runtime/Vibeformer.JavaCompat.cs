@@ -31,6 +31,22 @@ internal delegate TResult JavaIntFunction<out TResult>(int value);
 internal delegate int JavaToIntFunction<in TValue>(TValue value);
 internal delegate long JavaToLongFunction<in TValue>(TValue value);
 internal delegate bool JavaBiPredicate<in TLeft, in TRight>(TLeft left, TRight right);
+
+internal interface IJavaEconomicMapCursor<out K, out V>
+{
+    bool Advance();
+    K GetKey();
+    V GetValue();
+}
+
+internal interface IJavaEconomicMap<K, out V> where K : notnull
+{
+    V? Get(K key);
+    bool ContainsKey(K key);
+    int Size();
+    IJavaEconomicMapCursor<K, V> GetEntries();
+}
+
 internal
 enum JavaTimeUnit { NANOSECONDS, MICROSECONDS, MILLISECONDS, SECONDS, MINUTES, HOURS, DAYS }
 internal enum JavaProcessRedirect { INHERIT }
@@ -1855,19 +1871,6 @@ internal static class JavaCompat
     internal static TimeSpan DurationOfSeconds(long seconds) => TimeSpan.FromSeconds(seconds);
     internal static TimeSpan DurationOfSeconds(long seconds, long nanos) =>
         TimeSpan.FromSeconds(seconds) + TimeSpan.FromTicks(nanos / 100);
-    #if VIBEFORMER_PKL_CORE
-    internal static TimeSpan DurationOf(long value, object unit) => unit switch
-    {
-        global::Pkl.Core.Runtime.JavaTemporalUnit.NANOS => TimeSpan.FromTicks(value / 100),
-        global::Pkl.Core.Runtime.JavaTemporalUnit.MICROS => TimeSpan.FromTicks(value * 10),
-        global::Pkl.Core.Runtime.JavaTemporalUnit.MILLIS => TimeSpan.FromMilliseconds(value),
-        global::Pkl.Core.Runtime.JavaTemporalUnit.SECONDS => TimeSpan.FromSeconds(value),
-        global::Pkl.Core.Runtime.JavaTemporalUnit.MINUTES => TimeSpan.FromMinutes(value),
-        global::Pkl.Core.Runtime.JavaTemporalUnit.HOURS => TimeSpan.FromHours(value),
-        global::Pkl.Core.Runtime.JavaTemporalUnit.DAYS => TimeSpan.FromDays(value),
-        _ => throw new ArgumentOutOfRangeException(nameof(unit))
-    };
-    #endif
     internal static T ClassCast<T>(Type type, object value) =>
         type.IsInstanceOfType(value) ? (T)value : throw new InvalidCastException();
     private static string? ClassResourceName(Assembly assembly, Type? type, string name)
@@ -3950,12 +3953,6 @@ internal static class JavaCompat
         return result;
     }
 
-#if VIBEFORMER_PKL_CORE
-    internal static global::Pkl.Core.Runtime.JavaTuple2<T[], T[]> SplitArray<T>(T[] source, int index) =>
-        new(source[..index], source[index..]);
-    internal static int[][] SplitArray(int[] source, int index) => new[] { source[..index], source[index..] };
-#endif
-
     internal static int ListCount<T>(IEnumerable<T> values) => values.Count();
 
     internal static bool ListIsEmpty<T>(IEnumerable<T> values) => !values.Any();
@@ -4716,21 +4713,12 @@ internal static class JavaCompat
     internal static T Min<T>(T left, T right) where T : IComparable<T> => left.CompareTo(right) <= 0 ? left : right;
     internal static T Min<T>(IEnumerable<T> values) => values.Min(Comparer<T>.Default)!;
 
-#if VIBEFORMER_PKL_CORE
-    internal static global::Pkl.Core.Pair<object, object> ObjectPair<F, S>(global::Pkl.Core.Pair<F, S> pair) =>
-        new(pair.GetFirst(), pair.GetSecond());
-#endif
     internal static long DurationToMillis(TimeSpan value) => checked((long)value.TotalMilliseconds);
     internal static long DurationGetSeconds(TimeSpan value) => checked((long)value.TotalSeconds);
     internal static int DurationGetNano(TimeSpan value) => checked((int)((value.Ticks % TimeSpan.TicksPerSecond) * 100));
-#if VIBEFORMER_PKL_CORE
-    internal static global::Pkl.Core.Runtime.GraalCollections.EconomicMap<K, V> CreateEconomicMap<K, V>() where K : notnull => new();
-    internal static global::Pkl.Core.Runtime.GraalCollections.EconomicMap<K, V> CreateEconomicMap<K, V>(int capacity) where K : notnull => new(capacity);
-    internal static global::Pkl.Core.Runtime.GraalCollections.UnmodifiableEconomicMap<K, V> EmptyEconomicMap<K, V>() where K : notnull =>
-        new global::Pkl.Core.Runtime.GraalCollections.EconomicMap<K, V>();
     internal static bool EconomicMapEquals<K, V>(
-        global::Pkl.Core.Runtime.GraalCollections.UnmodifiableEconomicMap<K, V> left,
-        global::Pkl.Core.Runtime.GraalCollections.UnmodifiableEconomicMap<K, V> right)
+        IJavaEconomicMap<K, V> left,
+        IJavaEconomicMap<K, V> right)
         where K : notnull
     {
         if (ReferenceEquals(left, right)) return true;
@@ -4751,19 +4739,6 @@ internal static class JavaCompat
     }
     internal static global::System.Net.IPEndPoint NewIpEndPoint(string host, int port) =>
         new(global::System.Net.Dns.GetHostAddresses(host)[0], port);
-    internal static global::System.Net.WebProxy NewWebProxy(
-        global::Pkl.Core.Runtime.JavaProxyType type, global::System.Net.IPEndPoint endpoint) =>
-        new(new UriBuilder("http", endpoint.Address.ToString(), endpoint.Port).Uri);
-    internal static void VisitVmValue(dynamic visitor, object value)
-    {
-        if (value is global::Pkl.Core.Runtime.VmValue vmValue) vmValue.Accept(visitor);
-        else if (value is string text) visitor.VisitString(text);
-        else if (value is bool boolean) visitor.VisitBoolean(boolean);
-        else if (value is long integer) visitor.VisitInt(integer);
-        else if (value is double floating) visitor.VisitFloat(floating);
-        else throw new ArgumentException("Unknown VM value type: " + value.GetType().FullName);
-    }
-#endif
     internal static V OrganicGet<K, V>(IDictionary<K, V> values, K key) where K : notnull => MapGet(values, key);
     internal static T OrganicGet<T>(IList<T> values, int index) => values[index];
     internal static V OrganicPut<K, V>(IDictionary<K, V> values, K key, V value) where K : notnull => MapPut(values, key, value);

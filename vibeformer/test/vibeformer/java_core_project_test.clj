@@ -106,7 +106,7 @@
 
     (testing "the entire selected declaration and body closure is accounted for"
       (is (= 657 (:compilation-units summary)))
-      (is (= 663 (:generated-files summary)))
+      (is (= 664 (:generated-files summary)))
       (is (= 28 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
@@ -222,6 +222,9 @@
               substrate (slurp (str (paths/resolve-path
                                       source-root "Runtime" "Substrate"
                                       "Pkl.Core.Substrate.cs")))
+              runtime-bridge (slurp (str (paths/resolve-path
+                                           source-root "Runtime" "Substrate"
+                                           "Pkl.Core.RuntimeBridge.cs")))
               json-writer (slurp (str (paths/resolve-path
                                         source-root "Util" "Json" "JsonWriter.cs")))
               http-client (slurp (str (paths/resolve-path source-root
@@ -308,6 +311,12 @@
                                "JavaCompat.ResolveLocalDependencyUri(projectBaseUri"))
             (is (str/includes? project-deps
                                "JavaCompat.EconomicMapEquals(this.resolvedDependencies"))
+            (is (str/includes? runtime-bridge
+                               "internal static class PklRuntimeBridge"))
+            (is (str/includes? runtime-bridge
+                               "CreateEconomicMap<K, V>"))
+            (is (not (str/includes? java-compat "global::Pkl.Core")))
+            (is (not (str/includes? java-compat "VIBEFORMER_PKL_CORE")))
             (is (str/includes? substrate
                                "internal SourceSection CreateSection(int line)"))
             (is (str/includes? substrate

@@ -4,7 +4,6 @@
            :target-framework "net8.0"
            :nullable "enable"
            :implicit-usings false
-           :define-constants ["VIBEFORMER_PKL_CORE"]
            :no-warn ["CS0108" "CS0109" "CS0414" "CS0649" "CS0693"
                      "CS8600" "CS8601" "CS8602" "CS8603" "CS8604"
                      "CS8619" "CS8620" "CS8629" "CS8605" "CS0162"
@@ -32,6 +31,7 @@
  :resources {}
  :project-references ["../pkl-parser/Pkl.Parser.csproj"]
  :runtime-sources ["vibeformer/runtime/Pkl.Core.Substrate.cs"
+                   "vibeformer/runtime/Pkl.Core.RuntimeBridge.cs"
                    "vibeformer/runtime/Pkl.Core.DotNet.cs"
                    "vibeformer/runtime/Pkl.Core.ValueModel.DotNet.cs"
                    "vibeformer/runtime/Pkl.Core.Loading.cs"]

@@ -755,6 +755,18 @@
 (defn- compat-call [name arguments]
   (invoke (raw (str "global::Vibeformer.Runtime.JavaCompat." name)) arguments))
 
+(defn- pkl-runtime-call [name arguments]
+  (invoke (raw (str "global::Pkl.Core.Runtime.PklRuntimeBridge." name)) arguments))
+
+(defn- pkl-runtime-invocation
+  [services invocation name arguments]
+  (let [target (raw (str "global::Pkl.Core.Runtime.PklRuntimeBridge." name))]
+    (invoke (if-let [type-arguments
+                     (inferred-method-type-arguments services invocation)]
+              (csharp/generic-name target type-arguments)
+              target)
+            arguments)))
+
 (defn- expected-nullable-collection? [^CtInvocation invocation]
   (let [parent (when (.isParentInitialized invocation) (.getParent invocation))]
     (when (or (instance? CtConstructorCall parent) (instance? CtInvocation parent))
@@ -846,6 +858,15 @@
                              (.getActualTypeArguments (.getType invocation)))]
     (invoke (csharp/generic-name
              (raw (str "global::Vibeformer.Runtime.JavaCompat." name))
+             type-arguments)
+            arguments)))
+
+(defn- result-generic-arguments-pkl-runtime-call
+  [services ^CtInvocation invocation name arguments]
+  (let [type-arguments (mapv #((:type-node services) %)
+                             (.getActualTypeArguments (.getType invocation)))]
+    (invoke (csharp/generic-name
+             (raw (str "global::Pkl.Core.Runtime.PklRuntimeBridge." name))
              type-arguments)
             arguments)))
 
@@ -1439,7 +1460,7 @@
           "executable:java.util.Set#of(java.lang.Object[])" (result-generic-compat-call services element "SetOf" args)
           "executable:java.time.Duration#ofSeconds(long)" (compat-call "DurationOfSeconds" args)
           "executable:java.time.Duration#ofSeconds(long,long)" (compat-call "DurationOfSeconds" args)
-          "executable:java.time.Duration#of(long,java.time.temporal.TemporalUnit)" (compat-call "DurationOf" args)
+          "executable:java.time.Duration#of(long,java.time.temporal.TemporalUnit)" (pkl-runtime-call "DurationOf" args)
           "executable:java.time.Duration#toMillis()" (compat-call "DurationToMillis" [target])
           "executable:java.time.Duration#getSeconds()" (compat-call "DurationGetSeconds" [target])
           "executable:java.time.Duration#getNano()" (compat-call "DurationGetNano" [target])
@@ -1638,7 +1659,7 @@
             (normal-invocation services element children))
           "executable:org.pkl.core.runtime.VmValueVisitor#visit(java.lang.Object)"
           (if (instance? CtSuperAccess target-element)
-            (compat-call "VisitVmValue" (into [(raw "this")] args))
+            (pkl-runtime-call "VisitVmValue" (into [(raw "this")] args))
             (normal-invocation services element children))
           ;; Project-local calls are mapped by exact declaration identity.  A
           ;; constructor invocation is handled separately below.
@@ -1854,16 +1875,21 @@
                    (= 2 argc))
               (compat-call "IterableString" args)
               (and (str/starts-with? key "executable:org.organicdesign.fp.collections.Cowry#")
+                   (= "splitArray" (.getSimpleName (.getExecutable element))))
+              (pkl-runtime-invocation services element "SplitArray" args)
+              (and (str/starts-with? key "executable:org.organicdesign.fp.collections.Cowry#")
                    (contains? #{"spliceIntoArrayAt" "insertIntoArrayAt" "replaceInArrayAt"}
                               (.getSimpleName (.getExecutable element))))
               (source-array-generic-compat-call
                services element ((:pascal services) (.getSimpleName (.getExecutable element))) args)
               (and (str/starts-with? key "executable:org.graalvm.collections.EconomicMap#create(")
                    (<= argc 1))
-              (result-generic-arguments-compat-call services element "CreateEconomicMap" args)
+              (result-generic-arguments-pkl-runtime-call
+               services element "CreateEconomicMap" args)
               (and (str/starts-with? key "executable:org.graalvm.collections.EconomicMap#emptyMap(")
                    (zero? argc))
-              (result-generic-arguments-compat-call services element "EmptyEconomicMap" [])
+              (result-generic-arguments-pkl-runtime-call
+               services element "EmptyEconomicMap" [])
               (and (str/starts-with? key "executable:org.pkl.core.util.paguro.RrbTree#genericNodeArray(")
                    (= 1 argc))
               (let [component (.getComponentType (.getType element))
@@ -1956,7 +1982,7 @@
                    (or (str/starts-with? key "executable:org.pkl.core.ValueVisitor#visitPair(")
                        (str/starts-with? key "executable:org.pkl.core.ValueConverter#convertPair(")))
               (invoke (member target ((:pascal services) (.getSimpleName (.getExecutable element))))
-                      [(compat-call "ObjectPair" [(arg 0)])])
+                      [(pkl-runtime-call "ObjectPair" [(arg 0)])])
               (record-component-invocation-name services element resolved)
               (member target (record-component-invocation-name services element resolved))
               (= :constructor (:kind resolved))
@@ -2119,7 +2145,7 @@
                          ;; wrapper that would escape through public metadata.
                          "java.io.PrintWriter" (first args)
                          "java.net.InetSocketAddress" (compat-call "NewIpEndPoint" args)
-                         "java.net.Proxy" (compat-call "NewWebProxy" args)
+                         "java.net.Proxy" (pkl-runtime-call "NewWebProxy" args)
                          "java.net.URI" (compat-call "NewUri" args)
                          "org.pkl.core.PType$Union"
                          (sequence-node

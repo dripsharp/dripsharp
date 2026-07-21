@@ -1482,7 +1482,8 @@ namespace Pkl.Core.Runtime.Polyglot
 
 namespace Pkl.Core.Runtime.GraalCollections
 {
-    internal class UnmodifiableEconomicMap<K, V> where K : notnull
+    internal class UnmodifiableEconomicMap<K, V> :
+        global::Vibeformer.Runtime.IJavaEconomicMap<K, V> where K : notnull
     {
         protected readonly Dictionary<K, V> Values;
 
@@ -1496,6 +1497,12 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal IEnumerable<V> GetValues() => Values.Values;
         internal IEnumerable<K> GetKeys() => Values.Keys;
         internal UnmodifiableMapCursor<K, V> GetEntries() => new(Values.GetEnumerator());
+
+        V? global::Vibeformer.Runtime.IJavaEconomicMap<K, V>.Get(K key) => Get(key);
+        bool global::Vibeformer.Runtime.IJavaEconomicMap<K, V>.ContainsKey(K key) => ContainsKey(key);
+        int global::Vibeformer.Runtime.IJavaEconomicMap<K, V>.Size() => Size();
+        global::Vibeformer.Runtime.IJavaEconomicMapCursor<K, V>
+            global::Vibeformer.Runtime.IJavaEconomicMap<K, V>.GetEntries() => GetEntries();
     }
 
     internal sealed class EconomicMap<K, V> : UnmodifiableEconomicMap<K, V> where K : notnull
@@ -1574,13 +1581,18 @@ namespace Pkl.Core.Runtime.GraalCollections
         internal static EconomicSet<T> Create<T>(int capacity) where T : notnull => new(capacity);
     }
 
-    internal sealed class UnmodifiableMapCursor<K, V> where K : notnull
+    internal sealed class UnmodifiableMapCursor<K, V> :
+        global::Vibeformer.Runtime.IJavaEconomicMapCursor<K, V> where K : notnull
     {
         private readonly IEnumerator<KeyValuePair<K, V>> entries;
         internal UnmodifiableMapCursor(IEnumerator<KeyValuePair<K, V>> entries) => this.entries = entries;
         internal bool Advance() => entries.MoveNext();
         internal K GetKey() => entries.Current.Key;
         internal V GetValue() => entries.Current.Value;
+
+        bool global::Vibeformer.Runtime.IJavaEconomicMapCursor<K, V>.Advance() => Advance();
+        K global::Vibeformer.Runtime.IJavaEconomicMapCursor<K, V>.GetKey() => GetKey();
+        V global::Vibeformer.Runtime.IJavaEconomicMapCursor<K, V>.GetValue() => GetValue();
         internal IEnumerable<KeyValuePair<K, V>> Entries()
         {
             while (entries.MoveNext()) yield return entries.Current;

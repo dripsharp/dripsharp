@@ -1,9 +1,133 @@
 (ns vibeformer.translation-boundary-test
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is testing]]
+            [vibeformer.paths :as paths]
+            [vibeformer.process :as process])
+  (:import [java.nio.file CopyOption Files OpenOption Path StandardCopyOption]
+           [java.nio.file.attribute FileAttribute]))
 
 (defn- source [relative]
   (slurp (str "src/vibeformer/" relative ".clj")))
+
+(defn- generic-runtime-assets []
+  (let [directory (paths/resolve-path (paths/workspace-root) "vibeformer" "runtime")]
+    (->> (.listFiles (.toFile directory))
+         (filter #(.isFile %))
+         (filter #(str/starts-with? (.getName %) "Vibeformer."))
+         (sort-by #(.getName %))
+         vec)))
+
+(defn- write-string! [^Path file value]
+  (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
+  (Files/writeString file value (make-array OpenOption 0))
+  file)
+
+(def ^:private generic-economic-map-fixture
+  (str
+   "#nullable enable\n"
+   "namespace Vibeformer.Runtime;\n\n"
+   "internal sealed class FixtureCursor<K, V> : IJavaEconomicMapCursor<K, V>\n"
+   "  where K : notnull\n"
+   "{\n"
+   "  private readonly global::System.Collections.Generic.IEnumerator<\n"
+   "    global::System.Collections.Generic.KeyValuePair<K, V>> entries;\n"
+   "  internal FixtureCursor(global::System.Collections.Generic.IEnumerator<\n"
+   "    global::System.Collections.Generic.KeyValuePair<K, V>> entries) =>\n"
+   "    this.entries = entries;\n"
+   "  public bool Advance() => entries.MoveNext();\n"
+   "  public K GetKey() => entries.Current.Key;\n"
+   "  public V GetValue() => entries.Current.Value;\n"
+   "}\n\n"
+   "internal sealed class FixtureMap<K, V> : IJavaEconomicMap<K, V>\n"
+   "  where K : notnull\n"
+   "{\n"
+   "  private readonly global::System.Collections.Generic.List<\n"
+   "    global::System.Collections.Generic.KeyValuePair<K, V>> entries;\n"
+   "  private readonly global::System.Collections.Generic.Dictionary<K, V> values = new();\n"
+   "  internal FixtureMap(params global::System.Collections.Generic.KeyValuePair<K, V>[] entries)\n"
+   "  {\n"
+   "    this.entries = new(entries);\n"
+   "    foreach (var entry in entries) values[entry.Key] = entry.Value;\n"
+   "  }\n"
+   "  public V? Get(K key) => values.TryGetValue(key, out var value) ? value : default;\n"
+   "  public bool ContainsKey(K key) => values.ContainsKey(key);\n"
+   "  public int Size() => entries.Count;\n"
+   "  public IJavaEconomicMapCursor<K, V> GetEntries() => new FixtureCursor<K, V>(entries.GetEnumerator());\n"
+   "}\n\n"
+   "internal static class Program\n"
+   "{\n"
+   "  private static global::System.Collections.Generic.KeyValuePair<K, V> Entry<K, V>(K key, V value)\n"
+   "    where K : notnull => new(key, value);\n"
+   "  public static void Main()\n"
+   "  {\n"
+   "    var firstKey = new global::System.Uri(\"package://example.test/first@1\");\n"
+   "    var secondKey = new global::System.Uri(\"package://example.test/second@1\");\n"
+   "    var absentKey = new global::System.Uri(\"package://example.test/absent@1\");\n"
+   "    var left = new FixtureMap<global::System.Uri, string?>(\n"
+   "      Entry<global::System.Uri, string?>(firstKey, null),\n"
+   "      Entry<global::System.Uri, string?>(secondKey, \"value\"));\n"
+   "    var equal = new FixtureMap<global::System.Uri, string?>(\n"
+   "      Entry<global::System.Uri, string?>(new global::System.Uri(firstKey.OriginalString), null),\n"
+   "      Entry<global::System.Uri, string?>(new global::System.Uri(secondKey.OriginalString), \"value\"));\n"
+   "    if (!JavaCompat.EconomicMapEquals(left, left) ||\n"
+   "        !JavaCompat.EconomicMapEquals(left, equal))\n"
+   "      throw new global::System.Exception(\"typed URI/null equality failed\");\n"
+   "    var missingNullKey = new FixtureMap<global::System.Uri, string?>(\n"
+   "      Entry<global::System.Uri, string?>(absentKey, null),\n"
+   "      Entry<global::System.Uri, string?>(secondKey, \"value\"));\n"
+   "    if (JavaCompat.EconomicMapEquals(left, missingNullKey))\n"
+   "      throw new global::System.Exception(\"missing null-valued key compared equal\");\n"
+   "    var cursor = left.GetEntries();\n"
+   "    if (!cursor.Advance() || cursor.GetKey() != firstKey || cursor.GetValue() is not null ||\n"
+   "        !cursor.Advance() || cursor.GetKey() != secondKey || cursor.GetValue() != \"value\" ||\n"
+   "        cursor.Advance())\n"
+   "      throw new global::System.Exception(\"cursor iteration contract failed\");\n"
+   "    global::System.Console.Write(\"OK\");\n"
+   "  }\n"
+   "}\n"))
+
+(defn- compile-and-run-generic-runtime! [assets]
+  (let [root (Files/createTempDirectory "vibeformer-generic-runtime"
+                                        (make-array FileAttribute 0))
+        runtime-output (:output (process/run! {:directory root
+                                               :command ["dotnet" "--list-runtimes"]}))
+        runtime-majors (keep (fn [line]
+                               (when-let [[_ major]
+                                          (re-find #"^Microsoft\.NETCore\.App (\d+)\."
+                                                   line)]
+                                 (parse-long major)))
+                             (str/split-lines runtime-output))
+        target-framework (str "net" (apply max runtime-majors) ".0")
+        source-root (paths/resolve-path root "src")
+        project (write-string!
+                 (paths/resolve-path root "GenericRuntime.csproj")
+                 (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+                      "  <PropertyGroup>\n"
+                      "    <OutputType>Exe</OutputType>\n"
+                      "    <TargetFramework>" target-framework "</TargetFramework>\n"
+                      "    <Nullable>enable</Nullable>\n"
+                      "    <ImplicitUsings>disable</ImplicitUsings>\n"
+                      "    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>\n"
+                      "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
+                      "  </PropertyGroup>\n"
+                      "  <ItemGroup><Compile Include=\"src/**/*.cs\" /></ItemGroup>\n"
+                      "</Project>\n"))]
+    (doseq [asset assets]
+      (let [destination (paths/resolve-path source-root (.getName asset))]
+        (Files/createDirectories (.getParent destination)
+                                 (make-array FileAttribute 0))
+        (Files/copy (.toPath asset) destination
+                    (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+    (write-string! (paths/resolve-path source-root "Program.cs")
+                   generic-economic-map-fixture)
+    (process/run! {:directory root
+                   :command ["dotnet" "build" project "--nologo"
+                             "--configuration" "Release" "--verbosity:quiet"
+                             "-warnaserror"]})
+    (str/trim
+     (:output (process/run! {:directory root
+                             :command ["dotnet" "run" "--project" project
+                                       "--configuration" "Release" "--no-build"]})))))
 
 (deftest reusable-translation-kernel-is-product-neutral
   (let [kernel (source "java_translate")
@@ -13,6 +137,20 @@
     (testing "Pkl source identities and destinations are absent from reusable layers"
       (doseq [content [kernel frontend]]
         (is (not (re-find #"(?i)org\\.pkl|Pkl\\.Core|Pkl\\.Parser" content)))))))
+
+(deftest generic-runtime-is-independently-product-neutral
+  (let [assets (generic-runtime-assets)]
+    (is (seq assets))
+    (doseq [asset assets
+            :let [content (slurp asset)
+                  label (.getName asset)]]
+      (testing label
+        (is (str/includes? content "namespace Vibeformer.Runtime"))
+        (is (not (re-find #"(?i)org\\.pkl" content)))
+        (is (not (re-find #"(?i)(?:global::|using\\s+|namespace\\s+)Pkl\\.(?:Core|Parser)"
+                          content)))
+        (is (not (re-find #"(?i)#if[^\n]*PKL" content)))))
+    (is (= "OK" (compile-and-run-generic-runtime! assets)))))
 
 (deftest pkl-rules-depend-inward-on-the-reusable-kernel
   (let [body-rules (source "pkl/java_body")
