@@ -3784,6 +3784,9 @@ internal static class JavaCompat
     internal static ReadOnlyCollection<T> UnmodifiableList<T>(IEnumerable<T> values) =>
         new(values is IList<T> list ? list : values.ToList());
 
+    internal static IDictionary<K, V> UnmodifiableMap<K, V>(IDictionary<K, V> values)
+        where K : notnull => new ReadOnlyDictionary<K, V>(values);
+
     internal static IList<T> SubList<T>(IEnumerable<T> values, int fromIndex, int toIndex) =>
         new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
     // Java generic casts may legally carry null even when the declaration is
@@ -4395,6 +4398,9 @@ internal static class JavaCompat
     {
         foreach (var value in values) action(value);
     }
+    internal static IEnumerable<T> StreamOf<T>(params T[] values) => values;
+    internal static IEnumerable<R> FlatMap<T, R>(IEnumerable<T> values,
+        Func<T, IEnumerable<R>> mapper) => values.SelectMany(mapper);
     internal static void ForEach<K, V>(IDictionary<K, V> values, Action<K, V> action) where K : notnull
     {
         foreach (var entry in values) action(entry.Key, entry.Value);

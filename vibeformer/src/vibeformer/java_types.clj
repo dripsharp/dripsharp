@@ -160,11 +160,16 @@
    "java.util.function.BiConsumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]
+   "java.util.function.Function" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Supplier" ["global::System.Func" :dotnet.type/func]
    "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex"
                               :dotnet.type/regex]
    "java.util.stream.Stream" ["global::System.Collections.Generic.IEnumerable"
                               :dotnet.type/enumerable]
+   "java.util.stream.Collector" ["global::Vibeformer.Runtime.JavaCollector"
+                                 :dotnet.type/java-collector]
+   "java.util.stream.Collectors" ["global::Vibeformer.Runtime.JavaCompat"
+                                  :dotnet.type/java-compat]
 
    "java.util.zip.GZIPInputStream" ["global::System.IO.Compression.GZipStream"
                                     :dotnet.type/gzip-stream]

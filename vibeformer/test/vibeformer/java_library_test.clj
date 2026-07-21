@@ -42,53 +42,57 @@
     {:root root :discovery discovery
      :model (spoon/build-resolved-model! root discovery)}))
 
-(defn- configuration []
-  {:schema-version 1
-   :product-family :java-library
-   :destination-bundle 'vibeformer.java-library/rule-bundle
-   :project {:assembly-name "Example.Java.Library"
-             :root-namespace "Example.Java.Library"
-             :target-framework "net8.0"
-             :nullable "enable"
-             :implicit-usings false
-             :warnings-as-errors true}
-   :package {:id "Example.Java.Library"
-             :version "1.0.0"
-             :title "Example Java library"
-             :description "Reusable ordinary Java declaration fixture."
-             :authors "Vibeformer"
-             :tags "java fixture"
-             :project-url "https://example.invalid/java-library"
-             :repository-url "https://example.invalid/java-library.git"
-             :repository-type "git"}
-   :output {:project-directory "generated/example-java-library"
-            :source-directory "src"
-            :resource-directory "resources"
-            :project-file "Example.Java.Library.csproj"
-            :source-map-file "source-map.edn"
-            :diagnostics-file "diagnostics.edn"
-            :manifest-file "generation-manifest.edn"
-            :public-metadata-file "public-metadata.edn"
-            :annotation-decisions-file "annotation-decisions.edn"}
-   :namespaces {"example" "Example.Java.Library"}
-   :namespace-prefixes {}
-   :destination-capabilities #{}
-   :resources {}
-   :resource-policy {:strategy :embedded-resource-preserve-path}
-   :project-dependencies []
-   :external-dependencies {}
-   :public-surface {:strategy 'vibeformer.java-library/public-surface-strategy}})
+(defn- configuration
+  ([] (configuration #{}))
+  ([capabilities]
+   {:schema-version 1
+    :product-family :java-library
+    :destination-bundle 'vibeformer.java-library/rule-bundle
+    :project {:assembly-name "Example.Java.Library"
+              :root-namespace "Example.Java.Library"
+              :target-framework "net8.0"
+              :nullable "enable"
+              :implicit-usings false
+              :warnings-as-errors true}
+    :package {:id "Example.Java.Library"
+              :version "1.0.0"
+              :title "Example Java library"
+              :description "Reusable ordinary Java declaration fixture."
+              :authors "Vibeformer"
+              :tags "java fixture"
+              :project-url "https://example.invalid/java-library"
+              :repository-url "https://example.invalid/java-library.git"
+              :repository-type "git"}
+    :output {:project-directory "generated/example-java-library"
+             :source-directory "src"
+             :resource-directory "resources"
+             :project-file "Example.Java.Library.csproj"
+             :source-map-file "source-map.edn"
+             :diagnostics-file "diagnostics.edn"
+             :manifest-file "generation-manifest.edn"
+             :public-metadata-file "public-metadata.edn"
+             :annotation-decisions-file "annotation-decisions.edn"}
+    :namespaces {"example" "Example.Java.Library"}
+    :namespace-prefixes {}
+    :destination-capabilities capabilities
+    :resources {}
+    :resource-policy {:strategy :embedded-resource-preserve-path}
+    :project-dependencies []
+    :external-dependencies {}
+    :public-surface {:strategy 'vibeformer.java-library/public-surface-strategy}}))
 
-(defn- emit! [{:keys [root discovery model]} workers]
-  (concurrency/call-with-executor
-   {:worker-count workers}
-   #(project-emission/emit-project!
-     {:workspace-root root
-      :target (temp-directory)
-      :discovery discovery
-      :resolved-model model
-      :configuration (configuration)
-      :rule-bundle (java-library/rule-bundle)})))
+(defn- emit!
+  ([fixture workers] (emit! fixture workers #{}))
+  ([{:keys [root discovery model]} workers capabilities]
+   (concurrency/call-with-executor
+    {:worker-count workers}
+    #(project-emission/emit-project!
+      {:workspace-root (if (seq capabilities) (paths/absolute "..") root)
+       :target (temp-directory)
+       :discovery discovery
+       :resolved-model model
+       :configuration (configuration capabilities)
+       :rule-bundle (java-library/rule-bundle)}))))
 
 (defn- type-mapper []
   (get-in (java-library/rule-bundle) [:rules :resolved-mappings :type-node]))
@@ -306,3 +310,97 @@
                        "Java library constructor has no neutral mapping"))
     (is (= "executable:java.util.ArrayList#<init>()"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-map-copy-freeze-and-lambda-semantics-are-resolved
+  (let [fixture
+        (model! {"example/Frozen.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "import java.util.Collections; import java.util.LinkedHashMap; "
+                      "import java.util.List; import java.util.Map; "
+                      "public final class Frozen { "
+                      "private final Map<String, Item> items; "
+                      "private final List<String> names; "
+                      "public Frozen(Map<String, Item> source, List<String> names) { "
+                      "Map<String, Item> copied = new LinkedHashMap<>(source); "
+                      "copied.entrySet().forEach(entry -> "
+                      "entry.setValue(entry.getValue().freeze())); "
+                      "this.items = Collections.unmodifiableMap(copied); "
+                      "this.names = Collections.unmodifiableList(new ArrayList<>(names)); } "
+                      "public abstract static class Item { "
+                      "public abstract Item freeze(); } }")})
+        first (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        second (emit! fixture 3 #{:java-compat :java-regex-unicode})
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Frozen.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Frozen.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::System.Collections.Generic.IDictionary<string, global::Example.Java.Library.Frozen.Item> copied = new global::Vibeformer.Runtime.JavaLinkedHashMap<string, global::Example.Java.Library.Frozen.Item>(source);\n"
+              "global::Vibeformer.Runtime.JavaCompat.ForEach(global::Vibeformer.Runtime.JavaCompat.MapEntrySet(copied), (entry) => entry.SetValue(entry.Value.freeze()));\n"
+              "this.items = global::Vibeformer.Runtime.JavaCompat.UnmodifiableMap(copied);\n"
+              "this.names = global::Vibeformer.Runtime.JavaCompat.UnmodifiableList(new global::System.Collections.Generic.List<string>(names));")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest nearby-unmapped-collection-wrapper-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.Collections; "
+                      "import java.util.Map; public final class Unsupported { "
+                      "public Unsupported(Map<String, String> values) { "
+                      "Collections.synchronizedMap(values); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= :translation-rule-failed
+           (get-in (ex-data error) [:diagnostic :kind])))
+    (is (= "executable:java.util.Collections#synchronizedMap(java.util.Map)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-method-bodies-use-resolved-invocations-and-operators
+  (let [fixture
+        (model! {"example/Methods.java"
+                 (str "package example; import java.net.URI; "
+                      "public final class Methods { private Methods() {} "
+                      "public static int normalizedPort(URI uri) { "
+                      "if (uri.getPort() < 0 || uri.getPort() == 80) { "
+                      "return 0; } else { return uri.getPort(); } } "
+                      "public static boolean sameType(Object left, Object right) { "
+                      "if (left == null || left.getClass() != right.getClass()) { "
+                      "return false; } return true; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Methods.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Methods.cs")))]
+    (is (str/includes?
+         first-source
+         (str "public static int normalizedPort(global::System.Uri uri) {\n"
+              "if (((global::Vibeformer.Runtime.JavaCompat.UriPort(uri) < 0) || "
+              "(global::Vibeformer.Runtime.JavaCompat.UriPort(uri) == 80))) {\n"
+              "return 0;\n} else {\n"
+              "return global::Vibeformer.Runtime.JavaCompat.UriPort(uri);\n}\n}")))
+    (is (str/includes?
+         first-source
+         (str "if (((left == null) || (left.GetType() != right.GetType()))) {\n"
+              "return false;\n}\nreturn true;")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
