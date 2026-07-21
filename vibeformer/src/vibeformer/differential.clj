@@ -8,7 +8,8 @@
             [vibeformer.process :as process]
             [vibeformer.project :as project]
             [vibeformer.public-api-contract :as public-api-contract]
-            [vibeformer.schema-binding-contract :as schema-binding-contract])
+            [vibeformer.schema-binding-contract :as schema-binding-contract]
+            [vibeformer.schema-binding-runner :as schema-binding-runner])
   (:import [java.io BufferedReader File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
@@ -1677,6 +1678,12 @@
           schema-proof (verify-schema-codegen-binding!
                         {:root root :package-proof package-proof :run-command! run-command!
                          :java-release java-release :java-home java-home :entries entries})
+          exhaustive-schema-proof
+          (schema-binding-runner/verify-full-suite!
+           {:workspace-root root
+            :run-command! run-command!
+            :package-fn (fn [_] package-proof)
+            :require-conformant? true})
           comparison (assert-equal! "Pkl.Core" oracle-output package-output)
           perturbation (prove-perturbation! oracle-output perturbed-output)
           to-fixed-upstream-comparison
@@ -1709,6 +1716,8 @@
                    :public-contract (:summary public-contract)
                    :loading-policy-configuration-contract (:summary loading-contract)
                    :schema-codegen-binding (:summary schema-proof)
+                   :exhaustive-schema-codegen-binding
+                   (:summary exhaustive-schema-proof)
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
       (println "Independent upstream/package Pkl.Core differential passed:" (pr-str summary))
       {:package-proof package-proof
@@ -1716,6 +1725,7 @@
        :java-pattern-regex regex-compat
        :loading-policy-configuration-contract loading-contract
        :schema-codegen-binding schema-proof
+       :exhaustive-schema-codegen-binding exhaustive-schema-proof
        :summary summary
        :manifest manifest
        :oracle-output oracle-output
