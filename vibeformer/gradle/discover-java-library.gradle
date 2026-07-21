@@ -1,0 +1,141 @@
+import java.security.MessageDigest
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.compile.JavaCompile
+
+def vibeformerSha256 = { File input ->
+  MessageDigest digest = MessageDigest.getInstance("SHA-256")
+  input.withInputStream { stream ->
+    byte[] buffer = new byte[8192]
+    int read
+    while ((read = stream.read(buffer)) >= 0) {
+      if (read > 0) digest.update(buffer, 0, read)
+    }
+  }
+  digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+}
+
+def vibeformerPortablePath = { File root, File input ->
+  def rootPath = root.canonicalFile.toPath()
+  def inputPath = input.canonicalFile.toPath()
+  def rendered = inputPath.startsWith(rootPath)
+    ? rootPath.relativize(inputPath).toString()
+    : inputPath.toString()
+  rendered.replace(File.separatorChar, '/' as char)
+}
+
+gradle.projectsEvaluated {
+  def projectPath = gradle.rootProject.providers.gradleProperty("vibeformer.project").get()
+  def selectedProject = gradle.rootProject.findProject(projectPath)
+  if (selectedProject == null) {
+    throw new GradleException("Unknown -Pvibeformer.project=${projectPath}")
+  }
+
+  def compileJavaProvider = selectedProject.tasks.named("compileJava", JavaCompile)
+  def processResourcesProvider = selectedProject.tasks.named("processResources")
+  selectedProject.tasks.register("vibeformerInventoryMain") {
+    group = "vibeformer"
+    description = "Writes the complete resolved production inventory for ${projectPath}"
+    dependsOn(compileJavaProvider, processResourcesProvider)
+
+    doLast {
+      def outputProperty = selectedProject.providers.gradleProperty("vibeformer.output")
+      if (!outputProperty.present) {
+        throw new GradleException("Missing -Pvibeformer.output=<path>")
+      }
+
+      def sourceSets = selectedProject.extensions.getByType(SourceSetContainer)
+      def main = sourceSets.getByName("main")
+      def compileJava = compileJavaProvider.get()
+      def processResources = processResourcesProvider.get()
+      def projectRoot = gradle.rootProject.projectDir.canonicalFile
+      def generatedRoot = compileJava.options.generatedSourceOutputDirectory.present
+        ? compileJava.options.generatedSourceOutputDirectory.get().asFile.canonicalFile
+        : null
+      def generatedRootPath = generatedRoot == null ? null : generatedRoot.toPath()
+      def records = []
+
+      def javaRelease = compileJava.options.release.orNull
+      if (javaRelease == null) {
+        javaRelease = Integer.parseInt(
+          org.gradle.api.JavaVersion.toVersion(compileJava.sourceCompatibility).majorVersion)
+      }
+
+      records.add(["project", projectPath])
+      records.add(["java-release", javaRelease.toString()])
+      records.add(["preview-features", compileJava.options.compilerArgs.contains("--enable-preview").toString()])
+
+      def sources = (main.allJava.files + compileJava.source.files).findAll {
+        it.isFile() && it.name.endsWith(".java")
+      }.collect { it.canonicalFile }.unique()
+      sources.each { source ->
+        def generated = generatedRootPath != null && source.toPath().startsWith(generatedRootPath)
+        records.add([generated ? "generated-source" : "production-source",
+                     vibeformerPortablePath(projectRoot, source),
+                     vibeformerSha256(source)])
+      }
+
+      processResources.destinationDir.mkdirs()
+      if (processResources.destinationDir.isDirectory()) {
+        processResources.destinationDir.eachFileRecurse { resource ->
+          if (resource.isFile()) {
+            records.add(["resource",
+                         vibeformerPortablePath(processResources.destinationDir, resource),
+                         vibeformerSha256(resource)])
+          }
+        }
+      }
+
+      [["compile", selectedProject.configurations.getByName("compileClasspath")],
+       ["runtime", selectedProject.configurations.getByName("runtimeClasspath")]].each { scoped ->
+        def scope = scoped[0]
+        def configuration = scoped[1]
+        def unresolved = configuration.incoming.resolutionResult.allDependencies.findAll {
+          it.metaClass.hasProperty(it, "failure") && it.failure != null
+        }
+        if (!unresolved.empty) {
+          throw new GradleException("Unresolved ${scope} production dependencies: ${unresolved}")
+        }
+        configuration.incoming.resolutionResult.allComponents.each { component ->
+          def id = component.id
+          if (id instanceof ProjectComponentIdentifier) {
+            if (id.projectPath != projectPath) {
+              records.add(["project-dependency", scope, id.projectPath])
+            }
+          } else if (id instanceof ModuleComponentIdentifier) {
+            records.add(["external-dependency", scope, "${id.group}:${id.module}:${id.version}"])
+          }
+        }
+        configuration.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+          def component = artifact.moduleVersion.id
+          records.add(["external-artifact", scope,
+                       "${component.group}:${component.name}:${component.version}",
+                       artifact.file.name, vibeformerSha256(artifact.file)])
+        }
+      }
+
+      records = records.unique().sort { left, right ->
+        def order = [
+          "project": 0,
+          "java-release": 1,
+          "preview-features": 2,
+          "production-source": 3,
+          "generated-source": 4,
+          "resource": 5,
+          "project-dependency": 6,
+          "external-dependency": 7,
+          "external-artifact": 8,
+        ]
+        (order[left[0]] <=> order[right[0]]) ?: (left.join("\t") <=> right.join("\t"))
+      }
+
+      def outputFile = file(outputProperty.get())
+      outputFile.parentFile.mkdirs()
+      outputFile.withWriter("UTF-8") { writer ->
+        writer.write("VIBEFORMER_JAVA_LIBRARY_INVENTORY_V1\n")
+        records.each { record -> writer.write(record.join("\t") + "\n") }
+      }
+    }
+  }
+}

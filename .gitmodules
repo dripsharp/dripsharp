@@ -1,3 +1,6 @@
 [submodule "research/pkl"]
 	path = research/pkl
 	url = https://github.com/apple/pkl.git
+[submodule "research/rawhttp"]
+	path = research/rawhttp
+	url = https://github.com/renatoathaydes/rawhttp.git
