@@ -52,9 +52,22 @@
           :rule rule}
          extra))
 
+(def ^:private csharp-keywords
+  #{"abstract" "as" "base" "bool" "break" "byte" "case" "catch" "char"
+    "checked" "class" "const" "continue" "decimal" "default" "delegate"
+    "do" "double" "else" "enum" "event" "explicit" "extern" "false"
+    "finally" "fixed" "float" "for" "foreach" "goto" "if" "implicit"
+    "in" "int" "interface" "internal" "is" "lock" "long" "namespace"
+    "new" "null" "object" "operator" "out" "override" "params" "private"
+    "protected" "public" "readonly" "ref" "return" "sbyte" "sealed"
+    "short" "sizeof" "stackalloc" "static" "string" "struct" "switch"
+    "this" "throw" "true" "try" "typeof" "uint" "ulong" "unchecked"
+    "unsafe" "ushort" "using" "virtual" "void" "volatile" "while"})
+
 (defn- identifier [value]
-  (let [clean (str/replace (str value) #"[^A-Za-z0-9_]" "_")]
-    (if (re-matches #"[0-9].*" clean) (str "_" clean) clean)))
+  (let [clean (str/replace (str value) #"[^A-Za-z0-9_]" "_")
+        clean (if (re-matches #"[0-9].*" clean) (str "_" clean) clean)]
+    (if (contains? csharp-keywords clean) (str "@" clean) clean)))
 
 (defn- pascal [value]
   (let [value (identifier value)]
@@ -413,6 +426,7 @@
        "executable:java.lang.String#toCharArray()"
        "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
        "executable:java.lang.Long#parseLong(java.lang.String)"
+       "executable:java.lang.Math#min(long,long)"
        "executable:java.net.Socket#getInputStream()"
        "executable:java.net.Socket#getOutputStream()"
        "executable:java.net.Socket#getRemoteSocketAddress()"
@@ -428,6 +442,7 @@
        "executable:javax.net.SocketFactory#createSocket(java.lang.String,int)"
        "executable:java.io.OutputStream#flush()"
        "executable:java.io.OutputStream#close()"
+       "executable:java.io.FilterOutputStream#flush()"
        "executable:java.io.Closeable#close()"
        "executable:java.io.File#toPath()"
        "executable:java.nio.file.Files#newInputStream(java.nio.file.Path,java.nio.file.OpenOption[])"
@@ -454,6 +469,7 @@
        "executable:java.net.InetAddress#getLoopbackAddress()"
        "executable:java.lang.Thread#sleep(long)"
        "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
+       "executable:java.util.Objects#hash(java.lang.Object[])"
        "executable:java.util.Objects#requireNonNull(java.lang.Object)"
        "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)"
        "executable:java.util.Map#entrySet()"
@@ -497,6 +513,7 @@
        "executable:java.util.Optional#ofNullable(java.lang.Object)"
        "executable:java.util.Optional#get()"
        "executable:java.util.Optional#isPresent()"
+       "executable:java.util.Optional#equals(java.lang.Object)"
        "executable:java.util.Optional#map(java.util.function.Function)"
        "executable:java.util.Optional#orElse(java.lang.Object)"
        "executable:java.util.Optional#orElseGet(java.util.function.Supplier)"
@@ -517,17 +534,24 @@
        "executable:java.util.stream.Stream#map(java.util.function.Function)"
        "executable:java.util.stream.Stream#of(java.lang.Object[])"
        "executable:java.io.OutputStream#write(byte[])"
+       "executable:java.io.OutputStream#write(byte[],int,int)"
        "executable:java.io.OutputStream#write(int)"
+       "executable:java.io.PipedOutputStream#connect(java.io.PipedInputStream)"
+       "executable:java.io.PipedOutputStream#write(byte[],int,int)"
+       "executable:java.io.PipedOutputStream#close()"
+       "executable:java.io.PipedOutputStream#flush()"
        "executable:java.io.InputStream#read()"
        "executable:java.io.InputStream#read(byte[])"
        "executable:java.io.InputStream#read(byte[],int,int)"
        "executable:java.io.InputStream#close()"
+       "executable:java.util.zip.GZIPInputStream#read(byte[],int,int)"
        "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
        "executable:java.util.concurrent.ExecutorService#submit(java.util.concurrent.Callable)"
        "executable:java.util.concurrent.ExecutorService#shutdown()"
        "executable:java.util.concurrent.ExecutorService#shutdownNow()"
        "executable:java.util.concurrent.ExecutorService#awaitTermination(long,java.util.concurrent.TimeUnit)"
        "executable:java.util.concurrent.Executors#newFixedThreadPool(int,java.util.concurrent.ThreadFactory)"
+       "executable:java.util.concurrent.Executors#newSingleThreadExecutor()"
        "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
        "executable:java.lang.Thread#setDaemon(boolean)"
        "executable:java.lang.Thread#setName(java.lang.String)"
@@ -545,6 +569,9 @@
 
     (= "field:<array>#length" (:key occurrence))
     "Length"
+
+    (= "field:java.io.FilterOutputStream#out" (:key occurrence))
+    "@out"
 
     (= "field:java.nio.charset.StandardCharsets#US_ASCII" (:key occurrence))
     "USASCII"
@@ -613,7 +640,10 @@
                  (contains?
                   #{"executable:java.lang.Object#<init>()"
                     "executable:java.io.IOException#<init>()"
+                    "executable:java.io.IOException#<init>(java.lang.String)"
+                    "executable:java.io.IOException#<init>(java.lang.Throwable)"
                     "executable:java.util.NoSuchElementException#<init>()"
+                    "executable:java.lang.RuntimeException#<init>()"
                     "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
                     "executable:java.lang.RuntimeException#<init>(java.lang.String)"
                     "executable:java.lang.RuntimeException#<init>(java.lang.String,java.lang.Throwable)"
@@ -625,8 +655,12 @@
                     "executable:java.lang.StringBuilder#<init>(java.lang.String)"
                     "executable:java.lang.String#<init>(char[])"
                     "executable:java.lang.String#<init>(byte[],java.nio.charset.Charset)"
+                    "executable:java.io.ByteArrayOutputStream#<init>()"
                     "executable:java.io.ByteArrayOutputStream#<init>(int)"
                     "executable:java.io.ByteArrayInputStream#<init>(byte[])"
+                    "executable:java.io.PipedInputStream#<init>()"
+                    "executable:java.io.PipedOutputStream#<init>()"
+                    "executable:java.util.zip.GZIPInputStream#<init>(java.io.InputStream)"
                     "executable:java.net.URI#<init>(java.lang.String)"
                     "executable:java.util.HashMap#<init>()"
                     "executable:java.util.HashMap#<init>(int)"
@@ -906,6 +940,10 @@
                "executable:java.lang.Long#parseLong(java.lang.String)"
                (compat-call "ParseLong" arguments)
 
+               "executable:java.lang.Math#min(long,long)"
+               (sequence-node [(raw "global::System.Math.Min(")
+                               (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.lang.Integer#parseInt(java.lang.String,int)"
                (compat-call "ParseInt" arguments)
 
@@ -952,6 +990,9 @@
                "executable:java.io.OutputStream#flush()"
                (sequence-node [target-node (raw ".Flush()")])
 
+               "executable:java.io.FilterOutputStream#flush()"
+               (sequence-node [target-node (raw ".Flush()")])
+
                "executable:java.io.OutputStream#close()"
                (sequence-node [target-node (raw ".Dispose()")])
 
@@ -976,8 +1017,24 @@
                "executable:java.io.OutputStream#write(byte[])"
                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
+               "executable:java.io.OutputStream#write(byte[],int,int)"
+               (compat-call "OutputStreamWrite" (into [target-node] arguments))
+
                "executable:java.io.OutputStream#write(int)"
                (compat-call "OutputStreamWrite" (into [target-node] arguments))
+
+               "executable:java.io.PipedOutputStream#connect(java.io.PipedInputStream)"
+               (sequence-node [target-node (raw ".Connect(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.io.PipedOutputStream#write(byte[],int,int)"
+               (compat-call "OutputStreamWrite" (into [target-node] arguments))
+
+               "executable:java.io.PipedOutputStream#close()"
+               (sequence-node [target-node (raw ".Dispose()")])
+
+               "executable:java.io.PipedOutputStream#flush()"
+               (sequence-node [target-node (raw ".Flush()")])
 
                "executable:java.io.InputStream#read()"
                (compat-call "InputStreamRead" [target-node])
@@ -986,6 +1043,9 @@
                (compat-call "InputStreamRead" (into [target-node] arguments))
 
                "executable:java.io.InputStream#read(byte[],int,int)"
+               (compat-call "InputStreamRead" (into [target-node] arguments))
+
+               "executable:java.util.zip.GZIPInputStream#read(byte[],int,int)"
                (compat-call "InputStreamRead" (into [target-node] arguments))
 
                "executable:java.lang.StringBuilder#append(java.lang.String)"
@@ -1051,6 +1111,9 @@
 
                "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
                (compat-call "Equals" arguments)
+
+               "executable:java.util.Objects#hash(java.lang.Object[])"
+               (compat-call "Hash" arguments)
 
                "executable:java.util.Objects#requireNonNull(java.lang.Object)"
                (compat-call "RequireNonNull" arguments)
@@ -1190,6 +1253,9 @@
                "executable:java.util.Optional#isPresent()"
                (sequence-node [target-node (raw ".IsPresent()")])
 
+               "executable:java.util.Optional#equals(java.lang.Object)"
+               (compat-call "Equals" (into [target-node] arguments))
+
                "executable:java.util.Optional#map(java.util.function.Function)"
                (sequence-node [target-node (raw ".Map(")
                                (sequence-node arguments ", ") (raw ")")])
@@ -1288,6 +1354,9 @@
                 [(raw "new global::Vibeformer.Runtime.JavaExecutorService(")
                  (sequence-node arguments ", ") (raw ")")])
 
+               "executable:java.util.concurrent.Executors#newSingleThreadExecutor()"
+               (raw "new global::Vibeformer.Runtime.JavaExecutorService(1)")
+
                "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
                (sequence-node [target-node (raw ".Get(")
                                (sequence-node arguments ", ") (raw ")")])
@@ -1381,6 +1450,10 @@
               (sequence-node [(raw "new global::System.Exception(null, ")
                               (first arguments) (raw ")")])
 
+              "executable:java.io.IOException#<init>(java.lang.Throwable)"
+              (sequence-node [(raw "new global::System.IO.IOException(null, ")
+                              (first arguments) (raw ")")])
+
               "executable:java.net.Socket#<init>(java.lang.String,int)"
               (sequence-node
                [(raw "global::Vibeformer.Runtime.JavaSocketFactory.Plain.CreateSocket(")
@@ -1395,6 +1468,12 @@
               (sequence-node
                [(raw "global::Vibeformer.Runtime.JavaCompat.NewMemoryStream(")
                 (sequence-node arguments ", ") (raw ")")])
+
+              "executable:java.util.zip.GZIPInputStream#<init>(java.io.InputStream)"
+              (sequence-node
+               [(raw "new global::System.IO.Compression.GZipStream(")
+                (sequence-node arguments ", ")
+                (raw ", global::System.IO.Compression.CompressionMode.Decompress)")])
 
               "executable:java.lang.String#<init>(byte[],java.nio.charset.Charset)"
               (compat-call "NewString" arguments)
@@ -1570,23 +1649,27 @@
      :class CtOperatorAssignment
      :emit
      (fn [{:keys [^CtOperatorAssignment element children]}]
-       {:node
-        (sequence-node
-         [(child-node children (.getAssigned element))
-          (raw (str " " (assignment-operator element) "= "))
-          (child-node children (.getAssignment element))
-          (when (statement-expression? element) (raw ";"))])})}
+       (let [statement? (statement-expression? element)]
+         {:node
+          (sequence-node
+           [(when-not statement? (raw "("))
+            (child-node children (.getAssigned element))
+            (raw (str " " (assignment-operator element) "= "))
+            (child-node children (.getAssignment element))
+            (raw (if statement? ";" ")"))])}))}
 
     {:id :java-library.expression/assignment
      :class CtAssignment
      :emit
      (fn [{:keys [^CtAssignment element children]}]
-       {:node
-        (sequence-node
-         [(child-node children (.getAssigned element))
-          (raw " = ")
-          (child-node children (.getAssignment element))
-          (when (statement-expression? element) (raw ";"))])})}
+       (let [statement? (statement-expression? element)]
+         {:node
+          (sequence-node
+           [(when-not statement? (raw "("))
+            (child-node children (.getAssigned element))
+            (raw " = ")
+            (child-node children (.getAssignment element))
+            (raw (if statement? ";" ")"))])}))}
 
     {:id :java-library.expression/array-read
      :class CtArrayRead

@@ -78,15 +78,18 @@
                                            :dotnet.type/argument-exception]
    "java.io.InputStream" ["global::System.IO.Stream" :dotnet.type/stream]
    "java.io.OutputStream" ["global::System.IO.Stream" :dotnet.type/stream]
-   "java.io.FilterOutputStream" ["global::System.IO.Stream" :dotnet.type/stream]
+   "java.io.FilterOutputStream" ["global::Vibeformer.Runtime.JavaFilterOutputStream"
+                                 :dotnet.type/filter-output-stream]
    "java.io.BufferedInputStream" ["global::System.IO.BufferedStream"
                                   :dotnet.type/buffered-stream]
    "java.io.ByteArrayInputStream" ["global::System.IO.MemoryStream"
                                    :dotnet.type/memory-stream]
    "java.io.ByteArrayOutputStream" ["global::System.IO.MemoryStream"
                                     :dotnet.type/memory-stream]
-   "java.io.PipedInputStream" ["global::System.IO.Stream" :dotnet.type/stream]
-   "java.io.PipedOutputStream" ["global::System.IO.Stream" :dotnet.type/stream]
+   "java.io.PipedInputStream" ["global::Vibeformer.Runtime.JavaPipedInputStream"
+                               :dotnet.type/piped-input-stream]
+   "java.io.PipedOutputStream" ["global::Vibeformer.Runtime.JavaPipedOutputStream"
+                                :dotnet.type/piped-output-stream]
    "java.io.PushbackInputStream" ["global::System.IO.Stream" :dotnet.type/stream]
    "java.io.File" ["string" :dotnet.type/path]
 

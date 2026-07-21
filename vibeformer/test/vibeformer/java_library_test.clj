@@ -652,16 +652,82 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-output-stream-slice-write-remains-fail-closed
+(deftest neighboring-byte-array-output-stream-slice-write-remains-fail-closed
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.io.IOException; "
-                      "import java.io.OutputStream; public final class Unsupported { "
-                      "public static void write(OutputStream output, byte[] bytes) "
+                      "import java.io.ByteArrayOutputStream; public final class Unsupported { "
+                      "public static void write(ByteArrayOutputStream output, byte[] bytes) "
                       "throws IOException { output.write(bytes, 0, bytes.length); } }")})
         error (caught #(emit! fixture 1))]
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.io.OutputStream#write(byte[],int,int)"
+    (is (= "executable:java.io.ByteArrayOutputStream#write(byte[],int,int)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-pipes-gzip-and-single-thread-executor-are-resolved
+  (let [fixture
+        (model! {"example/Pipes.java"
+                 (str "package example; import java.io.IOException; "
+                      "import java.io.OutputStream; import java.io.PipedInputStream; "
+                      "import java.io.PipedOutputStream; import java.util.concurrent.ExecutorService; "
+                      "import java.util.concurrent.Executors; import java.util.concurrent.Future; "
+                      "import java.util.concurrent.TimeUnit; import java.util.zip.GZIPInputStream; "
+                      "public final class Pipes { static void copy(byte[] compressed, "
+                      "OutputStream output) throws Exception { PipedInputStream receiver = "
+                      "new PipedInputStream(); PipedOutputStream sink = new PipedOutputStream(); "
+                      "sink.connect(receiver); ExecutorService executor = "
+                      "Executors.newSingleThreadExecutor(); Future<?> reader = executor.submit(() -> { "
+                      "byte[] buffer = new byte[32]; try (GZIPInputStream gzip = "
+                      "new GZIPInputStream(receiver)) { int count; while ((count = "
+                      "gzip.read(buffer, 0, buffer.length)) >= 0) { output.write(buffer, 0, count); } "
+                      "} catch (IOException error) { throw new RuntimeException(error); } }); "
+                      "sink.write(compressed, 0, compressed.length); sink.close(); "
+                      "reader.get(5, TimeUnit.SECONDS); executor.shutdownNow(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Pipes.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Pipes.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaPipedInputStream receiver = "
+              "new global::Vibeformer.Runtime.JavaPipedInputStream();\n"
+              "global::Vibeformer.Runtime.JavaPipedOutputStream sink = "
+              "new global::Vibeformer.Runtime.JavaPipedOutputStream();\n"
+              "sink.Connect(receiver);")))
+    (is (str/includes?
+         first-source
+         "new global::Vibeformer.Runtime.JavaExecutorService(1)"))
+    (is (str/includes?
+         first-source
+         (str "new global::System.IO.Compression.GZipStream(receiver, "
+              "global::System.IO.Compression.CompressionMode.Decompress)")))
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.OutputStreamWrite(sink, compressed, 0, compressed.Length);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-connected-pipe-constructor-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.io.IOException; "
+                      "import java.io.PipedInputStream; import java.io.PipedOutputStream; "
+                      "public final class Unsupported { static PipedOutputStream create() "
+                      "throws IOException { return new PipedOutputStream(new PipedInputStream()); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.io.PipedOutputStream#<init>(java.io.PipedInputStream)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
 
 (deftest neutral-socket-executor-optional-atomic-and-runtime-failures-are-resolved

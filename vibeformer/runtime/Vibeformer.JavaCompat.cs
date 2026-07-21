@@ -235,6 +235,9 @@ internal sealed class JavaExecutorService
 
     internal JavaExecutorService() { }
 
+    internal JavaExecutorService(int workerCount) :
+        this(workerCount, runnable => new JavaThread(runnable)) { }
+
     internal JavaExecutorService(int workerCount, JavaThreadFactory threadFactory) =>
         scheduler = new JavaFixedThreadTaskScheduler(workerCount, threadFactory);
 
@@ -243,11 +246,11 @@ internal sealed class JavaExecutorService
             ? JavaFuture<T>.Run(callable, Token())
             : JavaFuture<T>.Run(callable, Token(), scheduler));
 
-    internal JavaFuture<object?> Submit(Action runnable) =>
-        Submit<object?>(() =>
+    internal JavaFuture<object> Submit(Action runnable) =>
+        Submit<object>(() =>
         {
             runnable();
-            return null;
+            return null!;
         });
 
     internal void Shutdown()
@@ -294,6 +297,197 @@ internal sealed class JavaExecutorService
             TaskScheduler.Default);
         return future;
     }
+}
+
+internal sealed class JavaPipedInputStream : Stream
+{
+    private readonly JavaPipe pipe = new();
+
+    internal JavaPipe Pipe => pipe;
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override int Read(byte[] buffer, int offset, int count) =>
+        pipe.Read(buffer, offset, count);
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) pipe.CloseReader();
+        base.Dispose(disposing);
+    }
+}
+
+internal class JavaFilterOutputStream : Stream
+{
+    protected readonly Stream @out;
+
+    internal JavaFilterOutputStream(Stream output) => @out = output;
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => @out.CanWrite;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush() => @out.Flush();
+    public override void Write(byte[] buffer, int offset, int count) =>
+        @out.Write(buffer, offset, count);
+    public override void WriteByte(byte value) => @out.WriteByte(value);
+    public override int Read(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) @out.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
+internal sealed class JavaPipedOutputStream : Stream
+{
+    private readonly object sync = new();
+    private JavaPipe? pipe;
+    private bool closed;
+
+    internal void Connect(JavaPipedInputStream receiver)
+    {
+        ArgumentNullException.ThrowIfNull(receiver);
+        lock (sync)
+        {
+            if (closed) throw new IOException("Pipe is closed.");
+            if (pipe is not null) throw new IOException("Pipe is already connected.");
+            receiver.Pipe.ConnectWriter();
+            pipe = receiver.Pipe;
+        }
+    }
+
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => !closed;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        JavaPipe connected;
+        lock (sync)
+        {
+            if (closed) throw new IOException("Pipe is closed.");
+            connected = pipe ?? throw new IOException("Pipe is not connected.");
+        }
+        connected.Write(buffer, offset, count);
+    }
+
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            JavaPipe? connected;
+            lock (sync)
+            {
+                if (closed) return;
+                closed = true;
+                connected = pipe;
+            }
+            connected?.CloseWriter();
+        }
+        base.Dispose(disposing);
+    }
+}
+
+internal sealed class JavaPipe
+{
+    private const int DefaultCapacity = 1024;
+    private readonly BlockingCollection<byte> bytes = new(DefaultCapacity);
+    private int connected;
+    private int readerClosed;
+
+    internal void ConnectWriter()
+    {
+        if (Interlocked.Exchange(ref connected, 1) != 0)
+            throw new IOException("Pipe is already connected.");
+    }
+
+    internal int Read(byte[] buffer, int offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (buffer.Length - offset < count) throw new ArgumentException("Invalid buffer range.");
+        if (count == 0) return 0;
+        try
+        {
+            if (!bytes.TryTake(out var first, Timeout.Infinite)) return 0;
+            buffer[offset] = first;
+            var read = 1;
+            while (read < count && bytes.TryTake(out var next)) buffer[offset + read++] = next;
+            return read;
+        }
+        catch (ThreadInterruptedException error)
+        {
+            throw new IOException("Interrupted while reading from a pipe.", error);
+        }
+    }
+
+    internal void Write(byte[] buffer, int offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (buffer.Length - offset < count) throw new ArgumentException("Invalid buffer range.");
+        try
+        {
+            for (var index = 0; index < count; index++)
+            {
+                if (Volatile.Read(ref readerClosed) != 0)
+                    throw new IOException("Pipe reader is closed.");
+                bytes.Add(buffer[offset + index]);
+            }
+        }
+        catch (ThreadInterruptedException error)
+        {
+            throw new IOException("Interrupted while writing to a pipe.", error);
+        }
+        catch (InvalidOperationException error)
+        {
+            throw new IOException("Pipe is closed.", error);
+        }
+    }
+
+    internal void CloseReader()
+    {
+        Interlocked.Exchange(ref readerClosed, 1);
+        bytes.CompleteAdding();
+    }
+
+    internal void CloseWriter() => bytes.CompleteAdding();
 }
 
 internal delegate JavaThread JavaThreadFactory(Action runnable);
@@ -709,7 +903,13 @@ internal sealed class JavaProperties
         });
 }
 
-internal sealed class JavaOptional<T>
+internal interface IJavaOptional
+{
+    bool HasValue { get; }
+    object? BoxedValue { get; }
+}
+
+internal sealed class JavaOptional<T> : IJavaOptional
 {
     private readonly T? value;
     private readonly bool present;
@@ -736,6 +936,12 @@ internal sealed class JavaOptional<T>
     internal JavaOptional<R> Map<R>(Func<T, R> mapper) => present ? JavaOptional<R>.OfNullable(mapper(value!)) : JavaOptional<R>.Empty();
     internal R Match<R>(Func<T, R> presentCase, Func<R> emptyCase) =>
         present ? presentCase(value!) : emptyCase();
+    bool IJavaOptional.HasValue => present;
+    object? IJavaOptional.BoxedValue => value;
+    public override bool Equals(object? other) =>
+        other is IJavaOptional optional && present == optional.HasValue &&
+        (!present || JavaCompat.Equals(value, optional.BoxedValue));
+    public override int GetHashCode() => present ? JavaCompat.HashCode(value) : 0;
 }
 
 // A Java Map.Entry is a reference object whose value can remain backed by the
@@ -4783,6 +4989,13 @@ internal static class JavaCompat
         values.Select(value => unchecked((sbyte)value)).ToArray();
     internal static void OutputStreamWrite(Stream stream, sbyte[] values) =>
         stream.Write(ToUnsignedBytes(values));
+    internal static void OutputStreamWrite(Stream stream, sbyte[] values, int offset, int count)
+    {
+        var buffer = new byte[count];
+        for (var index = 0; index < count; index++)
+            buffer[index] = unchecked((byte)values[offset + index]);
+        stream.Write(buffer, 0, buffer.Length);
+    }
     internal static void OutputStreamWrite(Stream stream, int value) =>
         stream.WriteByte(unchecked((byte)value));
     internal static int InputStreamRead(Stream stream) => stream.ReadByte();
