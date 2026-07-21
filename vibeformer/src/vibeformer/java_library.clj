@@ -234,6 +234,20 @@
                              :origin (:origin occurrence)
                              :resolution (:resolution occurrence)}}))))
 
+(defn- resolved-annotation? [ctx ^CtElement element resolved-key]
+  (boolean
+   (some (fn [^CtAnnotation annotation]
+           (= resolved-key (:key (occurrence! ctx annotation :annotation))))
+         (.getAnnotations element))))
+
+(defn- declaration-type-node [ctx ^CtElement element ^CtTypeReference reference]
+  (let [base (type-node ctx reference)]
+    (if (and (not (.isPrimitive reference))
+             (resolved-annotation?
+              ctx element "annotation:javax.annotation.Nullable"))
+      (sequence-node [base (raw "?")])
+      base)))
+
 (defn- child-node [children ^CtElement element]
   (:node (java/child-result children element)))
 
@@ -884,6 +898,14 @@
           node
           (.getTypeCasts expression)))
 
+(defn- assignment-value-node [ctx ^CtExpression assigned ^CtExpression assignment node]
+  (if (and (= "byte" (some-> assigned .getType .getQualifiedName))
+           (= "char" (some-> assignment .getType .getQualifiedName))
+           (instance? CtLiteral assignment))
+    (sequence-node [(raw "(") (type-node ctx (.getType assigned))
+                    (raw ")") node])
+    node))
+
 (defn- collection-element-type [^CtInvocation invocation]
   (or (first (.getActualTypeArguments (.getType invocation)))
       (unsupported! "Generic Java collection invocation has no resolved element type"
@@ -969,11 +991,45 @@
            (terminating-statement? else-statement)))
     :else false))
 
-(defn- case-labels [children ^CtCase case]
-  (let [expressions (vec (.getCaseExpressions case))]
+(defn- enum-switch-declaration [ctx ^CtSwitch switch]
+  (when-let [reference (some-> switch .getSelector .getType)]
+    (let [occurrence (occurrence! ctx reference :type)
+          declaration (:declaration occurrence)]
+      (when (and (= :project (:origin occurrence))
+                 (instance? CtEnum declaration))
+        declaration))))
+
+(defn- enum-case-node [ctx ^CtEnum enum ^CtExpression expression]
+  (let [occurrence (when (instance? CtFieldRead expression)
+                     (field-occurrence ctx expression))
+        declaration (:declaration occurrence)
+        ordinal (first
+                 (keep-indexed
+                  (fn [index ^CtEnumValue value]
+                    (when (identical? value declaration) index))
+                  (.getEnumValues enum)))]
+    (when-not (and (= :project (:origin occurrence))
+                   (instance? CtEnumValue declaration)
+                   (some? ordinal))
+      (unsupported! "Java enum case has no exact resolved ordinal" expression))
+    (csharp/with-source
+      (raw (str ordinal))
+      (source-ref expression :java-library.expression/enum-case-ordinal
+                  {:mapping {:resolved-key (:key occurrence)
+                             :ordinal ordinal}}))))
+
+(defn- case-labels [ctx children ^CtCase case]
+  (let [expressions (vec (.getCaseExpressions case))
+        parent (when (.isParentInitialized case) (.getParent case))
+        enum (when (instance? CtSwitch parent)
+               (enum-switch-declaration ctx parent))]
     (if (seq expressions)
       (sequence-node
-       (mapv #(sequence-node [(raw "case ") (child-node children %) (raw ":")])
+       (mapv #(sequence-node [(raw "case ")
+                              (if enum
+                                (enum-case-node ctx enum %)
+                                (child-node children %))
+                              (raw ":")])
              expressions)
        "\n")
       (raw "default:"))))
@@ -2132,7 +2188,9 @@
            [(when-not statement? (raw "("))
             (child-node children (.getAssigned element))
             (raw " = ")
-            (child-node children (.getAssignment element))
+            (assignment-value-node
+             @ctx-holder (.getAssigned element) (.getAssignment element)
+             (child-node children (.getAssignment element)))
             (raw (if statement? ";" ")"))])}))}
 
     {:id :java-library.expression/array-read
@@ -2280,24 +2338,31 @@
              last-semantic (last (remove #(instance? CtComment %) source-statements))]
          {:node
           (sequence-node
-           [(case-labels children element)
+           [(case-labels @ctx-holder children element)
             (when (seq statements) (raw "\n"))
             (sequence-node statements "\n")
             (when (and last-semantic
                        (not (terminating-statement? last-semantic)))
+              (raw "\nbreak;"))
+            (when (and (empty? statements)
+                       (identical? element
+                                   (last (.getCases ^CtSwitch (.getParent element)))))
               (raw "\nbreak;"))])}))}
 
     {:id :java-library.statement/switch
      :class CtSwitch
      :emit
      (fn [{:keys [^CtSwitch element children]}]
-       {:node
-        (sequence-node
-         [(raw "switch (")
-          (child-node children (.getSelector element))
-          (raw ") {\n")
-          (sequence-node (mapv #(child-node children %) (.getCases element)) "\n")
-          (raw "\n}")])})}
+       (let [selector (child-node children (.getSelector element))]
+         {:node
+          (sequence-node
+           [(raw "switch (")
+            (if (enum-switch-declaration @ctx-holder element)
+              (compat-call "EnumOrdinal" [selector])
+              selector)
+            (raw ") {\n")
+            (sequence-node (mapv #(child-node children %) (.getCases element)) "\n")
+            (raw "\n}")])}))}
 
     {:id :java-library.statement/assert
      :class CtAssert
@@ -2368,12 +2433,17 @@
      :class CtCatch
      :emit
      (fn [{:keys [^CtCatch element children]}]
-       {:node
-        (sequence-node
-         [(raw "catch (")
-          (child-node children (.getParameter element))
-          (raw ") ")
-          (child-node children (.getBody element))])})}
+       (let [parameter (.getParameter element)
+             used? (seq (.getElements (.getBody element)
+                                      (TypeFilter. CtCatchVariableReference)))]
+         {:node
+          (sequence-node
+           [(raw "catch (")
+            (if used?
+              (child-node children parameter)
+              (type-node @ctx-holder (first (.getMultiTypes parameter))))
+            (raw ") ")
+            (child-node children (.getBody element))])}))}
 
     {:id :java-library.statement/throw
      :class CtThrow
@@ -2393,7 +2463,7 @@
           (sequence-node
            [(if (.isInferred element)
               (raw "var")
-              (child-node children (.getType element)))
+              (declaration-type-node @ctx-holder element (.getType element)))
             (raw (str " " (identifier (.getSimpleName element))))
             (when initializer
               (sequence-node [(raw " = ")
@@ -2411,7 +2481,9 @@
      :class CtVariableRead
      :emit
      (fn [{:keys [^CtVariableRead element children]}]
-       {:node (child-node children (.getVariable element))})}
+       {:node (expression-cast-node
+               @ctx-holder element
+               (child-node children (.getVariable element)))})}
 
     {:id :java-library.expression/variable-write
      :class CtVariableWrite
@@ -2590,6 +2662,12 @@
     (.hasModifier element ModifierKind/PRIVATE) "private"
     :else default))
 
+(defn- member-visibility [^CtType owner ^CtModifiable member default]
+  (if (and (.getDeclaringType owner)
+           (.hasModifier member ModifierKind/PRIVATE))
+    "internal"
+    (visibility member default)))
+
 (defn- type-formals-node [^CtType type]
   (let [parameters (vec (.getFormalCtTypeParameters type))]
     (when (seq parameters)
@@ -2620,7 +2698,7 @@
      [(when (.isVarArgs parameter) (raw "params "))
       (if object-equals-parameter?
         (raw "object?")
-        (type-node ctx (.getType parameter)))
+        (declaration-type-node ctx parameter (.getType parameter)))
       (raw (str " " (identifier (.getSimpleName parameter))))])))
 
 (defn- base-type-references [^CtType type]
@@ -2834,7 +2912,8 @@
     (remove nil?
             [(if widened-override-family?
                "public"
-               (visibility method (if (instance? CtInterface owner)
+               (member-visibility owner method
+                                  (if (instance? CtInterface owner)
                                     "public"
                                     "internal")))
              (when static? "static")
@@ -2888,7 +2967,7 @@
                             (remove nil?
                                     [(if enum-value?
                                        "public"
-                                       (visibility field "internal"))
+                                       (member-visibility owner field "internal"))
                                      (when (or enum-value?
                                                (.hasModifier field ModifierKind/STATIC))
                                        "static")
@@ -2898,7 +2977,7 @@
                                                (.hasModifier field ModifierKind/FINAL))
                                        "readonly")]))
                   " "))
-        (type-node ctx (.getType field))
+        (declaration-type-node ctx field (.getType field))
         (raw (str " " name))
         (when initializer-node
           (sequence-node [(raw " = ") initializer-node]))
@@ -2919,7 +2998,7 @@
         (csharp/with-source
           (sequence-node
            [(raw (str (str/join " " (method-words owner method)) " "))
-            (type-node ctx (.getType method))
+            (declaration-type-node ctx method (.getType method))
             (raw (str " " name))
             (executable-formals-node method)
             (raw "(")
@@ -2985,7 +3064,7 @@
       (unsupported! "Java library constructor has no body" constructor))
     (csharp/with-source
       (sequence-node
-       [(raw (str (visibility constructor "internal") " " name "("))
+       [(raw (str (member-visibility owner constructor "internal") " " name "("))
         (sequence-node (mapv #(parameter-node ctx %) (.getParameters constructor))
                        ", ")
         (raw ")")
@@ -3063,7 +3142,7 @@
       (sequence-node
        [(raw "private readonly ") (owner-type-node ctx outer)
         (raw (str " " outer-field-name ";\n\n"))
-        (raw (str (visibility constructor "internal") " " name "("))
+        (raw (str (member-visibility type constructor "internal") " " name "("))
         (owner-type-node ctx outer) (raw (str " " outer-field-name ") {\nthis."))
         (raw outer-field-name) (raw (str " = " outer-field-name ";\n}"))])
       (source-ref constructor rule

@@ -13,6 +13,7 @@
   (:import [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]
            [java.util IdentityHashMap]
+           [javax.tools ToolProvider]
            [spoon.reflect.declaration CtClass]
            [spoon.reflect.reference CtTypeReference]))
 
@@ -20,27 +21,47 @@
   (Files/createTempDirectory "vibeformer-java-library"
                              (make-array FileAttribute 0)))
 
-(defn- model! [sources]
-  (let [root (temp-directory)
-        source-root (paths/resolve-path root "src/main/java")
-        files
-        (mapv
-         (fn [[relative content]]
-           (let [file (paths/resolve-path source-root relative)]
-             (Files/createDirectories (.getParent file)
+(defn- write-sources! [source-root sources]
+  (mapv
+   (fn [[relative content]]
+     (let [file (paths/resolve-path source-root relative)]
+       (Files/createDirectories (.getParent file)
+                                (make-array FileAttribute 0))
+       (Files/writeString file content (make-array OpenOption 0))
+       file))
+   sources))
+
+(defn- model!
+  ([sources] (model! sources {}))
+  ([sources dependency-sources]
+   (let [root (temp-directory)
+         files (write-sources! (paths/resolve-path root "src/main/java") sources)
+         dependency-files
+         (write-sources! (paths/resolve-path root "dependency-src")
+                         dependency-sources)
+         classpath-root (paths/resolve-path root "dependency-classes")
+         _ (when (seq dependency-files)
+             (Files/createDirectories classpath-root
                                       (make-array FileAttribute 0))
-             (Files/writeString file content (make-array OpenOption 0))
-             file))
-         sources)
-        discovery {:java-home (paths/absolute (System/getProperty "java.home"))
-                   :java-release 17
-                   :preview-features false
-                   :java-sources files
-                   :resource-root (paths/resolve-path root "src/main/resources")
-                   :resources []
-                   :classpath []}]
-    {:root root :discovery discovery
-     :model (spoon/build-resolved-model! root discovery)}))
+             (let [exit (.run (ToolProvider/getSystemJavaCompiler)
+                              nil nil nil
+                              (into-array
+                               String
+                               (concat ["-d" (str classpath-root)]
+                                       (map str dependency-files))))]
+               (when-not (zero? exit)
+                 (throw (ex-info "Fixture dependency compilation failed"
+                                 {:kind :fixture-dependency-compilation-failed
+                                  :exit exit})))))
+         discovery {:java-home (paths/absolute (System/getProperty "java.home"))
+                    :java-release 17
+                    :preview-features false
+                    :java-sources files
+                    :resource-root (paths/resolve-path root "src/main/resources")
+                    :resources []
+                    :classpath (if (seq dependency-files) [classpath-root] [])}]
+     {:root root :discovery discovery
+      :model (spoon/build-resolved-model! root discovery)})))
 
 (defn- configuration
   ([] (configuration #{}))
@@ -207,6 +228,67 @@
     (is (= "annotation"
            (get-in (ex-data error) [:source-identity :role])))
     (is (pos? (get-in (ex-data error) [:source-location :line])))))
+
+(deftest resolved-nullable-annotations-emit-csharp-nullable-types
+  (let [fixture
+        (model! {"example/NullableValues.java"
+                 (str "package example; import javax.annotation.Nullable; "
+                      "public final class NullableValues { "
+                      "@Nullable private String value; "
+                      "public NullableValues(@Nullable String value) { "
+                      "@Nullable String copy = value; this.value = copy; } "
+                      "@Nullable public String get() { return value; } }")}
+                {"javax/annotation/Nullable.java"
+                 (str "package javax.annotation; import java.lang.annotation.*; "
+                      "@Target({ElementType.FIELD, ElementType.METHOD, "
+                      "ElementType.PARAMETER, ElementType.LOCAL_VARIABLE}) "
+                      "public @interface Nullable {}")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/NullableValues.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/NullableValues.cs")))]
+    (is (str/includes? first-source "private string? value;"))
+    (is (str/includes? first-source "public NullableValues(string? value)"))
+    (is (str/includes? first-source "string? copy = value;"))
+    (is (str/includes? first-source "public string? get()"))
+    (is (= first-source second-source))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest private-nested-members-widen-for-java-nestmate-access
+  (let [fixture
+        (model! {"example/Nest.java"
+                 (str "package example; public final class Nest { "
+                      "public static String read() { "
+                      "return new Holder().get() + Holder.value; } "
+                      "private static final class Holder { "
+                      "private static final String value = \"value\"; "
+                      "private Holder() {} private String get() { return value; } } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Nest.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Nest.cs")))]
+    (is (str/includes? first-source
+                       "internal static readonly string value = \"value\";"))
+    (is (str/includes? first-source "internal Holder()"))
+    (is (str/includes? first-source "internal string get()"))
+    (is (= first-source second-source))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest neutral-field-initializers-use-live-recursive-and-resolved-rules
   (let [fixture
@@ -1246,6 +1328,31 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest unused-java-catch-bindings-emit-identifierless-csharp-catches
+  (let [fixture
+        (model! {"example/IgnoredFailure.java"
+                 (str "package example; public final class IgnoredFailure { "
+                      "public static int run() { try { "
+                      "throw new RuntimeException(\"failure\"); "
+                      "} catch (RuntimeException ignored) { return 1; } } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/IgnoredFailure.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/IgnoredFailure.cs")))]
+    (is (str/includes? first-source
+                       "catch (global::System.Exception) {"))
+    (is (not (str/includes? first-source "Exception ignored")))
+    (is (= first-source second-source))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest single-declared-try-resource-has-deterministic-lifetime
   (let [fixture
         (model! {"example/Resources.java"
@@ -1308,7 +1415,7 @@
     (is (str/includes?
          first-source
          (str "private class _1Index {\n"
-              "private int value = -1;\n\n"
+              "internal int value = -1;\n\n"
               "internal int increment() {\n"
               "return ++this.value;\n}\n}")))
     (is (= first-source second-source))
@@ -1572,6 +1679,32 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest explicit-primitive-casts-and-constant-byte-assignments-are-preserved
+  (let [fixture
+        (model! {"example/PrimitiveConversions.java"
+                 (str "package example; public final class PrimitiveConversions { "
+                      "static char asChar(int value) { char result = (char) value; "
+                      "return result; } static byte[] markers() { "
+                      "byte[] result = new byte[2]; result[0] = '\\r'; "
+                      "result[1] = '\\n'; return result; } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/PrimitiveConversions.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/PrimitiveConversions.cs")))]
+    (is (str/includes? first-source "char result = (char)(value);"))
+    (is (str/includes? first-source "result[0] = (sbyte)'\\r';"))
+    (is (str/includes? first-source "result[1] = (sbyte)'\\n';"))
+    (is (= first-source second-source))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest external-consumer-method-references-use-exact-target-semantics
   (let [fixture
         (model! {"example/Consumers.java"
@@ -1707,7 +1840,9 @@
                  (str "package example; public enum Mode { ALPHA(1), BETA(2); "
                       "private final int codeValue; Mode(int code) { this.codeValue = code; } "
                       "int code() { return codeValue; } "
-                      "boolean before(Mode other) { return ordinal() < other.ordinal(); } }")})
+                      "boolean before(Mode other) { return ordinal() < other.ordinal(); } "
+                      "int selected() { switch (this) { case ALPHA: return 1; "
+                      "case BETA: } return 2; } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -1728,6 +1863,10 @@
          first-source
          (str "return (global::Vibeformer.Runtime.JavaCompat.EnumOrdinal(this) < "
               "global::Vibeformer.Runtime.JavaCompat.EnumOrdinal(other));")))
+    (is (str/includes?
+         first-source
+         (str "switch (global::Vibeformer.Runtime.JavaCompat.EnumOrdinal(this)) {\n"
+              "case 0:\nreturn 1;\ncase 1:\nbreak;\n}")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
