@@ -310,15 +310,22 @@
        "executable:java.util.Collections#unmodifiableMap(java.util.Map)"
        "executable:java.net.URI#getHost()"
        "executable:java.net.URI#getPort()"
+       "executable:java.net.URI#getScheme()"
        "executable:java.lang.String#toUpperCase()"
        "executable:java.lang.String#split(java.lang.String)"
        "executable:java.lang.String#length()"
+       "executable:java.lang.String#hashCode()"
        "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
        "executable:java.lang.String#toCharArray()"
        "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
        "executable:java.net.Socket#getInputStream()"
        "executable:java.net.Socket#getOutputStream()"
        "executable:java.net.Socket#close()"
+       "executable:java.net.Socket#isClosed()"
+       "executable:java.net.Socket#isConnected()"
+       "executable:java.net.Socket#setSoTimeout(int)"
+       "executable:javax.net.ssl.SSLSocketFactory#getDefault()"
+       "executable:javax.net.SocketFactory#createSocket(java.lang.String,int)"
        "executable:java.io.OutputStream#flush()"
        "executable:java.io.OutputStream#close()"
        "executable:java.io.ByteArrayOutputStream#writeTo(java.io.OutputStream)"
@@ -328,6 +335,9 @@
        "executable:java.lang.Object#getClass()"
        "executable:java.lang.Throwable#getCause()"
        "executable:java.lang.Throwable#printStackTrace()"
+       "executable:java.time.Duration#ofSeconds(long)"
+       "executable:java.time.Duration#toMillis()"
+       "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#entrySet()"
        "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
@@ -336,6 +346,7 @@
        "executable:java.util.LinkedHashMap#getOrDefault(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#keySet()"
        "executable:java.util.LinkedHashMap#keySet()"
+       "executable:java.util.Map#values()"
        "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
        "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
        "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
@@ -357,10 +368,13 @@
        "executable:java.util.Collection#removeIf(java.util.function.Predicate)"
        "executable:java.util.List#addAll(java.util.Collection)"
        "executable:java.util.List#size()"
+       "executable:java.util.Collection#remove(java.lang.Object)"
        "executable:java.util.Optional#empty()"
        "executable:java.util.Optional#of(java.lang.Object)"
+       "executable:java.util.Optional#ofNullable(java.lang.Object)"
        "executable:java.util.Optional#get()"
        "executable:java.util.Optional#isPresent()"
+       "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)"
        "executable:java.util.OptionalInt#isPresent()"
        "executable:java.util.OptionalInt#getAsInt()"
        "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
@@ -379,9 +393,16 @@
        "executable:java.io.OutputStream#write(int)"
        "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
        "executable:java.util.concurrent.ExecutorService#submit(java.util.concurrent.Callable)"
+       "executable:java.util.concurrent.ExecutorService#shutdown()"
+       "executable:java.util.concurrent.Executors#newFixedThreadPool(int,java.util.concurrent.ThreadFactory)"
        "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
+       "executable:java.lang.Thread#setDaemon(boolean)"
+       "executable:java.lang.Thread#setName(java.lang.String)"
        "executable:java.util.concurrent.atomic.AtomicBoolean#get()"
-       "executable:java.util.concurrent.atomic.AtomicBoolean#compareAndSet(boolean,boolean)"}
+       "executable:java.util.concurrent.atomic.AtomicBoolean#compareAndSet(boolean,boolean)"
+       "executable:java.util.concurrent.atomic.AtomicInteger#incrementAndGet()"
+       "executable:java.util.concurrent.atomic.AtomicReference#getAndSet(java.lang.Object)"
+       "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"}
      (:key occurrence))
     (identifier (.getSimpleName ^CtElement reference))
 
@@ -456,6 +477,7 @@
                     "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
                     "executable:java.lang.RuntimeException#<init>(java.lang.String)"
                     "executable:java.lang.RuntimeException#<init>(java.lang.String,java.lang.Throwable)"
+                    "executable:java.lang.IllegalStateException#<init>(java.lang.String)"
                     "executable:java.lang.StringBuilder#<init>()"
                     "executable:java.lang.String#<init>(char[])"
                     "executable:java.io.ByteArrayOutputStream#<init>(int)"
@@ -467,7 +489,12 @@
                     "executable:java.util.ArrayList#<init>(java.util.Collection)"
                     "executable:java.util.LinkedHashMap#<init>()"
                     "executable:java.util.LinkedHashMap#<init>(int)"
-                    "executable:java.util.LinkedHashMap#<init>(java.util.Map)"}
+                    "executable:java.util.LinkedHashMap#<init>(java.util.Map)"
+                    "executable:java.lang.Thread#<init>(java.lang.Runnable)"
+                    "executable:java.util.concurrent.atomic.AtomicBoolean#<init>(boolean)"
+                    "executable:java.util.concurrent.atomic.AtomicInteger#<init>(int)"
+                    "executable:java.util.concurrent.atomic.AtomicReference#<init>()"
+                    "executable:java.net.Socket#<init>(java.lang.String,int)"}
                   (:key occurrence))
                  {:node (raw "")}
 
@@ -608,6 +635,9 @@
                "executable:java.net.URI#getPort()"
                (compat-call "UriPort" [target-node])
 
+               "executable:java.net.URI#getScheme()"
+               (compat-call "UriScheme" [target-node])
+
                "executable:java.lang.String#toUpperCase()"
                (sequence-node [target-node (raw ".ToUpper()")])
 
@@ -616,6 +646,9 @@
 
                "executable:java.lang.String#length()"
                (sequence-node [target-node (raw ".Length")])
+
+               "executable:java.lang.String#hashCode()"
+               (compat-call "HashCode" [target-node])
 
                "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
                (compat-call "EqualsIgnoreCase" (into [target-node] arguments))
@@ -634,6 +667,22 @@
 
                "executable:java.net.Socket#close()"
                (sequence-node [target-node (raw ".Close()")])
+
+               "executable:java.net.Socket#isClosed()"
+               (compat-call "SocketIsClosed" [target-node])
+
+               "executable:java.net.Socket#isConnected()"
+               (compat-call "SocketIsConnected" [target-node])
+
+               "executable:java.net.Socket#setSoTimeout(int)"
+               (compat-call "SocketSetSoTimeout" (into [target-node] arguments))
+
+               "executable:javax.net.ssl.SSLSocketFactory#getDefault()"
+               (raw "global::Vibeformer.Runtime.JavaSocketFactory.Default")
+
+               "executable:javax.net.SocketFactory#createSocket(java.lang.String,int)"
+               (sequence-node [target-node (raw ".CreateSocket(")
+                               (sequence-node arguments ", ") (raw ")")])
 
                "executable:java.io.OutputStream#flush()"
                (sequence-node [target-node (raw ".Flush()")])
@@ -669,6 +718,17 @@
                "executable:java.lang.Throwable#printStackTrace()"
                (compat-call "PrintStackTrace" [target-node])
 
+               "executable:java.time.Duration#ofSeconds(long)"
+               (sequence-node [(raw "global::System.TimeSpan.FromSeconds(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.time.Duration#toMillis()"
+               (sequence-node [(raw "checked((long)") target-node
+                               (raw ".TotalMilliseconds)")])
+
+               "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
+               (compat-call "Equals" arguments)
+
                "executable:java.util.Map#entrySet()"
                (compat-call "MapEntrySet" [target-node])
 
@@ -692,6 +752,9 @@
 
                "executable:java.util.LinkedHashMap#keySet()"
                (compat-call "MapKeySet" [target-node])
+
+               "executable:java.util.Map#values()"
+               (sequence-node [target-node (raw ".Values")])
 
                "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
                (compat-call "MapPut" (into [target-node] arguments))
@@ -760,6 +823,9 @@
                "executable:java.util.List#size()"
                (sequence-node [target-node (raw ".Count")])
 
+               "executable:java.util.Collection#remove(java.lang.Object)"
+               (compat-call "CollectionRemove" (into [target-node] arguments))
+
                "executable:java.util.Optional#empty()"
                (sequence-node [(type-node @ctx-holder (.getType element))
                                (raw ".Empty()")])
@@ -769,11 +835,20 @@
                                (raw ".Of(") (sequence-node arguments ", ")
                                (raw ")")])
 
+               "executable:java.util.Optional#ofNullable(java.lang.Object)"
+               (sequence-node [(type-node @ctx-holder (.getType element))
+                               (raw ".OfNullable(")
+                               (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.util.Optional#get()"
                (sequence-node [target-node (raw ".Get()")])
 
                "executable:java.util.Optional#isPresent()"
                (sequence-node [target-node (raw ".IsPresent()")])
+
+               "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)"
+               (sequence-node [target-node (raw ".OrElseThrow(")
+                               (sequence-node arguments ", ") (raw ")")])
 
                "executable:java.util.OptionalInt#isPresent()"
                (sequence-node [target-node (raw ".HasValue")])
@@ -838,6 +913,14 @@
                (sequence-node [target-node (raw ".Submit(")
                                (sequence-node arguments ", ") (raw ")")])
 
+               "executable:java.util.concurrent.ExecutorService#shutdown()"
+               (sequence-node [target-node (raw ".Shutdown()")])
+
+               "executable:java.util.concurrent.Executors#newFixedThreadPool(int,java.util.concurrent.ThreadFactory)"
+               (sequence-node
+                [(raw "new global::Vibeformer.Runtime.JavaExecutorService(")
+                 (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
                (sequence-node [target-node (raw ".Get(")
                                (sequence-node arguments ", ") (raw ")")])
@@ -847,6 +930,25 @@
 
                "executable:java.util.concurrent.atomic.AtomicBoolean#compareAndSet(boolean,boolean)"
                (sequence-node [target-node (raw ".CompareAndSet(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.concurrent.atomic.AtomicInteger#incrementAndGet()"
+               (sequence-node [target-node (raw ".IncrementAndGet()")])
+
+               "executable:java.util.concurrent.atomic.AtomicReference#getAndSet(java.lang.Object)"
+               (sequence-node [target-node (raw ".GetAndSet(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"
+               (sequence-node [target-node (raw ".Set(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.lang.Thread#setDaemon(boolean)"
+               (sequence-node [target-node (raw ".SetDaemon(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.lang.Thread#setName(java.lang.String)"
+               (sequence-node [target-node (raw ".SetName(")
                                (sequence-node arguments ", ") (raw ")")])
 
                "executable:java.lang.Object#<init>()"
@@ -876,6 +978,11 @@
             "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
             (sequence-node [(raw "new global::System.Exception(null, ")
                             (first arguments) (raw ")")])
+
+            "executable:java.net.Socket#<init>(java.lang.String,int)"
+            (sequence-node
+             [(raw "global::Vibeformer.Runtime.JavaSocketFactory.Plain.CreateSocket(")
+              (sequence-node arguments ", ") (raw ")")])
 
             (sequence-node
              [(raw "new ") (type-node @ctx-holder (.getType element)) (raw "(")
@@ -1136,20 +1243,40 @@
      :class CtTry
      :emit
      (fn [{:keys [^CtTry element children]}]
-       (when (and (instance? CtTryWithResource element)
-                  (seq (.getResources ^CtTryWithResource element)))
-         (unsupported! "Java try-with-resources requires explicit lifetime lowering"
-                       element))
-       {:node
-        (sequence-node
-         [(raw "try ")
-          (child-node children (.getBody element))
-          (sequence-node
-           (mapv #(sequence-node [(raw " ") (child-node children %)])
-                 (.getCatchers element)))
-          (when-let [finalizer (.getFinalizer element)]
-            (sequence-node [(raw " finally ")
-                            (child-node children finalizer)]))])})}
+       (let [resources (if (instance? CtTryWithResource element)
+                         (vec (.getResources ^CtTryWithResource element))
+                         [])
+             resource (first resources)
+             catches (vec (.getCatchers element))
+             finalizer (.getFinalizer element)]
+         (when (and (seq resources)
+                    (not (and (= 1 (count resources))
+                              (instance? CtLocalVariable resource)
+                              (.getDefaultExpression ^CtLocalVariable resource))))
+           (unsupported! "Java try-with-resources requires one declared resource"
+                         element))
+         (let [body (child-node children (.getBody element))
+               using-node
+               (when resource
+                 (sequence-node
+                  [(raw "using (")
+                   (child-node children resource)
+                   (raw ") ") body]))
+               guarded-body
+               (if (and using-node (or (seq catches) finalizer))
+                 (sequence-node [(raw "{\n") using-node (raw "\n}")])
+                 (or using-node body))]
+           {:node
+            (sequence-node
+             [(when (or (empty? resources) (seq catches) finalizer)
+                (raw "try "))
+              guarded-body
+              (sequence-node
+               (mapv #(sequence-node [(raw " ") (child-node children %)])
+                     catches))
+              (when finalizer
+                (sequence-node [(raw " finally ")
+                                (child-node children finalizer)]))])})))}
 
     {:id :java-library.statement/catch
      :class CtCatch
@@ -1185,7 +1312,9 @@
             (when initializer
               (sequence-node [(raw " = ")
                               (child-node children initializer)]))
-            (when-not (= "forInit" (role element))
+            (when-not (or (= "forInit" (role element))
+                          (and (.isParentInitialized element)
+                               (instance? CtTryWithResource (.getParent element))))
               (raw ";"))])}))}
 
     {:id :java-library.expression/variable-read
@@ -1446,6 +1575,8 @@
                                     [(visibility field "internal")
                                      (when (.hasModifier field ModifierKind/STATIC)
                                        "static")
+                                     (when (.hasModifier field ModifierKind/VOLATILE)
+                                       "volatile")
                                      (when (.hasModifier field ModifierKind/FINAL)
                                        "readonly")]))
                   " "))

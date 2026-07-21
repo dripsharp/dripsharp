@@ -727,6 +727,93 @@
     (is (= "executable:java.util.concurrent.Executor#execute(java.lang.Runnable)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
 
+(deftest neutral-fixed-thread-factory-and-atomic-counter-are-resolved
+  (let [fixture
+        (model! {"example/Threads.java"
+                 (str "package example; import java.util.concurrent.ExecutorService; "
+                      "import java.util.concurrent.Executors; "
+                      "import java.util.concurrent.atomic.AtomicInteger; "
+                      "public final class Threads { "
+                      "static ExecutorService create() { "
+                      "AtomicInteger count = new AtomicInteger(1); "
+                      "return Executors.newFixedThreadPool(2, runnable -> { "
+                      "Thread thread = new Thread(runnable); "
+                      "thread.setDaemon(true); "
+                      "thread.setName(\"worker-\" + count.incrementAndGet()); "
+                      "return thread; }); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Threads.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Threads.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaAtomicInteger count = "
+              "new global::Vibeformer.Runtime.JavaAtomicInteger(1);\n"
+              "return new global::Vibeformer.Runtime.JavaExecutorService(2, (runnable) => {\n"
+              "global::Vibeformer.Runtime.JavaThread thread = "
+              "new global::Vibeformer.Runtime.JavaThread(runnable);\n"
+              "thread.SetDaemon(true);\n"
+              "thread.SetName((\"worker-\" + count.IncrementAndGet()));\n"
+              "return thread;\n});")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-atomic-get-and-increment-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.concurrent.atomic.AtomicInteger; "
+                      "public final class Unsupported { static int next(AtomicInteger value) { "
+                      "return value.getAndIncrement(); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.util.concurrent.atomic.AtomicInteger#getAndIncrement()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-nullable-optional-supplier-and-uri-scheme-are-resolved
+  (let [fixture
+        (model! {"example/Uris.java"
+                 (str "package example; import java.net.URI; import java.util.Optional; "
+                      "public final class Uris { static String host(URI uri) { "
+                      "if (\"http\".equalsIgnoreCase(uri.getScheme())) { return \"http\"; } "
+                      "return Optional.ofNullable(uri.getHost()).orElseThrow(() -> "
+                      "new RuntimeException(\"missing host\")); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Uris.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Uris.cs")))]
+    (is (str/includes?
+         first-source
+         (str "if (global::Vibeformer.Runtime.JavaCompat.EqualsIgnoreCase(\"http\", "
+              "global::Vibeformer.Runtime.JavaCompat.UriScheme(uri))) {\n"
+              "return \"http\";\n}\n"
+              "return global::Vibeformer.Runtime.JavaOptional<string>.OfNullable("
+              "global::Vibeformer.Runtime.JavaCompat.UriHost(uri)).OrElseThrow("
+              "() => new global::System.Exception(\"missing host\"));")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neighboring-map-compute-contract-remains-fail-closed
   (let [fixture
         (model! {"example/Unsupported.java"
@@ -849,19 +936,43 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest try-with-resources-remains-fail-closed-until-lifetime-lowering
+(deftest single-declared-try-resource-has-deterministic-lifetime
   (let [fixture
         (model! {"example/Resources.java"
-                 (str "package example; public final class Resources { "
-                      "public static void run() { try (Item item = new Item()) { } } "
-                      "private static final class Item implements AutoCloseable { "
-                      "public void close() { } } }")})
+                 (str "package example; import java.io.InputStream; "
+                      "public final class Resources { public static int run(InputStream stream) throws Exception { "
+                      "try (InputStream resource = stream) { return 1; } } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Resources.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Resources.cs")))]
+    (is (str/includes? first-source
+                       (str "using (global::System.IO.Stream resource = stream) {\n"
+                            "return 1;\n}")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest multiple-try-resources-remain-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.io.InputStream; "
+                      "public final class Unsupported { static void run(InputStream first, "
+                      "InputStream second) throws Exception { "
+                      "try (InputStream a = first; InputStream b = second) { } } }")})
         error (caught #(emit! fixture 1))]
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= :translation-rule-failed
-           (get-in (ex-data error) [:diagnostic :kind])))
     (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
-                       "Java try-with-resources requires explicit lifetime lowering"))))
+                       "Java try-with-resources requires one declared resource"))))
 
 (deftest noncapturing-method-local-classes-are-hoisted-by-resolved-identity
   (let [fixture

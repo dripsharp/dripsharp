@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -171,6 +172,11 @@ internal sealed class JavaFuture<T>
     internal static JavaFuture<T> Run(Func<T> callable, CancellationToken cancellation) =>
         new(Task.Run(callable, cancellation));
 
+    internal static JavaFuture<T> Run(Func<T> callable, CancellationToken cancellation,
+        TaskScheduler scheduler) =>
+        new(Task.Factory.StartNew(callable, cancellation,
+            TaskCreationOptions.DenyChildAttach, scheduler));
+
     internal bool Complete(T value) => completion?.TrySetResult(value) ?? false;
     internal bool CompleteExceptionally(Exception error) =>
         completion?.TrySetException(error) ?? false;
@@ -222,10 +228,18 @@ internal sealed class JavaExecutorService
     private readonly object sync = new();
     private readonly List<Task> tasks = new();
     private readonly CancellationTokenSource cancellation = new();
+    private readonly JavaFixedThreadTaskScheduler? scheduler;
     private bool shutdown;
 
+    internal JavaExecutorService() { }
+
+    internal JavaExecutorService(int workerCount, JavaThreadFactory threadFactory) =>
+        scheduler = new JavaFixedThreadTaskScheduler(workerCount, threadFactory);
+
     internal JavaFuture<T> Submit<T>(Func<T> callable) =>
-        Track(JavaFuture<T>.Run(callable, Token()));
+        Track(scheduler is null
+            ? JavaFuture<T>.Run(callable, Token())
+            : JavaFuture<T>.Run(callable, Token(), scheduler));
 
     internal JavaFuture<object?> Submit(Action runnable) =>
         Submit<object?>(() =>
@@ -237,19 +251,24 @@ internal sealed class JavaExecutorService
     internal void Shutdown()
     {
         lock (sync) shutdown = true;
+        scheduler?.Complete();
     }
 
     internal void ShutdownNow()
     {
         lock (sync) shutdown = true;
         cancellation.Cancel();
+        scheduler?.Complete();
     }
 
     internal bool AwaitTermination(long timeout, JavaTimeUnit unit)
     {
         Task[] pending;
         lock (sync) pending = tasks.ToArray();
-        return Task.WhenAll(pending).Wait(JavaTimeUnits.ToTimeSpan(timeout, unit));
+        var duration = JavaTimeUnits.ToTimeSpan(timeout, unit);
+        var started = Stopwatch.StartNew();
+        if (!Task.WhenAll(pending).Wait(duration)) return false;
+        return scheduler?.AwaitTermination(duration - started.Elapsed) ?? true;
     }
 
     private CancellationToken Token()
@@ -274,6 +293,64 @@ internal sealed class JavaExecutorService
     }
 }
 
+internal delegate JavaThread JavaThreadFactory(Action runnable);
+
+internal sealed class JavaThread
+{
+    private readonly Thread thread;
+
+    internal JavaThread(Action runnable) => thread = new Thread(() => runnable());
+    internal void SetDaemon(bool daemon) => thread.IsBackground = daemon;
+    internal void SetName(string name) => thread.Name = name;
+    internal void Start() => thread.Start();
+    internal bool Join(TimeSpan timeout) => thread.Join(timeout);
+}
+
+internal sealed class JavaFixedThreadTaskScheduler : TaskScheduler
+{
+    private readonly BlockingCollection<Task> tasks = new();
+    private readonly IReadOnlyList<JavaThread> workers;
+
+    internal JavaFixedThreadTaskScheduler(int workerCount, JavaThreadFactory threadFactory)
+    {
+        if (workerCount <= 0) throw new ArgumentOutOfRangeException(nameof(workerCount));
+        ArgumentNullException.ThrowIfNull(threadFactory);
+        var created = new List<JavaThread>(workerCount);
+        for (var index = 0; index < workerCount; index++)
+        {
+            var worker = threadFactory(Consume);
+            if (worker is null)
+                throw new InvalidOperationException("A Java thread factory returned null.");
+            created.Add(worker);
+        }
+        workers = created;
+        foreach (var worker in workers) worker.Start();
+    }
+
+    internal void Complete() => tasks.CompleteAdding();
+
+    internal bool AwaitTermination(TimeSpan timeout)
+    {
+        if (timeout <= TimeSpan.Zero) return workers.All(worker => worker.Join(TimeSpan.Zero));
+        var started = Stopwatch.StartNew();
+        foreach (var worker in workers)
+        {
+            var remaining = timeout - started.Elapsed;
+            if (remaining <= TimeSpan.Zero || !worker.Join(remaining)) return false;
+        }
+        return true;
+    }
+
+    protected override IEnumerable<Task>? GetScheduledTasks() => tasks.ToArray();
+    protected override void QueueTask(Task task) => tasks.Add(task);
+    protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued) => false;
+
+    private void Consume()
+    {
+        foreach (var task in tasks.GetConsumingEnumerable()) TryExecuteTask(task);
+    }
+}
+
 internal sealed class JavaAtomicBoolean
 {
     private int value;
@@ -284,6 +361,58 @@ internal sealed class JavaAtomicBoolean
     internal bool CompareAndSet(bool expected, bool replacement) =>
         Interlocked.CompareExchange(ref value, replacement ? 1 : 0, expected ? 1 : 0) ==
         (expected ? 1 : 0);
+}
+
+internal sealed class JavaAtomicInteger
+{
+    private int value;
+
+    internal JavaAtomicInteger(int value = 0) => this.value = value;
+    internal int IncrementAndGet() => Interlocked.Increment(ref value);
+}
+
+internal sealed class JavaAtomicReference<T> where T : class
+{
+    private T? value;
+
+    internal JavaAtomicReference(T? value = null) => this.value = value;
+    internal T Get() => Volatile.Read(ref value)!;
+    internal void Set(T? replacement) => Volatile.Write(ref value, replacement);
+    internal T GetAndSet(T? replacement) => Interlocked.Exchange(ref value, replacement)!;
+}
+
+internal sealed class JavaSocketFactory
+{
+    internal static readonly JavaSocketFactory Plain = new(false);
+    internal static readonly JavaSocketFactory Default = new(true);
+    private readonly bool tls;
+
+    private JavaSocketFactory(bool tls) => this.tls = tls;
+
+    internal System.Net.Sockets.Socket CreateSocket(string host, int port)
+    {
+        var socket = new System.Net.Sockets.Socket(
+            System.Net.Sockets.SocketType.Stream,
+            System.Net.Sockets.ProtocolType.Tcp);
+        try
+        {
+            socket.Connect(host, port);
+            Stream stream = new System.Net.Sockets.NetworkStream(socket, ownsSocket: false);
+            if (tls)
+            {
+                var secure = new System.Net.Security.SslStream(stream, leaveInnerStreamOpen: false);
+                secure.AuthenticateAsClient(host);
+                stream = secure;
+            }
+            JavaCompat.RegisterSocketStream(socket, stream);
+            return socket;
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
 }
 
 internal sealed class JavaRandom
@@ -546,6 +675,8 @@ internal sealed class JavaOptional<T>
     internal void IfPresent(Action<T> action) { if (present) action(value!); }
     internal void IfPresentOrElse(Action<T> action, Action emptyAction) { if (present) action(value!); else emptyAction(); }
     internal T OrElseThrow() => Get();
+    internal T OrElseThrow(Func<Exception> exceptionSupplier) =>
+        present ? value! : throw exceptionSupplier();
     internal JavaOptional<R> Map<R>(Func<T, R> mapper) => present ? JavaOptional<R>.OfNullable(mapper(value!)) : JavaOptional<R>.Empty();
     internal R Match<R>(Func<T, R> presentCase, Func<R> emptyCase) =>
         present ? presentCase(value!) : emptyCase();
@@ -850,6 +981,8 @@ internal sealed class JavaMapKeySet<K, V> : ISet<K> where K : notnull
 
 internal static class JavaCompat
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        System.Net.Sockets.Socket, Stream> SocketStreams = new();
     private sealed class ReadOnlyAdapterCache
     {
         internal Dictionary<Type, object> Values { get; } = new();
@@ -2580,6 +2713,8 @@ internal static class JavaCompat
     internal static bool CollectionIsEmpty(IEnumerable collection) => !collection.Cast<object?>().Any();
     internal static bool CollectionContains<T>(IEnumerable<T> collection, object? value) =>
         value is T typed && collection.Contains(typed);
+    internal static bool CollectionRemove<T>(ICollection<T> collection, object? value) =>
+        value is T typed && collection.Remove(typed);
     internal static bool ContainsAll<T>(IEnumerable<T> collection, IEnumerable<T> values)
     {
         var set = new HashSet<T>(collection);
@@ -4533,8 +4668,17 @@ internal static class JavaCompat
             contents = new ArraySegment<byte>(source.ToArray());
         destination.Write(contents.AsSpan(0, checked((int)source.Length)));
     }
+    internal static void RegisterSocketStream(System.Net.Sockets.Socket socket, Stream stream) =>
+        SocketStreams.Add(socket, stream);
     internal static Stream SocketStream(System.Net.Sockets.Socket socket) =>
-        new System.Net.Sockets.NetworkStream(socket, ownsSocket: false);
+        SocketStreams.TryGetValue(socket, out var stream)
+            ? stream
+            : new System.Net.Sockets.NetworkStream(socket, ownsSocket: false);
+    internal static bool SocketIsClosed(System.Net.Sockets.Socket socket) =>
+        socket.SafeHandle.IsClosed;
+    internal static bool SocketIsConnected(System.Net.Sockets.Socket socket) => socket.Connected;
+    internal static void SocketSetSoTimeout(System.Net.Sockets.Socket socket, int timeout) =>
+        socket.ReceiveTimeout = timeout;
     internal static void ForEach<T>(IEnumerable<T> values, Action<T> action)
     {
         foreach (var value in values) action(value);

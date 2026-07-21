@@ -55,6 +55,8 @@
    "java.lang.Math" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat"
                        :dotnet.type/java-compat]
+   "java.lang.Thread" ["global::Vibeformer.Runtime.JavaThread"
+                       :dotnet.type/thread]
    "java.lang.Runnable" ["global::System.Action" :dotnet.type/action]
    "java.lang.Iterable" ["global::System.Collections.Generic.IEnumerable"
                          :dotnet.type/enumerable]
@@ -158,12 +160,18 @@
                                      :dotnet.type/java-compat]
    "java.util.concurrent.Future" ["global::Vibeformer.Runtime.JavaFuture"
                                   :dotnet.type/future]
+   "java.util.concurrent.ThreadFactory" ["global::Vibeformer.Runtime.JavaThreadFactory"
+                                         :dotnet.type/thread-factory]
    "java.util.concurrent.TimeUnit" ["global::Vibeformer.Runtime.JavaTimeUnit"
                                     :dotnet.type/time-unit]
    "java.util.concurrent.TimeoutException" ["global::System.TimeoutException"
                                             :dotnet.type/timeout-exception]
    "java.util.concurrent.atomic.AtomicBoolean" ["global::Vibeformer.Runtime.JavaAtomicBoolean"
                                                 :dotnet.type/atomic-boolean]
+   "java.util.concurrent.atomic.AtomicInteger" ["global::Vibeformer.Runtime.JavaAtomicInteger"
+                                                :dotnet.type/atomic-integer]
+   "java.util.concurrent.atomic.AtomicReference" ["global::Vibeformer.Runtime.JavaAtomicReference"
+                                                  :dotnet.type/atomic-reference]
    "java.util.function.BiConsumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]
@@ -183,6 +191,13 @@
                                     :dotnet.type/gzip-stream]
    "java.util.zip.InflaterOutputStream" ["global::System.IO.Compression.DeflateStream"
                                          :dotnet.type/deflate-stream]
+
+   "javax.annotation.Nullable" ["global::System.Diagnostics.CodeAnalysis.MaybeNullAttribute"
+                                :dotnet.type/nullable-annotation]
+   "javax.annotation.Nonnull" ["global::System.Diagnostics.CodeAnalysis.NotNullAttribute"
+                               :dotnet.type/nonnullable-annotation]
+   "javax.net.SocketFactory" ["global::Vibeformer.Runtime.JavaSocketFactory"
+                              :dotnet.type/socket-factory]
 
    "java.security.KeyManagementException" ["global::System.Security.Cryptography.CryptographicException"
                                            :dotnet.type/cryptographic-exception]
@@ -205,7 +220,8 @@
                                :dotnet.type/ssl-context]
    "javax.net.ssl.SSLSocket" ["global::System.Net.Sockets.Socket"
                               :dotnet.type/ssl-socket]
-   "javax.net.ssl.SSLSocketFactory" ["object" :dotnet.type/ssl-socket-factory]
+   "javax.net.ssl.SSLSocketFactory" ["global::Vibeformer.Runtime.JavaSocketFactory"
+                                     :dotnet.type/ssl-socket-factory]
    "javax.net.ssl.TrustManager" ["object" :dotnet.type/trust-manager]
    "javax.net.ssl.TrustManagerFactory" ["object" :dotnet.type/trust-manager-factory]
    "javax.net.ssl.X509TrustManager" ["object" :dotnet.type/x509-trust-manager]})
