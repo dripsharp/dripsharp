@@ -227,7 +227,12 @@ internal sealed class JavaFuture<T>
     }
 }
 
-public sealed class JavaExecutorService
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaExecutorService
 {
     private readonly object sync = new();
     private readonly List<Task> tasks = new();
@@ -301,7 +306,12 @@ public sealed class JavaExecutorService
     }
 }
 
-public abstract class JavaInputStream : Stream
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+abstract class JavaInputStream : Stream
 {
     public abstract int read();
 
@@ -354,7 +364,12 @@ public abstract class JavaInputStream : Stream
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }
 
-public abstract class JavaOutputStream : Stream
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+abstract class JavaOutputStream : Stream
 {
     public abstract void write(int value);
 
@@ -530,7 +545,12 @@ internal sealed class JavaInflaterOutputStream : Stream
     }
 }
 
-public class JavaFilterOutputStream : JavaOutputStream
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+class JavaFilterOutputStream : JavaOutputStream
 {
     protected readonly Stream @out;
 
@@ -943,7 +963,12 @@ internal sealed class JavaTrustManagerFactory
         : new object[] { manager };
 }
 
-public sealed class JavaSslContext
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaSslContext
 {
     private readonly string protocol;
     private JavaSocketFactory? socketFactory;
@@ -1120,7 +1145,12 @@ internal sealed class JavaSslServerSocketFactory
         new(port, tls: true, serverCertificate: serverCertificate);
 }
 
-public sealed class JavaServerSocket : IDisposable
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaServerSocket : IDisposable
 {
     private readonly System.Net.Sockets.TcpListener listener;
     private readonly bool tls;
@@ -1413,13 +1443,23 @@ internal sealed class JavaProperties
         });
 }
 
-public interface IJavaOptional
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+interface IJavaOptional
 {
     bool HasValue { get; }
     object? BoxedValue { get; }
 }
 
-public sealed class JavaOptional<T> : IJavaOptional
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaOptional<T> : IJavaOptional
 {
     private readonly T? value;
     private readonly bool present;
@@ -1535,7 +1575,12 @@ internal interface JavaRemovableIterator
     void Remove();
 }
 
-public interface JavaIterator<out T>
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+interface JavaIterator<out T>
 {
     bool HasNext();
     T Next();
@@ -3251,7 +3296,8 @@ internal static class JavaCompat
             _ = OriginalUriTexts.GetValue(driveOnly, _ => new JavaUriText(value));
             return driveOnly;
         }
-        if (Regex.IsMatch(value, @"^[A-Za-z][A-Za-z0-9+.-]*:///"))
+        if (!value.StartsWith("file:", StringComparison.OrdinalIgnoreCase) &&
+            Regex.IsMatch(value, @"^[A-Za-z][A-Za-z0-9+.-]*:///"))
         {
             // java.net.URI accepts an absolute hierarchical URI with an empty
             // authority (for example, `http:///path`). System.Uri rejects the

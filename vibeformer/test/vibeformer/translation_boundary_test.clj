@@ -86,6 +86,11 @@
    "    if (JavaCompat.UriHost(hostless) is not null ||\n"
    "        JavaCompat.UriRawPath(hostless) != \"/submit\")\n"
    "      throw new global::System.Exception(\"hostless Java URI contract failed\");\n"
+   "    var projectFile = JavaCompat.CreateUri(\"file:///tmp/vibeformer/PklProject\");\n"
+   "    var projectBase = JavaCompat.ResolveUri(projectFile, \".\");\n"
+   "    if (JavaCompat.UriAuthority(projectBase) is not null ||\n"
+   "        JavaCompat.UriRawPath(projectBase) != \"/tmp/vibeformer/\")\n"
+   "      throw new global::System.Exception(\"file project URI contract failed\");\n"
    "    using var compressed = new global::System.IO.MemoryStream();\n"
    "    using (var compressor = new global::System.IO.Compression.ZLibStream(\n"
    "      compressed, global::System.IO.Compression.CompressionLevel.Optimal, true))\n"
@@ -164,6 +169,17 @@
         (is (not (re-find #"(?i)org\\.pkl|Pkl\\.(?:Core|Parser)" content)))
         (is (not (re-find #"(?i)#if[^\n]*PKL" content)))))
     (is (= "OK" (compile-and-run-generic-runtime! assets)))))
+
+(deftest product-bundles-select-java-compatibility-visibility-explicitly
+  (let [runtime (slurp "runtime/Vibeformer.JavaCompat.cs")
+        pkl-parser (slurp "config/pkl-parser.edn")
+        pkl-core (slurp "config/pkl-core-value-model-destination.edn")
+        rawhttp (slurp "config/rawhttp-core-destination.edn")]
+    (is (= 9 (count (re-seq #"#if VIBEFORMER_INTERNAL_JAVA_COMPAT" runtime))))
+    (doseq [configuration [pkl-parser pkl-core]]
+      (is (str/includes? configuration
+                         ":define-constants [\"VIBEFORMER_INTERNAL_JAVA_COMPAT\"]")))
+    (is (not (str/includes? rawhttp "VIBEFORMER_INTERNAL_JAVA_COMPAT")))))
 
 (deftest pkl-rules-depend-inward-on-the-reusable-kernel
   (let [body-rules (source "pkl/java_body")

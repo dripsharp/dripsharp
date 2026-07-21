@@ -497,20 +497,30 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest unmapped-jdk-constructor-in-body-fails-closed
+(deftest linked-hash-map-access-order-constructor-is-neutral-and-deterministic
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.util.LinkedHashMap; "
+                      "import java.util.Map; "
                       "public final class Unsupported { public Unsupported() { "
+                      "Map<String, String> value = "
                       "new LinkedHashMap<String, String>(1, 0.75f, true); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= :translation-rule-failed
-           (get-in (ex-data error) [:diagnostic :kind])))
-    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
-                       "Java library constructor has no neutral mapping"))
-    (is (= "executable:java.util.LinkedHashMap#<init>(int,float,boolean)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        relative "src/Example/Java/Library/Unsupported.cs"
+        first-source (slurp (str (paths/resolve-path (:project-root first) relative)))
+        second-source (slurp (str (paths/resolve-path (:project-root second) relative)))]
+    (is (str/includes?
+         first-source
+         "new global::Vibeformer.Runtime.JavaLinkedHashMap<string, string>(1, 0.75F, true);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest neutral-empty-collections-use-exact-resolved-jdk-contracts
   (let [fixture
@@ -624,19 +634,27 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest nearby-unmapped-collection-wrapper-remains-fail-closed
+(deftest synchronized-map-wrapper-is-a-neutral-identity-adaptation
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.util.Collections; "
                       "import java.util.Map; public final class Unsupported { "
+                      "private final Map<String, String> values; "
                       "public Unsupported(Map<String, String> values) { "
-                      "Collections.synchronizedMap(values); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= :translation-rule-failed
-           (get-in (ex-data error) [:diagnostic :kind])))
-    (is (= "executable:java.util.Collections#synchronizedMap(java.util.Map)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+                      "this.values = Collections.synchronizedMap(values); } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        relative "src/Example/Java/Library/Unsupported.cs"
+        first-source (slurp (str (paths/resolve-path (:project-root first) relative)))
+        second-source (slurp (str (paths/resolve-path (:project-root second) relative)))]
+    (is (str/includes? first-source "this.values = values;"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest neutral-map-compute-and-consumer-calls-use-exact-jdk-contracts
   (let [fixture
@@ -1123,7 +1141,8 @@
               "global::Vibeformer.Runtime.JavaThread thread = "
               "new global::Vibeformer.Runtime.JavaThread(runnable);\n"
               "thread.SetDaemon(true);\n"
-              "thread.SetName((\"worker-\" + count.IncrementAndGet()));\n"
+              "thread.SetName(global::Vibeformer.Runtime.JavaCompat.Concat("
+              "\"worker-\", count.IncrementAndGet()));\n"
               "return thread;\n});")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
@@ -2221,8 +2240,10 @@
                                         "src/Example/Java/Library/UriFailure.cs")))]
     (is (str/includes?
          first-source
-         (str "global::Vibeformer.Runtime.JavaCompat.UriSyntaxReason(failure)"
-              " + \"@\") + global::Vibeformer.Runtime.JavaCompat.UriSyntaxIndex(failure)")))
+         (str "global::Vibeformer.Runtime.JavaCompat.Concat("
+              "global::Vibeformer.Runtime.JavaCompat.Concat("
+              "global::Vibeformer.Runtime.JavaCompat.UriSyntaxReason(failure), \"@\"), "
+              "global::Vibeformer.Runtime.JavaCompat.UriSyntaxIndex(failure))")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit

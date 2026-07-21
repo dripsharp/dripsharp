@@ -3,8 +3,9 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.concurrency :as concurrency]
+            [vibeformer.java-library :as java-library]
+            [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths]
-            [vibeformer.pkl.java-project :as java-project]
             [vibeformer.process :as process]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files OpenOption Path]
@@ -34,11 +35,14 @@
 
 (def ^:private configuration
   {:schema-version 1
+   :product-family :java-library
+   :destination-bundle 'vibeformer.java-library/rule-bundle
    :project {:assembly-name "Vibeformer.LinkedHashMap.Fixture"
              :root-namespace "Fixture.LinkedHashMap"
              :target-framework "net8.0"
              :nullable "enable"
-             :implicit-usings false}
+             :implicit-usings false
+             :warnings-as-errors true}
    :package {:id "Vibeformer.LinkedHashMap.Fixture"
              :version "1.0.0-task"
              :title "Vibeformer LinkedHashMap Fixture"
@@ -59,6 +63,8 @@
             :annotation-decisions-file "annotation-decisions.edn"}
    :namespaces {"fixture.linkedhashmap" "Fixture.LinkedHashMap"}
    :namespace-prefixes {"fixture.linkedhashmap" "Fixture.LinkedHashMap"}
+   :destination-capabilities #{:java-compat :java-regex-unicode}
+   :public-surface {:strategy 'vibeformer.java-library/public-surface-strategy}
    :resources {}})
 
 (defn- write-string! [^Path file value]
@@ -111,7 +117,7 @@
            (paths/resolve-path consumer "Program.cs")
            (str "public static class Program\n{\n"
                 "  public static void Main() => global::System.Console.Write(\n"
-                "    global::Fixture.LinkedHashMap.LinkedHashMapFixture.ObserveAll());\n"
+                "    global::Fixture.LinkedHashMap.LinkedHashMapFixture.observeAll());\n"
                 "}\n"))]
     (Files/createDirectories feed (make-array FileAttribute 0))
     (Files/createDirectories packages (make-array FileAttribute 0))
@@ -151,7 +157,8 @@
                      :target root
                      :discovery discovery
                      :resolved-model resolved
-                     :configuration configuration}))
+                     :configuration configuration
+                     :rule-bundle (java-library/rule-bundle)}))
         java-output (run-java! root source)
         package-output (run-package-consumer! root emission)
         summary (:summary emission)

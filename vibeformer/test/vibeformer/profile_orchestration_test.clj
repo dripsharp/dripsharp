@@ -137,7 +137,11 @@
            (get-in destination [:external-dependencies
                                 "com.google.code.findbugs:jsr305:3.0.2"
                                 :source-scope])))
-    (is (= :compile-only (get-in destination [:package-consumer :strategy])))))
+    (is (= {:strategy :source-file
+            :project-file "RawHttp.Core.PackageConsumer.csproj"
+            :fixture-file "RawHttp.Core.Program.cs"
+            :success-message "Independent RawHttp.Core package behavior passed."}
+           (:package-consumer destination)))))
 
 (deftest arbitrary-non-product-profile-runs-every-normal-package-stage-deterministically
   (let [{:keys [workspace profile-file]} (fixture!)

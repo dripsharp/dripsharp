@@ -6,6 +6,7 @@
            :target-framework "net8.0"
            :nullable "enable"
            :implicit-usings false
+           :define-constants ["VIBEFORMER_INTERNAL_JAVA_COMPAT"]
            :warnings-as-errors true}
  :package {:id "Pkl.Parser"
            :version "0.0.0-development"

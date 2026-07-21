@@ -593,7 +593,7 @@ public final class PublicApiUpstreamExtractor {
     Predicate<Path> evidenceFile =
         path -> {
           String name = path.getFileName().toString(), portable = slash(path);
-          return !portable.contains("/public-contract-compiler/")
+          return isPklEvidence(workspace, path) && !portable.contains("/public-contract-compiler/")
               && !portable.contains("/pkl-core-test-contract/")
               && (name.endsWith(".java") || name.endsWith(".kt")
                   || name.endsWith(".cs") || name.endsWith(".adoc"));
@@ -747,5 +747,27 @@ public final class PublicApiUpstreamExtractor {
 
   private static String slash(Path path) {
     return path.toString().replace('\\', '/');
+  }
+
+  private static boolean isPklEvidence(Path workspace, Path path) {
+    Path validationRoot = workspace.resolve("vibeformer/validation");
+    if (!path.startsWith(validationRoot)) return true;
+    Path relative = validationRoot.relativize(path);
+    if (relative.getNameCount() <= 1 || path.getFileName().toString().startsWith("RawHttp.")) {
+      return false;
+    }
+    return switch (relative.getName(0).toString()) {
+      case "differential",
+          "language-snippet-contract",
+          "language-snippet-runner",
+          "loading-contract",
+          "package-consumer",
+          "package-inspector",
+          "pkl-core-corpus",
+          "public-api-contract",
+          "regex-compat",
+          "schema-codegen" -> true;
+      default -> false;
+    };
   }
 }

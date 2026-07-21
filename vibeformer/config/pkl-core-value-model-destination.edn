@@ -6,6 +6,7 @@
            :target-framework "net8.0"
            :nullable "enable"
            :implicit-usings false
+           :define-constants ["VIBEFORMER_INTERNAL_JAVA_COMPAT"]
            :warnings-as-errors true
            :no-warn ["CS0108" "CS0109" "CS0414" "CS0649" "CS0693"
                      "CS8600" "CS8601" "CS8602" "CS8603" "CS8604"

@@ -174,6 +174,9 @@
             upstream (first (:resources (:discovery (fixture/models))))]
         (is (str/includes? project "<TargetFramework>net8.0</TargetFramework>"))
         (is (str/includes? project "<Nullable>enable</Nullable>"))
+        (is (str/includes?
+             project
+             "<DefineConstants>$(DefineConstants);VIBEFORMER_INTERNAL_JAVA_COMPAT</DefineConstants>"))
         (is (str/includes? project "<Authors>Vibeformer</Authors>"))
         (is (str/includes? project "<Title>Pkl parser for .NET</Title>"))
         (is (str/includes? project "<PackageTags>pkl parser dotnet vibeformer</PackageTags>"))

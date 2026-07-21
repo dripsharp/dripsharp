@@ -93,6 +93,7 @@
                                :dotnet.type/piped-input-stream]
    "java.io.PipedOutputStream" ["global::Vibeformer.Runtime.JavaPipedOutputStream"
                                 :dotnet.type/piped-output-stream]
+   "java.io.PrintStream" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
    "java.io.PushbackInputStream" ["global::Vibeformer.Runtime.JavaPushbackInputStream"
                                   :dotnet.type/pushback-input-stream]
    "java.io.File" ["global::System.IO.FileInfo" :dotnet.type/file]

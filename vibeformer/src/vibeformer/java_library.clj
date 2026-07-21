@@ -492,6 +492,7 @@
        "executable:java.util.Collections#emptyList()"
        "executable:java.util.Collections#emptyMap()"
        "executable:java.util.Collections#singletonList(java.lang.Object)"
+       "executable:java.util.Collections#synchronizedMap(java.util.Map)"
        "executable:java.util.Collections#unmodifiableList(java.util.List)"
        "executable:java.util.Collections#unmodifiableMap(java.util.Map)"
        "executable:java.net.URI#getHost()"
@@ -619,16 +620,21 @@
        "executable:java.util.Objects#requireNonNull(java.lang.Object)"
        "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)"
        "executable:java.util.Map#entrySet()"
+       "executable:java.util.Map#containsKey(java.lang.Object)"
        "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.Map#forEach(java.util.function.BiConsumer)"
        "executable:java.util.Map#getOrDefault(java.lang.Object,java.lang.Object)"
+       "executable:java.util.Map#putIfAbsent(java.lang.Object,java.lang.Object)"
+       "executable:java.util.HashMap#putIfAbsent(java.lang.Object,java.lang.Object)"
        "executable:java.util.LinkedHashMap#getOrDefault(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#keySet()"
        "executable:java.util.LinkedHashMap#keySet()"
        "executable:java.util.Map#values()"
        "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
+       "executable:java.util.Map#putAll(java.util.Map)"
        "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
+       "executable:java.util.HashMap#putAll(java.util.Map)"
        "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#size()"
        "executable:java.util.HashMap#size()"
@@ -701,6 +707,7 @@
        "executable:java.io.OutputStream#write(byte[])"
        "executable:java.io.OutputStream#write(byte[],int,int)"
        "executable:java.io.OutputStream#write(int)"
+       "executable:java.io.PrintStream#println(java.lang.String)"
        "executable:java.io.PipedOutputStream#connect(java.io.PipedInputStream)"
        "executable:java.io.PipedOutputStream#write(byte[],int,int)"
        "executable:java.io.PipedOutputStream#close()"
@@ -740,6 +747,9 @@
     "Length"
 
     (= "field:java.io.FilterOutputStream#out" (:key occurrence))
+    "@out"
+
+    (= "field:java.lang.System#out" (:key occurrence))
     "@out"
 
     (= "field:java.nio.charset.StandardCharsets#US_ASCII" (:key occurrence))
@@ -859,6 +869,7 @@
                     "executable:java.util.ArrayList#<init>(java.util.Collection)"
                     "executable:java.util.LinkedHashMap#<init>()"
                     "executable:java.util.LinkedHashMap#<init>(int)"
+                    "executable:java.util.LinkedHashMap#<init>(int,float,boolean)"
                     "executable:java.util.LinkedHashMap#<init>(java.util.Map)"
                     "executable:java.util.AbstractMap$SimpleEntry#<init>(java.lang.Object,java.lang.Object)"
                     "executable:java.util.AbstractMap$SimpleImmutableEntry#<init>(java.lang.Object,java.lang.Object)"
@@ -935,6 +946,9 @@
   (if (statement-expression? invocation)
     (sequence-node [node (raw ";")])
     node))
+
+(defn- string-expression? [^CtExpression expression]
+  (= "java.lang.String" (some-> expression .getType .getQualifiedName)))
 
 (defn- binary-operator [^CtBinaryOperator expression]
   (case (str (.getKind expression))
@@ -1108,6 +1122,9 @@
                   (raw "global::Vibeformer.Runtime.JavaCompat.ListOf")
                   [(type-node @ctx-holder (collection-element-type element))])
                  (raw "(") (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.Collections#synchronizedMap(java.util.Map)"
+               (first arguments)
 
                "executable:java.util.Collections#unmodifiableList(java.util.List)"
                (compat-call "UnmodifiableList" arguments)
@@ -1435,6 +1452,10 @@
                "executable:java.io.OutputStream#write(int)"
                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
+               "executable:java.io.PrintStream#println(java.lang.String)"
+               (sequence-node [target-node (raw ".WriteLine(")
+                               (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.io.PipedOutputStream#connect(java.io.PipedInputStream)"
                (sequence-node [target-node (raw ".Connect(")
                                (sequence-node arguments ", ") (raw ")")])
@@ -1567,6 +1588,9 @@
                "executable:java.util.Map#entrySet()"
                (compat-call "MapEntrySet" [target-node])
 
+               "executable:java.util.Map#containsKey(java.lang.Object)"
+               (compat-call "MapContainsKey" (into [target-node] arguments))
+
                "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
                (compat-call "ComputeIfAbsent" (into [target-node] arguments))
 
@@ -1578,6 +1602,12 @@
 
                "executable:java.util.Map#getOrDefault(java.lang.Object,java.lang.Object)"
                (compat-call "MapGetOrDefault" (into [target-node] arguments))
+
+               "executable:java.util.Map#putIfAbsent(java.lang.Object,java.lang.Object)"
+               (compat-call "MapPutIfAbsent" (into [target-node] arguments))
+
+               "executable:java.util.HashMap#putIfAbsent(java.lang.Object,java.lang.Object)"
+               (compat-call "MapPutIfAbsent" (into [target-node] arguments))
 
                "executable:java.util.LinkedHashMap#getOrDefault(java.lang.Object,java.lang.Object)"
                (compat-call "MapGetOrDefault" (into [target-node] arguments))
@@ -1594,8 +1624,14 @@
                "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
                (compat-call "MapPut" (into [target-node] arguments))
 
+               "executable:java.util.Map#putAll(java.util.Map)"
+               (compat-call "MapPutAll" (into [target-node] arguments))
+
                "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
                (compat-call "MapPut" (into [target-node] arguments))
+
+               "executable:java.util.HashMap#putAll(java.util.Map)"
+               (compat-call "MapPutAll" (into [target-node] arguments))
 
                "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
                (compat-call "MapPut" (into [target-node] arguments))
@@ -2153,17 +2189,24 @@
      :class CtBinaryOperator
      :emit
      (fn [{:keys [^CtBinaryOperator element children]}]
-       {:node
-        (expression-cast-node
-         @ctx-holder element
-         (sequence-node
-          [(raw "(")
-           (child-node children (.getLeftHandOperand element))
-           (raw (str " " (binary-operator element) " "))
-           (if (= "INSTANCEOF" (str (.getKind element)))
-             (inferred-instanceof-type-node @ctx-holder element children)
-             (child-node children (.getRightHandOperand element)))
-           (raw ")")]))})}
+       (let [left (child-node children (.getLeftHandOperand element))
+             right (child-node children (.getRightHandOperand element))
+             node
+             (if (and (= "PLUS" (str (.getKind element)))
+                      (string-expression? element)
+                      (contains? (get-in @ctx-holder
+                                         [:configuration :destination-capabilities])
+                                 :java-compat))
+               (compat-call "Concat" [left right])
+               (sequence-node
+                [(raw "(")
+                 left
+                 (raw (str " " (binary-operator element) " "))
+                 (if (= "INSTANCEOF" (str (.getKind element)))
+                   (inferred-instanceof-type-node @ctx-holder element children)
+                   right)
+                 (raw ")")]))]
+         {:node (expression-cast-node @ctx-holder element node)}))}
 
     {:id :java-library.expression/conditional
      :class CtConditional
@@ -2851,8 +2894,23 @@
               (when (instance? CtClass declaration)
                 (recur (.getSuperclass ^CtClass declaration)))))))))
 
+(defn- java-linked-hash-map-subclass? [^CtType owner]
+  (loop [reference (when (instance? CtClass owner)
+                     (.getSuperclass ^CtClass owner))]
+    (when reference
+      (let [qualified (.getQualifiedName ^CtTypeReference reference)]
+        (or (= "java.util.LinkedHashMap" qualified)
+            (when-let [declaration (.getTypeDeclaration ^CtTypeReference reference)]
+              (when (instance? CtClass declaration)
+                (recur (.getSuperclass ^CtClass declaration)))))))))
+
 (defn- method-name [^CtType owner ^CtMethod method]
   (cond
+    (and (= "removeEldestEntry" (.getSimpleName method))
+         (= 1 (count (.getParameters method)))
+         (java-linked-hash-map-subclass? owner))
+    "RemoveEldestEntry"
+
     (and (= "close" (.getSimpleName method))
          (empty? (.getParameters method))
          (not (java-stream-subclass? owner)))
@@ -2987,8 +3045,15 @@
                       (not (.hasModifier method ModifierKind/PRIVATE))
                       (not (.hasModifier method ModifierKind/FINAL)))]
     (remove nil?
-            [(if widened-override-family?
-               "public"
+            [(cond
+               (and (= "removeEldestEntry" (.getSimpleName method))
+                    (= 1 (count (.getParameters method)))
+                    (java-linked-hash-map-subclass? owner))
+               "protected internal"
+
+               widened-override-family? "public"
+
+               :else
                (member-visibility owner method
                                   (if (instance? CtInterface owner)
                                     "public"
@@ -3100,7 +3165,11 @@
      "\n\n")))
 
 (defn- constructor-node [ctx ^CtType owner ^CtConstructor constructor]
-  (let [name (pascal (.getSimpleName owner))
+  (let [local-types (mapv validate-local-type!
+                          (executable-local-types constructor))
+        anonymous-types (mapv #(emit-anonymous-type ctx owner %)
+                              (executable-anonymous-calls constructor))
+        name (pascal (.getSimpleName owner))
         rule :java-library.declaration/constructor
         id (register-member! ctx owner constructor name rule)
         body (.getBody constructor)
@@ -3146,24 +3215,30 @@
           (translated-node ctx body))]
     (when-not body
       (unsupported! "Java library constructor has no body" constructor))
-    (csharp/with-source
-      (sequence-node
-       [(raw (str (member-visibility owner constructor "internal") " " name "("))
-        (sequence-node (mapv #(parameter-node ctx %) (.getParameters constructor))
-                       ", ")
-        (raw ")")
-        (when constructor-invocation
-          (sequence-node
-           [(raw (str " : " initializer-kind "("))
+    (let [constructor-declaration
+          (csharp/with-source
             (sequence-node
-             (mapv #(translated-node ctx %)
-                   (.getArguments ^CtInvocation constructor-invocation))
-             ", ")
-            (raw ")")]))
-        (raw " ")
-        body-node])
-      (source-ref constructor rule
-                  {:declaration-id id :declaration-kind :constructor}))))
+             [(raw (str (member-visibility owner constructor "internal") " " name "("))
+              (sequence-node (mapv #(parameter-node ctx %) (.getParameters constructor))
+                             ", ")
+              (raw ")")
+              (when constructor-invocation
+                (sequence-node
+                 [(raw (str " : " initializer-kind "("))
+                  (sequence-node
+                   (mapv #(translated-node ctx %)
+                         (.getArguments ^CtInvocation constructor-invocation))
+                   ", ")
+                  (raw ")")]))
+              (raw " ")
+              body-node])
+            (source-ref constructor rule
+                        {:declaration-id id :declaration-kind :constructor}))]
+      (sequence-node
+       (into [constructor-declaration]
+             (concat (map #(emit-root ctx %) local-types)
+                     anonymous-types))
+       "\n\n"))))
 
 (defn- static-initializer-node
   [ctx ^CtType owner ^CtAnonymousExecutable initializer]
@@ -3346,10 +3421,13 @@
                   (anonymous-project-subclass? call))
       (unsupported! "Anonymous class requires exact Iterator, X509TrustManager, or project-class semantics"
                     anonymous-class))
-    (when (seq (.getArguments call))
+    (when (and (or (anonymous-iterator? call)
+                   (anonymous-x509-trust-manager? call))
+               (seq (.getArguments call)))
       (unsupported! "Anonymous java.util.Iterator construction cannot have base arguments"
                     call))
     (let [name (anonymous-class-name call)
+          base-arguments (vec (.getArguments call))
           captures (anonymous-captures anonymous-class)
           outer? (anonymous-uses-outer? anonymous-class owner)
           capture-names (IdentityHashMap.)
@@ -3395,6 +3473,12 @@
             constructor-parameters
             (vec
              (concat
+              (map-indexed
+               (fn [index ^CtExpression argument]
+                 (sequence-node
+                  [(type-node ctx (.getType argument))
+                   (raw (str " baseArgument" index))]))
+               base-arguments)
               (when outer?
                 [(sequence-node [(owner-type-node ctx owner) (raw " __outer")])])
               (map (fn [^CtElement declaration]
@@ -3426,7 +3510,16 @@
             (sequence-node
              [(raw (str "public " name "("))
               (sequence-node constructor-parameters ", ")
-              (raw ") {")
+              (raw ")")
+              (when (seq base-arguments)
+                (sequence-node
+                 [(raw " : base(")
+                  (sequence-node
+                   (mapv #(raw (str "baseArgument" %))
+                         (range (count base-arguments)))
+                   ", ")
+                  (raw ")")]))
+              (raw " {")
               (when (seq constructor-assignments) (raw "\n"))
               (sequence-node constructor-assignments "\n")
               (when (seq constructor-assignments) (raw "\n"))
