@@ -161,6 +161,7 @@
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.Function" ["global::System.Func" :dotnet.type/func]
+   "java.util.function.Predicate" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Supplier" ["global::System.Func" :dotnet.type/func]
    "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex"
                               :dotnet.type/regex]

@@ -237,9 +237,9 @@
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.util.Collections; "
-                      "import java.util.List; public class Unsupported { "
-                      "public static final List<String> VALUE = "
-                      "Collections.singletonList(\"x\"); }")})
+                      "import java.util.Map; public class Unsupported { "
+                      "public static final Map<String, String> VALUE = "
+                      "Collections.singletonMap(\"x\", \"y\"); }")})
         error (caught #(emit! fixture 1))]
     (is (some? error))
     (is (str/includes? (ex-message error)
@@ -299,17 +299,89 @@
 (deftest unmapped-jdk-constructor-in-body-fails-closed
   (let [fixture
         (model! {"example/Unsupported.java"
-                 (str "package example; import java.util.ArrayList; "
+                 (str "package example; import java.util.LinkedHashMap; "
                       "public final class Unsupported { public Unsupported() { "
-                      "new ArrayList<String>(); } }")})
+                      "new LinkedHashMap<String, String>(1, 0.75f, true); } }")})
         error (caught #(emit! fixture 1))]
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
     (is (= :translation-rule-failed
            (get-in (ex-data error) [:diagnostic :kind])))
     (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
                        "Java library constructor has no neutral mapping"))
-    (is (= "executable:java.util.ArrayList#<init>()"
+    (is (= "executable:java.util.LinkedHashMap#<init>(int,float,boolean)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-empty-collections-use-exact-resolved-jdk-contracts
+  (let [fixture
+        (model! {"example/Empty.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "import java.util.Collections; import java.util.LinkedHashMap; "
+                      "import java.util.List; import java.util.Map; "
+                      "public final class Empty { "
+                      "private final Map<String, Integer> immutable = Collections.emptyMap(); "
+                      "private final Map<String, Integer> ordered = new LinkedHashMap<>(); "
+                      "private final List<String> values = new ArrayList<>(2); "
+                      "private final List<String> spare = new ArrayList<>(); "
+                      "private final List<String> singleton = Collections.singletonList(\"one\"); "
+                      "private static void copy(LinkedHashMap<String, Integer> target, "
+                      "List<String> values, List<String> more) { "
+                      "target.put(\"x\", 1); values.addAll(more); "
+                      "target.getOrDefault(\"missing\", 0); "
+                      "target.computeIfAbsent(\"new\", key -> 2); "
+                      "values.add(\"item\"); "
+                      "values.removeIf(value -> value.equalsIgnoreCase(\"drop\")); "
+                      "target.remove(\"x\"); } "
+                      "public static void fail() { throw new java.util.NoSuchElementException(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Empty.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Empty.cs")))]
+    (is (str/includes?
+         first-source
+         (str "private readonly global::System.Collections.Generic.IDictionary<string, int> immutable = "
+              "global::Vibeformer.Runtime.JavaCompat.EmptyMap<string, int>();")))
+    (is (str/includes?
+         first-source
+         (str "private readonly global::System.Collections.Generic.IDictionary<string, int> ordered = "
+              "new global::Vibeformer.Runtime.JavaLinkedHashMap<string, int>();")))
+    (is (str/includes?
+         first-source
+         (str "private readonly global::System.Collections.Generic.IList<string> values = "
+              "new global::System.Collections.Generic.List<string>(2);")))
+    (is (str/includes?
+         first-source
+         (str "private readonly global::System.Collections.Generic.IList<string> spare = "
+              "new global::System.Collections.Generic.List<string>();")))
+    (is (str/includes?
+         first-source
+         (str "private readonly global::System.Collections.Generic.IList<string> singleton = "
+              "global::Vibeformer.Runtime.JavaCompat.ListOf<string>(\"one\");")))
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaCompat.MapPut(target, \"x\", 1);\n"
+              "global::Vibeformer.Runtime.JavaCompat.AddAll(values, more);\n"
+              "global::Vibeformer.Runtime.JavaCompat.MapGetOrDefault(target, \"missing\", 0);\n"
+              "global::Vibeformer.Runtime.JavaCompat.ComputeIfAbsent(target, \"new\", (key) => 2);\n"
+              "global::Vibeformer.Runtime.JavaCompat.Add(values, \"item\");\n"
+              "global::Vibeformer.Runtime.JavaCompat.RemoveIf(values, (value) => "
+              "global::Vibeformer.Runtime.JavaCompat.EqualsIgnoreCase(value, \"drop\"));\n"
+              "global::Vibeformer.Runtime.JavaCompat.MapRemove(target, \"x\");")))
+    (is (str/includes?
+         first-source
+         "throw new global::System.InvalidOperationException();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest neutral-map-copy-freeze-and-lambda-semantics-are-resolved
   (let [fixture
@@ -509,6 +581,64 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest neutral-string-encoding-and-output-stream-writes-preserve-java-bytes
+  (let [fixture
+        (model! {"example/Wire.java"
+                 (str "package example; import java.io.IOException; "
+                      "import java.io.OutputStream; import java.nio.charset.StandardCharsets; "
+                      "import java.util.OptionalInt; "
+                      "public final class Wire { public static void write("
+                      "OutputStream output, String value) throws IOException { "
+                      "output.write(value.getBytes(StandardCharsets.US_ASCII)); "
+                      "output.write(':'); "
+                      "output.write(value.getBytes(StandardCharsets.ISO_8859_1)); "
+                      "output.write(value.length()); } "
+                      "public static int require(OptionalInt value) { "
+                      "if (value.isPresent()) { return value.getAsInt(); } return -1; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Wire.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Wire.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaCompat.OutputStreamWrite(output, "
+              "global::Vibeformer.Runtime.JavaCompat.StringGetBytes(value, "
+              "global::Vibeformer.Runtime.JavaStandardCharsets.USASCII));\n"
+              "global::Vibeformer.Runtime.JavaCompat.OutputStreamWrite(output, ':');\n"
+              "global::Vibeformer.Runtime.JavaCompat.OutputStreamWrite(output, "
+              "global::Vibeformer.Runtime.JavaCompat.StringGetBytes(value, "
+              "global::Vibeformer.Runtime.JavaStandardCharsets.ISO88591));\n"
+              "global::Vibeformer.Runtime.JavaCompat.OutputStreamWrite(output, value.Length);")))
+    (is (str/includes?
+         first-source
+         (str "public static int require(int? value) {\n"
+              "if (value.HasValue) {\nreturn value.Value;\n}\nreturn -1;")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-output-stream-slice-write-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.io.IOException; "
+                      "import java.io.OutputStream; public final class Unsupported { "
+                      "public static void write(OutputStream output, byte[] bytes) "
+                      "throws IOException { output.write(bytes, 0, bytes.length); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.io.OutputStream#write(byte[],int,int)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
 (deftest neighboring-map-compute-contract-remains-fail-closed
   (let [fixture
         (model! {"example/Unsupported.java"
@@ -520,6 +650,44 @@
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
     (is (= "executable:java.util.Map#compute(java.lang.Object,java.util.function.BiFunction)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-method-references-stream-map-and-set-collection-are-resolved
+  (let [fixture
+        (model! {"example/References.java"
+                 (str "package example; import java.util.Map; import java.util.Set; "
+                      "import static java.util.stream.Collectors.toSet; "
+                      "public final class References { "
+                      "public static Set<String> normalize(Set<String> values) { "
+                      "return values.stream().map(References::upper).collect(toSet()); } "
+                      "private static String upper(String value) { return value.toUpperCase(); } "
+                      "public void copy(Map<String, String> values) { values.forEach(this::with); } "
+                      "private References with(String key, String value) { return this; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/References.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/References.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return global::Vibeformer.Runtime.JavaCompat.SetOfValues<string>("
+              "global::Vibeformer.Runtime.JavaCompat.Map(values, "
+              "global::Example.Java.Library.References.upper));")))
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaCompat.ForEach(values, "
+              "(value0, value1) => { this.with(value0, value1); });")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest neutral-method-bodies-use-resolved-invocations-and-operators
   (let [fixture

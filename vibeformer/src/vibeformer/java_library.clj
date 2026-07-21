@@ -18,7 +18,8 @@
            [java.util Base64 IdentityHashMap]
            [spoon.reflect.code CtArrayRead CtArrayWrite CtAssignment
             CtBinaryOperator CtBlock CtCatch CtCatchVariable CtComment
-            CtConditional CtConstructorCall CtExpression CtFieldRead CtFieldWrite
+            CtConditional CtConstructorCall CtExecutableReferenceExpression
+            CtExpression CtFieldRead CtFieldWrite
             CtFor CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable
             CtNewArray CtReturn CtStatement CtThisAccess CtThrow CtTry
             CtTryWithResource CtTypeAccess CtUnaryOperator CtVariableAccess
@@ -303,13 +304,18 @@
     (contains?
      #{"executable:java.lang.Iterable#forEach(java.util.function.Consumer)"
        "executable:java.util.Collections#emptyList()"
+       "executable:java.util.Collections#emptyMap()"
+       "executable:java.util.Collections#singletonList(java.lang.Object)"
        "executable:java.util.Collections#unmodifiableList(java.util.List)"
        "executable:java.util.Collections#unmodifiableMap(java.util.Map)"
        "executable:java.net.URI#getHost()"
        "executable:java.net.URI#getPort()"
        "executable:java.lang.String#toUpperCase()"
        "executable:java.lang.String#split(java.lang.String)"
+       "executable:java.lang.String#length()"
+       "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
        "executable:java.lang.String#toCharArray()"
+       "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
        "executable:java.lang.StringBuilder#append(java.lang.String)"
        "executable:java.lang.StringBuilder#toString()"
        "executable:java.util.Collection#stream()"
@@ -317,12 +323,20 @@
        "executable:java.lang.Throwable#getCause()"
        "executable:java.util.Map#entrySet()"
        "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
+       "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.Map#forEach(java.util.function.BiConsumer)"
        "executable:java.util.Map#getOrDefault(java.lang.Object,java.lang.Object)"
+       "executable:java.util.LinkedHashMap#getOrDefault(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#keySet()"
+       "executable:java.util.LinkedHashMap#keySet()"
        "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
+       "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
+       "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#size()"
        "executable:java.util.Map#get(java.lang.Object)"
+       "executable:java.util.Map#remove(java.lang.Object)"
+       "executable:java.util.HashMap#remove(java.lang.Object)"
+       "executable:java.util.LinkedHashMap#remove(java.lang.Object)"
        "executable:java.util.Map#hashCode()"
        "executable:java.util.Map$Entry#getKey()"
        "executable:java.util.Map$Entry#getValue()"
@@ -330,23 +344,40 @@
        "executable:java.util.List#get(int)"
        "executable:java.util.List#equals(java.lang.Object)"
        "executable:java.util.List#isEmpty()"
+       "executable:java.util.List#add(java.lang.Object)"
+       "executable:java.util.List#removeIf(java.util.function.Predicate)"
+       "executable:java.util.Collection#removeIf(java.util.function.Predicate)"
+       "executable:java.util.List#addAll(java.util.Collection)"
        "executable:java.util.List#size()"
        "executable:java.util.Optional#empty()"
        "executable:java.util.Optional#of(java.lang.Object)"
+       "executable:java.util.OptionalInt#isPresent()"
+       "executable:java.util.OptionalInt#getAsInt()"
        "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
        "executable:java.util.function.Consumer#accept(java.lang.Object)"
        "executable:java.util.Set#contains(java.lang.Object)"
        "executable:java.util.Set#equals(java.lang.Object)"
        "executable:java.util.Set#add(java.lang.Object)"
+       "executable:java.util.Set#removeAll(java.util.Collection)"
        "executable:java.util.stream.Collectors#toList()"
+       "executable:java.util.stream.Collectors#toSet()"
        "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
        "executable:java.util.stream.Stream#flatMap(java.util.function.Function)"
-       "executable:java.util.stream.Stream#of(java.lang.Object[])"}
+       "executable:java.util.stream.Stream#map(java.util.function.Function)"
+       "executable:java.util.stream.Stream#of(java.lang.Object[])"
+       "executable:java.io.OutputStream#write(byte[])"
+       "executable:java.io.OutputStream#write(int)"}
      (:key occurrence))
     (identifier (.getSimpleName ^CtElement reference))
 
     (= "field:<array>#length" (:key occurrence))
     "Length"
+
+    (= "field:java.nio.charset.StandardCharsets#US_ASCII" (:key occurrence))
+    "USASCII"
+
+    (= "field:java.nio.charset.StandardCharsets#ISO_8859_1" (:key occurrence))
+    "ISO88591"
 
     :else
     (unsupported! "Java library executable or field has no neutral mapping"
@@ -396,12 +427,16 @@
                  (contains?
                   #{"executable:java.lang.Object#<init>()"
                     "executable:java.io.IOException#<init>()"
+                    "executable:java.util.NoSuchElementException#<init>()"
                     "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
                     "executable:java.lang.StringBuilder#<init>()"
                     "executable:java.lang.String#<init>(char[])"
                     "executable:java.util.HashMap#<init>()"
                     "executable:java.util.HashSet#<init>(int)"
+                    "executable:java.util.ArrayList#<init>()"
+                    "executable:java.util.ArrayList#<init>(int)"
                     "executable:java.util.ArrayList#<init>(java.util.Collection)"
+                    "executable:java.util.LinkedHashMap#<init>()"
                     "executable:java.util.LinkedHashMap#<init>(int)"
                     "executable:java.util.LinkedHashMap#<init>(java.util.Map)"}
                   (:key occurrence))
@@ -517,6 +552,21 @@
                  (type-node @ctx-holder (collection-element-type element))
                  (raw ">()")])
 
+               "executable:java.util.Collections#emptyMap()"
+               (let [type-arguments (.getActualTypeArguments (.getType element))]
+                 (sequence-node
+                  [(csharp/generic-name
+                    (raw "global::Vibeformer.Runtime.JavaCompat.EmptyMap")
+                    (mapv #(type-node @ctx-holder %) type-arguments))
+                   (raw "()")]))
+
+               "executable:java.util.Collections#singletonList(java.lang.Object)"
+               (sequence-node
+                [(csharp/generic-name
+                  (raw "global::Vibeformer.Runtime.JavaCompat.ListOf")
+                  [(type-node @ctx-holder (collection-element-type element))])
+                 (raw "(") (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.util.Collections#unmodifiableList(java.util.List)"
                (compat-call "UnmodifiableList" arguments)
 
@@ -535,8 +585,23 @@
                "executable:java.lang.String#split(java.lang.String)"
                (compat-call "StringSplit" (into [target-node] (conj arguments (raw "0"))))
 
+               "executable:java.lang.String#length()"
+               (sequence-node [target-node (raw ".Length")])
+
+               "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
+               (compat-call "EqualsIgnoreCase" (into [target-node] arguments))
+
                "executable:java.lang.String#toCharArray()"
                (sequence-node [target-node (raw ".ToCharArray()")])
+
+               "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
+               (compat-call "StringGetBytes" (into [target-node] arguments))
+
+               "executable:java.io.OutputStream#write(byte[])"
+               (compat-call "OutputStreamWrite" (into [target-node] arguments))
+
+               "executable:java.io.OutputStream#write(int)"
+               (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
                "executable:java.lang.StringBuilder#append(java.lang.String)"
                (sequence-node [target-node (raw ".Append(")
@@ -560,16 +625,31 @@
                "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
                (compat-call "ComputeIfAbsent" (into [target-node] arguments))
 
+               "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
+               (compat-call "ComputeIfAbsent" (into [target-node] arguments))
+
                "executable:java.util.Map#forEach(java.util.function.BiConsumer)"
                (compat-call "ForEach" (into [target-node] arguments))
 
                "executable:java.util.Map#getOrDefault(java.lang.Object,java.lang.Object)"
                (compat-call "MapGetOrDefault" (into [target-node] arguments))
 
+               "executable:java.util.LinkedHashMap#getOrDefault(java.lang.Object,java.lang.Object)"
+               (compat-call "MapGetOrDefault" (into [target-node] arguments))
+
                "executable:java.util.Map#keySet()"
                (compat-call "MapKeySet" [target-node])
 
+               "executable:java.util.LinkedHashMap#keySet()"
+               (compat-call "MapKeySet" [target-node])
+
                "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
+               (compat-call "MapPut" (into [target-node] arguments))
+
+               "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
+               (compat-call "MapPut" (into [target-node] arguments))
+
+               "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
                (compat-call "MapPut" (into [target-node] arguments))
 
                "executable:java.util.Map#size()"
@@ -577,6 +657,15 @@
 
                "executable:java.util.Map#get(java.lang.Object)"
                (compat-call "MapGet" (into [target-node] arguments))
+
+               "executable:java.util.Map#remove(java.lang.Object)"
+               (compat-call "MapRemove" (into [target-node] arguments))
+
+               "executable:java.util.HashMap#remove(java.lang.Object)"
+               (compat-call "MapRemove" (into [target-node] arguments))
+
+               "executable:java.util.LinkedHashMap#remove(java.lang.Object)"
+               (compat-call "MapRemove" (into [target-node] arguments))
 
                "executable:java.util.Map#hashCode()"
                (compat-call "HashCode" [target-node])
@@ -597,6 +686,18 @@
                "executable:java.util.List#isEmpty()"
                (compat-call "ListIsEmpty" [target-node])
 
+               "executable:java.util.List#add(java.lang.Object)"
+               (compat-call "Add" (into [target-node] arguments))
+
+               "executable:java.util.List#removeIf(java.util.function.Predicate)"
+               (compat-call "RemoveIf" (into [target-node] arguments))
+
+               "executable:java.util.Collection#removeIf(java.util.function.Predicate)"
+               (compat-call "RemoveIf" (into [target-node] arguments))
+
+               "executable:java.util.List#addAll(java.util.Collection)"
+               (compat-call "AddAll" (into [target-node] arguments))
+
                "executable:java.util.List#equals(java.lang.Object)"
                (compat-call "Equals" (into [target-node] arguments))
 
@@ -614,6 +715,12 @@
                (sequence-node [(type-node @ctx-holder (.getType element))
                                (raw ".Of(") (sequence-node arguments ", ")
                                (raw ")")])
+
+               "executable:java.util.OptionalInt#isPresent()"
+               (sequence-node [target-node (raw ".HasValue")])
+
+               "executable:java.util.OptionalInt#getAsInt()"
+               (sequence-node [target-node (raw ".Value")])
 
                "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
                (sequence-node [target-node (raw "(")
@@ -633,17 +740,36 @@
                (sequence-node [target-node (raw ".Add(")
                                (sequence-node arguments ", ") (raw ")")])
 
+               "executable:java.util.Set#removeAll(java.util.Collection)"
+               (compat-call "RemoveAll" (into [target-node] arguments))
+
                "executable:java.util.stream.Stream#of(java.lang.Object[])"
                (compat-call "StreamOf" arguments)
 
                "executable:java.util.stream.Stream#flatMap(java.util.function.Function)"
                (compat-call "FlatMap" (into [target-node] arguments))
 
+               "executable:java.util.stream.Stream#map(java.util.function.Function)"
+               (compat-call "Map" (into [target-node] arguments))
+
                "executable:java.util.stream.Collectors#toList()"
                (raw "global::Vibeformer.Runtime.JavaCompat.ToList<object>()")
 
+               "executable:java.util.stream.Collectors#toSet()"
+               (sequence-node
+                [(csharp/generic-name
+                  (raw "global::Vibeformer.Runtime.JavaCompat.ToSet")
+                  [(type-node @ctx-holder (collection-element-type element))])
+                 (raw "()")])
+
                "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
-               (compat-call "ToListValues" [target-node])
+               (if (= "java.util.Set" (some-> element .getType .getQualifiedName))
+                 (sequence-node
+                  [(csharp/generic-name
+                    (raw "global::Vibeformer.Runtime.JavaCompat.SetOfValues")
+                    [(type-node @ctx-holder (collection-element-type element))])
+                   (raw "(") target-node (raw ")")])
+                 (compat-call "ToListValues" [target-node]))
 
                "executable:java.lang.Object#<init>()"
                (raw "")
@@ -690,6 +816,36 @@
              (mapv #(child-node children %) (.getParameters element)) ", ")
             (raw ") => ")
             (child-node children body)])}))}
+
+    {:id :java-library.expression/method-reference
+     :class CtExecutableReferenceExpression
+     :emit
+     (fn [{:keys [context ^CtExecutableReferenceExpression element children]}]
+       (let [target (child-node children (.getTarget element))
+             executable (child-node children (.getExecutable element))
+             occurrence (.get ^IdentityHashMap (:occurrence-index context)
+                              (.getExecutable element))
+             declaration (:declaration occurrence)
+             parameter-count (count (.getParameters (.getExecutable element)))
+             parameters (mapv #(raw (str "value" %)) (range parameter-count))
+             functional-type (some-> element .getType .getQualifiedName)
+             discards-result?
+             (and (instance? CtMethod declaration)
+                  (not= "void" (.getQualifiedName (.getType ^CtMethod declaration)))
+                  (contains? #{"java.util.function.Consumer"
+                               "java.util.function.BiConsumer"}
+                             functional-type))]
+         (when-not (and (= :project (:origin occurrence))
+                        (instance? CtMethod declaration))
+           (unsupported! "Java library method reference requires a resolved project method"
+                         element))
+         {:node
+          (if discards-result?
+            (sequence-node
+             [(raw "(") (sequence-node parameters ", ") (raw ") => { ")
+              target (raw ".") executable (raw "(")
+              (sequence-node parameters ", ") (raw "); }")])
+            (sequence-node [target (raw ".") executable]))}))}
 
     {:id :java-library.expression/literal
      :class CtLiteral

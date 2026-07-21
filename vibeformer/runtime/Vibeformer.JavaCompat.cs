@@ -25,6 +25,8 @@ namespace Vibeformer.Runtime;
 internal static class JavaStandardCharsets
 {
     internal static readonly Encoding UTF8 = new UTF8Encoding(false);
+    internal static readonly Encoding USASCII = Encoding.ASCII;
+    internal static readonly Encoding ISO88591 = Encoding.Latin1;
 }
 
 internal delegate TResult JavaIntFunction<out TResult>(int value);
@@ -2446,6 +2448,13 @@ internal static class JavaCompat
         }
         return changed;
     }
+    internal static bool RemoveIf<T>(ICollection<T> collection, Func<T, bool> predicate)
+    {
+        var removed = false;
+        foreach (var value in collection.Where(predicate).ToList())
+            removed |= collection.Remove(value);
+        return removed;
+    }
 
     internal static int CollectionCount<T>(IEnumerable<T> collection) => collection.Count();
     internal static bool CollectionIsEmpty<T>(IEnumerable<T> collection) => !collection.Any();
@@ -3786,6 +3795,8 @@ internal static class JavaCompat
 
     internal static IDictionary<K, V> UnmodifiableMap<K, V>(IDictionary<K, V> values)
         where K : notnull => new ReadOnlyDictionary<K, V>(values);
+    internal static IDictionary<K, V> EmptyMap<K, V>() where K : notnull =>
+        new ReadOnlyDictionary<K, V>(new Dictionary<K, V>());
 
     internal static IList<T> SubList<T>(IEnumerable<T> values, int fromIndex, int toIndex) =>
         new JavaSubList<T>(values is IList<T> list ? list : values.ToList(), fromIndex, toIndex);
@@ -4394,6 +4405,10 @@ internal static class JavaCompat
     internal static byte[] ToUnsignedBytes(byte[] values) => values;
     internal static sbyte[] ToSignedBytes(byte[] values) =>
         values.Select(value => unchecked((sbyte)value)).ToArray();
+    internal static void OutputStreamWrite(Stream stream, sbyte[] values) =>
+        stream.Write(ToUnsignedBytes(values));
+    internal static void OutputStreamWrite(Stream stream, int value) =>
+        stream.WriteByte(unchecked((byte)value));
     internal static void ForEach<T>(IEnumerable<T> values, Action<T> action)
     {
         foreach (var value in values) action(value);
