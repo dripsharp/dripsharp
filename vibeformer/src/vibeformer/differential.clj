@@ -7,7 +7,8 @@
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
             [vibeformer.project :as project]
-            [vibeformer.public-api-contract :as public-api-contract])
+            [vibeformer.public-api-contract :as public-api-contract]
+            [vibeformer.schema-binding-contract :as schema-binding-contract])
   (:import [java.io BufferedReader File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
@@ -500,80 +501,80 @@
 (defn- verify-parser-differential!
   "Retains the complete packaged parser differential proof."
   [{:keys [workspace-root package-fn run-command!]
-     :or {package-fn packaging/verify-package-consumption!
-          run-command! process/run!}}]
-   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         package-proof (package-fn {:workspace-root root :profile "pkl-parser"
-                                    :run-command! run-command!})
-         proof-root (harness/clean-directory!
-                     (paths/resolve-path root "vibeformer" "validation-output"
-                                         "differential-proof"
-                                         "parser"))
-         corpus (paths/resolve-path root "research" "pkl" "pkl-core" "src" "test"
-                                    "files" "LanguageSnippetTests" "input")
-         {:keys [cases upstream-count edge-count]} (manifest-cases corpus)
-         manifest (write-manifest! (paths/resolve-path proof-root "cases.tsv") cases)
-         oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
-                          (Files/createDirectories (make-array FileAttribute 0)))
-         upstream-root (paths/resolve-path root "research" "pkl")
-         upstream-main (paths/resolve-path upstream-root "pkl-parser" "build" "classes"
-                                           "java" "main")
-         upstream-resources (paths/resolve-path upstream-root "pkl-parser" "build"
-                                                "resources" "main")
-         oracle-source (paths/resolve-path root "vibeformer" "validation" "differential"
-                                           "UpstreamOracle.java")
-         oracle-output (paths/resolve-path proof-root "upstream.tsv")
-         package-output (paths/resolve-path proof-root "package.tsv")
-         perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
-         classpath (str/join File/pathSeparator
-                             (map str [oracle-classes upstream-main upstream-resources]))
-         consumer-root (:consumer-root package-proof)
-         consumer-project (paths/resolve-path consumer-root "Pkl.Parser.PackageConsumer.csproj")
-         consumer-source (paths/resolve-path consumer-root "Program.cs")
-         probe-source (paths/resolve-path root "vibeformer" "validation" "differential"
-                                          "PackageProbe.cs")]
-     (when-not (= 940 upstream-count)
-       (fail! "The pinned LanguageSnippetTests corpus count changed; review the oracle selection"
-              {:expected 940 :actual upstream-count :corpus (str corpus)}))
-     (run-command! {:command ["./gradlew" ":pkl-parser:classes" "--console=plain"]
-                    :directory upstream-root})
-     (run-command! {:command ["javac" "--release" "21" "-cp" (str upstream-main)
-                              "-d" (str oracle-classes) (str oracle-source)]
-                    :directory root})
-     (Files/copy probe-source consumer-source
-                 (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-     (run-command! {:command ["dotnet" "build" (str consumer-project) "--nologo"
-                              "--verbosity:minimal" "--no-restore" "--no-incremental"
-                              "-warnaserror"]
-                    :directory consumer-root})
-     (run-independent-probes!
-      run-command!
-      [{:name :upstream-java-oracle
-        :command ["java" "-cp" classpath "UpstreamOracle"
-                  (str manifest) (str oracle-output)]
-        :directory upstream-root}
-       {:name :packaged-dotnet-probe
-        :command ["dotnet" "run" "--project" (str consumer-project)
-                  "--no-build" "--no-restore" "--" (str manifest)
-                  (str package-output)]
-        :directory consumer-root}])
-     (let [comparison (assert-equal! "parser" oracle-output package-output)
-           perturbation (prove-perturbation! oracle-output perturbed-output)
-           revision (str/trim (:output (run-command! {:command ["git" "rev-parse" "HEAD"]
-                                                       :directory upstream-root})))
-           summary {:upstream-revision revision
-                    :package (:identity package-proof)
-                    :language-snippet-cases upstream-count
-                    :lexer-span-edge-cases edge-count
-                    :total-cases (count cases)
-                    :observations (:matched comparison)
-                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
-       (println "Independent upstream/package differential passed:" (pr-str summary))
-       {:package-proof package-proof
-        :summary summary
-        :manifest manifest
-        :oracle-output oracle-output
-        :package-output package-output})))
+    :or {package-fn packaging/verify-package-consumption!
+         run-command! process/run!}}]
+  (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+        package-proof (package-fn {:workspace-root root :profile "pkl-parser"
+                                   :run-command! run-command!})
+        proof-root (harness/clean-directory!
+                    (paths/resolve-path root "vibeformer" "validation-output"
+                                        "differential-proof"
+                                        "parser"))
+        corpus (paths/resolve-path root "research" "pkl" "pkl-core" "src" "test"
+                                   "files" "LanguageSnippetTests" "input")
+        {:keys [cases upstream-count edge-count]} (manifest-cases corpus)
+        manifest (write-manifest! (paths/resolve-path proof-root "cases.tsv") cases)
+        oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
+                         (Files/createDirectories (make-array FileAttribute 0)))
+        upstream-root (paths/resolve-path root "research" "pkl")
+        upstream-main (paths/resolve-path upstream-root "pkl-parser" "build" "classes"
+                                          "java" "main")
+        upstream-resources (paths/resolve-path upstream-root "pkl-parser" "build"
+                                               "resources" "main")
+        oracle-source (paths/resolve-path root "vibeformer" "validation" "differential"
+                                          "UpstreamOracle.java")
+        oracle-output (paths/resolve-path proof-root "upstream.tsv")
+        package-output (paths/resolve-path proof-root "package.tsv")
+        perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
+        classpath (str/join File/pathSeparator
+                            (map str [oracle-classes upstream-main upstream-resources]))
+        consumer-root (:consumer-root package-proof)
+        consumer-project (paths/resolve-path consumer-root "Pkl.Parser.PackageConsumer.csproj")
+        consumer-source (paths/resolve-path consumer-root "Program.cs")
+        probe-source (paths/resolve-path root "vibeformer" "validation" "differential"
+                                         "PackageProbe.cs")]
+    (when-not (= 940 upstream-count)
+      (fail! "The pinned LanguageSnippetTests corpus count changed; review the oracle selection"
+             {:expected 940 :actual upstream-count :corpus (str corpus)}))
+    (run-command! {:command ["./gradlew" ":pkl-parser:classes" "--console=plain"]
+                   :directory upstream-root})
+    (run-command! {:command ["javac" "--release" "21" "-cp" (str upstream-main)
+                             "-d" (str oracle-classes) (str oracle-source)]
+                   :directory root})
+    (Files/copy probe-source consumer-source
+                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+    (run-command! {:command ["dotnet" "build" (str consumer-project) "--nologo"
+                             "--verbosity:minimal" "--no-restore" "--no-incremental"
+                             "-warnaserror"]
+                   :directory consumer-root})
+    (run-independent-probes!
+     run-command!
+     [{:name :upstream-java-oracle
+       :command ["java" "-cp" classpath "UpstreamOracle"
+                 (str manifest) (str oracle-output)]
+       :directory upstream-root}
+      {:name :packaged-dotnet-probe
+       :command ["dotnet" "run" "--project" (str consumer-project)
+                 "--no-build" "--no-restore" "--" (str manifest)
+                 (str package-output)]
+       :directory consumer-root}])
+    (let [comparison (assert-equal! "parser" oracle-output package-output)
+          perturbation (prove-perturbation! oracle-output perturbed-output)
+          revision (str/trim (:output (run-command! {:command ["git" "rev-parse" "HEAD"]
+                                                     :directory upstream-root})))
+          summary {:upstream-revision revision
+                   :package (:identity package-proof)
+                   :language-snippet-cases upstream-count
+                   :lexer-span-edge-cases edge-count
+                   :total-cases (count cases)
+                   :observations (:matched comparison)
+                   :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
+      (println "Independent upstream/package differential passed:" (pr-str summary))
+      {:package-proof package-proof
+       :summary summary
+       :manifest manifest
+       :oracle-output oracle-output
+       :package-output package-output})))
 
 (defn- core-classpath [root]
   (let [manifest (paths/resolve-path root "vibeformer" "target"
@@ -824,15 +825,15 @@
      :summary {:families (count evidence-entries)
                :existing-evidence (count (filter #(= "existing-evidence"
                                                      (:implementation %))
-                                                  evidence-entries))
+                                                 evidence-entries))
                :pending-in-scope (count (filter #(= "pending-in-scope"
-                                                     (:implementation %))
-                                                  evidence-entries))
+                                                    (:implementation %))
+                                                evidence-entries))
                :jvm-shared-families (count (filter #(= "jvm-shared" (:comparison %))
                                                    evidence-entries))
                :dotnet-adaptation-families (count (filter #(= "dotnet-adaptation"
-                                                               (:comparison %))
-                                                         evidence-entries))
+                                                              (:comparison %))
+                                                          evidence-entries))
                :jvm-shared-observations (count shared)
                :dotnet-adaptation-observations (count adaptations)}}))
 
@@ -1016,75 +1017,75 @@
               :observations (mapv :observation package-entries)}))
     (let [runtime-assemblies
           (write-packed-assembly-manifest! assembly-manifest (:packages package-proof))]
-    (run-command! {:command ["./gradlew" ":pkl-commons-test:processResources" "--console=plain"]
-                   :directory upstream-root})
-    (run-command! {:command [(str javac) "--release" (str java-release)
-                             "-cp" compile-classpath "-d" (str oracle-classes)
-                             (str oracle-source)]
-                   :directory root})
-    (run-command! {:command [(str java) "-cp" classpath "LoadingContractUpstreamOracle"
-                             (str root) (str oracle-output) (str work)]
-                   :directory root})
-    (doseq [[source relative]
-            [[(paths/resolve-path dotnet-fixtures "modules" "main.pkl")
-              ["fixtures" "modules" "main.pkl"]]
-             [(paths/resolve-path dotnet-fixtures "modules" "dependency.pkl")
-              ["fixtures" "modules" "dependency.pkl"]]
-             [(paths/resolve-path dotnet-fixtures "resources" "payload.txt")
-              ["fixtures" "resources" "payload.txt"]]
-             [(paths/resolve-path dotnet-fixtures "resources" "second.txt")
-              ["fixtures" "resources" "second.txt"]]]]
-      (let [destination (apply paths/resolve-path package-root relative)]
-        (Files/createDirectories (.getParent destination) (make-array FileAttribute 0))
-        (Files/copy source destination
-                    (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))))
-    (write-text! package-project (loading-package-project id version target-framework))
-    (Files/copy package-probe-source package-source
-                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-    (Files/copy source-package-config package-config
-                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-    (let [source-isolation
-          (verify-package-probe-source-isolation!
-           package-root package-project package-source)
-          package-dependencies
-          (restore-package-only-project! run-command! package-project package-config
-                                         packages package-proof identities)]
-      (run-command! {:command ["dotnet" "build" (str package-project) "--nologo"
-                               "--verbosity:minimal" "--no-restore" "--no-incremental"
-                               "-warnaserror"]
-                     :directory package-root})
-      (let [package-run
-            (run-command! {:command ["dotnet" "run" "--project" (str package-project)
-                                     "--no-build" "--no-restore" "--"
-                                     (str (paths/resolve-path fixtures "fixtures"))
-                                     (str package-output) (str package-work)
-                                     (str package-build) (str assembly-manifest)]
-                           :directory package-root})]
-        (when-not (str/includes? (:output package-run)
-                                 "Package-only loading, package, and policy validation passed.")
-          (fail! "Package-only loading probe did not report successful validation"
-                 {:output (:output package-run)}))
-    (let [comparison (assert-equal! "Pkl loading/policy/configuration contract"
-                                    expected-output oracle-output)
-          package-comparison (assert-equal! "Pkl loading/package/policy contract"
-                                            package-expected-output package-output)
-          perturbation (prove-perturbation! expected-output perturbed-output)
-          package-perturbation (prove-perturbation! package-expected-output
-                                                    package-perturbed-output)]
-      {:summary (assoc (:summary contract)
-                       :observations (:matched comparison)
-                       :package-observations (:matched package-comparison)
-                       :package-perturbation-detected-at
-                       (get-in package-perturbation [:mismatch :line])
-                       :perturbation-detected-at (get-in perturbation [:mismatch :line]))
-       :evidence evidence
-       :expectations expectations
-       :expected-output expected-output
-       :oracle-output oracle-output
-       :package-output package-output
-       :package-dependencies package-dependencies
-       :source-isolation source-isolation
-       :runtime-assemblies runtime-assemblies}))))))
+      (run-command! {:command ["./gradlew" ":pkl-commons-test:processResources" "--console=plain"]
+                     :directory upstream-root})
+      (run-command! {:command [(str javac) "--release" (str java-release)
+                               "-cp" compile-classpath "-d" (str oracle-classes)
+                               (str oracle-source)]
+                     :directory root})
+      (run-command! {:command [(str java) "-cp" classpath "LoadingContractUpstreamOracle"
+                               (str root) (str oracle-output) (str work)]
+                     :directory root})
+      (doseq [[source relative]
+              [[(paths/resolve-path dotnet-fixtures "modules" "main.pkl")
+                ["fixtures" "modules" "main.pkl"]]
+               [(paths/resolve-path dotnet-fixtures "modules" "dependency.pkl")
+                ["fixtures" "modules" "dependency.pkl"]]
+               [(paths/resolve-path dotnet-fixtures "resources" "payload.txt")
+                ["fixtures" "resources" "payload.txt"]]
+               [(paths/resolve-path dotnet-fixtures "resources" "second.txt")
+                ["fixtures" "resources" "second.txt"]]]]
+        (let [destination (apply paths/resolve-path package-root relative)]
+          (Files/createDirectories (.getParent destination) (make-array FileAttribute 0))
+          (Files/copy source destination
+                      (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+      (write-text! package-project (loading-package-project id version target-framework))
+      (Files/copy package-probe-source package-source
+                  (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+      (Files/copy source-package-config package-config
+                  (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+      (let [source-isolation
+            (verify-package-probe-source-isolation!
+             package-root package-project package-source)
+            package-dependencies
+            (restore-package-only-project! run-command! package-project package-config
+                                           packages package-proof identities)]
+        (run-command! {:command ["dotnet" "build" (str package-project) "--nologo"
+                                 "--verbosity:minimal" "--no-restore" "--no-incremental"
+                                 "-warnaserror"]
+                       :directory package-root})
+        (let [package-run
+              (run-command! {:command ["dotnet" "run" "--project" (str package-project)
+                                       "--no-build" "--no-restore" "--"
+                                       (str (paths/resolve-path fixtures "fixtures"))
+                                       (str package-output) (str package-work)
+                                       (str package-build) (str assembly-manifest)]
+                             :directory package-root})]
+          (when-not (str/includes? (:output package-run)
+                                   "Package-only loading, package, and policy validation passed.")
+            (fail! "Package-only loading probe did not report successful validation"
+                   {:output (:output package-run)}))
+          (let [comparison (assert-equal! "Pkl loading/policy/configuration contract"
+                                          expected-output oracle-output)
+                package-comparison (assert-equal! "Pkl loading/package/policy contract"
+                                                  package-expected-output package-output)
+                perturbation (prove-perturbation! expected-output perturbed-output)
+                package-perturbation (prove-perturbation! package-expected-output
+                                                          package-perturbed-output)]
+            {:summary (assoc (:summary contract)
+                             :observations (:matched comparison)
+                             :package-observations (:matched package-comparison)
+                             :package-perturbation-detected-at
+                             (get-in package-perturbation [:mismatch :line])
+                             :perturbation-detected-at (get-in perturbation [:mismatch :line]))
+             :evidence evidence
+             :expectations expectations
+             :expected-output expected-output
+             :oracle-output oracle-output
+             :package-output package-output
+             :package-dependencies package-dependencies
+             :source-isolation source-isolation
+             :runtime-assemblies runtime-assemblies}))))))
 
 (defn- package-only-project [package-id version target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
@@ -1183,7 +1184,7 @@
                         (:package (public-api-contract/contract-paths root))
                         public-api-contract/package-columns))
                 perturbed-package (assoc-in expected-package [0 :signature]
-                                             "PERTURBED-CONTRACT-SIGNATURE")
+                                            "PERTURBED-CONTRACT-SIGNATURE")
                 metadata-control
                 (public-api-contract/compare-package-surface expected-package
                                                              perturbed-package)
@@ -1234,11 +1235,13 @@
                                         "differential-proof" "schema-codegen-binding"))
         fixtures (paths/resolve-path root "vibeformer" "validation" "schema-codegen")
         contract-evidence (paths/resolve-path fixtures "ContractEvidence.tsv")
+        exhaustive-contract (schema-binding-contract/validate-contract! root)
         evidence-summary (verify-contract-evidence! root contract-evidence)
         oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
                          (Files/createDirectories (make-array FileAttribute 0)))
         oracle-source (paths/resolve-path fixtures "SchemaUpstreamOracle.java")
         oracle-output (paths/resolve-path proof-root "upstream.tsv")
+        oracle-second-output (paths/resolve-path proof-root "upstream-second.tsv")
         package-output (paths/resolve-path proof-root "package.tsv")
         perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
         config-manifest (paths/resolve-path proof-root "pkl-config-java-main-inputs.tsv")
@@ -1308,110 +1311,117 @@
     (run-command! {:command [(str java) "-cp" classpath "SchemaUpstreamOracle"
                              (str fixtures) (str oracle-output)]
                    :directory root})
+    (run-command! {:command [(str java) "-cp" classpath "SchemaUpstreamOracle"
+                             (str fixtures) (str oracle-second-output)]
+                   :directory root})
+    (let [repeated-oracle (assert-pinned! "Repeated Pkl schema/codegen/binding upstream oracle"
+                                          oracle-output oracle-second-output)]
 
-    (write-text! generator-project project-contents)
-    (Files/copy (paths/resolve-path fixtures "SchemaGeneratorProbe.cs")
-                (paths/resolve-path generator-root "Program.cs")
-                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-    (Files/copy package-config generator-config
-                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-    (let [generator-dependencies
-          (restore-package-only-project! run-command! generator-project generator-config
-                                         generator-packages package-proof identities)]
-      (run-command! {:command ["dotnet" "build" (str generator-project) "--nologo"
-                               "--verbosity:minimal" "--no-restore" "--no-incremental"
-                               "-warnaserror"]
-                     :directory generator-root})
-      (let [generator-run
-            (run-command! {:command ["dotnet" "run" "--project" (str generator-project)
-                                     "--no-build" "--no-restore" "--"
-                                     (str fixtures) (str generated-root) (str package-output)
-                                     (str collision-diagnostics)]
-                           :directory generator-root})]
-        (when-not (str/includes? (:output generator-run)
-                                 "Package-only schema traversal and deterministic C# generation passed.")
-          (fail! "Package-only schema generator did not report successful validation"
-                 {:output (:output generator-run)}))
+      (write-text! generator-project project-contents)
+      (Files/copy (paths/resolve-path fixtures "SchemaGeneratorProbe.cs")
+                  (paths/resolve-path generator-root "Program.cs")
+                  (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+      (Files/copy package-config generator-config
+                  (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+      (let [generator-dependencies
+            (restore-package-only-project! run-command! generator-project generator-config
+                                           generator-packages package-proof identities)]
+        (run-command! {:command ["dotnet" "build" (str generator-project) "--nologo"
+                                 "--verbosity:minimal" "--no-restore" "--no-incremental"
+                                 "-warnaserror"]
+                       :directory generator-root})
+        (let [generator-run
+              (run-command! {:command ["dotnet" "run" "--project" (str generator-project)
+                                       "--no-build" "--no-restore" "--"
+                                       (str fixtures) (str generated-root) (str package-output)
+                                       (str collision-diagnostics)]
+                             :directory generator-root})]
+          (when-not (str/includes? (:output generator-run)
+                                   "Package-only schema traversal and deterministic C# generation passed.")
+            (fail! "Package-only schema generator did not report successful validation"
+                   {:output (:output generator-run)}))
 
-        (write-text! consumer-project project-contents)
-        (Files/copy (paths/resolve-path fixtures "GeneratedConsumer.cs")
-                    (paths/resolve-path consumer-root "Program.cs")
-                    (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-        (Files/copy package-config consumer-config
-                    (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-        (let [generated-files
-              (mapv #(paths/resolve-path generated-root %)
-                    ["ContractBase.g.cs" "ContractImported.g.cs" "ContractMain.g.cs"
-                     "PolymorphicLib.g.cs" "PolymorphicModuleTest.g.cs"
-                     "OverriddenProperty.g.cs" "SchemaMethods.g.cs"])]
-          (doseq [^Path source generated-files]
-            (when-not (paths/regular-file? source)
-              (fail! "Package generator did not emit an expected C# source" {:path (str source)}))
-            (Files/copy source (paths/resolve-path consumer-root (str (.getFileName source)))
-                        (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING])))
-          (let [consumer-dependencies
-                (restore-package-only-project! run-command! consumer-project consumer-config
-                                               consumer-packages package-proof identities)]
-            (run-command! {:command ["dotnet" "build" (str consumer-project) "--nologo"
-                                     "--verbosity:minimal" "--no-restore" "--no-incremental"
-                                     "-warnaserror"]
-                           :directory consumer-root})
-            (let [consumer-run
-                  (run-command! {:command ["dotnet" "run" "--project" (str consumer-project)
-                                           "--no-build" "--no-restore" "--"
-                                           (str fixtures) (str package-output)
-                                           (str binding-diagnostics)]
-                                 :directory consumer-root})]
-              (when-not (str/includes? (:output consumer-run)
-                                       "Independently compiled generated C# binding consumer passed.")
-                (fail! "Generated package-only consumer did not report successful validation"
-                       {:output (:output consumer-run)}))
-              (let [comparison (assert-equal! "Pkl schema/codegen/binding" oracle-output package-output)
-                    perturbation (prove-perturbation! oracle-output perturbed-output)
-                    binding-report (Files/readString binding-diagnostics)
-                    expected-binding-report
-                    (str "constructor-and-members=passed\n"
-                         "metadata-options=passed\n"
-                         "custom-loader=passed\n"
-                         "custom-conversion=passed\n"
-                         "explicit-polymorphism=passed\n"
-                         "unknown=$\n"
-                         "incompatible=$.count\n"
-                         "missing=$\n"
-                         "overflow=$.count\n"
-                         "nullability=$.name\n"
-                         "nested-list-nullability=$.values[1]\n"
-                         "nested-map-nullability=$.mapping[\"bad\"]\n"
-                         "nested-pair-nullability=$.pair.second\n"
-                         "nullable-nested-generics=passed\n"
-                         "numeric-exactness=passed\n"
-                         "conversion-failures=passed\n"
-                         "polymorphic-mismatch=$\n"
-                         "cycle=$.next\n"
-                         "config-evaluator=passed\n"
-                         "disposed=passed\n")]
-                (when-not (= expected-binding-report binding-report)
-                  (fail! "Generated consumer focused binding diagnostics were missing, duplicated, or reordered"
-                         {:path (str binding-diagnostics)
-                          :expected expected-binding-report
-                          :actual binding-report}))
-                {:summary {:schemas 9
-                           :generated-files (count generated-files)
-                           :observations (:matched comparison)
-                           :generated-contract-observations 1
-                           :codegen-failure-observations 6
-                           :binding-observations 2
-                           :independent-binding-failure-observations 14
-                           :binding-failure-cases 21
-                           :contract-evidence evidence-summary
-                           :perturbation-detected-at (get-in perturbation [:mismatch :line])}
-                 :oracle-output oracle-output
-                 :package-output package-output
-                 :generated-root generated-root
-                 :collision-diagnostics collision-diagnostics
-                 :binding-diagnostics binding-diagnostics
-                 :generator-dependencies generator-dependencies
-                 :consumer-dependencies consumer-dependencies}))))))))
+          (write-text! consumer-project project-contents)
+          (Files/copy (paths/resolve-path fixtures "GeneratedConsumer.cs")
+                      (paths/resolve-path consumer-root "Program.cs")
+                      (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+          (Files/copy package-config consumer-config
+                      (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+          (let [generated-files
+                (mapv #(paths/resolve-path generated-root %)
+                      ["ContractBase.g.cs" "ContractImported.g.cs" "ContractMain.g.cs"
+                       "PolymorphicLib.g.cs" "PolymorphicModuleTest.g.cs"
+                       "OverriddenProperty.g.cs" "SchemaMethods.g.cs"])]
+            (doseq [^Path source generated-files]
+              (when-not (paths/regular-file? source)
+                (fail! "Package generator did not emit an expected C# source" {:path (str source)}))
+              (Files/copy source (paths/resolve-path consumer-root (str (.getFileName source)))
+                          (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING])))
+            (let [consumer-dependencies
+                  (restore-package-only-project! run-command! consumer-project consumer-config
+                                                 consumer-packages package-proof identities)]
+              (run-command! {:command ["dotnet" "build" (str consumer-project) "--nologo"
+                                       "--verbosity:minimal" "--no-restore" "--no-incremental"
+                                       "-warnaserror"]
+                             :directory consumer-root})
+              (let [consumer-run
+                    (run-command! {:command ["dotnet" "run" "--project" (str consumer-project)
+                                             "--no-build" "--no-restore" "--"
+                                             (str fixtures) (str package-output)
+                                             (str binding-diagnostics)]
+                                   :directory consumer-root})]
+                (when-not (str/includes? (:output consumer-run)
+                                         "Independently compiled generated C# binding consumer passed.")
+                  (fail! "Generated package-only consumer did not report successful validation"
+                         {:output (:output consumer-run)}))
+                (let [comparison (assert-equal! "Pkl schema/codegen/binding" oracle-output package-output)
+                      perturbation (prove-perturbation! oracle-output perturbed-output)
+                      binding-report (Files/readString binding-diagnostics)
+                      expected-binding-report
+                      (str "constructor-and-members=passed\n"
+                           "metadata-options=passed\n"
+                           "custom-loader=passed\n"
+                           "custom-conversion=passed\n"
+                           "explicit-polymorphism=passed\n"
+                           "unknown=$\n"
+                           "incompatible=$.count\n"
+                           "missing=$\n"
+                           "overflow=$.count\n"
+                           "nullability=$.name\n"
+                           "nested-list-nullability=$.values[1]\n"
+                           "nested-map-nullability=$.mapping[\"bad\"]\n"
+                           "nested-pair-nullability=$.pair.second\n"
+                           "nullable-nested-generics=passed\n"
+                           "numeric-exactness=passed\n"
+                           "conversion-failures=passed\n"
+                           "polymorphic-mismatch=$\n"
+                           "cycle=$.next\n"
+                           "config-evaluator=passed\n"
+                           "disposed=passed\n")]
+                  (when-not (= expected-binding-report binding-report)
+                    (fail! "Generated consumer focused binding diagnostics were missing, duplicated, or reordered"
+                           {:path (str binding-diagnostics)
+                            :expected expected-binding-report
+                            :actual binding-report}))
+                  {:summary {:schemas 9
+                             :generated-files (count generated-files)
+                             :observations (:matched comparison)
+                             :repeated-upstream-observations (:matched repeated-oracle)
+                             :generated-contract-observations 1
+                             :codegen-failure-observations 6
+                             :binding-observations 2
+                             :independent-binding-failure-observations 14
+                             :binding-failure-cases 21
+                             :exhaustive-contract (:summary exhaustive-contract)
+                             :legacy-selected-fixture-evidence evidence-summary
+                             :perturbation-detected-at (get-in perturbation [:mismatch :line])}
+                   :oracle-output oracle-output
+                   :package-output package-output
+                   :generated-root generated-root
+                   :collision-diagnostics collision-diagnostics
+                   :binding-diagnostics binding-diagnostics
+                   :generator-dependencies generator-dependencies
+                   :consumer-dependencies consumer-dependencies})))))))))
 
 (defn- verify-astral-regex-captures!
   [{:keys [root run-command! java oracle-classes consumer-root consumer-project]}]
@@ -1582,8 +1592,8 @@
 (defn- verify-core-differential!
   "Runs representative evaluator/value-model cases in isolated upstream and package processes."
   [{:keys [workspace-root core-package-fn run-command!]
-     :or {core-package-fn packaging/verify-package-consumption!
-          run-command! process/run!}}]
+    :or {core-package-fn packaging/verify-package-consumption!
+         run-command! process/run!}}]
   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
         package-proof (core-package-fn {:workspace-root root
                                         :profile "pkl-core-value-model"
@@ -1677,7 +1687,7 @@
           to-fixed-perturbation
           (prove-perturbation! to-fixed-expected to-fixed-perturbed)
           revision (str/trim (:output (run-command! {:command ["git" "rev-parse" "HEAD"]
-                                                      :directory upstream-root})))
+                                                     :directory upstream-root})))
           summary {:upstream-revision revision
                    :package (:identity package-proof)
                    :cases (count core-cases)
