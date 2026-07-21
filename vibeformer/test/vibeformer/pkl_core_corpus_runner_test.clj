@@ -325,4 +325,4 @@
     (is (.contains corpus "packages-root (:packages-root package-proof)"))
     (is (.contains corpus "Corpus.Resources.payload.txt"))
     (is (.contains corpus ":expected-count 215"))
-    (is (.contains corpus ":expected-count 59"))))
+    (is (.contains corpus ":expected-count 54"))))

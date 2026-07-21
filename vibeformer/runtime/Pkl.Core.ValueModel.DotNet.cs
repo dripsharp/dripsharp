@@ -10,16 +10,21 @@ using System.Text;
 
 namespace Pkl.Core;
 
-public interface IPklPair
-{
-    object? FirstObject { get; }
-    object? SecondObject { get; }
-}
+public sealed partial class Pair<F, S> { }
 
-public sealed partial class Pair<F, S> : IPklPair
+internal static class PairEquality
 {
-    object? IPklPair.FirstObject => GetFirst();
-    object? IPklPair.SecondObject => GetSecond();
+    internal static bool EqualsPair(object? first, object? second, object? candidate)
+    {
+        if (candidate is null) return false;
+        Type type = candidate.GetType();
+        if (!type.IsGenericType || type.GetGenericTypeDefinition() != typeof(Pair<,>))
+            return false;
+        object? otherFirst = type.GetMethod("GetFirst", Type.EmptyTypes)!.Invoke(candidate, null);
+        object? otherSecond = type.GetMethod("GetSecond", Type.EmptyTypes)!.Invoke(candidate, null);
+        return Vibeformer.Runtime.JavaCompat.Equals(first, otherFirst) &&
+            Vibeformer.Runtime.JavaCompat.Equals(second, otherSecond);
+    }
 }
 
 internal static class DotNetCollections
@@ -91,126 +96,9 @@ public partial interface Evaluator
 
     public TestResults EvaluateTests(ModuleSource moduleSource, bool overwriteExpected = false) =>
         EvaluateTest(moduleSource, overwriteExpected);
-
-    public PklCommandSpec ParseCommand(
-        ModuleSource moduleSource,
-        IReadOnlySet<string>? reservedFlagNames = null,
-        IReadOnlySet<string>? reservedFlagShortNames = null)
-    {
-        ArgumentNullException.ThrowIfNull(moduleSource);
-        CommandSpec? result = null;
-        EvaluateCommand(
-            moduleSource,
-            new HashSet<string>(reservedFlagNames ?? new HashSet<string>(), StringComparer.Ordinal),
-            new HashSet<string>(reservedFlagShortNames ?? new HashSet<string>(), StringComparer.Ordinal),
-            value => result = value);
-        return PklCommandSpec.FromInternal(
-            result ?? throw new PklException("Command evaluation did not produce a command specification."));
-    }
 }
 
-public sealed record PklCommandSpec(
-    string Name,
-    string? HelpText,
-    bool Hidden,
-    bool NoOp,
-    IReadOnlyList<PklCommandOption> Options,
-    IReadOnlyList<PklCommandSpec> Subcommands)
-{
-    internal static PklCommandSpec FromInternal(CommandSpec value) =>
-        new(
-            value.Name,
-            value.HelpText,
-            value.Hidden,
-            value.NoOp,
-            value.Options.Select(PklCommandOption.FromInternal).ToList().AsReadOnly(),
-            value.Subcommands.Select(FromInternal).ToList().AsReadOnly());
-}
-
-public abstract record PklCommandOption(string Name, string? HelpText)
-{
-    internal static PklCommandOption FromInternal(CommandSpec.Option value) => value switch
-    {
-        CommandSpec.Flag flag => new PklCommandFlag(
-            flag.Name,
-            flag.HelpText,
-            flag.ShowAsRequired,
-            flag.ShortName,
-            flag.Metavar,
-            flag.Hidden,
-            flag.DefaultValue,
-            (input, moduleUri) => Convert(flag.TransformEach, input, moduleUri)),
-        CommandSpec.BooleanFlag flag => new PklCommandBooleanFlag(
-            flag.Name, flag.HelpText, flag.ShortName, flag.Hidden, flag.DefaultValue),
-        CommandSpec.CountedFlag flag => new PklCommandCountedFlag(
-            flag.Name, flag.HelpText, flag.ShortName, flag.Hidden),
-        CommandSpec.Argument argument => new PklCommandArgument(
-            argument.Name,
-            argument.HelpText,
-            argument.Repeated,
-            (input, moduleUri) => Convert(argument.TransformEach, input, moduleUri)),
-        _ => throw new InvalidOperationException(
-            $"Unsupported command option implementation `{value.GetType().FullName}`.")
-    };
-
-    private static object Convert(
-        Func<string, Uri, object> converter,
-        string input,
-        Uri moduleUri)
-    {
-        try
-        {
-            return converter(input, moduleUri);
-        }
-        catch (CommandSpec.Option.BadValue error)
-        {
-            throw new PklCommandOptionException(error.Message, error);
-        }
-    }
-}
-
-public sealed record PklCommandFlag(
-    string Name,
-    string? HelpText,
-    bool ShowAsRequired,
-    string? ShortName,
-    string Metavar,
-    bool Hidden,
-    string? DefaultValue,
-    Func<string, Uri, object> Convert)
-    : PklCommandOption(Name, HelpText);
-
-public sealed record PklCommandBooleanFlag(
-    string Name,
-    string? HelpText,
-    string? ShortName,
-    bool Hidden,
-    bool? DefaultValue)
-    : PklCommandOption(Name, HelpText);
-
-public sealed record PklCommandCountedFlag(
-    string Name,
-    string? HelpText,
-    string? ShortName,
-    bool Hidden)
-    : PklCommandOption(Name, HelpText);
-
-public sealed record PklCommandArgument(
-    string Name,
-    string? HelpText,
-    bool Repeated,
-    Func<string, Uri, object> Convert)
-    : PklCommandOption(Name, HelpText);
-
-public sealed class PklCommandOptionException : PklException
-{
-    public PklCommandOptionException(string message, Exception innerException)
-        : base(message, innerException)
-    {
-    }
-}
-
-public static class PklPath
+internal static class PklPath
 {
     public static string ResolvePosix(Uri baseUri, string path)
     {
@@ -227,7 +115,7 @@ public static class PklPath
     }
 }
 
-public static class PklGlob
+internal static class PklGlob
 {
     public static System.Text.RegularExpressions.Regex Compile(string pattern)
     {
@@ -243,7 +131,7 @@ public static class PklGlob
     }
 }
 
-public static class PklUris
+internal static class PklUris
 {
     public static Uri EnsurePathEndsWithSlash(Uri uri)
     {
@@ -472,13 +360,13 @@ public static class PklUris
     }
 }
 
-public enum PklAnsiCode
+internal enum PklAnsiCode
 {
     Bold,
     Red
 }
 
-public static class PklValueRenderer
+internal static class PklValueRenderer
 {
     public static string RenderNull(int lengthLimit = 80) =>
         Runtime.VmValueRenderer.SingleLine(lengthLimit).Render(Runtime.VmNull.WithoutDefault());
@@ -490,7 +378,7 @@ public static class PklValueRenderer
     }
 }
 
-public static class PklExceptions
+internal static class PklExceptions
 {
     public static Exception RootCause(Exception value)
     {
@@ -512,7 +400,7 @@ public static class PklExceptions
     }
 }
 
-public sealed class PklAnsiBuilder
+internal sealed class PklAnsiBuilder
 {
     private readonly bool enabled;
     private readonly StringBuilder builder = new();
@@ -573,7 +461,7 @@ public sealed class PklAnsiBuilder
     }
 }
 
-public sealed class PklTextEscaper
+internal sealed class PklTextEscaper
 {
     private readonly IReadOnlyDictionary<char, string> escapes;
 
@@ -615,7 +503,7 @@ public sealed class PklTextEscaper
     }
 }
 
-public static class PklHttp
+internal static class PklHttp
 {
     public static bool IsHttpUrl(Uri uri)
     {
@@ -636,7 +524,7 @@ public static class PklHttp
     }
 }
 
-public static class PklStrings
+internal static class PklStrings
 {
     public static int CodePointOffsetToUtf16Offset(
         string value,
@@ -670,7 +558,7 @@ public static class PklStrings
     }
 }
 
-public static class PklClassInfos
+internal static class PklClassInfos
 {
     public static bool IsExactTypeOf(PClassInfo<object> classInfo, object value)
     {
@@ -683,7 +571,7 @@ public static class PklClassInfos
     }
 }
 
-public static class PklParserUtilities
+internal static class PklParserUtilities
 {
     public static IReadOnlyList<string> FindImportsAndReads(string source)
     {
@@ -696,7 +584,7 @@ public static class PklParserUtilities
     }
 }
 
-public static class PklImportGraphs
+internal static class PklImportGraphs
 {
     public static IReadOnlyList<IReadOnlyList<Uri>> FindCycles(ImportGraph graph)
     {
@@ -707,7 +595,7 @@ public static class PklImportGraphs
     }
 }
 
-public enum PklValuePathPartKind
+internal enum PklValuePathPartKind
 {
     Property,
     Element,
@@ -716,7 +604,7 @@ public enum PklValuePathPartKind
     TopLevel
 }
 
-public sealed record PklValuePathPart(PklValuePathPartKind Kind, object? Value = null)
+internal sealed record PklValuePathPart(PklValuePathPartKind Kind, object? Value = null)
 {
     public static PklValuePathPart Property(string name) =>
         new(PklValuePathPartKind.Property, name);
@@ -734,7 +622,7 @@ public sealed record PklValuePathPart(PklValuePathPartKind Kind, object? Value =
         new(PklValuePathPartKind.TopLevel);
 }
 
-public static class PklValuePaths
+internal static class PklValuePaths
 {
     public static IReadOnlyList<PklValuePathPart> Parse(string pathSpec)
     {
@@ -785,78 +673,6 @@ public static class PklValuePaths
         PklValuePathPartKind.TopLevel => Runtime.VmValueConverter<object>.TOP_LEVEL_VALUE,
         _ => throw new ArgumentOutOfRangeException(nameof(value))
     };
-}
-
-public interface PklTestReporter
-{
-    void Report(TestResults results, TextWriter writer);
-    void Summarize(IReadOnlyList<TestResults> results, TextWriter writer);
-    string Report(TestResults results);
-    string Summarize(IReadOnlyList<TestResults> results);
-    void ReportToFile(TestResults results, string path);
-    void SummarizeToFile(IReadOnlyList<TestResults> results, string path);
-}
-
-public static class PklTestReporters
-{
-    public static PklTestReporter Minimal(bool useColor = false) =>
-        new PklTestReporterAdapter(new Stdlib.Test.Report.MinimalReporter(useColor));
-
-    public static PklTestReporter Spec(bool useColor = false) =>
-        new PklTestReporterAdapter(new Stdlib.Test.Report.SpecReporter(useColor));
-
-    public static PklTestReporter JUnit(string aggregateSuiteName = "") =>
-        new PklTestReporterAdapter(new Stdlib.Test.Report.JUnitReporter(aggregateSuiteName));
-
-    private sealed class PklTestReporterAdapter : PklTestReporter
-    {
-        private readonly Stdlib.Test.Report.TestReporter reporter;
-
-        internal PklTestReporterAdapter(Stdlib.Test.Report.TestReporter reporter) =>
-            this.reporter = reporter;
-
-        public void Report(TestResults results, TextWriter writer)
-        {
-            ArgumentNullException.ThrowIfNull(results);
-            ArgumentNullException.ThrowIfNull(writer);
-            reporter.Report(results, writer);
-        }
-
-        public void Summarize(IReadOnlyList<TestResults> results, TextWriter writer)
-        {
-            ArgumentNullException.ThrowIfNull(results);
-            ArgumentNullException.ThrowIfNull(writer);
-            reporter.Summarize(results as IList<TestResults> ?? results.ToList(), writer);
-        }
-
-        public string Report(TestResults results)
-        {
-            using var writer = new StringWriter(CultureInfo.InvariantCulture);
-            Report(results, writer);
-            return writer.ToString();
-        }
-
-        public string Summarize(IReadOnlyList<TestResults> results)
-        {
-            using var writer = new StringWriter(CultureInfo.InvariantCulture);
-            Summarize(results, writer);
-            return writer.ToString();
-        }
-
-        public void ReportToFile(TestResults results, string path)
-        {
-            ArgumentException.ThrowIfNullOrEmpty(path);
-            using var writer = new StreamWriter(path, append: false, new UTF8Encoding(false));
-            Report(results, writer);
-        }
-
-        public void SummarizeToFile(IReadOnlyList<TestResults> results, string path)
-        {
-            ArgumentException.ThrowIfNullOrEmpty(path);
-            using var writer = new StreamWriter(path, append: false, new UTF8Encoding(false));
-            Summarize(results, writer);
-        }
-    }
 }
 
 public partial class PObject

@@ -83,17 +83,23 @@
   (let [yaml (case-by #(= "org.pkl.core.YamlRendererTest" (:source-class %)))
         binary (case-by #(= "org.pkl.core.PklBinaryDecoderTest" (:source-class %)))
         repl (case-by #(= "org.pkl.core.ReplServerTest" (:source-class %)))
+        command (case-by #(= "org.pkl.core.runtime.CommandSpecParserTest"
+                             (:source-class %)))
+        report (case-by #(= "org.pkl.core.stdlib.MinimalReportTest"
+                            (:source-class %)))
         hygiene (case-by #(= "org.pkl.core.RepositoryHygiene" (:source-class %)))
         disabled (case-by #(= "org.pkl.core.StackFrameTransformersTest" (:source-class %)))
         windows (case-by #(= "enabled-on-windows" (:expected-outcome %)))
         path-abort (case-by #(= "external-reader-path-conditional"
                                 (:expected-outcome %)))]
-    (doseq [excluded [yaml binary repl]]
+    (doseq [excluded [yaml binary repl command report]]
       (is (= "user-approved-excluded-surface" (:product-classification excluded)))
       (is (str/includes? (:scope-basis excluded)
                          "product-goal.md#user-approved-product-exclusions"))
       (is (str/includes? (:scope-basis excluded)
                          "port-scope.md#explicit-scope-decisions")))
+    (is (= "excluded-cli-command" (:behavior-family command)))
+    (is (= "excluded-cli-test-reporting" (:behavior-family report)))
     (is (= "test-infrastructure-only-mechanics" (:product-classification hygiene)))
     (is (= "jvm-shared-product-behavior" (:product-classification disabled)))
     (is (= "upstream-explicitly-disabled" (:expected-outcome disabled)))

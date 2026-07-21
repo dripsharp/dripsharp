@@ -2055,7 +2055,7 @@
           (= "executable:org.pkl.core.Pair#equals(java.lang.Object)"
              (spoon/declaration-key method))
           (raw
-           "{\nif (global::System.Object.ReferenceEquals(this, obj)) return true;\nif (obj is not global::Pkl.Core.IPklPair other) return false;\nreturn global::Vibeformer.Runtime.JavaCompat.Equals(this.first, other.FirstObject) && global::Vibeformer.Runtime.JavaCompat.Equals(this.second, other.SecondObject);\n}")
+           "{\nif (global::System.Object.ReferenceEquals(this, obj)) return true;\nreturn global::Pkl.Core.PairEquality.EqualsPair(this.first, this.second, obj);\n}")
 
           (= "executable:org.pkl.core.runtime.VmBytes#export()"
              (spoon/declaration-key method))

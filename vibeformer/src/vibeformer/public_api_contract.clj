@@ -80,39 +80,129 @@
     "Pkl.Core.CSharpGeneratorOptions"
     "Pkl.Core.CSharpGenerator"})
 
-(def ^:private native-core-owners
-  #{"Pkl.Core.IPklPair"
-    "Pkl.Core.PklAnsiBuilder"
-    "Pkl.Core.PklAnsiCode"
-    "Pkl.Core.PklClassInfos"
-    "Pkl.Core.PklCommandArgument"
-    "Pkl.Core.PklCommandBooleanFlag"
-    "Pkl.Core.PklCommandCountedFlag"
-    "Pkl.Core.PklCommandFlag"
-    "Pkl.Core.PklCommandOption"
-    "Pkl.Core.PklCommandOptionException"
-    "Pkl.Core.PklCommandSpec"
-    "Pkl.Core.PklExceptions"
-    "Pkl.Core.PklGlob"
-    "Pkl.Core.PklHttp"
-    "Pkl.Core.PklImportGraphs"
-    "Pkl.Core.PklParserUtilities"
-    "Pkl.Core.PklPath"
-    "Pkl.Core.PklStrings"
-    "Pkl.Core.PklTextEscaper"
-    "Pkl.Core.PklTextEscaper$Builder"
-    "Pkl.Core.PklUris"
-    "Pkl.Core.PklValuePathPart"
-    "Pkl.Core.PklValuePathPartKind"
-    "Pkl.Core.PklValuePaths"
-    "Pkl.Core.PklValueRenderer"
-    "Pkl.Core.Module.AssemblyModuleKeyFactory"
-    "Pkl.Core.Resource.EmbeddedResourceReader"
-    "Pkl.Core.StackFrameTransformerExtensions"})
-
-(def ^:private native-test-reporting-owners
-  #{"Pkl.Core.PklTestReporter"
-    "Pkl.Core.PklTestReporters"})
+(def native-owner-decisions
+  {"Pkl.Core.IPklPair"
+   {:behavior-family "value.pair"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/Pair.java"
+    :dotnet-adaptation "Pair cross-generic equality is internal implementation behavior behind the public Pair API; the helper interface is not product API or an exclusion."}
+   "Pkl.Core.PklAnsiBuilder"
+   {:behavior-family "diagnostics.rendering"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/AnsiStringBuilder.java"
+    :dotnet-adaptation "ANSI state is internal diagnostic-rendering behavior used by the runtime; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklAnsiCode"
+   {:behavior-family "diagnostics.rendering"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/AnsiStringBuilder.java"
+    :dotnet-adaptation "ANSI codes are internal diagnostic-rendering state; the helper enum is not product API or an exclusion."}
+   "Pkl.Core.PklClassInfos"
+   {:behavior-family "schema.class-info"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/PClassInfo.java"
+    :dotnet-adaptation "Exact class checks remain internal behavior behind the authoritative public PClassInfo API; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklCommandArgument"
+   {:behavior-family "cli.options"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
+    :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
+   "Pkl.Core.PklCommandBooleanFlag"
+   {:behavior-family "cli.options"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
+    :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
+   "Pkl.Core.PklCommandCountedFlag"
+   {:behavior-family "cli.options"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
+    :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
+   "Pkl.Core.PklCommandFlag"
+   {:behavior-family "cli.options"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
+    :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
+   "Pkl.Core.PklCommandOption"
+   {:behavior-family "cli.options"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
+    :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
+   "Pkl.Core.PklCommandOptionException"
+   {:behavior-family "cli.options"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
+    :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
+   "Pkl.Core.PklCommandSpec"
+   {:behavior-family "cli.options"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
+    :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
+   "Pkl.Core.PklExceptions"
+   {:behavior-family "diagnostics.exceptions"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/Exceptions.java"
+    :dotnet-adaptation "Root-cause traversal remains internal diagnostic behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklGlob"
+   {:behavior-family "loading.glob"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/GlobResolver.java"
+    :dotnet-adaptation "Glob compilation remains internal behavior behind globbed import and read evaluation; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklHttp"
+   {:behavior-family "loading.http"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/HttpUtils.java"
+    :dotnet-adaptation "HTTP URI and response checks remain internal loading behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklImportGraphs"
+   {:behavior-family "analysis.import-graph"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/ImportGraphUtils.java"
+    :dotnet-adaptation "Import-cycle discovery remains internal behavior behind Analyzer and ImportGraph; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklParserUtilities"
+   {:behavior-family "parser.imports-reads"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/ast/builder/ImportsAndReadsParser.java"
+    :dotnet-adaptation "Import/read discovery remains internal parser and analysis behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklPath"
+   {:behavior-family "loading.path-resolution"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/PathResolvers.java"
+    :dotnet-adaptation "Platform path resolution remains internal loading behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklStrings"
+   {:behavior-family "runtime.strings"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/StringUtils.java"
+    :dotnet-adaptation "Code-point offset conversion remains internal parser/runtime behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklTextEscaper"
+   {:behavior-family "rendering.text-escaping"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/ArrayCharEscaper.java"
+    :dotnet-adaptation "Character escaping remains internal renderer behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklTextEscaper$Builder"
+   {:behavior-family "rendering.text-escaping"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/ArrayCharEscaper.java"
+    :dotnet-adaptation "Character-escape construction remains internal renderer behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklUris"
+   {:behavior-family "loading.uri"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/IoUtils.java"
+    :dotnet-adaptation "URI normalization and resolution remain internal loading behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklValuePathPart"
+   {:behavior-family "binding.value-path"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/stdlib/PathSpecParser.java"
+    :dotnet-adaptation "Value-path matching remains internal conversion behavior; the helper record is not product API or an exclusion."}
+   "Pkl.Core.PklValuePathPartKind"
+   {:behavior-family "binding.value-path"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/stdlib/PathSpecParser.java"
+    :dotnet-adaptation "Value-path matching remains internal conversion behavior; the helper enum is not product API or an exclusion."}
+   "Pkl.Core.PklValuePaths"
+   {:behavior-family "binding.value-path"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/stdlib/PathConverterSupport.java"
+    :dotnet-adaptation "Value-path parsing and matching remain internal conversion behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklValueRenderer"
+   {:behavior-family "runtime.value-rendering"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/runtime/VmValueRenderer.java"
+    :dotnet-adaptation "VM value rendering remains internal runtime and diagnostic behavior; the helper is not product API or an exclusion."}
+   "Pkl.Core.PklTestReporter"
+   {:behavior-family "cli.test-reporting"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliTestRunner.kt"
+    :dotnet-adaptation "Upstream report formatting is consumed by excluded CLI and Gradle products; no native reporter facade is shipped."}
+   "Pkl.Core.PklTestReporters"
+   {:behavior-family "cli.test-reporting"
+    :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliTestRunner.kt"
+    :dotnet-adaptation "Upstream report formatting is consumed by excluded CLI and Gradle products; no native reporter facade is shipped."}
+   "Pkl.Core.Module.AssemblyModuleKeyFactory"
+   {:behavior-family "loading.assembly"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/module/ModuleKeyFactories.java"
+    :dotnet-adaptation "The concrete .NET assembly factory stays internal behind ModuleKeyFactories.CreateAssembly and its independently consumed ModuleKeyFactory contract."}
+   "Pkl.Core.Resource.EmbeddedResourceReader"
+   {:behavior-family "loading.embedded-resource"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/resource/ResourceReaders.java"
+    :dotnet-adaptation "The concrete embedded reader stays internal behind ResourceReaders.CreateEmbeddedResources and its independently consumed ResourceReader contract."}
+   "Pkl.Core.StackFrameTransformerExtensions"
+   {:classification "product-api-native"
+    :area "core"
+    :behavior-family "diagnostics.stack-frames"
+    :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/StackFrameTransformers.java"
+    :dotnet-adaptation "The idiomatic delegate extension preserves upstream StackFrameTransformer.andThen and is source-mapped to that public embedding API member."}})
 
 (def ^:private forbidden-package-metadata
   #"(?i)(?:Pkl[.]Core[.](?:Runtime|Ast|Stdlib|Util|Messaging)(?:[$.<]|$)|Vibeformer[.]Runtime|SnakeYaml|MessagePack|Org[.]Msgpack|System[.]Collections[.]Generic[.]I(?:List|Dictionary|Set)<|System[.]SByte(?:\[\])?|\bJava[A-Z][A-Za-z0-9_]*\b|\b(?:ToJavaDuration|GetJavaClass)\b)")
@@ -765,17 +855,9 @@
      :upstream-provenance "research/pkl/docs/modules/java-binding/pages/codegen.adoc"
      :dotnet-adaptation "Native C# generator API backed by upstream schema/codegen behavior."}
 
-    (native-core-owners (:owner row))
-    {:classification "product-api-native" :area "core"
-     :behavior-family "loading.public-api"
-     :upstream-provenance "vibeformer/validation/loading-contract/PackageConsumer.cs"
-     :dotnet-adaptation "Idiomatic .NET loading and delegate APIs backed by package-only consumer behavior."}
-
-    (native-test-reporting-owners (:owner row))
-    {:classification "product-api-native" :area "core"
-     :behavior-family "test.reporting"
-     :upstream-provenance "vibeformer/validation/pkl-core-corpus/PklCorePackageCorpusRunner.cs"
-     :dotnet-adaptation "Idiomatic .NET test reporting facade backed by package-only consumer behavior."}
+    (native-owner-decisions (:owner row))
+    (merge {:classification "public-implementation-internal" :area "implementation"}
+           (native-owner-decisions (:owner row)))
 
     (target-keys (package-broad-key row))
     {:classification "product-api-current" :area (if (= "Pkl.Parser" (:assembly row))

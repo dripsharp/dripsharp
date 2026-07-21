@@ -46,7 +46,7 @@
 
 (def ^:private evaluator-diagnostic-renderer-partition
   {:name :evaluator-analyzer-test-reporting-diagnostic-renderer
-   :expected-count 59
+   :expected-count 54
    :source-classes
    #{"org.pkl.core.EvaluateExpressionTest"
      "org.pkl.core.EvaluateMultipleFileOutputTest"
@@ -58,9 +58,7 @@
      "org.pkl.core.PcfRendererTest"
      "org.pkl.core.PropertiesRendererTest"
      "org.pkl.core.StackFrameTransformersTest"
-     "org.pkl.core.runtime.StackTraceRendererTest"
-     "org.pkl.core.stdlib.MinimalReportTest"
-     "org.pkl.core.stdlib.SimpleReportTest"}
+     "org.pkl.core.runtime.StackTraceRendererTest"}
    :source-methods-by-class
    {"org.pkl.core.AnalyzerTest"
     #{"simple case"
@@ -79,7 +77,7 @@
 
 (def ^:private value-runtime-parser-path-partition
   {:name :value-runtime-parser-path-utilities
-   :expected-count 289
+   :expected-count 254
    :source-classes
    #{"org.pkl.core.ClassInheritanceTest"
      "org.pkl.core.DataSizeTest"
@@ -100,7 +98,6 @@
      "org.pkl.core.parser.MultiLineStringLiteralTest"
      "org.pkl.core.parser.ShebangTest"
      "org.pkl.core.parser.TrailingCommasTest"
-     "org.pkl.core.runtime.CommandSpecParserTest"
      "org.pkl.core.runtime.IteratorsTest"
      "org.pkl.core.runtime.VmClassTest"
      "org.pkl.core.runtime.VmDataSizeTest"
@@ -194,13 +191,13 @@
 (def ^:private complete-matrix-boundary
   {:cases 605
    :classifications
-   {"jvm-shared-product-behavior" 291
+   {"jvm-shared-product-behavior" 251
     "idiomatic-dotnet-adaptation" 272
-    "user-approved-excluded-surface" 40
+    "user-approved-excluded-surface" 80
     "test-infrastructure-only-mechanics" 2}
    :package-statuses
-   {"PASS" 563
-    "APPROVED_EXCLUSION" 40
+   {"PASS" 523
+    "APPROVED_EXCLUSION" 80
     "TEST_INFRASTRUCTURE" 2}})
 
 (defn- fail!
@@ -404,7 +401,7 @@
 
 (defn validate-complete-package-matrix!
   "Requires the three implementation partitions to be disjoint, exhaustive,
-  and entirely PASS across the pinned 563-row product matrix. The remaining
+  and entirely PASS across the pinned 523-row product matrix. The remaining
   rows must retain only their source-controlled approved-exclusion or
   test-infrastructure dispositions."
   ([validated-manifest result-file]

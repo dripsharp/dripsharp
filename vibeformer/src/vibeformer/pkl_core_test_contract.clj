@@ -77,7 +77,9 @@
 
 (def ^:private behavior-families
   #{"evaluation-runtime"
+    "excluded-cli-command"
     "excluded-cli-repl"
+    "excluded-cli-test-reporting"
     "excluded-format-transport"
     "loading-security-project-package"
     "parser-analysis"
@@ -366,6 +368,10 @@
                  "org.pkl.core.externalreader.MessagePackCodecTest"}
                source-class) :messagepack-server
     (= source-class "org.pkl.core.ReplServerTest") :cli-repl
+    (= source-class "org.pkl.core.runtime.CommandSpecParserTest") :cli-command
+    (contains? #{"org.pkl.core.stdlib.MinimalReportTest"
+                 "org.pkl.core.stdlib.SimpleReportTest"}
+               source-class) :cli-test-reporting
     :else nil))
 
 (defn- behavior-family
@@ -373,6 +379,9 @@
   (cond
     (= source-class "org.pkl.core.RepositoryHygiene") "test-infrastructure"
     (= :cli-repl (excluded-kind source-class source-method)) "excluded-cli-repl"
+    (= :cli-command (excluded-kind source-class source-method)) "excluded-cli-command"
+    (= :cli-test-reporting (excluded-kind source-class source-method))
+    "excluded-cli-test-reporting"
     (excluded-kind source-class source-method) "excluded-format-transport"
     (or (str/includes? source-class ".parser.")
         (str/includes? source-class ".ast.builder.")
@@ -439,7 +448,7 @@
             ";port-scope.md#explicit-scope-decisions:MessagePack-support-is-out-of-scope")
        :execution-owner "approved-exclusion-audit"}
 
-      (= excluded :cli-repl)
+      (contains? #{:cli-repl :cli-command :cli-test-reporting} excluded)
       {:product-classification "user-approved-excluded-surface"
        :scope-basis
        "product-goal.md#user-approved-product-exclusions:CLI-product-support;port-scope.md#explicit-scope-decisions:CLI-support-is-out-of-scope"
@@ -475,7 +484,9 @@
      "value-model-rendering" ["core" "public-api" "language"]
      "evaluation-runtime" ["language" "core"]
      "excluded-format-transport" ["core" "language"]
+     "excluded-cli-command" ["core" "public-api"]
      "excluded-cli-repl" ["core" "public-api"]
+     "excluded-cli-test-reporting" ["core" "public-api"]
      "test-infrastructure" ["language"])))
 
 (defn- fixtures

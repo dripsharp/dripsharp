@@ -301,7 +301,7 @@ namespace Pkl.Core.Module
         public Uri ProjectFileUri => GetProjectFileUri();
     }
 
-    public sealed class AssemblyModuleKeyFactory : ModuleKeyFactory
+    internal sealed class AssemblyModuleKeyFactory : ModuleKeyFactory
     {
         private readonly DotNetLoading.AssemblyResourceIndex resources;
         private readonly string uriScheme;
@@ -441,7 +441,7 @@ namespace Pkl.Core.Resource
             new EmbeddedResourceReader(assembly, resourcePrefix, uriScheme);
     }
 
-    public sealed class EmbeddedResourceReader : ResourceReader
+    internal sealed class EmbeddedResourceReader : ResourceReader
     {
         private readonly DotNetLoading.AssemblyResourceIndex resources;
         private readonly string uriScheme;

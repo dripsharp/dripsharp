@@ -1,5 +1,6 @@
 (ns vibeformer.public-api-contract-test
-  (:require [clojure.string :as str]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
@@ -45,11 +46,11 @@
         kinds (set (map :kind rows))]
     (testing "all independently extracted declarations and package rows are classified"
       (is (= 6353 (:upstream-rows summary)))
-      (is (= 2911 (:package-rows summary)))
+      (is (= 2724 (:package-rows summary)))
       (is (= 20 (:behavior-rows summary)))
       (is (zero? (:failing-controls summary)))
       (is (= 6353 (reduce + (vals (:classifications summary)))))
-      (is (= 2911 (reduce + (vals (:package-classifications summary)))))
+      (is (= 2724 (reduce + (vals (:package-classifications summary)))))
       (is (zero? (get (:package-classifications summary)
                       "public-implementation-internal" 0))))
 
@@ -79,6 +80,31 @@
                                        "vibeformer/doc/product-goal.md#User-Approved")
                     exclusions))))
 
+    (testing "native helper decisions come from authoritative upstream usage"
+      (let [decisions contract/native-owner-decisions
+            command-owners (filter #(str/starts-with? % "Pkl.Core.PklCommand")
+                                   (keys decisions))
+            internal-owners (->> decisions
+                                 (remove #(= "product-api-native"
+                                             (:classification (val %))))
+                                 (map key)
+                                 set)]
+        (is (= 30 (count decisions)))
+        (is (every? #(str/starts-with? (:upstream-provenance %) "research/pkl/")
+                    (vals decisions)))
+        (is (not-any? #(or (str/includes? (:upstream-provenance %)
+                                          "PackageConsumer.cs")
+                           (str/includes? (:upstream-provenance %)
+                                          "PklCorePackageCorpusRunner.cs"))
+                      (vals decisions)))
+        (is (= 7 (count command-owners)))
+        (is (every? #(= "cli.options" (get-in decisions [% :behavior-family]))
+                    command-owners))
+        (is (empty? (set/intersection internal-owners
+                                      (set (map :owner @package)))))
+        (is (contains? (set (map :owner @package))
+                       "Pkl.Core.StackFrameTransformerExtensions"))))
+
     (testing "all four product areas have surface or behavior rows"
       (is (every? #(pos? (get (:areas summary) % 0))
                   ["parser" "core" "config-binding"]))
@@ -107,7 +133,7 @@
                    [:mismatch :kind]))))
 
   (testing "package reflection"
-    (is (= {:matched 2911}
+    (is (= {:matched 2724}
            (contract/compare-package-surface @package @package)))
     (is (= :package-public-surface-drift
            (get-in (contract/compare-package-surface @package (pop @package))
@@ -297,8 +323,8 @@
         summary (contract/write-strong-contract-keys! @workspace output)
         lines (->> (str/split-lines (Files/readString output))
                    (remove #(str/starts-with? % "#")) vec)]
-    (is (= {:rows 2860 :keys 2788} summary))
-    (is (= 2788 (count lines)))
+    (is (= {:rows 2682 :keys 2623} summary))
+    (is (= 2623 (count lines)))
     (is (= (sort lines) lines))
     (is (some #(str/includes? % "Pkl.Core\tPkl.Core.ConfigBinder\tmethod\tBind")
               lines))

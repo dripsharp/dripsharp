@@ -217,6 +217,6 @@ and fail closed; byte-for-byte repetition and deliberate JVM/package,
 coverage, classification, provenance, crash, and timeout controls are retained under
 `validation-output/pkl-core-corpus`. The aggregate command re-discovers the
 live upstream case set, requires all three implementation partitions to form
-one non-overlapping 563-row product matrix, and fails unless every in-scope row
+one non-overlapping 523-row product matrix, and fails unless every in-scope row
 matches the independent package result. Product mismatches cannot become
 exclusions.
