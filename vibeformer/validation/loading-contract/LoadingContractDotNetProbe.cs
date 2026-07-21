@@ -1831,7 +1831,7 @@ static class LoadingContractDotNetProbe
 
     static string ObserveAssemblyModules()
     {
-        var factory = (AssemblyModuleKeyFactory)ModuleKeyFactories.CreateAssembly(
+        ModuleKeyFactory factory = ModuleKeyFactories.CreateAssembly(
             Assembly.GetExecutingAssembly(), "Contract.Modules");
         using (Evaluator evaluator = EvaluatorBuilder.Unconfigured()
             .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
@@ -1876,7 +1876,7 @@ static class LoadingContractDotNetProbe
 
     static string ObserveEmbeddedResources()
     {
-        var reader = (EmbeddedResourceReader)ResourceReaders.CreateEmbeddedResources(
+        ResourceReader reader = ResourceReaders.CreateEmbeddedResources(
             Assembly.GetExecutingAssembly(), "Contract.Resources");
         SecurityManager manager = SecurityManagers.CreateStandard(
             new List<Regex>(), new List<Regex> { new("embedded:") }, _ => 0, null);
