@@ -57,6 +57,8 @@
                                       :dotnet.type/format-exception]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder"
                               :dotnet.type/string-builder]
+   "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder"
+                                      :dotnet.type/string-builder-base]
    "java.lang.Math" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat"
                        :dotnet.type/java-compat]

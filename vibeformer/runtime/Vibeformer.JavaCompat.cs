@@ -800,11 +800,12 @@ internal interface JavaRemovableIterator
     void Remove();
 }
 
-internal interface JavaIterator<out T>
+public interface JavaIterator<out T>
 {
     bool HasNext();
     T Next();
-    void Remove();
+    void Remove() => throw new NotSupportedException(
+        "This Java iterator does not expose mutable removal semantics.");
 }
 
 internal sealed class JavaListIterator<T>(IEnumerable<T> values) : JavaIterator<T>
@@ -1282,6 +1283,14 @@ internal static class JavaCompat
         value.IndexOf((char)character, fromIndex);
     internal static bool StringContains(string value, string part) =>
         value.Contains(part, StringComparison.Ordinal);
+    internal static string StringTrim(string value)
+    {
+        var start = 0;
+        while (start < value.Length && value[start] <= '\u0020') start++;
+        var end = value.Length;
+        while (end > start && value[end - 1] <= '\u0020') end--;
+        return value.Substring(start, end - start);
+    }
 
     internal static int StringHashCode(string value)
     {
@@ -4776,6 +4785,19 @@ internal static class JavaCompat
         stream.Write(ToUnsignedBytes(values));
     internal static void OutputStreamWrite(Stream stream, int value) =>
         stream.WriteByte(unchecked((byte)value));
+    internal static int InputStreamRead(Stream stream) => stream.ReadByte();
+    internal static int InputStreamRead(Stream stream, sbyte[] values) =>
+        InputStreamRead(stream, values, 0, values.Length);
+    internal static int InputStreamRead(Stream stream, sbyte[] values, int offset, int count)
+    {
+        if (count == 0) return 0;
+        var buffer = new byte[count];
+        var read = stream.Read(buffer, 0, count);
+        if (read == 0) return -1;
+        for (var index = 0; index < read; index++)
+            values[offset + index] = unchecked((sbyte)buffer[index]);
+        return read;
+    }
     internal static void MemoryStreamWriteTo(MemoryStream source, Stream destination)
     {
         if (!source.TryGetBuffer(out var contents))
