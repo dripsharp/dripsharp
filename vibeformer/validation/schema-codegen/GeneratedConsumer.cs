@@ -510,7 +510,7 @@ static class GeneratedConsumer
             "$.count", typeof(int), "not a Pkl Int or Float");
         ExpectBindFailure(
             () => binder.Bind<CountModel>(new Dictionary<string, object?>()),
-            "$", typeof(CountModel), "missing required Pkl property `count`");
+            "$", typeof(CountModel), "required Pkl property `count` is missing");
         ExpectBindFailure(
             () => binder.Bind<CountModel>(new Dictionary<string, object?> { ["count"] = long.MaxValue }),
             "$.count", typeof(int), "numeric overflow");

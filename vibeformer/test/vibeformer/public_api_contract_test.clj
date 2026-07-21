@@ -133,7 +133,7 @@
                    [:mismatch :kind]))))
 
   (testing "package reflection"
-      (is (= {:matched 2786}
+    (is (= {:matched 2786}
            (contract/compare-package-surface @package @package)))
     (is (= :package-public-surface-drift
            (get-in (contract/compare-package-surface @package (pop @package))
@@ -296,6 +296,34 @@
                 resource))
       (is (some #(= "dispose" (:lifecycle %)) resource))
       (is (some #(= "delegate" (:delegate %)) formatter)))))
+
+(deftest public-contract-compiler-preserves-source-only-generic-nullability
+  (let [project (paths/resolve-path (:root @fixtures) "PackageProbeFixture.csproj")
+        _ (process/run! {:command ["dotnet" "build" project
+                                   "--configuration" "Release" "--nologo"]
+                         :directory @workspace})
+        assembly (paths/resolve-path (:root @fixtures) "bin" "Release" "net10.0"
+                                     "PackageProbeFixture.dll")
+        strong-keys (temp-file "strong-keys.tsv")
+        output (temp-file "GeneratedSignatures.cs")
+        compiler (paths/resolve-path @workspace "vibeformer" "validation"
+                                     "public-contract-compiler"
+                                     "PublicContractCompiler.csproj")]
+    (Files/writeString
+     strong-keys
+     (str "PackageProbeFixture\t"
+          "Vibeformer.PublicApiProbeFixture.Resource\tmethod\tMap\t1\n"
+          "PackageProbeFixture\t"
+          "Vibeformer.PublicApiProbeFixture.Resource\tmethod\tMapNullable\t1\n")
+     (make-array OpenOption 0))
+    (process/run! {:command ["dotnet" "run" "--project" compiler
+                             "--configuration" "Release" "--"
+                             "generate" output strong-keys assembly]
+                   :directory @workspace})
+    (let [source (Files/readString output)]
+      (is (str/includes? source "where T1 : notnull"))
+      (is (re-find #"private delegate T1\? ContractDelegate[^(]+<T0, T1>"
+                   source)))))
 
 (deftest whole-public-body-audit-is-reviewed-and-perturbation-sensitive
   (let [rows @body-candidates]

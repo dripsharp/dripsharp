@@ -441,7 +441,11 @@ internal static class Program
             .Any(type => type.FullName == "System.Runtime.CompilerServices.IsReadOnlyAttribute")
             ? "ref readonly " : method.ReturnType.IsByRef ? "ref " : "";
         var type = method.ReturnType.IsByRef ? method.ReturnType.GetElementType()! : method.ReturnType;
-        return prefix + CSharpType(type, names, nullability);
+        var rendered = CSharpType(type, names, nullability);
+        if (type.IsGenericParameter &&
+            nullability?.ReadState == System.Reflection.NullabilityState.Nullable)
+            rendered += "?";
+        return prefix + rendered;
     }
 
     private static string ParameterDeclaration(
@@ -487,8 +491,11 @@ internal static class Program
         {
             var values = new List<string>();
             var attributes = parameter.GenericParameterAttributes;
-            if ((attributes & GenericParameterAttributes.ReferenceTypeConstraint) != 0) values.Add("class");
+            var nullableAnnotation = NullableAnnotation(parameter);
+            if ((attributes & GenericParameterAttributes.ReferenceTypeConstraint) != 0)
+                values.Add(nullableAnnotation == 2 ? "class?" : "class");
             else if ((attributes & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) values.Add("struct");
+            else if (nullableAnnotation == 1) values.Add("notnull");
             values.AddRange(parameter.GetGenericParameterConstraints().Select(item => CSharpType(item, names)));
             if ((attributes & GenericParameterAttributes.DefaultConstructorConstraint) != 0 &&
                 (attributes & GenericParameterAttributes.NotNullableValueTypeConstraint) == 0) values.Add("new()");
@@ -497,6 +504,35 @@ internal static class Program
                     .Append(string.Join(", ", values));
         }
         return result.ToString();
+    }
+
+    private static byte? NullableAnnotation(Type parameter)
+    {
+        var direct = NullableAttributeValue(parameter.GetCustomAttributesData(), "NullableAttribute");
+        if (direct is not null) return direct;
+        for (MemberInfo? owner = parameter.DeclaringMethod ?? (MemberInfo?)parameter.DeclaringType;
+             owner is not null;
+             owner = owner is Type type ? type.DeclaringType : owner.DeclaringType)
+        {
+            var context = NullableAttributeValue(owner.GetCustomAttributesData(), "NullableContextAttribute");
+            if (context is not null) return context;
+        }
+        return null;
+    }
+
+    private static byte? NullableAttributeValue(
+        IEnumerable<CustomAttributeData> attributes,
+        string attributeName)
+    {
+        var attribute = attributes.FirstOrDefault(item =>
+            item.AttributeType.Namespace == "System.Runtime.CompilerServices" &&
+            item.AttributeType.Name == attributeName);
+        if (attribute is null || attribute.ConstructorArguments.Count != 1) return null;
+        var value = attribute.ConstructorArguments[0].Value;
+        if (value is byte scalar) return scalar;
+        if (value is IReadOnlyCollection<CustomAttributeTypedArgument> values && values.Count != 0 &&
+            values.First().Value is byte first) return first;
+        return null;
     }
 
     private static string CSharpType(

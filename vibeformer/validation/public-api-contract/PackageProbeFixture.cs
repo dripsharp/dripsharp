@@ -14,5 +14,6 @@ public sealed class Resource<T> : IResource<T> where T : class, new()
     public T Value { get; }
     public string? Label { get; set; }
     public TResult Map<TResult>(Func<T, TResult> mapper) where TResult : notnull => mapper(Value);
+    public TResult? MapNullable<TResult>(Func<T, TResult?> mapper) => mapper(Value);
     public void Dispose() { }
 }
