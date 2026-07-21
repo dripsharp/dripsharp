@@ -283,18 +283,32 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest unsupported-do-while-constructor-statements-fail-closed
+(deftest do-while-statements-lower-structurally
   (let [fixture
         (model! {"example/Loop.java"
                  (str "package example; public final class Loop { "
-                      "public Loop(boolean running) { do { } while (running); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= :unsupported-java-element
-           (get-in (ex-data error) [:diagnostic :kind])))
-    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
-                       "CtDo"))
-    (is (pos? (get-in (ex-data error) [:diagnostic :location :line])))))
+                      "static int count(int limit) { int count = 0; "
+                      "do { count++; } while (count < limit); return count; } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Loop.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Loop.cs")))]
+    (is (str/includes?
+         first-source
+         (str "do {\n"
+              "count++;\n"
+              "} while ((count < limit));")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest unmapped-jdk-constructor-in-body-fails-closed
   (let [fixture
@@ -1377,7 +1391,7 @@
         error (caught #(emit! fixture 1))]
     (is (= :unsupported-destination-rule (:kind (ex-data error))))
     (is (str/includes? (.getMessage error)
-                       "Anonymous class requires exact Iterator or project-class semantics"))))
+                       "Anonymous class requires exact Iterator, X509TrustManager, or project-class semantics"))))
 
 (deftest capturing-anonymous-project-subclasses-preserve-virtual-dispatch-and-super
   (let [fixture
@@ -1877,17 +1891,30 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-filter-stream-base-constructor-remains-fail-closed
+(deftest filter-stream-base-construction-uses-a-csharp-constructor-initializer
   (let [fixture
-        (model! {"example/Unsupported.java"
+        (model! {"example/Filtering.java"
                  (str "package example; import java.io.FilterOutputStream; "
-                      "import java.io.OutputStream; public final class Unsupported "
-                      "extends FilterOutputStream { Unsupported(OutputStream out) { "
+                      "import java.io.OutputStream; public final class Filtering "
+                      "extends FilterOutputStream { Filtering(OutputStream out) { "
                       "super(out); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.io.FilterOutputStream#<init>(java.io.OutputStream)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Filtering.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Filtering.cs")))]
+    (is (str/includes? first-source "Filtering(global::System.IO.Stream @out) : base(@out)"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest concrete-byte-array-input-read-preserves-signed-stream-semantics
   (let [fixture
@@ -2256,3 +2283,891 @@
     (is (= :unsupported-destination-rule (:kind (ex-data error))))
     (is (str/includes? (ex-message error)
                        "instance initializer lowering is not implemented"))))
+
+(deftest ssl-context-socket-factory-uses-the-reusable-tls-client-factory
+  (let [fixture
+        (model! {"example/TlsClient.java"
+                 (str "package example; import java.net.Socket; "
+                      "import javax.net.ssl.SSLContext; public final class TlsClient { "
+                      "static Socket connect(SSLContext context, String host, int port) "
+                      "throws Exception { return context.getSocketFactory()"
+                      ".createSocket(host, port); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/TlsClient.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/TlsClient.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return context.GetSocketFactory().CreateSocket(host, port);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-ssl-context-protocol-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import javax.net.ssl.SSLContext; "
+                      "public final class Unsupported { static String protocol("
+                      "SSLContext context) { return context.getProtocol(); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:javax.net.ssl.SSLContext#getProtocol()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest ssl-context-server-socket-factory-preserves-the-tls-listener-boundary
+  (let [fixture
+        (model! {"example/TlsServer.java"
+                 (str "package example; import java.net.ServerSocket; "
+                      "import javax.net.ssl.SSLContext; public final class TlsServer { "
+                      "static ServerSocket listen(SSLContext context, int port) "
+                      "throws Exception { return context.getServerSocketFactory()"
+                      ".createServerSocket(port); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/TlsServer.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/TlsServer.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return context.GetServerSocketFactory()"
+              ".CreateServerSocket(port);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest keystore-managers-initialize-a-reusable-ssl-context
+  (let [fixture
+        (model! {"example/TlsContexts.java"
+                 (str "package example; import java.io.InputStream; import java.net.URL; "
+                      "import java.security.KeyStore; import javax.net.ssl.KeyManager; "
+                      "import javax.net.ssl.KeyManagerFactory; import javax.net.ssl.SSLContext; "
+                      "import javax.net.ssl.TrustManager; import javax.net.ssl.TrustManagerFactory; "
+                      "public final class TlsContexts { static SSLContext create("
+                      "URL location, String password) throws Exception { "
+                      "KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType()); "
+                      "try (InputStream input = location.openStream()) { "
+                      "store.load(input, password.toCharArray()); } "
+                      "KeyManagerFactory keys = KeyManagerFactory.getInstance("
+                      "KeyManagerFactory.getDefaultAlgorithm()); "
+                      "keys.init(store, password.toCharArray()); "
+                      "KeyManager[] keyManagers = keys.getKeyManagers(); "
+                      "TrustManagerFactory trusts = TrustManagerFactory.getInstance("
+                      "TrustManagerFactory.getDefaultAlgorithm()); trusts.init(store); "
+                      "TrustManager[] trustManagers = trusts.getTrustManagers(); "
+                      "SSLContext context = SSLContext.getInstance(\"TLS\"); "
+                      "context.init(keyManagers, trustManagers, null); return context; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/TlsContexts.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/TlsContexts.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaKeyStore store = "
+              "global::Vibeformer.Runtime.JavaKeyStore.GetInstance("
+              "global::Vibeformer.Runtime.JavaKeyStore.GetDefaultType());")))
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.OpenUrlStream(location)"))
+    (is (str/includes?
+         first-source
+         "context.Init(keyManagers, trustManagers, null);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-keystore-size-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.security.KeyStore; "
+                      "public final class Unsupported { static int size(KeyStore store) "
+                      "throws Exception { return store.size(); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.security.KeyStore#size()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest decimal-integer-parsing-uses-the-reusable-java-parser
+  (let [fixture
+        (model! {"example/Numbers.java"
+                 (str "package example; public final class Numbers { "
+                      "static int parse(String value) { return Integer.parseInt(value); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Numbers.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Numbers.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.ParseInt(value, 10);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-unsigned-integer-parsing-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; public final class Unsupported { "
+                      "static int parse(String value) { "
+                      "return Integer.parseUnsignedInt(value); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.lang.Integer#parseUnsignedInt(java.lang.String)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest component-uri-construction-uses-the-reusable-java-uri-contract
+  (let [fixture
+        (model! {"example/Uris.java"
+                 (str "package example; import java.net.URI; public final class Uris { "
+                      "static URI create(String scheme, String user, String host, int port, "
+                      "String path, String query, String fragment) throws Exception { "
+                      "return new URI(scheme, user, host, port, path, query, fragment); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Uris.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Uris.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return global::Vibeformer.Runtime.JavaCompat.NewUri("
+              "scheme, user, host, port, path, query, fragment);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-authority-uri-construction-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.net.URI; public final class Unsupported { "
+                      "static URI create(String scheme, String authority, String path, "
+                      "String query, String fragment) throws Exception { "
+                      "return new URI(scheme, authority, path, query, fragment); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= (str "executable:java.net.URI#<init>(java.lang.String,java.lang.String,"
+                "java.lang.String,java.lang.String,java.lang.String)")
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest concrete-byte-array-output-single-byte-write-is-reusable
+  (let [fixture
+        (model! {"example/Bytes.java"
+                 (str "package example; import java.io.ByteArrayOutputStream; "
+                      "public final class Bytes { static byte[] write(int value) { "
+                      "ByteArrayOutputStream output = new ByteArrayOutputStream(); "
+                      "output.write(value); return output.toByteArray(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Bytes.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Bytes.cs")))]
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.OutputStreamWrite(output, value);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-byte-array-output-write-bytes-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.io.ByteArrayOutputStream; "
+                      "public final class Unsupported { static void write("
+                      "ByteArrayOutputStream output, byte[] value) { "
+                      "output.writeBytes(value); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.io.ByteArrayOutputStream#writeBytes(byte[])"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest concrete-array-list-operations-use-reusable-list-semantics
+  (let [fixture
+        (model! {"example/Lists.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "public final class Lists { "
+                      "static String takeLast(ArrayList<String> values) { "
+                      "if (values.isEmpty()) return \"\"; "
+                      "String value = values.get(values.size() - 1); "
+                      "return values.remove(values.size() - 1) + value; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Lists.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Lists.cs")))]
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.ListIsEmpty(values)"))
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.ListGet(values, (values.Count - 1))"))
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.ListRemove(values, (values.Count - 1))"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-array-list-capacity-operation-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "public final class Unsupported { static void reserve("
+                      "ArrayList<String> values) { values.ensureCapacity(10); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.util.ArrayList#ensureCapacity(int)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest collector-suppliers-materialize-concrete-array-lists
+  (let [fixture
+        (model! {"example/Collecting.java"
+                 (str "package example; import java.util.ArrayList; import java.util.List; "
+                      "import static java.util.stream.Collectors.toCollection; "
+                      "public final class Collecting { static ArrayList<String> copy("
+                      "List<String> values) { return values.stream()"
+                      ".collect(toCollection(ArrayList::new)); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Collecting.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Collecting.cs")))]
+    (is (str/includes?
+         first-source
+         "return new global::System.Collections.Generic.List<string>(values);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-unmodifiable-list-collector-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.List; "
+                      "import static java.util.stream.Collectors.toUnmodifiableList; "
+                      "public final class Unsupported { static List<String> copy("
+                      "List<String> values) { return values.stream()"
+                      ".collect(toUnmodifiableList()); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.util.stream.Collectors#toUnmodifiableList()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest string-last-index-search-uses-java-character-semantics
+  (let [fixture
+        (model! {"example/Search.java"
+                 (str "package example; public final class Search { "
+                      "static int space(String value) { return value.lastIndexOf(' '); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Search.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Search.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.StringLastIndexOf(value, ' ');"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-string-last-index-from-offset-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; public final class Unsupported { "
+                      "static int search(String value) { return value.lastIndexOf('x', 2); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.lang.String#lastIndexOf(int,int)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest bounded-string-split-uses-the-reusable-java-regex-contract
+  (let [fixture
+        (model! {"example/Splitting.java"
+                 (str "package example; public final class Splitting { "
+                      "static String[] parts(String value) { return value.split(\"\\\\s\", 3); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Splitting.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Splitting.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.StringSplit(value, \"\\\\s\", 3);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-string-replace-all-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; public final class Unsupported { "
+                      "static String replace(String value) { "
+                      "return value.replaceAll(\"x\", \"y\"); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.lang.String#replaceAll(java.lang.String,java.lang.String)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest thread-local-rfc1123-date-state-uses-reusable-time-semantics
+  (let [fixture
+        (model! {"example/Dates.java"
+                 (str "package example; import java.time.ZoneOffset; "
+                      "import java.time.ZonedDateTime; import java.time.format.DateTimeFormatter; "
+                      "public final class Dates { private static final ThreadLocal<Long> LAST = "
+                      "ThreadLocal.withInitial(() -> 0L); static String current() { "
+                      "long previous = LAST.get(); long now = System.currentTimeMillis(); "
+                      "LAST.set(now); return DateTimeFormatter.RFC_1123_DATE_TIME.format("
+                      "ZonedDateTime.now(ZoneOffset.UTC)) + previous; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Dates.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Dates.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaThreadLocal<long>.WithInitial("
+              "() => 0L)")))
+    (is (str/includes?
+         first-source
+         "long now = global::System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();"))
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaDateTimeFormatter.Rfc1123.Format("
+              "global::System.DateTimeOffset.UtcNow)")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-thread-local-remove-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; public final class Unsupported { "
+                      "static void clear(ThreadLocal<String> value) { value.remove(); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.lang.ThreadLocal#remove()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest ordinary-supplier-get-invokes-the-resolved-delegate
+  (let [fixture
+        (model! {"example/Supplied.java"
+                 (str "package example; import java.util.function.Supplier; "
+                      "public final class Supplied { static String value("
+                      "Supplier<String> supplier) { return supplier.get(); } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Supplied.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Supplied.cs")))]
+    (is (str/includes? first-source "return supplier();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest anonymous-x509-trust-managers-preserve-the-throw-to-reject-contract
+  (let [fixture
+        (model! {"example/UnsafeTls.java"
+                 (str "package example; import java.security.cert.X509Certificate; "
+                      "import javax.net.ssl.SSLContext; import javax.net.ssl.TrustManager; "
+                      "import javax.net.ssl.X509TrustManager; public final class UnsafeTls { "
+                      "static SSLContext create() throws Exception { TrustManager[] managers = "
+                      "new TrustManager[]{ new X509TrustManager() { "
+                      "public X509Certificate[] getAcceptedIssuers() { "
+                      "return new X509Certificate[0]; } "
+                      "public void checkServerTrusted(X509Certificate[] chain, String authType) {} "
+                      "public void checkClientTrusted(X509Certificate[] chain, String authType) {} "
+                      "} }; SSLContext context = SSLContext.getInstance(\"SSL\"); "
+                      "context.init(null, managers, null); return context; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/UnsafeTls.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/UnsafeTls.cs")))]
+    (is (str/includes? first-source "private sealed class Anonymous_1_"))
+    (is (str/includes?
+         first-source
+         ": global::Vibeformer.Runtime.JavaX509TrustManager"))
+    (is (str/includes? first-source "void CheckServerTrusted("))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest synchronized-blocks-use-the-dotnet-monitor-contract
+  (let [fixture
+        (model! {"example/Locked.java"
+                 (str "package example; public final class Locked { "
+                      "static int update(Object monitor, int value) { "
+                      "synchronized (monitor) { return value + 1; } } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Locked.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Locked.cs")))]
+    (is (str/includes?
+         first-source
+         (str "lock (monitor) {\n"
+              "return (value + 1);\n"
+              "}")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest multi-catch-collapses-only-equal-destination-exception-types
+  (let [fixture
+        (model! {"example/Security.java"
+                 (str "package example; import java.security.KeyManagementException; "
+                      "import java.security.NoSuchAlgorithmException; import javax.net.ssl.SSLContext; "
+                      "public final class Security { static boolean initialize() { try { "
+                      "SSLContext context = SSLContext.getInstance(\"TLS\"); "
+                      "context.init(null, null, null); return true; "
+                      "} catch (KeyManagementException | NoSuchAlgorithmException failure) { "
+                      "return failure.getMessage() == null; } } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Security.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Security.cs")))]
+    (is (str/includes?
+         first-source
+         "catch (global::System.Security.Cryptography.CryptographicException failure)"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest multi-catch-with-distinct-destination-types-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.io.IOException; "
+                      "import java.security.NoSuchAlgorithmException; "
+                      "public final class Unsupported { static void first() throws IOException {} "
+                      "static void second() throws NoSuchAlgorithmException {} static void run() { "
+                      "try { first(); second(); } catch (IOException | NoSuchAlgorithmException failure) {} "
+                      "} }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
+                       "multi-catch alternatives require one exact destination type"))))
+
+(deftest no-argument-ssl-socket-factories-preserve-deferred-tls-state
+  (let [fixture
+        (model! {"example/Sockets.java"
+                 (str "package example; import java.net.Socket; "
+                      "import javax.net.ssl.SSLSocketFactory; public final class Sockets { "
+                      "static Socket create(SSLSocketFactory factory) throws Exception { "
+                      "return factory.createSocket(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Sockets.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Sockets.cs")))]
+    (is (str/includes? first-source "return factory.CreateSocket();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest ordinary-continue-statements-lower-structurally
+  (let [fixture
+        (model! {"example/Continuing.java"
+                 (str "package example; public final class Continuing { "
+                      "static int odds(int limit) { int count = 0; "
+                      "for (int value = 0; value < limit; value++) { "
+                      "if (value % 2 == 0) continue; count++; } return count; } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Continuing.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Continuing.cs")))]
+    (is (str/includes? first-source "if (((value % 2) == 0)) {\ncontinue;\n}"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest file-length-and-buffered-input-use-reusable-io-semantics
+  (let [fixture
+        (model! {"example/Files.java"
+                 (str "package example; import java.io.BufferedInputStream; import java.io.File; "
+                      "import java.io.InputStream; public final class Files { "
+                      "static long length(File file) { return file.length(); } "
+                      "static InputStream open(File file) throws Exception { "
+                      "return new BufferedInputStream(java.nio.file.Files.newInputStream(file.toPath())); "
+                      "} }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Files.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Files.cs")))]
+    (is (str/includes?
+         first-source
+         "return file.Length;"))
+    (is (str/includes?
+         first-source
+         (str "new global::System.IO.BufferedStream("
+              "global::Vibeformer.Runtime.JavaCompat.OpenInputStream(file.FullName))")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-file-delete-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.io.File; public final class Unsupported { "
+                      "static boolean delete(File file) { return file.delete(); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.io.File#delete()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest service-loader-class-scope-and-lowercase-are-reusable
+  (let [fixture
+        (model! {"example/Decoder.java"
+                 "package example; public interface Decoder {}"
+                 "example/Registry.java"
+                 (str "package example; import java.util.ServiceLoader; "
+                      "public final class Registry { static Iterable<Decoder> load() { "
+                      "return ServiceLoader.load(Decoder.class, Registry.class.getClassLoader()); } "
+                      "static String normalize(String value) { return value.toLowerCase(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Registry.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Registry.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaCompat.LoadServices<"
+              "global::Example.Java.Library.Decoder>(typeof(global::Example.Java.Library.Decoder), "
+              "typeof(global::Example.Java.Library.Registry).Assembly)")))
+    (is (str/includes? first-source "return value.ToLowerInvariant();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-service-loader-reload-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.ServiceLoader; "
+                      "public final class Unsupported { static void reload("
+                      "ServiceLoader<Runnable> services) { services.reload(); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.util.ServiceLoader#reload()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest simple-immutable-map-entries-use-a-read-only-entry-carrier
+  (let [fixture
+        (model! {"example/Entries.java"
+                 (str "package example; import java.util.AbstractMap; import java.util.Map; "
+                      "public final class Entries { static Map.Entry<String, String> create("
+                      "String key, String value) { "
+                      "return new AbstractMap.SimpleImmutableEntry<>(key, value); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Entries.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Entries.cs")))]
+    (is (str/includes?
+         first-source
+         (str "new global::Vibeformer.Runtime.JavaSimpleImmutableEntry<"
+              "string, string>(key, value)")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest project-constructor-references-lower-to-arity-exact-lambdas
+  (let [fixture
+        (model! {"example/Failure.java"
+                 (str "package example; public final class Failure { "
+                      "Failure(String message, int line) {} }")
+                 "example/Factories.java"
+                 (str "package example; import java.util.function.BiFunction; "
+                      "public final class Factories { static BiFunction<String, Integer, Failure> "
+                      "factory() { return Failure::new; } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Factories.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Factories.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return (value0, value1) => new global::Example.Java.Library.Failure("
+              "value0, value1);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest utf8-url-form-decoding-uses-the-reusable-java-contract
+  (let [fixture
+        (model! {"example/Urls.java"
+                 (str "package example; import java.net.URLDecoder; "
+                      "public final class Urls { static String decode(String value) "
+                      "throws Exception { return URLDecoder.decode(value, \"UTF-8\"); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Urls.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Urls.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.UrlDecode(value, \"UTF-8\");"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-url-decoder-charset-overload-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.net.URLDecoder; "
+                      "import java.nio.charset.StandardCharsets; public final class Unsupported { "
+                      "static String decode(String value) { "
+                      "return URLDecoder.decode(value, StandardCharsets.UTF_8); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.net.URLDecoder#decode(java.lang.String,java.nio.charset.Charset)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest java-field-and-method-name-collisions-get-stable-private-field-names
+  (let [fixture
+        (model! {"example/Options.java"
+                 (str "package example; public final class Options { "
+                      "private boolean enabled; private int __field_enabled = 1; "
+                      "public boolean enabled() { return enabled; } "
+                      "public Options enabled(boolean value) { this.enabled = value; return this; } "
+                      "int generatedNameGuard() { return __field_enabled; } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Options.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Options.cs")))]
+    (is (str/includes? first-source "private bool __field_enabled2;"))
+    (is (str/includes? first-source "private int __field_enabled = 1;"))
+    (is (str/includes? first-source "public bool enabled()"))
+    (is (str/includes? first-source "return this.__field_enabled2;"))
+    (is (str/includes? first-source "this.__field_enabled2 = value;"))
+    (is (= first-source second-source))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest constructor-chaining-and-invocation-conditionals-remain-expressions
+  (let [fixture
+        (model! {"example/Chains.java"
+                 (str "package example; public class Chains { private int value; "
+                      "public Chains() { this(1); } "
+                      "public Chains(int value) { super(); this.value = value; } "
+                      "String left() { return \"left\"; } String right() { return \"right\"; } "
+                      "String choose(boolean left) { return left ? left() : right(); } }")})
+        emission (emit! fixture 2)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Chains.cs")))]
+    (is (str/includes? source "public Chains() : this(1)"))
+    (is (str/includes? source "public Chains(int value) : base()"))
+    (is (str/includes? source "return (left ? this.left() : this.right());"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest non-static-member-classes-carry-their-java-outer-instance
+  (let [fixture
+        (model! {"example/Outer.java"
+                 (str "package example; public final class Outer { "
+                      "private Inner child = new Inner(); private Outer() {} "
+                      "public static Outer create() { return new Outer(); } "
+                      "public Inner child() { return child; } "
+                      "public class Inner { public Outer done() { return Outer.this; } } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Outer.cs")))]
+    (is (str/includes? source "this.__field_child = new global::Example.Java.Library.Outer.Inner(this);"))
+    (is (str/includes? source "private readonly global::Example.Java.Library.Outer __outer;"))
+    (is (str/includes? source "public Inner(global::Example.Java.Library.Outer __outer)"))
+    (is (str/includes? source "return this.__outer;"))
+    (is (= source
+           (slurp (str (paths/resolve-path (:project-root second)
+                                           "src/Example/Java/Library/Outer.cs")))))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))

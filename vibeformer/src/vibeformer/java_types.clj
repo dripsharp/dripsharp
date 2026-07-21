@@ -35,6 +35,7 @@
    "java.lang.SuppressWarnings" ["global::System.Attribute" :dotnet.type/source-annotation]
    "java.lang.FunctionalInterface" ["global::System.Attribute" :dotnet.type/source-annotation]
    "java.lang.Class" ["global::System.Type" :dotnet.type/type]
+   "java.lang.ClassLoader" ["object" :dotnet.type/class-loader]
    "java.lang.Enum" ["object" :dotnet.type/enum-base]
    "java.lang.Throwable" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.Exception" ["global::System.Exception" :dotnet.type/exception]
@@ -64,6 +65,8 @@
                        :dotnet.type/java-compat]
    "java.lang.Thread" ["global::Vibeformer.Runtime.JavaThread"
                        :dotnet.type/thread]
+   "java.lang.ThreadLocal" ["global::Vibeformer.Runtime.JavaThreadLocal"
+                            :dotnet.type/thread-local]
    "java.lang.Runnable" ["global::System.Action" :dotnet.type/action]
    "java.lang.Iterable" ["global::System.Collections.Generic.IEnumerable"
                          :dotnet.type/enumerable]
@@ -92,10 +95,12 @@
                                 :dotnet.type/piped-output-stream]
    "java.io.PushbackInputStream" ["global::Vibeformer.Runtime.JavaPushbackInputStream"
                                   :dotnet.type/pushback-input-stream]
-   "java.io.File" ["string" :dotnet.type/path]
+   "java.io.File" ["global::System.IO.FileInfo" :dotnet.type/file]
 
    "java.net.URI" ["global::System.Uri" :dotnet.type/uri]
    "java.net.URL" ["global::System.Uri" :dotnet.type/uri]
+   "java.net.URLDecoder" ["global::Vibeformer.Runtime.JavaCompat"
+                          :dotnet.type/java-compat]
    "java.net.URISyntaxException" ["global::System.UriFormatException"
                                   :dotnet.type/uri-format-exception]
    "java.net.InetAddress" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
@@ -120,10 +125,14 @@
 
    "java.time.Duration" ["global::System.TimeSpan" :dotnet.type/time-span]
    "java.time.Instant" ["global::System.DateTimeOffset" :dotnet.type/date-time-offset]
-   "java.time.temporal.TemporalAmount" ["global::System.TimeSpan" :dotnet.type/time-span]
+   "java.time.ZoneId" ["global::System.TimeSpan" :dotnet.type/time-span]
    "java.time.ZoneOffset" ["global::System.TimeSpan" :dotnet.type/time-span]
-   "java.time.ZonedDateTime" ["global::System.DateTimeOffset"
-                              :dotnet.type/date-time-offset]
+   "java.time.ZonedDateTime" ["global::System.DateTimeOffset" :dotnet.type/date-time-offset]
+   "java.time.format.DateTimeFormatter" ["global::Vibeformer.Runtime.JavaDateTimeFormatter"
+                                         :dotnet.type/date-time-formatter]
+   "java.time.temporal.TemporalAccessor" ["global::System.DateTimeOffset"
+                                          :dotnet.type/date-time-offset]
+   "java.time.temporal.TemporalAmount" ["global::System.TimeSpan" :dotnet.type/time-span]
 
    "java.util.AbstractMap" ["global::System.Collections.Generic.IDictionary"
                             :dotnet.type/map-interface]
@@ -153,6 +162,8 @@
                           :dotnet.type/map-entry]
    "java.util.AbstractMap$SimpleEntry" ["global::Vibeformer.Runtime.JavaSimpleEntry"
                                         :dotnet.type/simple-map-entry]
+   "java.util.AbstractMap$SimpleImmutableEntry" ["global::Vibeformer.Runtime.JavaSimpleImmutableEntry"
+                                                 :dotnet.type/simple-immutable-map-entry]
    "java.util.NoSuchElementException" ["global::System.InvalidOperationException"
                                        :dotnet.type/invalid-operation]
    "java.util.Objects" ["global::Vibeformer.Runtime.JavaCompat"
@@ -221,35 +232,45 @@
                                 :dotnet.type/nullable-annotation]
    "javax.annotation.Nonnull" ["global::System.Diagnostics.CodeAnalysis.NotNullAttribute"
                                :dotnet.type/nonnullable-annotation]
+   "javax.net.ServerSocketFactory" ["global::Vibeformer.Runtime.JavaSslServerSocketFactory"
+                                    :dotnet.type/server-socket-factory]
    "javax.net.SocketFactory" ["global::Vibeformer.Runtime.JavaSocketFactory"
                               :dotnet.type/socket-factory]
 
    "java.security.KeyManagementException" ["global::System.Security.Cryptography.CryptographicException"
                                            :dotnet.type/cryptographic-exception]
+   "java.security.GeneralSecurityException" ["global::System.Security.Cryptography.CryptographicException"
+                                             :dotnet.type/cryptographic-exception]
    "java.security.KeyStoreException" ["global::System.Security.Cryptography.CryptographicException"
                                       :dotnet.type/cryptographic-exception]
    "java.security.NoSuchAlgorithmException" ["global::System.Security.Cryptography.CryptographicException"
                                              :dotnet.type/cryptographic-exception]
    "java.security.UnrecoverableKeyException" ["global::System.Security.Cryptography.CryptographicException"
                                               :dotnet.type/cryptographic-exception]
-   "java.security.KeyStore" ["global::System.Security.Cryptography.X509Certificates.X509Certificate2Collection"
-                             :dotnet.type/certificate-collection]
+   "java.security.KeyStore" ["global::Vibeformer.Runtime.JavaKeyStore"
+                             :dotnet.type/key-store]
+   "java.security.SecureRandom" ["object" :dotnet.type/secure-random]
    "java.security.cert.CertificateException" ["global::System.Security.Cryptography.CryptographicException"
                                               :dotnet.type/cryptographic-exception]
    "java.security.cert.X509Certificate" ["global::System.Security.Cryptography.X509Certificates.X509Certificate2"
                                          :dotnet.type/x509-certificate]
 
    "javax.net.ssl.KeyManager" ["object" :dotnet.type/key-manager]
-   "javax.net.ssl.KeyManagerFactory" ["object" :dotnet.type/key-manager-factory]
-   "javax.net.ssl.SSLContext" ["global::System.Net.Security.SslStream"
+   "javax.net.ssl.KeyManagerFactory" ["global::Vibeformer.Runtime.JavaKeyManagerFactory"
+                                      :dotnet.type/key-manager-factory]
+   "javax.net.ssl.SSLContext" ["global::Vibeformer.Runtime.JavaSslContext"
                                :dotnet.type/ssl-context]
+   "javax.net.ssl.SSLServerSocketFactory" ["global::Vibeformer.Runtime.JavaSslServerSocketFactory"
+                                           :dotnet.type/ssl-server-socket-factory]
    "javax.net.ssl.SSLSocket" ["global::System.Net.Sockets.Socket"
                               :dotnet.type/ssl-socket]
    "javax.net.ssl.SSLSocketFactory" ["global::Vibeformer.Runtime.JavaSocketFactory"
                                      :dotnet.type/ssl-socket-factory]
    "javax.net.ssl.TrustManager" ["object" :dotnet.type/trust-manager]
-   "javax.net.ssl.TrustManagerFactory" ["object" :dotnet.type/trust-manager-factory]
-   "javax.net.ssl.X509TrustManager" ["object" :dotnet.type/x509-trust-manager]})
+   "javax.net.ssl.TrustManagerFactory" ["global::Vibeformer.Runtime.JavaTrustManagerFactory"
+                                        :dotnet.type/trust-manager-factory]
+   "javax.net.ssl.X509TrustManager" ["global::Vibeformer.Runtime.JavaX509TrustManager"
+                                     :dotnet.type/x509-trust-manager]})
 
 (defn mapping
   "Returns [destination-type mapping-rule] for an exact Java qualified name."

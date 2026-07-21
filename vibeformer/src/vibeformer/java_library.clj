@@ -18,11 +18,11 @@
            [java.util Base64 IdentityHashMap]
            [spoon.reflect.code CtArrayRead CtArrayWrite CtAssert CtAssignment
             CtBinaryOperator CtBlock CtBreak CtCase CtCatch CtCatchVariable CtComment
-            CtConditional CtConstructorCall CtExecutableReferenceExpression
+            CtConditional CtConstructorCall CtContinue CtDo CtExecutableReferenceExpression
             CtExpression CtFieldRead CtFieldWrite
             CtFor CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable
             CtNewArray CtOperatorAssignment CtReturn CtStatement CtSuperAccess CtThisAccess CtThrow CtTry
-            CtSwitch CtTryWithResource CtTypeAccess CtUnaryOperator CtVariableAccess CtWhile
+            CtSwitch CtSynchronized CtTryWithResource CtTypeAccess CtUnaryOperator CtVariableAccess CtWhile
             CtVariableRead CtVariableWrite]
            [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtConstructor CtElement
             CtEnum CtEnumValue CtExecutable CtField CtInterface CtMethod
@@ -165,6 +165,18 @@
        (str/join "." (map #(pascal (.getSimpleName ^CtType %))
                           (declaring-types declaration)))))
 
+(defn- destination-type-parameter-name [^CtElement parameter]
+  (let [base (identifier (.getSimpleName parameter))
+        parent (when (.isParentInitialized parameter) (.getParent parameter))
+        owner (when (instance? CtExecutable parent)
+                (.getDeclaringType ^CtExecutable parent))
+        outer-names (when owner
+                      (set (map #(.getSimpleName ^CtElement %)
+                                (.getFormalCtTypeParameters ^CtType owner))))]
+    (if (contains? outer-names (.getSimpleName parameter))
+      (str "Method" (pascal base))
+      base)))
+
 (defn- mapped-type-base [ctx ^CtTypeReference reference occurrence]
   (let [qualified (.getQualifiedName reference)]
     (cond
@@ -172,7 +184,9 @@
       ["object" :dotnet.type/null]
 
       (instance? CtTypeParameterReference reference)
-      [(identifier (.getSimpleName reference)) :dotnet.type/type-parameter]
+      [(destination-type-parameter-name
+        (or (:declaration occurrence) reference))
+       :dotnet.type/type-parameter]
 
       (= :project (:origin occurrence))
       (if-let [declaration (.getTypeDeclaration reference)]
@@ -230,6 +244,18 @@
 (defn- local-type? [^CtType type]
   (and (not (.isTopLevel type))
        (= "statement" (role type))))
+
+(defn- non-static-member-class? [^CtType type]
+  (and (instance? CtClass type)
+       (some? (.getDeclaringType type))
+       (not (local-type? type))
+       (not (.isAnonymous ^CtClass type))
+       (not (.hasModifier ^CtModifiable type ModifierKind/STATIC))))
+
+(defn- implicit-member-constructor? [declaration]
+  (and (instance? CtConstructor declaration)
+       (.isImplicit ^CtConstructor declaration)
+       (non-static-member-class? (.getDeclaringType ^CtConstructor declaration))))
 
 (defn- anonymous-class? [^CtType type]
   (and (instance? CtClass type)
@@ -303,6 +329,10 @@
 (defn- anonymous-iterator? [^CtConstructorCall call]
   (= "java.util.Iterator" (some-> call .getType .getQualifiedName)))
 
+(defn- anonymous-x509-trust-manager? [^CtConstructorCall call]
+  (= "javax.net.ssl.X509TrustManager"
+     (some-> call .getType .getQualifiedName)))
+
 (defn- anonymous-project-subclass? [^CtConstructorCall call]
   (let [declaration (some-> call .getType .getTypeDeclaration)]
     (and (instance? CtClass declaration)
@@ -332,7 +362,7 @@
   (if (and (:outer-type ctx)
            (= (.getQualifiedName ^CtType (:outer-type ctx))
               (some-> access .getType .getQualifiedName)))
-    (raw "this.__outer")
+    (raw (str "this." (or (:outer-field-name ctx) "__outer")))
     (raw "this")))
 
 (defn- validate-local-type! [^CtType local-type]
@@ -353,7 +383,10 @@
 
 (defn- statement-expression? [^CtElement element]
   (and (instance? CtStatement element)
-       (contains? #{"statement" "then" "else"} (role element))))
+       (or (= "statement" (role element))
+           (and (contains? #{"then" "else"} (role element))
+                (.isParentInitialized element)
+                (instance? CtIf (.getParent element))))))
 
 (defn- statement-node [children ^CtStatement statement]
   (let [node (child-node children statement)]
@@ -391,10 +424,40 @@
        (instance? Double value) (str value "D")
        :else (str value)))))
 
+(defn- destination-field-name [^CtField field]
+  (let [base (identifier (.getSimpleName field))
+        owner (.getDeclaringType field)
+        method-collision?
+        (and owner
+             (seq (.getMethodsByName ^CtType owner (.getSimpleName field))))]
+    (if-not method-collision?
+      base
+      (let [reserved (->> (concat (.getFields ^CtType owner)
+                                  (.getMethods ^CtType owner))
+                          (remove #(identical? field %))
+                          (map #(identifier (.getSimpleName ^CtElement %)))
+                          set)]
+        (loop [suffix nil]
+          (let [candidate (str "__field_" base suffix)]
+            (if (contains? reserved candidate)
+              (recur (if suffix (inc suffix) 2))
+              candidate)))))))
+
+(declare method-name)
+
 (defn- resolved-name [occurrence reference]
   (cond
     (= :project (:origin occurrence))
-    (identifier (.getSimpleName ^CtElement reference))
+    (let [declaration (:declaration occurrence)]
+      (cond
+        (instance? CtField declaration)
+        (destination-field-name declaration)
+
+        (instance? CtMethod declaration)
+        (method-name (.getDeclaringType ^CtMethod declaration) declaration)
+
+        :else
+        (identifier (.getSimpleName ^CtElement reference))))
 
     (contains?
      #{"executable:java.lang.Iterable#forEach(java.util.function.Consumer)"
@@ -415,9 +478,11 @@
        "executable:java.net.URI#toString()"
        "executable:java.net.URI#create(java.lang.String)"
        "executable:java.lang.String#toUpperCase()"
+       "executable:java.lang.String#toLowerCase()"
        "executable:java.lang.String#format(java.lang.String,java.lang.Object[])"
        "executable:java.lang.String#trim()"
        "executable:java.lang.String#split(java.lang.String)"
+       "executable:java.lang.String#split(java.lang.String,int)"
        "executable:java.lang.String#length()"
        "executable:java.lang.String#isEmpty()"
        "executable:java.lang.String#startsWith(java.lang.String)"
@@ -426,6 +491,7 @@
        "executable:java.lang.String#substring(int,int)"
        "executable:java.lang.String#indexOf(int)"
        "executable:java.lang.String#indexOf(int,int)"
+       "executable:java.lang.String#lastIndexOf(int)"
        "executable:java.lang.String#contains(java.lang.CharSequence)"
        "executable:java.lang.String#matches(java.lang.String)"
        "executable:java.lang.String#hashCode()"
@@ -437,12 +503,17 @@
        "executable:java.lang.String#join(java.lang.CharSequence,java.lang.Iterable)"
        "executable:java.lang.Integer#toString(int)"
        "executable:java.lang.Integer#toString(int,int)"
+       "executable:java.lang.Integer#parseInt(java.lang.String)"
        "executable:java.lang.Long#parseLong(java.lang.String)"
        "executable:java.lang.Long#toString(long)"
        "executable:java.lang.Math#min(long,long)"
        "executable:java.lang.Math#min(int,int)"
        "executable:java.lang.Math#toIntExact(long)"
        "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)"
+       "executable:java.lang.System#currentTimeMillis()"
+       "executable:java.lang.ThreadLocal#withInitial(java.util.function.Supplier)"
+       "executable:java.lang.ThreadLocal#get()"
+       "executable:java.lang.ThreadLocal#set(java.lang.Object)"
        "executable:java.util.Arrays#equals(byte[],byte[])"
        "executable:java.util.Arrays#hashCode(byte[])"
        "executable:java.net.Socket#getInputStream()"
@@ -456,16 +527,37 @@
        "executable:java.net.ServerSocket#close()"
        "executable:java.net.ServerSocket#isClosed()"
        "executable:java.net.InetSocketAddress#getAddress()"
+       "executable:java.net.URL#openStream()"
+       "executable:java.net.URLDecoder#decode(java.lang.String,java.lang.String)"
+       "executable:java.security.KeyStore#getDefaultType()"
+       "executable:java.security.KeyStore#getInstance(java.lang.String)"
+       "executable:java.security.KeyStore#load(java.io.InputStream,char[])"
+       "executable:javax.net.ssl.KeyManagerFactory#getDefaultAlgorithm()"
+       "executable:javax.net.ssl.KeyManagerFactory#getInstance(java.lang.String)"
+       "executable:javax.net.ssl.KeyManagerFactory#init(java.security.KeyStore,char[])"
+       "executable:javax.net.ssl.KeyManagerFactory#getKeyManagers()"
+       "executable:javax.net.ssl.TrustManagerFactory#getDefaultAlgorithm()"
+       "executable:javax.net.ssl.TrustManagerFactory#getInstance(java.lang.String)"
+       "executable:javax.net.ssl.TrustManagerFactory#init(java.security.KeyStore)"
+       "executable:javax.net.ssl.TrustManagerFactory#getTrustManagers()"
+       "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)"
+       "executable:javax.net.ssl.SSLContext#init(javax.net.ssl.KeyManager[],javax.net.ssl.TrustManager[],java.security.SecureRandom)"
        "executable:javax.net.ssl.SSLSocketFactory#getDefault()"
+       "executable:javax.net.ssl.SSLContext#getSocketFactory()"
+       "executable:javax.net.ssl.SSLContext#getServerSocketFactory()"
+       "executable:javax.net.ServerSocketFactory#createServerSocket(int)"
+       "executable:javax.net.SocketFactory#createSocket()"
        "executable:javax.net.SocketFactory#createSocket(java.lang.String,int)"
        "executable:java.io.OutputStream#flush()"
        "executable:java.io.OutputStream#close()"
        "executable:java.io.FilterOutputStream#flush()"
        "executable:java.io.Closeable#close()"
        "executable:java.io.File#toPath()"
+       "executable:java.io.File#length()"
        "executable:java.nio.file.Files#newInputStream(java.nio.file.Path,java.nio.file.OpenOption[])"
        "executable:java.io.ByteArrayOutputStream#writeTo(java.io.OutputStream)"
        "executable:java.io.ByteArrayOutputStream#toByteArray()"
+       "executable:java.io.ByteArrayOutputStream#write(int)"
        "executable:java.lang.StringBuilder#append(java.lang.String)"
        "executable:java.lang.StringBuilder#append(char)"
        "executable:java.lang.StringBuilder#append(int)"
@@ -475,6 +567,7 @@
        "executable:java.lang.Integer#parseInt(java.lang.String,int)"
        "executable:java.util.Collection#stream()"
        "executable:java.lang.Object#getClass()"
+       "executable:java.lang.Class#getClassLoader()"
        "executable:java.lang.Object#toString()"
        "executable:java.lang.Enum#name()"
        "executable:java.lang.Enum#ordinal()"
@@ -489,6 +582,8 @@
        "executable:java.time.Instant#now()"
        "executable:java.time.Instant#plus(java.time.temporal.TemporalAmount)"
        "executable:java.time.Instant#isBefore(java.time.Instant)"
+       "executable:java.time.ZonedDateTime#now(java.time.ZoneId)"
+       "executable:java.time.format.DateTimeFormatter#format(java.time.temporal.TemporalAccessor)"
        "executable:java.net.InetAddress#getLoopbackAddress()"
        "executable:java.lang.Thread#sleep(long)"
        "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
@@ -528,6 +623,10 @@
        "executable:java.util.List#addAll(java.util.Collection)"
        "executable:java.util.List#size()"
        "executable:java.util.List#iterator()"
+       "executable:java.util.ArrayList#get(int)"
+       "executable:java.util.ArrayList#isEmpty()"
+       "executable:java.util.ArrayList#remove(int)"
+       "executable:java.util.ArrayList#size()"
        "executable:java.util.Iterator#next()"
        "executable:java.util.Iterator#hasNext()"
        "executable:java.util.Iterator#remove()"
@@ -553,6 +652,7 @@
        "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
        "executable:java.util.function.BiFunction#apply(java.lang.Object,java.lang.Object)"
        "executable:java.util.function.Consumer#accept(java.lang.Object)"
+       "executable:java.util.function.Supplier#get()"
        "executable:java.util.Set#contains(java.lang.Object)"
        "executable:java.util.Set#equals(java.lang.Object)"
        "executable:java.util.Set#add(java.lang.Object)"
@@ -562,12 +662,14 @@
        "executable:java.util.regex.Matcher#matches()"
        "executable:java.util.stream.Collectors#toList()"
        "executable:java.util.stream.Collectors#toSet()"
+       "executable:java.util.stream.Collectors#toCollection(java.util.function.Supplier)"
        "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
        "executable:java.util.stream.Stream#flatMap(java.util.function.Function)"
        "executable:java.util.stream.Stream#map(java.util.function.Function)"
        "executable:java.util.stream.Stream#mapToLong(java.util.function.ToLongFunction)"
        "executable:java.util.stream.LongStream#sum()"
        "executable:java.util.stream.Stream#of(java.lang.Object[])"
+       "executable:java.util.ServiceLoader#load(java.lang.Class,java.lang.ClassLoader)"
        "executable:java.io.OutputStream#write(byte[])"
        "executable:java.io.OutputStream#write(byte[],int,int)"
        "executable:java.io.OutputStream#write(int)"
@@ -620,6 +722,12 @@
 
     (= "field:java.nio.charset.StandardCharsets#ISO_8859_1" (:key occurrence))
     "ISO88591"
+
+    (= "field:java.time.ZoneOffset#UTC" (:key occurrence))
+    "Zero"
+
+    (= "field:java.time.format.DateTimeFormatter#RFC_1123_DATE_TIME" (:key occurrence))
+    "Rfc1123"
 
     (contains? #{"field:java.util.concurrent.TimeUnit#NANOSECONDS"
                  "field:java.util.concurrent.TimeUnit#MICROSECONDS"
@@ -705,12 +813,15 @@
                     "executable:java.io.ByteArrayOutputStream#<init>()"
                     "executable:java.io.ByteArrayOutputStream#<init>(int)"
                     "executable:java.io.ByteArrayInputStream#<init>(byte[])"
+                    "executable:java.io.BufferedInputStream#<init>(java.io.InputStream)"
+                    "executable:java.io.FilterOutputStream#<init>(java.io.OutputStream)"
                     "executable:java.io.PipedInputStream#<init>()"
                     "executable:java.io.PipedOutputStream#<init>()"
                     "executable:java.io.PushbackInputStream#<init>(java.io.InputStream)"
                     "executable:java.util.zip.GZIPInputStream#<init>(java.io.InputStream)"
                     "executable:java.util.zip.InflaterOutputStream#<init>(java.io.OutputStream)"
                     "executable:java.net.URI#<init>(java.lang.String)"
+                    "executable:java.net.URI#<init>(java.lang.String,java.lang.String,java.lang.String,int,java.lang.String,java.lang.String,java.lang.String)"
                     "executable:java.util.HashMap#<init>()"
                     "executable:java.util.HashMap#<init>(int)"
                     "executable:java.util.HashSet#<init>(int)"
@@ -722,6 +833,7 @@
                     "executable:java.util.LinkedHashMap#<init>(int)"
                     "executable:java.util.LinkedHashMap#<init>(java.util.Map)"
                     "executable:java.util.AbstractMap$SimpleEntry#<init>(java.lang.Object,java.lang.Object)"
+                    "executable:java.util.AbstractMap$SimpleImmutableEntry#<init>(java.lang.Object,java.lang.Object)"
                     "executable:java.util.Iterator#<init>()"
                     "executable:java.lang.Thread#<init>(java.lang.Runnable)"
                     "executable:java.lang.Thread#<init>(java.lang.Runnable,java.lang.String)"
@@ -846,7 +958,8 @@
   (cond
     (or (instance? CtReturn statement)
         (instance? CtThrow statement)
-        (instance? CtBreak statement)) true
+        (instance? CtBreak statement)
+        (instance? CtContinue statement)) true
     (instance? CtBlock statement)
     (boolean (some-> ^CtBlock statement .getStatements last terminating-statement?))
     (instance? CtIf statement)
@@ -942,6 +1055,9 @@
                "executable:java.lang.String#toUpperCase()"
                (sequence-node [target-node (raw ".ToUpper()")])
 
+               "executable:java.lang.String#toLowerCase()"
+               (sequence-node [target-node (raw ".ToLowerInvariant()")])
+
                "executable:java.lang.Object#toString()"
                (sequence-node [target-node (raw ".ToString()!")])
 
@@ -953,6 +1069,9 @@
 
                "executable:java.lang.String#split(java.lang.String)"
                (compat-call "StringSplit" (into [target-node] (conj arguments (raw "0"))))
+
+               "executable:java.lang.String#split(java.lang.String,int)"
+               (compat-call "StringSplit" (into [target-node] arguments))
 
                "executable:java.lang.String#length()"
                (sequence-node [target-node (raw ".Length")])
@@ -978,6 +1097,9 @@
 
                "executable:java.lang.String#indexOf(int,int)"
                (compat-call "StringIndexOf" (into [target-node] arguments))
+
+               "executable:java.lang.String#lastIndexOf(int)"
+               (compat-call "StringLastIndexOf" (into [target-node] arguments))
 
                "executable:java.lang.String#contains(java.lang.CharSequence)"
                (compat-call "StringContains" (into [target-node] arguments))
@@ -1013,6 +1135,9 @@
                "executable:java.lang.Integer#toString(int)"
                (compat-call "StringValueOf" arguments)
 
+               "executable:java.lang.Integer#parseInt(java.lang.String)"
+               (compat-call "ParseInt" (conj arguments (raw "10")))
+
                "executable:java.lang.Long#parseLong(java.lang.String)"
                (compat-call "ParseLong" arguments)
 
@@ -1029,6 +1154,23 @@
 
                "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)"
                (compat-call "ArrayCopy" arguments)
+
+               "executable:java.lang.System#currentTimeMillis()"
+               (raw "global::System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()")
+
+               "executable:java.lang.ThreadLocal#withInitial(java.util.function.Supplier)"
+               (sequence-node
+                [(csharp/generic-name
+                  (raw "global::Vibeformer.Runtime.JavaThreadLocal")
+                  [(type-node @ctx-holder (collection-element-type element))])
+                 (raw ".WithInitial(") (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.lang.ThreadLocal#get()"
+               (sequence-node [target-node (raw ".Get()")])
+
+               "executable:java.lang.ThreadLocal#set(java.lang.Object)"
+               (sequence-node [target-node (raw ".Set(")
+                               (sequence-node arguments ", ") (raw ")")])
 
                "executable:java.util.Arrays#equals(byte[],byte[])"
                (compat-call "ArrayEquals" arguments)
@@ -1078,8 +1220,76 @@
                "executable:java.net.InetSocketAddress#getAddress()"
                (compat-call "InetSocketAddressAddress" [target-node])
 
+               "executable:java.net.URL#openStream()"
+               (compat-call "OpenUrlStream" [target-node])
+
+               "executable:java.net.URLDecoder#decode(java.lang.String,java.lang.String)"
+               (compat-call "UrlDecode" arguments)
+
+               "executable:java.security.KeyStore#getDefaultType()"
+               (raw "global::Vibeformer.Runtime.JavaKeyStore.GetDefaultType()")
+
+               "executable:java.security.KeyStore#getInstance(java.lang.String)"
+               (sequence-node [(raw "global::Vibeformer.Runtime.JavaKeyStore.GetInstance(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.security.KeyStore#load(java.io.InputStream,char[])"
+               (sequence-node [target-node (raw ".Load(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:javax.net.ssl.KeyManagerFactory#getDefaultAlgorithm()"
+               (raw "global::Vibeformer.Runtime.JavaKeyManagerFactory.GetDefaultAlgorithm()")
+
+               "executable:javax.net.ssl.KeyManagerFactory#getInstance(java.lang.String)"
+               (sequence-node
+                [(raw "global::Vibeformer.Runtime.JavaKeyManagerFactory.GetInstance(")
+                 (sequence-node arguments ", ") (raw ")")])
+
+               "executable:javax.net.ssl.KeyManagerFactory#init(java.security.KeyStore,char[])"
+               (sequence-node [target-node (raw ".Init(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:javax.net.ssl.KeyManagerFactory#getKeyManagers()"
+               (sequence-node [target-node (raw ".GetKeyManagers()")])
+
+               "executable:javax.net.ssl.TrustManagerFactory#getDefaultAlgorithm()"
+               (raw "global::Vibeformer.Runtime.JavaTrustManagerFactory.GetDefaultAlgorithm()")
+
+               "executable:javax.net.ssl.TrustManagerFactory#getInstance(java.lang.String)"
+               (sequence-node
+                [(raw "global::Vibeformer.Runtime.JavaTrustManagerFactory.GetInstance(")
+                 (sequence-node arguments ", ") (raw ")")])
+
+               "executable:javax.net.ssl.TrustManagerFactory#init(java.security.KeyStore)"
+               (sequence-node [target-node (raw ".Init(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:javax.net.ssl.TrustManagerFactory#getTrustManagers()"
+               (sequence-node [target-node (raw ".GetTrustManagers()")])
+
+               "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)"
+               (sequence-node [(raw "global::Vibeformer.Runtime.JavaSslContext.GetInstance(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:javax.net.ssl.SSLContext#init(javax.net.ssl.KeyManager[],javax.net.ssl.TrustManager[],java.security.SecureRandom)"
+               (sequence-node [target-node (raw ".Init(")
+                               (sequence-node arguments ", ") (raw ")")])
+
                "executable:javax.net.ssl.SSLSocketFactory#getDefault()"
                (raw "global::Vibeformer.Runtime.JavaSocketFactory.Default")
+
+               "executable:javax.net.ssl.SSLContext#getSocketFactory()"
+               (sequence-node [target-node (raw ".GetSocketFactory()")])
+
+               "executable:javax.net.ssl.SSLContext#getServerSocketFactory()"
+               (sequence-node [target-node (raw ".GetServerSocketFactory()")])
+
+               "executable:javax.net.ServerSocketFactory#createServerSocket(int)"
+               (sequence-node [target-node (raw ".CreateServerSocket(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:javax.net.SocketFactory#createSocket()"
+               (sequence-node [target-node (raw ".CreateSocket()")])
 
                "executable:javax.net.SocketFactory#createSocket(java.lang.String,int)"
                (sequence-node [target-node (raw ".CreateSocket(")
@@ -1101,7 +1311,10 @@
                (sequence-node [target-node (raw ".Dispose()")])
 
                "executable:java.io.File#toPath()"
-               target-node
+               (sequence-node [target-node (raw ".FullName")])
+
+               "executable:java.io.File#length()"
+               (sequence-node [target-node (raw ".Length")])
 
                "executable:java.nio.file.Files#newInputStream(java.nio.file.Path,java.nio.file.OpenOption[])"
                (compat-call "OpenInputStream" arguments)
@@ -1111,6 +1324,9 @@
 
                "executable:java.io.ByteArrayOutputStream#toByteArray()"
                (compat-call "ToSignedBytes" [target-node])
+
+               "executable:java.io.ByteArrayOutputStream#write(int)"
+               (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
                "executable:java.io.OutputStream#write(byte[])"
                (compat-call "OutputStreamWrite" (into [target-node] arguments))
@@ -1186,6 +1402,9 @@
                "executable:java.lang.Object#getClass()"
                (sequence-node [target-node (raw ".GetType()")])
 
+               "executable:java.lang.Class#getClassLoader()"
+               (sequence-node [target-node (raw ".Assembly")])
+
                "executable:java.lang.Throwable#getCause()"
                (sequence-node [target-node (raw ".InnerException")])
 
@@ -1221,6 +1440,13 @@
 
                "executable:java.time.Instant#isBefore(java.time.Instant)"
                (sequence-node [(raw "(") target-node (raw " < ")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.time.ZonedDateTime#now(java.time.ZoneId)"
+               (raw "global::System.DateTimeOffset.UtcNow")
+
+               "executable:java.time.format.DateTimeFormatter#format(java.time.temporal.TemporalAccessor)"
+               (sequence-node [target-node (raw ".Format(")
                                (sequence-node arguments ", ") (raw ")")])
 
                "executable:java.net.InetAddress#getLoopbackAddress()"
@@ -1311,6 +1537,9 @@
                "executable:java.util.List#isEmpty()"
                (compat-call "ListIsEmpty" [target-node])
 
+               "executable:java.util.ArrayList#isEmpty()"
+               (compat-call "ListIsEmpty" [target-node])
+
                "executable:java.util.List#add(java.lang.Object)"
                (compat-call "Add" (into [target-node] arguments))
 
@@ -1332,11 +1561,20 @@
                "executable:java.util.List#get(int)"
                (compat-call "ListGet" (into [target-node] arguments))
 
+               "executable:java.util.ArrayList#get(int)"
+               (compat-call "ListGet" (into [target-node] arguments))
+
                "executable:java.util.List#contains(java.lang.Object)"
                (compat-call "CollectionContains" (into [target-node] arguments))
 
                "executable:java.util.List#size()"
                (sequence-node [target-node (raw ".Count")])
+
+               "executable:java.util.ArrayList#size()"
+               (sequence-node [target-node (raw ".Count")])
+
+               "executable:java.util.ArrayList#remove(int)"
+               (compat-call "ListRemove" (into [target-node] arguments))
 
                "executable:java.util.List#iterator()"
                (compat-call "Iterator" [target-node])
@@ -1429,6 +1667,9 @@
                (sequence-node [target-node (raw "(")
                                (sequence-node arguments ", ") (raw ")")])
 
+               "executable:java.util.function.Supplier#get()"
+               (sequence-node [target-node (raw "()")])
+
                "executable:java.util.Set#contains(java.lang.Object)"
                (compat-call "CollectionContains" (into [target-node] arguments))
 
@@ -1454,6 +1695,13 @@
                "executable:java.util.stream.Stream#of(java.lang.Object[])"
                (compat-call "StreamOf" arguments)
 
+               "executable:java.util.ServiceLoader#load(java.lang.Class,java.lang.ClassLoader)"
+               (sequence-node
+                [(csharp/generic-name
+                  (raw "global::Vibeformer.Runtime.JavaCompat.LoadServices")
+                  [(type-node @ctx-holder (collection-element-type element))])
+                 (raw "(") (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.util.stream.Stream#flatMap(java.util.function.Function)"
                (compat-call "FlatMap" (into [target-node] arguments))
 
@@ -1476,13 +1724,23 @@
                   [(type-node @ctx-holder (collection-element-type element))])
                  (raw "()")])
 
+               "executable:java.util.stream.Collectors#toCollection(java.util.function.Supplier)"
+               (compat-call "ToCollection" arguments)
+
                "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
-               (if (= "java.util.Set" (some-> element .getType .getQualifiedName))
+               (case (some-> element .getType .getQualifiedName)
+                 "java.util.Set"
                  (sequence-node
                   [(csharp/generic-name
                     (raw "global::Vibeformer.Runtime.JavaCompat.SetOfValues")
                     [(type-node @ctx-holder (collection-element-type element))])
                    (raw "(") target-node (raw ")")])
+
+                 "java.util.ArrayList"
+                 (sequence-node
+                  [(raw "new ") (type-node @ctx-holder (.getType element))
+                   (raw "(") target-node (raw ")")])
+
                  (compat-call "ToListValues" [target-node]))
 
                "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
@@ -1560,7 +1818,8 @@
                ("executable:java.lang.Object#<init>()"
                 "executable:java.lang.Enum#<init>(java.lang.String,int)"
                 "executable:java.io.InputStream#<init>()"
-                "executable:java.io.OutputStream#<init>()")
+                "executable:java.io.OutputStream#<init>()"
+                "executable:java.io.FilterOutputStream#<init>(java.io.OutputStream)")
                (raw "")
 
                (sequence-node
@@ -1575,7 +1834,8 @@
           (if (contains? #{"executable:java.lang.Object#<init>()"
                            "executable:java.lang.Enum#<init>(java.lang.String,int)"
                            "executable:java.io.InputStream#<init>()"
-                           "executable:java.io.OutputStream#<init>()"}
+                           "executable:java.io.OutputStream#<init>()"
+                           "executable:java.io.FilterOutputStream#<init>(java.io.OutputStream)"}
                          (:key occurrence))
             node
             (invocation-statement element node))}))}
@@ -1586,6 +1846,12 @@
      (fn [{:keys [context ^CtConstructorCall element children]}]
        (let [arguments (mapv #(child-node children %) (.getArguments element))
              occurrence (constructor-occurrence context element)
+             arguments (if (implicit-member-constructor? (:declaration occurrence))
+                         (conj arguments
+                               (if-let [target (.getTarget element)]
+                                 (child-node children target)
+                                 (raw "this")))
+                         arguments)
              anonymous-class (anonymous-class-for-call element)
              owner (when anonymous-class (nearest-enclosing-type element))
              captures (when anonymous-class (anonymous-captures anonymous-class))
@@ -1624,6 +1890,9 @@
               (sequence-node
                [(raw "global::Vibeformer.Runtime.JavaSocketFactory.Plain.CreateSocket(")
                 (sequence-node arguments ", ") (raw ")")])
+
+              "executable:java.net.URI#<init>(java.lang.String,java.lang.String,java.lang.String,int,java.lang.String,java.lang.String,java.lang.String)"
+              (compat-call "NewUri" arguments)
 
               "executable:java.io.ByteArrayInputStream#<init>(byte[])"
               (sequence-node
@@ -1679,11 +1948,13 @@
                                "java.util.function.BiConsumer"}
                              functional-type))]
          (when-not (or (and (= :project (:origin occurrence))
-                            (instance? CtMethod declaration))
+                            (or (instance? CtMethod declaration)
+                                (instance? CtConstructor declaration)))
                        (contains?
                         #{"executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
                           "executable:java.lang.Object#toString()"
                           "executable:java.util.List#add(java.lang.Object)"
+                          "executable:java.util.ArrayList#<init>()"
                           "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"}
                         (:key occurrence)))
            (unsupported! "Java library method reference requires a supported resolved method"
@@ -1706,6 +1977,15 @@
 
             (= "executable:java.lang.Object#toString()" (:key occurrence))
             (raw "(value0) => value0.ToString()!")
+
+            (= "executable:java.util.ArrayList#<init>()" (:key occurrence))
+            (sequence-node [(raw "() => new ") target (raw "()")])
+
+            (and (= :project (:origin occurrence))
+                 (instance? CtConstructor declaration))
+            (sequence-node
+             [(raw "(") (sequence-node parameters ", ") (raw ") => new ")
+              target (raw "(") (sequence-node parameters ", ") (raw ")")])
 
             (and (instance? CtTypeAccess target-element) (not static?))
             (let [receiver (raw "value0")
@@ -1808,12 +2088,15 @@
        (let [target (.getTarget element)
              occurrence (field-occurrence context element)]
          {:node
-          (sequence-node
-           [(when target
-              (sequence-node [(child-node children target) (raw ".")]))
-            (if (= "field:<array>#length" (:key occurrence))
-              (raw "Length")
-              (child-node children (.getVariable element)))])}))}
+          (if (and (instance? CtTypeAccess target)
+                   (= "class" (.getSimpleName (.getVariable element))))
+            (sequence-node [(raw "typeof(") (child-node children target) (raw ")")])
+            (sequence-node
+             [(when target
+                (sequence-node [(child-node children target) (raw ".")]))
+              (if (= "field:<array>#length" (:key occurrence))
+                (raw "Length")
+                (child-node children (.getVariable element)))]))}))}
 
     {:id :java-library.expression/field-write
      :class CtFieldWrite
@@ -1949,6 +2232,29 @@
           (raw ") ")
           (statement-node children (.getBody element))])})}
 
+    {:id :java-library.statement/do-while
+     :class CtDo
+     :emit
+     (fn [{:keys [^CtDo element children]}]
+       {:node
+        (sequence-node
+         [(raw "do ")
+          (statement-node children (.getBody element))
+          (raw " while (")
+          (child-node children (.getLoopingExpression element))
+          (raw ");")])})}
+
+    {:id :java-library.statement/synchronized
+     :class CtSynchronized
+     :emit
+     (fn [{:keys [^CtSynchronized element children]}]
+       {:node
+        (sequence-node
+         [(raw "lock (")
+          (child-node children (.getExpression element))
+          (raw ") ")
+          (statement-node children (.getBlock element))])})}
+
     {:id :java-library.statement/break
      :class CtBreak
      :emit
@@ -1956,6 +2262,14 @@
        {:node (if (.getTargetLabel element)
                 (java/labeled-branch-node context element :break)
                 (raw "break;"))})}
+
+    {:id :java-library.statement/continue
+     :class CtContinue
+     :emit
+     (fn [{:keys [context ^CtContinue element]}]
+       {:node (if (.getTargetLabel element)
+                (java/labeled-branch-node context element :continue)
+                (raw "continue;"))})}
 
     {:id :java-library.statement/case
      :class CtCase
@@ -2124,9 +2438,15 @@
      :class CtCatchVariable
      :emit
      (fn [{:keys [^CtCatchVariable element]}]
-       (let [types (vec (.getMultiTypes element))]
-         (when-not (= 1 (count types))
-           (unsupported! "Java multi-catch requires explicit union lowering"
+       (let [types (vec (.getMultiTypes element))
+             destinations
+             (mapv (fn [^CtTypeReference type]
+                     (first (mapped-type-base
+                             @ctx-holder type
+                             (occurrence! @ctx-holder type :type))))
+                   types)]
+         (when-not (= 1 (count (distinct destinations)))
+           (unsupported! "Java multi-catch alternatives require one exact destination type"
                          element))
          {:node
           (sequence-node [(type-node @ctx-holder (first types))
@@ -2221,36 +2541,40 @@
     (instance? CtAnonymousExecutable member) :initializer
     :else :member))
 
-(defn- register-member! [ctx ^CtType owner ^CtElement member name rule]
-  (let [kind (member-kind member)
-        id (declaration-id member kind)
-        parameter-count (if (instance? CtExecutable member)
-                          (count (.getParameters ^CtExecutable member))
-                          0)
-        entry {:id id :java-key (spoon/declaration-key member) :kind kind
-               :owner (spoon/declaration-key owner) :name name
-               :signature (or (when (instance? CtExecutable member)
-                                (.getSignature ^CtExecutable member))
-                              (.getSimpleName member))
-               :destination {:assembly (get-in ctx [:configuration :project :assembly-name])
-                             :namespace (destination-namespace ctx owner)
-                             :owner (destination-owner-name ctx owner)
-                             :kind (case kind
-                                     :constructor "constructor"
-                                     :method "method"
-                                     :field "field"
-                                     :type "type"
-                                     :initializer "initializer"
-                                     "member")
-                             :name (if (= :constructor kind) ".ctor" name)
-                             :parameter-count (str parameter-count)}
-               :source (source-ref member rule nil)}]
-    (when (.containsKey ^IdentityHashMap (:emitted ctx) member)
-      (fail! "A Java library declaration was emitted more than once"
-             {:kind :duplicate-source-declaration :declaration entry}))
-    (.put ^IdentityHashMap (:emitted ctx) member entry)
-    (swap! (:declarations ctx) conj entry)
-    id))
+(defn- register-member!
+  ([ctx ^CtType owner ^CtElement member name rule]
+   (register-member! ctx owner member name rule nil))
+  ([ctx ^CtType owner ^CtElement member name rule parameter-count-override]
+   (let [kind (member-kind member)
+         id (declaration-id member kind)
+         parameter-count (or parameter-count-override
+                             (if (instance? CtExecutable member)
+                               (count (.getParameters ^CtExecutable member))
+                               0))
+         entry {:id id :java-key (spoon/declaration-key member) :kind kind
+                :owner (spoon/declaration-key owner) :name name
+                :signature (or (when (instance? CtExecutable member)
+                                 (.getSignature ^CtExecutable member))
+                               (.getSimpleName member))
+                :destination {:assembly (get-in ctx [:configuration :project :assembly-name])
+                              :namespace (destination-namespace ctx owner)
+                              :owner (destination-owner-name ctx owner)
+                              :kind (case kind
+                                      :constructor "constructor"
+                                      :method "method"
+                                      :field "field"
+                                      :type "type"
+                                      :initializer "initializer"
+                                      "member")
+                              :name (if (= :constructor kind) ".ctor" name)
+                              :parameter-count (str parameter-count)}
+                :source (source-ref member rule nil)}]
+     (when (.containsKey ^IdentityHashMap (:emitted ctx) member)
+       (fail! "A Java library declaration was emitted more than once"
+              {:kind :duplicate-source-declaration :declaration entry}))
+     (.put ^IdentityHashMap (:emitted ctx) member entry)
+     (swap! (:declarations ctx) conj entry)
+     id)))
 
 (defn- explicit-members [^CtType type]
   (vec
@@ -2281,16 +2605,23 @@
     (when (seq parameters)
       (sequence-node [(raw "<")
                       (sequence-node
-                       (mapv #(raw (identifier (.getSimpleName ^CtElement %)))
+                       (mapv #(raw (destination-type-parameter-name %))
                              parameters)
                        ", ")
                       (raw ">")]))))
 
 (defn- parameter-node [ctx ^CtParameter parameter]
-  (sequence-node
-   [(when (.isVarArgs parameter) (raw "params "))
-    (type-node ctx (.getType parameter))
-    (raw (str " " (identifier (.getSimpleName parameter))))]))
+  (let [parent (when (.isParentInitialized parameter) (.getParent parameter))
+        object-equals-parameter?
+        (and (instance? CtMethod parent)
+             (= "equals" (.getSimpleName ^CtMethod parent))
+             (= "java.lang.Object" (.getQualifiedName (.getType parameter))))]
+    (sequence-node
+     [(when (.isVarArgs parameter) (raw "params "))
+      (if object-equals-parameter?
+        (raw "object?")
+        (type-node ctx (.getType parameter)))
+      (raw (str " " (identifier (.getSimpleName parameter))))])))
 
 (defn- base-type-references [^CtType type]
   (vec
@@ -2302,6 +2633,25 @@
           [superclass])))
     (sort-by #(.getQualifiedName ^CtTypeReference %)
              (.getSuperInterfaces type)))))
+
+(def ^:private functional-interface-types
+  #{"java.util.concurrent.Callable" "java.util.function.Supplier"})
+
+(defn- base-type-node [ctx ^CtType owner ^CtTypeReference reference]
+  (cond
+    (and (instance? CtClass owner)
+         (contains? functional-interface-types (.getQualifiedName reference)))
+    nil
+
+    (contains? (get-in ctx [:configuration :destination-capabilities])
+               :java-compat)
+    (case (.getQualifiedName reference)
+      "java.io.InputStream" (raw "global::Vibeformer.Runtime.JavaInputStream")
+      "java.io.OutputStream" (raw "global::Vibeformer.Runtime.JavaOutputStream")
+      (type-node ctx reference))
+
+    :else
+    (type-node ctx reference)))
 
 (defn- type-words [^CtType type]
   (let [visibility (cond
@@ -2328,31 +2678,149 @@
        (some #(= "java.util.Iterator" (.getQualifiedName ^CtTypeReference %))
              (.getSuperInterfaces owner))))
 
+(defn- x509-trust-manager-implementation? [^CtType owner]
+  (and (anonymous-class? owner)
+       (some #(= "javax.net.ssl.X509TrustManager"
+                 (.getQualifiedName ^CtTypeReference %))
+             (.getSuperInterfaces owner))))
+
+(defn- java-stream-subclass? [^CtType owner]
+  (loop [reference (when (instance? CtClass owner)
+                     (.getSuperclass ^CtClass owner))]
+    (when reference
+      (let [qualified (.getQualifiedName ^CtTypeReference reference)]
+        (or (contains? #{"java.io.InputStream" "java.io.OutputStream"
+                         "java.io.FilterOutputStream"}
+                       qualified)
+            (when-let [declaration (.getTypeDeclaration ^CtTypeReference reference)]
+              (when (instance? CtClass declaration)
+                (recur (.getSuperclass ^CtClass declaration)))))))))
+
 (defn- method-name [^CtType owner ^CtMethod method]
-  (if (iterator-implementation? owner)
+  (cond
+    (and (= "close" (.getSimpleName method))
+         (empty? (.getParameters method))
+         (not (java-stream-subclass? owner)))
+    "Dispose"
+
+    (and (= "toString" (.getSimpleName method))
+         (empty? (.getParameters method)))
+    "ToString"
+
+    (and (= "hashCode" (.getSimpleName method))
+         (empty? (.getParameters method)))
+    "GetHashCode"
+
+    (and (= "equals" (.getSimpleName method))
+         (= 1 (count (.getParameters method))))
+    "Equals"
+
+    (iterator-implementation? owner)
     (case (.getSimpleName method)
       "hasNext" "HasNext"
       "next" "Next"
       "remove" "Remove"
       (identifier (.getSimpleName method)))
-    (identifier (.getSimpleName method))))
 
-(defn- superclass-method? [^CtType owner ^CtMethod method]
+    (x509-trust-manager-implementation? owner)
+    (case (.getSimpleName method)
+      "getAcceptedIssuers" "GetAcceptedIssuers"
+      "checkServerTrusted" "CheckServerTrusted"
+      "checkClientTrusted" "CheckClientTrusted"
+      (identifier (.getSimpleName method)))
+
+    :else (identifier (.getSimpleName method))))
+
+(defn- destination-object-method? [^CtMethod method]
+  (or (and (= "toString" (.getSimpleName method))
+           (empty? (.getParameters method)))
+      (and (= "hashCode" (.getSimpleName method))
+           (empty? (.getParameters method)))
+      (and (= "equals" (.getSimpleName method))
+           (= 1 (count (.getParameters method))))))
+
+(defn- superclass-method [^CtType owner ^CtMethod method]
   (loop [reference (when (instance? CtClass owner)
                      (.getSuperclass ^CtClass owner))]
     (when reference
       (let [declaration (.getTypeDeclaration ^CtTypeReference reference)]
         (if-not (instance? CtClass declaration)
           false
-          (or (some #(= (.getSignature method) (.getSignature ^CtMethod %))
+          (or (some #(when (= (.getSignature method) (.getSignature ^CtMethod %)) %)
                     (.getMethodsByName ^CtClass declaration (.getSimpleName method)))
+              (recur (.getSuperclass ^CtClass declaration))))))))
+
+(defn- subtype-of? [^CtType candidate ^CtType ancestor]
+  (loop [reference (when (instance? CtClass candidate)
+                     (.getSuperclass ^CtClass candidate))]
+    (when reference
+      (or (= (.getQualifiedName ancestor)
+             (.getQualifiedName ^CtTypeReference reference))
+          (when-let [declaration (.getTypeDeclaration ^CtTypeReference reference)]
+            (when (instance? CtClass declaration)
+              (recur (.getSuperclass ^CtClass declaration))))))))
+
+(defn- override-family-root [^CtType owner ^CtMethod method]
+  (loop [current-owner owner current-method method]
+    (if-let [parent-method (superclass-method current-owner current-method)]
+      (recur (.getDeclaringType ^CtMethod parent-method) parent-method)
+      [current-owner current-method])))
+
+(defn- public-override-family? [^CtType owner ^CtMethod method]
+  (let [[root-owner root-method] (override-family-root owner method)
+        signature (.getSignature ^CtMethod root-method)
+        simple-name (.getSimpleName ^CtMethod root-method)
+        all-types
+        (mapcat (fn [^CtType root]
+                  (tree-seq (fn [^CtType type] (seq (.getNestedTypes type)))
+                            (fn [^CtType type] (.getNestedTypes type))
+                            root))
+                (.getAllTypes (.getModel (.getFactory owner))))]
+    (boolean
+     (some
+      (fn [^CtType candidate-owner]
+        (when (or (= (.getQualifiedName root-owner)
+                     (.getQualifiedName candidate-owner))
+                  (subtype-of? candidate-owner root-owner))
+          (some #(and (= signature (.getSignature ^CtMethod %))
+                      (.hasModifier ^CtMethod % ModifierKind/PUBLIC))
+                (.getMethodsByName candidate-owner simple-name))))
+      all-types))))
+
+(defn- superclass-implements-closeable? [^CtType owner]
+  (loop [reference (when (instance? CtClass owner)
+                     (.getSuperclass ^CtClass owner))]
+    (when reference
+      (let [declaration (.getTypeDeclaration ^CtTypeReference reference)]
+        (when (instance? CtClass declaration)
+          (or (some #(= "java.io.Closeable" (.getQualifiedName ^CtTypeReference %))
+                    (.getSuperInterfaces ^CtClass declaration))
               (recur (.getSuperclass ^CtClass declaration))))))))
 
 (defn- method-words [^CtType owner ^CtMethod method]
   (let [static? (.hasModifier method ModifierKind/STATIC)
         abstract? (and (not (instance? CtInterface owner))
                        (.hasModifier method ModifierKind/ABSTRACT))
-        override? (and (not static?) (superclass-method? owner method))
+        super-method (when-not static? (superclass-method owner method))
+        generic-return-conflict?
+        (and super-method
+             (= (.getQualifiedName (.getType method))
+                (.getQualifiedName (.getType ^CtMethod super-method)))
+             (not= (str (.getType method)) (str (.getType ^CtMethod super-method))))
+        widened-override-family? (public-override-family? owner method)
+        interface-dispose?
+        (and (instance? CtInterface owner)
+             (= "close" (.getSimpleName method))
+             (empty? (.getParameters method)))
+        override? (and (not static?)
+                       (or (destination-object-method? method)
+                           (and (= "close" (.getSimpleName method))
+                                (empty? (.getParameters method))
+                                (superclass-implements-closeable? owner))
+                           (and (not (and (= "getMessage" (.getSimpleName method))
+                                          (empty? (.getParameters method))))
+                                super-method
+                                (not generic-return-conflict?))))
         virtual? (and (instance? CtClass owner)
                       (not (instance? CtEnum owner))
                       (not (anonymous-class? owner))
@@ -2364,10 +2832,15 @@
                       (not (.hasModifier method ModifierKind/PRIVATE))
                       (not (.hasModifier method ModifierKind/FINAL)))]
     (remove nil?
-            [(visibility method (if (instance? CtInterface owner) "public" "internal"))
+            [(if widened-override-family?
+               "public"
+               (visibility method (if (instance? CtInterface owner)
+                                    "public"
+                                    "internal")))
              (when static? "static")
              (when abstract? "abstract")
              (when override? "override")
+             (when (or generic-return-conflict? interface-dispose?) "new")
              (when virtual? "virtual")])))
 
 (declare member-node emit-root emit-anonymous-type)
@@ -2404,7 +2877,7 @@
         initializer-node (when (and initializer
                                     (not (:defer-field-initializers? ctx)))
                            (translated-node ctx initializer))
-        name (identifier (.getSimpleName field))
+        name (destination-field-name field)
         rule (if enum-value?
                :java-library.declaration/enum-value
                :java-library.declaration/field)
@@ -2467,7 +2940,47 @@
   (let [name (pascal (.getSimpleName owner))
         rule :java-library.declaration/constructor
         id (register-member! ctx owner constructor name rule)
-        body (.getBody constructor)]
+        body (.getBody constructor)
+        first-statement (some-> body .getStatements first)
+        constructor-invocation
+        (when (and (instance? CtInvocation first-statement)
+                   (not (.isImplicit ^CtInvocation first-statement))
+                   (str/includes?
+                    (:key (invocation-occurrence ctx first-statement))
+                    "#<init>("))
+          first-statement)
+        constructor-occurrence
+        (when constructor-invocation
+          (invocation-occurrence ctx constructor-invocation))
+        initializer-kind
+        (when constructor-invocation
+          (if (and (= :project (:origin constructor-occurrence))
+                   (instance? CtConstructor (:declaration constructor-occurrence))
+                   (identical? owner
+                               (.getDeclaringType
+                                ^CtConstructor (:declaration constructor-occurrence))))
+            "this"
+            "base"))
+        deferred-fields (:deferred-field-initializers ctx)
+        body-node
+        (if (or constructor-invocation (seq deferred-fields))
+          (let [initializers
+                (mapv
+                 (fn [^CtField field]
+                   (sequence-node
+                    [(raw (str "this." (destination-field-name field) " = "))
+                     (translated-node ctx (.getDefaultExpression field))
+                     (raw ";")]))
+                 deferred-fields)
+                statements (remove #(identical? constructor-invocation %)
+                                   (.getStatements body))]
+            (sequence-node
+             [(raw "{\n")
+              (sequence-node initializers "\n")
+              (when (and (seq initializers) (seq statements)) (raw "\n"))
+              (sequence-node (mapv #(translated-node ctx %) statements) "\n")
+              (raw "\n}")]))
+          (translated-node ctx body))]
     (when-not body
       (unsupported! "Java library constructor has no body" constructor))
     (csharp/with-source
@@ -2475,8 +2988,17 @@
        [(raw (str (visibility constructor "internal") " " name "("))
         (sequence-node (mapv #(parameter-node ctx %) (.getParameters constructor))
                        ", ")
-        (raw ") ")
-        (translated-node ctx body)])
+        (raw ")")
+        (when constructor-invocation
+          (sequence-node
+           [(raw (str " : " initializer-kind "("))
+            (sequence-node
+             (mapv #(translated-node ctx %)
+                   (.getArguments ^CtInvocation constructor-invocation))
+             ", ")
+            (raw ")")]))
+        (raw " ")
+        body-node])
       (source-ref constructor rule
                   {:declaration-id id :declaration-kind :constructor}))))
 
@@ -2521,11 +3043,48 @@
        (mapv #(raw (identifier (.getSimpleName ^CtElement %))) parameters))
       (raw (project-type-base ctx owner)))))
 
+(defn- generated-outer-field-name [^CtType type]
+  (let [reserved (->> (concat (.getFields type) (.getMethods type))
+                      (map #(identifier (.getSimpleName ^CtElement %)))
+                      set)]
+    (loop [suffix nil]
+      (let [candidate (str "__outer" suffix)]
+        (if (contains? reserved candidate)
+          (recur (if suffix (inc suffix) 2))
+          candidate)))))
+
+(defn- implicit-member-constructor-node
+  [ctx ^CtType type ^CtConstructor constructor outer-field-name]
+  (let [name (pascal (.getSimpleName type))
+        outer (.getDeclaringType type)
+        rule :java-library.declaration/implicit-member-constructor
+        id (register-member! ctx type constructor name rule 1)]
+    (csharp/with-source
+      (sequence-node
+       [(raw "private readonly ") (owner-type-node ctx outer)
+        (raw (str " " outer-field-name ";\n\n"))
+        (raw (str (visibility constructor "internal") " " name "("))
+        (owner-type-node ctx outer) (raw (str " " outer-field-name ") {\nthis."))
+        (raw outer-field-name) (raw (str " = " outer-field-name ";\n}"))])
+      (source-ref constructor rule
+                  {:declaration-id id :declaration-kind :constructor}))))
+
+(defn- functional-adapter-node [ctx ^CtType type ^CtTypeReference interface]
+  (let [method-name (case (.getQualifiedName interface)
+                      "java.util.concurrent.Callable" "call"
+                      "java.util.function.Supplier" "get")]
+    (sequence-node
+     [(raw "public static implicit operator ")
+      (type-node ctx interface)
+      (raw "(") (owner-type-node ctx type)
+      (raw (str " value) => value." method-name ";"))])))
+
 (defn- emit-anonymous-type [ctx ^CtType owner ^CtConstructorCall call]
   (let [^CtClass anonymous-class (anonymous-class-for-call call)]
     (when-not (or (anonymous-iterator? call)
+                  (anonymous-x509-trust-manager? call)
                   (anonymous-project-subclass? call))
-      (unsupported! "Anonymous class requires exact Iterator or project-class semantics"
+      (unsupported! "Anonymous class requires exact Iterator, X509TrustManager, or project-class semantics"
                     anonymous-class))
     (when (seq (.getArguments call))
       (unsupported! "Anonymous java.util.Iterator construction cannot have base arguments"
@@ -2669,10 +3228,63 @@
                :java-library.declaration/class)
         id (register-type! ctx type name rule)
         bases (base-type-references type)
+        base-nodes (vec (keep #(base-type-node ctx type %) bases))
+        functional-bases
+        (when (instance? CtClass type)
+          (filter #(contains? functional-interface-types (.getQualifiedName ^CtTypeReference %))
+                  bases))
         members (explicit-members type)
+        inner? (non-static-member-class? type)
+        outer-field-name (when inner? (generated-outer-field-name type))
+        nested-instance-class?
+        (some #(and (instance? CtType %)
+                    (non-static-member-class? %))
+              members)
+        deferred-fields
+        (when nested-instance-class?
+          (->> members
+               (filter #(and (instance? CtField %)
+                             (not (.hasModifier ^CtField % ModifierKind/STATIC))
+                             (some? (.getDefaultExpression ^CtField %))))
+               vec))
+        explicit-constructors (filter #(instance? CtConstructor %) members)
+        _ (when (and (seq deferred-fields)
+                     (not= 1 (count explicit-constructors)))
+            (unsupported!
+             "Java member-class field initialization requires exactly one explicit constructor"
+             type))
+        member-ctx (derived-body-context
+                    ctx
+                    {:outer-type (when inner? (.getDeclaringType type))
+                     :outer-field-name outer-field-name
+                     :defer-field-initializers? (boolean (seq deferred-fields))
+                     :deferred-field-initializers deferred-fields})
         member-nodes (if-let [emit-members (:emit-members ctx)]
-                       (emit-members ctx type members)
-                       (mapv #(member-node ctx type %) members))
+                       (emit-members member-ctx type members)
+                       (mapv #(member-node member-ctx type %) members))
+        implicit-constructor
+        (when inner?
+          (some #(when (and (instance? CtConstructor %)
+                            (.isImplicit ^CtConstructor %))
+                   %)
+                (.getTypeMembers type)))
+        member-nodes
+        (cond-> (vec member-nodes)
+          implicit-constructor
+          (conj (implicit-member-constructor-node member-ctx type implicit-constructor
+                                                  outer-field-name))
+          (seq functional-bases)
+          (into (mapv #(functional-adapter-node member-ctx type %) functional-bases)))
+        closeable? (some #(= "java.io.Closeable" (.getQualifiedName ^CtTypeReference %))
+                         (.getSuperInterfaces type))
+        declares-close? (some #(and (instance? CtMethod %)
+                                    (= "close" (.getSimpleName ^CtMethod %))
+                                    (empty? (.getParameters ^CtMethod %)))
+                              members)
+        member-nodes
+        (cond-> member-nodes
+          (and closeable? (not declares-close?) (instance? CtClass type))
+          (conj (raw "public abstract void Dispose();")))
         explicit-enum-to-string?
         (and (instance? CtEnum type)
              (some (fn [member]
@@ -2689,16 +3301,16 @@
            (when-not explicit-enum-to-string?
              (raw (str "public override string ToString() => "
                        "global::Vibeformer.Runtime.JavaCompat.EnumName(this);")))])
-        member-nodes (into (vec member-nodes) (remove nil? enum-members))
+        member-nodes (into member-nodes (remove nil? enum-members))
         source (source-ref type rule
                            {:declaration-id id :declaration-kind :type})]
     (csharp/with-source
       (sequence-node
        [(raw (str (str/join " " (type-words type)) " " name))
         (type-formals-node type)
-        (when (seq bases)
+        (when (seq base-nodes)
           (sequence-node [(raw " : ")
-                          (sequence-node (mapv #(type-node ctx %) bases) ", ")]))
+                          (sequence-node base-nodes ", ")]))
         (if (seq member-nodes)
           (sequence-node [(raw " {\n")
                           (sequence-node member-nodes "\n\n")

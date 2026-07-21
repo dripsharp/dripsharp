@@ -227,7 +227,7 @@ internal sealed class JavaFuture<T>
     }
 }
 
-internal sealed class JavaExecutorService
+public sealed class JavaExecutorService
 {
     private readonly object sync = new();
     private readonly List<Task> tasks = new();
@@ -299,6 +299,97 @@ internal sealed class JavaExecutorService
             TaskScheduler.Default);
         return future;
     }
+}
+
+public abstract class JavaInputStream : Stream
+{
+    public abstract int read();
+
+    public virtual int read(sbyte[] buffer) => read(buffer, 0, buffer.Length);
+
+    public virtual int read(sbyte[] buffer, int offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        if (offset < 0 || count < 0 || offset + count > buffer.Length)
+            throw new ArgumentOutOfRangeException();
+        if (count == 0) return 0;
+        var first = read();
+        if (first < 0) return -1;
+        buffer[offset] = unchecked((sbyte)first);
+        var copied = 1;
+        while (copied < count)
+        {
+            var next = read();
+            if (next < 0) break;
+            buffer[offset + copied++] = unchecked((sbyte)next);
+        }
+        return copied;
+    }
+
+    public virtual int available() => 0;
+    public virtual bool markSupported() => false;
+    public virtual void close() => Dispose();
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        var signed = new sbyte[count];
+        var readCount = read(signed, 0, count);
+        if (readCount > 0) Buffer.BlockCopy(signed, 0, buffer, offset, readCount);
+        return readCount;
+    }
+
+    public override int ReadByte() => read();
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+}
+
+public abstract class JavaOutputStream : Stream
+{
+    public abstract void write(int value);
+
+    public virtual void write(sbyte[] buffer) => write(buffer, 0, buffer.Length);
+
+    public virtual void write(sbyte[] buffer, int offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        for (var index = 0; index < count; index++) write(buffer[offset + index]);
+    }
+
+    public virtual void flush() => Flush();
+    public virtual void close() => Dispose();
+    public override bool CanRead => false;
+    public override bool CanSeek => false;
+    public override bool CanWrite => true;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        var signed = new sbyte[count];
+        Buffer.BlockCopy(buffer, offset, signed, 0, count);
+        write(signed, 0, count);
+    }
+
+    public override void WriteByte(byte value) => write(value);
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
 }
 
 internal sealed class JavaPipedInputStream : Stream
@@ -427,29 +518,17 @@ internal sealed class JavaInflaterOutputStream : Stream
     }
 }
 
-internal class JavaFilterOutputStream : Stream
+public class JavaFilterOutputStream : JavaOutputStream
 {
     protected readonly Stream @out;
 
-    internal JavaFilterOutputStream(Stream output) => @out = output;
-    public override bool CanRead => false;
-    public override bool CanSeek => false;
+    protected JavaFilterOutputStream(Stream output) => @out = output;
     public override bool CanWrite => @out.CanWrite;
-    public override long Length => throw new NotSupportedException();
-    public override long Position
-    {
-        get => throw new NotSupportedException();
-        set => throw new NotSupportedException();
-    }
-
-    public override void Flush() => @out.Flush();
-    public override void Write(byte[] buffer, int offset, int count) =>
-        @out.Write(buffer, offset, count);
-    public override void WriteByte(byte value) => @out.WriteByte(value);
-    public override int Read(byte[] buffer, int offset, int count) =>
-        throw new NotSupportedException();
-    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void write(int value) => @out.WriteByte(unchecked((byte)value));
+    public override void write(sbyte[] buffer, int offset, int count) =>
+        @out.Write(JavaCompat.ToUnsignedBytes(buffer), offset, count);
+    public override void flush() => @out.Flush();
+    public override void close() => @out.Dispose();
 
     protected override void Dispose(bool disposing)
     {
@@ -681,13 +760,219 @@ internal sealed class JavaAtomicReference<T> where T : class
     internal T GetAndSet(T? replacement) => Interlocked.Exchange(ref value, replacement)!;
 }
 
+internal sealed class JavaThreadLocal<T> : IDisposable
+{
+    private readonly ThreadLocal<T> value;
+
+    private JavaThreadLocal(Func<T> supplier) => value = new ThreadLocal<T>(supplier);
+
+    internal static JavaThreadLocal<T> WithInitial(Func<T> supplier)
+    {
+        ArgumentNullException.ThrowIfNull(supplier);
+        return new JavaThreadLocal<T>(supplier);
+    }
+
+    internal T Get() => value.Value!;
+    internal void Set(T replacement) => value.Value = replacement;
+    public void Dispose() => value.Dispose();
+}
+
+internal sealed class JavaDateTimeFormatter
+{
+    internal static readonly JavaDateTimeFormatter Rfc1123 = new();
+
+    private JavaDateTimeFormatter() { }
+
+    internal string Format(DateTimeOffset value) =>
+        value.UtcDateTime.ToString("ddd, d MMM yyyy HH:mm:ss 'GMT'", CultureInfo.InvariantCulture);
+}
+
+internal sealed class JavaKeyStore
+{
+    private readonly System.Security.Cryptography.X509Certificates.X509Certificate2Collection certificates = new();
+
+    private JavaKeyStore() { }
+
+    internal static string GetDefaultType() => "PKCS12";
+
+    internal static JavaKeyStore GetInstance(string type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        if (!string.Equals(type, "PKCS12", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(type, "PKCS#12", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(type, "PFX", StringComparison.OrdinalIgnoreCase))
+            throw new System.Security.Cryptography.CryptographicException(
+                $"Unsupported KeyStore type: {type}");
+        return new JavaKeyStore();
+    }
+
+    internal void Load(Stream input, char[]? password)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        using var contents = new MemoryStream();
+        input.CopyTo(contents);
+        certificates.Clear();
+        certificates.Import(
+            contents.ToArray(),
+            password is null ? null : new string(password),
+            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet |
+            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable);
+    }
+
+    internal System.Security.Cryptography.X509Certificates.X509Certificate2Collection Certificates =>
+        certificates;
+}
+
+internal sealed class JavaKeyManager
+{
+    internal JavaKeyManager(
+        System.Security.Cryptography.X509Certificates.X509Certificate2 serverCertificate) =>
+        ServerCertificate = serverCertificate;
+
+    internal System.Security.Cryptography.X509Certificates.X509Certificate2 ServerCertificate { get; }
+}
+
+internal sealed class JavaKeyManagerFactory
+{
+    private JavaKeyManager? manager;
+
+    private JavaKeyManagerFactory() { }
+
+    internal static string GetDefaultAlgorithm() => "SunX509";
+
+    internal static JavaKeyManagerFactory GetInstance(string algorithm)
+    {
+        ArgumentNullException.ThrowIfNull(algorithm);
+        if (!string.Equals(algorithm, "SunX509", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(algorithm, "NewSunX509", StringComparison.OrdinalIgnoreCase))
+            throw new System.Security.Cryptography.CryptographicException(
+                $"Unsupported KeyManagerFactory algorithm: {algorithm}");
+        return new JavaKeyManagerFactory();
+    }
+
+    internal void Init(JavaKeyStore keyStore, char[]? password)
+    {
+        ArgumentNullException.ThrowIfNull(keyStore);
+        var certificate = keyStore.Certificates.Cast<
+            System.Security.Cryptography.X509Certificates.X509Certificate2>()
+            .FirstOrDefault(candidate => candidate.HasPrivateKey);
+        manager = certificate is null
+            ? throw new System.Security.Cryptography.CryptographicException(
+                "The KeyStore contains no private key certificate.")
+            : new JavaKeyManager(certificate);
+    }
+
+    internal object[] GetKeyManagers() => manager is null
+        ? throw new InvalidOperationException("KeyManagerFactory is not initialized.")
+        : new object[] { manager };
+}
+
+internal sealed class JavaTrustManager
+{
+    internal JavaTrustManager(
+        System.Security.Cryptography.X509Certificates.X509Certificate2Collection certificates) =>
+        Certificates = certificates;
+
+    internal System.Security.Cryptography.X509Certificates.X509Certificate2Collection Certificates { get; }
+}
+
+internal interface JavaX509TrustManager
+{
+    System.Security.Cryptography.X509Certificates.X509Certificate2[] GetAcceptedIssuers();
+    void CheckServerTrusted(
+        System.Security.Cryptography.X509Certificates.X509Certificate2[] chain,
+        string authType);
+    void CheckClientTrusted(
+        System.Security.Cryptography.X509Certificates.X509Certificate2[] chain,
+        string authType);
+}
+
+internal sealed class JavaTrustManagerFactory
+{
+    private JavaTrustManager? manager;
+
+    private JavaTrustManagerFactory() { }
+
+    internal static string GetDefaultAlgorithm() => "PKIX";
+
+    internal static JavaTrustManagerFactory GetInstance(string algorithm)
+    {
+        ArgumentNullException.ThrowIfNull(algorithm);
+        if (!string.Equals(algorithm, "PKIX", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(algorithm, "SunX509", StringComparison.OrdinalIgnoreCase))
+            throw new System.Security.Cryptography.CryptographicException(
+                $"Unsupported TrustManagerFactory algorithm: {algorithm}");
+        return new JavaTrustManagerFactory();
+    }
+
+    internal void Init(JavaKeyStore keyStore)
+    {
+        ArgumentNullException.ThrowIfNull(keyStore);
+        var roots = new System.Security.Cryptography.X509Certificates.X509Certificate2Collection();
+        roots.AddRange(keyStore.Certificates);
+        manager = new JavaTrustManager(roots);
+    }
+
+    internal object[] GetTrustManagers() => manager is null
+        ? throw new InvalidOperationException("TrustManagerFactory is not initialized.")
+        : new object[] { manager };
+}
+
+public sealed class JavaSslContext
+{
+    private readonly string protocol;
+    private JavaSocketFactory? socketFactory;
+    private JavaSslServerSocketFactory? serverSocketFactory;
+
+    private JavaSslContext(string protocol) => this.protocol = protocol;
+
+    public static JavaSslContext GetInstance(string protocol)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        if (!string.Equals(protocol, "TLS", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(protocol, "SSL", StringComparison.OrdinalIgnoreCase))
+            throw new System.Security.Cryptography.CryptographicException(
+                $"Unsupported SSLContext protocol: {protocol}");
+        return new JavaSslContext(protocol);
+    }
+
+    internal void Init(object[]? keyManagers, object[]? trustManagers, object? secureRandom)
+    {
+        var serverCertificate = keyManagers?.OfType<JavaKeyManager>()
+            .Select(manager => manager.ServerCertificate)
+            .FirstOrDefault();
+        var trustedRoots = trustManagers?.OfType<JavaTrustManager>()
+            .Select(manager => manager.Certificates)
+            .FirstOrDefault();
+        var customTrustManager = trustManagers?.OfType<JavaX509TrustManager>().FirstOrDefault();
+        socketFactory = new JavaSocketFactory(tls: true, trustedRoots, customTrustManager);
+        serverSocketFactory = new JavaSslServerSocketFactory(serverCertificate);
+    }
+
+    internal JavaSocketFactory GetSocketFactory() => socketFactory ??
+        throw new InvalidOperationException($"SSLContext {protocol} is not initialized.");
+
+    internal JavaSslServerSocketFactory GetServerSocketFactory() => serverSocketFactory ??
+        throw new InvalidOperationException($"SSLContext {protocol} is not initialized.");
+}
+
 internal sealed class JavaSocketFactory
 {
     internal static readonly JavaSocketFactory Plain = new(false);
     internal static readonly JavaSocketFactory Default = new(true);
     private readonly bool tls;
+    private readonly System.Security.Cryptography.X509Certificates.X509Certificate2Collection? trustedRoots;
+    private readonly JavaX509TrustManager? customTrustManager;
 
-    private JavaSocketFactory(bool tls) => this.tls = tls;
+    internal JavaSocketFactory(
+        bool tls,
+        System.Security.Cryptography.X509Certificates.X509Certificate2Collection? trustedRoots = null,
+        JavaX509TrustManager? customTrustManager = null)
+    {
+        this.tls = tls;
+        this.trustedRoots = trustedRoots;
+        this.customTrustManager = customTrustManager;
+    }
 
     internal System.Net.Sockets.Socket CreateSocket(string host, int port)
     {
@@ -700,7 +985,12 @@ internal sealed class JavaSocketFactory
             Stream stream = new System.Net.Sockets.NetworkStream(socket, ownsSocket: false);
             if (tls)
             {
-                var secure = new System.Net.Security.SslStream(stream, leaveInnerStreamOpen: false);
+                var secure = new System.Net.Security.SslStream(
+                    stream,
+                    leaveInnerStreamOpen: false,
+                    trustedRoots is null && customTrustManager is null
+                        ? null
+                        : ValidateRemoteCertificate);
                 secure.AuthenticateAsClient(host);
                 stream = secure;
             }
@@ -712,6 +1002,64 @@ internal sealed class JavaSocketFactory
             socket.Dispose();
             throw;
         }
+    }
+
+    internal System.Net.Sockets.Socket CreateSocket()
+    {
+        var socket = new System.Net.Sockets.Socket(
+            System.Net.Sockets.SocketType.Stream,
+            System.Net.Sockets.ProtocolType.Tcp);
+        JavaCompat.RegisterPendingSocketFactory(socket, this);
+        return socket;
+    }
+
+    internal Stream OpenStream(System.Net.Sockets.Socket socket)
+    {
+        var stream = new System.Net.Sockets.NetworkStream(socket, ownsSocket: false);
+        if (!tls) return stream;
+        var secure = new System.Net.Security.SslStream(
+            stream,
+            leaveInnerStreamOpen: false,
+            trustedRoots is null && customTrustManager is null
+                ? null
+                : ValidateRemoteCertificate);
+        var host = (socket.RemoteEndPoint as System.Net.IPEndPoint)?.Address.ToString() ??
+            throw new InvalidOperationException("An unconnected SSL socket has no remote host.");
+        secure.AuthenticateAsClient(host);
+        return secure;
+    }
+
+    private bool ValidateRemoteCertificate(
+        object sender,
+        System.Security.Cryptography.X509Certificates.X509Certificate? certificate,
+        System.Security.Cryptography.X509Certificates.X509Chain? chain,
+        System.Net.Security.SslPolicyErrors errors)
+    {
+        if (certificate is null)
+            return false;
+        if (customTrustManager is not null)
+        {
+            var certificates = chain?.ChainElements
+                .Cast<System.Security.Cryptography.X509Certificates.X509ChainElement>()
+                .Select(element => element.Certificate)
+                .ToArray() ?? new[] {
+                    new System.Security.Cryptography.X509Certificates.X509Certificate2(certificate)
+                };
+            customTrustManager.CheckServerTrusted(certificates, certificate.GetKeyAlgorithm());
+            return true;
+        }
+        if (trustedRoots is null ||
+            (errors & System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch) != 0)
+            return false;
+        using var candidate =
+            new System.Security.Cryptography.X509Certificates.X509Certificate2(certificate);
+        using var customChain = new System.Security.Cryptography.X509Certificates.X509Chain();
+        customChain.ChainPolicy.TrustMode =
+            System.Security.Cryptography.X509Certificates.X509ChainTrustMode.CustomRootTrust;
+        customChain.ChainPolicy.CustomTrustStore.AddRange(trustedRoots);
+        customChain.ChainPolicy.RevocationMode =
+            System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
+        return customChain.Build(candidate);
     }
 
     internal System.Net.Sockets.Socket CreateSocket(System.Net.IPAddress address, int port)
@@ -735,13 +1083,34 @@ internal sealed class JavaSocketFactory
     }
 }
 
-internal sealed class JavaServerSocket : IDisposable
+internal sealed class JavaSslServerSocketFactory
+{
+    private readonly System.Security.Cryptography.X509Certificates.X509Certificate2? serverCertificate;
+
+    internal JavaSslServerSocketFactory(
+        System.Security.Cryptography.X509Certificates.X509Certificate2? serverCertificate) =>
+        this.serverCertificate = serverCertificate;
+
+    internal JavaServerSocket CreateServerSocket(int port) =>
+        new(port, tls: true, serverCertificate: serverCertificate);
+}
+
+public sealed class JavaServerSocket : IDisposable
 {
     private readonly System.Net.Sockets.TcpListener listener;
+    private readonly bool tls;
+    private readonly System.Security.Cryptography.X509Certificates.X509Certificate2? serverCertificate;
     private int closed;
 
-    internal JavaServerSocket(int port)
+    internal JavaServerSocket(int port) : this(port, tls: false, serverCertificate: null) { }
+
+    internal JavaServerSocket(
+        int port,
+        bool tls,
+        System.Security.Cryptography.X509Certificates.X509Certificate2? serverCertificate)
     {
+        this.tls = tls;
+        this.serverCertificate = serverCertificate;
         listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, port);
         listener.Start();
     }
@@ -749,7 +1118,25 @@ internal sealed class JavaServerSocket : IDisposable
     internal System.Net.Sockets.Socket Accept()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref closed) != 0, this);
-        return listener.AcceptSocket();
+        var socket = listener.AcceptSocket();
+        if (!tls) return socket;
+        try
+        {
+            if (serverCertificate is null)
+                throw new InvalidOperationException(
+                    "The SSLContext has no server certificate configured.");
+            var secure = new System.Net.Security.SslStream(
+                new System.Net.Sockets.NetworkStream(socket, ownsSocket: false),
+                leaveInnerStreamOpen: false);
+            secure.AuthenticateAsServer(serverCertificate);
+            JavaCompat.RegisterSocketStream(socket, secure);
+            return socket;
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 
     internal bool IsClosed() => Volatile.Read(ref closed) != 0;
@@ -1001,13 +1388,13 @@ internal sealed class JavaProperties
         });
 }
 
-internal interface IJavaOptional
+public interface IJavaOptional
 {
     bool HasValue { get; }
     object? BoxedValue { get; }
 }
 
-internal sealed class JavaOptional<T> : IJavaOptional
+public sealed class JavaOptional<T> : IJavaOptional
 {
     private readonly T? value;
     private readonly bool present;
@@ -1110,6 +1497,11 @@ internal class JavaMapEntry<K, V> where K : notnull
 internal sealed class JavaSimpleEntry<K, V> : JavaMapEntry<K, V> where K : notnull
 {
     internal JavaSimpleEntry(K key, V value) : base(key, value, mutable: true) { }
+}
+
+internal sealed class JavaSimpleImmutableEntry<K, V> : JavaMapEntry<K, V> where K : notnull
+{
+    internal JavaSimpleImmutableEntry(K key, V value) : base(key, value, mutable: false) { }
 }
 
 internal interface JavaRemovableIterator
@@ -1395,6 +1787,9 @@ internal static class JavaCompat
             "true", StringComparison.OrdinalIgnoreCase);
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
         System.Net.Sockets.Socket, Stream> SocketStreams = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        System.Net.Sockets.Socket, JavaSocketFactory> PendingSocketFactories = new();
+    private static readonly System.Net.Http.HttpClient UrlClient = new();
     private sealed class ReadOnlyAdapterCache
     {
         internal Dictionary<Type, object> Values { get; } = new();
@@ -1599,6 +1994,8 @@ internal static class JavaCompat
         value.IndexOf((char)character);
     internal static int StringIndexOf(string value, int character, int fromIndex) =>
         value.IndexOf((char)character, fromIndex);
+    internal static int StringLastIndexOf(string value, int character) =>
+        value.LastIndexOf((char)character);
     internal static bool StringContains(string value, string part) =>
         value.Contains(part, StringComparison.Ordinal);
     internal static string StringTrim(string value)
@@ -5140,12 +5537,21 @@ internal static class JavaCompat
     }
     internal static void RegisterSocketStream(System.Net.Sockets.Socket socket, Stream stream) =>
         SocketStreams.Add(socket, stream);
+    internal static void RegisterPendingSocketFactory(
+        System.Net.Sockets.Socket socket,
+        JavaSocketFactory factory) => PendingSocketFactories.Add(socket, factory);
     internal static System.Net.IPAddress InetSocketAddressAddress(
         System.Net.IPEndPoint endpoint) => endpoint.Address;
-    internal static Stream SocketStream(System.Net.Sockets.Socket socket) =>
-        SocketStreams.TryGetValue(socket, out var stream)
-            ? stream
-            : new System.Net.Sockets.NetworkStream(socket, ownsSocket: false);
+    internal static Stream SocketStream(System.Net.Sockets.Socket socket)
+    {
+        if (SocketStreams.TryGetValue(socket, out var stream)) return stream;
+        if (!PendingSocketFactories.TryGetValue(socket, out var factory))
+            return new System.Net.Sockets.NetworkStream(socket, ownsSocket: false);
+        stream = factory.OpenStream(socket);
+        PendingSocketFactories.Remove(socket);
+        SocketStreams.Add(socket, stream);
+        return stream;
+    }
     internal static bool SocketIsClosed(System.Net.Sockets.Socket socket) =>
         socket.SafeHandle.IsClosed;
     internal static bool SocketIsConnected(System.Net.Sockets.Socket socket) => socket.Connected;
@@ -5314,6 +5720,28 @@ internal static class JavaCompat
             ? OpenFileRead(PathOfUri(uri))
             : new System.Net.Http.HttpClient().GetStreamAsync(uri).GetAwaiter().GetResult();
     internal static Stream OpenInputStream(string path) => OpenFileRead(path);
+
+    internal static long FileLength(string path) => File.Exists(path)
+        ? new FileInfo(path).Length
+        : 0L;
+
+    internal static Stream OpenUrlStream(Uri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        return uri.IsFile
+            ? OpenFileRead(uri.LocalPath)
+            : UrlClient.GetStreamAsync(uri).GetAwaiter().GetResult();
+    }
+
+    internal static string UrlDecode(string value, string encoding)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(encoding);
+        if (!string.Equals(encoding, "UTF-8", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(encoding, "UTF8", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException($"Unsupported URL decoder encoding: {encoding}", nameof(encoding));
+        return System.Net.WebUtility.UrlDecode(value);
+    }
     internal static sbyte[] ReadAllBytes(string path)
     {
         using var stream = OpenFileRead(path);
