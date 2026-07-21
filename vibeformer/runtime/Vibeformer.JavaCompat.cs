@@ -51,6 +51,20 @@ internal interface IJavaEconomicMap<K, out V> where K : notnull
 
 internal
 enum JavaTimeUnit { NANOSECONDS, MICROSECONDS, MILLISECONDS, SECONDS, MINUTES, HOURS, DAYS }
+internal static class JavaTimeUnits
+{
+    internal static TimeSpan ToTimeSpan(long value, JavaTimeUnit unit) => unit switch
+    {
+        JavaTimeUnit.NANOSECONDS => TimeSpan.FromTicks(value / 100),
+        JavaTimeUnit.MICROSECONDS => TimeSpan.FromTicks(checked(value * 10)),
+        JavaTimeUnit.MILLISECONDS => TimeSpan.FromMilliseconds(value),
+        JavaTimeUnit.SECONDS => TimeSpan.FromSeconds(value),
+        JavaTimeUnit.MINUTES => TimeSpan.FromMinutes(value),
+        JavaTimeUnit.HOURS => TimeSpan.FromHours(value),
+        JavaTimeUnit.DAYS => TimeSpan.FromDays(value),
+        _ => throw new ArgumentOutOfRangeException(nameof(unit))
+    };
+}
 internal enum JavaProcessRedirect { INHERIT }
 
 // C# forbids goto from a finally clause, while Java permits a labeled break or
@@ -142,11 +156,24 @@ internal static class JavaCancellation
 // ExecutionException wrapping for translated callers.
 internal sealed class JavaFuture<T>
 {
-    private readonly TaskCompletionSource<T> completion =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<T>? completion;
+    private readonly Task<T> task;
 
-    internal bool Complete(T value) => completion.TrySetResult(value);
-    internal bool CompleteExceptionally(Exception error) => completion.TrySetException(error);
+    internal JavaFuture()
+    {
+        completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        task = completion.Task;
+    }
+
+    private JavaFuture(Task<T> task) => this.task = task;
+    internal Task CompletionTask => task;
+
+    internal static JavaFuture<T> Run(Func<T> callable, CancellationToken cancellation) =>
+        new(Task.Run(callable, cancellation));
+
+    internal bool Complete(T value) => completion?.TrySetResult(value) ?? false;
+    internal bool CompleteExceptionally(Exception error) =>
+        completion?.TrySetException(error) ?? false;
 
     internal T Get()
     {
@@ -154,8 +181,8 @@ internal sealed class JavaFuture<T>
         try
         {
             return cancellation.CanBeCanceled
-                ? completion.Task.WaitAsync(cancellation).GetAwaiter().GetResult()
-                : completion.Task.GetAwaiter().GetResult();
+                ? task.WaitAsync(cancellation).GetAwaiter().GetResult()
+                : task.GetAwaiter().GetResult();
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -166,6 +193,97 @@ internal sealed class JavaFuture<T>
             throw new AggregateException(error);
         }
     }
+
+    internal T Get(long timeout, JavaTimeUnit unit)
+    {
+        try
+        {
+            return task.WaitAsync(JavaTimeUnits.ToTimeSpan(timeout, unit),
+                    JavaCancellation.CurrentToken)
+                .GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) when (JavaCancellation.CurrentToken.IsCancellationRequested)
+        {
+            throw new JavaCancellationException(JavaCancellation.CurrentToken);
+        }
+        catch (TimeoutException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new AggregateException(error);
+        }
+    }
+}
+
+internal sealed class JavaExecutorService
+{
+    private readonly object sync = new();
+    private readonly List<Task> tasks = new();
+    private readonly CancellationTokenSource cancellation = new();
+    private bool shutdown;
+
+    internal JavaFuture<T> Submit<T>(Func<T> callable) =>
+        Track(JavaFuture<T>.Run(callable, Token()));
+
+    internal JavaFuture<object?> Submit(Action runnable) =>
+        Submit<object?>(() =>
+        {
+            runnable();
+            return null;
+        });
+
+    internal void Shutdown()
+    {
+        lock (sync) shutdown = true;
+    }
+
+    internal void ShutdownNow()
+    {
+        lock (sync) shutdown = true;
+        cancellation.Cancel();
+    }
+
+    internal bool AwaitTermination(long timeout, JavaTimeUnit unit)
+    {
+        Task[] pending;
+        lock (sync) pending = tasks.ToArray();
+        return Task.WhenAll(pending).Wait(JavaTimeUnits.ToTimeSpan(timeout, unit));
+    }
+
+    private CancellationToken Token()
+    {
+        lock (sync)
+        {
+            if (shutdown) throw new InvalidOperationException("Executor service is shut down.");
+            return cancellation.Token;
+        }
+    }
+
+    private JavaFuture<T> Track<T>(JavaFuture<T> future)
+    {
+        var marker = future.CompletionTask;
+        lock (sync) tasks.Add(marker);
+        _ = marker.ContinueWith(completed =>
+        {
+            lock (sync) tasks.Remove(completed);
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return future;
+    }
+}
+
+internal sealed class JavaAtomicBoolean
+{
+    private int value;
+
+    internal JavaAtomicBoolean(bool value = false) => this.value = value ? 1 : 0;
+    internal bool Get() => Volatile.Read(ref value) != 0;
+    internal void Set(bool replacement) => Volatile.Write(ref value, replacement ? 1 : 0);
+    internal bool CompareAndSet(bool expected, bool replacement) =>
+        Interlocked.CompareExchange(ref value, replacement ? 1 : 0, expected ? 1 : 0) ==
+        (expected ? 1 : 0);
 }
 
 internal sealed class JavaRandom
@@ -4409,6 +4527,14 @@ internal static class JavaCompat
         stream.Write(ToUnsignedBytes(values));
     internal static void OutputStreamWrite(Stream stream, int value) =>
         stream.WriteByte(unchecked((byte)value));
+    internal static void MemoryStreamWriteTo(MemoryStream source, Stream destination)
+    {
+        if (!source.TryGetBuffer(out var contents))
+            contents = new ArraySegment<byte>(source.ToArray());
+        destination.Write(contents.AsSpan(0, checked((int)source.Length)));
+    }
+    internal static Stream SocketStream(System.Net.Sockets.Socket socket) =>
+        new System.Net.Sockets.NetworkStream(socket, ownsSocket: false);
     internal static void ForEach<T>(IEnumerable<T> values, Action<T> action)
     {
         foreach (var value in values) action(value);

@@ -639,6 +639,94 @@
     (is (= "executable:java.io.OutputStream#write(byte[],int,int)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
 
+(deftest neutral-socket-executor-optional-atomic-and-runtime-failures-are-resolved
+  (let [fixture
+        (model! {"example/Network.java"
+                 (str "package example; import java.io.ByteArrayOutputStream; "
+                      "import java.io.IOException; "
+                      "import java.io.InputStream; import java.io.OutputStream; "
+                      "import java.net.Socket; import java.util.HashMap; import java.util.Optional; "
+                      "import java.util.concurrent.Callable; import java.util.concurrent.Future; "
+                      "import java.util.concurrent.ExecutorService; "
+                      "import java.util.concurrent.TimeUnit; "
+                      "import java.util.concurrent.atomic.AtomicBoolean; "
+                      "public final class Network { static boolean use("
+                      "Socket socket, ExecutorService executor, Optional<String> value, "
+                      "AtomicBoolean called) throws IOException { "
+                      "OutputStream output = socket.getOutputStream(); "
+                      "InputStream input = socket.getInputStream(); output.flush(); "
+                      "HashMap<String, String> values = new HashMap<>(4); "
+                      "ByteArrayOutputStream buffer = new ByteArrayOutputStream(16); "
+                      "buffer.writeTo(output); "
+                      "executor.submit(() -> { called.compareAndSet(false, true); }); "
+                      "if (called.get()) { socket.close(); } "
+                      "if (!value.isPresent()) { output.close(); } "
+                      "return input != null && values.size() == 0 && value.get().length() > 0; } "
+                      "static String await(ExecutorService executor, Callable<String> callable) "
+                      "throws Exception { Future<String> future = executor.submit(callable); "
+                      "return future.get(5, TimeUnit.SECONDS); } "
+                      "static RuntimeException failure(String message, Throwable cause) { "
+                      "cause.printStackTrace(); "
+                      "if (cause == null) { return new RuntimeException(message); } "
+                      "return new RuntimeException(message, cause); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Network.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Network.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::System.IO.Stream output = "
+              "global::Vibeformer.Runtime.JavaCompat.SocketStream(socket);\n"
+              "global::System.IO.Stream input = "
+              "global::Vibeformer.Runtime.JavaCompat.SocketStream(socket);\n"
+              "output.Flush();\n"
+              "global::System.Collections.Generic.Dictionary<string, string> values = "
+              "new global::System.Collections.Generic.Dictionary<string, string>(4);\n"
+              "global::System.IO.MemoryStream buffer = new global::System.IO.MemoryStream(16);\n"
+              "global::Vibeformer.Runtime.JavaCompat.MemoryStreamWriteTo(buffer, output);\n"
+              "executor.Submit(() => {\n"
+              "called.CompareAndSet(false, true);\n});\n"
+              "if (called.Get()) {\nsocket.Close();\n}\n"
+              "if (!value.IsPresent()) {\noutput.Dispose();\n}\n"
+              "return (((input != null) && "
+              "(values.Count == 0)) && "
+              "(value.Get().Length > 0));")))
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaFuture<string> future = "
+              "executor.Submit(callable);\n"
+              "return future.Get(5, global::Vibeformer.Runtime.JavaTimeUnit.SECONDS);")))
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaCompat.PrintStackTrace(cause);\n"
+              "if ((cause == null)) {\n"
+              "return new global::System.Exception(message);\n}\n"
+              "return new global::System.Exception(message, cause);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-executor-execute-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.concurrent.ExecutorService; "
+                      "public final class Unsupported { public static void run("
+                      "ExecutorService executor, Runnable action) { executor.execute(action); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.util.concurrent.Executor#execute(java.lang.Runnable)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
 (deftest neighboring-map-compute-contract-remains-fail-closed
   (let [fixture
         (model! {"example/Unsupported.java"

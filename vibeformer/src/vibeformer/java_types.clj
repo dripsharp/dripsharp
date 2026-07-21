@@ -55,6 +55,7 @@
    "java.lang.Math" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::Vibeformer.Runtime.JavaCompat"
                        :dotnet.type/java-compat]
+   "java.lang.Runnable" ["global::System.Action" :dotnet.type/action]
    "java.lang.Iterable" ["global::System.Collections.Generic.IEnumerable"
                          :dotnet.type/enumerable]
    "java.lang.AutoCloseable" ["global::System.IDisposable" :dotnet.type/disposable]
@@ -147,6 +148,10 @@
                     :dotnet.type/set-interface]
 
    "java.util.concurrent.Callable" ["global::System.Func" :dotnet.type/func]
+   "java.util.concurrent.Executor" ["global::Vibeformer.Runtime.JavaExecutorService"
+                                    :dotnet.type/executor]
+   "java.util.concurrent.ExecutorService" ["global::Vibeformer.Runtime.JavaExecutorService"
+                                           :dotnet.type/executor-service]
    "java.util.concurrent.ExecutionException" ["global::System.AggregateException"
                                               :dotnet.type/execution-exception]
    "java.util.concurrent.Executors" ["global::Vibeformer.Runtime.JavaCompat"
@@ -157,6 +162,8 @@
                                     :dotnet.type/time-unit]
    "java.util.concurrent.TimeoutException" ["global::System.TimeoutException"
                                             :dotnet.type/timeout-exception]
+   "java.util.concurrent.atomic.AtomicBoolean" ["global::Vibeformer.Runtime.JavaAtomicBoolean"
+                                                :dotnet.type/atomic-boolean]
    "java.util.function.BiConsumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
    "java.util.function.Consumer" ["global::System.Action" :dotnet.type/action]

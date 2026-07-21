@@ -316,11 +316,18 @@
        "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
        "executable:java.lang.String#toCharArray()"
        "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
+       "executable:java.net.Socket#getInputStream()"
+       "executable:java.net.Socket#getOutputStream()"
+       "executable:java.net.Socket#close()"
+       "executable:java.io.OutputStream#flush()"
+       "executable:java.io.OutputStream#close()"
+       "executable:java.io.ByteArrayOutputStream#writeTo(java.io.OutputStream)"
        "executable:java.lang.StringBuilder#append(java.lang.String)"
        "executable:java.lang.StringBuilder#toString()"
        "executable:java.util.Collection#stream()"
        "executable:java.lang.Object#getClass()"
        "executable:java.lang.Throwable#getCause()"
+       "executable:java.lang.Throwable#printStackTrace()"
        "executable:java.util.Map#entrySet()"
        "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
@@ -333,6 +340,7 @@
        "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
        "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
        "executable:java.util.Map#size()"
+       "executable:java.util.HashMap#size()"
        "executable:java.util.Map#get(java.lang.Object)"
        "executable:java.util.Map#remove(java.lang.Object)"
        "executable:java.util.HashMap#remove(java.lang.Object)"
@@ -351,6 +359,8 @@
        "executable:java.util.List#size()"
        "executable:java.util.Optional#empty()"
        "executable:java.util.Optional#of(java.lang.Object)"
+       "executable:java.util.Optional#get()"
+       "executable:java.util.Optional#isPresent()"
        "executable:java.util.OptionalInt#isPresent()"
        "executable:java.util.OptionalInt#getAsInt()"
        "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
@@ -366,7 +376,12 @@
        "executable:java.util.stream.Stream#map(java.util.function.Function)"
        "executable:java.util.stream.Stream#of(java.lang.Object[])"
        "executable:java.io.OutputStream#write(byte[])"
-       "executable:java.io.OutputStream#write(int)"}
+       "executable:java.io.OutputStream#write(int)"
+       "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
+       "executable:java.util.concurrent.ExecutorService#submit(java.util.concurrent.Callable)"
+       "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
+       "executable:java.util.concurrent.atomic.AtomicBoolean#get()"
+       "executable:java.util.concurrent.atomic.AtomicBoolean#compareAndSet(boolean,boolean)"}
      (:key occurrence))
     (identifier (.getSimpleName ^CtElement reference))
 
@@ -378,6 +393,16 @@
 
     (= "field:java.nio.charset.StandardCharsets#ISO_8859_1" (:key occurrence))
     "ISO88591"
+
+    (contains? #{"field:java.util.concurrent.TimeUnit#NANOSECONDS"
+                 "field:java.util.concurrent.TimeUnit#MICROSECONDS"
+                 "field:java.util.concurrent.TimeUnit#MILLISECONDS"
+                 "field:java.util.concurrent.TimeUnit#SECONDS"
+                 "field:java.util.concurrent.TimeUnit#MINUTES"
+                 "field:java.util.concurrent.TimeUnit#HOURS"
+                 "field:java.util.concurrent.TimeUnit#DAYS"}
+               (:key occurrence))
+    (identifier (.getSimpleName ^CtElement reference))
 
     :else
     (unsupported! "Java library executable or field has no neutral mapping"
@@ -429,9 +454,13 @@
                     "executable:java.io.IOException#<init>()"
                     "executable:java.util.NoSuchElementException#<init>()"
                     "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
+                    "executable:java.lang.RuntimeException#<init>(java.lang.String)"
+                    "executable:java.lang.RuntimeException#<init>(java.lang.String,java.lang.Throwable)"
                     "executable:java.lang.StringBuilder#<init>()"
                     "executable:java.lang.String#<init>(char[])"
+                    "executable:java.io.ByteArrayOutputStream#<init>(int)"
                     "executable:java.util.HashMap#<init>()"
+                    "executable:java.util.HashMap#<init>(int)"
                     "executable:java.util.HashSet#<init>(int)"
                     "executable:java.util.ArrayList#<init>()"
                     "executable:java.util.ArrayList#<init>(int)"
@@ -597,6 +626,24 @@
                "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
                (compat-call "StringGetBytes" (into [target-node] arguments))
 
+               "executable:java.net.Socket#getInputStream()"
+               (compat-call "SocketStream" [target-node])
+
+               "executable:java.net.Socket#getOutputStream()"
+               (compat-call "SocketStream" [target-node])
+
+               "executable:java.net.Socket#close()"
+               (sequence-node [target-node (raw ".Close()")])
+
+               "executable:java.io.OutputStream#flush()"
+               (sequence-node [target-node (raw ".Flush()")])
+
+               "executable:java.io.OutputStream#close()"
+               (sequence-node [target-node (raw ".Dispose()")])
+
+               "executable:java.io.ByteArrayOutputStream#writeTo(java.io.OutputStream)"
+               (compat-call "MemoryStreamWriteTo" (into [target-node] arguments))
+
                "executable:java.io.OutputStream#write(byte[])"
                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
@@ -618,6 +665,9 @@
 
                "executable:java.lang.Throwable#getCause()"
                (sequence-node [target-node (raw ".InnerException")])
+
+               "executable:java.lang.Throwable#printStackTrace()"
+               (compat-call "PrintStackTrace" [target-node])
 
                "executable:java.util.Map#entrySet()"
                (compat-call "MapEntrySet" [target-node])
@@ -654,6 +704,9 @@
 
                "executable:java.util.Map#size()"
                (compat-call "MapCount" [target-node])
+
+               "executable:java.util.HashMap#size()"
+               (sequence-node [target-node (raw ".Count")])
 
                "executable:java.util.Map#get(java.lang.Object)"
                (compat-call "MapGet" (into [target-node] arguments))
@@ -716,6 +769,12 @@
                                (raw ".Of(") (sequence-node arguments ", ")
                                (raw ")")])
 
+               "executable:java.util.Optional#get()"
+               (sequence-node [target-node (raw ".Get()")])
+
+               "executable:java.util.Optional#isPresent()"
+               (sequence-node [target-node (raw ".IsPresent()")])
+
                "executable:java.util.OptionalInt#isPresent()"
                (sequence-node [target-node (raw ".HasValue")])
 
@@ -770,6 +829,25 @@
                     [(type-node @ctx-holder (collection-element-type element))])
                    (raw "(") target-node (raw ")")])
                  (compat-call "ToListValues" [target-node]))
+
+               "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
+               (sequence-node [target-node (raw ".Submit(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.concurrent.ExecutorService#submit(java.util.concurrent.Callable)"
+               (sequence-node [target-node (raw ".Submit(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
+               (sequence-node [target-node (raw ".Get(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.concurrent.atomic.AtomicBoolean#get()"
+               (sequence-node [target-node (raw ".Get()")])
+
+               "executable:java.util.concurrent.atomic.AtomicBoolean#compareAndSet(boolean,boolean)"
+               (sequence-node [target-node (raw ".CompareAndSet(")
+                               (sequence-node arguments ", ") (raw ")")])
 
                "executable:java.lang.Object#<init>()"
                (raw "")
