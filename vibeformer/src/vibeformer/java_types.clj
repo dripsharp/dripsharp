@@ -31,6 +31,9 @@
    "java.lang.Double" ["double" :dotnet.type/double]
    "java.lang.Number" ["global::System.IConvertible" :dotnet.type/number]
    "java.lang.Void" ["object" :dotnet.type/void-marker]
+   "java.lang.Override" ["global::System.Attribute" :dotnet.type/source-annotation]
+   "java.lang.SuppressWarnings" ["global::System.Attribute" :dotnet.type/source-annotation]
+   "java.lang.FunctionalInterface" ["global::System.Attribute" :dotnet.type/source-annotation]
    "java.lang.Class" ["global::System.Type" :dotnet.type/type]
    "java.lang.Enum" ["object" :dotnet.type/enum-base]
    "java.lang.Throwable" ["global::System.Exception" :dotnet.type/exception]
@@ -40,6 +43,8 @@
                                          :dotnet.type/argument-exception]
    "java.lang.IllegalStateException" ["global::System.InvalidOperationException"
                                       :dotnet.type/invalid-operation]
+   "java.lang.InterruptedException" ["global::System.Threading.ThreadInterruptedException"
+                                     :dotnet.type/thread-interrupted]
    "java.lang.IndexOutOfBoundsException" ["global::System.ArgumentOutOfRangeException"
                                           :dotnet.type/argument-out-of-range]
    "java.lang.ClassCastException" ["global::System.InvalidCastException"
@@ -90,9 +95,10 @@
    "java.net.InetAddress" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
    "java.net.InetSocketAddress" ["global::System.Net.IPEndPoint"
                                  :dotnet.type/ip-endpoint]
+   "java.net.SocketAddress" ["global::System.Net.EndPoint" :dotnet.type/end-point]
    "java.net.Socket" ["global::System.Net.Sockets.Socket" :dotnet.type/socket]
-   "java.net.ServerSocket" ["global::System.Net.Sockets.TcpListener"
-                            :dotnet.type/tcp-listener]
+   "java.net.ServerSocket" ["global::Vibeformer.Runtime.JavaServerSocket"
+                            :dotnet.type/server-socket]
    "java.net.SocketException" ["global::System.Net.Sockets.SocketException"
                                :dotnet.type/socket-exception]
    "java.net.SocketTimeoutException" ["global::System.TimeoutException"
@@ -103,9 +109,12 @@
                                         :dotnet.type/standard-charsets]
    "java.nio.file.Files" ["global::Vibeformer.Runtime.JavaCompat"
                           :dotnet.type/java-compat]
+   "java.nio.file.Path" ["string" :dotnet.type/path]
+   "java.nio.file.OpenOption" ["object" :dotnet.type/open-option]
 
    "java.time.Duration" ["global::System.TimeSpan" :dotnet.type/time-span]
    "java.time.Instant" ["global::System.DateTimeOffset" :dotnet.type/date-time-offset]
+   "java.time.temporal.TemporalAmount" ["global::System.TimeSpan" :dotnet.type/time-span]
    "java.time.ZoneOffset" ["global::System.TimeSpan" :dotnet.type/time-span]
    "java.time.ZonedDateTime" ["global::System.DateTimeOffset"
                               :dotnet.type/date-time-offset]
@@ -124,8 +133,8 @@
                         :dotnet.type/dictionary]
    "java.util.HashSet" ["global::System.Collections.Generic.HashSet"
                         :dotnet.type/hash-set]
-   "java.util.Iterator" ["global::System.Collections.Generic.IEnumerator"
-                         :dotnet.type/enumerator]
+   "java.util.Iterator" ["global::Vibeformer.Runtime.JavaIterator"
+                         :dotnet.type/java-iterator]
    "java.util.LinkedHashMap" ["global::Vibeformer.Runtime.JavaLinkedHashMap"
                               :dotnet.type/linked-dictionary]
    "java.util.LinkedHashSet" ["global::System.Collections.Generic.HashSet"

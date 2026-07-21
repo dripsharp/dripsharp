@@ -283,17 +283,17 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest unsupported-constructor-statements-fail-closed
+(deftest unsupported-do-while-constructor-statements-fail-closed
   (let [fixture
         (model! {"example/Loop.java"
                  (str "package example; public final class Loop { "
-                      "public Loop(boolean running) { while (running) { } } }")})
+                      "public Loop(boolean running) { do { } while (running); } }")})
         error (caught #(emit! fixture 1))]
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
     (is (= :unsupported-java-element
            (get-in (ex-data error) [:diagnostic :kind])))
     (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
-                       "CtWhile"))
+                       "CtDo"))
     (is (pos? (get-in (ex-data error) [:diagnostic :location :line])))))
 
 (deftest unmapped-jdk-constructor-in-body-fails-closed
@@ -584,7 +584,8 @@
 (deftest neutral-string-encoding-and-output-stream-writes-preserve-java-bytes
   (let [fixture
         (model! {"example/Wire.java"
-                 (str "package example; import java.io.IOException; "
+                 (str "package example; import java.io.ByteArrayInputStream; "
+                      "import java.io.IOException; import java.io.InputStream; "
                       "import java.io.OutputStream; import java.nio.charset.StandardCharsets; "
                       "import java.util.OptionalInt; "
                       "public final class Wire { public static void write("
@@ -593,6 +594,8 @@
                       "output.write(':'); "
                       "output.write(value.getBytes(StandardCharsets.ISO_8859_1)); "
                       "output.write(value.length()); } "
+                      "public static InputStream input(String value) { return new "
+                      "ByteArrayInputStream(value.getBytes(StandardCharsets.US_ASCII)); } "
                       "public static int require(OptionalInt value) { "
                       "if (value.isPresent()) { return value.getAsInt(); } return -1; } }")})
         capabilities #{:java-compat :java-regex-unicode}
@@ -614,6 +617,11 @@
               "global::Vibeformer.Runtime.JavaCompat.StringGetBytes(value, "
               "global::Vibeformer.Runtime.JavaStandardCharsets.ISO88591));\n"
               "global::Vibeformer.Runtime.JavaCompat.OutputStreamWrite(output, value.Length);")))
+    (is (str/includes?
+         first-source
+         (str "return global::Vibeformer.Runtime.JavaCompat.NewMemoryStream("
+              "global::Vibeformer.Runtime.JavaCompat.StringGetBytes(value, "
+              "global::Vibeformer.Runtime.JavaStandardCharsets.USASCII));")))
     (is (str/includes?
          first-source
          (str "public static int require(int? value) {\n"
@@ -778,6 +786,138 @@
         error (caught #(emit! fixture 1))]
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
     (is (= "executable:java.util.concurrent.atomic.AtomicInteger#getAndIncrement()"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-server-socket-lifecycle-is-resolved
+  (let [fixture
+        (model! {"example/Server.java"
+                 (str "package example; import java.net.InetAddress; "
+                      "import java.net.InetSocketAddress; import java.net.ServerSocket; "
+                      "import java.net.Socket; "
+                      "public final class Server { static Socket accept(ServerSocket server) "
+                      "throws Exception { return server.accept(); } "
+                      "static InetAddress remote(Socket socket) { return "
+                      "((InetSocketAddress) socket.getRemoteSocketAddress()).getAddress(); } "
+                      "static void run() { new Thread(() -> { "
+                      "while (true) { break; } }, \"worker\").start(); } "
+                      "static boolean open(int port) throws Exception { "
+                      "ServerSocket server = new ServerSocket(port); "
+                      "if (!server.isClosed()) { server.close(); } "
+                      "return !server.isClosed(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Server.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Server.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return server.Accept();\n}\n\n"
+              "internal static global::System.Net.IPAddress remote("
+              "global::System.Net.Sockets.Socket socket) {\n"
+              "return global::Vibeformer.Runtime.JavaCompat.InetSocketAddressAddress("
+              "(global::System.Net.IPEndPoint)(socket.RemoteEndPoint!));\n}\n\n"
+              "internal static void run() {\n"
+              "new global::Vibeformer.Runtime.JavaThread(() => {\n"
+              "while (true) {\nbreak;\n}\n}, \"worker\").Start();\n}\n\n"
+              "internal static bool open(int port) {\n"
+              "global::Vibeformer.Runtime.JavaServerSocket server = "
+              "new global::Vibeformer.Runtime.JavaServerSocket(port);\n"
+              "if (!server.IsClosed()) {\nserver.Close();\n}\n"
+              "return !server.IsClosed();")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-server-socket-backlog-constructor-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.net.ServerSocket; "
+                      "public final class Unsupported { static ServerSocket open(int port) "
+                      "throws Exception { return new ServerSocket(port, 12); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.net.ServerSocket#<init>(int,int)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neighboring-thread-name-only-constructor-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; public final class Unsupported { "
+                      "static Thread create() { return new Thread(\"worker\"); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.lang.Thread#<init>(java.lang.String)"
+           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-optional-control-flow-and-executor-lifecycle-are-resolved
+  (let [fixture
+        (model! {"example/Options.java"
+                 (str "package example; import java.util.Optional; "
+                      "import java.util.concurrent.ExecutorService; "
+                      "import java.util.concurrent.TimeUnit; "
+                      "public final class Options { static boolean check("
+                      "Optional<String> value, boolean current) { "
+                      "current |= value.map(\"x\"::equalsIgnoreCase).orElse(false); "
+                      "value.ifPresent(text -> { }); "
+                      "return value.orElseGet(() -> \"none\").equals(\"x\") && current; } "
+                      "static boolean stop(ExecutorService executor) throws Exception { "
+                      "executor.shutdown(); boolean stopped = "
+                      "executor.awaitTermination(1, TimeUnit.SECONDS); "
+                      "if (!stopped) { executor.shutdownNow(); } return stopped; } "
+                      "static void interrupt() { Thread.currentThread().interrupt(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Options.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Options.cs")))]
+    (is (str/includes?
+         first-source
+         (str "current |= value.Map((value0) => "
+              "global::Vibeformer.Runtime.JavaCompat.EqualsIgnoreCase(\"x\", value0))"
+              ".OrElse(false);\n"
+              "value.IfPresent((text) => {});\n"
+              "return (global::Vibeformer.Runtime.JavaCompat.Equals("
+              "value.OrElseGet(() => \"none\"), \"x\") && current);")))
+    (is (str/includes?
+         first-source
+         (str "executor.Shutdown();\n"
+              "bool stopped = executor.AwaitTermination(1, "
+              "global::Vibeformer.Runtime.JavaTimeUnit.SECONDS);\n"
+              "if (!stopped) {\nexecutor.ShutdownNow();\n}\nreturn stopped;")))
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaThread.CurrentThread().Interrupt();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neighboring-optional-filter-remains-fail-closed
+  (let [fixture
+        (model! {"example/Unsupported.java"
+                 (str "package example; import java.util.Optional; "
+                      "public final class Unsupported { static Optional<String> filter("
+                      "Optional<String> value) { return value.filter(x -> true); } }")})
+        error (caught #(emit! fixture 1))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= "executable:java.util.Optional#filter(java.util.function.Predicate)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
 
 (deftest neutral-nullable-optional-supplier-and-uri-scheme-are-resolved

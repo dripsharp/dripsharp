@@ -87,6 +87,8 @@ internal sealed class JavaCancellationException : OperationCanceledException
         : base("The translated Java operation was cancelled.", token) { }
 }
 
+internal sealed class JavaAssertionError(string? message) : Exception(message);
+
 internal sealed class JavaUriSyntaxException : UriFormatException
 {
     internal string InputText { get; }
@@ -254,11 +256,12 @@ internal sealed class JavaExecutorService
         scheduler?.Complete();
     }
 
-    internal void ShutdownNow()
+    internal IList<Action> ShutdownNow()
     {
         lock (sync) shutdown = true;
         cancellation.Cancel();
         scheduler?.Complete();
+        return new List<Action>();
     }
 
     internal bool AwaitTermination(long timeout, JavaTimeUnit unit)
@@ -300,9 +303,14 @@ internal sealed class JavaThread
     private readonly Thread thread;
 
     internal JavaThread(Action runnable) => thread = new Thread(() => runnable());
+    internal JavaThread(Action runnable, string name) : this(runnable) => SetName(name);
+    private JavaThread(Thread thread) => this.thread = thread;
+    internal static JavaThread CurrentThread() => new(Thread.CurrentThread);
+    internal static void Sleep(long milliseconds) => Thread.Sleep(checked((int)milliseconds));
     internal void SetDaemon(bool daemon) => thread.IsBackground = daemon;
     internal void SetName(string name) => thread.Name = name;
     internal void Start() => thread.Start();
+    internal void Interrupt() => thread.Interrupt();
     internal bool Join(TimeSpan timeout) => thread.Join(timeout);
 }
 
@@ -413,6 +421,53 @@ internal sealed class JavaSocketFactory
             throw;
         }
     }
+
+    internal System.Net.Sockets.Socket CreateSocket(System.Net.IPAddress address, int port)
+    {
+        var socket = new System.Net.Sockets.Socket(
+            address.AddressFamily,
+            System.Net.Sockets.SocketType.Stream,
+            System.Net.Sockets.ProtocolType.Tcp);
+        try
+        {
+            socket.Connect(address, port);
+            JavaCompat.RegisterSocketStream(
+                socket, new System.Net.Sockets.NetworkStream(socket, ownsSocket: false));
+            return socket;
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+}
+
+internal sealed class JavaServerSocket : IDisposable
+{
+    private readonly System.Net.Sockets.TcpListener listener;
+    private int closed;
+
+    internal JavaServerSocket(int port)
+    {
+        listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, port);
+        listener.Start();
+    }
+
+    internal System.Net.Sockets.Socket Accept()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref closed) != 0, this);
+        return listener.AcceptSocket();
+    }
+
+    internal bool IsClosed() => Volatile.Read(ref closed) != 0;
+
+    internal void Close()
+    {
+        if (Interlocked.Exchange(ref closed, 1) == 0) listener.Stop();
+    }
+
+    public void Dispose() => Close();
 }
 
 internal sealed class JavaRandom
@@ -672,6 +727,7 @@ internal sealed class JavaOptional<T>
     internal bool IsEmpty() => !present;
     internal T Get() => present ? value! : throw new InvalidOperationException("Optional is empty");
     internal T OrElse(T fallback) => present ? value! : fallback;
+    internal T OrElseGet(Func<T> supplier) => present ? value! : supplier();
     internal void IfPresent(Action<T> action) { if (present) action(value!); }
     internal void IfPresentOrElse(Action<T> action, Action emptyAction) { if (present) action(value!); else emptyAction(); }
     internal T OrElseThrow() => Get();
@@ -742,6 +798,40 @@ internal interface JavaRemovableIterator
 {
     void MarkReturned();
     void Remove();
+}
+
+internal interface JavaIterator<out T>
+{
+    bool HasNext();
+    T Next();
+    void Remove();
+}
+
+internal sealed class JavaListIterator<T>(IEnumerable<T> values) : JavaIterator<T>
+{
+    private readonly IEnumerator<T> iterator = values.GetEnumerator();
+    private bool prepared;
+    private bool hasNext;
+
+    public bool HasNext()
+    {
+        if (!prepared)
+        {
+            hasNext = iterator.MoveNext();
+            prepared = true;
+        }
+        return hasNext;
+    }
+
+    public T Next()
+    {
+        if (!HasNext()) throw new InvalidOperationException("Iterator has no next element.");
+        prepared = false;
+        return iterator.Current;
+    }
+
+    public void Remove() => throw new NotSupportedException(
+        "This Java iterator does not expose mutable removal semantics.");
 }
 
 internal interface JavaReadOnlyAdapter
@@ -981,6 +1071,9 @@ internal sealed class JavaMapKeySet<K, V> : ISet<K> where K : notnull
 
 internal static class JavaCompat
 {
+    private static readonly bool AssertionsEnabled =
+        string.Equals(Environment.GetEnvironmentVariable("VIBEFORMER_JAVA_ASSERTIONS"),
+            "true", StringComparison.OrdinalIgnoreCase);
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
         System.Net.Sockets.Socket, Stream> SocketStreams = new();
     private sealed class ReadOnlyAdapterCache
@@ -990,6 +1083,15 @@ internal static class JavaCompat
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, ReadOnlyAdapterCache>
         ReadOnlyAdapters = new();
+
+    internal static void Assert(Func<bool> condition, Func<object?>? message = null)
+    {
+        if (AssertionsEnabled && !condition())
+            throw new JavaAssertionError(message?.Invoke()?.ToString());
+    }
+
+    internal static JavaIterator<T> Iterator<T>(IEnumerable<T> values) =>
+        new JavaListIterator<T>(values);
 
     private static object ReadOnlyAdapter(Type targetType, object source, Func<object> create)
     {
@@ -1168,6 +1270,18 @@ internal static class JavaCompat
 
     internal static bool EqualsIgnoreCase(string value, string? other) =>
         string.Equals(value, other, StringComparison.OrdinalIgnoreCase);
+    internal static bool StringStartsWith(string value, string prefix) =>
+        value.StartsWith(prefix, StringComparison.Ordinal);
+    internal static bool StringEndsWith(string value, string suffix) =>
+        value.EndsWith(suffix, StringComparison.Ordinal);
+    internal static string StringSubstring(string value, int beginIndex, int endIndex) =>
+        value.Substring(beginIndex, endIndex - beginIndex);
+    internal static int StringIndexOf(string value, int character) =>
+        value.IndexOf((char)character);
+    internal static int StringIndexOf(string value, int character, int fromIndex) =>
+        value.IndexOf((char)character, fromIndex);
+    internal static bool StringContains(string value, string part) =>
+        value.Contains(part, StringComparison.Ordinal);
 
     internal static int StringHashCode(string value)
     {
@@ -4670,6 +4784,8 @@ internal static class JavaCompat
     }
     internal static void RegisterSocketStream(System.Net.Sockets.Socket socket, Stream stream) =>
         SocketStreams.Add(socket, stream);
+    internal static System.Net.IPAddress InetSocketAddressAddress(
+        System.Net.IPEndPoint endpoint) => endpoint.Address;
     internal static Stream SocketStream(System.Net.Sockets.Socket socket) =>
         SocketStreams.TryGetValue(socket, out var stream)
             ? stream
@@ -4837,6 +4953,7 @@ internal static class JavaCompat
         uri.IsFile
             ? OpenFileRead(PathOfUri(uri))
             : new System.Net.Http.HttpClient().GetStreamAsync(uri).GetAwaiter().GetResult();
+    internal static Stream OpenInputStream(string path) => OpenFileRead(path);
     internal static sbyte[] ReadAllBytes(string path)
     {
         using var stream = OpenFileRead(path);

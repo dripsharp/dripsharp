@@ -16,13 +16,13 @@
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.util Base64 IdentityHashMap]
-           [spoon.reflect.code CtArrayRead CtArrayWrite CtAssignment
-            CtBinaryOperator CtBlock CtCatch CtCatchVariable CtComment
+           [spoon.reflect.code CtArrayRead CtArrayWrite CtAssert CtAssignment
+            CtBinaryOperator CtBlock CtBreak CtCatch CtCatchVariable CtComment
             CtConditional CtConstructorCall CtExecutableReferenceExpression
             CtExpression CtFieldRead CtFieldWrite
             CtFor CtForEach CtIf CtInvocation CtLambda CtLiteral CtLocalVariable
-            CtNewArray CtReturn CtStatement CtThisAccess CtThrow CtTry
-            CtTryWithResource CtTypeAccess CtUnaryOperator CtVariableAccess
+            CtNewArray CtOperatorAssignment CtReturn CtStatement CtThisAccess CtThrow CtTry
+            CtTryWithResource CtTypeAccess CtUnaryOperator CtVariableAccess CtWhile
             CtVariableRead CtVariableWrite]
            [spoon.reflect.declaration CtAnnotation CtClass CtConstructor CtElement
             CtEnum CtEnumValue CtExecutable CtField CtInterface CtMethod
@@ -311,33 +311,68 @@
        "executable:java.net.URI#getHost()"
        "executable:java.net.URI#getPort()"
        "executable:java.net.URI#getScheme()"
+       "executable:java.net.URI#getUserInfo()"
+       "executable:java.net.URI#getRawPath()"
+       "executable:java.net.URI#getRawQuery()"
+       "executable:java.net.URI#getRawFragment()"
+       "executable:java.net.URI#toString()"
+       "executable:java.net.URI#create(java.lang.String)"
        "executable:java.lang.String#toUpperCase()"
        "executable:java.lang.String#split(java.lang.String)"
        "executable:java.lang.String#length()"
+       "executable:java.lang.String#isEmpty()"
+       "executable:java.lang.String#startsWith(java.lang.String)"
+       "executable:java.lang.String#endsWith(java.lang.String)"
+       "executable:java.lang.String#substring(int)"
+       "executable:java.lang.String#substring(int,int)"
+       "executable:java.lang.String#indexOf(int)"
+       "executable:java.lang.String#indexOf(int,int)"
+       "executable:java.lang.String#contains(java.lang.CharSequence)"
        "executable:java.lang.String#hashCode()"
+       "executable:java.lang.String#equals(java.lang.Object)"
        "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
        "executable:java.lang.String#toCharArray()"
        "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
+       "executable:java.lang.Long#parseLong(java.lang.String)"
        "executable:java.net.Socket#getInputStream()"
        "executable:java.net.Socket#getOutputStream()"
+       "executable:java.net.Socket#getRemoteSocketAddress()"
        "executable:java.net.Socket#close()"
        "executable:java.net.Socket#isClosed()"
        "executable:java.net.Socket#isConnected()"
        "executable:java.net.Socket#setSoTimeout(int)"
+       "executable:java.net.ServerSocket#accept()"
+       "executable:java.net.ServerSocket#close()"
+       "executable:java.net.ServerSocket#isClosed()"
+       "executable:java.net.InetSocketAddress#getAddress()"
        "executable:javax.net.ssl.SSLSocketFactory#getDefault()"
        "executable:javax.net.SocketFactory#createSocket(java.lang.String,int)"
        "executable:java.io.OutputStream#flush()"
        "executable:java.io.OutputStream#close()"
+       "executable:java.io.Closeable#close()"
+       "executable:java.io.File#toPath()"
+       "executable:java.nio.file.Files#newInputStream(java.nio.file.Path,java.nio.file.OpenOption[])"
        "executable:java.io.ByteArrayOutputStream#writeTo(java.io.OutputStream)"
        "executable:java.lang.StringBuilder#append(java.lang.String)"
+       "executable:java.lang.StringBuilder#append(char)"
+       "executable:java.lang.StringBuilder#append(int)"
        "executable:java.lang.StringBuilder#toString()"
        "executable:java.util.Collection#stream()"
        "executable:java.lang.Object#getClass()"
        "executable:java.lang.Throwable#getCause()"
+       "executable:java.lang.Throwable#getMessage()"
+       "executable:java.net.URISyntaxException#getMessage()"
        "executable:java.lang.Throwable#printStackTrace()"
        "executable:java.time.Duration#ofSeconds(long)"
        "executable:java.time.Duration#toMillis()"
+       "executable:java.time.Instant#now()"
+       "executable:java.time.Instant#plus(java.time.temporal.TemporalAmount)"
+       "executable:java.time.Instant#isBefore(java.time.Instant)"
+       "executable:java.net.InetAddress#getLoopbackAddress()"
+       "executable:java.lang.Thread#sleep(long)"
        "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
+       "executable:java.util.Objects#requireNonNull(java.lang.Object)"
+       "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)"
        "executable:java.util.Map#entrySet()"
        "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
@@ -368,12 +403,20 @@
        "executable:java.util.Collection#removeIf(java.util.function.Predicate)"
        "executable:java.util.List#addAll(java.util.Collection)"
        "executable:java.util.List#size()"
+       "executable:java.util.List#iterator()"
+       "executable:java.util.Iterator#next()"
+       "executable:java.util.Iterator#hasNext()"
+       "executable:java.util.Iterator#remove()"
        "executable:java.util.Collection#remove(java.lang.Object)"
        "executable:java.util.Optional#empty()"
        "executable:java.util.Optional#of(java.lang.Object)"
        "executable:java.util.Optional#ofNullable(java.lang.Object)"
        "executable:java.util.Optional#get()"
        "executable:java.util.Optional#isPresent()"
+       "executable:java.util.Optional#map(java.util.function.Function)"
+       "executable:java.util.Optional#orElse(java.lang.Object)"
+       "executable:java.util.Optional#orElseGet(java.util.function.Supplier)"
+       "executable:java.util.Optional#ifPresent(java.util.function.Consumer)"
        "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)"
        "executable:java.util.OptionalInt#isPresent()"
        "executable:java.util.OptionalInt#getAsInt()"
@@ -394,10 +437,15 @@
        "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
        "executable:java.util.concurrent.ExecutorService#submit(java.util.concurrent.Callable)"
        "executable:java.util.concurrent.ExecutorService#shutdown()"
+       "executable:java.util.concurrent.ExecutorService#shutdownNow()"
+       "executable:java.util.concurrent.ExecutorService#awaitTermination(long,java.util.concurrent.TimeUnit)"
        "executable:java.util.concurrent.Executors#newFixedThreadPool(int,java.util.concurrent.ThreadFactory)"
        "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
        "executable:java.lang.Thread#setDaemon(boolean)"
        "executable:java.lang.Thread#setName(java.lang.String)"
+       "executable:java.lang.Thread#start()"
+       "executable:java.lang.Thread#currentThread()"
+       "executable:java.lang.Thread#interrupt()"
        "executable:java.util.concurrent.atomic.AtomicBoolean#get()"
        "executable:java.util.concurrent.atomic.AtomicBoolean#compareAndSet(boolean,boolean)"
        "executable:java.util.concurrent.atomic.AtomicInteger#incrementAndGet()"
@@ -411,6 +459,9 @@
 
     (= "field:java.nio.charset.StandardCharsets#US_ASCII" (:key occurrence))
     "USASCII"
+
+    (= "field:java.nio.charset.StandardCharsets#UTF_8" (:key occurrence))
+    "UTF8"
 
     (= "field:java.nio.charset.StandardCharsets#ISO_8859_1" (:key occurrence))
     "ISO88591"
@@ -477,10 +528,15 @@
                     "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
                     "executable:java.lang.RuntimeException#<init>(java.lang.String)"
                     "executable:java.lang.RuntimeException#<init>(java.lang.String,java.lang.Throwable)"
+                    "executable:java.util.concurrent.TimeoutException#<init>(java.lang.String)"
                     "executable:java.lang.IllegalStateException#<init>(java.lang.String)"
+                    "executable:java.lang.IllegalArgumentException#<init>(java.lang.String)"
                     "executable:java.lang.StringBuilder#<init>()"
+                    "executable:java.lang.StringBuilder#<init>(int)"
                     "executable:java.lang.String#<init>(char[])"
                     "executable:java.io.ByteArrayOutputStream#<init>(int)"
+                    "executable:java.io.ByteArrayInputStream#<init>(byte[])"
+                    "executable:java.net.URI#<init>(java.lang.String)"
                     "executable:java.util.HashMap#<init>()"
                     "executable:java.util.HashMap#<init>(int)"
                     "executable:java.util.HashSet#<init>(int)"
@@ -491,9 +547,12 @@
                     "executable:java.util.LinkedHashMap#<init>(int)"
                     "executable:java.util.LinkedHashMap#<init>(java.util.Map)"
                     "executable:java.lang.Thread#<init>(java.lang.Runnable)"
+                    "executable:java.lang.Thread#<init>(java.lang.Runnable,java.lang.String)"
                     "executable:java.util.concurrent.atomic.AtomicBoolean#<init>(boolean)"
                     "executable:java.util.concurrent.atomic.AtomicInteger#<init>(int)"
                     "executable:java.util.concurrent.atomic.AtomicReference#<init>()"
+                    "executable:java.net.ServerSocket#<init>(int)"
+                    "executable:java.net.Socket#<init>(java.net.InetAddress,int)"
                     "executable:java.net.Socket#<init>(java.lang.String,int)"}
                   (:key occurrence))
                  {:node (raw "")}
@@ -577,6 +636,22 @@
     (unsupported! "Java library binary operator has no neutral mapping"
                   expression)))
 
+(defn- assignment-operator [^CtOperatorAssignment expression]
+  (case (str (.getKind expression))
+    "PLUS" "+"
+    "MINUS" "-"
+    "MUL" "*"
+    "DIV" "/"
+    "MOD" "%"
+    "BITAND" "&"
+    "BITOR" "|"
+    "BITXOR" "^"
+    "SL" "<<"
+    "SR" ">>"
+    "USR" ">>>"
+    (unsupported! "Java library operator assignment has no neutral mapping"
+                  expression)))
+
 (defn- unary-operator [^CtUnaryOperator expression]
   (case (str (.getKind expression))
     "NOT" ["!" ""]
@@ -638,6 +713,26 @@
                "executable:java.net.URI#getScheme()"
                (compat-call "UriScheme" [target-node])
 
+               "executable:java.net.URI#getUserInfo()"
+               (compat-call "UriUserInfo" [target-node])
+
+               "executable:java.net.URI#getRawPath()"
+               (compat-call "UriRawPath" [target-node])
+
+               "executable:java.net.URI#getRawQuery()"
+               (compat-call "UriRawQuery" [target-node])
+
+               "executable:java.net.URI#getRawFragment()"
+               (compat-call "UriRawFragment" [target-node])
+
+               "executable:java.net.URI#toString()"
+               (sequence-node [target-node (raw ".OriginalString")])
+
+               "executable:java.net.URI#create(java.lang.String)"
+               (sequence-node [(raw "new global::System.Uri(")
+                               (sequence-node arguments ", ")
+                               (raw ", global::System.UriKind.RelativeOrAbsolute)")])
+
                "executable:java.lang.String#toUpperCase()"
                (sequence-node [target-node (raw ".ToUpper()")])
 
@@ -647,8 +742,36 @@
                "executable:java.lang.String#length()"
                (sequence-node [target-node (raw ".Length")])
 
+               "executable:java.lang.String#isEmpty()"
+               (sequence-node [(raw "(") target-node (raw ".Length == 0)")])
+
+               "executable:java.lang.String#startsWith(java.lang.String)"
+               (compat-call "StringStartsWith" (into [target-node] arguments))
+
+               "executable:java.lang.String#endsWith(java.lang.String)"
+               (compat-call "StringEndsWith" (into [target-node] arguments))
+
+               "executable:java.lang.String#substring(int)"
+               (sequence-node [target-node (raw ".Substring(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.lang.String#substring(int,int)"
+               (compat-call "StringSubstring" (into [target-node] arguments))
+
+               "executable:java.lang.String#indexOf(int)"
+               (compat-call "StringIndexOf" (into [target-node] arguments))
+
+               "executable:java.lang.String#indexOf(int,int)"
+               (compat-call "StringIndexOf" (into [target-node] arguments))
+
+               "executable:java.lang.String#contains(java.lang.CharSequence)"
+               (compat-call "StringContains" (into [target-node] arguments))
+
                "executable:java.lang.String#hashCode()"
                (compat-call "HashCode" [target-node])
+
+               "executable:java.lang.String#equals(java.lang.Object)"
+               (compat-call "Equals" (into [target-node] arguments))
 
                "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
                (compat-call "EqualsIgnoreCase" (into [target-node] arguments))
@@ -659,11 +782,17 @@
                "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
                (compat-call "StringGetBytes" (into [target-node] arguments))
 
+               "executable:java.lang.Long#parseLong(java.lang.String)"
+               (compat-call "ParseLong" arguments)
+
                "executable:java.net.Socket#getInputStream()"
                (compat-call "SocketStream" [target-node])
 
                "executable:java.net.Socket#getOutputStream()"
                (compat-call "SocketStream" [target-node])
+
+               "executable:java.net.Socket#getRemoteSocketAddress()"
+               (sequence-node [target-node (raw ".RemoteEndPoint")])
 
                "executable:java.net.Socket#close()"
                (sequence-node [target-node (raw ".Close()")])
@@ -676,6 +805,18 @@
 
                "executable:java.net.Socket#setSoTimeout(int)"
                (compat-call "SocketSetSoTimeout" (into [target-node] arguments))
+
+               "executable:java.net.ServerSocket#accept()"
+               (sequence-node [target-node (raw ".Accept()")])
+
+               "executable:java.net.ServerSocket#close()"
+               (sequence-node [target-node (raw ".Close()")])
+
+               "executable:java.net.ServerSocket#isClosed()"
+               (sequence-node [target-node (raw ".IsClosed()")])
+
+               "executable:java.net.InetSocketAddress#getAddress()"
+               (compat-call "InetSocketAddressAddress" [target-node])
 
                "executable:javax.net.ssl.SSLSocketFactory#getDefault()"
                (raw "global::Vibeformer.Runtime.JavaSocketFactory.Default")
@@ -690,6 +831,15 @@
                "executable:java.io.OutputStream#close()"
                (sequence-node [target-node (raw ".Dispose()")])
 
+               "executable:java.io.Closeable#close()"
+               (sequence-node [target-node (raw ".Dispose()")])
+
+               "executable:java.io.File#toPath()"
+               target-node
+
+               "executable:java.nio.file.Files#newInputStream(java.nio.file.Path,java.nio.file.OpenOption[])"
+               (compat-call "OpenInputStream" arguments)
+
                "executable:java.io.ByteArrayOutputStream#writeTo(java.io.OutputStream)"
                (compat-call "MemoryStreamWriteTo" (into [target-node] arguments))
 
@@ -700,6 +850,14 @@
                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
                "executable:java.lang.StringBuilder#append(java.lang.String)"
+               (sequence-node [target-node (raw ".Append(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.lang.StringBuilder#append(char)"
+               (sequence-node [target-node (raw ".Append(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.lang.StringBuilder#append(int)"
                (sequence-node [target-node (raw ".Append(")
                                (sequence-node arguments ", ") (raw ")")])
 
@@ -715,6 +873,12 @@
                "executable:java.lang.Throwable#getCause()"
                (sequence-node [target-node (raw ".InnerException")])
 
+               "executable:java.lang.Throwable#getMessage()"
+               (sequence-node [target-node (raw ".Message")])
+
+               "executable:java.net.URISyntaxException#getMessage()"
+               (sequence-node [target-node (raw ".Message")])
+
                "executable:java.lang.Throwable#printStackTrace()"
                (compat-call "PrintStackTrace" [target-node])
 
@@ -726,8 +890,28 @@
                (sequence-node [(raw "checked((long)") target-node
                                (raw ".TotalMilliseconds)")])
 
+               "executable:java.time.Instant#now()"
+               (raw "global::System.DateTimeOffset.UtcNow")
+
+               "executable:java.time.Instant#plus(java.time.temporal.TemporalAmount)"
+               (sequence-node [target-node (raw ".Add(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.time.Instant#isBefore(java.time.Instant)"
+               (sequence-node [(raw "(") target-node (raw " < ")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.net.InetAddress#getLoopbackAddress()"
+               (raw "global::System.Net.IPAddress.Loopback")
+
                "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
                (compat-call "Equals" arguments)
+
+               "executable:java.util.Objects#requireNonNull(java.lang.Object)"
+               (compat-call "RequireNonNull" arguments)
+
+               "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)"
+               (compat-call "RequireNonNull" arguments)
 
                "executable:java.util.Map#entrySet()"
                (compat-call "MapEntrySet" [target-node])
@@ -823,6 +1007,18 @@
                "executable:java.util.List#size()"
                (sequence-node [target-node (raw ".Count")])
 
+               "executable:java.util.List#iterator()"
+               (compat-call "Iterator" [target-node])
+
+               "executable:java.util.Iterator#next()"
+               (sequence-node [target-node (raw ".Next()")])
+
+               "executable:java.util.Iterator#hasNext()"
+               (sequence-node [target-node (raw ".HasNext()")])
+
+               "executable:java.util.Iterator#remove()"
+               (sequence-node [target-node (raw ".Remove()")])
+
                "executable:java.util.Collection#remove(java.lang.Object)"
                (compat-call "CollectionRemove" (into [target-node] arguments))
 
@@ -845,6 +1041,22 @@
 
                "executable:java.util.Optional#isPresent()"
                (sequence-node [target-node (raw ".IsPresent()")])
+
+               "executable:java.util.Optional#map(java.util.function.Function)"
+               (sequence-node [target-node (raw ".Map(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.Optional#orElse(java.lang.Object)"
+               (sequence-node [target-node (raw ".OrElse(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.Optional#orElseGet(java.util.function.Supplier)"
+               (sequence-node [target-node (raw ".OrElseGet(")
+                               (sequence-node arguments ", ") (raw ")")])
+
+               "executable:java.util.Optional#ifPresent(java.util.function.Consumer)"
+               (sequence-node [target-node (raw ".IfPresent(")
+                               (sequence-node arguments ", ") (raw ")")])
 
                "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)"
                (sequence-node [target-node (raw ".OrElseThrow(")
@@ -916,6 +1128,13 @@
                "executable:java.util.concurrent.ExecutorService#shutdown()"
                (sequence-node [target-node (raw ".Shutdown()")])
 
+               "executable:java.util.concurrent.ExecutorService#shutdownNow()"
+               (sequence-node [target-node (raw ".ShutdownNow()")])
+
+               "executable:java.util.concurrent.ExecutorService#awaitTermination(long,java.util.concurrent.TimeUnit)"
+               (sequence-node [target-node (raw ".AwaitTermination(")
+                               (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.util.concurrent.Executors#newFixedThreadPool(int,java.util.concurrent.ThreadFactory)"
                (sequence-node
                 [(raw "new global::Vibeformer.Runtime.JavaExecutorService(")
@@ -951,6 +1170,19 @@
                (sequence-node [target-node (raw ".SetName(")
                                (sequence-node arguments ", ") (raw ")")])
 
+               "executable:java.lang.Thread#start()"
+               (sequence-node [target-node (raw ".Start()")])
+
+               "executable:java.lang.Thread#currentThread()"
+               (raw "global::Vibeformer.Runtime.JavaThread.CurrentThread()")
+
+               "executable:java.lang.Thread#interrupt()"
+               (sequence-node [target-node (raw ".Interrupt()")])
+
+               "executable:java.lang.Thread#sleep(long)"
+               (sequence-node [(raw "global::Vibeformer.Runtime.JavaThread.Sleep(")
+                               (sequence-node arguments ", ") (raw ")")])
+
                "executable:java.lang.Object#<init>()"
                (raw "")
 
@@ -982,6 +1214,16 @@
             "executable:java.net.Socket#<init>(java.lang.String,int)"
             (sequence-node
              [(raw "global::Vibeformer.Runtime.JavaSocketFactory.Plain.CreateSocket(")
+              (sequence-node arguments ", ") (raw ")")])
+
+            "executable:java.net.Socket#<init>(java.net.InetAddress,int)"
+            (sequence-node
+             [(raw "global::Vibeformer.Runtime.JavaSocketFactory.Plain.CreateSocket(")
+              (sequence-node arguments ", ") (raw ")")])
+
+            "executable:java.io.ByteArrayInputStream#<init>(byte[])"
+            (sequence-node
+             [(raw "global::Vibeformer.Runtime.JavaCompat.NewMemoryStream(")
               (sequence-node arguments ", ") (raw ")")])
 
             (sequence-node
@@ -1020,16 +1262,26 @@
                   (contains? #{"java.util.function.Consumer"
                                "java.util.function.BiConsumer"}
                              functional-type))]
-         (when-not (and (= :project (:origin occurrence))
-                        (instance? CtMethod declaration))
-           (unsupported! "Java library method reference requires a resolved project method"
+         (when-not (or (and (= :project (:origin occurrence))
+                            (instance? CtMethod declaration))
+                       (= "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
+                          (:key occurrence)))
+           (unsupported! "Java library method reference requires a supported resolved method"
                          element))
          {:node
-          (if discards-result?
+          (cond
+            (= "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
+               (:key occurrence))
+            (sequence-node
+             [(raw "(value0) => global::Vibeformer.Runtime.JavaCompat.EqualsIgnoreCase(")
+              target (raw ", value0)")])
+
+            discards-result?
             (sequence-node
              [(raw "(") (sequence-node parameters ", ") (raw ") => { ")
               target (raw ".") executable (raw "(")
               (sequence-node parameters ", ") (raw "); }")])
+            :else
             (sequence-node [target (raw ".") executable]))}))}
 
     {:id :java-library.expression/literal
@@ -1130,6 +1382,17 @@
               (sequence-node [(child-node children target) (raw ".")]))
             (child-node children (.getVariable element))])}))}
 
+    {:id :java-library.expression/operator-assignment
+     :class CtOperatorAssignment
+     :emit
+     (fn [{:keys [^CtOperatorAssignment element children]}]
+       {:node
+        (sequence-node
+         [(child-node children (.getAssigned element))
+          (raw (str " " (assignment-operator element) "= "))
+          (child-node children (.getAssignment element))
+          (when (statement-expression? element) (raw ";"))])})}
+
     {:id :java-library.expression/assignment
      :class CtAssignment
      :emit
@@ -1226,6 +1489,40 @@
               (sequence-node (mapv #(child-node children %) updates) ", ")
               (raw ") ")
               (statement-node children (.getBody element))])})))}
+
+    {:id :java-library.statement/while
+     :class CtWhile
+     :emit
+     (fn [{:keys [^CtWhile element children]}]
+       {:node
+        (sequence-node
+         [(raw "while (")
+          (child-node children (.getLoopingExpression element))
+          (raw ") ")
+          (statement-node children (.getBody element))])})}
+
+    {:id :java-library.statement/break
+     :class CtBreak
+     :emit
+     (fn [{:keys [^CtBreak element]}]
+       (when (.getTargetLabel element)
+         (unsupported! "Java labeled break requires explicit control-flow lowering"
+                       element))
+       {:node (raw "break;")})}
+
+    {:id :java-library.statement/assert
+     :class CtAssert
+     :emit
+     (fn [{:keys [^CtAssert element children]}]
+       (let [message (.getExpression element)]
+         {:node
+          (sequence-node
+           [(raw "global::Vibeformer.Runtime.JavaCompat.Assert(() => ")
+            (child-node children (.getAssertExpression element))
+            (when message
+              (sequence-node [(raw ", () => ")
+                              (child-node children message)]))
+            (raw ");")])}))}
 
     {:id :java-library.statement/return
      :class CtReturn
