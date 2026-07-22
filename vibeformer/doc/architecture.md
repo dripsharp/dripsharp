@@ -10,6 +10,197 @@ The Pkl product boundary is defined by [Authoritative Product Goal](product-goal
 and [Port Scope](port-scope.md). Temporary sequencing and status belong in
 Beads, not in this document.
 
+## Code-Derived System Views
+
+These views follow the executable call paths and data structures in the
+Clojure source. They describe the current implementation rather than an
+intended future decomposition.
+
+### Command Orchestration and Proof Ladder
+
+The CLI commands are cumulative. Generation is the base operation; compilation,
+packing, isolated consumption, and differential comparison add successively
+stronger proof around a freshly generated project.
+
+```mermaid
+flowchart TD
+  CLI["vibeformer.main/-main"]
+
+  CLI -->|generate| Generate["harness/generate!"]
+  CLI -->|verify| Verify["compiler/verify-clean-build!"]
+  CLI -->|pack| Pack["packaging/pack-verified-profile!"]
+  CLI -->|package| Consume["packaging/verify-package-consumption!"]
+  CLI -->|differential| Differential["differential/verify-differential!"]
+
+  Verify -->|regenerates| Generate
+  Verify --> Build["dotnet build with warnings as errors"]
+  Build --> CompiledSurface["compiled public-surface audit"]
+
+  Pack -->|runs twice| Verify
+  Pack --> DotnetPack["dotnet pack"]
+  DotnetPack --> Canonicalize["canonicalize and compare package bytes"]
+  Canonicalize --> Inspect["inspect metadata, assembly, resources, and dependencies"]
+  Inspect --> Feed["fresh local NuGet feed"]
+
+  Consume --> Pack
+  Consume --> Restore["isolated consumer restore from local feed"]
+  Feed --> Restore
+  Restore --> ConsumerRun["consumer build and run"]
+
+  Differential --> ParserProof["parser proof"]
+  Differential --> CoreProof["Pkl.Core proof"]
+  ParserProof --> Consume
+  CoreProof --> Consume
+  ParserProof --> JavaOracle["upstream JVM oracle"]
+  CoreProof --> JavaOracle
+  ParserProof --> PackageProbe["package-only .NET probe"]
+  CoreProof --> PackageProbe
+  JavaOracle --> Compare["normalized observation comparison"]
+  PackageProbe --> Compare
+```
+
+This composition is implemented by
+[`vibeformer.main`](../src/vibeformer/main.clj),
+[`vibeformer.compiler`](../src/vibeformer/compiler.clj),
+[`vibeformer.packaging`](../src/vibeformer/packaging.clj), and
+[`vibeformer.differential`](../src/vibeformer/differential.clj).
+
+### Source-to-Project Generation
+
+`harness/generate!` coordinates configuration, source discovery, semantic
+resolution, public-surface checks, and deterministic project emission. The
+resolved model retains live Spoon objects all the way into translation.
+
+```mermaid
+flowchart LR
+  subgraph Inputs["Configured and source inputs"]
+    Profile["generation profile"]
+    Destination["destination EDN"]
+    JavaSource["verified Java checkout"]
+    SurfaceContract["public-surface contract"]
+    RuntimeSource["Java compatibility and Pkl runtime C# sources"]
+  end
+
+  subgraph Discovery["Discovery and semantic frontend"]
+    Preflight["resolve profile, rule bundle, and surface strategy"]
+    Gradle["Gradle discovery task"]
+    Manifest["sources, resources, classpath, toolchain, and dependencies"]
+    Spoon["classpath-enabled Spoon model"]
+    Resolution{"profile or surface seeds?"}
+    Complete["fail-closed complete resolved model"]
+    Closure["fail-closed resolved declaration closure"]
+    SelectedSurface["validate selected public surface"]
+  end
+
+  subgraph DestinationLayer["Destination composition and emission"]
+    Bundle["explicit destination rule bundle"]
+    PklRules["Pkl declaration and body rules"]
+    CommonRules["common project and resource policies"]
+    Emitter["product-neutral java-project emitter"]
+    Scheduler["bounded deterministic root/member scheduling"]
+    Writer["structured C# render with source mappings"]
+    Assets["copy bridge, runtime, and resource assets"]
+  end
+
+  subgraph Output["Disposable generated project"]
+    CSharp["namespaced generated .cs files"]
+    Project["SDK-style .csproj"]
+    Evidence["source map, diagnostics, annotations, manifest, and public metadata"]
+    Resources["embedded resources and runtime sources"]
+  end
+
+  Profile --> Preflight
+  Destination --> Preflight
+  SurfaceContract --> Preflight
+  Preflight --> Bundle
+  JavaSource --> Gradle
+  Profile --> Gradle
+  Gradle --> Manifest
+  Manifest --> Spoon
+  Preflight --> Resolution
+  Spoon --> Resolution
+  Resolution -->|no seeds| Complete
+  Resolution -->|seeds| Closure
+  Complete --> SelectedSurface
+  Closure --> SelectedSurface
+  SurfaceContract --> SelectedSurface
+
+  Bundle --> PklRules
+  Bundle --> CommonRules
+  PklRules --> Emitter
+  CommonRules --> Emitter
+  SelectedSurface --> Emitter
+  Manifest --> Emitter
+  Emitter --> Scheduler
+  Scheduler --> Writer
+  RuntimeSource --> Assets
+  Manifest --> Assets
+  Emitter --> Assets
+
+  Writer --> CSharp
+  Emitter --> Project
+  Writer --> Evidence
+  SelectedSurface --> Evidence
+  Assets --> Resources
+```
+
+The orchestration and boundaries above come from
+[`vibeformer.harness`](../src/vibeformer/harness.clj),
+[`vibeformer.project`](../src/vibeformer/project.clj),
+[`vibeformer.spoon`](../src/vibeformer/spoon.clj),
+[`vibeformer.java-project`](../src/vibeformer/java_project.clj), and the
+[`vibeformer.pkl.java-project`](../src/vibeformer/pkl/java_project.clj) rule
+bundle. Destination files such as
+[`pkl-parser.edn`](../config/pkl-parser.edn) select the bundle and output
+contract explicitly.
+
+### Recursive Translation Kernel
+
+The translation kernel has two dispatch mechanisms over the same live Spoon
+tree. Reference elements use exact resolved identities; other elements use the
+first matching ordered structural rule. Both paths produce structured C# nodes,
+and missing coverage becomes a blocking diagnostic rather than guessed output.
+
+```mermaid
+flowchart TD
+  Root["live Spoon CtElement root"] --> Plan["select plan for exact element"]
+  Root --> Children["read live direct children"]
+  Children --> Recurse["recursively translate each child"]
+  Recurse --> ChildResults["translated child results"]
+
+  Plan --> Reference{"reference element?"}
+  Reference -->|yes| Occurrence["identity lookup in resolved occurrence index"]
+  Occurrence --> Semantic{"exact semantic mapping exists?"}
+  Semantic -->|yes| SemanticRule["type, executable, constructor, field, or annotation rule"]
+  Semantic -->|no| Blocked["blocking resolved-symbol diagnostic"]
+
+  Reference -->|no| Structural{"ordered structural rule matches?"}
+  Structural -->|yes| StructuralRule["declaration, statement, or expression rule"]
+  Structural -->|no| Unsupported["blocking unsupported-element diagnostic"]
+
+  SemanticRule --> Emit["emit after children"]
+  StructuralRule --> Emit
+  ChildResults --> Emit
+  Emit --> Fragment["C# node plus usings, helpers, diagnostics, and rule identity"]
+  Fragment --> Aggregate["aggregate child and parent results"]
+  Aggregate --> Source["attach Spoon identity and source location"]
+  Source --> Coverage{"accepted coverage gate passes?"}
+  Blocked --> Coverage
+  Unsupported --> Coverage
+  Coverage -->|no| Fail["generation fails at originating source element"]
+  Coverage -->|yes| Render["render structured C# tree once"]
+  Render --> Text["C# text"]
+  Render --> Mappings["destination offsets mapped to Spoon source and rule"]
+```
+
+The reusable traversal and fail-closed gate are in
+[`vibeformer.java-translate`](../src/vibeformer/java_translate.clj); the
+structured writer is [`vibeformer.csharp`](../src/vibeformer/csharp.clj).
+For the Pkl destination,
+[`vibeformer.pkl.java-body`](../src/vibeformer/pkl/java_body.clj) constructs the
+structural and semantic registries from the resolved model, while declaration
+emission remains composed through the rule bundle shown above.
+
 ## Primary Pipeline
 
 ```text
