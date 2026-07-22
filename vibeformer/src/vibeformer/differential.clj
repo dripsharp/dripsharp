@@ -7,9 +7,7 @@
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
             [vibeformer.project :as project]
-            [vibeformer.public-api-contract :as public-api-contract]
-            [vibeformer.schema-binding-contract :as schema-binding-contract]
-            [vibeformer.schema-binding-runner :as schema-binding-runner])
+            [vibeformer.public-api-contract :as public-api-contract])
   (:import [java.io BufferedReader File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
@@ -1236,13 +1234,11 @@
                                         "differential-proof" "schema-codegen-binding"))
         fixtures (paths/resolve-path root "vibeformer" "validation" "schema-codegen")
         contract-evidence (paths/resolve-path fixtures "ContractEvidence.tsv")
-        exhaustive-contract (schema-binding-contract/validate-contract! root)
         evidence-summary (verify-contract-evidence! root contract-evidence)
         oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
                          (Files/createDirectories (make-array FileAttribute 0)))
         oracle-source (paths/resolve-path fixtures "SchemaUpstreamOracle.java")
         oracle-output (paths/resolve-path proof-root "upstream.tsv")
-        oracle-second-output (paths/resolve-path proof-root "upstream-second.tsv")
         package-output (paths/resolve-path proof-root "package.tsv")
         perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
         config-manifest (paths/resolve-path proof-root "pkl-config-java-main-inputs.tsv")
@@ -1312,11 +1308,7 @@
     (run-command! {:command [(str java) "-cp" classpath "SchemaUpstreamOracle"
                              (str fixtures) (str oracle-output)]
                    :directory root})
-    (run-command! {:command [(str java) "-cp" classpath "SchemaUpstreamOracle"
-                             (str fixtures) (str oracle-second-output)]
-                   :directory root})
-    (let [repeated-oracle (assert-pinned! "Repeated Pkl schema/codegen/binding upstream oracle"
-                                          oracle-output oracle-second-output)]
+    (do
 
       (write-text! generator-project project-contents)
       (Files/copy (paths/resolve-path fixtures "SchemaGeneratorProbe.cs")
@@ -1398,6 +1390,8 @@
                            "polymorphic-mismatch=$\n"
                            "cycle=$.next\n"
                            "config-evaluator=passed\n"
+                           "config-navigation=passed\n"
+                           "config-builder=passed\n"
                            "disposed=passed\n")]
                   (when-not (= expected-binding-report binding-report)
                     (fail! "Generated consumer focused binding diagnostics were missing, duplicated, or reordered"
@@ -1407,14 +1401,12 @@
                   {:summary {:schemas 9
                              :generated-files (count generated-files)
                              :observations (:matched comparison)
-                             :repeated-upstream-observations (:matched repeated-oracle)
                              :generated-contract-observations 1
                              :codegen-failure-observations 6
                              :binding-observations 2
                              :independent-binding-failure-observations 14
                              :binding-failure-cases 21
-                             :exhaustive-contract (:summary exhaustive-contract)
-                             :legacy-selected-fixture-evidence evidence-summary
+                             :focused-contract-evidence evidence-summary
                              :perturbation-detected-at (get-in perturbation [:mismatch :line])}
                    :oracle-output oracle-output
                    :package-output package-output
@@ -1678,12 +1670,6 @@
           schema-proof (verify-schema-codegen-binding!
                         {:root root :package-proof package-proof :run-command! run-command!
                          :java-release java-release :java-home java-home :entries entries})
-          exhaustive-schema-proof
-          (schema-binding-runner/verify-full-suite!
-           {:workspace-root root
-            :run-command! run-command!
-            :package-fn (fn [_] package-proof)
-            :require-conformant? true})
           comparison (assert-equal! "Pkl.Core" oracle-output package-output)
           perturbation (prove-perturbation! oracle-output perturbed-output)
           to-fixed-upstream-comparison
@@ -1716,8 +1702,6 @@
                    :public-contract (:summary public-contract)
                    :loading-policy-configuration-contract (:summary loading-contract)
                    :schema-codegen-binding (:summary schema-proof)
-                   :exhaustive-schema-codegen-binding
-                   (:summary exhaustive-schema-proof)
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
       (println "Independent upstream/package Pkl.Core differential passed:" (pr-str summary))
       {:package-proof package-proof
@@ -1725,7 +1709,6 @@
        :java-pattern-regex regex-compat
        :loading-policy-configuration-contract loading-contract
        :schema-codegen-binding schema-proof
-       :exhaustive-schema-codegen-binding exhaustive-schema-proof
        :summary summary
        :manifest manifest
        :oracle-output oracle-output

@@ -604,9 +604,59 @@ static class GeneratedConsumer
                 ModuleSource.Text("value = 41\n"), "value + 1");
             Check(evaluated.Known == "evaluated" && expression == 42,
                 "ConfigEvaluator end-to-end evaluation and binding");
+
+            Config navigation = configEvaluator.Evaluate(ModuleSource.Text(
+                "name = \"Ada\"\nitems = List(1, 2)\nmaybe = null\n"));
+            Check(navigation.ChildNames.SequenceEqual(new[] { "name", "items", "maybe" }) &&
+                  navigation["name"].QualifiedName == "name" &&
+                  navigation["name"].As<string>() == "Ada" &&
+                  navigation["items"][1].As<long>() == 2 &&
+                  navigation.GetPath("items", 0).As<long>() == 1 &&
+                  navigation["maybe"].AsNullable<string>() is null &&
+                  navigation.TryGet("name", out Config? name) && name is not null &&
+                  name.As<string>() == "Ada",
+                "Config navigation and typed access");
+            try
+            {
+                navigation.Get("missing");
+                throw new InvalidOperationException("missing Config child was accepted");
+            }
+            catch (NoSuchChildException error)
+            {
+                Check(error.QualifiedName == "" && error.ChildName == "missing",
+                    "missing Config child diagnostic");
+            }
         }
         Check((long)evaluator.EvaluateExpression(ModuleSource.Text("value = 1\n"), "value") == 1,
             "disposing a non-owning ConfigEvaluator disposed its evaluator");
+
+        var replacementEvaluatorBuilder = EvaluatorBuilder.Preconfigured();
+        var replacementBinderOptions = new ConfigBinderOptions { IgnoreUnknownProperties = true };
+        var builder = ConfigEvaluatorBuilder.Unconfigured()
+            .SetEvaluatorBuilder(replacementEvaluatorBuilder)
+            .SetBinderOptions(replacementBinderOptions)
+            .ConfigureBinder(options => options.PropertyNamesCaseInsensitive = true)
+            .AddEnvironmentVariable("first", "one")
+            .AddEnvironmentVariables(new Dictionary<string, string> { ["second"] = "two" })
+            .SetEnvironmentVariables(new Dictionary<string, string> { ["only"] = "environment" })
+            .AddExternalProperty("first", "one")
+            .AddExternalProperties(new Dictionary<string, string> { ["second"] = "two" })
+            .SetExternalProperties(new Dictionary<string, string> { ["only"] = "external" });
+        Check(ReferenceEquals(builder.EvaluatorBuilder, replacementEvaluatorBuilder) &&
+              ReferenceEquals(builder.BinderOptions, replacementBinderOptions) &&
+              builder.BinderOptions.PropertyNamesCaseInsensitive &&
+              builder.EnvironmentVariables.Count == 1 &&
+              builder.EnvironmentVariables["only"] == "environment" &&
+              builder.ExternalProperties.Count == 1 &&
+              builder.ExternalProperties["only"] == "external",
+            "ConfigEvaluatorBuilder settings and replacement semantics");
+        using (var built = builder.Build())
+        {
+            Check(built.OwnsEvaluator, "built ConfigEvaluator does not own its evaluator");
+            KnownOnly builtValue = built.Evaluate<KnownOnly>(
+                ModuleSource.Text("known = \"built\"\nextra = 1\n"));
+            Check(builtValue.Known == "built", "ConfigEvaluatorBuilder binder options were not applied");
+        }
 
         var disposed = new ConfigEvaluator(evaluator);
         disposed.Dispose();
@@ -637,6 +687,8 @@ static class GeneratedConsumer
             "polymorphic-mismatch=$\n" +
             "cycle=$.next\n" +
             "config-evaluator=passed\n" +
+            "config-navigation=passed\n" +
+            "config-builder=passed\n" +
             "disposed=passed\n", Utf8);
     }
 
