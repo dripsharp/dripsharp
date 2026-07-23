@@ -86,6 +86,7 @@ flowchart LR
   subgraph Discovery["Discovery and semantic frontend"]
     Preflight["resolve profile, rule bundle, and surface strategy"]
     Gradle["Gradle discovery backend"]
+    Maven["pinned Maven reactor backend"]
     BackendManifest["backend-specific manifest"]
     ProjectInput["neutral project identity, roots, production inputs, toolchain, and dependencies"]
     Spoon["classpath-enabled Spoon model"]
@@ -117,8 +118,11 @@ flowchart LR
   SurfaceContract --> Preflight
   Preflight --> Bundle
   JavaSource --> Gradle
+  JavaSource --> Maven
   Profile --> Gradle
+  Profile --> Maven
   Gradle --> BackendManifest
+  Maven --> BackendManifest
   BackendManifest --> ProjectInput
   ProjectInput --> Spoon
   Preflight --> Resolution

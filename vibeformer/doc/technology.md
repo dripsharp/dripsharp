@@ -6,6 +6,21 @@ Clojure is the orchestration and transformation language. It provides direct
 JVM interop with the Java frontend and works well for recursive visitor
 dispatch, immutable translation results, mapping registries, and diagnostics.
 
+## Java Project Discovery
+
+Build-tool backends resolve their native effective project model before
+adapting it to Vibeformer's neutral Java project input. Gradle builds use their
+checked-in wrapper and init-script backend. Maven builds use checksum-pinned
+Maven `3.9.11` because an upstream reactor is not required to ship a wrapper.
+
+The Maven backend observes Maven's effective selected reactor through a small
+EventSpy after the compile lifecycle has materialized generated production
+sources and reactor output directories. It retains inherited production
+source/resource definitions, keeps test inputs separate, resolves compile and
+runtime reactor/external dependencies, and hashes every external classpath
+artifact. Callers select Maven projects, never individual source or classpath
+files.
+
 ## Java Frontend: Spoon
 
 Spoon is the Java semantic frontend. Product translation configures it from the
