@@ -69,6 +69,4 @@
    :package-path "NOTICE.txt"
    :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
  :public-surface
- {:strategy vibeformer.pdfcube.java-project/public-surface-strategy
-  :contract-file "vibeformer/validation/pdfcube/fontbox/UpstreamSurface.tsv"
-  :compiled-contract-file "vibeformer/validation/pdfcube/fontbox/CompiledSurface.tsv"}}
+ {:strategy vibeformer.pdfcube.java-project/public-surface-strategy}}

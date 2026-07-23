@@ -103,3 +103,64 @@
     (is (= 3 (count correct-rows)))
     (is (= 3 (count wrong-rows)))
     (is (= :compiled-dotnet-surface-mismatch (:kind (ex-data error))))))
+
+(defn- generated-row [source-file identity kind name parameter-count]
+  {:row {:identity identity}
+   :generated
+   {:destination {:assembly "Correct.Library"
+                  :owner "Correct.Library.Api"
+                  :kind kind
+                  :name name
+                  :parameter-count (str parameter-count)
+                  :visibility "public"}
+    :source {:location {:file source-file :line 1}}}})
+
+(deftest spoon-derived-metadata-detects-every-missing-or-misplaced-shape
+  (let [workspace (paths/workspace-root)
+        source-file
+        (paths/resolve-path workspace
+                            "vibeformer/test/vibeformer/dotnet_surface_test.clj")
+        rows
+        [(row {:kind "type" :name "Api" :parameter-count "0"
+               :signature "class Api" :nullability "type=oblivious"})
+         (row {:kind "constructor" :name ".ctor" :parameter-count "0"
+               :signature "Api .ctor()" :nullability "-"})
+         (row {})
+         (row {:parameter-count "2"
+               :signature "System.String Echo(System.String left,System.String right)"
+               :nullability
+               "return=non-null;param0=non-null;param1=non-null"})]
+        metadata
+        {:required-rows 4
+         :rows [(generated-row source-file "type:Api" "type" "Api" 0)
+                (generated-row source-file "constructor:Api()" "constructor" ".ctor" 0)
+                (generated-row source-file "method:Echo(String)" "method" "Echo" 1)
+                (generated-row source-file "method:Echo(String,String)"
+                               "method" "Echo" 2)]}
+        success (surface/verify-generated-rows! workspace rows metadata)
+        mutations
+        [[:missing-type
+          (vec (remove #(= "type" (:kind %)) rows))]
+         [:missing-member
+          (vec (remove #(and (= "method" (:kind %))
+                             (= "1" (:parameter-count %)))
+                       rows))]
+         [:missing-constructor
+          (vec (remove #(= "constructor" (:kind %)) rows))]
+         [:missing-overload
+          (vec (remove #(= "2" (:parameter-count %)) rows))]
+         [:visibility
+          (assoc-in rows [2 :visibility] "protected")]
+         [:project
+          (assoc-in rows [2 :assembly] "Wrong.Library")]
+         [:package
+          (assoc-in rows [2 :owner] "Correct.Library.Other")]]]
+    (is (= {:rows 4 :types 1 :members 3 :contract-members 4}
+           (select-keys success [:rows :types :members :contract-members])))
+    (doseq [[label actual] mutations]
+      (testing (name label)
+        (let [error
+              (caught #(surface/verify-generated-rows!
+                        workspace actual metadata))]
+          (is (= :compiled-java-declaration-shape-mismatch
+                 (:kind (ex-data error)))))))))

@@ -349,9 +349,9 @@
               :resource-policy {:strategy :embedded-resource-preserve-path})]
         (exact! "PdfCube destination differs from its approved product contract"
                 field expected actual)))
-    (exact! "PdfCube public-surface strategy must remain target-specific"
-            [:public-surface :strategy] surface-selector
-            (get-in configuration [:public-surface :strategy]))
+    (exact! "PdfCube public surface must be derived from its resolved Spoon module"
+            :public-surface {:strategy surface-selector}
+            (:public-surface configuration))
     configuration))
 
 (defn- digest-file [^Path input]
@@ -478,11 +478,7 @@
                     (into (base-assets context) (legal-assets context)))))))
 
 (defn public-surface-strategy
-  "Provides the target-family wrapper used by the five configurations.
-
-  The underlying complete accessible-library strategy remains fail closed.
-  The follow-on public-surface task owns its build-tool-neutral derivation and
-  compiled metadata refinements."
+  "Provides the target-family wrapper used by the five configurations."
   []
   (assoc (java-library/public-surface-strategy)
          :id :pdfcube-complete-accessible-library

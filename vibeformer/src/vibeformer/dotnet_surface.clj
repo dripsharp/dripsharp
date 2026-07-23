@@ -167,13 +167,14 @@
       (str/replace ".internal." ".@internal.")))
 
 (defn- reflected-shape [row]
-  [(normalize-owner (:owner row)) (:kind row) (:name row)
-   (:parameter-count row)])
+  [(:assembly row) (normalize-owner (:owner row)) (:kind row) (:name row)
+   (:parameter-count row) (:visibility row)])
 
 (defn- generated-shape [row]
   (let [destination (get-in row [:generated :destination])]
-    [(:owner destination) (:kind destination) (:name destination)
-     (:parameter-count destination)]))
+    [(:assembly destination) (:owner destination) (:kind destination)
+     (:name destination) (:parameter-count destination)
+     (:visibility destination)]))
 
 (defn- portable-provenance [workspace location]
   (let [workspace (paths/absolute workspace)
@@ -357,19 +358,25 @@
                             "java-synthetic-member"}
           java-rows (filter #(contains? generated-rules (:translation-rule %))
                             annotated)
-          selected-rows (:rows public-metadata)]
+          selected-rows (:rows public-metadata)
+          selected-identities
+          (frequencies (map #(get-in % [:row :identity]) selected-rows))
+          compiled-identities
+          (frequencies (map :source-declaration java-rows))]
       (when-not (= expected-contract annotated)
         (fail! "Compiled .NET contract source provenance or translation rules drifted"
                {:kind :compiled-dotnet-surface-provenance-drift
                 :expected-count (count expected-contract)
                 :actual-count (count annotated)}))
       (when-not (and (= (:required-rows public-metadata) (count selected-rows))
-                     (= (count selected-rows) (count java-rows)))
+                     (= selected-identities compiled-identities))
         (fail! "Compiled .NET surface does not reconcile exact generated metadata"
                {:kind :forged-compiled-surface-metadata
                 :required-rows (:required-rows public-metadata)
                 :metadata-rows (count selected-rows)
-                :compiled-java-rows (count java-rows)}))
+                :compiled-java-rows (count java-rows)
+                :selected-identities selected-identities
+                :compiled-identities compiled-identities}))
       {:rows (:matched comparison)
        :types (count (filter #(= "type" (:kind %)) expected))
        :members (count (remove #(= "type" (:kind %)) expected))
@@ -377,12 +384,52 @@
        :surface-sha256 (surface-fingerprint expected)
        :translation-rules (frequencies (map :translation-rule expected))})))
 
+(defn verify-generated-rows!
+  "Verifies reflected rows directly against generated source mappings. This
+  build-tool-neutral mode derives the required Java surface from Spoon and
+  permits only the systematic compatibility rows classified by the annotator."
+  [workspace actual-rows public-metadata]
+  (let [annotated (annotate-contract-rows! workspace actual-rows public-metadata)
+        generated-rules #{"java-declaration"
+                          "java-implicit-constructor"
+                          "java-synthetic-member"}
+        java-rows (filter #(contains? generated-rules (:translation-rule %))
+                          annotated)
+        selected-rows (:rows public-metadata)
+        selected-identities
+        (frequencies (map #(get-in % [:row :identity]) selected-rows))
+        compiled-identities
+        (frequencies (map :source-declaration java-rows))]
+    (when-not (and (= (:required-rows public-metadata) (count selected-rows))
+                   (= selected-identities compiled-identities))
+      (fail! "Compiled .NET surface does not reconcile exact generated metadata"
+             {:kind :forged-compiled-surface-metadata
+              :required-rows (:required-rows public-metadata)
+              :metadata-rows (count selected-rows)
+              :compiled-java-rows (count java-rows)
+              :selected-identities selected-identities
+              :compiled-identities compiled-identities}))
+    {:rows (count actual-rows)
+     :types (count (filter #(= "type" (:kind %)) actual-rows))
+     :members (count (remove #(= "type" (:kind %)) actual-rows))
+     :contract-members (count selected-rows)
+     :surface-sha256 (surface-fingerprint actual-rows)
+     :translation-rules (frequencies (map :translation-rule annotated))}))
+
 (defn verify!
   "Reflects and exactly verifies one assembly against its retained contract."
   [workspace contract-file assembly public-metadata]
   (let [contract (read-contract! workspace contract-file)
         actual (reflect! workspace assembly)]
     (assoc (verify-rows! workspace contract actual public-metadata)
+           :assembly (str (paths/absolute assembly)))))
+
+(defn verify-generated!
+  "Reflects one assembly and verifies it against its Spoon-derived generated
+  source mappings without a retained manual API inventory."
+  [workspace assembly public-metadata]
+  (let [actual (reflect! workspace assembly)]
+    (assoc (verify-generated-rows! workspace actual public-metadata)
            :assembly (str (paths/absolute assembly)))))
 
 (defn write-contract!

@@ -2770,15 +2770,43 @@
            (str/join "." (map #(pascal (.getSimpleName ^CtType %))
                               (declaring-types type))))))
 
+(defn- emitted-type-visibility [^CtType type]
+  (cond
+    (or (anonymous-class? type) (local-type? type)) "private"
+    (.hasModifier ^CtModifiable type ModifierKind/PUBLIC) "public"
+    :else "internal"))
+
+(defn- canonical-visibility [visibility]
+  (str/replace visibility " " "-"))
+
+(defn- executable-implementation [^CtType owner ^CtElement member]
+  (cond
+    (instance? CtConstructor member)
+    (if (.getBody ^CtConstructor member)
+      :translated-body
+      :public-stub)
+
+    (instance? CtMethod member)
+    (cond
+      (.getBody ^CtMethod member) :translated-body
+      (or (instance? CtInterface owner)
+          (.hasModifier ^CtMethod member ModifierKind/ABSTRACT))
+      :abstract-contract
+      :else :public-stub)
+
+    :else :declaration))
+
 (defn- register-type! [ctx ^CtType type name rule]
   (let [id (declaration-id type :type)
         entry {:id id :java-key (spoon/declaration-key type) :kind :type
                :owner (some-> type .getDeclaringType spoon/declaration-key)
                :name name :signature (.getQualifiedName type)
+               :implementation :declaration
                :destination {:assembly (get-in ctx [:configuration :project :assembly-name])
                              :namespace (destination-namespace ctx type)
                              :owner (destination-owner-name ctx type)
-                             :kind "type" :name name :parameter-count "0"}
+                             :kind "type" :name name :parameter-count "0"
+                             :visibility (emitted-type-visibility type)}
                :source (source-ref type rule nil)}]
     (when (.containsKey ^IdentityHashMap (:emitted ctx) type)
       (fail! "A Java library declaration was emitted more than once"
@@ -2798,8 +2826,11 @@
 
 (defn- register-member!
   ([ctx ^CtType owner ^CtElement member name rule]
-   (register-member! ctx owner member name rule nil))
+   (register-member! ctx owner member name rule nil nil))
   ([ctx ^CtType owner ^CtElement member name rule parameter-count-override]
+   (register-member! ctx owner member name rule parameter-count-override nil))
+  ([ctx ^CtType owner ^CtElement member name rule parameter-count-override
+    emitted-visibility]
    (let [kind (member-kind member)
          id (declaration-id member kind)
          parameter-count (or parameter-count-override
@@ -2811,6 +2842,7 @@
                 :signature (or (when (instance? CtExecutable member)
                                  (.getSignature ^CtExecutable member))
                                (.getSimpleName member))
+                :implementation (executable-implementation owner member)
                 :destination {:assembly (get-in ctx [:configuration :project :assembly-name])
                               :namespace (destination-namespace ctx owner)
                               :owner (destination-owner-name ctx owner)
@@ -2822,7 +2854,9 @@
                                       :initializer "initializer"
                                       "member")
                               :name (if (= :constructor kind) ".ctor" name)
-                              :parameter-count (str parameter-count)}
+                              :parameter-count (str parameter-count)
+                              :visibility
+                              (some-> emitted-visibility canonical-visibility)}
                 :source (source-ref member rule nil)}]
      (when (.containsKey ^IdentityHashMap (:emitted ctx) member)
        (fail! "A Java library declaration was emitted more than once"
@@ -2915,11 +2949,7 @@
     (type-node ctx reference)))
 
 (defn- type-words [^CtType type]
-  (let [visibility (cond
-                     (anonymous-class? type) "private"
-                     (local-type? type) "private"
-                     (.hasModifier ^CtModifiable type ModifierKind/PUBLIC) "public"
-                     :else "internal")]
+  (let [visibility (emitted-type-visibility type)]
     (cond
       (instance? CtInterface type) [visibility "interface"]
       (instance? CtEnum type) [visibility "sealed" "class"]
@@ -3171,7 +3201,11 @@
         rule (if enum-value?
                :java-library.declaration/enum-value
                :java-library.declaration/field)
-        id (register-member! ctx owner field name rule)]
+        emitted-visibility
+        (if enum-value?
+          "public"
+          (member-visibility owner field "internal"))
+        id (register-member! ctx owner field name rule nil emitted-visibility)]
     (csharp/with-source
       (sequence-node
        [(raw (str (str/join " "
@@ -3205,11 +3239,12 @@
         body-node (when body (translated-node ctx body))
         name (method-name ctx owner method)
         rule :java-library.declaration/method
-        id (register-member! ctx owner method name rule)
+        words (method-words owner method)
+        id (register-member! ctx owner method name rule nil (first words))
         method-node
         (csharp/with-source
           (sequence-node
-           [(raw (str (str/join " " (method-words owner method)) " "))
+           [(raw (str (str/join " " words) " "))
             (declaration-type-node ctx method (.getType method))
             (raw (str " " name))
             (executable-formals-node method)
@@ -3234,7 +3269,8 @@
                               (executable-anonymous-calls constructor))
         name (pascal (.getSimpleName owner))
         rule :java-library.declaration/constructor
-        id (register-member! ctx owner constructor name rule)
+        emitted-visibility (member-visibility owner constructor "internal")
+        id (register-member! ctx owner constructor name rule nil emitted-visibility)
         body (.getBody constructor)
         first-statement (some-> body .getStatements first)
         constructor-invocation
@@ -3446,7 +3482,8 @@
   (let [name (pascal (.getSimpleName type))
         outer (.getDeclaringType type)
         rule :java-library.declaration/implicit-member-constructor
-        id (register-member! ctx type constructor name rule 1)]
+        emitted-visibility (member-visibility type constructor "internal")
+        id (register-member! ctx type constructor name rule 1 emitted-visibility)]
     (csharp/with-source
       (sequence-node
        [(raw "private readonly ") (owner-type-node ctx outer)
@@ -3702,7 +3739,9 @@
                    members))
         enum-members
         (when (instance? CtEnum type)
-          [(raw (str "public static " name "[] values() => "
+          [(when (empty? explicit-constructors)
+             (raw (str "private " name "() {}\n")))
+           (raw (str "public static " name "[] values() => "
                      "global::Vibeformer.Runtime.JavaCompat.EnumValues<" name ">();\n"
                      "public static " name " valueOf(string name) => "
                      "global::Vibeformer.Runtime.JavaCompat.EnumValueOf<" name ">(name);"))
@@ -3824,6 +3863,9 @@
 (def ^:private surface-header
   "VIBEFORMER_JAVA_LIBRARY_PUBLIC_SURFACE_V1")
 
+(def ^:private surface-shape-keys
+  [:kind :owner :name :parameter-count :visibility])
+
 (defn- parameter-count [value]
   (let [value (str/replace value #"^parameters=" "")]
     (if (str/blank? value)
@@ -3835,6 +3877,18 @@
                  (if (and (= \, character) (zero? depth)) (inc count) count))
           count)))))
 
+(defn- declared-visibility [^CtModifiable declaration]
+  (cond
+    (.hasModifier declaration ModifierKind/PUBLIC) "public"
+    (.hasModifier declaration ModifierKind/PROTECTED) "protected"
+    (.hasModifier declaration ModifierKind/PRIVATE) "private"
+    :else "package"))
+
+(defn- encoded-visibility [value]
+  (or (some #(when (str/includes? (str " " value " ") (str " " % " ")) %)
+            ["public" "protected" "private"])
+      "package"))
+
 (defn- parse-surface-row [encoded]
   (let [decoded (String. (.decode (Base64/getDecoder) encoded)
                          StandardCharsets/UTF_8)
@@ -3843,59 +3897,70 @@
         row
         (case kind
           "type" {:kind kind :owner (nth fields 3) :name ""
-                  :parameter-count 0 :visibility (nth fields 2)}
+                  :parameter-count 0
+                  :visibility (encoded-visibility (nth fields 2))}
           "field" {:kind kind :owner (nth fields 1) :name (nth fields 4)
-                   :parameter-count 0 :visibility (nth fields 2)}
+                   :parameter-count 0
+                   :visibility (encoded-visibility (nth fields 2))}
           "method" {:kind kind :owner (nth fields 1) :name (nth fields 5)
                     :parameter-count (parameter-count (nth fields 6))
-                    :visibility (nth fields 2)}
+                    :visibility (encoded-visibility (nth fields 2))}
           "constructor" {:kind kind :owner (nth fields 1) :name ".ctor"
                          :parameter-count (parameter-count (nth fields 4))
-                         :visibility (nth fields 2)}
+                         :visibility (encoded-visibility (nth fields 2))}
           (fail! "Java library public-surface row has an unknown kind"
                  {:kind :unknown-java-library-surface-kind :row decoded}))]
     (assoc row :identity decoded)))
 
 (defn- read-surface!
   [workspace {:keys [contract-file compiled-contract-file] :as specification}]
-  (when-not (= #{:contract-file :compiled-contract-file}
-               (set (keys specification)))
-    (fail! "Invalid Java library public-surface specification"
-           {:kind :invalid-java-library-surface-specification
-            :specification specification}))
-  (let [workspace (paths/absolute workspace)
-        file (paths/resolve-path workspace contract-file)
-        compiled-file (paths/resolve-path workspace compiled-contract-file)]
-    (when-not (paths/regular-file? file)
-      (fail! "Java library public-surface contract is missing"
-             {:kind :missing-java-library-surface :file (str file)}))
-    (when-not (paths/regular-file? compiled-file)
-      (fail! "Java library compiled public-surface contract is missing"
-             {:kind :missing-compiled-java-library-surface-contract
-              :file (str compiled-file)}))
-    (let [[header & lines] (str/split-lines (Files/readString file StandardCharsets/UTF_8))
-          rows (mapv (fn [line]
-                       (let [[record encoded extra] (str/split line #"\t" -1)]
-                         (when-not (and (= "surface" record)
-                                        (not (str/blank? encoded))
-                                        (nil? extra))
-                           (fail! "Malformed Java library public-surface row"
-                                  {:kind :malformed-java-library-surface-row
-                                   :line line}))
-                         (parse-surface-row encoded)))
-                     (remove str/blank? lines))
-          identities (mapv :identity rows)]
-      (when-not (= surface-header header)
-        (fail! "Unsupported Java library public-surface contract"
-               {:kind :unsupported-java-library-surface :header header}))
-      (when-not (and (seq rows)
-                     (= (count identities) (count (distinct identities)))
-                     (= identities (vec (sort identities))))
-        (fail! "Java library public-surface rows are empty, duplicate, or unsorted"
-               {:kind :nondeterministic-java-library-surface
-                :rows (count rows)}))
-      {:contract-file file :compiled-contract-file compiled-file
-       :rows rows :seeds []})))
+  (let [keys (set (keys specification))]
+    (when-not (or (empty? keys)
+                  (= #{:contract-file :compiled-contract-file} keys))
+      (fail! "Invalid Java library public-surface specification"
+             {:kind :invalid-java-library-surface-specification
+              :specification specification}))
+    (if (empty? keys)
+      {:derivation :resolved-spoon-model :rows nil :seeds []}
+      (let [workspace (paths/absolute workspace)
+            file (paths/resolve-path workspace contract-file)
+            compiled-file (paths/resolve-path workspace compiled-contract-file)]
+        (when-not (paths/regular-file? file)
+          (fail! "Java library public-surface contract is missing"
+                 {:kind :missing-java-library-surface :file (str file)}))
+        (when-not (paths/regular-file? compiled-file)
+          (fail! "Java library compiled public-surface contract is missing"
+                 {:kind :missing-compiled-java-library-surface-contract
+                  :file (str compiled-file)}))
+        (let [[header & lines]
+              (str/split-lines (Files/readString file StandardCharsets/UTF_8))
+              rows
+              (mapv
+               (fn [line]
+                 (let [[record encoded extra] (str/split line #"\t" -1)]
+                   (when-not (and (= "surface" record)
+                                  (not (str/blank? encoded))
+                                  (nil? extra))
+                     (fail! "Malformed Java library public-surface row"
+                            {:kind :malformed-java-library-surface-row
+                             :line line}))
+                   (parse-surface-row encoded)))
+               (remove str/blank? lines))
+              identities (mapv :identity rows)]
+          (when-not (= surface-header header)
+            (fail! "Unsupported Java library public-surface contract"
+                   {:kind :unsupported-java-library-surface :header header}))
+          (when-not (and (seq rows)
+                         (= (count identities) (count (distinct identities)))
+                         (= identities (vec (sort identities))))
+            (fail! "Java library public-surface rows are empty, duplicate, or unsorted"
+                   {:kind :nondeterministic-java-library-surface
+                    :rows (count rows)}))
+          {:derivation :retained-contract
+           :contract-file file
+           :compiled-contract-file compiled-file
+           :rows rows
+           :seeds []})))))
 
 (defn- canonical-owner [value]
   (str/replace (str value) "$" "."))
@@ -3934,6 +3999,54 @@
        (or (.hasModifier ^CtModifiable declaration ModifierKind/PUBLIC)
            (.hasModifier ^CtModifiable declaration ModifierKind/PROTECTED))))
 
+(defn- effectively-accessible-type? [^CtType type]
+  (loop [current type]
+    (or (nil? current)
+        (and (accessible? current)
+             (recur (.getDeclaringType ^CtType current))))))
+
+(defn- surface-row
+  ([^CtElement declaration shape]
+   (surface-row declaration shape nil))
+  ([^CtElement declaration shape systematic-adaptation]
+   (let [key (spoon/declaration-key declaration)
+         adaptation-kind
+         (if (map? systematic-adaptation)
+           (:kind systematic-adaptation)
+           systematic-adaptation)
+         adaptation-identity
+         (if (map? systematic-adaptation)
+           (:identity systematic-adaptation)
+           (some-> systematic-adaptation name))
+         identity (if adaptation-kind
+                    (str key "|systematic-adaptation="
+                         adaptation-identity)
+                    key)]
+     (when-not (and (string? identity) (not (str/blank? identity)))
+       (fail! "Accessible Spoon declaration has no stable source identity"
+              {:kind :missing-accessible-surface-identity
+               :source-element declaration
+               :source-location (spoon/source-location declaration)}))
+     (assoc shape :identity identity))))
+
+(defn- synthetic-surface-entry
+  [^CtType type name parameter-count systematic-adaptation]
+  (let [adaptation-kind
+        (if (map? systematic-adaptation)
+          (:kind systematic-adaptation)
+          systematic-adaptation)
+        shape
+        {:kind "method"
+         :owner (canonical-owner (.getQualifiedName type))
+         :name name
+         :parameter-count parameter-count
+         :visibility "public"}]
+    {:declaration type
+     :synthetic? true
+     :systematic-adaptation adaptation-kind
+     :shape shape
+     :row (surface-row type shape systematic-adaptation)}))
+
 (defn- live-surface [resolved-model]
   (->> (java/project-roots resolved-model)
        (mapcat (fn [^CtType root]
@@ -3942,54 +4055,115 @@
                            root)))
        distinct
        (mapcat (fn [^CtType type]
-                 (when (accessible? type)
-                   (concat
-                    [{:declaration type :shape (live-shape type)}]
-                    (map (fn [declaration]
-                           {:declaration declaration :shape (live-shape declaration)})
-                         (filter #(and (accessible? %)
-                                       (or (instance? CtConstructor %)
-                                           (instance? CtMethod %)
-                                           (instance? CtField %)))
-                                 (.getTypeMembers type)))
-                    (when (instance? CtEnum type)
-                      (concat
-                       (map (fn [^CtEnumValue value]
-                              {:declaration value :shape (live-shape value)})
-                            (.getEnumValues ^CtEnum type))
-                       [{:declaration type :synthetic? true
-                         :shape {:kind "method"
-                                 :owner (canonical-owner (.getQualifiedName type))
-                                 :name "values" :parameter-count 0}}
-                        {:declaration type :synthetic? true
-                         :shape {:kind "method"
-                                 :owner (canonical-owner (.getQualifiedName type))
-                                 :name "valueOf" :parameter-count 1}}]))))))
+                 (when (effectively-accessible-type? type)
+                   (let [type-shape
+                         (assoc (live-shape type)
+                                :visibility (declared-visibility type))
+                         declarations
+                         (filter
+                          #(and (accessible? %)
+                                (or (instance? CtConstructor %)
+                                    (instance? CtMethod %)
+                                    (instance? CtField %)))
+                          (.getTypeMembers type))]
+                     (concat
+                      [{:declaration type
+                        :shape type-shape
+                        :row (surface-row type type-shape)}]
+                      (map
+                       (fn [^CtModifiable declaration]
+                         (let [shape
+                               (assoc (live-shape declaration)
+                                      :visibility
+                                      (declared-visibility declaration))]
+                           {:declaration declaration
+                            :shape shape
+                            :row (surface-row declaration shape)}))
+                       declarations)
+                      (when (instance? CtEnum type)
+                        (concat
+                         (map
+                          (fn [^CtEnumValue value]
+                            (let [shape
+                                  (assoc (live-shape value)
+                                         :visibility "public")]
+                              {:declaration value
+                               :shape shape
+                               :row (surface-row value shape)}))
+                          (.getEnumValues ^CtEnum type))
+                         (map (fn [[name parameter-count adaptation]]
+                                (synthetic-surface-entry
+                                 type name parameter-count adaptation))
+                              (cond->
+                               [["values" 0 :java-enum-values]
+                                ["valueOf" 1 :java-enum-value-of]]
+                                (not
+                                 (some
+                                  #(and (instance? CtMethod %)
+                                        (= "toString"
+                                           (.getSimpleName ^CtMethod %))
+                                        (empty?
+                                         (.getParameters ^CtMethod %)))
+                                  (.getTypeMembers type)))
+                                (conj ["ToString" 0
+                                       :java-enum-name-to-string])))))
+                      (when (instance? CtClass type)
+                        (map
+                         (fn [^CtTypeReference reference]
+                           (synthetic-surface-entry
+                            type "op_Implicit" 1
+                            {:kind :java-functional-implicit-operator
+                             :identity
+                             (str "java-functional-implicit-operator:"
+                                  (.getQualifiedName reference))}))
+                         (filter
+                          #(contains? functional-interface-types
+                                      (.getQualifiedName ^CtTypeReference %))
+                          (.getSuperInterfaces type)))))))))
        (remove (comp nil? :shape))
        (sort-by (juxt (comp pr-str :shape)
                       #(spoon/declaration-key (:declaration %))))
        vec))
 
 (defn- validate-selected! [_workspace surface resolved-model]
-  (let [expected (frequencies (map #(select-keys % [:kind :owner :name :parameter-count])
-                                   (:rows surface)))
-        live (live-surface resolved-model)
-        actual (frequencies (map :shape live))]
+  (let [live (live-surface resolved-model)
+        actual (frequencies (map :shape live))
+        derived? (= :resolved-spoon-model (:derivation surface))
+        rows (if derived?
+               (mapv :row live)
+               (:rows surface))
+        expected (frequencies (map #(select-keys % surface-shape-keys) rows))
+        identities (mapv :identity rows)]
+    (when-not (seq rows)
+      (fail! "Resolved Java library has no accessible declarations"
+             {:kind :empty-java-library-selected-surface
+              :derivation (:derivation surface)}))
+    (when-not (= (count identities) (count (distinct identities)))
+      (fail! "Resolved Java library public surface has duplicate source identities"
+             {:kind :duplicate-java-library-surface-identities
+              :duplicates
+              (->> identities frequencies
+                   (keep (fn [[identity count]]
+                           (when (< 1 count) identity)))
+                   sort vec)}))
     (when-not (= expected actual)
-      (fail! "Resolved Java library public surface differs from its explicit contract"
+      (fail! (if derived?
+               "Resolved Java library public surface derivation is incomplete"
+               "Resolved Java library public surface differs from its retained contract")
              {:kind :java-library-selected-surface-mismatch
+              :derivation (:derivation surface)
               :missing (vec (take 30 (remove (fn [[shape count]]
                                                (= count (get actual shape))) expected)))
               :unexpected (vec (take 30 (remove (fn [[shape count]]
                                                   (= count (get expected shape))) actual)))}))
-    (let [rows-by-shape (group-by #(select-keys % [:kind :owner :name :parameter-count])
-                                  (:rows surface))
+    (let [rows-by-shape (group-by #(select-keys % surface-shape-keys) rows)
           live-by-shape (group-by :shape live)
           evidence
           (->> rows-by-shape
                (mapcat
                 (fn [[shape rows]]
-                  (map (fn [row {:keys [declaration synthetic?]}]
+                  (map (fn [row {:keys [declaration synthetic?
+                                        systematic-adaptation]}]
                          {:row row
                           :declaration-key (spoon/declaration-key declaration)
                           :owner-declaration-key
@@ -3998,6 +4172,7 @@
                                     spoon/declaration-key))
                           :implicit? (.isImplicit ^CtElement declaration)
                           :synthetic? (boolean synthetic?)
+                          :systematic-adaptation systematic-adaptation
                           :expansion :body
                           :representation :live-declaration})
                        (sort-by :identity rows)
@@ -4005,9 +4180,74 @@
                                 (get live-by-shape shape)))))
                (sort-by (juxt (comp :identity :row) :declaration-key))
                vec)]
-      (assoc surface :selection-evidence evidence))))
+      (assoc surface :rows (vec (sort-by :identity rows))
+             :selection-evidence evidence))))
+
+(def ^:private systematic-adaptations
+  {:java-implicit-default-constructor
+   "A Java implicit default constructor is represented by the CLR default constructor."
+   :java-enum-values
+   "Java enum values() is emitted as the reusable CLR enum-values adaptation."
+   :java-enum-value-of
+   "Java enum valueOf(String) is emitted as the reusable CLR enum-name adaptation."
+   :java-enum-name-to-string
+   "A Java enum without an override receives the CLR ToString enum-name adaptation."
+   :java-functional-implicit-operator
+   "A supported Java functional base receives a CLR implicit delegate conversion."
+   :protected-override-family-widening
+   "A protected Java override-family member is widened to public when a public override requires one CLR visibility."
+   :protected-package-visibility
+   "Java protected package access is represented as CLR protected-internal for the reusable linked-map hook."})
+
+(def ^:private blocking-coverage-keys
+  [:blocked :unsupported-elements :missing-mappings :missing-occurrences
+   :fallback])
+
+(defn- validate-emission-coverage! [emission]
+  (let [summary (:summary emission)
+        coverage (:executable-coverage summary)
+        blockers
+        (cond-> {}
+          (not (map? summary))
+          (assoc :summary :missing)
+
+          (pos? (long (or (:hard-failures summary) 0)))
+          (assoc :hard-failures (:hard-failures summary))
+
+          (pos? (long (or (:missing-source-mappings summary) 0)))
+          (assoc :missing-source-mappings (:missing-source-mappings summary))
+
+          (seq (:diagnostics emission))
+          (assoc :diagnostics (count (:diagnostics emission)))
+
+          (some #(pos? (long (or (get coverage %) 0)))
+                blocking-coverage-keys)
+          (assoc :executable-coverage
+                 (select-keys coverage blocking-coverage-keys)))]
+    (when (seq blockers)
+      (fail! "Unsupported translation or incomplete source coverage blocks the public surface"
+             {:kind :incomplete-java-library-public-surface
+              :blockers blockers})))
+  emission)
+
+(defn- visibility-adaptation! [source-visibility destination-visibility evidence]
+  (cond
+    (= source-visibility destination-visibility) nil
+    (and (= "protected" source-visibility)
+         (= "public" destination-visibility))
+    :protected-override-family-widening
+    (and (= "protected" source-visibility)
+         (= "protected-internal" destination-visibility))
+    :protected-package-visibility
+    :else
+    (fail! "Generated declaration changed accessible visibility without a systematic adaptation"
+           {:kind :java-library-generated-visibility-mismatch
+            :source-visibility source-visibility
+            :destination-visibility destination-visibility
+            :source-declaration (get-in evidence [:row :identity])})))
 
 (defn- validate-generated! [surface emission]
+  (validate-emission-coverage! emission)
   (let [by-key (group-by :java-key (filter :java-key (:declarations emission)))
         rows
         (mapv
@@ -4017,36 +4257,81 @@
                  implicit-constructor?
                  (and implicit? (= "constructor" (get-in evidence [:row :kind]))
                       (zero? (get-in evidence [:row :parameter-count])))
-                 owner-match (when implicit-constructor?
-                               (first (get by-key owner-declaration-key)))
-                 synthetic-match (when synthetic? (first matches))]
-             (when-not (or (= 1 (count matches)) owner-match synthetic-match)
+                 owner-matches (when implicit-constructor?
+                                 (get by-key owner-declaration-key))
+                 owner-match (when (= 1 (count owner-matches))
+                               (first owner-matches))
+                 synthetic-match (when (and synthetic? (= 1 (count matches)))
+                                   (first matches))
+                 direct-match (when (= 1 (count matches)) (first matches))]
+             (when-not (or direct-match owner-match synthetic-match)
                (fail! "Java library surface declaration did not map to one generated declaration"
                       {:kind :java-library-generated-surface-mismatch
                        :declaration-key declaration-key
-                       :match-count (count matches)}))
-             (assoc evidence :generated
-                    (or (when synthetic?
-                          (-> synthetic-match
-                              (assoc :representation :java-synthetic-public-member)
-                              (assoc :destination
-                                     (assoc (:destination synthetic-match)
-                                            :kind (get-in evidence [:row :kind])
-                                            :name (get-in evidence [:row :name])
-                                            :parameter-count
-                                            (str (get-in evidence
-                                                         [:row :parameter-count]))))))
-                        (first matches)
-                        (-> owner-match
-                            (assoc :representation :implicit-default-constructor)
-                            (assoc :destination
-                                   (assoc (:destination owner-match)
-                                          :kind "constructor" :name ".ctor"
-                                          :parameter-count "0")))))))
+                       :match-count (count matches)
+                       :owner-match-count (count owner-matches)}))
+             (let [generated
+                   (or
+                    (when synthetic?
+                      (-> synthetic-match
+                          (assoc :representation
+                                 :java-synthetic-public-member
+                                 :implementation :systematic-adaptation)
+                          (assoc :destination
+                                 (assoc (:destination synthetic-match)
+                                        :kind (get-in evidence [:row :kind])
+                                        :name (get-in evidence [:row :name])
+                                        :parameter-count
+                                        (str (get-in evidence
+                                                     [:row :parameter-count]))))))
+                    direct-match
+                    (-> owner-match
+                        (assoc :representation
+                               :implicit-default-constructor
+                               :implementation :systematic-adaptation)
+                        (assoc :destination
+                               (assoc (:destination owner-match)
+                                      :kind "constructor" :name ".ctor"
+                                      :parameter-count "0"))))
+                   visibility-adaptation
+                   (visibility-adaptation!
+                    (get-in evidence [:row :visibility])
+                    (get-in generated [:destination :visibility])
+                    evidence)
+                   adaptation
+                   (or (:systematic-adaptation evidence)
+                       (when implicit-constructor?
+                         :java-implicit-default-constructor)
+                       visibility-adaptation)]
+               (when (= :public-stub (:implementation generated))
+                 (fail! "Accessible Java declaration generated an implementation stub"
+                        {:kind :public-java-library-stub
+                         :source-declaration (get-in evidence [:row :identity])
+                         :destination (:destination generated)}))
+               (cond-> (assoc evidence
+                              :source-mapping
+                              (if adaptation
+                                :documented-systematic-adaptation
+                                :one-to-one)
+                              :generated generated)
+                 adaptation
+                 (assoc :systematic-adaptation adaptation)))))
          (:selection-evidence surface))]
-    {:schema-version 1 :strategy :complete-accessible-gradle-library
-     :required-rows (count rows) :rows rows
-     :compiled-contract-file (str (:compiled-contract-file surface))}))
+    (cond->
+     {:schema-version 1
+      :strategy :complete-accessible-java-library
+      :surface-derivation (:derivation surface)
+      :required-rows (count rows)
+      :rows rows
+      :systematic-adaptations
+      (into (sorted-map)
+            (keep (fn [adaptation]
+                    (when adaptation
+                      [adaptation (get systematic-adaptations adaptation)])))
+            (map :systematic-adaptation rows))}
+      (:compiled-contract-file surface)
+      (assoc :compiled-contract-file
+             (str (:compiled-contract-file surface))))))
 
 (defn- verify-compiled! [workspace generation build-configuration]
   (let [emissions (concat (:dependency-emissions generation)
@@ -4060,22 +4345,26 @@
                  file (paths/resolve-path project-root "bin" build-configuration framework
                                           (str assembly ".dll"))]
              (when-not (and (paths/regular-file? file) public-metadata
-                            (:compiled-contract-file public-metadata))
+                            (seq (:rows public-metadata)))
                (fail! "Clean Java library build lacks its compiled public-surface evidence"
                       {:kind :missing-compiled-java-library-surface
                        :assembly assembly :file (str file)}))
-             (assoc (dotnet-surface/verify!
-                     workspace (:compiled-contract-file public-metadata)
-                     file public-metadata)
+             (assoc ((if-let [contract-file
+                              (:compiled-contract-file public-metadata)]
+                       #(dotnet-surface/verify!
+                         workspace contract-file % public-metadata)
+                       #(dotnet-surface/verify-generated!
+                         workspace % public-metadata))
+                     file)
                     :assembly assembly :file (str file))))
          emissions)]
-    {:strategy :complete-accessible-gradle-library :assemblies audits}))
+    {:strategy :complete-accessible-java-library :assemblies audits}))
 
 (defn public-surface-strategy
-  "Returns the complete accessible Gradle-library surface strategy."
+  "Returns the complete accessible Java-library surface strategy."
   []
   {:schema-version 1
-   :id :complete-accessible-gradle-library
+   :id :complete-accessible-java-library
    :product-family :java-library
    :read! read-surface!
    :validate-selected! validate-selected!

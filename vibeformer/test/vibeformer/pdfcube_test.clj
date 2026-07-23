@@ -91,16 +91,20 @@
       :input input
       :model (spoon/build-resolved-model! root input)})))
 
-(defn- emit! [fixture destination]
-  (concurrency/call-with-executor
-   {:worker-count 2}
-   #(project-emission/emit-project!
-     {:workspace-root (paths/workspace-root)
-      :target (temp-directory)
-      :project-input (:input fixture)
-      :resolved-model (:model fixture)
-      :configuration destination
-      :rule-bundle (pdfcube/rule-bundle)})))
+(defn- emit!
+  ([fixture destination]
+   (emit! fixture destination nil))
+  ([fixture destination public-api-boundary]
+   (concurrency/call-with-executor
+    {:worker-count 2}
+    #(project-emission/emit-project!
+      {:workspace-root (paths/workspace-root)
+       :target (temp-directory)
+       :project-input (:input fixture)
+       :resolved-model (:model fixture)
+       :public-api-boundary public-api-boundary
+       :configuration destination
+       :rule-bundle (pdfcube/rule-bundle)}))))
 
 (deftest five-configurations-match-the-approved-pdfcube-family
   (let [workspace (paths/workspace-root)
@@ -143,6 +147,14 @@
               (:contract
                (public-surface/resolve-strategy!
                 :pdfcube (:public-surface destination))))))
+      (is (= #{:strategy} (set (keys (:public-surface destination)))))
+      (let [selection
+            (public-surface/resolve-strategy!
+             :pdfcube (:public-surface destination))]
+        (is (= :pdfcube-complete-accessible-library
+               (get-in selection [:contract :id])))
+        (is (= :resolved-spoon-model
+               (:derivation (public-surface/read! selection workspace)))))
       (is (= destination
              (validate-profile! {:workspace-root workspace
                                  :profile profile
@@ -280,3 +292,85 @@
          (str "public global::PdfCube.IO.RandomAccessRead Echo("
               "global::PdfCube.IO.RandomAccessRead value)")))
     (is (not (str/includes? source "org.apache.pdfbox.io")))))
+
+(deftest resolved-module-surface-is-complete-and-blocks-stubs
+  (let [workspace (paths/workspace-root)
+        {destination :destination}
+        (read-profile-and-destination "pdfcube-io")
+        fixture
+        (model!
+         "org/apache/pdfbox/io/SurfaceFixture.java"
+         (str "package org.apache.pdfbox.io; "
+              "public class SurfaceFixture { "
+              "protected int state = 0; "
+              "public SurfaceFixture() {} "
+              "protected SurfaceFixture(int value) { this.state = value; } "
+              "public int read(int value) { return value; } "
+              "public int read(byte[] value) { return value.length; } "
+              "protected int hook() { return state; } "
+              "public static class Nested { "
+              "public int ping() { return 1; } } "
+              "public enum Choice { A, B } "
+              "private static class Hidden { "
+              "public int leaked() { return 2; } } "
+              "}"))
+        strategy (pdfcube/public-surface-strategy)
+        surface ((:read! strategy) workspace {})
+        selected ((:validate-selected! strategy)
+                  workspace surface (:model fixture))
+        emission (emit! fixture destination selected)
+        metadata ((:validate-generated! strategy) selected emission)
+        hidden-rows
+        (filter #(str/includes? (get-in % [:row :owner]) "Hidden")
+                (:rows metadata))
+        stub-declarations
+        (loop [remaining (:declarations emission) changed? false result []]
+          (if-let [declaration (first remaining)]
+            (if (and (not changed?)
+                     (= :method (:kind declaration))
+                     (= "Read" (:name declaration)))
+              (recur (next remaining) true
+                     (conj result (assoc declaration
+                                         :implementation :public-stub)))
+              (recur (next remaining) changed? (conj result declaration)))
+            result))
+        stub-error
+        (caught #((:validate-generated! strategy)
+                   selected (assoc emission :declarations stub-declarations)))
+        unsupported-error
+        (caught #((:validate-generated! strategy)
+                   selected
+                   (assoc-in emission
+                             [:summary :executable-coverage
+                              :unsupported-elements]
+                             1)))]
+    (is (= :resolved-spoon-model (:derivation selected)))
+    (is (= 16 (count (:rows selected))
+           (:required-rows metadata)))
+    (is (= 16 (count (distinct (map #(get-in % [:row :identity])
+                                    (:rows metadata))))))
+    (is (empty? hidden-rows))
+    (is (every? #(contains? #{:one-to-one
+                              :documented-systematic-adaptation}
+                            (:source-mapping %))
+                (:rows metadata)))
+    (is (every? #(contains? (:systematic-adaptations metadata) %)
+                [:java-enum-values :java-enum-value-of
+                 :java-enum-name-to-string]))
+    (is (= :public-java-library-stub (:kind (ex-data stub-error))))
+    (is (= :incomplete-java-library-public-surface
+           (:kind (ex-data unsupported-error))))
+    (process/run! {:directory (:project-root emission)
+                   :command ["dotnet" "build" (:project-file emission)
+                             "--nologo" "--configuration" "Release"
+                             "--verbosity:quiet" "-warnaserror"]})
+    (let [audit
+          ((:verify-compiled! strategy)
+           workspace
+           {:dependency-emissions []
+            :destination destination
+            :emission (assoc emission :public-metadata metadata)}
+           "Release")]
+      (is (= :complete-accessible-java-library (:strategy audit)))
+      (is (= 16 (get-in audit [:assemblies 0 :contract-members])))
+      (is (pos? (get-in audit [:assemblies 0 :rows]))))))
