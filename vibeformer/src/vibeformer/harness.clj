@@ -15,7 +15,7 @@
     :profile "pkl-parser"
     :product-family :pkl
     :project-root "research/pkl"
-    :source-verifier 'vibeformer.project/verify-submodule!
+    :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
     :gradle-project ":pkl-parser"
     :destination-bundle 'vibeformer.pkl.java-project/rule-bundle
     :destination-config "vibeformer/config/pkl-parser.edn"}
@@ -68,9 +68,6 @@
                               (not (str/blank? (:revision profile)))))
                      (or (nil? (:require-clean-source profile))
                          (boolean? (:require-clean-source profile)))
-                     (or (nil? (:source-verifier profile))
-                         (let [selector (:source-verifier profile)]
-                           (and (symbol? selector) (namespace selector))))
                      (string? (:destination-config profile))
                      (let [dependencies (:dependency-profiles profile)]
                        (or (nil? dependencies)
@@ -206,31 +203,15 @@
        vec))
 
 (defn- source-project!
-  [root profile verify-submodule-fn]
+  [root profile verify-checkout-fn]
   (let [configured-root (:project-root profile)
         project-root (let [path (paths/path configured-root)]
                        (paths/absolute
                         (if (.isAbsolute path) path (paths/resolve-path root path))))]
-    (if-let [selector (:source-verifier profile)]
-      (let [verifier (if (= selector 'vibeformer.project/verify-submodule!)
-                       verify-submodule-fn
-                       (try
-                         (requiring-resolve selector)
-                         (catch Throwable error
-                           (throw (ex-info "Source verifier selection failed"
-                                           {:kind :unsupported-source-verifier
-                                            :source-verifier selector}
-                                           error)))))]
-        (when-not (ifn? verifier)
-          (throw (ex-info "Source verifier selector is not callable"
-                          {:kind :invalid-source-verifier
-                           :source-verifier selector})))
-        (verifier {:workspace-root root :project-root project-root
-                   :profile profile}))
-      (project/verify-checkout! {:workspace-root root
-                                 :project-root project-root
-                                 :revision (:revision profile)
-                                 :require-clean? (:require-clean-source profile)}))))
+    (verify-checkout-fn {:workspace-root root
+                         :project-root project-root
+                         :revision (:revision profile)
+                         :require-clean? (:require-clean-source profile)})))
 
 (defn- identity-values [profile destination]
   {:source [(:project-root profile)]
@@ -309,10 +290,10 @@
 (defn- generate-with-executor!
   "Preflights an explicit product/destination plan, then cleans disposable
   output, discovers the selected Gradle projects, and emits them."
-  [{:keys [workspace-root profile generate-dependencies? verify-submodule-fn discover-main-fn
+  [{:keys [workspace-root profile generate-dependencies? verify-checkout-fn discover-main-fn
            build-resolved-model-fn build-resolved-closure-fn
            read-profile-fn read-destination-fn emit-project-fn]
-    :or {verify-submodule-fn project/verify-submodule!
+    :or {verify-checkout-fn project/verify-checkout!
          discover-main-fn project/discover-main!
          build-resolved-model-fn spoon/build-resolved-model!
          build-resolved-closure-fn spoon/build-resolved-closure!
@@ -323,13 +304,19 @@
         profile-name (or profile "pkl-parser")
         prepared (prepare-profile! root profile-name read-profile-fn read-destination-fn)
         generation-profile (:profile prepared)
-        dependency-prepared
+        prepared-dependencies
         (if (= false generate-dependencies?)
           []
           (mapv #(prepare-profile! root % read-profile-fn read-destination-fn)
                 (:dependency-profiles generation-profile)))
+        source-project (source-project! root generation-profile verify-checkout-fn)
+        dependency-prepared
+        (mapv (fn [prepared]
+                (assoc prepared
+                       :source-project
+                       (source-project! root (:profile prepared) verify-checkout-fn)))
+              prepared-dependencies)
         target (clean-directory! (paths/resolve-path root "vibeformer" "target"))
-        source-project (source-project! root generation-profile verify-submodule-fn)
         manifest (paths/resolve-path target "gradle-main-inputs.tsv")
         discovery (discover-main-fn (merge {:workspace-root root :manifest manifest}
                                            (project-options generation-profile)))
@@ -352,12 +339,11 @@
         (concurrency/mapv-ordered
          :dependency-profile-generation
          (fn [{dependency-profile :profile
+               dependency-source-project :source-project
                dependency-destination :destination
                dependency-bundle :rule-bundle
                dependency-selection :public-surface-strategy}]
            (let [dependency-name (:profile dependency-profile)
-                 dependency-source-project
-                 (source-project! root dependency-profile verify-submodule-fn)
                  dependency-manifest
                  (paths/resolve-path target
                                      (manifest-name "gradle-main-inputs-"

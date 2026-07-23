@@ -19,7 +19,11 @@
         status-before (research-status root)
         manifest (Files/createTempFile "vibeformer-main-inputs" ".tsv"
                                        (make-array FileAttribute 0))
-        submodule (project/verify-submodule! {:workspace-root root})
+        source-project
+        (project/verify-checkout!
+         {:workspace-root root
+          :project-root "research/pkl"
+          :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"})
         discovery (project/discover-main! {:workspace-root root
                                            :project-root "research/pkl"
                                            :gradle-project ":pkl-parser"
@@ -32,7 +36,7 @@
                       #(spoon/build-resolved-model! root discovery))
         status-after (research-status root)]
     {:root root
-     :submodule submodule
+     :source-project source-project
      :discovery discovery
      :first first-model
      :second second-model

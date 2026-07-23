@@ -106,33 +106,94 @@
     (is (= [] (:classpath discovery)))
     (is (= [source] (:java-sources discovery)))))
 
-(deftest mismatched-submodule-is-explicit
+(deftest configured-checkout-verifier-accepts-an-arbitrary-path-and-revision
   (let [root (temp-directory)
-        submodule (paths/resolve-path root "research" "pkl")
-        _ (create-file! submodule ".git")
-        _ (create-file! submodule "settings.gradle.kts")
+        checkout (doto (paths/resolve-path root "vendor" "example")
+                   (Files/createDirectories (make-array FileAttribute 0)))
+        _ (create-file! checkout ".git")
+        expected (apply str (repeat 40 "a"))
+        seen (atom nil)
+        result (project/verify-checkout!
+                {:workspace-root root
+                 :project-root "vendor/example"
+                 :revision expected
+                 :run-command! (fn [options]
+                                 (reset! seen options)
+                                 {:exit 0 :output (str expected "\n")})})]
+    (is (= {:path checkout :revision expected} result))
+    (is (= ["git" "rev-parse" "HEAD"] (:command @seen)))
+    (is (= checkout (:directory @seen)))))
+
+(deftest missing-configured-checkout-is-explicit
+  (let [root (temp-directory)
+        expected (apply str (repeat 40 "a"))
+        error (try
+                (project/verify-checkout!
+                 {:workspace-root root
+                  :project-root "research/pkl"
+                  :revision expected})
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :source-checkout-missing (:kind (ex-data error))))
+    (is (str/ends-with? (:path (ex-data error)) "/research/pkl"))
+    (is (re-find #"git submodule update --init research/pkl" (.getMessage error)))))
+
+(deftest uninitialized-configured-checkout-is-explicit
+  (let [root (temp-directory)
+        checkout (paths/resolve-path root "research" "pdfbox")
+        _ (Files/createDirectories checkout (make-array FileAttribute 0))
+        expected (apply str (repeat 40 "a"))
+        error (try
+                (project/verify-checkout!
+                 {:workspace-root root
+                  :project-root "research/pdfbox"
+                  :revision expected})
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :source-checkout-uninitialized (:kind (ex-data error))))
+    (is (= expected (:expected (ex-data error))))
+    (is (re-find #"git submodule update --init research/pdfbox" (.getMessage error)))))
+
+(deftest mismatched-pkl-checkout-is-explicit
+  (let [root (temp-directory)
+        checkout (paths/resolve-path root "research" "pkl")
+        _ (create-file! checkout ".git")
         expected (apply str (repeat 40 "a"))
         actual (apply str (repeat 40 "b"))
-        runner (fn [{:keys [command]}]
-                 (if (= "ls-tree" (second command))
-                   {:exit 0 :output (str "160000 commit " expected "\tresearch/pkl\n")}
-                   {:exit 0 :output (str actual "\n")}))
         error (try
-                (project/verify-submodule! {:workspace-root root :run-command! runner})
+                (project/verify-checkout!
+                 {:workspace-root root
+                  :project-root "research/pkl"
+                  :revision expected
+                  :run-command! (fn [_] {:exit 0 :output (str actual "\n")})})
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
-    (is (= :submodule-revision-mismatch (:kind (ex-data error))))
+    (is (= :source-revision-mismatch (:kind (ex-data error))))
     (is (= expected (:expected (ex-data error))))
-    (is (= actual (:actual (ex-data error))))))
+    (is (= actual (:actual (ex-data error))))
+    (is (re-find #"check out the configured revision" (.getMessage error)))))
 
-(deftest missing-submodule-is-explicit
+(deftest dirty-rawhttp-checkout-is-explicit
   (let [root (temp-directory)
+        checkout (paths/resolve-path root "research" "rawhttp")
+        _ (create-file! checkout ".git")
+        expected (apply str (repeat 40 "a"))
         error (try
-                (project/verify-submodule! {:workspace-root root})
+                (project/verify-checkout!
+                 {:workspace-root root
+                  :project-root "research/rawhttp"
+                  :revision expected
+                  :require-clean? true
+                  :run-command!
+                  (fn [{:keys [command]}]
+                    (case (second command)
+                      "rev-parse" {:exit 0 :output (str expected "\n")}
+                      "status" {:exit 0 :output " M rawhttp-core/build.gradle\n"}))})
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
-    (is (= :submodule-missing (:kind (ex-data error))))
-    (is (re-find #"git submodule update --init" (.getMessage error)))))
+    (is (= :source-checkout-dirty (:kind (ex-data error))))
+    (is (= "M rawhttp-core/build.gradle" (:status (ex-data error))))
+    (is (re-find #"commit, stash, or discard" (.getMessage error)))))
 
 (deftest gradle-toolchain-failure-is-explicit
   (let [root (temp-directory)

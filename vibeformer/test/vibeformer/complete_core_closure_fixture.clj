@@ -29,7 +29,11 @@
         status-before (research-status root)
         manifest (Files/createTempFile "vibeformer-pkl-core-inputs" ".tsv"
                                        (make-array FileAttribute 0))
-        submodule (project/verify-submodule! {:workspace-root root})
+        source-project
+        (project/verify-checkout!
+         {:workspace-root root
+          :project-root (:project-root configuration)
+          :revision (:revision configuration)})
         discovery (project/discover-main!
                    {:workspace-root root
                     :manifest manifest
@@ -54,7 +58,7 @@
      :configuration (assoc configuration :seeds seeds)
      :surface first-surface
      :second-surface second-surface
-     :submodule submodule
+     :source-project source-project
      :discovery discovery
      :frontend frontend
      :first first-closure

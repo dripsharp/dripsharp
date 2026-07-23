@@ -9,71 +9,78 @@
   #{"VIBEFORMER_GRADLE_INPUTS_V3" "VIBEFORMER_GRADLE_INPUTS_V4"})
 (def ^:private gradle-project-pattern
   #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$")
-(def ^:private gitlink-pattern
-  #"(?m)^160000 commit ([0-9a-f]{40})\s+research/pkl\s*$")
 
-(defn verify-submodule!
-  "Verifies that research/pkl is initialized at the revision recorded by HEAD."
-  [{:keys [workspace-root run-command!] :or {run-command! process/run!}}]
-  (let [root (paths/absolute workspace-root)
-        submodule (paths/resolve-path root "research" "pkl")]
-    (when-not (and (paths/exists? (paths/resolve-path submodule ".git"))
-                   (paths/regular-file? (paths/resolve-path submodule "settings.gradle.kts")))
-      (throw (ex-info
-              "research/pkl is missing or not initialized; run git submodule update --init research/pkl"
-              {:kind :submodule-missing :path (str submodule)})))
-    (let [tree-output (:output (run-command!
-                                {:command ["git" "ls-tree" "HEAD" "research/pkl"]
-                                 :directory root}))
-          expected (second (re-find gitlink-pattern tree-output))]
-      (when-not expected
-        (throw (ex-info
-                "HEAD does not contain the expected research/pkl gitlink"
-                {:kind :gitlink-missing :output tree-output})))
-      (let [actual (str/trim
-                    (:output (run-command!
-                              {:command ["git" "-C" (str submodule) "rev-parse" "HEAD"]
-                               :directory root})))]
-        (when-not (= expected actual)
-          (throw (ex-info
-                  (str "research/pkl revision mismatch: expected " expected ", found " actual)
-                  {:kind :submodule-revision-mismatch
-                   :expected expected
-                   :actual actual})))
-        {:path submodule :revision expected
-         :submodule {:path "research/pkl" :revision expected}}))))
+(defn- checkout-path
+  [workspace-root project-root]
+  (let [path (paths/path project-root)]
+    (paths/absolute
+     (if (or (.isAbsolute path) (nil? workspace-root))
+       path
+       (paths/resolve-path workspace-root path)))))
+
+(defn- checkout-reference
+  [workspace-root project-root]
+  (let [root (some-> workspace-root paths/absolute)
+        project-root (checkout-path root project-root)]
+    (if (and root (.startsWith project-root root))
+      (-> (str (.relativize root project-root))
+          (str/replace "\\" "/"))
+      (str project-root))))
+
+(defn- initialization-guidance
+  [workspace-root project-root]
+  (str "clone or initialize it"
+       (when workspace-root
+         (str " (for a submodule, run git submodule update --init "
+              (checkout-reference workspace-root project-root) ")"))))
 
 (defn verify-checkout!
-  "Verifies an arbitrary configured source checkout without assuming a product
-  path. A pinned revision is checked against Git HEAD; unpinned directories are
-  accepted as explicit local project inputs."
-  [{:keys [project-root revision require-clean? run-command!]
+  "Verifies an arbitrary configured source checkout and exact revision.
+  Unpinned directories remain valid explicit local project inputs."
+  [{:keys [workspace-root project-root revision require-clean? run-command!]
     :or {run-command! process/run!}}]
-  (let [project-root (paths/absolute project-root)]
+  (let [project-root (checkout-path workspace-root project-root)
+        reference (checkout-reference workspace-root project-root)]
     (when-not (paths/directory? project-root)
-      (throw (ex-info "Configured source project root is missing"
-                      {:kind :project-root-missing :path (str project-root)})))
+      (throw (ex-info
+              (str "Configured source checkout is missing at " reference "; "
+                   (initialization-guidance workspace-root project-root))
+              {:kind :source-checkout-missing :path (str project-root)})))
     (if-not revision
       {:path project-root :revision nil}
-      (let [actual (str/trim
-                    (:output
-                     (run-command! {:command ["git" "rev-parse" "HEAD"]
-                                    :directory project-root})))]
-        (when-not (= revision actual)
-          (throw (ex-info "Configured source checkout revision differs from the profile"
-                          {:kind :source-revision-mismatch
-                           :path (str project-root)
-                           :expected revision :actual actual})))
-        (when require-clean?
-          (let [status (str/trim
-                        (:output
-                         (run-command! {:command ["git" "status" "--porcelain"]
-                                        :directory project-root})))]
-            (when-not (str/blank? status)
-              (throw (ex-info "Configured source checkout contains local changes"
-                              {:kind :source-checkout-dirty
-                               :path (str project-root) :status status})))))
-        {:path project-root :revision actual}))))
+      (do
+        (when-not (paths/exists? (paths/resolve-path project-root ".git"))
+          (throw (ex-info
+                  (str "Configured source checkout is not initialized as a Git checkout at "
+                       reference "; "
+                       (initialization-guidance workspace-root project-root))
+                  {:kind :source-checkout-uninitialized
+                   :path (str project-root)
+                   :expected revision})))
+        (let [actual (str/trim
+                      (:output
+                       (run-command! {:command ["git" "rev-parse" "HEAD"]
+                                      :directory project-root})))]
+          (when-not (= revision actual)
+            (throw (ex-info
+                    (str "Configured source checkout revision mismatch at " reference
+                         ": expected " revision ", found " actual
+                         "; check out the configured revision before generation")
+                    {:kind :source-revision-mismatch
+                     :path (str project-root)
+                     :expected revision :actual actual})))
+          (when require-clean?
+            (let [status (str/trim
+                          (:output
+                           (run-command! {:command ["git" "status" "--porcelain"]
+                                          :directory project-root})))]
+              (when-not (str/blank? status)
+                (throw (ex-info
+                        (str "Configured source checkout contains local changes at "
+                             reference "; commit, stash, or discard them before generation")
+                        {:kind :source-checkout-dirty
+                         :path (str project-root) :status status})))))
+          {:path project-root :revision actual})))))
 
 (defn- parse-record
   [line]

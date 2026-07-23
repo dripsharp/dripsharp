@@ -96,6 +96,20 @@
    :public-surface
    {:strategy 'vibeformer.harness-test/java-library-test-surface-strategy}})
 
+(deftest pkl-and-rawhttp-profiles-use-configured-revisions
+  (let [root (paths/workspace-root)
+        pkl-parser (harness/read-profile root "pkl-parser")
+        pkl-core (harness/read-profile root "pkl-core-value-model")
+        rawhttp (harness/read-profile root "vibeformer/config/rawhttp-core.edn")]
+    (is (= "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+           (:revision pkl-parser)
+           (:revision pkl-core)))
+    (is (= "947cfdc619100a23f5e429ccb3c42ba6fedc8141"
+           (:revision rawhttp)))
+    (is (every? #(not (contains? % :source-verifier))
+                [pkl-parser pkl-core rawhttp]))
+    (is (true? (:require-clean-source rawhttp)))))
+
 (deftest generation-cleans-output-and-writes-configuration
   (let [root (temp-directory)
         stale (create-file! root "vibeformer/target/stale/output.cs")
@@ -103,7 +117,7 @@
         saw-clean-target? (atom false)
         config (harness/generate!
                 {:workspace-root root
-                 :verify-submodule-fn
+                 :verify-checkout-fn
                  (fn [_] {:path (paths/resolve-path root "research/pkl")
                           :revision "tracked-revision"})
                  :discover-main-fn
@@ -148,6 +162,76 @@
             "research/pkl/pkl-parser/src/main/java/B.java"]
            (get-in config [:production :java-sources])))))
 
+(deftest checkout-verification-fails-before-output-cleanup-or-discovery
+  (doseq [kind [:source-checkout-missing
+                :source-checkout-uninitialized
+                :source-revision-mismatch]]
+    (let [root (temp-directory)
+          stale (create-file! root "vibeformer/target/stale/output.cs")
+          discovered? (atom false)
+          bundle 'vibeformer.java-library/rule-bundle
+          profile (assoc (guarded-profile bundle)
+                         :project-root "research/example"
+                         :revision (apply str (repeat 40 "a")))
+          error
+          (try
+            (harness/generate!
+             {:workspace-root root
+              :profile "fixture"
+              :read-profile-fn (fn [_ _] profile)
+              :read-destination-fn (fn [_ _] (guarded-destination bundle))
+              :verify-checkout-fn
+              (fn [_]
+                (throw (ex-info "configured checkout rejected" {:kind kind})))
+              :discover-main-fn
+              (fn [_]
+                (reset! discovered? true)
+                (throw (ex-info "discovery must not run" {})))})
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= kind (:kind (ex-data error))))
+      (is (paths/regular-file? stale))
+      (is (false? @discovered?)))))
+
+(deftest dependency-checkouts-are-verified-before-cleanup-and-main-discovery
+  (let [root (temp-directory)
+        stale (create-file! root "vibeformer/target/stale/output.cs")
+        bundle 'vibeformer.java-library/rule-bundle
+        base (guarded-profile bundle)
+        profiles {"main" (assoc base :profile "main"
+                                :project-root "research/main"
+                                :revision (apply str (repeat 40 "a"))
+                                :dependency-profiles ["dependency"])
+                  "dependency" (assoc base :profile "dependency"
+                                      :project-root "research/dependency"
+                                      :revision (apply str (repeat 40 "b")))}
+        verified (atom [])
+        discovered? (atom false)
+        error
+        (try
+          (harness/generate!
+           {:workspace-root root
+            :profile "main"
+            :read-profile-fn (fn [_ profile] (get profiles profile))
+            :read-destination-fn (fn [_ _] (guarded-destination bundle))
+            :verify-checkout-fn
+            (fn [{:keys [project-root revision]}]
+              (swap! verified conj (.getFileName ^Path project-root))
+              (if (= "dependency" (str (.getFileName ^Path project-root)))
+                (throw (ex-info "dependency checkout rejected"
+                                {:kind :source-revision-mismatch}))
+                {:path project-root :revision revision}))
+            :discover-main-fn
+            (fn [_]
+              (reset! discovered? true)
+              (throw (ex-info "discovery must not run" {})))})
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :source-revision-mismatch (:kind (ex-data error))))
+    (is (= ["main" "dependency"] (mapv str @verified)))
+    (is (paths/regular-file? stale))
+    (is (false? @discovered?))))
+
 (deftest explicit-core-profile-selects-live-closure-path
   (let [root (temp-directory)
         discovery (fixture-discovery root)
@@ -159,7 +243,7 @@
                  :read-profile-fn (fn [_ profile-name]
                                     (harness/read-profile (paths/workspace-root)
                                                           profile-name))
-                 :verify-submodule-fn
+                 :verify-checkout-fn
                  (fn [_] {:path (paths/resolve-path root "research/pkl")
                           :revision "tracked-revision"})
                  :discover-main-fn (fn [options]
@@ -300,8 +384,6 @@
                 {:workspace-root root
                  :profile "profiles/acme.edn"
                  :generate-dependencies? false
-                 :verify-submodule-fn
-                 (fn [_] (throw (ex-info "Pkl verification must not run" {})))
                  :discover-main-fn
                  (fn [options]
                    (reset! captured options)
