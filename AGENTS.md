@@ -1,7 +1,7 @@
 The main project we are working on is /vibeformer (clojure).
 
 The Vibeformer product goal is fixed by
-`vibeformer/doc/product-goal.md`, whose baseline is commit
+`vibeformer/doc/targets/pkl/product-goal.md`, whose baseline is commit
 `1d09c0da80015d937827ebae9c6d66267ca1af25`. Agents may create bounded
 implementation milestones, but must not narrow the product goal, add product
 exclusions, convert unfinished product behavior into an exclusion, or redefine
@@ -15,7 +15,7 @@ the longer-term product goal remains open. An empty ready queue or an externally
 blocked issue means stop and report the state; do not create another epic,
 substitute adjacent hardening, or search indefinitely for additional work.
 
-Changes to `vibeformer/doc/product-goal.md`, the user-approved exclusion list,
+Changes to `vibeformer/doc/targets/pkl/product-goal.md`, the user-approved exclusion list,
 or project-completion semantics require explicit user approval. Upstream Pkl
 tests are behavior evidence even when their test infrastructure is not shipped
 as part of the .NET product.

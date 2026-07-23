@@ -77,7 +77,7 @@
                     internals))
         (is (seq exclusions))
         (is (every? #(str/starts-with? (:exclusion-evidence %)
-                                       "vibeformer/doc/product-goal.md#User-Approved")
+                                       "vibeformer/doc/targets/pkl/product-goal.md#User-Approved")
                     exclusions))))
 
     (testing "native helper decisions come from authoritative upstream usage"

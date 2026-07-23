@@ -58,10 +58,10 @@
     "approved-exclusion"})
 
 (def ^:private approved-exclusion-evidence
-  #{"vibeformer/doc/product-goal.md#User-Approved Product Exclusions:YAML support."
-    "vibeformer/doc/product-goal.md#User-Approved Product Exclusions:MessagePack and Pkl binary transport support."
-    "vibeformer/doc/product-goal.md#User-Approved Product Exclusions:CLI product support, except a small validation harness when useful."
-    "vibeformer/doc/product-goal.md#User-Approved Product Exclusions:Build, benchmark, and test infrastructure as shipped product surface."})
+  #{"vibeformer/doc/targets/pkl/product-goal.md#User-Approved Product Exclusions:YAML support."
+    "vibeformer/doc/targets/pkl/product-goal.md#User-Approved Product Exclusions:MessagePack and Pkl binary transport support."
+    "vibeformer/doc/targets/pkl/product-goal.md#User-Approved Product Exclusions:CLI product support, except a small validation harness when useful."
+    "vibeformer/doc/targets/pkl/product-goal.md#User-Approved Product Exclusions:Build, benchmark, and test infrastructure as shipped product surface."})
 
 (def ^:private native-config-owners
   #{"Pkl.Core.PklNameAttribute"

@@ -1,5 +1,5 @@
 # status	family	upstream-source	evidence
-# This bounded contract is not a project-completion claim; product scope remains governed by product-goal.md and port-scope.md.
+# This bounded contract is not a project-completion claim; product scope remains governed by targets/pkl/product-goal.md and targets/pkl/port-scope.md.
 selected	schema.modules-classes-inheritance	research/pkl/pkl-core/src/test/kotlin/org/pkl/core/EvaluateSchemaTest.kt	Module metadata, declarations, source locations, and supermodule relationships.
 selected	schema.properties-docs-annotations	research/pkl/pkl-codegen-java/src/test/kotlin/org/pkl/codegen/java/JavaCodeGeneratorTest.kt	Properties, documentation, and module/class/property/type-alias annotations.
 selected	schema.nullable-constrained-unions	research/pkl/pkl-codegen-java/src/test/kotlin/org/pkl/codegen/java/JavaCodeGeneratorTest.kt	Nullable, constrained, and union-backed generated property shapes.

@@ -6,9 +6,11 @@ Vibeformer is a reusable Java-to-C# source translator. Pkl is its first
 product target and requirements driver, not a reason to make the translator
 Pkl-specific. The Pkl source is in `../research/pkl`; do not modify it.
 
-The Pkl product boundary is defined by [Authoritative Product Goal](product-goal.md)
-and [Port Scope](port-scope.md). Temporary sequencing and status belong in
-Beads, not in this document.
+The Pkl product boundary is defined by its
+[Authoritative Product Goal](targets/pkl/product-goal.md) and
+[Port Scope](targets/pkl/port-scope.md). Other product targets define their own
+contracts under [`targets/`](targets/). Temporary sequencing and status belong
+in Beads, not in this document.
 
 ## Code-Derived System Views
 

@@ -435,15 +435,15 @@
       (= source-class "org.pkl.core.RepositoryHygiene")
       {:product-classification "test-infrastructure-only-mechanics"
        :scope-basis
-       "product-goal.md#user-approved-product-exclusions:build-benchmark-and-test-infrastructure-as-shipped-product-surface;test-evidence-retained"
+       "targets/pkl/product-goal.md#user-approved-product-exclusions:build-benchmark-and-test-infrastructure-as-shipped-product-surface;test-evidence-retained"
        :execution-owner "test-infrastructure-audit"}
 
       (mixed-pkl-binary-evaluator? source-class source-method)
       {:product-classification "in-scope-mixed-excluded-surface"
        :scope-basis
-       (str "product-goal.md#product-target:core-Pkl-evaluation+value-model+runtime+custom-resource-loading;"
-            "product-goal.md#user-approved-product-exclusions:MessagePack-and-Pkl-binary-transport-support-only;"
-            "port-scope.md#explicit-scope-decisions:MessagePack-support-is-out-of-scope;"
+       (str "targets/pkl/product-goal.md#product-target:core-Pkl-evaluation+value-model+runtime+custom-resource-loading;"
+            "targets/pkl/product-goal.md#user-approved-product-exclusions:MessagePack-and-Pkl-binary-transport-support-only;"
+            "targets/pkl/port-scope.md#explicit-scope-decisions:MessagePack-support-is-out-of-scope;"
             "in-scope-evaluator+value-model+custom-resource-observation;"
             "excluded-pkl-binary-transport-is-not-a-case-exclusion")
        :execution-owner "complete-pkl-core-runner"}
@@ -451,40 +451,40 @@
       (= excluded :yaml)
       {:product-classification "user-approved-excluded-surface"
        :scope-basis
-       "product-goal.md#user-approved-product-exclusions:YAML-support;port-scope.md#explicit-scope-decisions:YAML-support-is-out-of-scope"
+       "targets/pkl/product-goal.md#user-approved-product-exclusions:YAML-support;targets/pkl/port-scope.md#explicit-scope-decisions:YAML-support-is-out-of-scope"
        :execution-owner "approved-exclusion-audit"}
 
       (contains? #{:binary :messagepack-server} excluded)
       {:product-classification "user-approved-excluded-surface"
        :scope-basis
-       (str "product-goal.md#user-approved-product-exclusions:MessagePack-and-Pkl-binary-transport-support"
+       (str "targets/pkl/product-goal.md#user-approved-product-exclusions:MessagePack-and-Pkl-binary-transport-support"
             (when (= excluded :messagepack-server) "+Pkl-server-support")
-            ";port-scope.md#explicit-scope-decisions:MessagePack-support-is-out-of-scope")
+            ";targets/pkl/port-scope.md#explicit-scope-decisions:MessagePack-support-is-out-of-scope")
        :execution-owner "approved-exclusion-audit"}
 
       (contains? #{:cli-repl :cli-command :cli-test-reporting} excluded)
       {:product-classification "user-approved-excluded-surface"
        :scope-basis
-       "product-goal.md#user-approved-product-exclusions:CLI-product-support;port-scope.md#explicit-scope-decisions:CLI-support-is-out-of-scope"
+       "targets/pkl/product-goal.md#user-approved-product-exclusions:CLI-product-support;targets/pkl/port-scope.md#explicit-scope-decisions:CLI-support-is-out-of-scope"
        :execution-owner "approved-exclusion-audit"}
 
       (and (= source-class "org.pkl.core.stdlib.ReflectModuleTest")
            (str/includes? display-name "pkl:yaml"))
       {:product-classification "jvm-shared-product-behavior"
        :scope-basis
-       "product-goal.md#product-target:core-runtime+schema-reflection;mixed-case-retains-in-scope-reflection-observation;YAML-output-exclusion-not-applied"
+       "targets/pkl/product-goal.md#product-target:core-runtime+schema-reflection;mixed-case-retains-in-scope-reflection-observation;YAML-output-exclusion-not-applied"
        :execution-owner "complete-pkl-core-runner"}
 
       (idiomatic-adaptation? source-class)
       {:product-classification "idiomatic-dotnet-adaptation"
        :scope-basis
-       "product-goal.md#product-target:idiomatic-public-.NET-APIs+normal-.NET-loading;port-scope.md#product-target:JVM-specific-APIs-use-.NET-equivalents"
+       "targets/pkl/product-goal.md#product-target:idiomatic-public-.NET-APIs+normal-.NET-loading;targets/pkl/port-scope.md#product-target:JVM-specific-APIs-use-.NET-equivalents"
        :execution-owner "complete-pkl-core-runner"}
 
       :else
       {:product-classification "jvm-shared-product-behavior"
        :scope-basis
-       "product-goal.md#product-target:core-Pkl-parsing+evaluation+value-model+module-loading+runtime-behavior"
+       "targets/pkl/product-goal.md#product-target:core-Pkl-parsing+evaluation+value-model+module-loading+runtime-behavior"
        :execution-owner "complete-pkl-core-runner"})))
 
 (defn- family-evidence
@@ -929,9 +929,9 @@
                  {:kind :unexecutable-pkl-core-case :case (:case-id case-data)}))
         (when (= "user-approved-excluded-surface" (:product-classification case-data))
           (when-not (and (str/includes? (:scope-basis case-data)
-                                        "product-goal.md#user-approved-product-exclusions")
+                                        "targets/pkl/product-goal.md#user-approved-product-exclusions")
                          (str/includes? (:scope-basis case-data)
-                                        "port-scope.md#explicit-scope-decisions"))
+                                        "targets/pkl/port-scope.md#explicit-scope-decisions"))
             (fail! "A Pkl.Core case cites no user-approved exclusion"
                    {:kind :unapproved-pkl-core-exclusion :case (:case-id case-data)})))
         (when (contains? #{"SKIPPED" "ABORTED"} (:pinned-discovery-status case-data))

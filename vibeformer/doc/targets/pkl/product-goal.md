@@ -2,8 +2,8 @@
 
 ## Authority
 
-This document is the user-owned product contract for Vibeformer. It restores
-the intent recorded by `doc/port-scope.md` at commit
+This document is the user-owned product contract for the Pkl target. It restores
+the intent recorded by the file then located at `doc/port-scope.md` at commit
 `1d09c0da80015d937827ebae9c6d66267ca1af25` and takes precedence over bounded
 source-slice, milestone, manifest, acceptance, or release-readiness documents.
 

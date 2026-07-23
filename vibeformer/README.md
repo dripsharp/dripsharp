@@ -37,10 +37,14 @@ manual patches.
 
 The documentation is limited to durable product and architecture decisions:
 
-* [Product Goal](doc/product-goal.md) defines completion and protects the fixed
-  product scope.
-* [Port Scope](doc/port-scope.md) records the user-approved .NET product surface
-  and exclusions.
+* [Documentation Index](doc/README.md) separates reusable translator contracts
+  from product-target contracts.
+* [Product Targets](doc/targets/) defines the structure used for any number of
+  independently scoped ports.
+* [Pkl Product Goal](doc/targets/pkl/product-goal.md) defines completion and
+  protects the fixed Pkl product scope.
+* [Pkl Port Scope](doc/targets/pkl/port-scope.md) records the user-approved .NET
+  product surface and exclusions for Pkl.
 * [Architecture](doc/architecture.md) defines the end-to-end system and
   ownership boundaries.
 * [Technology](doc/technology.md) records the frontend and validation choices.
@@ -48,6 +52,7 @@ The documentation is limited to durable product and architecture decisions:
   and mapping contracts.
 * [Conversion Concerns](doc/conversion-concerns.md) records semantic mismatches
   that require explicit handling.
+
 ## Development Rule
 
 Use complete projects with their real generated sources and classpaths. A

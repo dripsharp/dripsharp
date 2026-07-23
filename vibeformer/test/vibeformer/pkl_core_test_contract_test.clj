@@ -99,9 +99,9 @@
     (doseq [excluded [yaml binary repl command report]]
       (is (= "user-approved-excluded-surface" (:product-classification excluded)))
       (is (str/includes? (:scope-basis excluded)
-                         "product-goal.md#user-approved-product-exclusions"))
+                         "targets/pkl/product-goal.md#user-approved-product-exclusions"))
       (is (str/includes? (:scope-basis excluded)
-                         "port-scope.md#explicit-scope-decisions")))
+                         "targets/pkl/port-scope.md#explicit-scope-decisions")))
     (is (= "excluded-cli-command" (:behavior-family command)))
     (is (= "excluded-cli-test-reporting" (:behavior-family report)))
     (is (= "evaluation-runtime" (:behavior-family mixed-binary)))
