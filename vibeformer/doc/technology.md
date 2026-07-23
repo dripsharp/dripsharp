@@ -8,9 +8,10 @@ dispatch, immutable translation results, mapping registries, and diagnostics.
 
 ## Java Frontend: Spoon
 
-Spoon is the Java semantic frontend. Product translation must configure it with
-the actual source sets, generated sources, dependencies, and classpath so that
-types and symbols resolve correctly.
+Spoon is the Java semantic frontend. Product translation configures it from the
+validated build-tool-neutral project input, including the actual source roots,
+generated production sources, dependencies, scoped classpath artifacts, Java
+release, and preview setting so that types and symbols resolve correctly.
 
 The translator consumes Spoon elements directly and recursively. Required
 semantic information includes:

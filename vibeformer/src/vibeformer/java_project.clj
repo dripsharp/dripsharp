@@ -13,6 +13,7 @@
             [vibeformer.csharp :as csharp]
             [vibeformer.java-translate :as java]
             [vibeformer.paths :as paths]
+            [vibeformer.project-input :as project-input]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
@@ -38,7 +39,7 @@
    :required-components required-rule-components
    :optional-components {:product-runtime-assets #{:assets}
                          :orchestration #{:validate-profile!
-                                          :validate-discovery!}}})
+                                          :validate-project-input!}}})
 
 (defn- destination-error [message data]
   (throw (ex-info message (assoc data :kind :invalid-destination-configuration))))
@@ -367,7 +368,7 @@
   (when-let [orchestration (:orchestration rule-bundle)]
     (when-not (and (map? orchestration)
                    (every? (fn [[_ hook]] (fn? hook)) orchestration)
-                   (every? #{:validate-profile! :validate-discovery!}
+                   (every? #{:validate-profile! :validate-project-input!}
                            (keys orchestration)))
       (capability-error! resolved-model "Destination orchestration capability is invalid"
                          {:bundle (:id rule-bundle)
@@ -424,15 +425,24 @@
     (mapv #(mapv (fn [entry] (select-keys entry [:id :kind :owner :name :signature])) %)
           duplicate-groups)))
 
-(defn- resource-relative [^Path resource-root ^Path resource]
-  (let [root (.normalize resource-root)
-        resource (.normalize resource)]
-    (when-not (.startsWith resource root)
-      (throw (ex-info "Production resource is outside the Gradle resource output root"
+(defn- resource-relative [resource-roots ^Path resource]
+  (let [resource (.normalize resource)
+        roots (->> resource-roots
+                   (map #(.normalize ^Path %))
+                   (filter #(.startsWith resource ^Path %))
+                   (sort-by #(.getNameCount ^Path %) >)
+                   vec)]
+    (when-not (seq roots)
+      (throw (ex-info "Production resource is outside every project resource root"
                       {:kind :unmapped-production-resource
-                       :root (str root)
+                       :roots (mapv str resource-roots)
                        :path (str resource)})))
-    (str/replace (str (.relativize root resource)) "\\" "/")))
+    (when (< 1 (count roots))
+      (throw (ex-info "Production resource matches multiple project resource roots"
+                      {:kind :ambiguous-production-resource-root
+                       :roots (mapv str roots)
+                       :path (str resource)})))
+    (str/replace (str (.relativize ^Path (first roots) resource)) "\\" "/")))
 
 (defn- portable [^Path root value]
   (let [path (paths/absolute value)]
@@ -460,10 +470,10 @@
           :hard-failures (count (get by-file canonical))}))
      (sort-by str files))))
 
-(defn- selected-source-files [resolved-model discovery]
+(defn- selected-source-files [resolved-model input]
   (if-let [source-inputs (:source-inputs resolved-model)]
     (mapv (comp paths/path key) source-inputs)
-    (:java-sources discovery)))
+    (project-input/production-source-files input)))
 
 (defn- selected-declaration-index [resolved-model]
   (when-let [declarations (:declarations resolved-model)]
@@ -533,10 +543,11 @@
 
   Callers may pass :rule-bundle directly, or configuration must select a
   namespace-qualified zero-argument bundle factory with :destination-bundle."
-  [{:keys [workspace-root target discovery resolved-model configuration
+  [{:keys [workspace-root target project-input resolved-model configuration
            public-api-boundary]
     :as options}]
-  (let [rule-bundle (resolve-rule-bundle! options)
+  (let [project-input (project-input/validate! project-input)
+        rule-bundle (resolve-rule-bundle! options)
         validate! (rule rule-bundle :project-policy :validate-configuration!)
         configuration (validate! configuration)
         root (paths/absolute workspace-root)
@@ -725,7 +736,7 @@
           resource-artifacts
           (mapv
            (fn [^Path source]
-             (let [relative (resource-relative (:resource-root discovery) source)
+             (let [relative (resource-relative (:resource-roots project-input) source)
                    mapping (map-resource configuration relative)]
                (when-not mapping
                  (throw (ex-info "Production resource has no explicit destination mapping"
@@ -741,7 +752,17 @@
                   :destination (portable project-root destination)
                   :strategy (:strategy mapping)
                   :logical-name (:logical-name mapping)})))
-           (sort-by str (:resources discovery)))
+           (sort-by str (:production-resources project-input)))
+          resource-collisions
+          (->> resource-artifacts
+               (group-by :destination)
+               vals
+               (filter #(< 1 (count %)))
+               vec)
+          _ (when (seq resource-collisions)
+              (throw (ex-info "Production resources map to the same destination"
+                              {:kind :generated-resource-collision
+                               :collisions resource-collisions})))
           project-file (paths/resolve-path project-root (get-in configuration [:output :project-file]))
           source-map-file (paths/resolve-path project-root (get-in configuration [:output :source-map-file]))
           diagnostics-file (paths/resolve-path project-root (get-in configuration [:output :diagnostics-file]))
@@ -752,7 +773,7 @@
           mapped-declaration-ids (set (keep #(get-in % [:source :declaration-id]) mappings))
           missing-mappings (sort (remove mapped-declaration-ids declaration-ids))
           accounts (source-accounting ctx root
-                                      (selected-source-files resolved-model discovery))
+                                      (selected-source-files resolved-model project-input))
           counts (frequencies (map :kind (:declarations ctx)))
           body-results (:body-translations ctx)
           body-coverage (reduce (fn [totals result]

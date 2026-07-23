@@ -46,6 +46,14 @@ gradle.projectsEvaluated {
         }
         def previewFeatures = compileJava.options.compilerArgs.contains("--enable-preview")
         def records = []
+        def buildRoot = selectedProject.layout.buildDirectory.get().asFile.canonicalFile
+        def sourceRoots = main.java.srcDirs
+          .findAll { it.isDirectory() }
+          .collect { it.canonicalFile }
+          .toSet()
+        def generatedSourceRoots = sourceRoots.findAll {
+          it.toPath().startsWith(buildRoot.toPath())
+        }.toSet()
 
         // Gradle may leave this output absent when a project has no resources.
         // The manifest still records a concrete resource root, so materialize
@@ -57,16 +65,30 @@ gradle.projectsEvaluated {
         records.add(["java-release", javaRelease])
         records.add(["preview-features", previewFeatures])
         records.add(["resource-root", processResources.destinationDir])
+        sourceRoots.each { records.add(["source-root", it]) }
         // `allJava` includes configured generated-source directories. The
         // compiler task is included as well because plugins may add generated
         // inputs directly to compileJava without registering a source set.
-        (main.allJava.files + compileJava.source.files).each {
-          if (it.isFile() && it.name.endsWith(".java")) records.add(["source", it])
-        }
+        def productionSources = (main.allJava.files + compileJava.source.files)
         if (compileJava.options.generatedSourceOutputDirectory.present) {
-          compileJava.options.generatedSourceOutputDirectory.get().asFileTree
-            .matching { include("**/*.java") }
-            .files.each { records.add(["source", it]) }
+          def generatedRoot = compileJava.options.generatedSourceOutputDirectory
+            .get().asFile.canonicalFile
+          if (generatedRoot.isDirectory()) {
+            sourceRoots.add(generatedRoot)
+            generatedSourceRoots.add(generatedRoot)
+            records.add(["source-root", generatedRoot])
+          }
+          productionSources += compileJava.options.generatedSourceOutputDirectory
+            .get().asFileTree.matching { include("**/*.java") }.files
+        }
+        productionSources.each { source ->
+          if (source.isFile() && source.name.endsWith(".java")) {
+            def canonicalSource = source.canonicalFile
+            def generated = generatedSourceRoots.any {
+              canonicalSource.toPath().startsWith(it.toPath())
+            }
+            records.add([generated ? "generated-source" : "source", canonicalSource])
+          }
         }
         if (processResources.destinationDir.isDirectory()) {
           processResources.destinationDir.eachFileRecurse { resource ->
@@ -102,6 +124,7 @@ gradle.projectsEvaluated {
               def component = artifact.moduleVersion.id
               records.add(["external-artifact", scope,
                            "${component.group}:${component.name}:${component.version}",
+                           artifact.file.canonicalFile,
                            vibeformerSha256(artifact.file)])
             }
           }
@@ -127,13 +150,15 @@ gradle.projectsEvaluated {
             "java-home": 1,
             "java-release": 2,
             "preview-features": 3,
-            "resource-root": 4,
-            "source": 5,
-            "resource": 6,
-            "classpath": 7,
-            "project-dependency": 8,
-            "external-dependency": 9,
-            "external-artifact": 10,
+            "source-root": 4,
+            "resource-root": 5,
+            "source": 6,
+            "generated-source": 7,
+            "resource": 8,
+            "classpath": 9,
+            "project-dependency": 10,
+            "external-dependency": 11,
+            "external-artifact": 12,
           ]
           (kindOrder[left[0]] <=> kindOrder[right[0]]) ?: (left.join("\t") <=> right.join("\t"))
         }
@@ -141,8 +166,8 @@ gradle.projectsEvaluated {
         def outputFile = file(outputProperty.get())
         outputFile.parentFile.mkdirs()
         outputFile.withWriter("UTF-8") { writer ->
-          writer.write("VIBEFORMER_GRADLE_INPUTS_V4\n")
-          records.each { record -> writer.write(record.join("\t") + "\n") }
+          writer.write("VIBEFORMER_GRADLE_INPUTS_V5\n")
+          records.unique().each { record -> writer.write(record.join("\t") + "\n") }
         }
       }
     }

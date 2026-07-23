@@ -85,8 +85,9 @@ flowchart LR
 
   subgraph Discovery["Discovery and semantic frontend"]
     Preflight["resolve profile, rule bundle, and surface strategy"]
-    Gradle["Gradle discovery task"]
-    Manifest["sources, resources, classpath, toolchain, and dependencies"]
+    Gradle["Gradle discovery backend"]
+    BackendManifest["backend-specific manifest"]
+    ProjectInput["neutral project identity, roots, production inputs, toolchain, and dependencies"]
     Spoon["classpath-enabled Spoon model"]
     Resolution{"profile or surface seeds?"}
     Complete["fail-closed complete resolved model"]
@@ -117,8 +118,9 @@ flowchart LR
   Preflight --> Bundle
   JavaSource --> Gradle
   Profile --> Gradle
-  Gradle --> Manifest
-  Manifest --> Spoon
+  Gradle --> BackendManifest
+  BackendManifest --> ProjectInput
+  ProjectInput --> Spoon
   Preflight --> Resolution
   Spoon --> Resolution
   Resolution -->|no seeds| Complete
@@ -132,11 +134,11 @@ flowchart LR
   PklRules --> Emitter
   CommonRules --> Emitter
   SelectedSurface --> Emitter
-  Manifest --> Emitter
+  ProjectInput --> Emitter
   Emitter --> Scheduler
   Scheduler --> Writer
   RuntimeSource --> Assets
-  Manifest --> Assets
+  ProjectInput --> Assets
   Emitter --> Assets
 
   Writer --> CSharp
@@ -149,6 +151,7 @@ flowchart LR
 The orchestration and boundaries above come from
 [`vibeformer.harness`](../src/vibeformer/harness.clj),
 [`vibeformer.project`](../src/vibeformer/project.clj),
+[`vibeformer.project-input`](../src/vibeformer/project_input.clj),
 [`vibeformer.spoon`](../src/vibeformer/spoon.clj),
 [`vibeformer.java-project`](../src/vibeformer/java_project.clj), and the
 [`vibeformer.pkl.java-project`](../src/vibeformer/pkl/java_project.clj) rule
@@ -207,6 +210,7 @@ emission remains composed through the rule bundle shown above.
 
 ```text
 resolve projects, source sets, generated sources, and dependencies
+  -> validate a deterministic build-tool-neutral Java project input
   -> build a typed semantic AST with resolved symbols
   -> recursively translate declarations, statements, and expressions
   -> map resolved source symbols to .NET equivalents

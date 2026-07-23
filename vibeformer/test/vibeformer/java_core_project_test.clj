@@ -67,7 +67,7 @@
      #(java-project/emit-project!
        {:workspace-root root
         :target target
-        :discovery discovery
+        :project-input discovery
         :resolved-model resolved-model
         :configuration
         (java-project/read-configuration

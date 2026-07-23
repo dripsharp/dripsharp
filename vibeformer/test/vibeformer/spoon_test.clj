@@ -4,6 +4,7 @@
             [vibeformer.complete-parser-fixture :as fixture]
             [vibeformer.concurrency :as concurrency]
             [vibeformer.paths :as paths]
+            [vibeformer.project-input :as project-input]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
@@ -12,17 +13,17 @@
 (deftest complete-gradle-production-inputs-are-modeled
   (let [{:keys [discovery status-before status-after]
          first-model :first} (fixture/models)
-        sources (map str (:java-sources discovery))
-        classpath (map str (:classpath discovery))]
-    (is (= 17 (:java-release discovery)))
-    (is (false? (:preview-features discovery)))
+        sources (map str (project-input/production-source-files discovery))
+        classpath (map str (project-input/compile-classpath discovery))]
+    (is (= 17 (get-in discovery [:java-toolchain :release])))
+    (is (false? (get-in discovery [:java-toolchain :preview-features?])))
     (is (= 50 (count sources)))
     (is (every? #(str/includes? % "/pkl-parser/src/main/java/") sources))
     (is (not-any? #(str/includes? % "/src/test/") sources))
     (is (= 1 (count classpath)))
     (is (str/ends-with? (clojure.core/first classpath) "/jspecify-1.0.0.jar"))
     (is (= (set (map #(-> ^Path % .toFile .getCanonicalPath)
-                    (:java-sources discovery)))
+                     (project-input/production-source-files discovery)))
            (:compilation-units first-model)))
     (is (= {:canonical-computations 50
             :cached-source-identities 50}
@@ -150,12 +151,20 @@
            source
            "final class Broken { missing.Dependency value; }"
            (make-array OpenOption 0))
-        discovery {:java-home (paths/absolute (System/getProperty "java.home"))
-                   :java-release 17
-                   :preview-features false
-                   :java-sources [source]
-                   :resources []
-                   :classpath []}
+        discovery {:schema-version 1
+                   :project-id "unresolved-fixture"
+                   :source-roots [root]
+                   :resource-roots []
+                   :production-sources [source]
+                   :generated-production-sources []
+                   :production-resources []
+                   :java-toolchain
+                   {:home (paths/absolute (System/getProperty "java.home"))
+                    :release 17
+                    :preview-features? false}
+                   :project-dependencies []
+                   :external-dependencies []
+                   :classpath-artifacts []}
         error (try
                 (spoon/build-resolved-model! root discovery)
                 nil

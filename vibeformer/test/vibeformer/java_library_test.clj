@@ -53,13 +53,24 @@
                  (throw (ex-info "Fixture dependency compilation failed"
                                  {:kind :fixture-dependency-compilation-failed
                                   :exit exit})))))
-         discovery {:java-home (paths/absolute (System/getProperty "java.home"))
-                    :java-release 17
-                    :preview-features false
-                    :java-sources files
-                    :resource-root (paths/resolve-path root "src/main/resources")
-                    :resources []
-                    :classpath (if (seq dependency-files) [classpath-root] [])}]
+         discovery
+         {:schema-version 1
+          :project-id "java-library-fixture"
+          :source-roots [(paths/resolve-path root "src/main/java")]
+          :resource-roots []
+          :production-sources files
+          :generated-production-sources []
+          :production-resources []
+          :java-toolchain
+          {:home (paths/absolute (System/getProperty "java.home"))
+           :release 17
+           :preview-features? false}
+          :project-dependencies []
+          :external-dependencies []
+          :classpath-artifacts
+          (if (seq dependency-files)
+            [{:scope :compile :path classpath-root}]
+            [])}]
      {:root root :discovery discovery
       :model (spoon/build-resolved-model! root discovery)})))
 
@@ -110,7 +121,7 @@
     #(project-emission/emit-project!
       {:workspace-root (if (seq capabilities) (paths/absolute "..") root)
        :target (temp-directory)
-       :discovery discovery
+       :project-input discovery
        :resolved-model model
        :configuration (configuration capabilities)
        :rule-bundle (java-library/rule-bundle)}))))

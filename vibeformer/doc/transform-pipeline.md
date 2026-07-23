@@ -98,8 +98,9 @@ nor falls back to that bundle.
 Profile orchestration resolves the profile, destination, bundle factory, and
 public-surface strategy as one fail-closed plan before source discovery or
 output cleanup. Profile, destination, bundle, and public strategy product
-families must agree. Dependency/resource identities from Gradle are compared
-to the destination contract before Spoon resolution, and product runtime
+families must agree. Dependency/resource identities from the validated neutral
+project input are compared to the destination contract before Spoon resolution,
+and product runtime
 sources require an explicit bundle capability. Isolated-consumer behavior is
 destination metadata, not a product-name dispatch table.
 

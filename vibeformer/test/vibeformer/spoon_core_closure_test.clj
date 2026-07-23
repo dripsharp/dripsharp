@@ -4,6 +4,7 @@
             [vibeformer.complete-core-closure-fixture :as fixture]
             [vibeformer.java-translate :as java]
             [vibeformer.paths :as paths]
+            [vibeformer.project-input :as project-input]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Path]
            [java.security MessageDigest]
@@ -32,12 +33,12 @@
 (deftest complete-pkl-core-production-frontend-is-loaded
   (let [{:keys [discovery frontend status-before status-after]}
         (fixture/models)
-        sources (map str (:java-sources discovery))]
-    (is (= ":pkl-core" (:gradle-project discovery)))
+        sources (map str (project-input/production-source-files discovery))]
+    (is (= ":pkl-core" (:project-id discovery)))
     (is (= 723 (count sources)))
     (is (= 140 (count (filter #(str/includes? % "/generated/truffle/") sources))))
-    (is (= 28 (count (:resources discovery))))
-    (is (= 13 (count (:classpath discovery))))
+    (is (= 28 (count (:production-resources discovery))))
+    (is (= 13 (count (project-input/compile-classpath discovery))))
     (is (= {:compilation-units 723 :project-types 2250}
            (:totals frontend)))
     (is (= {:canonical-computations 723
@@ -57,8 +58,9 @@
         declaration-keys (keys (:declarations first))
         public-api-keys (keys (:public-api-declarations first))
         project-roots (java/project-roots first)
-        discovery-sources (set (map #(str (.toFile ^Path %))
-                                    (:java-sources discovery)))]
+        discovery-sources
+        (set (map #(str (.toFile ^Path %))
+                  (project-input/production-source-files discovery)))]
     (testing "the contract-derived entry paths are exact live declaration identities"
       (is (= 1200 (count (:required-rows surface))))
       (is (= 1200 (count (:selection-evidence surface))))

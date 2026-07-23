@@ -5,6 +5,7 @@
             [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths]
             [vibeformer.project :as project]
+            [vibeformer.project-input :as project-input]
             [vibeformer.public-surface :as public-surface]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file FileVisitOption Files Path]))
@@ -117,37 +118,49 @@
 
 (defn configuration
   "Builds the deterministic, serializable configuration used by later stages."
-  ([workspace-root revision discovery]
-   (configuration workspace-root revision discovery nil))
-  ([workspace-root revision discovery destination]
-   (let [root (paths/absolute workspace-root)
+  ([workspace-root revision input]
+   (configuration workspace-root revision input nil))
+  ([workspace-root revision input destination]
+   (let [input (project-input/validate! input)
+         root (paths/absolute workspace-root)
          source-project (if (map? revision)
                           revision
-                          {:path (:project-root discovery)
+                          {:path (:project-root input)
                            :revision revision})
          _ (when-not (:path source-project)
              (throw (ex-info "Generation configuration has no source project path"
                              {:kind :missing-source-project-path
-                              :discovery (select-keys discovery
-                                                      [:gradle-project
-                                                       :project-root])})))
+                              :project-input
+                              (select-keys input [:project-id :project-root])})))
          source-path (let [path (paths/path (:path source-project))]
                        (paths/absolute
                         (if (.isAbsolute path) path (paths/resolve-path root path))))
          rendered-source {:path (portable-path root source-path)
                           :revision (:revision source-project)}
-         render-many #(->> % (map (partial portable-path root)) sort vec)]
-     (cond-> {:schema-version 1
-              :project (keyword (or (not-empty (subs (:gradle-project discovery) 1))
-                                    "root"))
-              :source-project rendered-source
-              :toolchain {:java-home (portable-path root (:java-home discovery))
-                          :java-release (:java-release discovery)
-                          :preview-features (:preview-features discovery)}
-              :production {:java-sources (render-many (:java-sources discovery))
-                           :resource-root (portable-path root (:resource-root discovery))
-                           :resources (render-many (:resources discovery))
-                           :classpath (render-many (:classpath discovery))}}
+         render-many #(->> % (map (partial portable-path root)) sort vec)
+         render-artifact
+         (fn [artifact]
+           (update artifact :path (partial portable-path root)))
+         toolchain (:java-toolchain input)]
+     (cond-> {:schema-version 2
+              :project-input
+              {:schema-version 1
+               :project-id (:project-id input)
+               :source-roots (render-many (:source-roots input))
+               :resource-roots (render-many (:resource-roots input))
+               :production-sources (render-many (:production-sources input))
+               :generated-production-sources
+               (render-many (:generated-production-sources input))
+               :production-resources (render-many (:production-resources input))
+               :java-toolchain
+               {:home (portable-path root (:home toolchain))
+                :release (:release toolchain)
+                :preview-features? (:preview-features? toolchain)}
+               :project-dependencies (:project-dependencies input)
+               :external-dependencies (:external-dependencies input)
+               :classpath-artifacts
+               (mapv render-artifact (:classpath-artifacts input))}
+              :source-project rendered-source}
        (:submodule source-project)
        (assoc :submodule (:submodule source-project))
        destination (assoc :destination destination)))))
@@ -289,12 +302,15 @@
 
 (defn- generate-with-executor!
   "Preflights an explicit product/destination plan, then cleans disposable
-  output, discovers the selected Gradle projects, and emits them."
+  output, obtains neutral project inputs from the selected discovery backend,
+  and emits them."
   [{:keys [workspace-root profile generate-dependencies? verify-checkout-fn discover-main-fn
+           validate-project-input-fn
            build-resolved-model-fn build-resolved-closure-fn
            read-profile-fn read-destination-fn emit-project-fn]
     :or {verify-checkout-fn project/verify-checkout!
          discover-main-fn project/discover-main!
+         validate-project-input-fn project-input/validate!
          build-resolved-model-fn spoon/build-resolved-model!
          build-resolved-closure-fn spoon/build-resolved-closure!
          read-profile-fn read-profile
@@ -318,21 +334,23 @@
               prepared-dependencies)
         target (clean-directory! (paths/resolve-path root "vibeformer" "target"))
         manifest (paths/resolve-path target "gradle-main-inputs.tsv")
-        discovery (discover-main-fn (merge {:workspace-root root :manifest manifest}
-                                           (project-options generation-profile)))
+        input-model
+        (validate-project-input-fn
+         (discover-main-fn (merge {:workspace-root root :manifest manifest}
+                                  (project-options generation-profile))))
         destination (:destination prepared)
         _ (when-let [validate! (get-in prepared
                                        [:rule-bundle :orchestration
-                                        :validate-discovery!])]
+                                        :validate-project-input!])]
             (validate! {:workspace-root root :profile generation-profile
-                        :configuration destination :discovery discovery}))
-        config (assoc (configuration root source-project discovery destination)
+                        :configuration destination :project-input input-model}))
+        config (assoc (configuration root source-project input-model destination)
                       :generation-profile generation-profile)
         surface (public-surface/read! (:public-surface-strategy prepared) root)
         seeds (merge-seeds (:seeds generation-profile) (:seeds surface))
         java-model (if (seq seeds)
-                     (build-resolved-closure-fn root discovery seeds)
-                     (build-resolved-model-fn root discovery))
+                     (build-resolved-closure-fn root input-model seeds)
+                     (build-resolved-model-fn root input-model))
         surface (public-surface/validate-selected!
                  (:public-surface-strategy prepared) root surface java-model)
         dependency-emissions
@@ -348,24 +366,25 @@
                  (paths/resolve-path target
                                      (manifest-name "gradle-main-inputs-"
                                                     dependency-name))
-                 dependency-discovery
-                 (discover-main-fn
-                  (merge {:workspace-root root :manifest dependency-manifest}
-                         (project-options dependency-profile)))
+                 dependency-input
+                 (validate-project-input-fn
+                  (discover-main-fn
+                   (merge {:workspace-root root :manifest dependency-manifest}
+                          (project-options dependency-profile))))
                  _ (when-let [validate! (get-in dependency-bundle
                                                 [:orchestration
-                                                 :validate-discovery!])]
+                                                 :validate-project-input!])]
                      (validate! {:workspace-root root :profile dependency-profile
                                  :configuration dependency-destination
-                                 :discovery dependency-discovery}))
+                                 :project-input dependency-input}))
                  dependency-surface (public-surface/read! dependency-selection root)
                  dependency-seeds
                  (merge-seeds (:seeds dependency-profile)
                               (:seeds dependency-surface))
                  dependency-model
                  (if (seq dependency-seeds)
-                   (build-resolved-closure-fn root dependency-discovery dependency-seeds)
-                   (build-resolved-model-fn root dependency-discovery))
+                   (build-resolved-closure-fn root dependency-input dependency-seeds)
+                   (build-resolved-model-fn root dependency-input))
                  dependency-surface
                  (public-surface/validate-selected!
                   dependency-selection root dependency-surface dependency-model)
@@ -374,7 +393,7 @@
                   dependency-selection dependency-surface
                   (emit-project-fn {:workspace-root root
                                     :target target
-                                    :discovery dependency-discovery
+                                    :project-input dependency-input
                                     :resolved-model dependency-model
                                     :public-api-boundary dependency-surface
                                     :configuration dependency-destination
@@ -394,22 +413,24 @@
                   (:public-surface-strategy prepared) surface
                   (emit-project-fn {:workspace-root root
                                     :target target
-                                    :discovery discovery
+                                    :project-input input-model
                                     :resolved-model java-model
                                     :public-api-boundary emission-public-api-boundary
                                     :configuration destination
                                     :rule-bundle (:rule-bundle prepared)})
                   destination)
         config-file (paths/resolve-path target "generation-config.edn")
-        source-count (count (get-in config [:production :java-sources]))
-        resources (get-in config [:production :resources])]
+        source-count
+        (count (project-input/production-source-files input-model))
+        resources (get-in config [:project-input :production-resources])]
     (spit (str config-file) (str (pr-str config) "\n"))
     (println (format "Prepared %s: %d production Java files, %d production resource%s, %d classpath entries."
-                     (:gradle-project discovery)
+                     (:project-id input-model)
                      source-count
                      (count resources)
                      (if (= 1 (count resources)) "" "s")
-                     (count (get-in config [:production :classpath]))))
+                     (count (get-in config [:project-input
+                                            :classpath-artifacts]))))
     (println "Production resources:" (if (seq resources) (str/join ", " resources) "none"))
     (println "Resolved Spoon model:" (spoon/summary-line java-model))
     (println "Emitted declaration project:" (portable-path root (:project-file emission)))

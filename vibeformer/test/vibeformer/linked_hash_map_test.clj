@@ -26,12 +26,20 @@
                       "LinkedHashMapFixture.java"))
 
 (defn- discovery [source]
-  {:java-home (paths/absolute (System/getProperty "java.home"))
-   :java-release 17
-   :preview-features false
-   :java-sources [source]
-   :resources []
-   :classpath []})
+  {:schema-version 1
+   :project-id "linked-hash-map-fixture"
+   :source-roots [(.getParent ^Path source)]
+   :resource-roots []
+   :production-sources [source]
+   :generated-production-sources []
+   :production-resources []
+   :java-toolchain
+   {:home (paths/absolute (System/getProperty "java.home"))
+    :release 17
+    :preview-features? false}
+   :project-dependencies []
+   :external-dependencies []
+   :classpath-artifacts []})
 
 (def ^:private configuration
   {:schema-version 1
@@ -155,7 +163,7 @@
                   #(java-project/emit-project!
                     {:workspace-root workspace
                      :target root
-                     :discovery discovery
+                     :project-input discovery
                      :resolved-model resolved
                      :configuration configuration
                      :rule-bundle (java-library/rule-bundle)}))

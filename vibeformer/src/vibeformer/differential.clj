@@ -7,6 +7,7 @@
             [vibeformer.paths :as paths]
             [vibeformer.process :as process]
             [vibeformer.project :as project]
+            [vibeformer.project-input :as project-input]
             [vibeformer.public-api-contract :as public-api-contract])
   (:import [java.io BufferedReader File]
            [java.nio.charset StandardCharsets]
@@ -578,15 +579,16 @@
 (defn- core-classpath [root]
   (let [manifest (paths/resolve-path root "vibeformer" "target"
                                      "gradle-main-inputs.tsv")
-        discovery (project/read-discovery-manifest manifest)
+        input (project/read-discovery-manifest manifest)
+        toolchain (:java-toolchain input)
         upstream-root (paths/resolve-path root "research" "pkl")
         core-root (paths/resolve-path upstream-root "pkl-core")]
-    {:java-release (:java-release discovery)
-     :java-home (:java-home discovery)
+    {:java-release (:release toolchain)
+     :java-home (:home toolchain)
      :entries (into [(paths/resolve-path core-root "build" "classes" "java" "main")
                      (paths/resolve-path core-root "build" "resources" "main")
                      (paths/resolve-path upstream-root "pkl-parser" "build" "resources" "main")]
-                    (:classpath discovery))}))
+                    (project-input/compile-classpath input))}))
 
 (def ^:private required-contract-families
   #{"schema.modules-classes-inheritance"
@@ -1242,24 +1244,26 @@
         package-output (paths/resolve-path proof-root "package.tsv")
         perturbed-output (paths/resolve-path proof-root "perturbed.tsv")
         config-manifest (paths/resolve-path proof-root "pkl-config-java-main-inputs.tsv")
-        config-discovery (project/discover-main!
-                          {:workspace-root root
-                           :manifest config-manifest
-                           :project-root "research/pkl"
-                           :gradle-project ":pkl-config-java"
-                           :run-command! run-command!})
+        config-input (project/discover-main!
+                      {:workspace-root root
+                       :manifest config-manifest
+                       :project-root "research/pkl"
+                       :gradle-project ":pkl-config-java"
+                       :run-command! run-command!})
         config-classes (paths/resolve-path root "research" "pkl" "pkl-config-java"
                                            "build" "classes" "java" "main")
         oracle-entries (vec (distinct (concat [config-classes] entries
-                                              (:classpath config-discovery))))
+                                              (project-input/compile-classpath
+                                               config-input))))
+        config-toolchain (:java-toolchain config-input)
         toolchain-check
-        (when-not (and (= java-release (:java-release config-discovery))
+        (when-not (and (= java-release (:release config-toolchain))
                        (= (paths/absolute java-home)
-                          (paths/absolute (:java-home config-discovery))))
+                          (paths/absolute (:home config-toolchain))))
           (fail! "Pkl.Core and pkl-config-java oracle toolchains differ"
                  {:core {:java-release java-release :java-home (str java-home)}
-                  :config {:java-release (:java-release config-discovery)
-                           :java-home (str (:java-home config-discovery))}}))
+                  :config {:java-release (:release config-toolchain)
+                           :java-home (str (:home config-toolchain))}}))
         compile-classpath (str/join File/pathSeparator (map str oracle-entries))
         classpath (str/join File/pathSeparator (map str (cons oracle-classes oracle-entries)))
         javac (paths/resolve-path java-home "bin" "javac")

@@ -2,7 +2,8 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [vibeformer.paths :as paths]
-            [vibeformer.project :as project])
+            [vibeformer.project :as project]
+            [vibeformer.project-input :as project-input])
   (:import [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]))
 
@@ -41,13 +42,22 @@
                             (str kind "\t" value "\n")))))
     manifest))
 
+(defn- write-v5-manifest!
+  [^Path root records]
+  (let [manifest (paths/resolve-path root "manifest-v5.tsv")]
+    (spit (str manifest)
+          (str "VIBEFORMER_GRADLE_INPUTS_V5\n"
+               (apply str
+                      (map #(str (str/join "\t" %) "\n") records))))
+    manifest))
+
 (deftest source-resource-and-classpath-discovery
   (let [root (temp-directory)
         java-home (doto (paths/resolve-path root "jdk")
                     (Files/createDirectories (make-array FileAttribute 0)))
         source-b (create-file! root "src/B.java")
         source-a (create-file! root "src/A.java")
-        resource (create-file! root "resources/errorMessages.properties")
+        resource (create-file! root "resources-output/errorMessages.properties")
         classpath (doto (paths/resolve-path root "classes/main")
                     (Files/createDirectories (make-array FileAttribute 0)))
         manifest (write-manifest!
@@ -60,14 +70,15 @@
                    ["resource" resource]
                    ["source" source-a]])
         discovery (project/read-discovery-manifest manifest)]
-    (is (= [source-a source-b] (:java-sources discovery)))
-    (is (= [resource] (:resources discovery)))
-    (is (= (paths/resolve-path root "resources-output") (:resource-root discovery)))
-    (is (= [classpath] (:classpath discovery)))
-    (is (= ":pkl-parser" (:gradle-project discovery)))
-    (is (= java-home (:java-home discovery)))
-    (is (= 17 (:java-release discovery)))
-    (is (false? (:preview-features discovery)))))
+    (is (= [source-a source-b] (:production-sources discovery)))
+    (is (= [] (:generated-production-sources discovery)))
+    (is (= [resource] (:production-resources discovery)))
+    (is (= [(paths/resolve-path root "resources-output")]
+           (:resource-roots discovery)))
+    (is (= [classpath] (project-input/compile-classpath discovery)))
+    (is (= ":pkl-parser" (:project-id discovery)))
+    (is (= {:home java-home :release 17 :preview-features? false}
+           (:java-toolchain discovery)))))
 
 (deftest missing-classpath-input-is-explicit
   (let [root (temp-directory)
@@ -102,9 +113,79 @@
                      ["java-release" "17"]
                      ["preview-features" "false"]
                      ["source" source]]))]
-    (is (= ":" (:gradle-project discovery)))
-    (is (= [] (:classpath discovery)))
-    (is (= [source] (:java-sources discovery)))))
+    (is (= ":" (:project-id discovery)))
+    (is (= [] (:classpath-artifacts discovery)))
+    (is (= [source] (project-input/production-source-files discovery)))))
+
+(deftest v5-manifest-adapts-multiple-roots-and-generated-sources
+  (let [root (temp-directory)
+        java-home (doto (paths/resolve-path root "jdk")
+                    (Files/createDirectories (make-array FileAttribute 0)))
+        source-root-a (doto (paths/resolve-path root "src/main/java")
+                        (Files/createDirectories (make-array FileAttribute 0)))
+        source-root-b (doto (paths/resolve-path root "build/generated/java")
+                        (Files/createDirectories (make-array FileAttribute 0)))
+        resource-root-a (doto (paths/resolve-path root "src/main/resources")
+                          (Files/createDirectories (make-array FileAttribute 0)))
+        resource-root-b (doto (paths/resolve-path root "build/generated/resources")
+                          (Files/createDirectories (make-array FileAttribute 0)))
+        source (create-file! source-root-a "example/Main.java")
+        generated (create-file! source-root-b "example/Generated.java")
+        resource-a (create-file! resource-root-a "example/main.txt")
+        resource-b (create-file! resource-root-b "example/generated.txt")
+        input
+        (project/read-discovery-manifest
+         (write-v5-manifest!
+          root
+          [["project-path" ":library"]
+           ["java-home" java-home]
+           ["java-release" "17"]
+           ["preview-features" "false"]
+           ["source-root" source-root-b]
+           ["source-root" source-root-a]
+           ["resource-root" resource-root-b]
+           ["resource-root" resource-root-a]
+           ["source" source]
+           ["generated-source" generated]
+           ["resource" resource-b]
+           ["resource" resource-a]]))]
+    (is (= [source-root-b source-root-a]
+           (vec (sort-by str (:source-roots input)))))
+    (is (= [resource-root-b resource-root-a]
+           (vec (sort-by str (:resource-roots input)))))
+    (is (= [source] (:production-sources input)))
+    (is (= [generated] (:generated-production-sources input)))
+    (is (= [resource-b resource-a]
+           (vec (sort-by str (:production-resources input)))))))
+
+(deftest v5-manifest-rejects-unknown-and-malformed-records-deterministically
+  (let [root (temp-directory)
+        java-home (doto (paths/resolve-path root "jdk")
+                    (Files/createDirectories (make-array FileAttribute 0)))
+        base [["project-path" ":library"]
+              ["java-home" java-home]
+              ["java-release" "17"]
+              ["preview-features" "false"]]
+        errors
+        (mapv
+         (fn [records]
+           (try
+             (project/read-discovery-manifest
+              (write-v5-manifest! root records))
+             nil
+             (catch clojure.lang.ExceptionInfo caught caught)))
+         [(conj base ["product-name" "PdfCube"])
+          (conj base ["project-dependency" "test" ":dependency"])
+          (conj base ["external-artifact" "compile" "group:name:1"
+                      "/missing/path.jar" "not-a-hash"])
+          (conj base ["java-release" "17"])])]
+    (is (every? #(= :invalid-discovery-manifest (:kind (ex-data %))) errors))
+    (is (= [:product-name]
+           (:unknown-record-kinds (ex-data (first errors)))))
+    (is (= "test" (:scope (ex-data (second errors)))))
+    (is (= "not-a-hash" (:sha256 (ex-data (nth errors 2)))))
+    (is (= [[:java-release "17"]]
+           (:duplicate-records (ex-data (nth errors 3)))))))
 
 (deftest configured-checkout-verifier-accepts-an-arbitrary-path-and-revision
   (let [root (temp-directory)
@@ -249,7 +330,7 @@
                                   (paths/resolve-path root "target/manifest.tsv")
                                   (make-array java.nio.file.CopyOption 0))
                       {:exit 0 :output ""})})]
-    (is (= ":pkl-core" (:gradle-project discovery)))
+    (is (= ":pkl-core" (:project-id discovery)))
     (is (some #{":pkl-core:vibeformerDescribeMain"} @seen-command))
     (is (some #{"-Pvibeformer.project=:pkl-core"} @seen-command))))
 
@@ -310,20 +391,22 @@
                     :gradle-wrapper wrapper
                     :gradle-project ":application"
                     :manifest (paths/resolve-path root "build/vibeformer-inputs.tsv")})
-        sources (mapv str (:java-sources discovery))
-        resources (mapv str (:resources discovery))
-        classpath (mapv str (:classpath discovery))]
+        sources (mapv str (project-input/production-source-files discovery))
+        resources (mapv str (:production-resources discovery))
+        classpath (mapv str (project-input/compile-classpath discovery))]
     (is (= root (:project-root discovery)))
-    (is (= ":application" (:gradle-project discovery)))
+    (is (= ":application" (:project-id discovery)))
     (is (some #(str/ends-with? % "/Application.java") sources))
     (is (some #(str/ends-with? % "/Generated.java") sources))
+    (is (some #(str/ends-with? (str %) "/Generated.java")
+              (:generated-production-sources discovery)))
     (is (some #(str/ends-with? % "/example/message.txt") resources))
     (is (some #(str/ends-with? % "/library/build/classes/java/main") classpath))
-    (is (= #{{:scope :compile :project ":library"}
-             {:scope :runtime :project ":library"}}
+    (is (= #{{:scope :compile :project-id ":library"}
+             {:scope :runtime :project-id ":library"}}
            (set (:project-dependencies discovery))))
     (is (empty? (:external-dependencies discovery)))
-    (is (empty? (:external-artifacts discovery)))))
+    (is (empty? (filter :coordinate (:classpath-artifacts discovery))))))
 
 (deftest complete-independent-profile-discovers-resources-and-pinned-package-dependency
   (let [workspace (paths/workspace-root)
@@ -335,19 +418,20 @@
           :gradle-java-major 17
           :gradle-project ":rawhttp-core"
           :manifest (paths/resolve-path (temp-directory) "rawhttp-main.tsv")})]
-    (is (= ":rawhttp-core" (:gradle-project discovery)))
-    (is (= 62 (count (:java-sources discovery))))
-    (is (= 1 (count (:resources discovery))))
-    (is (str/ends-with? (str (first (:resources discovery)))
+    (is (= ":rawhttp-core" (:project-id discovery)))
+    (is (= 62 (count (project-input/production-source-files discovery))))
+    (is (= 1 (count (:production-resources discovery))))
+    (is (str/ends-with? (str (first (:production-resources discovery)))
                         "/META-INF/services/rawhttp.core.body.encoding.HttpMessageDecoder"))
     (is (empty? (:project-dependencies discovery)))
     (is (= [{:scope :compile
              :coordinate "com.google.code.findbugs:jsr305:3.0.2"}]
            (:external-dependencies discovery)))
-    (is (= [{:scope :compile
-             :coordinate "com.google.code.findbugs:jsr305:3.0.2"
-             :sha256 "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"}]
-           (:external-artifacts discovery)))))
+    (is (= #{{:scope :compile
+              :coordinate "com.google.code.findbugs:jsr305:3.0.2"
+              :sha256 "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"}}
+           (set (map #(select-keys % [:scope :coordinate :sha256])
+                     (filter :coordinate (:classpath-artifacts discovery))))))))
 
 (deftest complete-pkl-core-main-discovery
   (let [workspace (paths/workspace-root)
@@ -356,14 +440,14 @@
                     :project-root "research/pkl"
                     :manifest (paths/resolve-path (temp-directory) "pkl-core-main.tsv")
                     :gradle-project ":pkl-core"})
-        sources (mapv str (:java-sources discovery))
-        resources (mapv str (:resources discovery))]
-    (is (= ":pkl-core" (:gradle-project discovery)))
+        sources (mapv str (project-input/production-source-files discovery))
+        resources (mapv str (:production-resources discovery))]
+    (is (= ":pkl-core" (:project-id discovery)))
     (is (= 723 (count sources)))
     (is (= 140 (count (filter #(str/includes? % "/generated/truffle/") sources))))
     (is (some #(str/ends-with? % "/BaseModuleMembers.java") sources))
     (is (= 28 (count resources)))
     (is (some #(str/ends-with? % "/Release.properties") resources))
     (is (some #(str/ends-with? % "/stdlib/base.pkl") resources))
-    (is (= 13 (count (:classpath discovery))))
-    (is (every? paths/exists? (:classpath discovery)))))
+    (is (= 13 (count (project-input/compile-classpath discovery))))
+    (is (every? paths/exists? (project-input/compile-classpath discovery)))))

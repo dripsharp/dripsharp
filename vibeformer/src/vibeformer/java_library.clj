@@ -3699,43 +3699,45 @@
                       :capability capability})))
         (sort (:destination-capabilities configuration))))
 
-(defn- dependency-scopes [discovery coordinate]
-  (->> (:external-dependencies discovery)
+(defn- dependency-scopes [project-input coordinate]
+  (->> (:external-dependencies project-input)
        (filter #(= coordinate (:coordinate %)))
        (map :scope) set))
 
-(defn- validate-discovery! [{:keys [discovery configuration]}]
+(defn- validate-project-input! [{:keys [project-input configuration]}]
   (let [expected-projects (set (:project-dependencies configuration))
-        actual-projects (set (map :project (:project-dependencies discovery)))]
+        actual-projects (set (map :project-id
+                                  (:project-dependencies project-input)))]
     (when-not (= expected-projects actual-projects)
-      (fail! "Gradle project dependencies differ from the destination contract"
+      (fail! "Source project dependencies differ from the destination contract"
              {:kind :source-project-dependency-mismatch
               :expected (sort expected-projects) :actual (sort actual-projects)})))
   (let [expected (or (:external-dependencies configuration) {})
-        actual-coordinates (set (map :coordinate (:external-dependencies discovery)))]
+        actual-coordinates
+        (set (map :coordinate (:external-dependencies project-input)))]
     (when-not (= (set (keys expected)) actual-coordinates)
-      (fail! "Gradle external dependencies differ from the destination contract"
+      (fail! "Source external dependencies differ from the destination contract"
              {:kind :source-external-dependency-mismatch
               :expected (sort (keys expected)) :actual (sort actual-coordinates)}))
     (doseq [[coordinate {:keys [source-scope artifact-sha256]}] expected]
-      (let [scopes (dependency-scopes discovery coordinate)
+      (let [scopes (dependency-scopes project-input coordinate)
             required (case source-scope
                        :compile-only #{:compile}
                        :compile-runtime #{:compile :runtime})]
         (when-not (= required scopes)
-          (fail! "Gradle dependency scope differs from the destination contract"
+          (fail! "Source dependency scope differs from the destination contract"
                  {:kind :source-external-dependency-scope-mismatch
                   :coordinate coordinate :expected required :actual scopes})))
       (when artifact-sha256
-        (let [hashes (->> (:external-artifacts discovery)
+        (let [hashes (->> (:classpath-artifacts project-input)
                           (filter #(= coordinate (:coordinate %)))
                           (map :sha256) set)]
           (when-not (= #{artifact-sha256} hashes)
-            (fail! "Gradle dependency artifact differs from the destination contract"
+            (fail! "Source dependency artifact differs from the destination contract"
                    {:kind :source-external-artifact-mismatch
                     :coordinate coordinate :expected artifact-sha256
                     :actual (sort hashes)}))))))
-  discovery)
+  project-input)
 
 (defn rule-bundle
   "Returns the ordinary Java-library destination bundle."
@@ -3743,7 +3745,7 @@
   {:schema-version 1
    :id :java-library
    :product-family :java-library
-   :orchestration {:validate-discovery! validate-discovery!}
+   :orchestration {:validate-project-input! validate-project-input!}
    :rules
    {:structural-declarations
     {:create-template (fn [_ _] {})

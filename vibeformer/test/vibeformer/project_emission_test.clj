@@ -22,13 +22,20 @@
         _ (Files/writeString source
                              "package example; public final class Greeting {}\n"
                              (make-array OpenOption 0))
-        discovery {:java-home (paths/absolute (System/getProperty "java.home"))
-                   :java-release 17
-                   :preview-features false
-                   :java-sources [source]
-                   :resource-root (paths/resolve-path root "src/main/resources")
-                   :resources []
-                   :classpath []}
+        discovery {:schema-version 1
+                   :project-id "project-emission-fixture"
+                   :source-roots [(.getParent (.getParent (.getParent source)))]
+                   :resource-roots []
+                   :production-sources [source]
+                   :generated-production-sources []
+                   :production-resources []
+                   :java-toolchain
+                   {:home (paths/absolute (System/getProperty "java.home"))
+                    :release 17
+                    :preview-features? false}
+                   :project-dependencies []
+                   :external-dependencies []
+                   :classpath-artifacts []}
         model (spoon/build-resolved-model! root discovery)]
     {:root root :source source :discovery discovery :model model}))
 
@@ -161,7 +168,7 @@
    #(project-emission/emit-project!
      {:workspace-root root
       :target target
-      :discovery discovery
+      :project-input discovery
       :resolved-model model
       :configuration (configuration)
       :rule-bundle rule-bundle})))
@@ -224,7 +231,7 @@
              (project-emission/emit-project!
               {:workspace-root (:root fixture)
                :target (temp-directory)
-               :discovery (:discovery fixture)
+               :project-input (:discovery fixture)
                :resolved-model (:model fixture)
                :configuration unsupported-configuration}))))]
     (testing "missing composed capabilities fail before emitting output"
@@ -248,7 +255,7 @@
              :project-policy :resource-policy :destination-bridges}
            (set (keys (:required-components contract)))))
     (is (= {:product-runtime-assets #{:assets}
-            :orchestration #{:validate-profile! :validate-discovery!}}
+            :orchestration #{:validate-profile! :validate-project-input!}}
            (:optional-components contract)))
     (is (not (re-find #"(?i)vibeformer\\.pkl|org\\.pkl|Pkl\\.(?:Core|Parser)|research/pkl"
                       source)))))

@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest is]]
             [vibeformer.harness :as harness]
             [vibeformer.paths :as paths]
+            [vibeformer.project-input :as project-input]
             [vibeformer.spoon :as spoon])
   (:import [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]))
@@ -34,15 +35,20 @@
         resource (create-file! root "research/pkl/pkl-parser/src/main/resources/errorMessages.properties")
         resource-root (.getParent ^Path resource)
         classpath (create-file! root "cache/jspecify.jar")]
-    {:java-home java-home
+    {:schema-version 1
+     :project-id ":pkl-parser"
      :project-root (paths/resolve-path root "research/pkl")
-     :gradle-project ":pkl-parser"
-     :java-release 17
-     :preview-features false
-     :java-sources [source-b source-a]
-     :resource-root resource-root
-     :resources [resource]
-     :classpath [classpath]}))
+     :source-roots [(paths/resolve-path
+                     root "research/pkl/pkl-parser/src/main/java")]
+     :resource-roots [resource-root]
+     :production-sources [source-b source-a]
+     :generated-production-sources []
+     :production-resources [resource]
+     :java-toolchain {:home java-home :release 17
+                      :preview-features? false}
+     :project-dependencies []
+     :external-dependencies []
+     :classpath-artifacts [{:scope :compile :path classpath}]}))
 
 (defn pkl-test-surface-strategy []
   {:schema-version 1 :id :pkl-test-surface :product-family :pkl
@@ -126,7 +132,7 @@
                            (and (paths/directory? (.getParent ^Path manifest))
                                 (not (paths/exists? stale))
                                 (= ":pkl-parser" gradle-project)))
-                   (assoc discovery :gradle-project gradle-project))
+                   (assoc discovery :project-id gradle-project))
                  :read-destination-fn
                  (fn [_ config-file]
                    (assoc (fake-destination
@@ -155,12 +161,13 @@
                     :summary {:compilation-units 2}})})]
     (is @saw-clean-target?)
     (is (paths/regular-file? (paths/resolve-path root "vibeformer/target/generation-config.edn")))
-    (is (= 2 (count (get-in config [:production :java-sources]))))
+    (is (= 2 (count (get-in config [:project-input
+                                    :production-sources]))))
     (is (= "vibeformer/config/pkl-parser.edn"
            (get-in config [:destination :config-file])))
     (is (= ["research/pkl/pkl-parser/src/main/java/A.java"
             "research/pkl/pkl-parser/src/main/java/B.java"]
-           (get-in config [:production :java-sources])))))
+           (get-in config [:project-input :production-sources])))))
 
 (deftest checkout-verification-fails-before-output-cleanup-or-discovery
   (doseq [kind [:source-checkout-missing
@@ -248,7 +255,8 @@
                           :revision "tracked-revision"})
                  :discover-main-fn (fn [options]
                                      (swap! captured assoc :discovery-options options)
-                                     (assoc discovery :gradle-project (:gradle-project options)))
+                                     (assoc discovery :project-id
+                                            (:gradle-project options)))
                  :read-destination-fn (fn [_ file]
                                         (swap! captured assoc :destination-file file)
                                         (assoc (fake-destination
@@ -389,7 +397,7 @@
                    (reset! captured options)
                    (assoc discovery
                           :project-root project-root
-                          :gradle-project (:gradle-project options)))
+                          :project-id (:gradle-project options)))
                  :read-destination-fn
                  (fn [_ file]
                    (fake-destination
@@ -420,11 +428,13 @@
   (let [root (temp-directory)
         discovery (fixture-discovery root)
         reversed (-> discovery
-                     (update :java-sources #(vec (reverse %)))
-                     (update :resources #(vec (reverse %)))
-                     (update :classpath #(vec (reverse %))))]
-    (is (= (harness/configuration root "revision" discovery)
-           (harness/configuration root "revision" reversed)))))
+                     (update :production-sources #(vec (reverse %)))
+                     (update :production-resources #(vec (reverse %)))
+                     (update :classpath-artifacts #(vec (reverse %))))]
+    (is (= (harness/configuration root "revision"
+                                  (project-input/validate! discovery))
+           (harness/configuration root "revision"
+                                  (project-input/validate! reversed))))))
 
 (deftest independent-dependency-profiles-run-concurrently-and-collate-in-order
   (let [root (temp-directory)
@@ -450,7 +460,7 @@
             (when-not (= ":main" gradle-project)
               (swap! dependency-threads conj (.getName (Thread/currentThread)))
               (Thread/sleep 30))
-            (assoc discovery :gradle-project gradle-project))
+            (assoc discovery :project-id gradle-project))
           :read-destination-fn
           (fn [_ file]
             (fake-destination

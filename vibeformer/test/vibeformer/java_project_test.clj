@@ -29,7 +29,7 @@
      #(project-emission/emit-project!
        {:workspace-root root
         :target target
-        :discovery discovery
+        :project-input discovery
         :resolved-model first
         :configuration (pkl-project/read-configuration root)
         :rule-bundle (pkl-project/rule-bundle)}))))
@@ -171,7 +171,8 @@
             unicode-helper-source
             (paths/resolve-path (paths/workspace-root)
                                 "vibeformer/runtime/Vibeformer.JavaRegexUnicodeData.cs")
-            upstream (first (:resources (:discovery (fixture/models))))]
+            upstream
+            (first (:production-resources (:discovery (fixture/models))))]
         (is (str/includes? project "<TargetFramework>net8.0</TargetFramework>"))
         (is (str/includes? project "<Nullable>enable</Nullable>"))
         (is (str/includes?

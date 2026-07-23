@@ -5,7 +5,8 @@
   indexes are navigation aids over the frontend model, not a serialized semantic
   fact model or a replacement AST."
   (:require [clojure.string :as str]
-            [vibeformer.concurrency :as concurrency])
+            [vibeformer.concurrency :as concurrency]
+            [vibeformer.project-input :as project-input])
   (:import [java.io File]
            [java.lang.reflect Constructor Field]
            [java.nio.file Path]
@@ -607,16 +608,19 @@
        set))
 
 (defn- build-launcher
-  [discovery]
+  [input]
   (let [launcher (Launcher.)
-        environment (.getEnvironment launcher)]
+        environment (.getEnvironment launcher)
+        toolchain (:java-toolchain input)]
     (.setNoClasspath environment false)
     (.setIgnoreSyntaxErrors environment false)
-    (.setComplianceLevel environment (:java-release discovery))
-    (.setPreviewFeaturesEnabled environment (:preview-features discovery))
+    (.setComplianceLevel environment (:release toolchain))
+    (.setPreviewFeaturesEnabled environment (:preview-features? toolchain))
     (.setSourceClasspath environment
-                         (into-array String (map str (:classpath discovery))))
-    (doseq [source (:java-sources discovery)]
+                         (into-array String
+                                     (map str
+                                          (project-input/compile-classpath input))))
+    (doseq [source (project-input/production-source-files input)]
       (.addInputResource launcher (str source)))
     launcher))
 
@@ -627,7 +631,7 @@
         unexpected (sort (remove source-files actual))]
     (when (or (seq missing) (seq unexpected))
       (throw (ex-info
-              "Spoon compilation units do not exactly match the Gradle production source set"
+              "Spoon compilation units do not exactly match the neutral production source set"
               {:kind :compilation-unit-mismatch
                :missing missing
                :unexpected unexpected})))
@@ -1091,14 +1095,15 @@
                 :role "model-builder"}}))
 
 (defn build-frontend-model!
-  "Builds the complete live Spoon frontend from Gradle-resolved inputs with
+  "Builds the complete live Spoon frontend from neutral project inputs with
   classpath resolution enabled. Semantic acceptance is performed separately so
   callers may validate either the whole project or an exact declaration closure."
-  [_workspace-root discovery]
-  (let [launcher (build-launcher discovery)
+  [_workspace-root input]
+  (let [input (project-input/validate! input)
+        launcher (build-launcher input)
         cache (register-source-cache! launcher (new-canonical-source-cache))
         source-files (set (map #(canonical-file cache (.toFile ^Path %))
-                               (:java-sources discovery)))
+                               (project-input/production-source-files input)))
         model (try
                 (.buildModel launcher)
                 (catch Throwable error
@@ -1107,8 +1112,9 @@
                             (str "Spoon could not build the resolved production model: "
                                  (.getMessage error))
                             {:kind :spoon-model-build-failed
-                             :java-release (:java-release discovery)
-                             :preview-features (:preview-features discovery)
+                             :java-release (get-in input [:java-toolchain :release])
+                             :preview-features
+                             (get-in input [:java-toolchain :preview-features?])
                              :failure failure}
                             error)))))
         environment (.getEnvironment launcher)]
@@ -1159,17 +1165,17 @@
                          symbols occurrences totals)))
 
 (defn build-resolved-model!
-  "Builds and accepts a complete, fail-closed Spoon model from Gradle-resolved
+  "Builds and accepts a complete, fail-closed Spoon model from neutral
   production inputs. The returned value retains the live frontend objects."
-  [workspace-root discovery]
-  (resolve-complete-model! (build-frontend-model! workspace-root discovery)))
+  [workspace-root input]
+  (resolve-complete-model! (build-frontend-model! workspace-root input)))
 
 (defn build-resolved-closure!
   "Builds the complete production frontend and accepts only the exact resolved
   declaration closure reached from seed-specs."
-  [workspace-root discovery seed-specs]
+  [workspace-root input seed-specs]
   (select-resolved-closure!
-   (build-frontend-model! workspace-root discovery)
+   (build-frontend-model! workspace-root input)
    seed-specs))
 
 (defn summary-line

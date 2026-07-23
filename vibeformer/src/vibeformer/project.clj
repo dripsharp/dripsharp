@@ -1,12 +1,16 @@
 (ns vibeformer.project
   (:require [clojure.string :as str]
             [vibeformer.paths :as paths]
+            [vibeformer.project-input :as project-input]
             [vibeformer.process :as process])
   (:import [clojure.lang ExceptionInfo]
-           [java.nio.file Files Path]))
+           [java.nio.file Files Path]
+           [java.security MessageDigest]))
 
-(def ^:private manifest-headers
-  #{"VIBEFORMER_GRADLE_INPUTS_V3" "VIBEFORMER_GRADLE_INPUTS_V4"})
+(def ^:private manifest-versions
+  {"VIBEFORMER_GRADLE_INPUTS_V3" 3
+   "VIBEFORMER_GRADLE_INPUTS_V4" 4
+   "VIBEFORMER_GRADLE_INPUTS_V5" 5})
 (def ^:private gradle-project-pattern
   #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$")
 
@@ -87,7 +91,7 @@
   (let [[kind & values] (str/split line #"\t" -1)]
     (when (or (str/blank? kind) (empty? values) (some str/blank? values))
       (throw (ex-info
-              (str "Invalid Gradle discovery record: " (pr-str line))
+              (str "Invalid Gradle backend discovery record: " (pr-str line))
               {:kind :invalid-discovery-manifest :line line})))
     (into [(keyword kind)] values)))
 
@@ -113,6 +117,20 @@
               {:kind :invalid-discovery-manifest
                :record-kind kind
                :value value})))))
+
+(defn- sha256
+  [^Path input]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (with-open [stream (Files/newInputStream
+                        input
+                        (make-array java.nio.file.OpenOption 0))]
+      (let [buffer (byte-array 8192)]
+        (loop [read (.read stream buffer)]
+          (when-not (neg? read)
+            (when (pos? read)
+              (.update digest buffer 0 read))
+            (recur (.read stream buffer))))))
+    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
 
 (defn- validate-gradle-project!
   [gradle-project]
@@ -176,21 +194,30 @@
       {"JAVA_HOME" (str selected)})))
 
 (defn read-discovery-manifest
-  "Reads and validates the Gradle-derived production input manifest."
+  "Adapts and validates a Gradle production-input manifest into the neutral
+  Java project-input model."
   [manifest]
   (when-not (paths/regular-file? manifest)
     (throw (ex-info
             (str "Gradle did not create its discovery manifest: " manifest)
             {:kind :discovery-manifest-missing :path (str manifest)})))
   (let [[header & lines] (str/split-lines (slurp (str manifest)))]
-    (when-not (contains? manifest-headers header)
+    (when-not (contains? manifest-versions header)
       (throw (ex-info
               (str "Unsupported Gradle discovery manifest header: " (pr-str header))
               {:kind :invalid-discovery-manifest :header header})))
-    (let [records (mapv parse-record (remove str/blank? lines))
+    (let [version (get manifest-versions header)
+          records (mapv parse-record (remove str/blank? lines))
           grouped (group-by first records)
+          duplicate-records
+          (->> (frequencies records)
+               (filter #(< 1 (val %)))
+               (map key)
+               (sort-by pr-str)
+               vec)
           allowed #{:project-path :java-home :java-release :preview-features
-                    :resource-root :source :resource :classpath
+                    :source-root :resource-root :source :generated-source
+                    :resource :classpath
                     :project-dependency :external-dependency :external-artifact}
           unknown (sort (remove allowed (keys grouped)))
           invalid-arities
@@ -201,32 +228,42 @@
                                  (contains? #{:project-dependency
                                               :external-dependency}
                                             (first record)) 3
-                                 (= :external-artifact (first record)) 4
+                                 (= :external-artifact (first record))
+                                 (if (= 5 version) 5 4)
                                  :else 2))))
                vec)
-          _ (when (or (seq unknown) (seq invalid-arities))
+          _ (when (or (seq unknown) (seq invalid-arities)
+                      (seq duplicate-records))
               (throw (ex-info "Gradle discovery manifest has unknown or malformed records"
                               {:kind :invalid-discovery-manifest
                                :unknown-record-kinds unknown
-                               :invalid-records invalid-arities})))
+                               :invalid-records invalid-arities
+                               :duplicate-records duplicate-records})))
           path-values #(->> (get grouped %)
                             (map (comp paths/absolute second))
                             distinct
                             (sort-by str)
                             vec)
-          gradle-project (validate-gradle-project!
-                          (exactly-one grouped :project-path
-                                       "Gradle discovery must report exactly one project path"))
-          resource-root (paths/absolute
-                         (exactly-one grouped :resource-root
-                                      "Gradle discovery must report exactly one resource root"))
-          java-home (paths/absolute
-                     (exactly-one grouped :java-home
-                                  "Gradle discovery must report exactly one Java toolchain"))
-          java-release (parse-positive-int
-                        :java-release
-                        (exactly-one grouped :java-release
-                                     "Gradle discovery must report exactly one Java release"))
+          project-id
+          (validate-gradle-project!
+           (exactly-one grouped :project-path
+                        "Gradle discovery must report exactly one project identity"))
+          source-roots (if (= 5 version) (path-values :source-root) [])
+          resource-roots
+          (if (= 5 version)
+            (path-values :resource-root)
+            [(paths/absolute
+              (exactly-one grouped :resource-root
+                           "Legacy Gradle discovery must report exactly one resource root"))])
+          java-home
+          (paths/absolute
+           (exactly-one grouped :java-home
+                        "Gradle discovery must report exactly one Java toolchain"))
+          java-release
+          (parse-positive-int
+           :java-release
+           (exactly-one grouped :java-release
+                        "Gradle discovery must report exactly one Java release"))
           preview-value (exactly-one
                          grouped :preview-features
                          "Gradle discovery must report exactly one preview-features setting")
@@ -249,59 +286,118 @@
               scope))
           project-dependencies
           (->> (get grouped :project-dependency)
-               (map (fn [[_ scope project]]
-                      {:scope (parse-scope scope) :project project}))
-               distinct (sort-by (juxt :project :scope)) vec)
+               (map (fn [[_ scope dependency-id]]
+                      {:scope (parse-scope scope) :project-id dependency-id}))
+               distinct (sort-by (juxt :project-id :scope)) vec)
           external-dependencies
           (->> (get grouped :external-dependency)
                (map (fn [[_ scope coordinate]]
                       {:scope (parse-scope scope) :coordinate coordinate}))
                distinct (sort-by (juxt :coordinate :scope)) vec)
+          compile-paths (path-values :classpath)
+          legacy-paths-by-hash
+          (delay
+            (->> compile-paths
+                 (filter #(Files/isRegularFile ^Path % paths/no-links))
+                 (map (juxt sha256 identity))
+                 (into {})))
           external-artifacts
           (->> (get grouped :external-artifact)
-               (map (fn [[_ scope coordinate sha256]]
-                      (when-not (re-matches #"[0-9a-f]{64}" sha256)
-                        (throw (ex-info "Gradle discovery reported an invalid artifact hash"
-                                        {:kind :invalid-discovery-manifest
-                                         :coordinate coordinate :sha256 sha256})))
-                      {:scope (parse-scope scope) :coordinate coordinate
-                       :sha256 sha256}))
-               distinct (sort-by (juxt :coordinate :scope :sha256)) vec)
-          discovery {:gradle-project gradle-project
-                     :java-home java-home
-                     :java-release java-release
-                     :preview-features preview-features
-                     :resource-root resource-root
-                     :java-sources (path-values :source)
-                     :resources (path-values :resource)
-                     :classpath (path-values :classpath)
-                     :project-dependencies project-dependencies
-                     :external-dependencies external-dependencies
-                     :external-artifacts external-artifacts}]
-      (when-not (paths/directory? (:java-home discovery))
+               (map (fn [record]
+                      (let [[_ scope coordinate path sha256]
+                            (if (= 5 version)
+                              record
+                              (let [[kind legacy-scope legacy-coordinate
+                                     legacy-sha256] record
+                                    legacy-path
+                                    (get @legacy-paths-by-hash legacy-sha256)]
+                                (when-not legacy-path
+                                  (throw
+                                   (ex-info
+                                    "Legacy Gradle artifact hash does not match a compile classpath file"
+                                    {:kind :invalid-discovery-manifest
+                                     :coordinate legacy-coordinate
+                                     :sha256 legacy-sha256})))
+                                [kind legacy-scope legacy-coordinate
+                                 (str legacy-path) legacy-sha256]))]
+                        (when-not (re-matches #"[0-9a-f]{64}" sha256)
+                          (throw (ex-info "Gradle discovery reported an invalid artifact hash"
+                                          {:kind :invalid-discovery-manifest
+                                           :coordinate coordinate :sha256 sha256})))
+                        {:scope (parse-scope scope)
+                         :coordinate coordinate
+                         :path (paths/absolute path)
+                         :sha256 sha256})))
+               distinct
+               (sort-by (juxt (comp str :path) :coordinate :scope :sha256))
+               vec)
+          external-by-path-scope
+          (group-by (juxt :scope :path) external-artifacts)
+          _ (when-let [[identity collisions]
+                       (first
+                        (sort-by (comp pr-str key)
+                                 (filter #(< 1 (count (val %)))
+                                         external-by-path-scope)))]
+              (throw
+               (ex-info
+                "Gradle discovery assigns multiple external identities to one classpath artifact"
+                {:kind :invalid-discovery-manifest
+                 :artifact identity :records collisions})))
+          compile-artifacts
+          (mapv (fn [path]
+                  (or (first (get external-by-path-scope [:compile path]))
+                      {:scope :compile :path path}))
+                compile-paths)
+          compile-identities (set (map (juxt :scope :path) compile-artifacts))
+          classpath-artifacts
+          (->> (concat compile-artifacts
+                       (remove #(contains? compile-identities
+                                           ((juxt :scope :path) %))
+                               external-artifacts))
+               distinct
+               (sort-by (juxt (comp str :path) :scope
+                              #(or (:coordinate %) "")))
+               vec)
+          ordinary-sources (path-values :source)
+          generated-sources (path-values :generated-source)
+          resources (path-values :resource)
+          project-input
+          {:schema-version 1
+           :project-id project-id
+           :source-roots source-roots
+           :resource-roots resource-roots
+           :production-sources ordinary-sources
+           :generated-production-sources generated-sources
+           :production-resources resources
+           :java-toolchain {:home java-home
+                            :release java-release
+                            :preview-features? preview-features}
+           :project-dependencies project-dependencies
+           :external-dependencies external-dependencies
+           :classpath-artifacts classpath-artifacts}]
+      (when-not (paths/directory? java-home)
         (throw (ex-info
-                (str "Gradle-reported Java toolchain is missing: " (:java-home discovery))
-                {:kind :toolchain-missing :path (str (:java-home discovery))})))
-      (when-not (paths/directory? resource-root)
-        (throw (ex-info
-                (str "Gradle-reported resource root is missing: " resource-root)
-                {:kind :resource-root-missing :path (str resource-root)})))
-      (when-not (seq (:java-sources discovery))
-        (throw (ex-info
-                (str "Gradle reported no production Java sources for " gradle-project)
-                {:kind :production-sources-missing :gradle-project gradle-project})))
-      (doseq [[kind inputs] [[:source (:java-sources discovery)]
-                             [:resource (:resources discovery)]
-                             [:classpath (:classpath discovery)]]
+                (str "Gradle-reported Java toolchain is missing: " java-home)
+                {:kind :toolchain-missing :path (str java-home)})))
+      (doseq [^Path resource-root resource-roots]
+        (when-not (paths/directory? resource-root)
+          (throw (ex-info
+                  (str "Gradle-reported resource root is missing: " resource-root)
+                  {:kind :resource-root-missing :path (str resource-root)}))))
+      (doseq [[kind inputs] [[:source-root source-roots]
+                             [:source (into ordinary-sources generated-sources)]
+                             [:resource resources]
+                             [:classpath (mapv :path classpath-artifacts)]]
               ^Path input inputs]
-        (when-not (if (= :classpath kind)
-                    (or (Files/isRegularFile input paths/no-links)
-                        (Files/isDirectory input paths/no-links))
+        (when-not (case kind
+                    :source-root (Files/isDirectory input paths/no-links)
+                    :classpath (or (Files/isRegularFile input paths/no-links)
+                                   (Files/isDirectory input paths/no-links))
                     (Files/isRegularFile input paths/no-links))
           (throw (ex-info
                   (str "Gradle-reported " (name kind) " input is missing: " input)
                   {:kind :input-missing :input-kind kind :path (str input)}))))
-      discovery)))
+      (project-input/validate! project-input))))
 
 (defn discover-main!
   "Asks a Gradle Java project for its resolved production inputs.
@@ -352,11 +448,12 @@
                 (merge {:kind :gradle-discovery-failed}
                        (select-keys (ex-data error) [:command :exit :output]))
                 error))))
-    (let [discovery (read-discovery-manifest manifest)]
-      (when-not (= gradle-project (:gradle-project discovery))
+    (let [project-input (read-discovery-manifest manifest)]
+      (when-not (= gradle-project (:project-id project-input))
         (throw (ex-info
                 "Gradle discovery reported a different project than requested"
                 {:kind :gradle-project-mismatch
                  :requested gradle-project
-                 :reported (:gradle-project discovery)})))
-      (assoc discovery :project-root project-root))))
+                 :reported (:project-id project-input)})))
+      (project-input/validate!
+       (assoc project-input :project-root project-root)))))
