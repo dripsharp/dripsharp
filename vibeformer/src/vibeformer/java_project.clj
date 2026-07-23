@@ -215,8 +215,17 @@
                                          %))
                                   (:compile-types consumer)))
                      :source-file
-                     (and (string? (:fixture-file consumer))
-                          (not (str/blank? (:fixture-file consumer))))
+                     (let [fixture-file (:fixture-file consumer)
+                           source-path (:source-path consumer)]
+                       (or
+                        (and (string? fixture-file)
+                             (not (str/blank? fixture-file))
+                             (nil? source-path))
+                        (and (nil? fixture-file)
+                             (string? source-path)
+                             (str/ends-with? source-path ".cs")
+                             (relative-path! source-path
+                                             "package consumer source path"))))
                      false))
       (destination-error "Invalid independent package-consumer contract"
                          {:package-consumer consumer})))

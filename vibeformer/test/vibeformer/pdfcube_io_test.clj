@@ -116,7 +116,7 @@
         (write-string! consumer-project-file
                        (consumer-project packages package-id package-version))
         (write-string! (paths/resolve-path consumer "Program.cs")
-                       (slurp "test/fixtures/pdfcube_io/Program.cs"))
+                       (slurp "validation/pdfcube-io/PdfCube.IO.FocusedConsumer.cs"))
         (process/run! {:directory consumer
                        :environment package-environment
                        :command ["dotnet" "restore" consumer-project-file

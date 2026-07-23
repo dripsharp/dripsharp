@@ -331,14 +331,20 @@
       (require-exact-children!
        metadata
        (concat (map first configured-elements)
-               (when (:license-expression package) ["license" "licenseUrl"])
+               (when (or (:license-expression package) (:license-file package))
+                 ["license" "licenseUrl"])
                ["repository" "dependencies"])
        "package/metadata")
-      (when-let [expected-license (:license-expression package)]
+      (when-let [expected-license (or (:license-expression package)
+                                     (:license-file package))]
         (let [license (exactly-one-child! metadata "license" "package/metadata")
               license-url (exactly-one-child! metadata "licenseUrl" "package/metadata")
-              expected-url (str "https://licenses.nuget.org/" expected-license)]
-          (require-exact-attributes! license {"type" "expression"}
+              file-license? (boolean (:license-file package))
+              expected-url (if file-license?
+                             "https://aka.ms/deprecateLicenseUrl"
+                             (str "https://licenses.nuget.org/" expected-license))]
+          (require-exact-attributes! license
+                                     {"type" (if file-license? "file" "expression")}
                                      "package/metadata/license")
           (require-exact-children! license [] "package/metadata/license")
           (when-not (= expected-license (.getTextContent license))
@@ -404,14 +410,22 @@
                    {:expected expected-dependencies :actual dependencies}))
           dependencies)))))
 
-(defn- inspect-content-types! [xml]
+(defn- package-extension [path]
+  (some-> (re-find #"\.([^.\/]+)$" path) second str/lower-case))
+
+(defn- inspect-content-types! [xml package-files]
   (let [document (parse-xml! xml :content-types)
         root (.getDocumentElement document)
         defaults (child-elements root "Default")
-        expected {"rels" "application/vnd.openxmlformats-package.relationships+xml"
-                  "psmdcp" "application/vnd.openxmlformats-package.core-properties+xml"
-                  "dll" "application/octet"
-                  "nuspec" "application/octet"}]
+        expected
+        (into {"rels" "application/vnd.openxmlformats-package.relationships+xml"
+               "psmdcp" "application/vnd.openxmlformats-package.core-properties+xml"
+               "dll" "application/octet"
+               "nuspec" "application/octet"}
+              (for [{:keys [path]} package-files
+                    :let [extension (package-extension path)]
+                    :when extension]
+                [extension "application/octet"]))]
     (when-not (and (= "Types" (element-name root))
                    (= content-types-namespace (.getNamespaceURI root)))
       (fail! "NuGet content-types metadata has the wrong root"
@@ -523,25 +537,41 @@
           (fail! "NuGet core-properties package-writer identity is blank"
                  {:actual (.getTextContent element)}))))))
 
-(defn- inspect-opc-envelope! [archive nuspec-name package]
-  (inspect-content-types! (zip-text archive "[Content_Types].xml"))
+(defn- inspect-opc-envelope! [archive nuspec-name package package-files]
+  (inspect-content-types! (zip-text archive "[Content_Types].xml") package-files)
   (inspect-relationships! (zip-text archive "_rels/.rels") nuspec-name)
   (inspect-core-properties! (zip-text archive canonical-core-properties) package))
+
+(defn- sha256-bytes [bytes]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (.update digest bytes)
+    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
 
 (defn inspect-package!
   "Checks the package payload and metadata without extracting generated sources."
   ([artifact package target-framework assembly-name]
-   (inspect-package! artifact package target-framework assembly-name []))
+   (inspect-package! artifact package target-framework assembly-name [] []))
   ([artifact {:keys [id version title description authors tags project-url
                      repository-url repository-type repository-commit
-                     license-expression]}
+                     license-expression] :as package}
     target-framework assembly-name
     expected-dependencies]
+   (inspect-package! artifact package target-framework assembly-name
+                     expected-dependencies []))
+  ([artifact {:keys [id version title description authors tags project-url
+                     repository-url repository-type repository-commit
+                     license-expression] :as package}
+    target-framework assembly-name
+    expected-dependencies expected-package-files]
    (with-open [archive (ZipFile. (str artifact))]
      (let [entries (->> (enumeration-seq (.entries archive))
                         (map #(.getName %))
                         sort
                         vec)
+           expected-package-files
+           (mapv (fn [{:keys [kind path sha256]}]
+                   {:kind kind :path path :sha256 sha256})
+                 expected-package-files)
            _ (validate-entry-layout! entries :inspected-package)
            nuspec-name (str id ".nuspec")
            assembly-entry (str "lib/" target-framework "/" assembly-name ".dll")
@@ -559,12 +589,16 @@
                 {:required nuspec-name :entries entries}))
        (let [dependencies (inspect-nuspec!
                            nuspec
-                           {:id id :version version :title title :description description
-                            :authors authors :tags tags :project-url project-url
-                            :repository-url repository-url
-                            :repository-type repository-type
-                            :repository-commit repository-commit
-                            :license-expression license-expression}
+                           (assoc
+                            {:id id :version version :title title
+                             :description description :authors authors :tags tags
+                             :project-url project-url :repository-url repository-url
+                             :repository-type repository-type
+                             :repository-commit repository-commit
+                             :license-expression license-expression}
+                            :license-file
+                            (some #(when (= :license (:kind %)) (:path %))
+                                  expected-package-files))
                            target-framework expected-dependencies)]
          (when (seq forbidden)
            (fail! "NuGet package contains translator, test, or generated-source internals"
@@ -574,16 +608,28 @@
                                       nuspec-name
                                       assembly-entry
                                       canonical-core-properties]
+                                     (concat (map :path expected-package-files))
                                      sort
                                      vec)]
            (when-not (= expected-entries entries)
              (fail! "NuGet package layout differs from the exact release payload"
                     {:expected expected-entries :actual entries})))
+         (doseq [{:keys [path sha256]} expected-package-files]
+           (let [entry (.getEntry archive path)
+                 actual
+                 (when entry
+                   (with-open [input (.getInputStream archive entry)]
+                     (sha256-bytes (.readAllBytes input))))]
+             (when-not (= sha256 actual)
+               (fail! "NuGet package legal or notice payload does not match its pinned input"
+                      {:path path :expected sha256 :actual actual}))))
          (inspect-opc-envelope! archive nuspec-name
                                 {:id id :version version :description description
-                                 :authors authors :tags tags})
+                                 :authors authors :tags tags}
+                                expected-package-files)
          {:entries entries :assembly-entry assembly-entry :nuspec nuspec
-          :dependencies dependencies})))))
+          :dependencies dependencies
+          :package-files expected-package-files})))))
 
 (defn- consumer-project [package-id version target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
@@ -694,18 +740,95 @@
        "  <packageSources>\n"
        "    <clear />\n"
        "    <add key=\"vibeformer-local\" value=\"" (xml-escape feed) "\" />\n"
-       "    <add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />\n"
        "  </packageSources>\n"
        "  <packageSourceMapping>\n"
        "    <packageSource key=\"vibeformer-local\">\n"
        (apply str (for [package-id (sort package-ids)]
                     (str "      <package pattern=\"" (xml-escape package-id) "\" />\n")))
        "    </packageSource>\n"
-       "    <packageSource key=\"nuget.org\">\n"
-       "      <package pattern=\"Microsoft.*\" />\n"
-       "    </packageSource>\n"
        "  </packageSourceMapping>\n"
        "</configuration>\n"))
+
+(defn- restored-package-assets [^Path assets-file]
+  (when-not (paths/regular-file? assets-file)
+    (fail! "Verified project restore assets are missing"
+           {:assets-file (str assets-file)}))
+  (let [assets (Files/readString assets-file)
+        libraries-start (.indexOf assets "\"libraries\": {")
+        libraries-end (.indexOf assets "\"projectFileDependencyGroups\": {")
+        _ (when-not (and (<= 0 libraries-start)
+                         (< libraries-start libraries-end))
+            (fail! "Restore assets do not contain a bounded package library section"
+                   {:assets-file (str assets-file)}))
+        libraries (subs assets libraries-start libraries-end)
+        package-count (count (re-seq #"\"type\"\s*:\s*\"package\"" libraries))
+        packages
+        (->> (re-seq
+              #"(?m)^    \"([^\"/]+)/([^\"/]+)\": \{\r?\n      \"sha512\": \"[^\"]+\",\r?\n      \"type\": \"package\",\r?\n      \"path\": \"([^\"]+)\""
+              libraries)
+             (map (fn [[_ id version path]]
+                    {:id id :version version :cache-path path}))
+             (sort-by (juxt #(str/lower-case (:id %)) :version))
+             vec)]
+    (when-not (= package-count (count packages))
+      (fail! "Could not recover the exact external package closure from restore assets"
+             {:assets-file (str assets-file)
+              :expected package-count :actual (count packages)}))
+    packages))
+
+(defn- global-packages-root! [run-command! root]
+  (let [result (run-command! {:command ["dotnet" "nuget" "locals"
+                                        "global-packages" "--list"]
+                              :directory root})
+        path (some-> (re-find #"(?m)^global-packages:\s*(.+?)\s*$"
+                              (:output result))
+                     second str/trim paths/path)]
+    (when-not (and path (paths/directory? path))
+      (fail! "Could not locate the restored global NuGet package cache"
+             {:output (:output result)}))
+    path))
+
+(defn- publish-external-packages!
+  [run-command! root feed specs]
+  (let [packages
+        (->> specs
+             (filter #(seq (get-in % [:destination :runtime-packages])))
+             (mapcat
+              (fn [{:keys [emission]}]
+                (restored-package-assets
+                 (paths/resolve-path (:project-root emission)
+                                     "obj" "project.assets.json"))))
+             (reduce
+              (fn [by-identity {:keys [id version] :as package}]
+                (let [identity [(str/lower-case id) version]]
+                  (if-let [existing (get by-identity identity)]
+                    (if (= existing package)
+                      by-identity
+                      (fail! "Restore assets disagree about an external package identity"
+                             {:identity identity :first existing :second package}))
+                    (assoc by-identity identity package))))
+              (sorted-map))
+             vals
+             vec)]
+    (if-not (seq packages)
+      []
+      (let [global-packages (global-packages-root! run-command! root)]
+        (mapv
+         (fn [{:keys [id version cache-path]}]
+           (let [lower-id (str/lower-case id)
+                 filename (str lower-id "." version ".nupkg")
+                 source (paths/resolve-path global-packages cache-path filename)
+                 artifact (paths/resolve-path feed filename)]
+             (when-not (paths/regular-file? source)
+               (fail! "Restored external package archive is missing from the global cache"
+                      {:identity [id version] :artifact (str source)}))
+             (Files/copy source artifact
+                         (into-array
+                          StandardCopyOption
+                          [StandardCopyOption/REPLACE_EXISTING]))
+             {:id id :version version :sha256 (sha256 artifact)
+              :file filename :external? true}))
+         packages)))))
 
 (defn- installed-runtime-target! [run-command! root library-target]
   (let [result (run-command! {:command ["dotnet" "--list-runtimes"]
@@ -732,9 +855,21 @@
                   (fail! "Dependency emission is missing its destination configuration"
                          {:profile profile :emission (keys emission)}))
                 {:profile profile :emission emission :destination destination
-                 :expected-dependencies []})
+                 :expected-dependencies
+                 (mapv #(select-keys % [:id :version])
+                       (:runtime-packages destination))
+                 :expected-package-files
+                 (mapv (fn [{:keys [kind package-path sha256]}]
+                         {:kind kind :path package-path :sha256 sha256})
+                       (:legal-files destination))})
               (:dependency-emissions generation))
-        expected-dependencies (mapv #(get-in % [:destination :package]) dependency-specs)
+        translated-dependencies
+        (mapv #(get-in % [:destination :package]) dependency-specs)
+        destination (:destination generation)
+        expected-dependencies
+        (into translated-dependencies
+              (map #(select-keys % [:id :version])
+                   (:runtime-packages destination)))
         expected-assembly-dependencies
         (mapv (fn [{:keys [destination]}]
                 {:assembly-name (get-in destination [:project :assembly-name])
@@ -745,18 +880,24 @@
     (conj dependency-specs
           {:profile (get-in generation [:generation-profile :profile])
            :emission (:emission generation)
-           :destination (:destination generation)
+           :destination destination
            :expected-dependencies expected-dependencies
+           :expected-package-files
+           (mapv (fn [{:keys [kind package-path sha256]}]
+                   {:kind kind :path package-path :sha256 sha256})
+                 (:legal-files destination))
            :expected-assembly-dependencies expected-assembly-dependencies
            :primary? true})))
 
 (defn- package-reproducibility-plan [specs]
   (mapv (fn [{:keys [profile destination expected-dependencies
-                     expected-assembly-dependencies primary?]}]
+                     expected-package-files expected-assembly-dependencies
+                     primary?]}]
           {:profile profile
            :destination destination
            :expected-dependencies
            (mapv #(select-keys % [:id :version]) expected-dependencies)
+           :expected-package-files expected-package-files
            :expected-assembly-dependencies expected-assembly-dependencies
            :primary? (boolean primary?)})
         specs))
@@ -896,6 +1037,7 @@
            (let [packages
                  (mapv
                   (fn [{:keys [profile emission destination expected-dependencies
+                               expected-package-files
                                expected-assembly-dependencies primary?]}]
                     (let [{:keys [id version] :as package} (:package destination)
                           target-framework
@@ -932,7 +1074,8 @@
                             (inspect-package!
                              artifact
                              (assoc package :repository-commit repository-commit)
-                             target-framework assembly-name expected-dependencies)
+                             target-framework assembly-name expected-dependencies
+                             expected-package-files)
                             expected-resources
                             (->> (:resource-artifacts emission)
                                  (map :logical-name) sort vec)
@@ -950,12 +1093,15 @@
                          :public-surface (:public-surface resource-proof)
                          :resources expected-resources})))
                   specs)
+                 external-packages
+                 (publish-external-packages! run-command! root feed specs)
                  primary (first (filter :primary? packages))
                  summary
                  {:profile profile
                   :clean-builds 2
                   :repository-commit repository-commit
                   :packages (mapv :identity packages)
+                  :external-packages external-packages
                   :resource-counts
                   (into (sorted-map)
                         (map (juxt #(get-in % [:identity :id])
@@ -969,6 +1115,7 @@
              {:verification verification :proof-root proof-root :feed feed
               :packages packages :artifact (:artifact primary)
               :identity (:identity primary) :inspection (:inspection primary)
+              :external-packages external-packages
               :summary summary})))
        (finally
          (delete-tree! first-output))))))
@@ -1007,10 +1154,13 @@
          nuget-config-file (paths/resolve-path consumer "NuGet.Config")
          consumer-source (paths/resolve-path consumer "Program.cs")
          fixture-source (when (= :source-file (:strategy consumer-profile))
-                          (paths/resolve-path root "vibeformer" "validation"
-                                              "package-consumer"
-                                              (:fixture-file consumer-profile)))
-         identities (mapv :identity (:packages package-proof))]
+                          (if-let [source-path (:source-path consumer-profile)]
+                            (paths/resolve-path root source-path)
+                            (paths/resolve-path root "vibeformer" "validation"
+                                                "package-consumer"
+                                                (:fixture-file consumer-profile))))
+         identities (into (mapv :identity (:packages package-proof))
+                          (:external-packages package-proof))]
      (when (and fixture-source (not (paths/regular-file? fixture-source)))
        (fail! "Independent package-consumer source is missing"
               {:path (str fixture-source)}))
@@ -1055,6 +1205,7 @@
             :identity identity
             :inspection inspection
             :packages (:packages package-proof)
+            :external-packages (:external-packages package-proof)
             :feed feed
             :packing-summary (:summary package-proof)
             :dependency-proof dependency-proof

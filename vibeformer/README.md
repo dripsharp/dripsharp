@@ -74,6 +74,7 @@ clojure -J-Xmx8g -M:run pack pkl-core-value-model
 clojure -M:run package
 clojure -J-Xmx8g -M:run package pkl-core-value-model
 clojure -M:run differential
+clojure -J-Xmx28g -M:run pdfcube-io-differential
 clojure -M:run language-snippet-contract
 clojure -J-Xmx8g -M:run language-snippet-package
 clojure -J-Xmx8g -M:run pkl-core-corpus
@@ -209,6 +210,14 @@ comparisons deliberately perturb an oracle result to prove mismatches are
 detected. Proof outputs are retained under
 `validation-output/differential-proof` even while later generation cleans the
 disposable `target` tree.
+
+`pdfcube-io-differential` performs two clean PdfCube.IO builds, proves
+byte-identical packing, mirrors the complete external dependency closure into a
+local-only feed, and runs a package-reference-only consumer. It then compares
+25 normalized buffer, positioning, view, EOF, file, memory-map, scratch,
+memory-limit, lifecycle, and failure observations with a live oracle compiled
+from the pinned PDFBox 3.0.8 sources. The supported-host workflow applies that
+canonical CPU trace on Windows, Linux, and macOS on x64 and ARM64.
 
 `language-snippet-contract` validates the pinned, source-controlled manifest
 for all 940 upstream `LanguageSnippetTests` cases, then executes the upstream

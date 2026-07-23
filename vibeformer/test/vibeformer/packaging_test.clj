@@ -132,6 +132,11 @@
     (.update digest (Files/readAllBytes file))
     (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
 
+(defn- sha256-text [value]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (.update digest (.getBytes value StandardCharsets/UTF_8))
+    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+
 (defn- reproducibility-fixture [^Path root divergent?]
   (let [verification-count (atom 0)
         project-root (.resolve root "generated/pkl-parser")
@@ -325,6 +330,58 @@
                     [{:id "Pkl.Parser" :version "0.0.0-development"}])]
     (is (= [{:id "Pkl.Parser" :version "0.0.0-development"}]
            (:dependencies inspection)))))
+
+(deftest package-inspection-pins-file-license-and-notice-payloads
+  (let [file-package (dissoc package :license-expression)
+        file-nuspec
+        (str "<package xmlns=\"" nuspec-namespace "\"><metadata>"
+             "<id>" (:id file-package) "</id>"
+             "<version>" (:version file-package) "</version>"
+             "<title>" (:title file-package) "</title>"
+             "<description>" (:description file-package) "</description>"
+             "<authors>" (:authors file-package) "</authors>"
+             "<tags>" (:tags file-package) "</tags>"
+             "<license type=\"file\">LICENSE.txt</license>"
+             "<licenseUrl>https://aka.ms/deprecateLicenseUrl</licenseUrl>"
+             "<projectUrl>" (:project-url file-package) "</projectUrl>"
+             "<repository type=\"" (:repository-type file-package) "\" url=\""
+             (:repository-url file-package) "\" commit=\""
+             (:repository-commit file-package) "\" />"
+             "<dependencies><group targetFramework=\"net8.0\" /></dependencies>"
+             "</metadata></package>")
+        license "licensed payload"
+        notice "notice payload"
+        content-types-with-text
+        (str/replace (content-types)
+                     "</Types>"
+                     "<Default Extension=\"txt\" ContentType=\"application/octet\" /></Types>")
+        artifact
+        (archive!
+         {"Pkl.Parser.nuspec" file-nuspec
+          "lib/net8.0/Pkl.Parser.dll" "assembly"
+          "LICENSE.txt" license
+          "NOTICE.txt" notice
+          "[Content_Types].xml" content-types-with-text
+          "_rels/.rels" (relationships "Pkl.Parser.nuspec")
+          "package/services/metadata/core-properties/core-properties.psmdcp"
+          (core-properties file-package)})
+        files [{:kind :license :path "LICENSE.txt"
+                :sha256 (sha256-text license)}
+               {:kind :notice :path "NOTICE.txt"
+                :sha256 (sha256-text notice)}]
+        inspection
+        (packaging/inspect-package!
+         artifact file-package "net8.0" "Pkl.Parser" [] files)]
+    (is (= files (:package-files inspection)))
+    (let [error
+          (try
+            (packaging/inspect-package!
+             artifact file-package "net8.0" "Pkl.Parser" []
+             (assoc-in files [1 :sha256] (apply str (repeat 64 "0"))))
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :package-consumption-failed (:kind (ex-data error))))
+      (is (= "NOTICE.txt" (:path (ex-data error)))))))
 
 (deftest package-inspection-rejects-a-bundled-project-dependency-assembly
   (let [artifact (package-archive! {"Pkl.Core.nuspec" (core-nuspec)
