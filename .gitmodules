@@ -4,3 +4,6 @@
 [submodule "research/rawhttp"]
 	path = research/rawhttp
 	url = https://github.com/renatoathaydes/rawhttp.git
+[submodule "research/pdfbox"]
+	path = research/pdfbox
+	url = https://github.com/apache/pdfbox.git
