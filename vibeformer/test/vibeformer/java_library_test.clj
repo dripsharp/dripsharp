@@ -1887,8 +1887,8 @@
                       "List<String> values) { return values::remove; } }")})
         error (caught #(emit! fixture 1))]
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (str/includes? (get-in (ex-data error) [:diagnostic :resolved :key])
-                       "#remove("))))
+    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
+                       "method reference requires a supported resolved method"))))
 
 (deftest list-contains-uses-exact-java-equality-semantics
   (let [fixture
@@ -3160,7 +3160,7 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest multi-catch-with-distinct-destination-types-remains-fail-closed
+(deftest multi-catch-with-distinct-destination-types-uses-a-filtered-system-exception
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.io.IOException; "
@@ -3169,10 +3169,26 @@
                       "static void second() throws NoSuchAlgorithmException {} static void run() { "
                       "try { first(); second(); } catch (IOException | NoSuchAlgorithmException failure) {} "
                       "} }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
-                       "multi-catch alternatives require one exact destination type"))))
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Unsupported.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         first-source
+         (str "catch (global::System.Exception failure) when (failure is "
+              "global::System.IO.IOException or "
+              "global::System.Security.Cryptography.CryptographicException)")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest no-argument-ssl-socket-factories-preserve-deferred-tls-state
   (let [fixture
@@ -3247,7 +3263,8 @@
     (is (str/includes?
          first-source
          (str "new global::System.IO.BufferedStream("
-              "global::Vibeformer.Runtime.JavaCompat.OpenInputStream(file.FullName))")))
+              "global::Vibeformer.Runtime.JavaCompat.OpenInputStream("
+              "new global::Vibeformer.Runtime.JavaPath(file.FullName)))")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -3256,15 +3273,30 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-file-delete-remains-fail-closed
+(deftest file-delete-uses-reusable-file-compatibility-semantics
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.io.File; public final class Unsupported { "
                       "static boolean delete(File file) { return file.delete(); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.io.File#delete()"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Unsupported.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.FileDelete(file);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest service-loader-class-scope-and-lowercase-are-reusable
   (let [fixture

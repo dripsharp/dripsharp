@@ -6,6 +6,7 @@
   public-name policy, source-to-destination dependency projections, legal
   inputs, resource policy, and deterministic project metadata."
   (:require [clojure.string :as str]
+            [vibeformer.csharp :as csharp]
             [vibeformer.java-library :as java-library]
             [vibeformer.java-project :as project-emission]
             [vibeformer.paths :as paths])
@@ -35,6 +36,63 @@
    {:kind :microsoft-package
     :id "Microsoft.Extensions.Logging.Abstractions"
     :version "10.0.0"}})
+
+(def ^:private commons-type-mappings
+  {"org.apache.commons.logging.Log"
+   ["global::Microsoft.Extensions.Logging.ILogger"
+    :pdfcube.type/microsoft-logger]
+   "org.apache.commons.logging.LogFactory"
+   ["global::Microsoft.Extensions.Logging.Abstractions.NullLogger"
+    :pdfcube.type/microsoft-null-logger]})
+
+(defn- raw [text]
+  (csharp/raw text))
+
+(defn- sequence-node [nodes]
+  (csharp/sequence-node (vec (remove nil? nodes))))
+
+(defn- logger-message-node [message]
+  (sequence-node
+   [(raw "global::Vibeformer.Runtime.JavaCompat.StringValueOf(")
+    message (raw ")")]))
+
+(defn- logger-call-node [method target arguments exception?]
+  (let [message (first arguments)
+        exception (when exception? (second arguments))]
+    (sequence-node
+     [(raw (str "global::Microsoft.Extensions.Logging.LoggerExtensions."
+                method "("))
+      target
+      (when exception
+        (sequence-node [(raw ", (global::System.Exception)") exception]))
+      (raw ", ")
+      (logger-message-node message)
+      (raw ")")])))
+
+(def ^:private commons-invocation-adaptations
+  {"executable:org.apache.commons.logging.LogFactory#getLog(java.lang.Class)"
+   (fn [_target _arguments]
+     (raw "global::Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance"))
+
+   "executable:org.apache.commons.logging.Log#debug(java.lang.Object,java.lang.Throwable)"
+   (fn [target arguments]
+     (logger-call-node "LogDebug" target arguments true))
+
+   "executable:org.apache.commons.logging.Log#error(java.lang.Object)"
+   (fn [target arguments]
+     (logger-call-node "LogError" target arguments false))
+
+   "executable:org.apache.commons.logging.Log#error(java.lang.Object,java.lang.Throwable)"
+   (fn [target arguments]
+     (logger-call-node "LogError" target arguments true))
+
+   "executable:org.apache.commons.logging.Log#warn(java.lang.Object)"
+   (fn [target arguments]
+     (logger-call-node "LogWarning" target arguments false))
+
+   "executable:org.apache.commons.logging.Log#warn(java.lang.Object,java.lang.Throwable)"
+   (fn [target arguments]
+     (logger-call-node "LogWarning" target arguments true))})
 
 (def ^:private bouncy-dependencies
   {"org.bouncycastle:bcpkix-jdk18on:jar:1.84"
@@ -463,7 +521,9 @@
   "Returns the PdfCube rule bundle composed over reusable Java-library rules."
   []
   (let [base (java-library/rule-bundle)
-        base-assets (get-in base [:rules :destination-bridges :assets])]
+        base-assets (get-in base [:rules :destination-bridges :assets])
+        base-create-context
+        (get-in base [:rules :structural-declarations :create-context])]
     (-> base
         (assoc :id :pdfcube
                :product-family :pdfcube
@@ -473,6 +533,14 @@
         (assoc-in [:rules :project-policy]
                   {:validate-configuration! validate-configuration!
                    :project-text project-text})
+        (assoc-in
+         [:rules :structural-declarations :create-context]
+         (fn [options]
+           (base-create-context
+            (assoc options
+                   :destination-type-mappings commons-type-mappings
+                   :destination-invocation-adaptations
+                   commons-invocation-adaptations))))
         (assoc-in [:rules :destination-bridges :assets]
                   (fn [context]
                     (into (base-assets context) (legal-assets context)))))))

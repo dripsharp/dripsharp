@@ -158,6 +158,15 @@
       (doseq [content [kernel frontend]]
         (is (not (re-find #"(?i)org\\.pkl|Pkl\\.Core|Pkl\\.Parser" content)))))))
 
+(deftest pdfcube-logging-adaptation-stays-in-the-pdfcube-destination
+  (let [generic-rules [(source "java_library") (source "java_types")]
+        pdfcube-rules (source "pdfcube/java_project")]
+    (doseq [content generic-rules]
+      (is (not (str/includes? content "org.apache.commons.logging")))
+      (is (not (str/includes? content "Microsoft.Extensions.Logging"))))
+    (is (str/includes? pdfcube-rules "org.apache.commons.logging"))
+    (is (str/includes? pdfcube-rules "Microsoft.Extensions.Logging"))))
+
 (deftest generic-runtime-is-independently-product-neutral
   (let [assets (generic-runtime-assets)]
     (is (seq assets))
@@ -175,7 +184,7 @@
         pkl-parser (slurp "config/pkl-parser.edn")
         pkl-core (slurp "config/pkl-core-value-model-destination.edn")
         rawhttp (slurp "config/rawhttp-core-destination.edn")]
-    (is (= 9 (count (re-seq #"#if VIBEFORMER_INTERNAL_JAVA_COMPAT" runtime))))
+    (is (= 12 (count (re-seq #"#if VIBEFORMER_INTERNAL_JAVA_COMPAT" runtime))))
     (doseq [configuration [pkl-parser pkl-core]]
       (is (str/includes? configuration
                          ":define-constants [\"VIBEFORMER_INTERNAL_JAVA_COMPAT\"]")))

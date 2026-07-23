@@ -133,13 +133,36 @@
                         (.getBytes text StandardCharsets/UTF_8))]
     (apply str (map #(format "%02x" (bit-and 0xff (int %))) digest))))
 
+(defn- nuget-global-packages! [workspace]
+  (let [output
+        (:output
+         (process/run! {:command ["dotnet" "nuget" "locals"
+                                  "global-packages" "--list"]
+                        :directory workspace}))
+        path (some->> (re-find #"(?m)^global-packages:\s*(.+?)\s*$" output)
+                      second)]
+    (when-not (seq path)
+      (fail! "The .NET global package directory could not be discovered"
+             {:kind :missing-dotnet-global-packages :output output}))
+    path))
+
 (defn reflect!
   "Runs the independent product-neutral reflection probe on one exact assembly."
   [workspace assembly]
   (let [workspace (paths/absolute workspace)
         assembly (paths/absolute assembly)
-        probe (paths/resolve-path workspace "vibeformer" "validation"
-                                  "dotnet-surface-probe" "DotNetSurfaceProbe.csproj")
+        probe-directory (paths/resolve-path workspace "vibeformer" "validation"
+                                            "dotnet-surface-probe")
+        probe (paths/resolve-path probe-directory "DotNetSurfaceProbe.csproj")
+        probe-output (paths/resolve-path probe-directory "bin" "Release" "net10.0")
+        probe-assembly (paths/resolve-path probe-output "DotNetSurfaceProbe.dll")
+        probe-runtimeconfig
+        (paths/resolve-path probe-output "DotNetSurfaceProbe.runtimeconfig.json")
+        assembly-name (str (.getFileName ^Path assembly))
+        dependency-manifest
+        (paths/resolve-path
+         (.getParent ^Path assembly)
+         (str (subs assembly-name 0 (- (count assembly-name) 4)) ".deps.json"))
         directory (Files/createTempDirectory
                    "vibeformer-dotnet-surface"
                    (make-array FileAttribute 0))
@@ -151,9 +174,17 @@
       (process/run! {:command ["dotnet" "build" probe "--configuration" "Release"
                                "--nologo" "--verbosity:quiet" "-warnaserror"]
                      :directory workspace})
-      (process/run! {:command ["dotnet" "run" "--project" probe
-                               "--configuration" "Release" "--no-build" "--"
-                               output assembly]
+      (process/run! {:command
+                     (if (paths/regular-file? dependency-manifest)
+                       ["dotnet" "exec"
+                        "--additionalprobingpath"
+                        (nuget-global-packages! workspace)
+                        "--runtimeconfig" probe-runtimeconfig
+                        "--depsfile" dependency-manifest
+                        probe-assembly output assembly]
+                       ["dotnet" "run" "--project" probe
+                        "--configuration" "Release" "--no-build" "--"
+                        output assembly])
                      :directory workspace})
       (:rows (parse-tsv! output reflected-magic surface-columns))
       (finally
@@ -202,9 +233,10 @@
   "vibeformer/runtime/Vibeformer.JavaCompat.cs")
 
 (def ^:private compatibility-types
-  #{"IJavaOptional" "JavaExecutorService" "JavaFilterOutputStream"
-    "JavaInputStream" "JavaIterator" "JavaOptional" "JavaOutputStream"
-    "JavaServerSocket" "JavaSslContext"})
+  #{"IJavaOptional" "JavaByteBuffer" "JavaExecutorService"
+    "JavaFilterOutputStream" "JavaInputStream" "JavaIterator" "JavaOptional"
+    "JavaOutputStream" "JavaPath" "JavaServerSocket" "JavaSslContext"
+    "JavaStream"})
 
 (defn- compatibility-type-name [owner]
   (let [simple (last (str/split owner #"[$.]"))]

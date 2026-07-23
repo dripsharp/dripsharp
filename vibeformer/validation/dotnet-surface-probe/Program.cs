@@ -1,6 +1,7 @@
 // Product-neutral exact reflection probe for a compiled .NET assembly.
 using System.Reflection;
 using System.Globalization;
+using System.Runtime.Loader;
 using System.Text;
 
 internal static class Program
@@ -31,6 +32,21 @@ internal static class Program
         });
     }
 
+    private sealed class ComponentLoadContext(string assemblyPath) : AssemblyLoadContext
+    {
+        private readonly AssemblyDependencyResolver _resolver = new(assemblyPath);
+        private readonly string _directory = Path.GetDirectoryName(assemblyPath)!;
+
+        protected override Assembly? Load(AssemblyName assemblyName)
+        {
+            var resolved = _resolver.ResolveAssemblyToPath(assemblyName);
+            if (resolved is not null)
+                return LoadFromAssemblyPath(resolved);
+            var candidate = Path.Combine(_directory, assemblyName.Name + ".dll");
+            return File.Exists(candidate) ? LoadFromAssemblyPath(candidate) : null;
+        }
+    }
+
     private static int Main(string[] args)
     {
         if (args.Length != 2)
@@ -44,15 +60,8 @@ internal static class Program
         if (!File.Exists(assemblyPath))
             throw new FileNotFoundException("Surface assembly is missing", assemblyPath);
 
-        var directory = Path.GetDirectoryName(assemblyPath)!;
-        AppDomain.CurrentDomain.AssemblyResolve += (_, eventArgs) =>
-        {
-            var name = new AssemblyName(eventArgs.Name).Name + ".dll";
-            var candidate = Path.Combine(directory, name);
-            return File.Exists(candidate) ? Assembly.LoadFrom(candidate) : null;
-        };
-
-        var rows = Extract(Assembly.LoadFrom(assemblyPath));
+        var loadContext = new ComponentLoadContext(assemblyPath);
+        var rows = Extract(loadContext.LoadFromAssemblyPath(assemblyPath));
         rows.Sort((left, right) => StringComparer.Ordinal.Compare(left.Tsv, right.Tsv));
         var duplicate = rows.GroupBy(row => row.Identity, StringComparer.Ordinal)
             .FirstOrDefault(group => group.Count() > 1);

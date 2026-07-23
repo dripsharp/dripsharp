@@ -620,6 +620,14 @@
            :public-api-declaration-keys public-api-declaration-keys
            :blocker-start blocker-start
            :emit-members emit-members})
+        context-additions
+        (fn [ctx]
+          (apply dissoc ctx
+                 [:template :configuration :resolved-model :occurrence-index
+                  :selected-declarations :public-api-type-keys
+                  :public-api-declaration-keys :blocker-start :emit-members
+                  :emitted :declarations :diagnostics :body-translations
+                  :body-context]))
         declaration-results
         (let [ordinary-results (atom [])]
           (letfn [(emit-root!
@@ -651,13 +659,15 @@
                        :diagnostics (:diagnostics result)
                        :body-translations (:body-translations result)}))
                   (translate-member!
-                    [root-index ^CtType owner index member]
+                    [parent-ctx root-index ^CtType owner index member]
                     (let [template (.get ^ThreadLocal worker-template)
                           ctx (create-context
-                               (context-parameters
-                                template
-                                (+ (* root-index 1000000000) (* (inc index) 1000000))
-                                nil))]
+                               (merge
+                                (context-additions parent-ctx)
+                                (context-parameters
+                                 template
+                                 (+ (* root-index 1000000000) (* (inc index) 1000000))
+                                 nil)))]
                       {:kind :member
                        :index index
                        :node (translate-member ctx owner member)
@@ -684,7 +694,8 @@
                              (case kind
                                :root {:kind :root :index index
                                       :result (emit-root! job nil)}
-                               :member (translate-member! root-index owner index member)))
+                               :member (translate-member! dominant-ctx
+                                                          root-index owner index member)))
                            jobs)
                           member-results (sort-by :index (filter #(= :member (:kind %)) results))
                           roots (mapv :result (sort-by :index (filter #(= :root (:kind %)) results)))

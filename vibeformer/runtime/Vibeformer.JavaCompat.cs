@@ -12,6 +12,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
+using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Reflection;
 using System.Resources;
@@ -311,34 +312,548 @@ internal
 #else
 public
 #endif
+sealed class JavaByteBuffer : IDisposable
+{
+    private readonly sbyte[]? bytes;
+    private readonly MemoryMappedFile? mappedFile;
+    private readonly MemoryMappedViewAccessor? mappedView;
+    private readonly bool ownsMapping;
+    private readonly bool direct;
+    private readonly int capacity;
+    private int cursor;
+    private int upperBound;
+    private bool disposed;
+
+    private JavaByteBuffer(sbyte[] bytes, bool direct = false)
+    {
+        this.bytes = bytes;
+        this.direct = direct;
+        capacity = bytes.Length;
+        upperBound = capacity;
+    }
+
+    private JavaByteBuffer(
+        MemoryMappedFile mappedFile,
+        MemoryMappedViewAccessor mappedView,
+        int capacity,
+        bool ownsMapping)
+    {
+        this.mappedFile = mappedFile;
+        this.mappedView = mappedView;
+        this.capacity = capacity;
+        this.ownsMapping = ownsMapping;
+        direct = true;
+        upperBound = capacity;
+    }
+
+    internal static JavaByteBuffer Direct(sbyte[] bytes) => new(bytes, direct: true);
+    internal static JavaByteBuffer Direct(
+        MemoryMappedFile mappedFile,
+        MemoryMappedViewAccessor mappedView,
+        int capacity) => new(mappedFile, mappedView, capacity, ownsMapping: true);
+    public static JavaByteBuffer allocate(int capacity) =>
+        capacity < 0
+            ? throw new ArgumentOutOfRangeException(nameof(capacity))
+            : new JavaByteBuffer(new sbyte[capacity]);
+    public static JavaByteBuffer wrap(sbyte[] bytes) =>
+        new(bytes ?? throw new ArgumentNullException(nameof(bytes)));
+    public sbyte[] array()
+    {
+        ThrowIfDisposed();
+        if (direct || bytes is null)
+            throw new NotSupportedException("A direct Java byte buffer has no accessible array.");
+        return bytes;
+    }
+    public JavaByteBuffer clear()
+    {
+        ThrowIfDisposed();
+        cursor = 0;
+        upperBound = capacity;
+        return this;
+    }
+    public JavaByteBuffer duplicate()
+    {
+        ThrowIfDisposed();
+        var duplicate = mappedView is null
+            ? new JavaByteBuffer(bytes!, direct)
+            : new JavaByteBuffer(mappedFile!, mappedView, capacity, ownsMapping: false);
+        duplicate.cursor = cursor;
+        duplicate.upperBound = upperBound;
+        return duplicate;
+    }
+    public sbyte get()
+    {
+        ThrowIfDisposed();
+        if (cursor >= upperBound) throw new EndOfStreamException();
+        return ReadByte(cursor++);
+    }
+    public sbyte get(int index)
+    {
+        ThrowIfDisposed();
+        if ((uint)index >= (uint)upperBound) throw new ArgumentOutOfRangeException(nameof(index));
+        return ReadByte(index);
+    }
+    public JavaByteBuffer get(sbyte[] destination, int offset, int length)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(destination);
+        if (offset < 0 || length < 0 || offset + length > destination.Length)
+            throw new ArgumentOutOfRangeException();
+        if (length > upperBound - cursor) throw new EndOfStreamException();
+        if (mappedView is null)
+        {
+            Array.Copy(bytes!, cursor, destination, offset, length);
+        }
+        else
+        {
+            var unsigned = new byte[length];
+            var read = mappedView.ReadArray(cursor, unsigned, 0, length);
+            if (read != length) throw new EndOfStreamException();
+            Buffer.BlockCopy(unsigned, 0, destination, offset, length);
+        }
+        cursor += length;
+        return this;
+    }
+    public bool isDirect()
+    {
+        ThrowIfDisposed();
+        return direct;
+    }
+    public int limit()
+    {
+        ThrowIfDisposed();
+        return upperBound;
+    }
+    public JavaByteBuffer limit(int value)
+    {
+        ThrowIfDisposed();
+        if (value < 0 || value > capacity) throw new ArgumentOutOfRangeException(nameof(value));
+        upperBound = value;
+        if (cursor > upperBound) cursor = upperBound;
+        return this;
+    }
+    public int position()
+    {
+        ThrowIfDisposed();
+        return cursor;
+    }
+    public JavaByteBuffer position(int value)
+    {
+        ThrowIfDisposed();
+        if (value < 0 || value > upperBound) throw new ArgumentOutOfRangeException(nameof(value));
+        cursor = value;
+        return this;
+    }
+    public JavaByteBuffer put(sbyte value)
+    {
+        ThrowIfDisposed();
+        if (cursor >= upperBound) throw new EndOfStreamException();
+        if (mappedView is not null)
+            throw new NotSupportedException("A read-only mapped Java byte buffer cannot be written.");
+        bytes![cursor++] = value;
+        return this;
+    }
+    public JavaByteBuffer put(sbyte[] source) => put(source, 0, source.Length);
+    public JavaByteBuffer put(sbyte[] source, int offset, int length)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(source);
+        if (offset < 0 || length < 0 || offset + length > source.Length)
+            throw new ArgumentOutOfRangeException();
+        if (length > upperBound - cursor) throw new EndOfStreamException();
+        if (mappedView is not null)
+            throw new NotSupportedException("A read-only mapped Java byte buffer cannot be written.");
+        Array.Copy(source, offset, bytes!, cursor, length);
+        cursor += length;
+        return this;
+    }
+    public JavaByteBuffer rewind()
+    {
+        ThrowIfDisposed();
+        cursor = 0;
+        return this;
+    }
+    internal int Remaining
+    {
+        get
+        {
+            ThrowIfDisposed();
+            return upperBound - cursor;
+        }
+    }
+    internal sbyte[] ReadRemaining(int count)
+    {
+        count = Math.Min(count, Remaining);
+        var result = new sbyte[count];
+        get(result, 0, count);
+        return result;
+    }
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        if (!ownsMapping) return;
+        mappedView?.Dispose();
+        mappedFile?.Dispose();
+    }
+    private sbyte ReadByte(int index) =>
+        mappedView is null ? bytes![index] : unchecked((sbyte)mappedView.ReadByte(index));
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaPath : IEquatable<JavaPath>
+{
+    internal string Value { get; }
+    public JavaPath(string value) =>
+        Value = value ?? throw new ArgumentNullException(nameof(value));
+    public bool Equals(JavaPath? other) =>
+        other is not null && string.Equals(Value, other.Value,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    public override bool Equals(object? obj) => Equals(obj as JavaPath);
+    public override int GetHashCode() =>
+        (OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+            .GetHashCode(Value);
+    public override string ToString() => Value;
+    public static implicit operator string(JavaPath path) => path.Value;
+    public static implicit operator JavaPath(string path) => new(path);
+}
+
+internal enum JavaFileChannelMapMode { READ_ONLY }
+internal enum JavaStandardOpenOption { READ }
+
+internal sealed class JavaFileChannel : IDisposable
+{
+    private readonly FileStream stream;
+    private bool disposed;
+
+    private JavaFileChannel(string path) =>
+        stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+
+    internal static JavaFileChannel open(string path, params object?[] _) => new(path);
+    internal long size()
+    {
+        ThrowIfDisposed();
+        return stream.Length;
+    }
+    internal JavaFileChannel position(long value)
+    {
+        ThrowIfDisposed();
+        stream.Position = value;
+        return this;
+    }
+    internal int read(JavaByteBuffer destination)
+    {
+        ThrowIfDisposed();
+        var count = destination.Remaining;
+        if (count == 0) return 0;
+        var unsigned = new byte[count];
+        var read = stream.Read(unsigned, 0, count);
+        if (read == 0) return -1;
+        var signed = new sbyte[read];
+        Buffer.BlockCopy(unsigned, 0, signed, 0, read);
+        destination.put(signed);
+        return read;
+    }
+    internal void close() => Dispose();
+    internal JavaByteBuffer map(JavaFileChannelMapMode mode, long offset, long size)
+    {
+        ThrowIfDisposed();
+        if (mode != JavaFileChannelMapMode.READ_ONLY)
+            throw new NotSupportedException($"Unsupported file-channel map mode {mode}.");
+        if (offset < 0 || size < 0 || size > int.MaxValue ||
+            offset > stream.Length || size > stream.Length - offset)
+            throw new ArgumentOutOfRangeException();
+        if (size == 0) return JavaByteBuffer.Direct(Array.Empty<sbyte>());
+        var mappedFile = MemoryMappedFile.CreateFromFile(
+            stream, null, 0, MemoryMappedFileAccess.Read,
+            HandleInheritability.None, leaveOpen: true);
+        var mappedView = mappedFile.CreateViewAccessor(
+            offset, size, MemoryMappedFileAccess.Read);
+        return JavaByteBuffer.Direct(mappedFile, mappedView, (int)size);
+    }
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        stream.Dispose();
+    }
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
+}
+
+internal sealed class JavaRandomAccessFile : IDisposable
+{
+    private readonly FileStream stream;
+    private bool disposed;
+
+    internal JavaRandomAccessFile(FileInfo file, string mode)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        stream = mode switch
+        {
+            "r" => new FileStream(file.FullName, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete),
+            "rw" => new FileStream(file.FullName, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+                FileShare.Read),
+            _ => throw new ArgumentException($"Unsupported random-access mode `{mode}`.", nameof(mode))
+        };
+    }
+    internal long length()
+    {
+        ThrowIfDisposed();
+        return stream.Length;
+    }
+    internal void readFully(sbyte[] destination)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(destination);
+        var unsigned = new byte[destination.Length];
+        var total = 0;
+        while (total < unsigned.Length)
+        {
+            var read = stream.Read(unsigned, total, unsigned.Length - total);
+            if (read == 0) throw new EndOfStreamException();
+            total += read;
+        }
+        Buffer.BlockCopy(unsigned, 0, destination, 0, unsigned.Length);
+    }
+    internal void seek(long position)
+    {
+        ThrowIfDisposed();
+        if (position < 0) throw new IOException("Negative seek offset");
+        stream.Position = position;
+    }
+    internal void setLength(long length)
+    {
+        ThrowIfDisposed();
+        stream.SetLength(length);
+    }
+    internal void write(sbyte[] source)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(source);
+        var unsigned = new byte[source.Length];
+        Buffer.BlockCopy(source, 0, unsigned, 0, source.Length);
+        stream.Write(unsigned, 0, unsigned.Length);
+    }
+    internal void close() => Dispose();
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        stream.Dispose();
+    }
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
+}
+
+internal sealed class JavaBitSet
+{
+    private readonly HashSet<int> values = new();
+    internal void clear() => values.Clear();
+    internal void clear(int index) => values.Remove(index);
+    internal bool get(int index) => values.Contains(index);
+    internal int nextSetBit(int fromIndex) =>
+        values.Where(value => value >= fromIndex).DefaultIfEmpty(-1).Min();
+    internal void set(int index) => values.Add(index);
+    internal void set(int fromIndex, int toIndex)
+    {
+        for (var index = fromIndex; index < toIndex; index++) values.Add(index);
+    }
+}
+
+internal sealed class JavaMethodType : IEquatable<JavaMethodType>
+{
+    internal Type ReturnType { get; }
+    internal IReadOnlyList<Type> ParameterTypes { get; }
+    internal JavaMethodType(Type returnType, params Type[] parameterTypes)
+    {
+        ReturnType = returnType;
+        ParameterTypes = parameterTypes;
+    }
+    internal static JavaMethodType methodType(Type returnType) => new(returnType);
+    internal static JavaMethodType methodType(Type returnType, Type parameterType) =>
+        new(returnType, parameterType);
+    internal Type returnType() => ReturnType;
+    public bool Equals(JavaMethodType? other) =>
+        other is not null && ReturnType == other.ReturnType &&
+        ParameterTypes.SequenceEqual(other.ParameterTypes);
+    public override bool Equals(object? obj) => Equals(obj as JavaMethodType);
+    public override int GetHashCode() =>
+        ParameterTypes.Aggregate(ReturnType.GetHashCode(),
+            (hash, parameter) => HashCode.Combine(hash, parameter));
+}
+
+internal sealed class JavaMethodHandle
+{
+    private readonly Func<object?[], object?> invoke;
+    private readonly JavaMethodType methodType;
+    internal JavaMethodHandle(Func<object?[], object?> invoke, JavaMethodType methodType)
+    {
+        this.invoke = invoke;
+        this.methodType = methodType;
+    }
+    internal JavaMethodHandle asType(JavaMethodType _) => this;
+    internal JavaMethodHandle bindTo(object? target) =>
+        new(arguments => invoke(new[] { target }.Concat(arguments).ToArray()),
+            new JavaMethodType(methodType.ReturnType,
+                methodType.ParameterTypes.Skip(1).ToArray()));
+    internal object? invokeExact(params object?[] arguments) => invoke(arguments);
+    internal JavaMethodType type() => methodType;
+}
+
+internal sealed class JavaMethodHandlesLookup
+{
+    internal JavaMethodHandle findStatic(Type owner, string name, JavaMethodType methodType) =>
+        FromMethod(owner.GetMethod(name, BindingFlags.Static | BindingFlags.Public |
+            BindingFlags.NonPublic) ?? throw new MissingMethodException(owner.FullName, name),
+            methodType);
+    internal JavaMethodHandle findVirtual(Type owner, string name, JavaMethodType methodType) =>
+        FromMethod(owner.GetMethod(name, BindingFlags.Instance | BindingFlags.Public |
+            BindingFlags.NonPublic) ?? throw new MissingMethodException(owner.FullName, name),
+            methodType);
+    internal JavaMethodHandle unreflect(MethodInfo method) =>
+        FromMethod(method, new JavaMethodType(method.ReturnType,
+            (method.IsStatic ? Array.Empty<Type>() : new[] { method.DeclaringType! })
+                .Concat(method.GetParameters().Select(parameter => parameter.ParameterType))
+                .ToArray()));
+    private static JavaMethodHandle FromMethod(MethodInfo method, JavaMethodType methodType) =>
+        new(arguments =>
+        {
+            var target = method.IsStatic ? null : arguments[0];
+            var parameters = method.IsStatic ? arguments : arguments.Skip(1).ToArray();
+            return method.Invoke(target, parameters);
+        }, methodType);
+}
+
+internal static class JavaMethodHandles
+{
+    internal static JavaMethodHandlesLookup lookup() => new();
+    internal static JavaMethodHandle constant(Type type, object? value) =>
+        new(_ => value, new JavaMethodType(type));
+    internal static JavaMethodHandle dropArguments(
+        JavaMethodHandle target, int _, params Type[] parameterTypes) =>
+        new(arguments => target.invokeExact(arguments.Skip(parameterTypes.Length).ToArray()),
+            new JavaMethodType(target.type().ReturnType,
+                parameterTypes.Concat(target.type().ParameterTypes).ToArray()));
+    internal static JavaMethodHandle filterReturnValue(
+        JavaMethodHandle target, JavaMethodHandle filter) =>
+        new(arguments => filter.invokeExact(target.invokeExact(arguments)),
+            new JavaMethodType(filter.type().ReturnType, target.type().ParameterTypes.ToArray()));
+    internal static JavaMethodHandle guardWithTest(
+        JavaMethodHandle test, JavaMethodHandle target, JavaMethodHandle fallback) =>
+        new(arguments => (bool)test.invokeExact(arguments)!
+                ? target.invokeExact(arguments)
+                : fallback.invokeExact(arguments),
+            target.type());
+}
+
+internal sealed class JavaUnsafe
+{
+    internal static readonly JavaUnsafe theUnsafe = new();
+    internal void invokeCleaner(JavaByteBuffer buffer) => buffer.Dispose();
+}
+
+internal sealed class JavaFileSystem
+{
+    internal ISet<string> supportedFileAttributeViews() =>
+        OperatingSystem.IsWindows()
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : new HashSet<string>(new[] { "posix" }, StringComparer.Ordinal);
+}
+
+internal static class JavaFileSystems
+{
+    internal static JavaFileSystem getDefault() => new();
+}
+
+internal sealed record JavaUserPrincipal(string Name);
+internal enum JavaAclEntryPermission
+{
+    APPEND_DATA, DELETE, DELETE_CHILD, EXECUTE, READ_ACL, READ_ATTRIBUTES,
+    READ_DATA, READ_NAMED_ATTRS, SYNCHRONIZE, WRITE_ACL, WRITE_ATTRIBUTES,
+    WRITE_DATA, WRITE_NAMED_ATTRS
+}
+internal enum JavaAclEntryType { ALLOW }
+internal sealed record JavaAclEntry(
+    JavaAclEntryType Type,
+    JavaUserPrincipal Principal,
+    ISet<JavaAclEntryPermission> Permissions)
+{
+    internal static JavaAclEntryBuilder newBuilder() => new();
+}
+internal sealed class JavaAclEntryBuilder
+{
+    private JavaAclEntryType type;
+    private JavaUserPrincipal principal = new(Environment.UserName);
+    private ISet<JavaAclEntryPermission> permissions = new HashSet<JavaAclEntryPermission>();
+    internal JavaAclEntryBuilder setType(JavaAclEntryType value) { type = value; return this; }
+    internal JavaAclEntryBuilder setPrincipal(JavaUserPrincipal value) { principal = value; return this; }
+    internal JavaAclEntryBuilder setPermissions(ISet<JavaAclEntryPermission> value)
+    {
+        permissions = value;
+        return this;
+    }
+    internal JavaAclEntry build() => new(type, principal, permissions);
+}
+internal sealed class JavaAclFileAttributeView
+{
+    internal JavaUserPrincipal getOwner() => new(Environment.UserName);
+    internal void setAcl(IList<JavaAclEntry> _) { }
+}
+internal sealed record JavaFileAttribute<T>(T Value);
+
+internal sealed class JavaRuntime
+{
+    private static readonly JavaRuntime Instance = new();
+    internal static JavaRuntime getRuntime() => Instance;
+    internal void addShutdownHook(JavaThread thread) =>
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => thread.Start();
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
 abstract class JavaInputStream : Stream
 {
-    public abstract int read();
+    public abstract int Read();
 
-    public virtual int read(sbyte[] buffer) => read(buffer, 0, buffer.Length);
+    public virtual int Read(sbyte[] buffer) => Read(buffer, 0, buffer.Length);
 
-    public virtual int read(sbyte[] buffer, int offset, int count)
+    public virtual int Read(sbyte[] buffer, int offset, int count)
     {
         ArgumentNullException.ThrowIfNull(buffer);
         if (offset < 0 || count < 0 || offset + count > buffer.Length)
             throw new ArgumentOutOfRangeException();
         if (count == 0) return 0;
-        var first = read();
+        var first = Read();
         if (first < 0) return -1;
         buffer[offset] = unchecked((sbyte)first);
         var copied = 1;
         while (copied < count)
         {
-            var next = read();
+            var next = Read();
             if (next < 0) break;
             buffer[offset + copied++] = unchecked((sbyte)next);
         }
         return copied;
     }
 
-    public virtual int available() => 0;
-    public virtual bool markSupported() => false;
-    public virtual void close() => Dispose();
+    public virtual int Available() => 0;
+    public virtual long Skip(long count)
+    {
+        if (count <= 0) return 0;
+        var skipped = 0L;
+        while (skipped < count && Read() >= 0) skipped++;
+        return skipped;
+    }
+    public virtual bool MarkSupported() => false;
     public override bool CanRead => true;
     public override bool CanSeek => false;
     public override bool CanWrite => false;
@@ -352,12 +867,12 @@ abstract class JavaInputStream : Stream
     public override int Read(byte[] buffer, int offset, int count)
     {
         var signed = new sbyte[count];
-        var readCount = read(signed, 0, count);
+        var readCount = Read(signed, 0, count);
         if (readCount > 0) Buffer.BlockCopy(signed, 0, buffer, offset, readCount);
         return readCount;
     }
 
-    public override int ReadByte() => read();
+    public override int ReadByte() => Read();
     public override void Flush() { }
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
@@ -371,18 +886,16 @@ public
 #endif
 abstract class JavaOutputStream : Stream
 {
-    public abstract void write(int value);
+    public abstract void Write(int value);
 
-    public virtual void write(sbyte[] buffer) => write(buffer, 0, buffer.Length);
+    public virtual void Write(sbyte[] buffer) => Write(buffer, 0, buffer.Length);
 
-    public virtual void write(sbyte[] buffer, int offset, int count)
+    public virtual void Write(sbyte[] buffer, int offset, int count)
     {
         ArgumentNullException.ThrowIfNull(buffer);
-        for (var index = 0; index < count; index++) write(buffer[offset + index]);
+        for (var index = 0; index < count; index++) Write(buffer[offset + index]);
     }
 
-    public virtual void flush() => Flush();
-    public virtual void close() => Dispose();
     public override bool CanRead => false;
     public override bool CanSeek => false;
     public override bool CanWrite => true;
@@ -397,10 +910,10 @@ abstract class JavaOutputStream : Stream
     {
         var signed = new sbyte[count];
         Buffer.BlockCopy(buffer, offset, signed, 0, count);
-        write(signed, 0, count);
+        Write(signed, 0, count);
     }
 
-    public override void WriteByte(byte value) => write(value);
+    public override void WriteByte(byte value) => Write(value);
     public override void Flush() { }
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
@@ -556,12 +1069,10 @@ class JavaFilterOutputStream : JavaOutputStream
 
     protected JavaFilterOutputStream(Stream output) => @out = output;
     public override bool CanWrite => @out.CanWrite;
-    public override void write(int value) => @out.WriteByte(unchecked((byte)value));
-    public override void write(sbyte[] buffer, int offset, int count) =>
+    public override void Write(int value) => @out.WriteByte(unchecked((byte)value));
+    public override void Write(sbyte[] buffer, int offset, int count) =>
         @out.Write(JavaCompat.ToUnsignedBytes(buffer), offset, count);
     public override void Flush() => @out.Flush();
-    public override void flush() => Flush();
-    public override void close() => @out.Dispose();
 
     protected override void Dispose(bool disposing)
     {
@@ -716,6 +1227,7 @@ internal sealed class JavaThread
     internal void Start() => thread.Start();
     internal void Interrupt() => thread.Interrupt();
     internal bool Join(TimeSpan timeout) => thread.Join(timeout);
+    internal long getId() => thread.ManagedThreadId;
 }
 
 internal sealed class JavaFixedThreadTaskScheduler : TaskScheduler
@@ -1943,6 +2455,23 @@ internal static class JavaCompat
 
     internal static T RequireNonNull<T>(T? value, string? message = null) =>
         value is null ? throw new NullReferenceException(message) : value;
+    internal static bool nonNull(object? value) => value is not null;
+    internal static T doPrivileged<T>(Func<T> action) => action();
+    internal static Type ClassForName(string name) => name switch
+    {
+        "sun.misc.Unsafe" => typeof(JavaUnsafe),
+        "java.nio.DirectByteBuffer" => typeof(JavaByteBuffer),
+        _ => Type.GetType(name, throwOnError: true)!
+    };
+    internal static FieldInfo GetDeclaredField(Type type, string name) =>
+        type.GetField(name, BindingFlags.Instance | BindingFlags.Static |
+            BindingFlags.Public | BindingFlags.NonPublic) ??
+        throw new MissingFieldException(type.FullName, name);
+    internal static MethodInfo GetMethod(Type type, string name, params Type[] parameterTypes) =>
+        type.GetMethod(name, BindingFlags.Instance | BindingFlags.Static |
+            BindingFlags.Public | BindingFlags.NonPublic, parameterTypes) ??
+        throw new MissingMethodException(type.FullName, name);
+    internal static void SetAccessible(MemberInfo _, bool __) { }
     internal static T RequireNonNullElseGet<T>(T? value, Func<T> supplier) =>
         value is null ? RequireNonNull(supplier()) : value;
     internal static string? Getenv(string name) => Environment.GetEnvironmentVariable(name);
@@ -3767,6 +4296,9 @@ internal static class JavaCompat
                 ? linked.Get(typed)
                 : map.TryGetValue(typed, out var value) ? value : default!
             : default!;
+    internal static V MapGet<K, V>(ConcurrentDictionary<K, V> map, object? key)
+        where K : notnull =>
+        key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
     internal static V MapGet<K, V>(IReadOnlyDictionary<K, V> map, object? key) where K : notnull =>
         key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
 
@@ -5855,6 +6387,10 @@ internal static class JavaCompat
         stream.CopyTo(buffer);
         return buffer.ToArray().Select(value => unchecked((sbyte)value)).ToArray();
     }
+    internal static int InputStreamAvailable(Stream stream) =>
+        stream.CanSeek
+            ? checked((int)Math.Min(int.MaxValue, Math.Max(0, stream.Length - stream.Position)))
+            : 0;
     internal static sbyte[] ReadNBytes(Stream stream, int count)
     {
         var bytes = new byte[count];
@@ -5902,6 +6438,12 @@ internal static class JavaCompat
     internal static StreamWriter NewFileWriter(string path, Encoding encoding) => new(path, false, encoding);
     internal static JavaStream<string> Walk(string path, params object?[] _) =>
         new(Directory.EnumerateFileSystemEntries(path, "*", SearchOption.AllDirectories).Prepend(path));
+    internal static JavaStream<string> walk(string path, params object?[] options) =>
+        Walk(path, options);
+    internal static JavaStream<JavaPath> walk(JavaPath path, params object?[] _) =>
+        new(Directory.EnumerateFileSystemEntries(path.Value, "*", SearchOption.AllDirectories)
+            .Prepend(path.Value)
+            .Select(value => new JavaPath(value)));
     internal static bool PathIsRegularFile(string path) => File.Exists(path);
     internal static ICollection<object> ObjectCollection(IEnumerable<object> values) => values.ToList();
     internal static IDictionary<object, object> ObjectMap(IDictionary values)
@@ -5919,6 +6461,75 @@ internal static class JavaCompat
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(path, permissions.Aggregate((UnixFileMode)0, (mode, permission) => mode | permission));
     }
+    internal static void setPosixFilePermissions(string path, ISet<UnixFileMode> permissions) =>
+        SetPosixFilePermissions(path, permissions);
+    internal static ISet<UnixFileMode> fromString(string permissions)
+    {
+        if (permissions.Length != 9)
+            throw new ArgumentException("POSIX permissions must contain exactly nine characters.",
+                nameof(permissions));
+        var result = new HashSet<UnixFileMode>();
+        var modes = new[]
+        {
+            UnixFileMode.UserRead, UnixFileMode.UserWrite, UnixFileMode.UserExecute,
+            UnixFileMode.GroupRead, UnixFileMode.GroupWrite, UnixFileMode.GroupExecute,
+            UnixFileMode.OtherRead, UnixFileMode.OtherWrite, UnixFileMode.OtherExecute
+        };
+        for (var index = 0; index < permissions.Length; index++)
+        {
+            var expected = (index % 3) switch { 0 => 'r', 1 => 'w', _ => 'x' };
+            if (permissions[index] == expected) result.Add(modes[index]);
+            else if (permissions[index] != '-')
+                throw new ArgumentException($"Invalid POSIX permission `{permissions[index]}`.",
+                    nameof(permissions));
+        }
+        return result;
+    }
+    internal static JavaFileAttribute<ISet<UnixFileMode>> asFileAttribute(
+        ISet<UnixFileMode> permissions) => new(permissions);
+    internal static string createTempDirectory(
+        string prefix, params JavaFileAttribute<ISet<UnixFileMode>>[] attributes)
+    {
+        var path = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        if (attributes.Length > 0) SetPosixFilePermissions(path, attributes[0].Value);
+        return path;
+    }
+    internal static string createTempFile(
+        string prefix, string suffix,
+        params JavaFileAttribute<ISet<UnixFileMode>>[] attributes) =>
+        createTempFile(Path.GetTempPath(), prefix, suffix, attributes);
+    internal static string createTempFile(
+        string directory, string prefix, string suffix,
+        params JavaFileAttribute<ISet<UnixFileMode>>[] attributes)
+    {
+        var path = Path.Combine(directory, prefix + Guid.NewGuid().ToString("N") + suffix);
+        using (File.Create(path)) { }
+        if (attributes.Length > 0) SetPosixFilePermissions(path, attributes[0].Value);
+        return path;
+    }
+    internal static JavaAclFileAttributeView? getFileAttributeView(
+        string _, Type __, params object?[] ___) =>
+        OperatingSystem.IsWindows() ? new JavaAclFileAttributeView() : null;
+    internal static bool FileDelete(FileInfo file)
+    {
+        try
+        {
+            if (Directory.Exists(file.FullName)) Directory.Delete(file.FullName);
+            else if (File.Exists(file.FullName)) File.Delete(file.FullName);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    internal static bool FileExists(FileInfo file) =>
+        File.Exists(file.FullName) || Directory.Exists(file.FullName);
+    internal static bool FileIsDirectory(FileInfo file) => Directory.Exists(file.FullName);
+    internal static bool SetFileReadable(FileInfo _, bool __, bool ___) => true;
+    internal static bool SetFileWritable(FileInfo _, bool __, bool ___) => true;
+    internal static bool SetFileExecutable(FileInfo _, bool __, bool ___) => true;
     internal static string CreateTempFile(string prefix, string suffix, params object?[] _)
     {
         var path = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N") + suffix);
@@ -5937,6 +6548,16 @@ internal static class JavaCompat
     internal static IList<T> NCopies<T>(int count, T value) => Enumerable.Repeat(value, count).ToList();
     internal static T Min<T>(T left, T right) where T : IComparable<T> => left.CompareTo(right) <= 0 ? left : right;
     internal static T Min<T>(IEnumerable<T> values) => values.Min(Comparer<T>.Default)!;
+    internal static IComparer<T> ReverseComparer<T>() =>
+        Comparer<T>.Create((left, right) => Comparer<T>.Default.Compare(right, left));
+    internal static IList<T> SynchronizedList<T>(IList<T> values) =>
+        new JavaSynchronizedList<T>(values);
+    internal static JavaStream<T> StreamFilter<T>(
+        IEnumerable<T> values, Func<T, bool> predicate) =>
+        new(values.Where(predicate));
+    internal static JavaStream<T> StreamSorted<T>(
+        IEnumerable<T> values, IComparer<T> comparer) =>
+        new(values.OrderBy(value => value, comparer));
 
     internal static long DurationToMillis(TimeSpan value) => checked((long)value.TotalMilliseconds);
     internal static long DurationGetSeconds(TimeSpan value) => checked((long)value.TotalSeconds);
@@ -6832,13 +7453,49 @@ internal sealed class JavaArrayList<T> : Collection<T>
     internal JavaArrayList(IList<T> values) : base(values) { }
 }
 
-internal sealed class JavaStream<T> : IEnumerable<T>, IDisposable
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaStream<T> : IEnumerable<T>, IDisposable
 {
     private readonly IEnumerable<T> source;
     internal JavaStream(IEnumerable<T> source) => this.source = source;
     public IEnumerator<T> GetEnumerator() => source.GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     public void Dispose() { }
+}
+
+internal sealed class JavaSynchronizedList<T> : IList<T>
+{
+    private readonly IList<T> source;
+    private readonly object sync = new();
+    internal JavaSynchronizedList(IList<T> source) =>
+        this.source = source ?? throw new ArgumentNullException(nameof(source));
+    public T this[int index]
+    {
+        get { lock (sync) return source[index]; }
+        set { lock (sync) source[index] = value; }
+    }
+    public int Count { get { lock (sync) return source.Count; } }
+    public bool IsReadOnly => source.IsReadOnly;
+    public void Add(T item) { lock (sync) source.Add(item); }
+    public void Clear() { lock (sync) source.Clear(); }
+    public bool Contains(T item) { lock (sync) return source.Contains(item); }
+    public void CopyTo(T[] array, int arrayIndex)
+    {
+        lock (sync) source.CopyTo(array, arrayIndex);
+    }
+    public IEnumerator<T> GetEnumerator()
+    {
+        lock (sync) return source.ToList().GetEnumerator();
+    }
+    public int IndexOf(T item) { lock (sync) return source.IndexOf(item); }
+    public void Insert(int index, T item) { lock (sync) source.Insert(index, item); }
+    public bool Remove(T item) { lock (sync) return source.Remove(item); }
+    public void RemoveAt(int index) { lock (sync) source.RemoveAt(index); }
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 internal sealed class JavaSubList<T> : IList<T>
