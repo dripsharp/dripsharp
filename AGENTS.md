@@ -20,6 +20,13 @@ or project-completion semantics require explicit user approval. Upstream Pkl
 tests are behavior evidence even when their test infrastructure is not shipped
 as part of the .NET product.
 
+The PdfCube target is governed independently by
+`vibeformer/doc/targets/pdfbox/product-goal.md` and its target scope. Its
+selected PDFBox library modules are mechanically translated in full; missing or
+difficult behavior is pending work unless the user-approved PdfCube exclusion
+list says otherwise. Changes to the PdfCube goal, exclusions, synchronization
+policy, or completion semantics also require explicit user approval.
+
 Use Beads, not `vibeformer/doc/`, for temporary planning, current status,
 next-slice selection, progress logs, and deferred follow-up work. Documentation
 should contain only durable product goals, architecture, contracts, and

@@ -45,6 +45,9 @@ The documentation is limited to durable product and architecture decisions:
   protects the fixed Pkl product scope.
 * [Pkl Port Scope](doc/targets/pkl/port-scope.md) records the user-approved .NET
   product surface and exclusions for Pkl.
+* [PdfCube Product Goal](doc/targets/pdfbox/product-goal.md) and
+  [Port Scope](doc/targets/pdfbox/port-scope.md) define the synchronized,
+  mechanically translated Apache PDFBox library family.
 * [Architecture](doc/architecture.md) defines the end-to-end system and
   ownership boundaries.
 * [Technology](doc/technology.md) records the frontend and validation choices.

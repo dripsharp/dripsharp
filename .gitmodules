@@ -7,3 +7,6 @@
 [submodule "research/pdfbox"]
 	path = research/pdfbox
 	url = https://github.com/apache/pdfbox.git
+[submodule "research/SkiaSharp"]
+	path = research/SkiaSharp
+	url = https://github.com/mono/SkiaSharp.git

@@ -26,6 +26,8 @@ live under [`targets/`](targets/):
 
 * [Pkl](targets/pkl/) — a .NET library providing the approved Pkl product
   behavior.
+* [PdfCube](targets/pdfbox/) — mechanically translated .NET libraries tracking
+  the latest stable Apache PDFBox release.
 
 Adding a target does not alter another target's scope or exclusions. Temporary
 plans, implementation status, and milestone sequencing do not belong in these
