@@ -74,6 +74,39 @@
   (let [value (identifier value)]
     (str (str/upper-case (subs value 0 1)) (subs value 1))))
 
+(defn- csharp-public-name [value]
+  (let [escaped (identifier value)
+        prefix (when (str/starts-with? escaped "@") "@")
+        value (if prefix (subs escaped 1) escaped)
+        words (if (str/includes? value "_")
+                (remove str/blank? (str/split value #"_+"))
+                [value])
+        cased (apply str
+                     (map (fn [word]
+                            (let [word (if (re-matches #"[A-Z0-9]+" word)
+                                         (str/lower-case word)
+                                         word)]
+                              (str (str/upper-case (subs word 0 1))
+                                   (subs word 1))))
+                          words))]
+    (str prefix cased)))
+
+(defn- csharp-public-names? [ctx]
+  (= :csharp (get-in ctx [:configuration :name-policy :public-identifiers])))
+
+(defn- accessible-member? [member]
+  (and (instance? CtModifiable member)
+       (or (.hasModifier ^CtModifiable member ModifierKind/PUBLIC)
+           (.hasModifier ^CtModifiable member ModifierKind/PROTECTED))))
+
+(defn- ordinary-member-name [ctx member]
+  (let [source-name (.getSimpleName ^CtElement member)]
+    (if (and (csharp-public-names? ctx)
+             (or (accessible-member? member)
+                 (instance? CtEnumValue member)))
+      (csharp-public-name source-name)
+      (identifier source-name))))
+
 (defn- sequence-node
   ([nodes] (csharp/sequence-node (vec (remove nil? nodes))))
   ([nodes separator]
@@ -90,19 +123,22 @@
           (recur (.getDeclaringType ^CtType current))
           package)))))
 
+(defn- mapped-namespace [ctx package exact-key prefixes-key]
+  (or (get-in ctx [:configuration exact-key package])
+      (some (fn [[source destination]]
+              (when (or (= package source)
+                        (str/starts-with? package (str source ".")))
+                (let [suffix (subs package (count source))
+                      segments (remove str/blank? (str/split suffix #"\."))]
+                  (str destination
+                       (when (seq segments)
+                         (str "." (str/join "." (map pascal segments))))))))
+            (sort-by (comp - count key)
+                     (get-in ctx [:configuration prefixes-key])))))
+
 (defn- destination-namespace [ctx ^CtType type]
   (let [package (package-name type)]
-    (or (get-in ctx [:configuration :namespaces package])
-        (some (fn [[source destination]]
-                (when (or (= package source)
-                          (str/starts-with? package (str source ".")))
-                  (let [suffix (subs package (count source))
-                        segments (remove str/blank? (str/split suffix #"\."))]
-                    (str destination
-                         (when (seq segments)
-                           (str "." (str/join "." (map pascal segments))))))))
-              (sort-by (comp - count key)
-                       (get-in ctx [:configuration :namespace-prefixes])))
+    (or (mapped-namespace ctx package :namespaces :namespace-prefixes)
         (unsupported! "Java library has no destination namespace mapping" type))))
 
 (declare type-node body-context functional-expression-node)
@@ -166,6 +202,22 @@
        (str/join "." (map #(pascal (.getSimpleName ^CtType %))
                           (declaring-types declaration)))))
 
+(defn- reference-declaring-types [^CtTypeReference reference]
+  (loop [current reference result ()]
+    (if current
+      (recur (.getDeclaringType current) (conj result current))
+      (vec result))))
+
+(defn- translated-external-type-base [ctx ^CtTypeReference reference]
+  (let [package (some-> reference .getPackage .getQualifiedName)
+        namespace (mapped-namespace ctx package
+                                    :external-namespaces
+                                    :external-namespace-prefixes)]
+    (when namespace
+      (str "global::" namespace "."
+           (str/join "." (map #(pascal (.getSimpleName ^CtTypeReference %))
+                              (reference-declaring-types reference)))))))
+
 (defn- destination-type-parameter-name [^CtElement parameter]
   (let [base (identifier (.getSimpleName parameter))
         parent (when (.isParentInitialized parameter) (.getParent parameter))
@@ -195,7 +247,9 @@
         (unsupported! "Resolved project type has no live declaration" reference))
 
       :else
-      (or (java-types/mapping qualified)
+      (or (when-let [destination (translated-external-type-base ctx reference)]
+            [destination :dotnet.type/translated-project])
+          (java-types/mapping qualified)
           (unsupported! "Java library resolved type has no neutral mapping"
                         reference)))))
 
@@ -453,8 +507,10 @@
        (instance? Double value) (str value "D")
        :else (str value)))))
 
-(defn- destination-field-name [^CtField field]
-  (let [base (identifier (.getSimpleName field))
+(declare method-name)
+
+(defn- destination-field-name [ctx ^CtField field]
+  (let [base (ordinary-member-name ctx field)
         owner (.getDeclaringType field)
         method-collision?
         (and owner
@@ -464,7 +520,15 @@
       (let [reserved (->> (concat (.getFields ^CtType owner)
                                   (.getMethods ^CtType owner))
                           (remove #(identical? field %))
-                          (map #(identifier (.getSimpleName ^CtElement %)))
+                          (map #(cond
+                                  (instance? CtMethod %)
+                                  (method-name ctx owner %)
+
+                                  (instance? CtField %)
+                                  (ordinary-member-name ctx %)
+
+                                  :else
+                                  (identifier (.getSimpleName ^CtElement %))))
                           set)]
         (loop [suffix nil]
           (let [candidate (str "__field_" base suffix)]
@@ -472,18 +536,16 @@
               (recur (if suffix (inc suffix) 2))
               candidate)))))))
 
-(declare method-name)
-
-(defn- resolved-name [occurrence reference]
+(defn- resolved-name [ctx occurrence reference]
   (cond
     (= :project (:origin occurrence))
     (let [declaration (:declaration occurrence)]
       (cond
         (instance? CtField declaration)
-        (destination-field-name declaration)
+        (destination-field-name ctx declaration)
 
         (instance? CtMethod declaration)
-        (method-name (.getDeclaringType ^CtMethod declaration) declaration)
+        (method-name ctx (.getDeclaringType ^CtMethod declaration) declaration)
 
         :else
         (identifier (.getSimpleName ^CtElement reference))))
@@ -812,7 +874,7 @@
              (keyword "java-library.resolved.executable"
                       (name (:origin occurrence)))
              (fn [{:keys [element occurrence]}]
-               {:node (raw (resolved-name occurrence element))}))
+               {:node (raw (resolved-name @ctx-holder occurrence element))}))
 
             :constructors
             (registry-entry
@@ -895,7 +957,7 @@
              (keyword "java-library.resolved.field"
                       (name (:origin occurrence)))
              (fn [{:keys [element occurrence]}]
-               {:node (raw (resolved-name occurrence element))}))
+               {:node (raw (resolved-name @ctx-holder occurrence element))}))
 
             :annotations
             (registry-entry
@@ -2905,7 +2967,7 @@
               (when (instance? CtClass declaration)
                 (recur (.getSuperclass ^CtClass declaration)))))))))
 
-(defn- method-name [^CtType owner ^CtMethod method]
+(defn- method-name [ctx ^CtType owner ^CtMethod method]
   (cond
     (and (= "removeEldestEntry" (.getSimpleName method))
          (= 1 (count (.getParameters method)))
@@ -2934,16 +2996,16 @@
       "hasNext" "HasNext"
       "next" "Next"
       "remove" "Remove"
-      (identifier (.getSimpleName method)))
+      (ordinary-member-name ctx method))
 
     (x509-trust-manager-implementation? owner)
     (case (.getSimpleName method)
       "getAcceptedIssuers" "GetAcceptedIssuers"
       "checkServerTrusted" "CheckServerTrusted"
       "checkClientTrusted" "CheckClientTrusted"
-      (identifier (.getSimpleName method)))
+      (ordinary-member-name ctx method))
 
-    :else (identifier (.getSimpleName method))))
+    :else (ordinary-member-name ctx method)))
 
 (defn- destination-object-method? [^CtMethod method]
   (or (and (= "toString" (.getSimpleName method))
@@ -3105,7 +3167,7 @@
              (not (.isPrimitive (.getType field)))
              (not (resolved-annotation?
                    ctx field "annotation:javax.annotation.Nullable")))
-        name (destination-field-name field)
+        name (destination-field-name ctx field)
         rule (if enum-value?
                :java-library.declaration/enum-value
                :java-library.declaration/field)
@@ -3141,7 +3203,7 @@
                               (executable-anonymous-calls method))
         body (.getBody method)
         body-node (when body (translated-node ctx body))
-        name (method-name owner method)
+        name (method-name ctx owner method)
         rule :java-library.declaration/method
         id (register-member! ctx owner method name rule)
         method-node
@@ -3201,7 +3263,7 @@
                 (mapv
                  (fn [^CtField field]
                    (sequence-node
-                    [(raw (str "this." (destination-field-name field) " = "))
+                    [(raw (str "this." (destination-field-name ctx field) " = "))
                      (translated-node ctx (.getDefaultExpression field))
                      (raw ";")]))
                  deferred-fields)
@@ -3305,17 +3367,7 @@
 
 (defn- functional-reference-namespace [ctx ^CtTypeReference reference]
   (let [package (some-> reference .getPackage .getQualifiedName)]
-    (or (get-in ctx [:configuration :namespaces package])
-        (some (fn [[source destination]]
-                (when (or (= package source)
-                          (str/starts-with? package (str source ".")))
-                  (let [suffix (subs package (count source))
-                        segments (remove str/blank? (str/split suffix #"\."))]
-                    (str destination
-                         (when (seq segments)
-                           (str "." (str/join "." (map pascal segments))))))))
-              (sort-by (comp - count key)
-                       (get-in ctx [:configuration :namespace-prefixes])))
+    (or (mapped-namespace ctx package :namespaces :namespace-prefixes)
         (unsupported!
          (str "Java functional reference has no destination namespace mapping for "
               (.getQualifiedName reference) " in package " (pr-str package))
@@ -3373,7 +3425,7 @@
       delegate-type (raw " implementation;\n\ninternal ") (raw adapter-name)
       (raw "(") delegate-type (raw " implementation) {\nthis.implementation = implementation;\n}\n\npublic ")
       (declaration-type-node ctx method (.getType method))
-      (raw (str " " (method-name interface method) "("))
+      (raw (str " " (method-name ctx interface method) "("))
       (sequence-node parameter-nodes ", ")
       (raw ") {\n")
       (when-not void? (raw "return "))
@@ -3407,8 +3459,10 @@
 
 (defn- functional-adapter-node [ctx ^CtType type ^CtTypeReference interface]
   (let [method-name (case (.getQualifiedName interface)
-                      "java.util.concurrent.Callable" "call"
-                      "java.util.function.Supplier" "get")]
+                      "java.util.concurrent.Callable"
+                      (if (csharp-public-names? ctx) "Call" "call")
+                      "java.util.function.Supplier"
+                      (if (csharp-public-names? ctx) "Get" "get"))]
     (sequence-node
      [(raw "public static implicit operator ")
       (type-node ctx interface)

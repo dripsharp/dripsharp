@@ -1,0 +1,109 @@
+{:schema-version 1
+ :product-family :pdfcube
+ :pdfcube-product :pdfbox
+ :destination-bundle vibeformer.pdfcube.java-project/rule-bundle
+ :source-project-id "org.apache.pdfbox:pdfbox:3.0.8"
+ :project {:assembly-name "PdfCube.PdfBox"
+           :root-namespace "PdfCube.PdfBox"
+           :target-framework "net10.0"
+           :nullable "disable"
+           :implicit-usings false
+           :warnings-as-errors true}
+ :package {:id "PdfCube.PdfBox"
+           :version "3.0.8-vibeformer.0"
+           :title "PdfCube PDFBox"
+           :description "Apache PDFBox document, parsing, rendering, and manipulation APIs for .NET, mechanically translated by Vibeformer."
+           :authors "Apache PDFBox contributors,Vibeformer translation"
+           :tags "pdf pdfbox documents rendering parsing dotnet pdfcube"
+           :project-url "https://pdfbox.apache.org/"
+           :repository-url "https://github.com/apache/pdfbox.git"
+           :repository-type "git"
+           :repository-commit "9286e47d89d6877005c9d2d0f2fd38793a62519a"}
+ :output {:project-directory "generated/pdfcube-pdfbox"
+          :source-directory "src"
+          :resource-directory "resources"
+          :project-file "PdfCube.PdfBox.csproj"
+          :source-map-file "source-map.edn"
+          :diagnostics-file "diagnostics.edn"
+          :manifest-file "generation-manifest.edn"
+          :public-metadata-file "public-metadata.edn"
+          :annotation-decisions-file "annotation-decisions.edn"}
+ :name-policy {:public-identifiers :csharp
+               :methods :methods
+               :fields :fields
+               :overloads :overloads}
+ :namespaces {}
+ :namespace-prefixes {"org.apache.pdfbox" "PdfCube.PdfBox"}
+ :external-namespace-prefixes
+ {"org.apache.fontbox" "PdfCube.FontBox"
+  "org.apache.pdfbox.io" "PdfCube.IO"}
+ :resources {}
+ :resource-policy {:strategy :embedded-resource-preserve-path}
+ :project-dependencies
+ ["org.apache.pdfbox:fontbox:3.0.8"
+  "org.apache.pdfbox:pdfbox-io:3.0.8"]
+ :package-dependencies ["PdfCube.IO" "PdfCube.FontBox"]
+ :project-references
+ ["../pdfcube-io/PdfCube.IO.csproj"
+  "../pdfcube-fontbox/PdfCube.FontBox.csproj"]
+ :external-dependencies
+ {"commons-logging:commons-logging:jar:1.4.0"
+  {:source-scope :compile-runtime
+   :artifact-sha256 "d175dbd751dd782a63bde28c7a039520e971f25e84b79c19b8435edc3603e0dc"
+   :runtime-package true
+   :destination {:kind :microsoft-package
+                 :id "Microsoft.Extensions.Logging.Abstractions"
+                 :version "10.0.0"}}
+  "org.bouncycastle:bcpkix-jdk18on:jar:1.84"
+  {:source-scope :compile-runtime
+   :artifact-sha256 "c87f16ed9e5ec61bc94151e9f3646ac44e50cd448121ce84367fa4b7ec7ec1bb"
+   :runtime-package false
+   :destination
+   {:kind :bcl
+    :capabilities
+    ["System.Security.Cryptography.Pkcs"
+     "System.Formats.Asn1"
+     "System.Security.Cryptography.X509Certificates"]}}
+  "org.bouncycastle:bcprov-jdk18on:jar:1.84"
+  {:source-scope :compile-runtime
+   :artifact-sha256 "64d6c5a6121fcd927152dd182cbed39afe0fda641a970d9bcc0c9cb1858b2731"
+   :runtime-package false
+   :destination
+   {:kind :bcl
+    :capabilities
+    ["System.Security.Cryptography"
+     "System.Security.Cryptography.X509Certificates"]}}
+  "org.bouncycastle:bcutil-jdk18on:jar:1.84"
+  {:source-scope :compile-runtime
+   :artifact-sha256 "b374e16963421fb9cfb01cc20d7ad8fd2f8b8188e3eef0ec0a8965e245f7619a"
+   :runtime-package false
+   :destination
+   {:kind :bcl
+    :capabilities
+    ["System.Security.Cryptography"
+     "System.Formats.Asn1"]}}}
+ :runtime-packages
+ [{:id "Microsoft.Extensions.Logging.Abstractions"
+   :version "10.0.0"
+   :projection :microsoft-package}
+  {:id "SkiaSharp"
+   :version "4.150.1"
+   :projection :skia-sharp}]
+ :internal-capabilities
+ #{:icc :jbig2 :jpx :managed-raster :printing :skia-graphics :unicode-bidi}
+ :destination-capabilities #{:java-compat :java-regex-unicode}
+ :legal-files
+ [{:kind :license
+   :source "research/pdfbox/LICENSE.txt"
+   :destination "Legal/LICENSE.txt"
+   :package-path "LICENSE.txt"
+   :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
+  {:kind :notice
+   :source "research/pdfbox/NOTICE.txt"
+   :destination "Legal/NOTICE.txt"
+   :package-path "NOTICE.txt"
+   :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+ :public-surface
+ {:strategy vibeformer.pdfcube.java-project/public-surface-strategy
+  :contract-file "vibeformer/validation/pdfcube/pdfbox/UpstreamSurface.tsv"
+  :compiled-contract-file "vibeformer/validation/pdfcube/pdfbox/CompiledSurface.tsv"}}

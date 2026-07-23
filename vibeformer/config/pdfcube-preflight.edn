@@ -1,0 +1,11 @@
+{:schema-version 1
+ :profile "pdfcube-preflight"
+ :product-family :pdfcube
+ :project-root "research/pdfbox"
+ :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+ :build-tool :maven
+ :maven-project-id "org.apache.pdfbox:preflight:3.0.8"
+ :maven-selected-projects [":preflight"]
+ :destination-bundle vibeformer.pdfcube.java-project/rule-bundle
+ :destination-config "vibeformer/config/pdfcube-preflight-destination.edn"
+ :dependency-profiles ["pdfcube-pdfbox" "pdfcube-xmpbox"]}

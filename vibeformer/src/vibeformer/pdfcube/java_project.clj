@@ -1,0 +1,489 @@
+(ns vibeformer.pdfcube.java-project
+  "PdfCube destination composition and fail-closed five-package policy.
+
+  The reusable Java-library translator supplies structural Java translation.
+  This namespace owns only PdfCube's approved product identities, namespace and
+  public-name policy, source-to-destination dependency projections, legal
+  inputs, resource policy, and deterministic project metadata."
+  (:require [clojure.string :as str]
+            [vibeformer.java-library :as java-library]
+            [vibeformer.java-project :as project-emission]
+            [vibeformer.paths :as paths])
+  (:import [java.nio.file Files OpenOption Path]
+           [java.security MessageDigest]))
+
+(def ^:private source-revision
+  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+
+(def ^:private source-version "3.0.8")
+
+(def ^:private bundle-selector
+  'vibeformer.pdfcube.java-project/rule-bundle)
+
+(def ^:private surface-selector
+  'vibeformer.pdfcube.java-project/public-surface-strategy)
+
+(def ^:private commons-coordinate
+  "commons-logging:commons-logging:jar:1.4.0")
+
+(def ^:private commons-dependency
+  {:source-scope :compile-runtime
+   :artifact-sha256
+   "d175dbd751dd782a63bde28c7a039520e971f25e84b79c19b8435edc3603e0dc"
+   :runtime-package true
+   :destination
+   {:kind :microsoft-package
+    :id "Microsoft.Extensions.Logging.Abstractions"
+    :version "10.0.0"}})
+
+(def ^:private bouncy-dependencies
+  {"org.bouncycastle:bcpkix-jdk18on:jar:1.84"
+   {:source-scope :compile-runtime
+    :artifact-sha256
+    "c87f16ed9e5ec61bc94151e9f3646ac44e50cd448121ce84367fa4b7ec7ec1bb"
+    :runtime-package false
+    :destination
+    {:kind :bcl
+     :capabilities
+     ["System.Security.Cryptography.Pkcs"
+      "System.Formats.Asn1"
+      "System.Security.Cryptography.X509Certificates"]}}
+   "org.bouncycastle:bcprov-jdk18on:jar:1.84"
+   {:source-scope :compile-runtime
+    :artifact-sha256
+    "64d6c5a6121fcd927152dd182cbed39afe0fda641a970d9bcc0c9cb1858b2731"
+    :runtime-package false
+    :destination
+    {:kind :bcl
+     :capabilities
+     ["System.Security.Cryptography"
+      "System.Security.Cryptography.X509Certificates"]}}
+   "org.bouncycastle:bcutil-jdk18on:jar:1.84"
+   {:source-scope :compile-runtime
+    :artifact-sha256
+    "b374e16963421fb9cfb01cc20d7ad8fd2f8b8188e3eef0ec0a8965e245f7619a"
+    :runtime-package false
+    :destination
+    {:kind :bcl
+     :capabilities
+     ["System.Security.Cryptography"
+      "System.Formats.Asn1"]}}})
+
+(def ^:private logging-package
+  {:id "Microsoft.Extensions.Logging.Abstractions"
+   :version "10.0.0"
+   :projection :microsoft-package})
+
+(def ^:private skia-package
+  {:id "SkiaSharp"
+   :version "4.150.1"
+   :projection :skia-sharp})
+
+(def ^:private legal-files
+  [{:kind :license
+    :source "research/pdfbox/LICENSE.txt"
+    :destination "Legal/LICENSE.txt"
+    :package-path "LICENSE.txt"
+    :sha256
+    "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
+   {:kind :notice
+    :source "research/pdfbox/NOTICE.txt"
+    :destination "Legal/NOTICE.txt"
+    :package-path "NOTICE.txt"
+    :sha256
+    "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}])
+
+(def ^:private products
+  (array-map
+   :io
+   {:profile "pdfcube-io"
+    :destination-config "vibeformer/config/pdfcube-io-destination.edn"
+    :maven-selector ":pdfbox-io"
+    :source-project-id "org.apache.pdfbox:pdfbox-io:3.0.8"
+    :package-id "PdfCube.IO"
+    :namespace-prefixes {"org.apache.pdfbox.io" "PdfCube.IO"}
+    :external-namespace-prefixes {}
+    :dependency-profiles []
+    :source-project-dependencies []
+    :package-dependencies []
+    :project-references []
+    :external-dependencies {commons-coordinate commons-dependency}
+    :runtime-packages [logging-package]
+    :internal-capabilities #{:java-io :java-nio}
+    :destination-capabilities #{:java-compat :java-regex-unicode}}
+
+   :fontbox
+   {:profile "pdfcube-fontbox"
+    :destination-config "vibeformer/config/pdfcube-fontbox-destination.edn"
+    :maven-selector ":fontbox"
+    :source-project-id "org.apache.pdfbox:fontbox:3.0.8"
+    :package-id "PdfCube.FontBox"
+    :namespace-prefixes {"org.apache.fontbox" "PdfCube.FontBox"}
+    :external-namespace-prefixes {"org.apache.pdfbox.io" "PdfCube.IO"}
+    :dependency-profiles ["pdfcube-io"]
+    :source-project-dependencies ["org.apache.pdfbox:pdfbox-io:3.0.8"]
+    :package-dependencies ["PdfCube.IO"]
+    :project-references ["../pdfcube-io/PdfCube.IO.csproj"]
+    :external-dependencies {commons-coordinate commons-dependency}
+    :runtime-packages [logging-package skia-package]
+    :internal-capabilities #{:font-discovery :skia-geometry}
+    :destination-capabilities #{:java-compat :java-regex-unicode}}
+
+   :xmpbox
+   {:profile "pdfcube-xmpbox"
+    :destination-config "vibeformer/config/pdfcube-xmpbox-destination.edn"
+    :maven-selector ":xmpbox"
+    :source-project-id "org.apache.pdfbox:xmpbox:3.0.8"
+    :package-id "PdfCube.XmpBox"
+    :namespace-prefixes {"org.apache.xmpbox" "PdfCube.XmpBox"}
+    :external-namespace-prefixes {}
+    :dependency-profiles []
+    :source-project-dependencies []
+    :package-dependencies []
+    :project-references []
+    :external-dependencies {commons-coordinate commons-dependency}
+    :runtime-packages [logging-package]
+    :internal-capabilities #{:xml}
+    :destination-capabilities #{:java-compat :java-regex-unicode}}
+
+   :pdfbox
+   {:profile "pdfcube-pdfbox"
+    :destination-config "vibeformer/config/pdfcube-pdfbox-destination.edn"
+    :maven-selector ":pdfbox"
+    :source-project-id "org.apache.pdfbox:pdfbox:3.0.8"
+    :package-id "PdfCube.PdfBox"
+    :namespace-prefixes {"org.apache.pdfbox" "PdfCube.PdfBox"}
+    :external-namespace-prefixes
+    {"org.apache.fontbox" "PdfCube.FontBox"
+     "org.apache.pdfbox.io" "PdfCube.IO"}
+    :dependency-profiles ["pdfcube-io" "pdfcube-fontbox"]
+    :source-project-dependencies
+    ["org.apache.pdfbox:fontbox:3.0.8"
+     "org.apache.pdfbox:pdfbox-io:3.0.8"]
+    :package-dependencies ["PdfCube.IO" "PdfCube.FontBox"]
+    :project-references
+    ["../pdfcube-io/PdfCube.IO.csproj"
+     "../pdfcube-fontbox/PdfCube.FontBox.csproj"]
+    :external-dependencies
+    (assoc bouncy-dependencies commons-coordinate commons-dependency)
+    :runtime-packages [logging-package skia-package]
+    :internal-capabilities
+    #{:icc :jbig2 :jpx :managed-raster :printing :skia-graphics :unicode-bidi}
+    :destination-capabilities #{:java-compat :java-regex-unicode}}
+
+   :preflight
+   {:profile "pdfcube-preflight"
+    :destination-config "vibeformer/config/pdfcube-preflight-destination.edn"
+    :maven-selector ":preflight"
+    :source-project-id "org.apache.pdfbox:preflight:3.0.8"
+    :package-id "PdfCube.Preflight"
+    :namespace-prefixes {"org.apache.pdfbox.preflight" "PdfCube.Preflight"}
+    :external-namespace-prefixes
+    {"org.apache.fontbox" "PdfCube.FontBox"
+     "org.apache.pdfbox.io" "PdfCube.IO"
+     "org.apache.pdfbox" "PdfCube.PdfBox"
+     "org.apache.xmpbox" "PdfCube.XmpBox"}
+    :dependency-profiles ["pdfcube-pdfbox" "pdfcube-xmpbox"]
+    :source-project-dependencies
+    ["org.apache.pdfbox:fontbox:3.0.8"
+     "org.apache.pdfbox:pdfbox-io:3.0.8"
+     "org.apache.pdfbox:pdfbox:3.0.8"
+     "org.apache.pdfbox:xmpbox:3.0.8"]
+    :package-dependencies ["PdfCube.PdfBox" "PdfCube.XmpBox"]
+    :project-references
+    ["../pdfcube-pdfbox/PdfCube.PdfBox.csproj"
+     "../pdfcube-xmpbox/PdfCube.XmpBox.csproj"]
+    :external-dependencies {commons-coordinate commons-dependency}
+    :runtime-packages [logging-package skia-package]
+    :internal-capabilities #{:icc :managed-raster :skia-graphics}
+    :destination-capabilities #{:java-compat :java-regex-unicode}}))
+
+(defn product-family
+  "Returns the deterministic five-package PdfCube configuration contract."
+  []
+  {:schema-version 1
+   :product-family :pdfcube
+   :source-version source-version
+   :source-revision source-revision
+   :products products})
+
+(defn- fail! [message data]
+  (throw (ex-info message (assoc data :kind (or (:kind data)
+                                                :invalid-pdfcube-configuration)))))
+
+(defn- product! [configuration]
+  (let [key (:pdfcube-product configuration)
+        product (get products key)]
+    (when-not product
+      (fail! "PdfCube configuration does not select one of the five products"
+             {:kind :unknown-pdfcube-product
+              :pdfcube-product key
+              :available (vec (keys products))}))
+    product))
+
+(defn- exact! [message field expected actual]
+  (when-not (= expected actual)
+    (fail! message {:field field :expected expected :actual actual})))
+
+(def ^:private allowed-projection-kinds
+  #{:bcl :internal-capability :microsoft-package :skia-sharp
+    :translated-source})
+
+(defn- validate-dependency-projections! [configuration]
+  (let [external (:external-dependencies configuration)
+        runtime-packages (:runtime-packages configuration)
+        runtime-by-id (into {} (map (juxt :id identity)) runtime-packages)]
+    (doseq [[coordinate {:keys [runtime-package destination]}] external]
+      (when-not (and (map? destination)
+                     (contains? allowed-projection-kinds (:kind destination)))
+        (fail! "PdfCube source dependency has no approved destination projection"
+               {:kind :unsupported-pdfcube-dependency-projection
+                :coordinate coordinate :destination destination}))
+      (if runtime-package
+        (let [{:keys [id version]} destination
+              runtime (get runtime-by-id id)]
+          (when-not (and (contains? #{:microsoft-package :skia-sharp}
+                                    (:kind destination))
+                         (= version (:version runtime)))
+            (fail! "PdfCube runtime dependency projection is missing or inconsistent"
+                   {:kind :unapproved-pdfcube-runtime-dependency
+                    :coordinate coordinate :destination destination
+                    :runtime-package runtime})))
+        (when (contains? #{:microsoft-package :skia-sharp} (:kind destination))
+          (fail! "PdfCube package projection must be marked as a runtime package"
+                 {:kind :invalid-pdfcube-runtime-projection
+                  :coordinate coordinate :destination destination}))))
+    (doseq [{:keys [id version projection] :as dependency} runtime-packages]
+      (when-not
+       (or (= logging-package dependency)
+           (= skia-package dependency))
+        (fail! "PdfCube destination requested an unapproved runtime package"
+               {:kind :unapproved-pdfcube-runtime-dependency
+                :dependency dependency}))
+      (when-not (case projection
+                  :microsoft-package
+                  (and (= "Microsoft.Extensions.Logging.Abstractions" id)
+                       (= "10.0.0" version))
+                  :skia-sharp
+                  (and (= "SkiaSharp" id) (= "4.150.1" version))
+                  false)
+        (fail! "PdfCube runtime package version or provider is not approved"
+               {:kind :unapproved-pdfcube-runtime-dependency
+                :dependency dependency}))))
+  configuration)
+
+(defn validate-configuration!
+  "Validates common project structure plus the exact selected PdfCube product."
+  [configuration]
+  (project-emission/validate-configuration! configuration)
+  (let [product (product! configuration)
+        package-id (:package-id product)]
+    (validate-dependency-projections! configuration)
+    (exact! "PdfCube destination must target net10.0"
+            [:project :target-framework] "net10.0"
+            (get-in configuration [:project :target-framework]))
+    (exact! "PdfCube destination must disable nullable reference types"
+            [:project :nullable] "disable"
+            (get-in configuration [:project :nullable]))
+    (exact! "PdfCube destination must treat warnings as errors"
+            [:project :warnings-as-errors] true
+            (get-in configuration [:project :warnings-as-errors]))
+    (exact! "PdfCube destination must use explicit usings"
+            [:project :implicit-usings] false
+            (get-in configuration [:project :implicit-usings]))
+    (exact! "PdfCube public names must use C# casing without changing member kinds"
+            :name-policy
+            {:public-identifiers :csharp
+             :methods :methods
+             :fields :fields
+             :overloads :overloads}
+            (:name-policy configuration))
+    (doseq [[field actual]
+            [[:product-family (:product-family configuration)]
+             [:destination-bundle (:destination-bundle configuration)]
+             [[:project :assembly-name]
+              (get-in configuration [:project :assembly-name])]
+             [[:project :root-namespace]
+              (get-in configuration [:project :root-namespace])]
+             [[:package :id] (get-in configuration [:package :id])]
+             [[:package :version] (get-in configuration [:package :version])]
+             [[:package :repository-commit]
+              (get-in configuration [:package :repository-commit])]
+             [:source-project-id (:source-project-id configuration)]
+             [:namespaces (:namespaces configuration)]
+             [:namespace-prefixes (:namespace-prefixes configuration)]
+             [:external-namespace-prefixes
+              (:external-namespace-prefixes configuration)]
+             [:project-dependencies (:project-dependencies configuration)]
+             [:package-dependencies (:package-dependencies configuration)]
+             [:project-references (:project-references configuration)]
+             [:external-dependencies (:external-dependencies configuration)]
+             [:runtime-packages (:runtime-packages configuration)]
+             [:internal-capabilities (:internal-capabilities configuration)]
+             [:destination-capabilities
+              (:destination-capabilities configuration)]
+             [:legal-files (:legal-files configuration)]
+             [:resource-policy (:resource-policy configuration)]]]
+      (let [expected
+            (case field
+              :product-family :pdfcube
+              :destination-bundle bundle-selector
+              [:project :assembly-name] package-id
+              [:project :root-namespace] package-id
+              [:package :id] package-id
+              [:package :version] "3.0.8-vibeformer.0"
+              [:package :repository-commit] source-revision
+              :source-project-id (:source-project-id product)
+              :namespaces {}
+              :namespace-prefixes (:namespace-prefixes product)
+              :external-namespace-prefixes
+              (:external-namespace-prefixes product)
+              :project-dependencies (:source-project-dependencies product)
+              :package-dependencies (:package-dependencies product)
+              :project-references (:project-references product)
+              :external-dependencies (:external-dependencies product)
+              :runtime-packages (:runtime-packages product)
+              :internal-capabilities (:internal-capabilities product)
+              :destination-capabilities (:destination-capabilities product)
+              :legal-files legal-files
+              :resource-policy {:strategy :embedded-resource-preserve-path})]
+        (exact! "PdfCube destination differs from its approved product contract"
+                field expected actual)))
+    (exact! "PdfCube public-surface strategy must remain target-specific"
+            [:public-surface :strategy] surface-selector
+            (get-in configuration [:public-surface :strategy]))
+    configuration))
+
+(defn- digest-file [^Path input]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (with-open [stream (Files/newInputStream input (make-array OpenOption 0))]
+      (let [buffer (byte-array 16384)]
+        (loop [read (.read stream buffer)]
+          (when-not (neg? read)
+            (when (pos? read)
+              (.update digest buffer 0 read))
+            (recur (.read stream buffer))))))
+    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+
+(defn- validate-legal-inputs! [workspace-root configuration]
+  (doseq [{:keys [kind source sha256]} (:legal-files configuration)]
+    (let [file (paths/resolve-path (paths/absolute workspace-root) source)]
+      (when-not (paths/regular-file? file)
+        (fail! "Configured PdfCube license or notice input is missing"
+               {:kind :missing-pdfcube-legal-input
+                :legal-kind kind :path (str file)}))
+      (let [actual (digest-file file)]
+        (when-not (= sha256 actual)
+          (fail! "Configured PdfCube license or notice input changed"
+                 {:kind :pdfcube-legal-input-mismatch
+                  :legal-kind kind :path (str file)
+                  :expected sha256 :actual actual})))))
+  configuration)
+
+(defn- validate-profile! [{:keys [workspace-root profile configuration]}]
+  (let [configuration (validate-configuration! configuration)
+        product (product! configuration)
+        expected
+        {:schema-version 1
+         :profile (:profile product)
+         :product-family :pdfcube
+         :project-root "research/pdfbox"
+         :revision source-revision
+         :build-tool :maven
+         :maven-project-id (:source-project-id product)
+         :maven-selected-projects [(:maven-selector product)]
+         :destination-bundle bundle-selector
+         :destination-config (:destination-config product)
+         :dependency-profiles (:dependency-profiles product)}
+        actual (select-keys profile (keys expected))]
+    (when-not (= expected actual)
+      (fail! "PdfCube generation profile differs from the approved product contract"
+             {:kind :invalid-pdfcube-profile
+              :expected expected :actual actual}))
+    (validate-legal-inputs! workspace-root configuration)))
+
+(defn- validate-project-input!
+  [{:keys [project-input configuration] :as context}]
+  (let [base-validator
+        (get-in (java-library/rule-bundle)
+                [:orchestration :validate-project-input!])]
+    (base-validator context)
+    (exact! "Maven selected the wrong PdfCube source project"
+            :source-project-id (:source-project-id configuration)
+            (:project-id project-input))
+    project-input))
+
+(defn- xml-escape [value]
+  (-> (str value)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")
+      (str/replace "\"" "&quot;")
+      (str/replace "'" "&apos;")))
+
+(defn- project-text [configuration resource-artifacts]
+  (let [base-text (project-emission/project-text configuration resource-artifacts)
+        source-directory (get-in configuration [:output :source-directory])
+        license (some #(when (= :license (:kind %)) %) (:legal-files configuration))
+        properties
+        (str "    <PackageLicenseFile>"
+             (xml-escape (:package-path license))
+             "</PackageLicenseFile>\n")
+        items
+        (str
+         (apply str
+                (for [{:keys [id version]} (sort-by :id (:runtime-packages configuration))]
+                  (str "    <PackageReference Include=\"" (xml-escape id)
+                       "\" Version=\"" (xml-escape version) "\" />\n")))
+         (apply str
+                (for [{:keys [destination package-path]}
+                      (sort-by :package-path (:legal-files configuration))]
+                  (str "    <None Include=\"" (xml-escape source-directory) "/"
+                       (xml-escape destination)
+                       "\" Pack=\"true\" PackagePath=\""
+                       (xml-escape package-path) "\" />\n"))))]
+    (-> base-text
+        (str/replace "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
+                     (str properties
+                          "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"))
+        (str/replace "  </ItemGroup>\n</Project>\n"
+                     (str items "  </ItemGroup>\n</Project>\n")))))
+
+(defn- legal-assets [{:keys [workspace-root configuration]}]
+  (validate-legal-inputs! workspace-root configuration)
+  (mapv (fn [{:keys [kind source destination]}]
+          {:source source
+           :destination destination
+           :strategy (keyword "pdfcube.legal" (name kind))
+           :missing-kind :missing-pdfcube-legal-input
+           :missing-message "Configured PdfCube license or notice input is missing"})
+        (:legal-files configuration)))
+
+(defn rule-bundle
+  "Returns the PdfCube rule bundle composed over reusable Java-library rules."
+  []
+  (let [base (java-library/rule-bundle)
+        base-assets (get-in base [:rules :destination-bridges :assets])]
+    (-> base
+        (assoc :id :pdfcube
+               :product-family :pdfcube
+               :orchestration
+               {:validate-profile! validate-profile!
+                :validate-project-input! validate-project-input!})
+        (assoc-in [:rules :project-policy]
+                  {:validate-configuration! validate-configuration!
+                   :project-text project-text})
+        (assoc-in [:rules :destination-bridges :assets]
+                  (fn [context]
+                    (into (base-assets context) (legal-assets context)))))))
+
+(defn public-surface-strategy
+  "Provides the target-family wrapper used by the five configurations.
+
+  The underlying complete accessible-library strategy remains fail closed.
+  The follow-on public-surface task owns its build-tool-neutral derivation and
+  compiled metadata refinements."
+  []
+  (assoc (java-library/public-surface-strategy)
+         :id :pdfcube-complete-accessible-library
+         :product-family :pdfcube))

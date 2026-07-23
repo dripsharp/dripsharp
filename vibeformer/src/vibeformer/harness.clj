@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [vibeformer.concurrency :as concurrency]
             [vibeformer.java-project :as java-project]
+            [vibeformer.maven :as maven]
             [vibeformer.paths :as paths]
             [vibeformer.project :as project]
             [vibeformer.project-input :as project-input]
@@ -21,7 +22,52 @@
     :destination-bundle 'vibeformer.pkl.java-project/rule-bundle
     :destination-config "vibeformer/config/pkl-parser.edn"}
    "pkl-core-value-model"
-   {:configuration-file "vibeformer/config/pkl-core-value-model.edn"}})
+   {:configuration-file "vibeformer/config/pkl-core-value-model.edn"}
+   "pdfcube-io"
+   {:configuration-file "vibeformer/config/pdfcube-io.edn"}
+   "pdfcube-fontbox"
+   {:configuration-file "vibeformer/config/pdfcube-fontbox.edn"}
+   "pdfcube-xmpbox"
+   {:configuration-file "vibeformer/config/pdfcube-xmpbox.edn"}
+   "pdfcube-pdfbox"
+   {:configuration-file "vibeformer/config/pdfcube-pdfbox.edn"}
+   "pdfcube-preflight"
+   {:configuration-file "vibeformer/config/pdfcube-preflight.edn"}})
+
+(defn- non-blank-string? [value]
+  (and (string? value) (not (str/blank? value))))
+
+(defn- valid-gradle-profile? [profile]
+  (and (contains? #{nil :gradle} (:build-tool profile))
+       (re-matches
+        #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$"
+        (:gradle-project profile))
+       (or (nil? (:gradle-wrapper profile))
+           (non-blank-string? (:gradle-wrapper profile)))
+       (or (nil? (:gradle-java-major profile))
+           (and (integer? (:gradle-java-major profile))
+                (pos? (:gradle-java-major profile))))
+       (not-any? #(contains? profile %)
+                 [:maven-project-id :maven-selected-projects :maven-pom-file])))
+
+(defn- valid-maven-profile? [profile]
+  (and (= :maven (:build-tool profile))
+       (non-blank-string? (:maven-project-id profile))
+       (boolean
+        (re-matches #"[^:\\s]+:[^:\\s]+:[^:\\s]+"
+                    (:maven-project-id profile)))
+       (vector? (:maven-selected-projects profile))
+       (seq (:maven-selected-projects profile))
+       (= (count (:maven-selected-projects profile))
+          (count (distinct (:maven-selected-projects profile))))
+       (every? #(and (non-blank-string? %)
+                     (not (str/starts-with? % "-"))
+                     (not (str/includes? % ",")))
+               (:maven-selected-projects profile))
+       (or (nil? (:maven-pom-file profile))
+           (non-blank-string? (:maven-pom-file profile)))
+       (not-any? #(contains? profile %)
+                 [:gradle-project :gradle-wrapper :gradle-java-major])))
 
 (defn read-profile
   "Reads and validates an explicit generation profile. Profile configuration
@@ -56,14 +102,8 @@
                      (not (str/blank? (:project-root profile)))
                      (let [selector (:destination-bundle profile)]
                        (and (symbol? selector) (namespace selector)))
-                     (re-matches #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$"
-                                 (:gradle-project profile))
-                     (or (nil? (:gradle-wrapper profile))
-                         (and (string? (:gradle-wrapper profile))
-                              (not (str/blank? (:gradle-wrapper profile)))))
-                     (or (nil? (:gradle-java-major profile))
-                         (and (integer? (:gradle-java-major profile))
-                              (pos? (:gradle-java-major profile))))
+                     (or (valid-gradle-profile? profile)
+                         (valid-maven-profile? profile))
                      (or (nil? (:revision profile))
                          (and (string? (:revision profile))
                               (not (str/blank? (:revision profile)))))
@@ -167,8 +207,36 @@
 
 (defn- project-options
   [profile]
-  (select-keys profile [:project-root :gradle-wrapper :gradle-project
-                        :gradle-java-major]))
+  (case (or (:build-tool profile) :gradle)
+    :gradle
+    (assoc (select-keys profile [:project-root :gradle-wrapper :gradle-project
+                                 :gradle-java-major])
+           :build-tool :gradle)
+
+    :maven
+    (cond-> {:build-tool :maven
+             :project-root (:project-root profile)
+             :maven-project-id (:maven-project-id profile)
+             :selected-projects (:maven-selected-projects profile)}
+      (:maven-pom-file profile)
+      (assoc :pom-file (:maven-pom-file profile)))))
+
+(defn discover-project!
+  "Dispatches a validated generation profile to its build-tool backend and
+  returns exactly one neutral Java project input."
+  [{:keys [build-tool maven-project-id] :as options}]
+  (case (or build-tool :gradle)
+    :gradle
+    (project/discover-main! (dissoc options :build-tool))
+
+    :maven
+    (-> (maven/discover-reactor!
+         (dissoc options :build-tool :maven-project-id))
+        (maven/project-by-id! maven-project-id))
+
+    (throw (ex-info "Unsupported generation-profile build tool"
+                    {:kind :unsupported-project-discovery-backend
+                     :build-tool build-tool}))))
 
 (defn- manifest-name
   [prefix profile-name]
@@ -309,7 +377,7 @@
            build-resolved-model-fn build-resolved-closure-fn
            read-profile-fn read-destination-fn emit-project-fn]
     :or {verify-checkout-fn project/verify-checkout!
-         discover-main-fn project/discover-main!
+         discover-main-fn discover-project!
          validate-project-input-fn project-input/validate!
          build-resolved-model-fn spoon/build-resolved-model!
          build-resolved-closure-fn spoon/build-resolved-closure!
