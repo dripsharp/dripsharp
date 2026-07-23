@@ -224,6 +224,73 @@
     (is (= :package-consumption-failed (:kind (ex-data error))))
     (is (not= (:first (ex-data error)) (:second (ex-data error))))))
 
+(defn- dag-package-destination
+  [profile dependencies references]
+  {:project {:assembly-name (str "Package." profile)
+             :target-framework "net10.0"}
+   :package {:id (str "Package." profile)
+             :version "1.0.0"}
+   :package-dependencies (mapv #(str "Package." %) dependencies)
+   :project-references references
+   :runtime-packages []
+   :legal-files []})
+
+(deftest package-plan-preserves-direct-edges-and-includes-the-transitive-dag
+  (let [emission
+        (fn [profile dependencies references]
+          {:profile profile
+           :dependency-profiles dependencies
+           :destination
+           (dag-package-destination profile dependencies references)
+           :project-root (Paths/get (str "/generated/" profile)
+                                    (make-array String 0))
+           :project-file
+           (Paths/get (str "/generated/" profile "/" profile ".csproj")
+                      (make-array String 0))
+           :resource-artifacts []})
+        dependency-emissions
+        [(emission "io" [] [])
+         (emission "fontbox" ["io"] ["../io/io.csproj"])
+         (emission "pdfbox" ["io" "fontbox"]
+                   ["../io/io.csproj" "../fontbox/fontbox.csproj"])
+         (emission "xmpbox" [] [])]
+        main
+        (emission "preflight" ["pdfbox" "xmpbox"]
+                  ["../pdfbox/pdfbox.csproj" "../xmpbox/xmpbox.csproj"])
+        specs
+        (#'packaging/package-specs
+         {:generation-profile {:profile "preflight"}
+          :dependency-profiles ["pdfbox" "xmpbox"]
+          :dependency-emissions dependency-emissions
+          :destination (:destination main)
+          :emission (dissoc main :profile :dependency-profiles
+                            :destination)})
+        dependency-ids
+        (into
+         {}
+         (map
+          (fn [{:keys [profile expected-dependencies]}]
+            [profile (mapv :id expected-dependencies)]))
+         specs)
+        assembly-dependencies
+        (into
+         {}
+         (map
+          (fn [{:keys [profile expected-assembly-dependencies]}]
+            [profile (mapv :package-id expected-assembly-dependencies)]))
+         specs)]
+    (is (= ["io" "fontbox" "pdfbox" "xmpbox" "preflight"]
+           (mapv :profile specs)))
+    (is (= {"io" []
+            "fontbox" ["Package.io"]
+            "pdfbox" ["Package.fontbox" "Package.io"]
+            "xmpbox" []
+            "preflight" ["Package.pdfbox" "Package.xmpbox"]}
+           dependency-ids))
+    (is (= dependency-ids assembly-dependencies))
+    (is (= [false false false false true]
+           (mapv :primary? specs)))))
+
 (deftest package-inspection-requires-exact-release-layout
   (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
                                     "lib/net8.0/Pkl.Parser.dll" "assembly"})

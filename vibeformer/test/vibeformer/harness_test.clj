@@ -65,6 +65,17 @@
    :validate-generated! (fn [_ _] nil)
    :verify-compiled! (fn [& _] {})})
 
+(defn dag-test-surface-strategy []
+  {:schema-version 1 :id :dag-test-surface
+   :product-family :java-library
+   :read! (fn [_ _] nil)
+   :validate-selected! (fn [_ surface _] surface)
+   :validate-generated! (fn [_ _] nil)
+   :emission-boundary
+   (fn [_ dependency-emissions]
+     {:dependency-profiles (mapv :profile dependency-emissions)})
+   :verify-compiled! (fn [& _] {})})
+
 (defn- fake-destination [family bundle surface file]
   {:schema-version 1
    :product-family family
@@ -484,3 +495,189 @@
     (is (= ["dependency-b.edn" "dependency-a.edn"]
            (mapv #(get-in % [:destination :file]) (:dependency-emissions result))))
     (is (= 2 (count @dependency-threads)))))
+
+(defn- dag-profile
+  [profile dependencies]
+  {:schema-version 1
+   :profile profile
+   :product-family :java-library
+   :project-root "."
+   :gradle-project (str ":" profile)
+   :destination-bundle 'vibeformer.java-library/rule-bundle
+   :destination-config (str profile ".edn")
+   :dependency-profiles dependencies})
+
+(defn- dag-destination
+  [profile]
+  {:schema-version 1
+   :product-family :java-library
+   :destination-bundle 'vibeformer.java-library/rule-bundle
+   :project {:assembly-name (str "Package." profile)
+             :root-namespace (str "Package." profile)}
+   :package {:id (str "Package." profile)
+             :version "1.0.0"}
+   :output {:project-directory (str "generated/" profile)
+            :project-file (str profile ".csproj")}
+   :public-surface
+   {:strategy 'vibeformer.harness-test/dag-test-surface-strategy}})
+
+(defn- empty-model []
+  (spoon/map->ResolvedJavaModel
+   {:totals {:compilation-units 2 :project-types 0 :type-references 0
+             :executable-references 0 :constructor-references 0
+             :field-references 0 :annotations 0 :symbols 0
+             :shadow-symbols 0 :unresolved-symbols 0
+             :ambiguous-symbols 0 :fallback-symbols 0}}))
+
+(deftest transitive-project-dag-generates-each-project-once-in-topological-order
+  (let [root (temp-directory)
+        discovery (fixture-discovery root)
+        dependencies
+        {"io" []
+         "fontbox" ["io"]
+         "xmpbox" []
+         "pdfbox" ["io" "fontbox"]
+         "preflight" ["pdfbox" "xmpbox"]}
+        prepared (atom [])
+        destinations (atom [])
+        checkouts (atom [])
+        discoveries (atom [])
+        models (atom [])
+        emissions (atom {})
+        result
+        (harness/generate!
+         {:workspace-root root
+          :profile "preflight"
+          :worker-count 3
+          :read-profile-fn
+          (fn [_ profile]
+            (swap! prepared conj profile)
+            (dag-profile profile (get dependencies profile)))
+          :read-destination-fn
+          (fn [_ file]
+            (let [profile (subs file 0 (- (count file) 4))]
+              (swap! destinations conj profile)
+              (dag-destination profile)))
+          :verify-checkout-fn
+          (fn [{:keys [project-root revision]}]
+            (swap! checkouts conj project-root)
+            {:path project-root :revision revision})
+          :discover-main-fn
+          (fn [{:keys [gradle-project]}]
+            (let [profile (subs gradle-project 1)]
+              (swap! discoveries conj profile)
+              (assoc discovery :project-id gradle-project)))
+          :build-resolved-model-fn
+          (fn [_ input]
+            (swap! models conj (subs (:project-id input) 1))
+            (empty-model))
+          :emit-project-fn
+          (fn [{:keys [target project-input configuration
+                       public-api-boundary]}]
+            (let [profile (subs (:project-id project-input) 1)
+                  project-root
+                  (paths/resolve-path
+                   target (get-in configuration [:output :project-directory]))
+                  emission
+                  {:project-root project-root
+                   :project-file
+                   (paths/resolve-path
+                    project-root
+                    (get-in configuration [:output :project-file]))
+                   :summary {:compilation-units 2}}]
+              (swap! emissions assoc profile
+                     {:configuration configuration
+                      :boundary public-api-boundary})
+              emission))})]
+    (is (= ["io" "fontbox" "pdfbox" "xmpbox" "preflight"]
+           (get-in result [:project-graph :topological-order])))
+    (is (= ["io" "fontbox" "pdfbox" "xmpbox"]
+           (mapv :profile (:dependency-emissions result))))
+    (doseq [observed [@prepared @destinations @discoveries @models
+                      (keys @emissions)]]
+      (is (= (zipmap (keys dependencies) (repeat 1))
+             (frequencies observed))))
+    (is (= 5 (count @checkouts)))
+    (is (= ["io"] (get-in @emissions ["fontbox" :boundary
+                                      :dependency-profiles])))
+    (is (= ["io" "fontbox"]
+           (get-in @emissions ["pdfbox" :boundary :dependency-profiles])))
+    (is (= ["io" "fontbox" "pdfbox" "xmpbox"]
+           (get-in @emissions ["preflight" :boundary
+                               :dependency-profiles])))
+    (is (= ["../io/io.csproj" "../fontbox/fontbox.csproj"]
+           (get-in @emissions ["pdfbox" :configuration
+                               :project-references])))
+    (is (= ["Package.io" "Package.fontbox"]
+           (get-in @emissions ["pdfbox" :configuration
+                               :package-dependencies])))
+    (is (= ["../pdfbox/pdfbox.csproj" "../xmpbox/xmpbox.csproj"]
+           (get-in @emissions ["preflight" :configuration
+                               :project-references])))
+    (is (= ["Package.pdfbox" "Package.xmpbox"]
+           (get-in @emissions ["preflight" :configuration
+                               :package-dependencies])))))
+
+(deftest project-dependency-cycle-fails-before-checkout-or-output-cleanup
+  (let [root (temp-directory)
+        stale (create-file! root "vibeformer/target/stale/output.cs")
+        dependencies {"a" ["b"] "b" ["c"] "c" ["a"]}
+        prepared (atom [])
+        checkout? (atom false)
+        error
+        (try
+          (harness/generate!
+           {:workspace-root root
+            :profile "a"
+            :read-profile-fn
+            (fn [_ profile]
+              (swap! prepared conj profile)
+              (dag-profile profile (get dependencies profile)))
+            :read-destination-fn
+            (fn [_ file]
+              (dag-destination (subs file 0 (- (count file) 4))))
+            :verify-checkout-fn
+            (fn [_]
+              (reset! checkout? true)
+              (throw (ex-info "checkout must not run" {})))})
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :generation-profile-dependency-cycle (:kind (ex-data error))))
+    (is (= ["a" "b" "c" "a"] (:cycle (ex-data error))))
+    (is (= ["a" "b" "c"] @prepared))
+    (is (re-find #"a -> b -> c -> a" (.getMessage error)))
+    (is (false? @checkout?))
+    (is (paths/regular-file? stale))))
+
+(deftest declared-destination-references-must-match-the-resolved-graph
+  (let [root (temp-directory)
+        stale (create-file! root "vibeformer/target/stale/output.cs")
+        checkout? (atom false)
+        error
+        (try
+          (harness/generate!
+           {:workspace-root root
+            :profile "main"
+            :read-profile-fn
+            (fn [_ profile]
+              (dag-profile profile (if (= "main" profile) ["dependency"] [])))
+            :read-destination-fn
+            (fn [_ file]
+              (let [profile (subs file 0 (- (count file) 4))]
+                (cond-> (dag-destination profile)
+                  (= "main" profile)
+                  (assoc :project-references ["../wrong/Wrong.csproj"]))))
+            :verify-checkout-fn
+            (fn [_]
+              (reset! checkout? true)
+              (throw (ex-info "checkout must not run" {})))})
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :destination-dependency-graph-mismatch
+           (:kind (ex-data error))))
+    (is (= :project-references (:field (ex-data error))))
+    (is (= ["../dependency/dependency.csproj"]
+           (:expected (ex-data error))))
+    (is (= ["../wrong/Wrong.csproj"] (:actual (ex-data error))))
+    (is (false? @checkout?))
+    (is (paths/regular-file? stale))))

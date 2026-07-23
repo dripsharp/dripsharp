@@ -849,45 +849,89 @@
     (str "net" (first selected) "." (second selected))))
 
 (defn- package-specs [generation]
-  (let [dependency-specs
-        (mapv (fn [{:keys [profile destination] :as emission}]
-                (when-not destination
-                  (fail! "Dependency emission is missing its destination configuration"
-                         {:profile profile :emission (keys emission)}))
-                {:profile profile :emission emission :destination destination
-                 :expected-dependencies
-                 (mapv #(select-keys % [:id :version])
-                       (:runtime-packages destination))
-                 :expected-package-files
-                 (mapv (fn [{:keys [kind package-path sha256]}]
-                         {:kind kind :path package-path :sha256 sha256})
-                       (:legal-files destination))})
-              (:dependency-emissions generation))
-        translated-dependencies
-        (mapv #(get-in % [:destination :package]) dependency-specs)
-        destination (:destination generation)
-        expected-dependencies
-        (into translated-dependencies
-              (map #(select-keys % [:id :version])
-                   (:runtime-packages destination)))
-        expected-assembly-dependencies
-        (mapv (fn [{:keys [destination]}]
-                {:assembly-name (get-in destination [:project :assembly-name])
-                 :package-id (get-in destination [:package :id])
-                 :version (get-in destination [:package :version])
-                 :target-framework (get-in destination [:project :target-framework])})
-              dependency-specs)]
-    (conj dependency-specs
-          {:profile (get-in generation [:generation-profile :profile])
-           :emission (:emission generation)
-           :destination destination
-           :expected-dependencies expected-dependencies
-           :expected-package-files
-           (mapv (fn [{:keys [kind package-path sha256]}]
-                   {:kind kind :path package-path :sha256 sha256})
-                 (:legal-files destination))
-           :expected-assembly-dependencies expected-assembly-dependencies
-           :primary? true})))
+  (let [primary-profile (get-in generation [:generation-profile :profile])
+        dependency-emissions (:dependency-emissions generation)
+        main-emission
+        (assoc (:emission generation)
+               :profile primary-profile
+               :destination (:destination generation)
+               :dependency-profiles
+               (or (:dependency-profiles generation)
+                   (get-in generation
+                           [:generation-profile :dependency-profiles])
+                   (mapv :profile dependency-emissions)))
+        emissions (conj (vec dependency-emissions) main-emission)
+        by-profile
+        (reduce
+         (fn [result {:keys [profile destination] :as emission}]
+           (when-not (and (string? profile) destination)
+             (fail! "Project emission is missing its profile or destination configuration"
+                    {:profile profile :emission (keys emission)}))
+           (when (contains? result profile)
+             (fail! "Package plan contains a duplicate project emission"
+                    {:profile profile}))
+           (assoc result profile emission))
+         {}
+         emissions)]
+    (mapv
+     (fn [{:keys [profile destination dependency-profiles] :as emission}]
+       (let [dependency-profiles (or dependency-profiles [])
+             dependency-emissions
+             (mapv
+              (fn [dependency-profile]
+                (or (get by-profile dependency-profile)
+                    (fail! "Package plan is missing a direct project dependency"
+                           {:profile profile
+                            :dependency-profile dependency-profile
+                            :available (vec (sort (keys by-profile)))})))
+              dependency-profiles)
+             project-references (:project-references destination)
+             dependency-emissions
+             (if (= (count dependency-emissions)
+                    (count project-references))
+               (->> (map vector project-references dependency-emissions)
+                    (sort-by first)
+                    (mapv second))
+               dependency-emissions)
+             translated-dependencies
+             (mapv #(get-in % [:destination :package])
+                   dependency-emissions)
+             runtime-dependencies
+             (->> (:runtime-packages destination)
+                  (sort-by :id)
+                  (mapv #(select-keys % [:id :version])))
+             expected-dependencies
+             (into (mapv #(select-keys % [:id :version])
+                         translated-dependencies)
+                   runtime-dependencies)
+             expected-package-ids (mapv :id translated-dependencies)]
+         (when (and (contains? destination :package-dependencies)
+                    (not= (set expected-package-ids)
+                          (set (:package-dependencies destination))))
+           (fail! "Package dependencies differ from the resolved destination graph"
+                  {:profile profile
+                   :expected expected-package-ids
+                   :actual (:package-dependencies destination)}))
+         {:profile profile
+          :emission emission
+          :destination destination
+          :expected-dependencies expected-dependencies
+          :expected-package-files
+          (mapv (fn [{:keys [kind package-path sha256]}]
+                  {:kind kind :path package-path :sha256 sha256})
+                (:legal-files destination))
+          :expected-assembly-dependencies
+          (mapv
+           (fn [{dependency-destination :destination}]
+             {:assembly-name
+              (get-in dependency-destination [:project :assembly-name])
+              :package-id (get-in dependency-destination [:package :id])
+              :version (get-in dependency-destination [:package :version])
+              :target-framework
+              (get-in dependency-destination [:project :target-framework])})
+           dependency-emissions)
+          :primary? (= profile primary-profile)}))
+     emissions)))
 
 (defn- package-reproducibility-plan [specs]
   (mapv (fn [{:keys [profile destination expected-dependencies

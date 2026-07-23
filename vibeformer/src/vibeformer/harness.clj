@@ -358,6 +358,227 @@
        (public-surface/resolve-strategy! (:product-family profile)
                                          (:public-surface destination))})))
 
+(defn- dependency-cycle!
+  [stack profile-name]
+  (let [start (.indexOf ^java.util.List stack profile-name)
+        cycle (conj (subvec stack start) profile-name)]
+    (throw
+     (ex-info
+      (str "Generation profile dependency cycle: " (str/join " -> " cycle))
+      {:kind :generation-profile-dependency-cycle
+       :profile profile-name
+       :cycle cycle}))))
+
+(defn- resolve-profile-dag!
+  [root profile-name include-dependencies? read-profile-fn read-destination-fn]
+  (let [prepared-by-selector (atom {})
+        prepared-by-profile (atom {})
+        selector-by-profile (atom {})
+        dependencies (atom {})
+        states (atom {})
+        preparation-order (atom [])
+        topological-order (atom [])]
+    (letfn [(load! [selector]
+              (if-let [prepared (get @prepared-by-selector selector)]
+                prepared
+                (let [prepared
+                      (prepare-profile! root selector read-profile-fn
+                                        read-destination-fn)
+                      canonical (get-in prepared [:profile :profile])]
+                  (when-let [existing (get @prepared-by-profile canonical)]
+                    (when-not (= existing prepared)
+                      (throw
+                       (ex-info
+                        "Multiple generation-profile selectors resolve to conflicting projects"
+                        {:kind :conflicting-generation-profile
+                         :profile canonical
+                         :first-selector (get @selector-by-profile canonical)
+                         :second-selector selector}))))
+                  (swap! prepared-by-selector assoc selector prepared)
+                  (when-not (contains? @prepared-by-profile canonical)
+                    (swap! prepared-by-profile assoc canonical prepared)
+                    (swap! selector-by-profile assoc canonical selector)
+                    (swap! preparation-order conj canonical))
+                  (get @prepared-by-profile canonical))))
+            (visit! [selector stack]
+              (let [prepared (load! selector)
+                    canonical (get-in prepared [:profile :profile])]
+                (case (get @states canonical)
+                  :done canonical
+                  :visiting (dependency-cycle! stack canonical)
+                  (do
+                    (swap! states assoc canonical :visiting)
+                    (let [stack (conj stack canonical)
+                          dependency-names
+                          (if include-dependencies?
+                            (mapv
+                             (fn [dependency-selector]
+                               (let [dependency (load! dependency-selector)
+                                     dependency-name
+                                     (get-in dependency [:profile :profile])]
+                                 (when (= :visiting (get @states dependency-name))
+                                   (dependency-cycle! stack dependency-name))
+                                 (visit! dependency-selector stack)))
+                             (get-in prepared [:profile :dependency-profiles]))
+                            [])]
+                      (swap! dependencies assoc canonical dependency-names)
+                      (swap! states assoc canonical :done)
+                      (swap! topological-order conj canonical)
+                      canonical)))))]
+      (let [primary-profile (visit! profile-name [])
+            order @topological-order
+            level-by-profile
+            (reduce
+             (fn [levels profile]
+               (assoc levels profile
+                      (if-let [dependency-levels
+                               (seq (map levels (get @dependencies profile)))]
+                        (inc (apply max dependency-levels))
+                        0)))
+             {}
+             order)
+            levels
+            (->> order
+                 (group-by level-by-profile)
+                 (sort-by key)
+                 (mapv (comp vec val)))]
+        {:primary-profile primary-profile
+         :preparation-order @preparation-order
+         :topological-order order
+         :levels levels
+         :dependencies @dependencies
+         :prepared @prepared-by-profile}))))
+
+(defn- destination-project-path
+  [destination]
+  (let [directory (get-in destination [:output :project-directory])
+        file (get-in destination [:output :project-file])]
+    (when (and (non-blank-string? directory)
+               (non-blank-string? file))
+      (paths/resolve-path directory file))))
+
+(defn- resolved-project-reference
+  [destination dependency-destination]
+  (let [directory (get-in destination [:output :project-directory])
+        dependency-project
+        (destination-project-path dependency-destination)]
+    (when (and (non-blank-string? directory) dependency-project)
+      (-> (str (.relativize (paths/path directory) dependency-project))
+          (str/replace "\\" "/")))))
+
+(defn- validate-unique-destinations!
+  [graph]
+  (doseq [[field value-fn]
+          [[:project-file #(some-> (destination-project-path (:destination %))
+                                   str)]
+           [:package-id #(when (destination-project-path (:destination %))
+                           (get-in % [:destination :package :id]))]]
+          [value projects]
+          (sort-by
+           (comp str key)
+           (group-by value-fn
+                     (filter (comp non-blank-string? value-fn)
+                             (vals (:prepared graph)))))
+          :when (< 1 (count projects))]
+    (throw
+     (ex-info "Generation profiles resolve to the same destination identity"
+              {:kind :duplicate-generation-destination
+               :field field
+               :value value
+               :profiles
+               (->> projects
+                    (map #(get-in % [:profile :profile]))
+                    sort
+                    vec)})))
+  graph)
+
+(defn- resolve-destination-graph!
+  [graph]
+  (let [graph (validate-unique-destinations! graph)
+        prepared
+        (reduce
+         (fn [resolved profile-name]
+           (let [entry (get resolved profile-name)
+                 destination (:destination entry)
+                 dependency-entries
+                 (mapv resolved (get-in graph [:dependencies profile-name]))
+                 project-references-resolved?
+                 (and (destination-project-path destination)
+                      (every? #(destination-project-path (:destination %))
+                              dependency-entries))
+                 package-dependencies-resolved?
+                 (every? #(non-blank-string?
+                           (get-in % [:destination :package :id]))
+                         (cons entry dependency-entries))
+                 expected-project-references
+                 (when project-references-resolved?
+                   (mapv #(resolved-project-reference destination (:destination %))
+                         dependency-entries))
+                 expected-package-dependencies
+                 (when package-dependencies-resolved?
+                   (mapv #(get-in % [:destination :package :id])
+                         dependency-entries))]
+             (doseq [[field resolved? expected]
+                     [[:project-references project-references-resolved?
+                       expected-project-references]
+                      [:package-dependencies package-dependencies-resolved?
+                       expected-package-dependencies]]
+                     :when resolved?
+                     :when (contains? destination field)
+                     :let [actual (get destination field)]
+                     :when (not= expected actual)]
+               (throw
+                (ex-info
+                 "Destination references differ from the resolved generation-profile graph"
+                 {:kind :destination-dependency-graph-mismatch
+                  :profile profile-name
+                  :field field
+                  :expected expected
+                  :actual actual
+                  :dependency-profiles
+                  (get-in graph [:dependencies profile-name])})))
+             (assoc resolved profile-name
+                    (assoc entry :destination
+                           (cond-> destination
+                             project-references-resolved?
+                             (assoc :project-references
+                                    expected-project-references)
+                             package-dependencies-resolved?
+                             (assoc :package-dependencies
+                                    expected-package-dependencies))))))
+         (:prepared graph)
+         (:topological-order graph))]
+    (assoc graph :prepared prepared)))
+
+(defn- transitive-dependency-profiles
+  [graph profile-name]
+  (letfn [(closure [profile]
+            (reduce
+             (fn [result dependency]
+               (into (conj result dependency) (closure dependency)))
+             #{}
+             (get-in graph [:dependencies profile])))]
+    (let [dependencies (closure profile-name)]
+      (filterv dependencies (:topological-order graph)))))
+
+(defn- project-graph-data
+  [graph]
+  {:schema-version 1
+   :primary-profile (:primary-profile graph)
+   :topological-order (:topological-order graph)
+   :projects
+   (mapv
+    (fn [profile-name]
+      (let [destination
+            (get-in graph [:prepared profile-name :destination])]
+        {:profile profile-name
+         :dependency-profiles (get-in graph [:dependencies profile-name])
+         :project-reference-paths (:project-references destination)
+         :package-dependencies (:package-dependencies destination)
+         :project-file (some-> (destination-project-path destination) str)
+         :package-id (get-in destination [:package :id])}))
+    (:topological-order graph))})
+
 (defn- finish-emission!
   [selection surface emission destination]
   (if-not surface
@@ -367,6 +588,83 @@
                                    (get-in destination [:output :public-metadata-file]))]
       (spit (str file) (str (pr-str metadata) "\n"))
       (assoc emission :public-metadata-file file :public-metadata metadata))))
+
+(defn- generate-prepared-profile!
+  [{:keys [root target graph profile-name source-project dependency-emissions
+           discover-main-fn validate-project-input-fn build-resolved-model-fn
+           build-resolved-closure-fn emit-project-fn primary?]}]
+  (let [{generation-profile :profile
+         destination :destination
+         rule-bundle :rule-bundle
+         selection :public-surface-strategy}
+        (get-in graph [:prepared profile-name])
+        manifest
+        (paths/resolve-path
+         target
+         (if primary?
+           "gradle-main-inputs.tsv"
+           (manifest-name "gradle-main-inputs-" profile-name)))
+        input-model
+        (validate-project-input-fn
+         (discover-main-fn
+          (merge {:workspace-root root :manifest manifest}
+                 (project-options generation-profile))))
+        _ (when-let [validate!
+                     (get-in rule-bundle
+                             [:orchestration :validate-project-input!])]
+            (validate! {:workspace-root root
+                        :profile generation-profile
+                        :configuration destination
+                        :project-input input-model}))
+        config
+        (assoc (configuration root source-project input-model destination)
+               :generation-profile generation-profile)
+        surface (public-surface/read! selection root)
+        seeds (merge-seeds (:seeds generation-profile) (:seeds surface))
+        java-model
+        (if (seq seeds)
+          (build-resolved-closure-fn root input-model seeds)
+          (build-resolved-model-fn root input-model))
+        surface
+        (public-surface/validate-selected! selection root surface java-model)
+        emission-public-api-boundary
+        (public-surface/emission-boundary selection surface dependency-emissions)
+        emission
+        (finish-emission!
+         selection surface
+         (emit-project-fn {:workspace-root root
+                           :target target
+                           :project-input input-model
+                           :resolved-model java-model
+                           :public-api-boundary emission-public-api-boundary
+                           :configuration destination
+                           :rule-bundle rule-bundle})
+         destination)]
+    {:profile profile-name
+     :dependency-profiles (get-in graph [:dependencies profile-name])
+     :transitive-dependency-profiles
+     (transitive-dependency-profiles graph profile-name)
+     :source-project source-project
+     :project-input input-model
+     :configuration config
+     :java-model java-model
+     :public-api-boundary surface
+     :public-surface-strategy selection
+     :destination destination
+     :emission emission}))
+
+(defn- emission-record
+  [{:keys [profile dependency-profiles transitive-dependency-profiles
+           source-project public-api-boundary public-surface-strategy
+           destination emission]}]
+  (assoc emission
+         :profile profile
+         :dependency-profiles dependency-profiles
+         :transitive-dependency-profiles transitive-dependency-profiles
+         :source-project source-project
+         :public-api-boundary public-api-boundary
+         :public-surface-strategy public-surface-strategy
+         :destination destination))
 
 (defn- generate-with-executor!
   "Preflights an explicit product/destination plan, then cleans disposable
@@ -386,107 +684,64 @@
          emit-project-fn java-project/emit-project!}}]
   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
         profile-name (or profile "pkl-parser")
-        prepared (prepare-profile! root profile-name read-profile-fn read-destination-fn)
-        generation-profile (:profile prepared)
-        prepared-dependencies
-        (if (= false generate-dependencies?)
-          []
-          (mapv #(prepare-profile! root % read-profile-fn read-destination-fn)
-                (:dependency-profiles generation-profile)))
-        source-project (source-project! root generation-profile verify-checkout-fn)
-        dependency-prepared
-        (mapv (fn [prepared]
-                (assoc prepared
-                       :source-project
-                       (source-project! root (:profile prepared) verify-checkout-fn)))
-              prepared-dependencies)
+        include-dependencies? (not= false generate-dependencies?)
+        graph
+        (cond-> (resolve-profile-dag!
+                 root profile-name include-dependencies?
+                 read-profile-fn read-destination-fn)
+          include-dependencies? resolve-destination-graph!)
+        source-projects
+        (into
+         {}
+         (map
+          (fn [profile-name]
+            [profile-name
+             (source-project!
+              root (get-in graph [:prepared profile-name :profile])
+              verify-checkout-fn)]))
+         (:preparation-order graph))
         target (clean-directory! (paths/resolve-path root "vibeformer" "target"))
-        manifest (paths/resolve-path target "gradle-main-inputs.tsv")
-        input-model
-        (validate-project-input-fn
-         (discover-main-fn (merge {:workspace-root root :manifest manifest}
-                                  (project-options generation-profile))))
-        destination (:destination prepared)
-        _ (when-let [validate! (get-in prepared
-                                       [:rule-bundle :orchestration
-                                        :validate-project-input!])]
-            (validate! {:workspace-root root :profile generation-profile
-                        :configuration destination :project-input input-model}))
-        config (assoc (configuration root source-project input-model destination)
-                      :generation-profile generation-profile)
-        surface (public-surface/read! (:public-surface-strategy prepared) root)
-        seeds (merge-seeds (:seeds generation-profile) (:seeds surface))
-        java-model (if (seq seeds)
-                     (build-resolved-closure-fn root input-model seeds)
-                     (build-resolved-model-fn root input-model))
-        surface (public-surface/validate-selected!
-                 (:public-surface-strategy prepared) root surface java-model)
-        dependency-emissions
-        (concurrency/mapv-ordered
-         :dependency-profile-generation
-         (fn [{dependency-profile :profile
-               dependency-source-project :source-project
-               dependency-destination :destination
-               dependency-bundle :rule-bundle
-               dependency-selection :public-surface-strategy}]
-           (let [dependency-name (:profile dependency-profile)
-                 dependency-manifest
-                 (paths/resolve-path target
-                                     (manifest-name "gradle-main-inputs-"
-                                                    dependency-name))
-                 dependency-input
-                 (validate-project-input-fn
-                  (discover-main-fn
-                   (merge {:workspace-root root :manifest dependency-manifest}
-                          (project-options dependency-profile))))
-                 _ (when-let [validate! (get-in dependency-bundle
-                                                [:orchestration
-                                                 :validate-project-input!])]
-                     (validate! {:workspace-root root :profile dependency-profile
-                                 :configuration dependency-destination
-                                 :project-input dependency-input}))
-                 dependency-surface (public-surface/read! dependency-selection root)
-                 dependency-seeds
-                 (merge-seeds (:seeds dependency-profile)
-                              (:seeds dependency-surface))
-                 dependency-model
-                 (if (seq dependency-seeds)
-                   (build-resolved-closure-fn root dependency-input dependency-seeds)
-                   (build-resolved-model-fn root dependency-input))
-                 dependency-surface
-                 (public-surface/validate-selected!
-                  dependency-selection root dependency-surface dependency-model)
-                 dependency-emission
-                 (finish-emission!
-                  dependency-selection dependency-surface
-                  (emit-project-fn {:workspace-root root
-                                    :target target
-                                    :project-input dependency-input
-                                    :resolved-model dependency-model
-                                    :public-api-boundary dependency-surface
-                                    :configuration dependency-destination
-                                    :rule-bundle dependency-bundle})
-                  dependency-destination)]
-             (assoc dependency-emission
-                    :profile dependency-name
-                    :source-project dependency-source-project
-                    :public-api-boundary dependency-surface
-                    :public-surface-strategy dependency-selection
-                    :destination dependency-destination)))
-         dependency-prepared)
-        emission-public-api-boundary
-        (public-surface/emission-boundary
-         (:public-surface-strategy prepared) surface dependency-emissions)
-        emission (finish-emission!
-                  (:public-surface-strategy prepared) surface
-                  (emit-project-fn {:workspace-root root
-                                    :target target
-                                    :project-input input-model
-                                    :resolved-model java-model
-                                    :public-api-boundary emission-public-api-boundary
-                                    :configuration destination
-                                    :rule-bundle (:rule-bundle prepared)})
-                  destination)
+        generated (atom {})
+        _ (doseq [level (:levels graph)]
+            (let [results
+                  (concurrency/mapv-ordered
+                   :project-dag-generation
+                   (fn [profile-name]
+                     (let [dependency-profiles
+                           (transitive-dependency-profiles graph profile-name)
+                           dependency-emissions
+                           (mapv
+                            (comp emission-record @generated)
+                            dependency-profiles)]
+                       (generate-prepared-profile!
+                        {:root root
+                         :target target
+                         :graph graph
+                         :profile-name profile-name
+                         :source-project (get source-projects profile-name)
+                         :dependency-emissions dependency-emissions
+                         :discover-main-fn discover-main-fn
+                         :validate-project-input-fn validate-project-input-fn
+                         :build-resolved-model-fn build-resolved-model-fn
+                         :build-resolved-closure-fn build-resolved-closure-fn
+                         :emit-project-fn emit-project-fn
+                         :primary? (= profile-name
+                                      (:primary-profile graph))})))
+                   level)]
+              (swap! generated into (map (juxt :profile identity) results))))
+        main (get @generated (:primary-profile graph))
+        dependency-results
+        (mapv @generated
+              (remove #{(:primary-profile graph)}
+                      (:topological-order graph)))
+        dependency-emissions (mapv emission-record dependency-results)
+        input-model (:project-input main)
+        config
+        (assoc (:configuration main)
+               :project-graph (project-graph-data graph))
+        java-model (:java-model main)
+        surface (:public-api-boundary main)
+        emission (:emission main)
         config-file (paths/resolve-path target "generation-config.edn")
         source-count
         (count (project-input/production-source-files input-model))
@@ -507,7 +762,9 @@
     (assoc config
            :java-model java-model
            :public-api-boundary surface
-           :public-surface-strategy (:public-surface-strategy prepared)
+           :public-surface-strategy (:public-surface-strategy main)
+           :project-graph (:project-graph config)
+           :dependency-profiles (:dependency-profiles main)
            :dependency-emissions dependency-emissions
            :emission emission)))
 
