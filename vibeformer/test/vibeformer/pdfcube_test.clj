@@ -239,6 +239,8 @@
 (deftest dependency-and-legal-policies-are-deterministic-and-fail-closed
   (let [{io :destination io-profile :profile}
         (read-profile-and-destination "pdfcube-io")
+        {fontbox :destination}
+        (read-profile-and-destination "pdfcube-fontbox")
         {pdfbox :destination}
         (read-profile-and-destination "pdfcube-pdfbox")
         validate! (get-in (pdfcube/rule-bundle)
@@ -246,6 +248,10 @@
         project-text ((get-in (pdfcube/rule-bundle)
                               [:rules :project-policy :project-text])
                       pdfbox [])
+        fontbox-project-text
+        ((get-in (pdfcube/rule-bundle)
+                 [:rules :project-policy :project-text])
+         fontbox [])
         unapproved
         (caught #(validate!
                   (update io :runtime-packages conj
@@ -297,6 +303,10 @@
            (:kind (ex-data legal-mismatch))))
     (is (str/includes? project-text
                        "<PackageReference Include=\"SkiaSharp\" Version=\"4.150.1\" />"))
+    (is (str/includes?
+         fontbox-project-text
+         (str "<PackageReference Include=\"SkiaSharp.NativeAssets.Linux\" "
+              "Version=\"4.150.1\" />")))
     (is (str/includes? project-text
                        "<PackageReference Include=\"Microsoft.Extensions.Logging.Abstractions\" Version=\"10.0.0\" />"))
     (is (str/includes? project-text

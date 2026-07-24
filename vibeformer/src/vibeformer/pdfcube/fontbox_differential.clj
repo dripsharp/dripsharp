@@ -10,12 +10,20 @@
   (:import [java.io File]
            [java.net URI]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files OpenOption Path StandardCopyOption]
+           [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
            [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]))
 
 (def pinned-revision
   "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+
+(def supported-hosts
+  [{:os "windows" :architecture "x64" :runner "windows-2025"}
+   {:os "windows" :architecture "arm64" :runner "windows-11-arm"}
+   {:os "linux" :architecture "x64" :runner "ubuntu-24.04"}
+   {:os "linux" :architecture "arm64" :runner "ubuntu-24.04-arm"}
+   {:os "macos" :architecture "x64" :runner "macos-15-intel"}
+   {:os "macos" :architecture "arm64" :runner "macos-15"}])
 
 (def required-trace-families
   #{"encoding" "cff" "afm" "cmap" "pfb" "type1" "truetype" "opentype"
@@ -40,6 +48,11 @@
   (throw
    (ex-info message
             (assoc data :kind :pdfcube-fontbox-differential-failed))))
+
+(defn- write-text! [^Path file value]
+  (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
+  (Files/writeString file value (make-array OpenOption 0))
+  file)
 
 (defn- configured-path [^Path root value]
   (let [path (paths/path value)]
@@ -144,6 +157,18 @@
              {:expected expected-summary :actual actual-summary}))
     comparison))
 
+(defn- prove-perturbation! [^Path oracle ^Path perturbed]
+  (Files/copy oracle perturbed
+              (into-array StandardCopyOption
+                          [StandardCopyOption/REPLACE_EXISTING]))
+  (Files/writeString perturbed "failure\tperturbed-comparator\tvalue\n"
+                     (into-array OpenOption [StandardOpenOption/APPEND]))
+  (let [comparison (differential/compare-results oracle perturbed)]
+    (when-not (:mismatch comparison)
+      (fail! "FontBox differential comparator missed a deliberate perturbation"
+             {:oracle (str oracle) :perturbed (str perturbed)}))
+    comparison))
+
 (defn- java-tools [^Path root generation]
   (let [toolchain (get-in generation [:project-input :java-toolchain])
         home (configured-path root (:home toolchain))
@@ -228,6 +253,77 @@
                    :directory consumer-root
                    :timeout-ms 120000})))
 
+(defn- current-host []
+  (let [os-name (str/lower-case (System/getProperty "os.name" ""))
+        architecture (str/lower-case (System/getProperty "os.arch" ""))
+        os (cond
+             (str/includes? os-name "win") "windows"
+             (str/includes? os-name "mac") "macos"
+             (str/includes? os-name "linux") "linux"
+             :else os-name)
+        architecture (case architecture
+                       "amd64" "x64"
+                       "x86_64" "x64"
+                       "aarch64" "arm64"
+                       "arm64" "arm64"
+                       architecture)]
+    {:os os :architecture architecture}))
+
+(defn- validate-package-contract! [package-proof]
+  (let [generation (get-in package-proof [:verification :generation])
+        destination (:destination generation)
+        identity (:identity package-proof)
+        inspection (:inspection package-proof)
+        primary (first (filter :primary? (:packages package-proof)))
+        resource-proof (:resource-proof primary)
+        compiled-surface (get-in package-proof [:verification :public-surface])
+        compiled-fontbox
+        (first (filter #(= "PdfCube.FontBox" (:assembly %))
+                       (:assemblies compiled-surface)))
+        public-metadata (get-in generation [:emission :public-metadata])
+        expected
+        {:project-id "org.apache.pdfbox:fontbox:3.0.8"
+         :revision pinned-revision
+         :package-id "PdfCube.FontBox"
+         :version "3.0.8-vibeformer.0"
+         :target-framework "net10.0"
+         :assembly
+         {:name "PdfCube.FontBox" :version "3.0.8.0"
+          :dependency-assemblies ["PdfCube.IO"]}
+         :dependencies
+         [{:id "PdfCube.IO" :version "3.0.8-vibeformer.0"}
+          {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+          {:id "SkiaSharp" :version "4.150.1"}
+          {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
+         :resource-count 93
+         :package-files
+         [{:kind :license :path "LICENSE.txt"
+           :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
+          {:kind :notice :path "NOTICE.txt"
+           :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+         :public-contract
+         {:strategy :complete-accessible-java-library
+          :required-rows 1440
+          :compiled-contract-members 1440}}
+        actual
+        {:project-id (get-in generation [:project-input :project-id])
+         :revision (get-in generation [:source-project :revision])
+         :package-id (:id identity)
+         :version (:version identity)
+         :target-framework (get-in destination [:project :target-framework])
+         :assembly (:assembly-identity resource-proof)
+         :dependencies (:dependencies inspection)
+         :resource-count (:resources resource-proof)
+         :package-files (:package-files inspection)
+         :public-contract
+         {:strategy (:strategy compiled-surface)
+          :required-rows (:required-rows public-metadata)
+          :compiled-contract-members (:contract-members compiled-fontbox)}}]
+    (when-not (= expected actual)
+      (fail! "Packed PdfCube.FontBox identity or target contract is incorrect"
+             {:expected expected :actual actual}))
+    actual))
+
 (defn verify!
   "Runs clean deterministic packing, isolated consumption, and the pinned
   Java/package FontBox differential."
@@ -240,7 +336,9 @@
          (package-fn {:workspace-root root
                       :profile "pdfcube-fontbox"
                       :run-command! run-command!})
+         package-contract (validate-package-contract! package-proof)
          generation (get-in package-proof [:verification :generation])
+         primary (first (filter :primary? (:packages package-proof)))
          proof-root
          (harness/clean-directory!
           (paths/resolve-path root "vibeformer" "validation-output"
@@ -253,7 +351,8 @@
                              "src" "test" "resources")
          fonts (ensure-font-fixtures! root)
          oracle (paths/resolve-path proof-root "upstream-java.tsv")
-         packaged (paths/resolve-path proof-root "package-dotnet.tsv")]
+         packaged (paths/resolve-path proof-root "package-dotnet.tsv")
+         perturbed (paths/resolve-path proof-root "perturbed.tsv")]
      (when-not (paths/regular-file? canonical)
        (fail! "Pinned FontBox canonical trace is missing"
               {:canonical (str canonical)}))
@@ -266,22 +365,30 @@
            package-comparison
            (assert-match! "Package-only PdfCube.FontBox behavior"
                           oracle packaged)
+           perturbation (prove-perturbation! oracle perturbed)
            trace (trace-summary oracle)
            summary
            {:profile "pdfcube-fontbox"
             :source {:version "3.0.8" :revision pinned-revision}
-            :package (select-keys (:identity package-proof)
-                                  [:id :version :sha256 :file])
+            :package
+            (merge package-contract
+                   {:sha256 (get-in package-proof [:identity :sha256])
+                    :assembly (get-in primary
+                                      [:resource-proof :assembly-identity])
+                    :public-surface (:public-surface primary)
+                    :resources (:resources primary)
+                    :external-packages (:external-packages package-proof)})
             :consumer (:dependency-proof package-proof)
             :trace trace
             :canonical-comparison canonical-comparison
             :package-comparison package-comparison
+            :perturbation-line (get-in perturbation [:mismatch :line])
+            :host (current-host)
+            :supported-hosts supported-hosts
             :fixtures
             (mapv #(select-keys % [:file :sha512]) font-fixtures)}]
-       (Files/writeString
-        (paths/resolve-path proof-root "summary.edn")
-        (str (pr-str summary) "\n")
-        (make-array OpenOption 0))
+       (write-text! (paths/resolve-path proof-root "summary.edn")
+                    (str (pr-str summary) "\n"))
        (println "Pinned Java/package PdfCube.FontBox differential passed:"
-                (pr-str (select-keys summary [:source :package :trace])))
+                (pr-str (select-keys summary [:source :trace :host])))
        (assoc summary :proof-root proof-root)))))

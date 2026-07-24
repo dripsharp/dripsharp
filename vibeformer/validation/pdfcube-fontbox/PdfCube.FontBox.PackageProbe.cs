@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using PdfCube.FontBox.Afm;
@@ -24,10 +25,10 @@ internal static class Program
 
     private static void Main(string[] args)
     {
-        if (args.Length is not (3 or 4))
+        if (args.Length is not (3 or 4 or 6))
             throw new ArgumentException(
                 "Expected output trace, FontBox test resources, downloaded fonts, " +
-                "and optional canonical trace.");
+                "optional canonical trace, and optional OS/architecture.");
 
         var resources = args[1];
         var fonts = args[2];
@@ -47,8 +48,10 @@ internal static class Program
         ObserveFailures(Path.Combine(resources, "afm"));
 
         File.WriteAllLines(args[0], Observations, new UTF8Encoding(false));
-        if (args.Length == 4)
+        if (args.Length >= 4)
             ValidateCanonical(args[3]);
+        if (args.Length == 6)
+            ValidateHost(args[4], args[5]);
         Console.WriteLine(
             $"PdfCube.FontBox package differential passed: {Observations.Count} observations.");
     }
@@ -1127,6 +1130,29 @@ internal static class Program
                 $"Canonical differential mismatch at line {mismatch + 1}: " +
                 $"expected `{At(expected, mismatch)}`, observed `{At(Observations, mismatch)}`.");
         }
+    }
+
+    private static void ValidateHost(string expectedOs, string expectedArchitecture)
+    {
+        var osMatches = expectedOs switch
+        {
+            "linux" => RuntimeInformation.IsOSPlatform(OSPlatform.Linux),
+            "windows" => RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
+            "macos" => RuntimeInformation.IsOSPlatform(OSPlatform.OSX),
+            _ => false
+        };
+        var architectureMatches = expectedArchitecture switch
+        {
+            "x64" => RuntimeInformation.ProcessArchitecture == Architecture.X64,
+            "arm64" => RuntimeInformation.ProcessArchitecture == Architecture.Arm64,
+            _ => false
+        };
+        if (!osMatches || !architectureMatches)
+            throw new InvalidOperationException(
+                $"Expected {expectedOs}/{expectedArchitecture}, observed " +
+                $"{RuntimeInformation.OSDescription}/{RuntimeInformation.ProcessArchitecture}.");
+        Console.WriteLine(
+            $"PdfCube.FontBox host smoke passed: {expectedOs}/{expectedArchitecture}.");
     }
 
     private static string At(IReadOnlyList<string> values, int index) =>

@@ -59,7 +59,10 @@
    :projection :microsoft-package}
   {:id "SkiaSharp"
    :version "4.150.1"
-   :projection :skia-sharp}]
+   :projection :skia-sharp}
+  {:id "SkiaSharp.NativeAssets.Linux"
+   :version "4.150.1"
+   :projection :skia-sharp-native-assets}]
  :internal-capabilities #{:font-discovery :skia-geometry}
  :destination-capabilities #{:java-compat :java-regex-unicode}
  :compatibility-namespace "PdfCube.FB.Runtime"

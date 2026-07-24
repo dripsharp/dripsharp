@@ -299,6 +299,11 @@
    :version "4.150.1"
    :projection :skia-sharp})
 
+(def ^:private skia-linux-package
+  {:id "SkiaSharp.NativeAssets.Linux"
+   :version "4.150.1"
+   :projection :skia-sharp-native-assets})
+
 (def ^:private legal-files
   [{:kind :license
     :source "research/pdfbox/LICENSE.txt"
@@ -345,7 +350,7 @@
     :package-dependencies ["PdfCube.IO"]
     :project-references ["../pdfcube-io/PdfCube.IO.csproj"]
     :external-dependencies {commons-coordinate commons-dependency}
-    :runtime-packages [logging-package skia-package]
+    :runtime-packages [logging-package skia-package skia-linux-package]
     :internal-capabilities #{:font-discovery :skia-geometry}
     :destination-capabilities #{:java-compat :java-regex-unicode}
     :compatibility-namespace "PdfCube.FB.Runtime"}
@@ -477,7 +482,8 @@
     (doseq [{:keys [id version projection] :as dependency} runtime-packages]
       (when-not
        (or (= logging-package dependency)
-           (= skia-package dependency))
+           (= skia-package dependency)
+           (= skia-linux-package dependency))
         (fail! "PdfCube destination requested an unapproved runtime package"
                {:kind :unapproved-pdfcube-runtime-dependency
                 :dependency dependency}))
@@ -487,6 +493,9 @@
                        (= "10.0.0" version))
                   :skia-sharp
                   (and (= "SkiaSharp" id) (= "4.150.1" version))
+                  :skia-sharp-native-assets
+                  (and (= "SkiaSharp.NativeAssets.Linux" id)
+                       (= "4.150.1" version))
                   false)
         (fail! "PdfCube runtime package version or provider is not approved"
                {:kind :unapproved-pdfcube-runtime-dependency
