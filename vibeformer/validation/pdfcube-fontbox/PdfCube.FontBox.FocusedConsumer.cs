@@ -1,7 +1,10 @@
 #nullable enable
 
 using System;
+using System.IO;
+using System.Linq;
 using PdfCube.FontBox.Util;
+using PdfCube.FontBox.Util.Autodetect;
 using PdfCube.IO;
 
 internal static class Program
@@ -23,6 +26,36 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "The transitive PdfCube.IO package boundary is not usable.");
+        }
+
+        var fontRoot = Path.Combine(
+            Path.GetTempPath(),
+            "pdfcube-fontbox-consumer-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(fontRoot);
+            Directory.CreateDirectory(Path.Combine(fontRoot, ".hidden"));
+            File.WriteAllBytes(Path.Combine(fontRoot, "Detected.TTF"), [0, 1, 2, 3]);
+            File.WriteAllBytes(Path.Combine(fontRoot, "fonts.dir"), [0]);
+            File.WriteAllBytes(
+                Path.Combine(fontRoot, ".hidden", "Ignored.otf"),
+                [0, 1, 2, 3]);
+
+            var discovered = new FontFileFinder().Find(fontRoot);
+            if (discovered.Count != 1 ||
+                !string.Equals(
+                    Path.GetFileName(discovered.Single().LocalPath),
+                    "Detected.TTF",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Package-only FontBox discovery did not preserve the upstream filter.");
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(fontRoot))
+                Directory.Delete(fontRoot, recursive: true);
         }
 
         Console.WriteLine("PdfCube.FontBox focused behavior passed.");

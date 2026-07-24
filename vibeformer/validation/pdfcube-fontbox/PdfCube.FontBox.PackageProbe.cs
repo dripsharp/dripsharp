@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using PdfCube.FontBox.Afm;
 using PdfCube.FontBox.Cff;
@@ -13,6 +15,7 @@ using PdfCube.FontBox.Ttf;
 using PdfCube.FontBox.Ttf.Gsub;
 using PdfCube.FontBox.Ttf.Model;
 using PdfCube.FontBox.Type1;
+using PdfCube.FontBox.Util.Autodetect;
 using PdfCube.IO;
 
 internal static class Program
@@ -39,6 +42,8 @@ internal static class Program
         ObserveOpenType(Path.Combine(resources, "ttf"), fonts);
         ObserveGsub(Path.Combine(resources, "ttf"));
         ObserveCollection(Path.Combine(resources, "ttf"));
+        ObserveSubsetting(Path.Combine(resources, "ttf"));
+        ObserveDiscovery(Path.Combine(resources, "ttf"), fonts);
         ObserveFailures(Path.Combine(resources, "afm"));
 
         File.WriteAllLines(args[0], Observations, new UTF8Encoding(false));
@@ -569,6 +574,360 @@ internal static class Program
                 selected.GetNumberOfGlyphs(),
                 selected.GetUnitsPerEm()));
     }
+
+    private static void ObserveSubsetting(string ttfDirectory)
+    {
+        var liberation = Path.Combine(ttfDirectory, "LiberationSans-Regular.ttf");
+        var (first, gidMap) = CreateCompositeSubset(liberation);
+        var (second, _) = CreateCompositeSubset(liberation);
+        using (var subset = new TTFParser(true).Parse(
+            new RandomAccessReadBuffer(ToSigned(first))))
+        {
+            var tags = subset.GetTables()
+                .Select(table => table.GetTag())
+                .OrderBy(tag => tag, StringComparer.Ordinal)
+                .ToList();
+            var post = subset.GetPostScript();
+            Observe(
+                "subsetting",
+                "composite-closure-names-and-tables",
+                Join(
+                    first.Length,
+                    first.SequenceEqual(second),
+                    Convert.ToHexString(SHA256.HashData(first)).ToLowerInvariant(),
+                    subset.GetNumberOfGlyphs(),
+                    gidMap.Values,
+                    subset.GetName(),
+                    subset.GetNaming().GetFontFamily(),
+                    subset.GetNaming().GetFontSubFamily(),
+                    new[]
+                    {
+                        post.GetName(0),
+                        post.GetName(1),
+                        post.GetName(2),
+                        post.GetName(3),
+                        post.GetName(4)
+                    },
+                    subset.GetUnicodeCmapLookup().GetGlyphId('Ö'),
+                    subset.GetUnicodeCmapLookup().GetGlyphId('\u200A'),
+                    tags));
+        }
+
+        using (var full = new TTFParser().Parse(
+            new RandomAccessReadBufferedFile(liberation)))
+        {
+            var emptySubsetter = new TTFSubsetter(full);
+            using var emptyOutput = new MemoryStream();
+            emptySubsetter.WriteToStream(emptyOutput);
+            using var empty = new TTFParser(true).Parse(
+                new RandomAccessReadBuffer(ToSigned(emptyOutput.ToArray())));
+            Observe(
+                "subsetting",
+                "empty-subset",
+                Join(
+                    empty.GetNumberOfGlyphs(),
+                    empty.NameToGID(".notdef"),
+                    empty.GetGlyph().GetGlyph(0) is not null));
+        }
+
+        using (var full = new TTFParser().Parse(
+            new RandomAccessReadBufferedFile(liberation)))
+        {
+            var required = new List<string>
+            {
+                "head", "hhea", "loca", "maxp", "glyf", "hmtx"
+            };
+            var selectedSubsetter = new TTFSubsetter(full, required);
+            selectedSubsetter.Add('A');
+            using var selectedOutput = new MemoryStream();
+            selectedSubsetter.WriteToStream(selectedOutput);
+            using var selected = new TTFParser(true).Parse(
+                new RandomAccessReadBuffer(ToSigned(selectedOutput.ToArray())));
+            var tags = selected.GetTables()
+                .Select(table => table.GetTag())
+                .OrderBy(tag => tag, StringComparer.Ordinal)
+                .ToList();
+            Observe(
+                "subsetting",
+                "required-table-selection",
+                Join(
+                    selected.GetNumberOfGlyphs(),
+                    selected.GetAdvanceWidth(1),
+                    selected.GetHorizontalMetrics().GetLeftSideBearing(1),
+                    tags));
+        }
+
+        using (var full = new TTFParser().Parse(
+            new RandomAccessReadBufferedFile(liberation)))
+        {
+            var invisibleSubsetter = new TTFSubsetter(full);
+            invisibleSubsetter.Add('A');
+            invisibleSubsetter.Add('B');
+            invisibleSubsetter.Add('\u200C');
+            invisibleSubsetter.ForceInvisible('B');
+            invisibleSubsetter.ForceInvisible('\u200C');
+            using var invisibleOutput = new MemoryStream();
+            invisibleSubsetter.WriteToStream(invisibleOutput);
+            using var invisible = new TTFParser(true).Parse(
+                new RandomAccessReadBuffer(ToSigned(invisibleOutput.ToArray())));
+            using var aPath = invisible.GetPath("A");
+            using var bPath = invisible.GetPath("B");
+            using var zwnjPath = invisible.GetPath("uni200C");
+            Observe(
+                "subsetting",
+                "forced-invisible-encoding",
+                Join(
+                    invisible.GetNumberOfGlyphs(),
+                    aPath.Bounds.IsEmpty,
+                    bPath.Bounds.IsEmpty,
+                    zwnjPath.Bounds.IsEmpty,
+                    invisible.GetWidth("A"),
+                    invisible.GetWidth("B"),
+                    invisible.GetWidth("uni200C")));
+        }
+
+        Observe(
+            "subsetting",
+            "invalid-glyph-failure",
+            FailureKind(() =>
+            {
+                using var full = new TTFParser().Parse(
+                    new RandomAccessReadBufferedFile(liberation));
+                var invalid = new TTFSubsetter(full);
+                invalid.AddGlyphIds(new HashSet<int> { 999999 });
+                invalid.WriteToStream(new MemoryStream());
+            }));
+    }
+
+    private static (byte[] Bytes, IDictionary<int, int> GidMap)
+        CreateCompositeSubset(string liberation)
+    {
+        using var full = new TTFParser().Parse(
+            new RandomAccessReadBufferedFile(liberation));
+        var subsetter = new TTFSubsetter(full);
+        subsetter.SetPrefix("ABCDEF+");
+        subsetter.Add('Ö');
+        subsetter.Add('\u200A');
+        using var output = new MemoryStream();
+        subsetter.WriteToStream(output);
+        return (
+            output.ToArray(),
+            new Dictionary<int, int>(subsetter.GetGIDMap()));
+    }
+
+    private static void ObserveDiscovery(string ttfDirectory, string fonts)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "fontbox-discovery-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var scan = Directory.CreateDirectory(Path.Combine(root, "scan")).FullName;
+            var nested = Directory.CreateDirectory(Path.Combine(scan, "nested")).FullName;
+            var hidden = Directory.CreateDirectory(Path.Combine(scan, ".hidden")).FullName;
+            var liberation = Path.Combine(ttfDirectory, "LiberationSans-Regular.ttf");
+            File.Copy(liberation, Path.Combine(scan, "Valid.TTF"));
+            File.Copy(liberation, Path.Combine(nested, "Duplicate.ttf"));
+            File.WriteAllBytes(Path.Combine(scan, "Corrupt.otf"), [0, 1, 2, 3]);
+            File.WriteAllBytes(Path.Combine(scan, "TypeOne.PFB"), [0]);
+            File.WriteAllBytes(Path.Combine(scan, "Collection.TTC"), [0]);
+            File.WriteAllBytes(Path.Combine(scan, "fonts.dir"), [0]);
+            File.WriteAllBytes(Path.Combine(scan, "notes.txt"), [0]);
+            File.WriteAllBytes(Path.Combine(hidden, "Ignored.ttf"), [0]);
+
+            var finder = new FontFileFinder();
+            var discovered = RelativeUris(root, finder.Find(scan));
+            Observe(
+                "discovery",
+                "extension-filter-missing-duplicate-and-corrupt",
+                Join(
+                    discovered,
+                    finder.Find(Path.Combine(root, "missing")).Count,
+                    File.ReadAllBytes(Path.Combine(scan, "Valid.TTF"))
+                        .SequenceEqual(
+                            File.ReadAllBytes(
+                                Path.Combine(nested, "Duplicate.ttf")))));
+
+            var collectionNames = new List<string>();
+            var collectionBytes = BuildCollection(
+                File.ReadAllBytes(liberation),
+                File.ReadAllBytes(Path.Combine(ttfDirectory, "JosefinSans-Italic.ttf")));
+            using (var collection = new TrueTypeCollection(
+                new MemoryStream(collectionBytes, writable: false)))
+            {
+                collection.ProcessAllFonts(new FontNameProcessor(collectionNames));
+            }
+            string ttfName;
+            using (var ttf = new TTFParser().Parse(
+                new RandomAccessReadBufferedFile(liberation)))
+            {
+                ttfName = ttf.GetName();
+            }
+            bool cff;
+            using (var otf = new OTFParser().Parse(
+                new RandomAccessReadBufferedFile(
+                    Path.Combine(fonts, "SourceSansProBold.otf"))))
+            {
+                cff = otf.IsPostScript();
+            }
+            int pfbSize;
+            using (var input = File.OpenRead(Path.Combine(fonts, "OpenSans-Regular.pfb")))
+            {
+                pfbSize = new PfbParser(input).Size();
+            }
+            Observe(
+                "discovery",
+                "type-detection-and-failures",
+                Join(
+                    ttfName,
+                    cff,
+                    pfbSize,
+                    collectionNames,
+                    FailureKind(() => new TTFParser().Parse(
+                        new RandomAccessReadBufferedFile(
+                            Path.Combine(scan, "Corrupt.otf")))),
+                    FailureKind(() => new TTFParser().Parse(
+                        new RandomAccessReadBufferedFile(
+                            Path.Combine(root, "missing.ttf"))))));
+
+            var home = Directory.CreateDirectory(Path.Combine(root, "home")).FullName;
+            var macFonts = Directory.CreateDirectory(
+                Path.Combine(home, "Library", "Fonts")).FullName;
+            var unixFonts = Directory.CreateDirectory(
+                Path.Combine(home, ".fonts")).FullName;
+            var windows = Directory.CreateDirectory(
+                Path.Combine(root, "windows", "FONTS")).FullName;
+            File.WriteAllBytes(Path.Combine(macFonts, "Mac.ttf"), [0]);
+            File.WriteAllBytes(Path.Combine(unixFonts, "Unix.otf"), [0]);
+            File.WriteAllBytes(Path.Combine(windows, "Windows.pfb"), [0]);
+            SetJavaProperty("user.home", home);
+            SetJavaProperty("env.windir", Path.Combine(root, "windows"));
+
+            var matrix = new List<string>();
+            var platforms = new[]
+            {
+                (Name: "Windows 11", Id: "windows"),
+                (Name: "Mac OS X", Id: "mac"),
+                (Name: "Linux", Id: "unix")
+            };
+            var architectures = new[] { "amd64", "aarch64" };
+            foreach (var platform in platforms)
+            {
+                foreach (var architecture in architectures)
+                {
+                    SetJavaProperty("os.name", platform.Name);
+                    SetJavaProperty("os.arch", architecture);
+                    matrix.Add(
+                        $"{platform.Id}/{architecture}=" +
+                        Value(RelativeUris(root, new FontFileFinder().Find())));
+                }
+            }
+            SetJavaProperty("os.name", "Plan 9");
+            matrix.Add(
+                "fallback=" +
+                Value(RelativeUris(root, new FontFileFinder().Find())));
+            Observe("discovery", "supported-host-selection", Join(matrix));
+
+            SetJavaProperty("os.name", "Mac OS X");
+            var cached = new FontFileFinder();
+            var first = RelativeUris(root, cached.Find());
+            SetJavaProperty("os.name", "Linux");
+            var second = RelativeUris(root, cached.Find());
+            var fresh = RelativeUris(root, new FontFileFinder().Find());
+            Observe(
+                "discovery",
+                "finder-selection-cache-and-fallback",
+                Join(first, second, fresh));
+
+            var inaccessible = Directory.CreateDirectory(
+                Path.Combine(root, "inaccessible")).FullName;
+            File.WriteAllBytes(Path.Combine(inaccessible, "Blocked.ttf"), [0]);
+            VerifyInaccessibleAdapter(inaccessible);
+            UnixFileMode? previousMode = null;
+            if (!OperatingSystem.IsWindows())
+            {
+                previousMode = File.GetUnixFileMode(inaccessible);
+                File.SetUnixFileMode(inaccessible, UnixFileMode.None);
+            }
+            try
+            {
+                Observe(
+                    "discovery",
+                    "inaccessible-directory",
+                    FailureKind(() => new FontFileFinder().Find(inaccessible)));
+            }
+            finally
+            {
+                if (!OperatingSystem.IsWindows() && previousMode is not null)
+                    File.SetUnixFileMode(inaccessible, previousMode.Value);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static List<string> RelativeUris(string root, IEnumerable<Uri> values)
+    {
+        var absoluteRoot = Path.GetFullPath(root);
+        return values
+            .Select(value => Path.GetFullPath(value.LocalPath))
+            .Where(path => path.StartsWith(
+                absoluteRoot + Path.DirectorySeparatorChar,
+                OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(absoluteRoot, path)
+                .Replace(Path.DirectorySeparatorChar, '/'))
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static void SetJavaProperty(string name, string value)
+    {
+        var compatibility = typeof(FontFileFinder).Assembly.GetType(
+            "PdfCube.FB.Runtime.JavaCompat",
+            throwOnError: true)!;
+        var method = compatibility.GetMethod(
+            "SetProperty",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "FontBox Java system-property adapter is missing.");
+        _ = method.Invoke(null, [name, value]);
+    }
+
+    private static void VerifyInaccessibleAdapter(string directory)
+    {
+        var adapter = typeof(FontFileFinder).Assembly.GetType(
+            "PdfCube.FB.Runtime.PdfCubeFontDiscovery",
+            throwOnError: true)!;
+        var method = adapter.GetMethod(
+            "FileListFiles",
+            BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null,
+            types:
+            [
+                typeof(FileInfo),
+                typeof(Func<string, IEnumerable<string>>)
+            ],
+            modifiers: null)
+            ?? throw new InvalidOperationException(
+                "FontBox inaccessible-directory adapter is missing.");
+        Func<string, IEnumerable<string>> inaccessible =
+            _ => throw new UnauthorizedAccessException("focused inaccessible path");
+        var result = method.Invoke(
+            null,
+            [new FileInfo(directory), inaccessible]);
+        if (result is not null)
+            throw new InvalidOperationException(
+                "FontBox inaccessible-directory adapter did not match File.listFiles().");
+    }
+
+    private static sbyte[] ToSigned(IEnumerable<byte> values) =>
+        values.Select(value => unchecked((sbyte)value)).ToArray();
 
     private static List<int> GlyphIds(CmapLookup cmap, string text) =>
         text.Select(character => cmap.GetGlyphId(character)).ToList();

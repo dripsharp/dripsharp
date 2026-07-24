@@ -16,6 +16,7 @@ using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Reflection;
 using System.Resources;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Numerics;
@@ -2489,6 +2490,14 @@ internal static class JavaCompat
             : OperatingSystem.IsLinux() ? "Linux"
             : Environment.OSVersion.Platform.ToString(),
         ["os.version"] = Environment.OSVersion.VersionString,
+        ["os.arch"] = RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.X64 => "amd64",
+            Architecture.Arm64 => "aarch64",
+            Architecture.X86 => "x86",
+            Architecture.Arm => "arm",
+            var architecture => architecture.ToString().ToLowerInvariant()
+        },
         ["java.version"] = Environment.Version.ToString(),
         ["user.home"] = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ["user.dir"] = Environment.CurrentDirectory,

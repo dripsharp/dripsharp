@@ -1,11 +1,16 @@
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -35,7 +40,9 @@ import org.apache.fontbox.ttf.GlyphData;
 import org.apache.fontbox.ttf.GlyphSubstitutionTable;
 import org.apache.fontbox.ttf.OTFParser;
 import org.apache.fontbox.ttf.OpenTypeFont;
+import org.apache.fontbox.ttf.PostScriptTable;
 import org.apache.fontbox.ttf.TTFParser;
+import org.apache.fontbox.ttf.TTFSubsetter;
 import org.apache.fontbox.ttf.TTFTable;
 import org.apache.fontbox.ttf.TrueTypeCollection;
 import org.apache.fontbox.ttf.TrueTypeFont;
@@ -43,6 +50,7 @@ import org.apache.fontbox.ttf.gsub.GsubWorker;
 import org.apache.fontbox.ttf.gsub.GsubWorkerFactory;
 import org.apache.fontbox.ttf.model.GsubData;
 import org.apache.fontbox.type1.Type1Font;
+import org.apache.fontbox.util.autodetect.FontFileFinder;
 import org.apache.pdfbox.io.RandomAccessRead;
 import org.apache.pdfbox.io.RandomAccessReadBuffer;
 import org.apache.pdfbox.io.RandomAccessReadBufferedFile;
@@ -75,6 +83,8 @@ public final class FontBoxUpstreamOracle {
     observeOpenType(new File(resources, "ttf"), fonts);
     observeGsub(new File(resources, "ttf"));
     observeCollection(new File(resources, "ttf"));
+    observeSubsetting(new File(resources, "ttf"));
+    observeDiscovery(new File(resources, "ttf"), fonts);
     observeFailures(new File(resources, "afm"));
 
     Files.write(new File(args[0]).toPath(), observations, StandardCharsets.UTF_8);
@@ -573,6 +583,314 @@ public final class FontBoxUpstreamOracle {
           "generated-two-font-ttc",
           join(names, selected.getName(), selected.getNumberOfGlyphs(), selected.getUnitsPerEm()));
     }
+  }
+
+  private static void observeSubsetting(File ttfDirectory) throws Exception {
+    File liberation = new File(ttfDirectory, "LiberationSans-Regular.ttf");
+    byte[] first;
+    Map<Integer, Integer> gidMap;
+    try (TrueTypeFont full =
+        new TTFParser().parse(new RandomAccessReadBufferedFile(liberation))) {
+      TTFSubsetter subsetter = new TTFSubsetter(full);
+      subsetter.setPrefix("ABCDEF+");
+      subsetter.add('Ö');
+      subsetter.add('\u200A');
+      ByteArrayOutputStream output = new ByteArrayOutputStream();
+      subsetter.writeToStream(output);
+      first = output.toByteArray();
+      gidMap = subsetter.getGIDMap();
+    }
+
+    byte[] second;
+    try (TrueTypeFont full =
+        new TTFParser().parse(new RandomAccessReadBufferedFile(liberation))) {
+      TTFSubsetter subsetter = new TTFSubsetter(full);
+      subsetter.setPrefix("ABCDEF+");
+      subsetter.add('Ö');
+      subsetter.add('\u200A');
+      ByteArrayOutputStream output = new ByteArrayOutputStream();
+      subsetter.writeToStream(output);
+      second = output.toByteArray();
+    }
+    try (TrueTypeFont subset =
+        new TTFParser(true).parse(new RandomAccessReadBuffer(first))) {
+      List<String> tags = new ArrayList<String>();
+      for (TTFTable table : subset.getTables()) {
+        tags.add(table.getTag());
+      }
+      Collections.sort(tags);
+      PostScriptTable post = subset.getPostScript();
+      observe(
+          "subsetting",
+          "composite-closure-names-and-tables",
+          join(
+              first.length,
+              Arrays.equals(first, second),
+              sha256(first),
+              subset.getNumberOfGlyphs(),
+              gidMap.values(),
+              subset.getName(),
+              subset.getNaming().getFontFamily(),
+              subset.getNaming().getFontSubFamily(),
+              Arrays.asList(
+                  post.getName(0),
+                  post.getName(1),
+                  post.getName(2),
+                  post.getName(3),
+                  post.getName(4)),
+              subset.getUnicodeCmapLookup().getGlyphId('Ö'),
+              subset.getUnicodeCmapLookup().getGlyphId('\u200A'),
+              tags));
+    }
+
+    try (TrueTypeFont full =
+        new TTFParser().parse(new RandomAccessReadBufferedFile(liberation))) {
+      TTFSubsetter emptySubsetter = new TTFSubsetter(full);
+      ByteArrayOutputStream emptyOutput = new ByteArrayOutputStream();
+      emptySubsetter.writeToStream(emptyOutput);
+      try (TrueTypeFont empty =
+          new TTFParser(true)
+              .parse(new RandomAccessReadBuffer(emptyOutput.toByteArray()))) {
+        observe(
+            "subsetting",
+            "empty-subset",
+            join(
+                empty.getNumberOfGlyphs(),
+                empty.nameToGID(".notdef"),
+                empty.getGlyph().getGlyph(0) != null));
+      }
+
+      List<String> required =
+          Arrays.asList("head", "hhea", "loca", "maxp", "glyf", "hmtx");
+      TTFSubsetter selectedSubsetter = new TTFSubsetter(full, required);
+      selectedSubsetter.add('A');
+      ByteArrayOutputStream selectedOutput = new ByteArrayOutputStream();
+      selectedSubsetter.writeToStream(selectedOutput);
+      try (TrueTypeFont selected =
+          new TTFParser(true)
+              .parse(new RandomAccessReadBuffer(selectedOutput.toByteArray()))) {
+        List<String> tags = new ArrayList<String>();
+        for (TTFTable table : selected.getTables()) {
+          tags.add(table.getTag());
+        }
+        Collections.sort(tags);
+        observe(
+            "subsetting",
+            "required-table-selection",
+            join(
+                selected.getNumberOfGlyphs(),
+                selected.getAdvanceWidth(1),
+                selected.getHorizontalMetrics().getLeftSideBearing(1),
+                tags));
+      }
+    }
+
+    try (TrueTypeFont full =
+        new TTFParser().parse(new RandomAccessReadBufferedFile(liberation))) {
+      TTFSubsetter invisibleSubsetter = new TTFSubsetter(full);
+      invisibleSubsetter.add('A');
+      invisibleSubsetter.add('B');
+      invisibleSubsetter.add('\u200C');
+      invisibleSubsetter.forceInvisible('B');
+      invisibleSubsetter.forceInvisible('\u200C');
+      ByteArrayOutputStream invisibleOutput = new ByteArrayOutputStream();
+      invisibleSubsetter.writeToStream(invisibleOutput);
+      try (TrueTypeFont invisible =
+          new TTFParser(true)
+              .parse(new RandomAccessReadBuffer(invisibleOutput.toByteArray()))) {
+        observe(
+            "subsetting",
+            "forced-invisible-encoding",
+            join(
+                invisible.getNumberOfGlyphs(),
+                invisible.getPath("A").getBounds2D().isEmpty(),
+                invisible.getPath("B").getBounds2D().isEmpty(),
+                invisible.getPath("uni200C").getBounds2D().isEmpty(),
+                invisible.getWidth("A"),
+                invisible.getWidth("B"),
+                invisible.getWidth("uni200C")));
+      }
+    }
+
+    observe(
+        "subsetting",
+        "invalid-glyph-failure",
+        failureKind(
+            () -> {
+              try (TrueTypeFont full =
+                  new TTFParser()
+                      .parse(new RandomAccessReadBufferedFile(liberation))) {
+                TTFSubsetter invalid = new TTFSubsetter(full);
+                invalid.addGlyphIds(
+                    new TreeSet<Integer>(Arrays.asList(999999)));
+                invalid.writeToStream(new ByteArrayOutputStream());
+              }
+            }));
+  }
+
+  private static void observeDiscovery(File ttfDirectory, File fonts)
+      throws Exception {
+    Path root = Files.createTempDirectory("fontbox-discovery-");
+    Path scan = Files.createDirectories(root.resolve("scan"));
+    Path nested = Files.createDirectories(scan.resolve("nested"));
+    Path hidden = Files.createDirectories(scan.resolve(".hidden"));
+    File liberation = new File(ttfDirectory, "LiberationSans-Regular.ttf");
+    Files.copy(liberation.toPath(), scan.resolve("Valid.TTF"));
+    Files.copy(liberation.toPath(), nested.resolve("Duplicate.ttf"));
+    Files.write(scan.resolve("Corrupt.otf"), bytes(0, 1, 2, 3));
+    Files.write(scan.resolve("TypeOne.PFB"), bytes(0));
+    Files.write(scan.resolve("Collection.TTC"), bytes(0));
+    Files.write(scan.resolve("fonts.dir"), bytes(0));
+    Files.write(scan.resolve("notes.txt"), bytes(0));
+    Files.write(hidden.resolve("Ignored.ttf"), bytes(0));
+
+    FontFileFinder finder = new FontFileFinder();
+    List<String> discovered = relativeUris(root, finder.find(scan.toString()));
+    observe(
+        "discovery",
+        "extension-filter-missing-duplicate-and-corrupt",
+        join(
+            discovered,
+            finder.find(root.resolve("missing").toString()).size(),
+            Arrays.equals(
+                Files.readAllBytes(scan.resolve("Valid.TTF")),
+                Files.readAllBytes(nested.resolve("Duplicate.ttf")))));
+
+    List<String> collectionNames = new ArrayList<String>();
+    byte[] collectionBytes =
+        buildCollection(
+            Files.readAllBytes(liberation.toPath()),
+            Files.readAllBytes(
+                new File(ttfDirectory, "JosefinSans-Italic.ttf").toPath()));
+    try (TrueTypeCollection collection =
+        new TrueTypeCollection(new ByteArrayInputStream(collectionBytes))) {
+      collection.processAllFonts(font -> collectionNames.add(font.getName()));
+    }
+    String ttfName;
+    try (TrueTypeFont ttf =
+        new TTFParser().parse(new RandomAccessReadBufferedFile(liberation))) {
+      ttfName = ttf.getName();
+    }
+    boolean cff;
+    try (OpenTypeFont otf =
+        new OTFParser()
+            .parse(
+                new RandomAccessReadBufferedFile(
+                    new File(fonts, "SourceSansProBold.otf")))) {
+      cff = otf.isPostScript();
+    }
+    int pfbSize;
+    try (FileInputStream input =
+        new FileInputStream(new File(fonts, "OpenSans-Regular.pfb"))) {
+      pfbSize = new PfbParser(input).size();
+    }
+    observe(
+        "discovery",
+        "type-detection-and-failures",
+        join(
+            ttfName,
+            cff,
+            pfbSize,
+            collectionNames,
+            failureKind(
+                () ->
+                    new TTFParser()
+                        .parse(
+                            new RandomAccessReadBufferedFile(
+                                scan.resolve("Corrupt.otf").toFile()))),
+            failureKind(
+                () ->
+                    new TTFParser()
+                        .parse(
+                            new RandomAccessReadBufferedFile(
+                                root.resolve("missing.ttf").toFile())))));
+
+    Path home = Files.createDirectories(root.resolve("home"));
+    Path macFonts =
+        Files.createDirectories(home.resolve("Library").resolve("Fonts"));
+    Path unixFonts = Files.createDirectories(home.resolve(".fonts"));
+    Path windows =
+        Files.createDirectories(root.resolve("windows").resolve("FONTS"));
+    Files.write(macFonts.resolve("Mac.ttf"), bytes(0));
+    Files.write(unixFonts.resolve("Unix.otf"), bytes(0));
+    Files.write(windows.resolve("Windows.pfb"), bytes(0));
+    System.setProperty("user.home", home.toString());
+    System.setProperty("env.windir", root.resolve("windows").toString());
+
+    List<String> matrix = new ArrayList<String>();
+    String[][] platforms = {
+      {"Windows 11", "windows"},
+      {"Mac OS X", "mac"},
+      {"Linux", "unix"}
+    };
+    String[] architectures = {"amd64", "aarch64"};
+    for (String[] platform : platforms) {
+      for (String architecture : architectures) {
+        System.setProperty("os.name", platform[0]);
+        System.setProperty("os.arch", architecture);
+        matrix.add(
+            platform[1]
+                + "/"
+                + architecture
+                + "="
+                + relativeUris(root, new FontFileFinder().find()));
+      }
+    }
+    System.setProperty("os.name", "Plan 9");
+    matrix.add(
+        "fallback="
+            + relativeUris(root, new FontFileFinder().find()));
+    observe("discovery", "supported-host-selection", join(matrix));
+
+    System.setProperty("os.name", "Mac OS X");
+    FontFileFinder cached = new FontFileFinder();
+    List<String> first = relativeUris(root, cached.find());
+    System.setProperty("os.name", "Linux");
+    List<String> second = relativeUris(root, cached.find());
+    List<String> fresh = relativeUris(root, new FontFileFinder().find());
+    observe(
+        "discovery",
+        "finder-selection-cache-and-fallback",
+        join(first, second, fresh));
+
+    Path inaccessible = Files.createDirectories(root.resolve("inaccessible"));
+    Files.write(inaccessible.resolve("Blocked.ttf"), bytes(0));
+    File inaccessibleFile = inaccessible.toFile();
+    inaccessibleFile.setReadable(false, false);
+    inaccessibleFile.setExecutable(false, false);
+    observe(
+        "discovery",
+        "inaccessible-directory",
+        failureKind(
+            () -> new FontFileFinder().find(inaccessible.toString())));
+    inaccessibleFile.setReadable(true, false);
+    inaccessibleFile.setExecutable(true, false);
+  }
+
+  private static List<String> relativeUris(Path root, List<URI> values) {
+    Path absoluteRoot = root.toAbsolutePath().normalize();
+    List<String> relative = new ArrayList<String>();
+    for (URI value : values) {
+      Path path = new File(value).toPath().toAbsolutePath().normalize();
+      if (path.startsWith(absoluteRoot)) {
+        relative.add(
+            absoluteRoot.relativize(path).toString().replace(File.separatorChar, '/'));
+      }
+    }
+    Collections.sort(relative);
+    return relative;
+  }
+
+  private static String sha256(byte[] bytes) throws Exception {
+    return unsignedHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+  }
+
+  private static String unsignedHex(byte[] values) {
+    StringBuilder result = new StringBuilder();
+    for (byte value : values) {
+      result.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+    }
+    return result.toString();
   }
 
   private static List<Integer> glyphIds(CmapLookup cmap, String text) {

@@ -17,10 +17,10 @@
                             "vibeformer" "validation" "pdfcube-fontbox"
                             "canonical-trace.tsv")
         summary (fontbox-differential/trace-summary canonical)]
-    (is (= 45 (:observations summary)))
+    (is (= 55 (:observations summary)))
     (is (= fontbox-differential/required-trace-families
            (set (:families summary))))
-    (is (= 45 (count (set (:identities summary)))))))
+    (is (= 55 (count (set (:identities summary)))))))
 
 (deftest trace-validation-fails-closed
   (testing "a missing behavior family is rejected"

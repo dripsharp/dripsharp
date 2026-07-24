@@ -19,7 +19,8 @@
 
 (def required-trace-families
   #{"encoding" "cff" "afm" "cmap" "pfb" "type1" "truetype" "opentype"
-    "tables" "gsub" "collection" "lifecycle" "failure"})
+    "tables" "gsub" "collection" "subsetting" "discovery" "lifecycle"
+    "failure"})
 
 (def font-fixtures
   [{:file "SourceSansProBold.otf"

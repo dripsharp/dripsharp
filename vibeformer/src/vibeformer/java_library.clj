@@ -3051,6 +3051,32 @@
                [(raw "new ") (type-node @ctx-holder (.getType element))
                 (raw "()")])
 
+              "executable:java.util.TreeMap#<init>()"
+              (let [types
+                    (vec (.getActualTypeArguments (.getType element)))]
+                (if (= 2 (count types))
+                  (sequence-node
+                   [(raw "global::Vibeformer.Runtime.JavaCompat.NewSortedDictionary<")
+                    (type-node @ctx-holder (first types))
+                    (raw ", ")
+                    (type-node @ctx-holder (second types))
+                    (raw ">()")])
+                  (sequence-node
+                   [(raw "new ") (type-node @ctx-holder (.getType element))
+                    (raw "()")])))
+
+              "executable:java.util.TreeSet#<init>()"
+              (let [types
+                    (vec (.getActualTypeArguments (.getType element)))]
+                (if (= 1 (count types))
+                  (sequence-node
+                   [(raw "global::Vibeformer.Runtime.JavaCompat.NewSortedSet<")
+                    (type-node @ctx-holder (first types))
+                    (raw ">()")])
+                  (sequence-node
+                   [(raw "new ") (type-node @ctx-holder (.getType element))
+                    (raw "()")])))
+
               ("executable:java.util.TreeMap#<init>(java.util.Comparator)"
                "executable:java.util.TreeSet#<init>(java.util.Comparator)")
               (let [element-type

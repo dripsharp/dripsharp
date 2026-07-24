@@ -32,6 +32,16 @@ gsub	scripts-and-features	[dflt, bopo, copt, cyrl, grek, hebr, latn]|latn|cyrl|[
 gsub	bengali-model	bengali|bng2|[abvs, akhn, blwf, blws, half, haln, init, nukt, pres, pstf, rphf, vatu]|2
 gsub	bengali-shaping	[56, 102, 91]|[89, 156, 101, 97]|[438, 89, 94, 101]|[274, 82]
 collection	generated-two-font-ttc	[liberationsans, josefinsans-italic]|josefinsans-italic|577|1000
+subsetting	composite-closure-names-and-tables	89804|true|d32c6d43c17945f05075c4be751edbc90fdf3e3202b91f16ff9cc71c139464a5|5|[0, 50, 152, 2007, 2338]|abcdef+liberationsans|liberation sans|regular|[.notdef, o, odieresis, uni200a, dieresis.uc]|2|3|[fftm, gdef, gpos, gsub, os/2, cmap, cvt , fpgm, gasp, glyf, head, hhea, hmtx, kern, loca, maxp, name, post, prep]
+subsetting	empty-subset	1|0|true
+subsetting	required-table-selection	2|1366|4|[glyf, head, hhea, hmtx, loca, maxp]
+subsetting	forced-invisible-encoding	4|false|true|true|1366|0|0
+subsetting	invalid-glyph-failure	other
+discovery	extension-filter-missing-duplicate-and-corrupt	[scan/collection.ttc, scan/corrupt.otf, scan/typeone.pfb, scan/valid.ttf, scan/nested/duplicate.ttf]|0|true
+discovery	type-detection-and-failures	liberationsans|true|100942|[liberationsans, josefinsans-italic]|io|io
+discovery	supported-host-selection	[windows/amd64=[windows/fonts/windows.pfb], windows/aarch64=[windows/fonts/windows.pfb], mac/amd64=[home/library/fonts/mac.ttf], mac/aarch64=[home/library/fonts/mac.ttf], unix/amd64=[home/.fonts/unix.otf], unix/aarch64=[home/.fonts/unix.otf], fallback=[home/.fonts/unix.otf]]
+discovery	finder-selection-cache-and-fallback	[home/library/fonts/mac.ttf]|[home/library/fonts/mac.ttf]|[home/.fonts/unix.otf]
+discovery	inaccessible-directory	none
 failure	empty-pfb	io
 failure	negative-pfb-record	io
 failure	odd-hex	argument

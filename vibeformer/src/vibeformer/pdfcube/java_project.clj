@@ -79,6 +79,12 @@
     (csharp/sequence-node arguments ", ")
     (raw ")")]))
 
+(defn- font-discovery-call [member arguments]
+  (sequence-node
+   [(raw (str "global::Vibeformer.Runtime.PdfCubeFontDiscovery." member "("))
+    (csharp/sequence-node arguments ", ")
+    (raw ")")]))
+
 (defn- logger-message-node [message]
   (sequence-node
    [(raw "global::Vibeformer.Runtime.JavaCompat.StringValueOf(")
@@ -224,6 +230,31 @@
        (raw ").Read(")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))})
+
+(def ^:private font-discovery-invocation-adaptations
+  {"executable:java.io.File#canRead()"
+   (fn [target _arguments]
+     (font-discovery-call "FileCanRead" [target]))
+
+   "executable:java.io.File#exists()"
+   (fn [target _arguments]
+     (font-discovery-call "FileExists" [target]))
+
+   "executable:java.io.File#isDirectory()"
+   (fn [target _arguments]
+     (font-discovery-call "FileIsDirectory" [target]))
+
+   "executable:java.io.File#isHidden()"
+   (fn [target _arguments]
+     (font-discovery-call "FileIsHidden" [target]))
+
+   "executable:java.io.File#listFiles()"
+   (fn [target _arguments]
+     (font-discovery-call "FileListFiles" [target]))
+
+   "executable:java.io.File#toURI()"
+   (fn [target _arguments]
+     (font-discovery-call "FileToUri" [target]))})
 
 (def ^:private bouncy-dependencies
   {"org.bouncycastle:bcpkix-jdk18on:jar:1.84"
@@ -681,6 +712,14 @@
 
 (defn- internal-capability-assets [{:keys [configuration]}]
   (cond-> []
+    (contains? (:internal-capabilities configuration) :font-discovery)
+    (conj
+     {:source "vibeformer/runtime/PdfCube.FontBox.Discovery.cs"
+      :destination "Vibeformer/Runtime/PdfCubeFontDiscovery.cs"
+      :strategy :pdfcube.fontbox/font-discovery
+      :missing-kind :missing-pdfcube-fontbox-discovery-source
+      :missing-message "PdfCube FontBox discovery source is missing"})
+
     (contains? (:internal-capabilities configuration) :skia-geometry)
     (conj
      {:source "vibeformer/runtime/PdfCube.FontBox.Compat.cs"
@@ -709,11 +748,17 @@
         (assoc-in
          [:rules :structural-declarations :create-context]
          (fn [options]
-           (base-create-context
-            (assoc options
-                   :destination-type-mappings commons-type-mappings
-                   :destination-invocation-adaptations
-                   commons-invocation-adaptations))))
+           (let [configuration (:configuration options)
+                 invocation-adaptations
+                 (cond-> commons-invocation-adaptations
+                   (contains? (:internal-capabilities configuration)
+                              :font-discovery)
+                   (merge font-discovery-invocation-adaptations))]
+             (base-create-context
+              (assoc options
+                     :destination-type-mappings commons-type-mappings
+                     :destination-invocation-adaptations
+                     invocation-adaptations)))))
         (assoc-in [:rules :destination-bridges :assets]
                   (fn [context]
                     (let [configuration (:configuration context)

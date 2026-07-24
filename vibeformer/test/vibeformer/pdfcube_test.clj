@@ -369,6 +369,59 @@
               "global::PdfCube.IO.RandomAccessRead value)")))
     (is (not (str/includes? source "org.apache.pdfbox.io")))))
 
+(deftest fontbox-discovery-uses-the-internal-platform-adapter
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-fontbox")
+        fixture
+        (model!
+         "org/apache/fontbox/util/autodetect/DiscoveryFixture.java"
+         (str
+          "package org.apache.fontbox.util.autodetect; "
+          "import java.io.File; "
+          "import java.net.URI; "
+          "import java.util.Map; "
+          "import java.util.TreeMap; "
+          "public final class DiscoveryFixture { "
+          "public Map<String, byte[]> sortedTables() { "
+          "return new TreeMap<>(); "
+          "} "
+          "public URI inspect(File file) { "
+          "if (file.exists() && file.canRead() && file.isDirectory() "
+          "&& !file.isHidden()) { "
+          "File[] entries = file.listFiles(); "
+          "if (entries != null && entries.length > 0) { "
+          "return entries[0].toURI(); "
+          "} } "
+          "return file.toURI(); "
+          "} }"))
+        emission (emit! fixture destination)
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               "src/PdfCube/FontBox/Util/Autodetect/DiscoveryFixture.cs")))
+        adapter-file
+        (paths/resolve-path
+         (:project-root emission)
+         "src/Vibeformer/Runtime/PdfCubeFontDiscovery.cs")
+        adapter (slurp (str adapter-file))]
+    (is (paths/regular-file? adapter-file))
+    (doseq [member ["FileExists" "FileCanRead" "FileIsDirectory"
+                    "FileIsHidden" "FileListFiles" "FileToUri"]]
+      (is (str/includes?
+           source
+           (str "global::PdfCube.FB.Runtime.PdfCubeFontDiscovery."
+                member "("))))
+    (is (str/includes? adapter "namespace PdfCube.FB.Runtime;"))
+    (is (str/includes? adapter
+                       "internal static class PdfCubeFontDiscovery"))
+    (is (not (str/includes? adapter
+                            "public static class PdfCubeFontDiscovery")))
+    (is (str/includes?
+         source
+         (str "global::PdfCube.FB.Runtime.JavaCompat."
+              "NewSortedDictionary<string, sbyte[]>()")))))
+
 (deftest resolved-module-surface-is-complete-and-blocks-stubs
   (let [workspace (paths/workspace-root)
         {destination :destination}
