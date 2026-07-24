@@ -150,6 +150,25 @@
        path
        (paths/resolve-path project-root path)))))
 
+(defn- windows?
+  []
+  (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "windows"))
+
+(defn- resolve-gradle-wrapper
+  "Resolves the Gradle wrapper launcher for the host platform. The wrapper ships
+  as a Unix script (`gradlew`) alongside a Windows batch launcher
+  (`gradlew.bat`); ProcessBuilder cannot start the Unix script on Windows, so
+  prefer the `.bat` sibling there when it is present."
+  ^Path [^Path project-root gradle-wrapper]
+  (let [base (resolve-configured-path project-root gradle-wrapper "gradlew")]
+    (if (windows?)
+      (let [file-name (str/lower-case (str (.getFileName base)))]
+        (if (or (str/ends-with? file-name ".bat") (str/ends-with? file-name ".cmd"))
+          base
+          (let [batch (paths/path (str base ".bat"))]
+            (if (paths/regular-file? batch) batch base))))
+      base)))
+
 (defn- resolve-project-root
   [^Path workspace-root project-root]
   (when-not project-root
@@ -419,7 +438,7 @@
                          (paths/resolve-path root
                                              (or configured
                                                  (paths/path "vibeformer/gradle/discover-main.gradle"))))))
-        gradlew (resolve-configured-path project-root gradle-wrapper "gradlew")]
+        gradlew (resolve-gradle-wrapper project-root gradle-wrapper)]
     (when-not (paths/directory? project-root)
       (throw (ex-info
               (str "Configured Gradle project root is missing: " project-root)

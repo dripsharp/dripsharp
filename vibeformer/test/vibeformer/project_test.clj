@@ -334,6 +334,46 @@
     (is (some #{":pkl-core:vibeformerDescribeMain"} @seen-command))
     (is (some #{"-Pvibeformer.project=:pkl-core"} @seen-command))))
 
+(deftest gradle-wrapper-launcher-matches-host-platform
+  (let [root (temp-directory)
+        pkl (paths/resolve-path root "research" "pkl")
+        _ (create-file! pkl "gradlew")
+        _ (create-file! pkl "gradlew.bat")
+        _ (create-file! root "vibeformer/gradle/discover-main.gradle")
+        windows? (str/starts-with?
+                  (str/lower-case (System/getProperty "os.name" "")) "windows")
+        seen-command (atom nil)
+        _ (project/discover-main!
+           {:workspace-root root
+            :project-root "research/pkl"
+            :manifest (paths/resolve-path root "target/manifest.tsv")
+            :gradle-project ":pkl-core"
+            :run-command!
+            (fn [{:keys [command]}]
+              (reset! seen-command command)
+              (write-manifest!
+               root
+               [["project-path" ":pkl-core"]
+                ["java-home" (doto (paths/resolve-path root "jdk")
+                               (Files/createDirectories (make-array FileAttribute 0)))]
+                ["java-release" "17"]
+                ["preview-features" "false"]
+                ["source" (create-file! root "pkl-core/src/main/java/Value.java")]
+                ["classpath" (create-file! root "cache/pkl-parser.jar")]])
+              (Files/createDirectories (paths/resolve-path root "target")
+                                       (make-array FileAttribute 0))
+              (Files/move (paths/resolve-path root "manifest.tsv")
+                          (paths/resolve-path root "target/manifest.tsv")
+                          (make-array java.nio.file.CopyOption 0))
+              {:exit 0 :output ""})})
+        launcher (first @seen-command)]
+    (if windows?
+      (is (str/ends-with? launcher "gradlew.bat")
+          "Windows must launch the batch wrapper, not the Unix script")
+      (is (and (str/ends-with? launcher "gradlew")
+               (not (str/ends-with? launcher ".bat")))
+          "Non-Windows must launch the Unix wrapper script"))))
+
 (deftest invalid-gradle-project-is-explicit
   (let [error (try
                 (project/discover-main!
