@@ -3,8 +3,10 @@
 ## Purpose
 
 This document records approved dependency and platform mappings for the five
-PdfCube source modules. SkiaSharp is the only approved third-party product
-dependency; .NET standard-library and Microsoft-package mappings remain allowed.
+PdfCube source modules. SkiaSharp and the optional `SkiaSharp.HarfBuzz` and
+`HarfBuzzSharp` text-shaping packages are the approved third-party product
+dependencies; .NET standard-library and Microsoft-package mappings remain
+allowed.
 
 The absence of a resolved mapping is not a product exclusion. It is blocking
 product work under the [authoritative product goal](product-goal.md).
@@ -94,6 +96,34 @@ parsing, CMYK/LUT transforms, or Preflight metadata validation.
 Official `SkiaSharp.NativeAssets.*` packages required for supported hosts are
 deployment artifacts of this approved dependency.
 
+### Optional HarfBuzz Text Shaping
+
+[`SkiaSharp.HarfBuzz` `4.150.1`](https://www.nuget.org/packages/SkiaSharp.HarfBuzz/4.150.1)
+and its [`HarfBuzzSharp`](https://www.nuget.org/packages/HarfBuzzSharp)
+dependency may be used when they help preserve complex-script text shaping or
+Java2D-style glyph-layout behavior. PdfCube may also use `HarfBuzzSharp`
+directly when its lower-level buffer, font, feature, cluster, or glyph-position
+APIs are a better fit than the SkiaSharp integration layer.
+
+Their use is optional and should be selected from concrete translated call
+sites and behavior evidence. They are appropriate for contextual glyph
+selection, OpenType substitution and positioning, ligatures, joining forms,
+combining marks, clusters, and glyph advances. Text in PDF content streams is
+often already encoded and positioned as glyphs; PdfCube must not reshape it
+when doing so would change the source behavior.
+
+HarfBuzz is a shaping engine, not an implementation of the Unicode
+Bidirectional Algorithm. Mixed-direction run analysis, embedding levels, visual
+run ordering, and behavior matching `java.text.Bidi` remain a separate required
+capability. When both capabilities apply, PdfCube must perform bidirectional
+segmentation first and shape each resulting uniform-direction run.
+
+When either HarfBuzz package is used, the corresponding official
+`HarfBuzzSharp.NativeAssets.*` packages required for Windows, Linux, and macOS
+on x64 and ARM64 are approved deployment artifacts. Their versions and host
+coverage must be kept compatible with the selected stable SkiaSharp release and
+verified during package-consumption testing.
+
 ## Resolved Java Platform Mappings
 
 | Java capability | Destination capability | Scope |
@@ -135,8 +165,9 @@ dependencies; their cases validate SkiaSharp or PdfCube's internal decoders.
 
 ## Required Internal Capabilities
 
-SkiaSharp does not supply the following behavior, which must be implemented or
-mechanically translated inside PdfCube without another third-party dependency:
+The approved SkiaSharp and HarfBuzz packages do not supply the following
+behavior, which must be implemented or mechanically translated inside PdfCube
+without another third-party dependency:
 
 * The Java2D compatibility facade and arbitrary-component raster model described
   above.
