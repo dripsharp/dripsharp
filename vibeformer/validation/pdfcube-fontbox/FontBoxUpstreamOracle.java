@@ -6,9 +6,11 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeSet;
 
 import org.apache.fontbox.afm.AFMParser;
 import org.apache.fontbox.afm.CharMetric;
@@ -26,7 +28,22 @@ import org.apache.fontbox.cmap.CodespaceRange;
 import org.apache.fontbox.encoding.MacRomanEncoding;
 import org.apache.fontbox.encoding.StandardEncoding;
 import org.apache.fontbox.pfb.PfbParser;
+import org.apache.fontbox.ttf.CmapLookup;
+import org.apache.fontbox.ttf.FontHeaders;
+import org.apache.fontbox.ttf.GlyfCompositeDescript;
+import org.apache.fontbox.ttf.GlyphData;
+import org.apache.fontbox.ttf.GlyphSubstitutionTable;
+import org.apache.fontbox.ttf.OTFParser;
+import org.apache.fontbox.ttf.OpenTypeFont;
+import org.apache.fontbox.ttf.TTFParser;
+import org.apache.fontbox.ttf.TTFTable;
+import org.apache.fontbox.ttf.TrueTypeCollection;
+import org.apache.fontbox.ttf.TrueTypeFont;
+import org.apache.fontbox.ttf.gsub.GsubWorker;
+import org.apache.fontbox.ttf.gsub.GsubWorkerFactory;
+import org.apache.fontbox.ttf.model.GsubData;
 import org.apache.fontbox.type1.Type1Font;
+import org.apache.pdfbox.io.RandomAccessRead;
 import org.apache.pdfbox.io.RandomAccessReadBuffer;
 import org.apache.pdfbox.io.RandomAccessReadBufferedFile;
 
@@ -54,6 +71,10 @@ public final class FontBoxUpstreamOracle {
     observePfbAndType1(
         new File(fonts, "OpenSans-Regular.pfb"),
         new File(fonts, "DejaVuSerifCondensed.pfb"));
+    observeTrueType(new File(resources, "ttf"));
+    observeOpenType(new File(resources, "ttf"), fonts);
+    observeGsub(new File(resources, "ttf"));
+    observeCollection(new File(resources, "ttf"));
     observeFailures(new File(resources, "afm"));
 
     Files.write(new File(args[0]).toPath(), observations, StandardCharsets.UTF_8);
@@ -327,6 +348,285 @@ public final class FontBoxUpstreamOracle {
             dejavuFont.getCharStringsDict().size()));
   }
 
+  private static void observeTrueType(File ttfDirectory) throws Exception {
+    File liberation = new File(ttfDirectory, "LiberationSans-Regular.ttf");
+    RandomAccessRead input = new RandomAccessReadBufferedFile(liberation);
+    TrueTypeFont font = new TTFParser().parse(input);
+    try {
+      List<String> tags = new ArrayList<String>();
+      boolean initialized = true;
+      for (TTFTable table : font.getTables()) {
+        tags.add(table.getTag());
+        initialized &= table.getInitialized();
+      }
+      Collections.sort(tags);
+      observe(
+          "truetype",
+          "directory-and-lifecycle",
+          join(
+              font.getVersion(),
+              font.getOriginalDataSize(),
+              input.isClosed(),
+              tags.size(),
+              initialized,
+              String.join(",", tags)));
+
+      observe(
+          "tables",
+          "headers-names-and-os2",
+          join(
+              font.getName(),
+              font.getNaming().getFontFamily(),
+              font.getNaming().getFontSubFamily(),
+              font.getNaming().getNameRecords().size(),
+              font.getHeader().getCreated().toInstant(),
+              font.getHeader().getUnitsPerEm(),
+              font.getMaximumProfile().getNumGlyphs(),
+              font.getOS2Windows().getWeightClass(),
+              font.getOS2Windows().getAchVendId()));
+
+      CmapLookup cmap = font.getUnicodeCmapLookup();
+      int a = cmap.getGlyphId('A');
+      int trademark = cmap.getGlyphId(0x2122);
+      int euro = cmap.getGlyphId(0x20ac);
+      observe(
+          "tables",
+          "cmap-metrics-post",
+          join(
+              a,
+              trademark,
+              euro,
+              cmap.getCharCodes(trademark),
+              font.getAdvanceWidth(a),
+              font.getHorizontalMetrics().getLeftSideBearing(a),
+              font.getPostScript().getGlyphNames()[trademark],
+              font.getPostScript().getGlyphNames()[euro]));
+
+      GlyphData glyph = font.getGlyph().getGlyph(131);
+      GlyfCompositeDescript description = (GlyfCompositeDescript) glyph.getDescription();
+      observe(
+          "tables",
+          "composite-glyph",
+          join(
+              glyph.getNumberOfContours(),
+              glyph.getXMinimum(),
+              glyph.getYMinimum(),
+              glyph.getXMaximum(),
+              glyph.getYMaximum(),
+              description.isComposite(),
+              description.getComponentCount(),
+              description.getComponents().get(0).getGlyphIndex(),
+              description.getComponents().get(1).getGlyphIndex(),
+              failureKind(() -> description.getComponents().remove(0))));
+
+      try (java.io.InputStream original = font.getOriginalData()) {
+        byte[] signature = new byte[4];
+        int signatureLength = original.read(signature);
+        observe(
+            "lifecycle",
+            "owned-copy-after-source-close",
+            join(
+                input.isClosed(),
+                signatureLength == signature.length ? unsigned(signature) : "short",
+                font.getOriginalDataSize()));
+      }
+
+      RandomAccessRead headerInput = new RandomAccessReadBufferedFile(liberation);
+      FontHeaders headers = new TTFParser().parseTableHeaders(headerInput);
+      observe(
+          "lifecycle",
+          "selective-header-scan",
+          join(
+              headerInput.isClosed(),
+              headers.getError(),
+              headers.getName(),
+              headers.getFontFamily(),
+              headers.getFontSubFamily(),
+              headers.getHeaderMacStyle(),
+              headers.getOS2Windows().getWeightClass()));
+    } finally {
+      font.close();
+      font.close();
+    }
+  }
+
+  private static void observeOpenType(File ttfDirectory, File fonts) throws Exception {
+    OpenTypeFont liberation =
+        new OTFParser()
+            .parse(
+                new RandomAccessReadBufferedFile(
+                    new File(ttfDirectory, "LiberationSans-Regular.ttf")));
+    try {
+      GlyphSubstitutionTable gsub = liberation.getGsub();
+      observe(
+          "opentype",
+          "truetype-outlines-and-layout",
+          join(
+              liberation.isPostScript(),
+              liberation.isSupportedOTF(),
+              liberation.hasLayoutTables(),
+              new TreeSet<String>(gsub.getSupportedScriptTags())));
+    } finally {
+      liberation.close();
+    }
+
+    OpenTypeFont sourceSans =
+        new OTFParser()
+            .parse(new RandomAccessReadBufferedFile(new File(fonts, "SourceSansProBold.otf")));
+    try {
+      observe(
+          "opentype",
+          "cff-outlines",
+          join(
+              sourceSans.getName(),
+              sourceSans.isPostScript(),
+              sourceSans.isSupportedOTF(),
+              sourceSans.hasLayoutTables(),
+              sourceSans.getCFF().getFont().getName(),
+              sourceSans.getCFF().getFont().getNumCharStrings(),
+              failureKind(sourceSans::getGlyph)));
+    } finally {
+      sourceSans.close();
+    }
+
+    OpenTypeFont noto =
+        new OTFParser(false)
+            .parse(new RandomAccessReadBufferedFile(new File(fonts, "NotoSansSC-Regular.otf")));
+    try {
+      int gid = 8712;
+      observe(
+          "tables",
+          "multiple-cmap-codes",
+          join(
+              noto.getUnicodeCmapLookup().getCharCodes(gid),
+              noto.getCmap().getSubtable(0, 4).getCharCodes(gid),
+              noto.getCmap().getSubtable(0, 3).getCharCodes(gid)));
+    } finally {
+      noto.close();
+    }
+  }
+
+  private static void observeGsub(File ttfDirectory) throws Exception {
+    TrueTypeFont liberation =
+        new TTFParser()
+            .parse(
+                new RandomAccessReadBufferedFile(
+                    new File(ttfDirectory, "LiberationSans-Regular.ttf")));
+    try {
+      GlyphSubstitutionTable table = liberation.getGsub();
+      GsubData defaultData = liberation.getGsubData();
+      GsubData cyrillic = table.getGsubData("cyrl");
+      observe(
+          "gsub",
+          "scripts-and-features",
+          join(
+              new TreeSet<String>(table.getSupportedScriptTags()),
+              defaultData.getActiveScriptName(),
+              cyrillic.getActiveScriptName(),
+              new TreeSet<String>(cyrillic.getSupportedFeatures()),
+              table.getGsubData("missing") == null));
+    } finally {
+      liberation.close();
+    }
+
+    TrueTypeFont bengali =
+        new TTFParser()
+            .parse(
+                new RandomAccessReadBufferedFile(new File(ttfDirectory, "Lohit-Bengali.ttf")));
+    try {
+      CmapLookup cmap = bengali.getUnicodeCmapLookup();
+      GsubData data = bengali.getGsubData();
+      GsubWorker worker = new GsubWorkerFactory().getGsubWorker(cmap, data);
+      observe(
+          "gsub",
+          "bengali-model",
+          join(
+              data.getLanguage(),
+              data.getActiveScriptName(),
+              new TreeSet<String>(data.getSupportedFeatures()),
+              data.getFeature("rphf").getAllGlyphIdsForSubstitution().size()));
+      observe(
+          "gsub",
+          "bengali-shaping",
+          join(
+              worker.applyTransforms(glyphIds(cmap, "আমি")),
+              worker.applyTransforms(glyphIds(cmap, "ব্যাস")),
+              worker.applyTransforms(glyphIds(cmap, "বেলা")),
+              worker.applyTransforms(glyphIds(cmap, "দ্রুত"))));
+    } finally {
+      bengali.close();
+    }
+  }
+
+  private static void observeCollection(File ttfDirectory) throws Exception {
+    byte[] collectionBytes =
+        buildCollection(
+            Files.readAllBytes(new File(ttfDirectory, "LiberationSans-Regular.ttf").toPath()),
+            Files.readAllBytes(new File(ttfDirectory, "JosefinSans-Italic.ttf").toPath()));
+    List<String> names = new ArrayList<String>();
+    try (TrueTypeCollection collection =
+        new TrueTypeCollection(new ByteArrayInputStream(collectionBytes))) {
+      collection.processAllFonts(font -> names.add(font.getName()));
+      TrueTypeFont selected = collection.getFontByName("JosefinSans-Italic");
+      observe(
+          "collection",
+          "generated-two-font-ttc",
+          join(names, selected.getName(), selected.getNumberOfGlyphs(), selected.getUnitsPerEm()));
+    }
+  }
+
+  private static List<Integer> glyphIds(CmapLookup cmap, String text) {
+    List<Integer> glyphs = new ArrayList<Integer>();
+    for (int index = 0; index < text.length(); index++) {
+      glyphs.add(cmap.getGlyphId(text.charAt(index)));
+    }
+    return glyphs;
+  }
+
+  private static byte[] buildCollection(byte[] first, byte[] second) {
+    int firstOffset = 20;
+    int secondOffset = firstOffset + ((first.length + 3) & ~3);
+    byte[] collection = new byte[secondOffset + second.length];
+    writeInt(collection, 0, 0x74746366);
+    writeInt(collection, 4, 0x00010000);
+    writeInt(collection, 8, 2);
+    writeInt(collection, 12, firstOffset);
+    writeInt(collection, 16, secondOffset);
+    copyFontIntoCollection(first, collection, firstOffset);
+    copyFontIntoCollection(second, collection, secondOffset);
+    return collection;
+  }
+
+  private static void copyFontIntoCollection(byte[] font, byte[] collection, int offset) {
+    System.arraycopy(font, 0, collection, offset, font.length);
+    int tableCount = readUnsignedShort(collection, offset + 4);
+    for (int index = 0; index < tableCount; index++) {
+      int tableOffsetPosition = offset + 12 + index * 16 + 8;
+      writeInt(
+          collection,
+          tableOffsetPosition,
+          readInt(collection, tableOffsetPosition) + offset);
+    }
+  }
+
+  private static int readUnsignedShort(byte[] data, int offset) {
+    return ((data[offset] & 0xff) << 8) | (data[offset + 1] & 0xff);
+  }
+
+  private static int readInt(byte[] data, int offset) {
+    return ((data[offset] & 0xff) << 24)
+        | ((data[offset + 1] & 0xff) << 16)
+        | ((data[offset + 2] & 0xff) << 8)
+        | (data[offset + 3] & 0xff);
+  }
+
+  private static void writeInt(byte[] data, int offset, int value) {
+    data[offset] = (byte) (value >>> 24);
+    data[offset + 1] = (byte) (value >>> 16);
+    data[offset + 2] = (byte) (value >>> 8);
+    data[offset + 3] = (byte) value;
+  }
+
   private static void observeFailures(File afmDirectory) throws Exception {
     observe(
         "failure",
@@ -373,6 +673,23 @@ public final class FontBoxUpstreamOracle {
                 new AFMParser(input).parse();
               }
             }));
+    observe(
+        "failure",
+        "malformed-truetype",
+        failureKind(() -> new TTFParser().parse(new RandomAccessReadBuffer(bytes(0, 1, 2, 3)))));
+    observe(
+        "failure",
+        "bad-collection-header",
+        failureKind(() -> new TrueTypeCollection(new ByteArrayInputStream(bytes(0, 1, 2, 3)))));
+    observe(
+        "failure",
+        "bad-collection-count",
+        failureKind(
+            () ->
+                new TrueTypeCollection(
+                    new ByteArrayInputStream(
+                        bytes(
+                            0x74, 0x74, 0x63, 0x66, 0, 0, 0, 0, 0x7f, 0xff, 0xff, 0xff)))));
   }
 
   private static byte[] bytes(int... values) {
@@ -423,6 +740,17 @@ public final class FontBoxUpstreamOracle {
   private static String value(Object value) {
     if (value == null) {
       return "null";
+    }
+    if (value instanceof Iterable<?>) {
+      StringBuilder result = new StringBuilder("[");
+      int index = 0;
+      for (Object item : (Iterable<?>) value) {
+        if (index++ > 0) {
+          result.append(", ");
+        }
+        result.append(value(item).toLowerCase(Locale.ROOT));
+      }
+      return result.append(']').toString();
     }
     if (value instanceof Number) {
       return new BigDecimal(String.valueOf(value)).stripTrailingZeros().toPlainString();

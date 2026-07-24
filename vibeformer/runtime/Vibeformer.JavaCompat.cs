@@ -27,7 +27,10 @@ namespace Vibeformer.Runtime;
 internal static class JavaStandardCharsets
 {
     internal static readonly Encoding UTF8 = new UTF8Encoding(false);
-    internal static readonly Encoding UTF16 = Encoding.Unicode;
+    // Java UTF-16 consumes an optional BOM and defaults to big-endian.
+    // Keep a distinct instance so JavaCompat can retain that contract while
+    // UTF-16BE remains a BOM-agnostic fixed-endian charset.
+    internal static readonly Encoding UTF16 = new UnicodeEncoding(true, true);
     internal static readonly Encoding UTF16BE = Encoding.BigEndianUnicode;
     internal static readonly Encoding USASCII = Encoding.ASCII;
     internal static readonly Encoding ISO88591 = Encoding.Latin1;
@@ -2716,6 +2719,13 @@ internal static class JavaCompat
         RegexMatcher(CompileRegex(pattern), value).ReplaceAll(replacement);
     internal static sbyte[] StringGetBytes(string value, Encoding encoding)
     {
+        if (ReferenceEquals(encoding, JavaStandardCharsets.UTF16))
+        {
+            return new byte[] { 0xfe, 0xff }
+                .Concat(Encoding.BigEndianUnicode.GetBytes(value))
+                .Select(item => unchecked((sbyte)item))
+                .ToArray();
+        }
         if (encoding.CodePage == Encoding.UTF8.CodePage)
         {
             encoding = (Encoding)new UTF8Encoding(false, false).Clone();
@@ -3970,11 +3980,26 @@ internal static class JavaCompat
     internal static string NewString(int[] codePoints, int offset, int count) =>
         string.Concat(codePoints.Skip(offset).Take(count).Select(CodePointToString));
     internal static string NewString(sbyte[] value, Encoding encoding) =>
-        encoding.GetString(value.Select(item => unchecked((byte)item)).ToArray());
+        DecodeJavaBytes(value.Select(item => unchecked((byte)item)).ToArray(), encoding);
     internal static string NewString(sbyte[] value, int offset, int count, Encoding encoding) =>
-        encoding.GetString(value.Skip(offset).Take(count).Select(item => unchecked((byte)item)).ToArray());
-    internal static string NewString(byte[] value, Encoding encoding) => encoding.GetString(value);
+        DecodeJavaBytes(
+            value.Skip(offset).Take(count).Select(item => unchecked((byte)item)).ToArray(),
+            encoding);
+    internal static string NewString(byte[] value, Encoding encoding) =>
+        DecodeJavaBytes(value, encoding);
     internal static string NewString(object value) => StringValueOf(value);
+
+    private static string DecodeJavaBytes(byte[] value, Encoding encoding)
+    {
+        if (!ReferenceEquals(encoding, JavaStandardCharsets.UTF16))
+            return encoding.GetString(value);
+        if (value.Length >= 2 && value[0] == 0xfe && value[1] == 0xff)
+            return Encoding.BigEndianUnicode.GetString(value, 2, value.Length - 2);
+        if (value.Length >= 2 && value[0] == 0xff && value[1] == 0xfe)
+            return Encoding.Unicode.GetString(value, 2, value.Length - 2);
+        return Encoding.BigEndianUnicode.GetString(value);
+    }
+
     internal static Uri NewUri(string value) => CreateUri(value);
     internal static string UriToString(Uri value) =>
         OriginalUriTexts.TryGetValue(value, out var original)

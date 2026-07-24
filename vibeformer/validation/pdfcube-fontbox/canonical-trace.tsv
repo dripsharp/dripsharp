@@ -19,6 +19,19 @@ cmap	direct-zero-precedes-range	0
 pfb	segments	4498|95911|533|4498|95911|100942
 type1	open-sans	1.10|opensans-regular|open sans regular|open sans|book|builtinencoding|4498|95911|938|true|false
 type1	multiple-binary-segments	version 2.33|dejavuserifcondensed|5959|1056090|3399
+truetype	directory-and-lifecycle	1|410712|true|19|false|fftm,gdef,gpos,gsub,os/2,cmap,cvt ,fpgm,gasp,glyf,head,hhea,hmtx,kern,loca,maxp,name,post,prep
+tables	headers-names-and-os2	liberationsans|liberation sans|regular|30|2010-06-18t10:23:22z|2048|2620|400|1asc
+tables	cmap-metrics-post	36|2104|2088|[8482]|1366|4|trademark|euro
+tables	composite-glyph	-1|4|0|1362|1776|true|2|36|2335|unsupported
+lifecycle	owned-copy-after-source-close	true|0,1,0,0|410712
+lifecycle	selective-header-scan	true|null|liberationsans|liberation sans|regular|0|400
+opentype	truetype-outlines-and-layout	false|true|true|[dflt, bopo, copt, cyrl, grek, hebr, latn]
+opentype	cff-outlines	sourcesanspro-bold|true|true|true|sourcesanspro-bold|824|unsupported
+tables	multiple-cmap-codes	[19981, 63847]|[19981, 63847]|[19981, 63847]
+gsub	scripts-and-features	[dflt, bopo, copt, cyrl, grek, hebr, latn]|latn|cyrl|[subs, sups]|true
+gsub	bengali-model	bengali|bng2|[abvs, akhn, blwf, blws, half, haln, init, nukt, pres, pstf, rphf, vatu]|2
+gsub	bengali-shaping	[56, 102, 91]|[89, 156, 101, 97]|[438, 89, 94, 101]|[274, 82]
+collection	generated-two-font-ttc	[liberationsans, josefinsans-italic]|josefinsans-italic|577|1000
 failure	empty-pfb	io
 failure	negative-pfb-record	io
 failure	odd-hex	argument
@@ -27,3 +40,6 @@ failure	bad-codespace	argument
 failure	malformed-cff	io
 failure	malformed-afm-start	io
 failure	malformed-afm-number	io
+failure	malformed-truetype	io
+failure	bad-collection-header	io
+failure	bad-collection-count	io

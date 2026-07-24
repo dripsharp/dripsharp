@@ -18,7 +18,8 @@
   "9286e47d89d6877005c9d2d0f2fd38793a62519a")
 
 (def required-trace-families
-  #{"encoding" "cff" "afm" "cmap" "pfb" "type1" "failure"})
+  #{"encoding" "cff" "afm" "cmap" "pfb" "type1" "truetype" "opentype"
+    "tables" "gsub" "collection" "lifecycle" "failure"})
 
 (def font-fixtures
   [{:file "SourceSansProBold.otf"

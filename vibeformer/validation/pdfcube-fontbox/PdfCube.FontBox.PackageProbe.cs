@@ -9,6 +9,9 @@ using PdfCube.FontBox.Cff;
 using PdfCube.FontBox.Cmap;
 using PdfCube.FontBox.Encoding;
 using PdfCube.FontBox.Pfb;
+using PdfCube.FontBox.Ttf;
+using PdfCube.FontBox.Ttf.Gsub;
+using PdfCube.FontBox.Ttf.Model;
 using PdfCube.FontBox.Type1;
 using PdfCube.IO;
 
@@ -32,6 +35,10 @@ internal static class Program
         ObservePfbAndType1(
             Path.Combine(fonts, "OpenSans-Regular.pfb"),
             Path.Combine(fonts, "DejaVuSerifCondensed.pfb"));
+        ObserveTrueType(Path.Combine(resources, "ttf"));
+        ObserveOpenType(Path.Combine(resources, "ttf"), fonts);
+        ObserveGsub(Path.Combine(resources, "ttf"));
+        ObserveCollection(Path.Combine(resources, "ttf"));
         ObserveFailures(Path.Combine(resources, "afm"));
 
         File.WriteAllLines(args[0], Observations, new UTF8Encoding(false));
@@ -322,6 +329,302 @@ internal static class Program
                 dejavuFont.GetCharStringsDict().Count));
     }
 
+    private static void ObserveTrueType(string ttfDirectory)
+    {
+        var liberation = Path.Combine(ttfDirectory, "LiberationSans-Regular.ttf");
+        var input = new RandomAccessReadBufferedFile(liberation);
+        var font = new TTFParser().Parse(input);
+        try
+        {
+            var tags = font.GetTables().Select(table => table.GetTag())
+                .OrderBy(tag => tag, StringComparer.Ordinal)
+                .ToList();
+            Observe(
+                "truetype",
+                "directory-and-lifecycle",
+                Join(
+                    font.GetVersion(),
+                    font.GetOriginalDataSize(),
+                    input.IsClosed(),
+                    tags.Count,
+                    font.GetTables().All(table => table.GetInitialized()),
+                    string.Join(",", tags)));
+
+            Observe(
+                "tables",
+                "headers-names-and-os2",
+                Join(
+                    font.GetName(),
+                    font.GetNaming().GetFontFamily(),
+                    font.GetNaming().GetFontSubFamily(),
+                    font.GetNaming().GetNameRecords().Count,
+                    font.GetHeader().GetCreated().UtcDateTime.ToString(
+                        "yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
+                    font.GetHeader().GetUnitsPerEm(),
+                    font.GetMaximumProfile().GetNumGlyphs(),
+                    font.GetOS2Windows().GetWeightClass(),
+                    font.GetOS2Windows().GetAchVendId()));
+
+            var cmap = font.GetUnicodeCmapLookup();
+            var a = cmap.GetGlyphId('A');
+            var trademark = cmap.GetGlyphId(0x2122);
+            var euro = cmap.GetGlyphId(0x20ac);
+            Observe(
+                "tables",
+                "cmap-metrics-post",
+                Join(
+                    a,
+                    trademark,
+                    euro,
+                    cmap.GetCharCodes(trademark),
+                    font.GetAdvanceWidth(a),
+                    font.GetHorizontalMetrics().GetLeftSideBearing(a),
+                    font.GetPostScript().GetGlyphNames()[trademark],
+                    font.GetPostScript().GetGlyphNames()[euro]));
+
+            var glyph = font.GetGlyph().GetGlyph(131);
+            var description = (GlyfCompositeDescript)glyph.GetDescription();
+            Observe(
+                "tables",
+                "composite-glyph",
+                Join(
+                    glyph.GetNumberOfContours(),
+                    glyph.GetXMinimum(),
+                    glyph.GetYMinimum(),
+                    glyph.GetXMaximum(),
+                    glyph.GetYMaximum(),
+                    description.IsComposite(),
+                    description.GetComponentCount(),
+                    description.GetComponents()[0].GetGlyphIndex(),
+                    description.GetComponents()[1].GetGlyphIndex(),
+                    FailureKind(() => description.GetComponents().RemoveAt(0))));
+
+            using var original = font.GetOriginalData();
+            var signature = new byte[4];
+            _ = original.Read(signature, 0, signature.Length);
+            Observe(
+                "lifecycle",
+                "owned-copy-after-source-close",
+                Join(input.IsClosed(), string.Join(",", signature), font.GetOriginalDataSize()));
+
+            var headerInput = new RandomAccessReadBufferedFile(liberation);
+            var headers = new TTFParser().ParseTableHeaders(headerInput);
+            Observe(
+                "lifecycle",
+                "selective-header-scan",
+                Join(
+                    headerInput.IsClosed(),
+                    headers.GetError(),
+                    headers.GetName(),
+                    headers.GetFontFamily(),
+                    headers.GetFontSubFamily(),
+                    headers.GetHeaderMacStyle(),
+                    headers.GetOS2Windows().GetWeightClass()));
+        }
+        finally
+        {
+            font.Dispose();
+            font.Dispose();
+        }
+    }
+
+    private static void ObserveOpenType(string ttfDirectory, string fonts)
+    {
+        var liberation = new OTFParser().Parse(
+            new RandomAccessReadBufferedFile(
+                Path.Combine(ttfDirectory, "LiberationSans-Regular.ttf")));
+        try
+        {
+            var gsub = liberation.GetGsub();
+            Observe(
+                "opentype",
+                "truetype-outlines-and-layout",
+                Join(
+                    liberation.IsPostScript(),
+                    liberation.IsSupportedOTF(),
+                    liberation.HasLayoutTables(),
+                    gsub.GetSupportedScriptTags().OrderBy(value => value, StringComparer.Ordinal)));
+        }
+        finally
+        {
+            liberation.Dispose();
+        }
+
+        var sourceSans = new OTFParser().Parse(
+            new RandomAccessReadBufferedFile(Path.Combine(fonts, "SourceSansProBold.otf")));
+        try
+        {
+            Observe(
+                "opentype",
+                "cff-outlines",
+                Join(
+                    sourceSans.GetName(),
+                    sourceSans.IsPostScript(),
+                    sourceSans.IsSupportedOTF(),
+                    sourceSans.HasLayoutTables(),
+                    sourceSans.GetCFF().GetFont().GetName(),
+                    sourceSans.GetCFF().GetFont().GetNumCharStrings(),
+                    FailureKind(() => sourceSans.GetGlyph())));
+        }
+        finally
+        {
+            sourceSans.Dispose();
+        }
+
+        var noto = new OTFParser(false).Parse(
+            new RandomAccessReadBufferedFile(Path.Combine(fonts, "NotoSansSC-Regular.otf")));
+        try
+        {
+            const int gid = 8712;
+            Observe(
+                "tables",
+                "multiple-cmap-codes",
+                Join(
+                    noto.GetUnicodeCmapLookup().GetCharCodes(gid),
+                    noto.GetCmap().GetSubtable(0, 4).GetCharCodes(gid),
+                    noto.GetCmap().GetSubtable(0, 3).GetCharCodes(gid)));
+        }
+        finally
+        {
+            noto.Dispose();
+        }
+    }
+
+    private static void ObserveGsub(string ttfDirectory)
+    {
+        var liberation = new TTFParser().Parse(
+            new RandomAccessReadBufferedFile(
+                Path.Combine(ttfDirectory, "LiberationSans-Regular.ttf")));
+        try
+        {
+            var table = liberation.GetGsub();
+            var defaultData = liberation.GetGsubData();
+            var cyrillic = table.GetGsubData("cyrl");
+            Observe(
+                "gsub",
+                "scripts-and-features",
+                Join(
+                    table.GetSupportedScriptTags()
+                        .OrderBy(value => value, StringComparer.Ordinal),
+                    defaultData.GetActiveScriptName(),
+                    cyrillic.GetActiveScriptName(),
+                    cyrillic.GetSupportedFeatures()
+                        .OrderBy(value => value, StringComparer.Ordinal),
+                    table.GetGsubData("missing") is null));
+        }
+        finally
+        {
+            liberation.Dispose();
+        }
+
+        var bengali = new TTFParser().Parse(
+            new RandomAccessReadBufferedFile(Path.Combine(ttfDirectory, "Lohit-Bengali.ttf")));
+        try
+        {
+            var cmap = bengali.GetUnicodeCmapLookup();
+            var data = bengali.GetGsubData();
+            var worker = new GsubWorkerFactory().GetGsubWorker(cmap, data);
+            Observe(
+                "gsub",
+                "bengali-model",
+                Join(
+                    data.GetLanguage(),
+                    data.GetActiveScriptName(),
+                    data.GetSupportedFeatures()
+                        .OrderBy(value => value, StringComparer.Ordinal),
+                    data.GetFeature("rphf").GetAllGlyphIdsForSubstitution().Count));
+            Observe(
+                "gsub",
+                "bengali-shaping",
+                Join(
+                    worker.ApplyTransforms(GlyphIds(cmap, "আমি")),
+                    worker.ApplyTransforms(GlyphIds(cmap, "ব্যাস")),
+                    worker.ApplyTransforms(GlyphIds(cmap, "বেলা")),
+                    worker.ApplyTransforms(GlyphIds(cmap, "দ্রুত"))));
+        }
+        finally
+        {
+            bengali.Dispose();
+        }
+    }
+
+    private static void ObserveCollection(string ttfDirectory)
+    {
+        var collectionBytes = BuildCollection(
+            File.ReadAllBytes(Path.Combine(ttfDirectory, "LiberationSans-Regular.ttf")),
+            File.ReadAllBytes(Path.Combine(ttfDirectory, "JosefinSans-Italic.ttf")));
+        var names = new List<string>();
+        using var collection = new TrueTypeCollection(
+            new MemoryStream(collectionBytes, writable: false));
+        collection.ProcessAllFonts(new FontNameProcessor(names));
+        var selected = collection.GetFontByName("JosefinSans-Italic")
+            ?? throw new InvalidOperationException(
+                "TTC name lookup failed after observing: " + string.Join(",", names));
+        Observe(
+            "collection",
+            "generated-two-font-ttc",
+            Join(
+                names,
+                selected.GetName(),
+                selected.GetNumberOfGlyphs(),
+                selected.GetUnitsPerEm()));
+    }
+
+    private static List<int> GlyphIds(CmapLookup cmap, string text) =>
+        text.Select(character => cmap.GetGlyphId(character)).ToList();
+
+    private static byte[] BuildCollection(byte[] first, byte[] second)
+    {
+        const int firstOffset = 20;
+        var secondOffset = firstOffset + ((first.Length + 3) & ~3);
+        var collection = new byte[secondOffset + second.Length];
+        WriteInt(collection, 0, 0x74746366);
+        WriteInt(collection, 4, 0x00010000);
+        WriteInt(collection, 8, 2);
+        WriteInt(collection, 12, firstOffset);
+        WriteInt(collection, 16, secondOffset);
+        CopyFontIntoCollection(first, collection, firstOffset);
+        CopyFontIntoCollection(second, collection, secondOffset);
+        return collection;
+    }
+
+    private static void CopyFontIntoCollection(byte[] font, byte[] collection, int offset)
+    {
+        Array.Copy(font, 0, collection, offset, font.Length);
+        var tableCount = ReadUnsignedShort(collection, offset + 4);
+        for (var index = 0; index < tableCount; index++)
+        {
+            var tableOffsetPosition = offset + 12 + index * 16 + 8;
+            WriteInt(
+                collection,
+                tableOffsetPosition,
+                ReadInt(collection, tableOffsetPosition) + offset);
+        }
+    }
+
+    private static int ReadUnsignedShort(byte[] data, int offset) =>
+        (data[offset] << 8) | data[offset + 1];
+
+    private static int ReadInt(byte[] data, int offset) =>
+        (data[offset] << 24) |
+        (data[offset + 1] << 16) |
+        (data[offset + 2] << 8) |
+        data[offset + 3];
+
+    private static void WriteInt(byte[] data, int offset, int value)
+    {
+        data[offset] = unchecked((byte)(value >> 24));
+        data[offset + 1] = unchecked((byte)(value >> 16));
+        data[offset + 2] = unchecked((byte)(value >> 8));
+        data[offset + 3] = unchecked((byte)value);
+    }
+
+    private sealed class FontNameProcessor(List<string> names) :
+        TrueTypeCollection.TrueTypeFontProcessor
+    {
+        public void Process(TrueTypeFont font) => names.Add(font.GetName());
+    }
+
     private static void ObserveFailures(string afmDirectory)
     {
         Observe(
@@ -369,6 +672,27 @@ internal static class Program
                         File.OpenRead(Path.Combine(afmDirectory, "MalformedFloat.afm"));
                     new AFMParser(input).Parse();
                 }));
+        Observe(
+            "failure",
+            "malformed-truetype",
+            FailureKind(() => new TTFParser().Parse(
+                new RandomAccessReadBuffer(Bytes(0, 1, 2, 3)))));
+        Observe(
+            "failure",
+            "bad-collection-header",
+            FailureKind(() => new TrueTypeCollection(
+                new MemoryStream(new byte[] { 0, 1, 2, 3 }, writable: false))));
+        Observe(
+            "failure",
+            "bad-collection-count",
+            FailureKind(() => new TrueTypeCollection(
+                new MemoryStream(
+                    new byte[]
+                    {
+                        0x74, 0x74, 0x63, 0x66, 0, 0, 0, 0,
+                        0x7f, 0xff, 0xff, 0xff
+                    },
+                    writable: false))));
     }
 
     private static sbyte[] Bytes(params int[] values) =>
@@ -386,12 +710,20 @@ internal static class Program
     private static string Present(string value) => (value is not null).ToString();
 
     private static string Join(params object?[] values) =>
-        string.Join(
-            "|",
-            values.Select(value =>
-                value is null
-                    ? "null"
-                    : Convert.ToString(value, CultureInfo.InvariantCulture)!.ToLowerInvariant()));
+        string.Join("|", values.Select(Value));
+
+    private static string Value(object? value)
+    {
+        if (value is null)
+            return "null";
+        if (value is string text)
+            return text.ToLowerInvariant();
+        if (value is System.Collections.IEnumerable sequence)
+            return "[" + string.Join(
+                ", ",
+                sequence.Cast<object?>().Select(Value)) + "]";
+        return Convert.ToString(value, CultureInfo.InvariantCulture)!.ToLowerInvariant();
+    }
 
     private static string FailureKind(Action action)
     {
