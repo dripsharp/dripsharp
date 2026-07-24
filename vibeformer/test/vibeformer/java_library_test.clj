@@ -294,6 +294,77 @@
            (mapv (juxt :resolved-key :strategy) decisions)))
     (is (false? (:emitted-runtime-attribute (first decisions))))))
 
+(deftest project-runtime-annotations-preserve-reflection-semantics
+  (let [fixture
+        (model!
+         {"example/Mode.java"
+          "package example; public enum Mode { A, B }\n"
+          "example/Structured.java"
+          (str "package example; import java.lang.annotation.*; "
+               "@Retention(RetentionPolicy.RUNTIME) @Target(ElementType.TYPE) "
+               "public @interface Structured { String ns(); "
+               "Mode mode() default Mode.A; }\n")
+          "example/Property.java"
+          (str "package example; import java.lang.annotation.*; "
+               "@Retention(RetentionPolicy.RUNTIME) @Target(ElementType.FIELD) "
+               "public @interface Property { Mode mode() default Mode.A; }\n")
+          "example/Annotated.java"
+          (str "package example; import java.lang.reflect.Field; "
+               "@Structured(ns=\"urn:test\", mode=Mode.B) "
+               "public class Annotated { "
+               "@Property public static final String VALUE=\"value\"; "
+               "public static boolean annotationsWork() { "
+               "Structured structured=Annotated.class.getAnnotation(Structured.class); "
+               "Field field=Annotated.class.getFields()[0]; "
+               "return structured.ns().equals(\"urn:test\") "
+               "&& structured.mode().equals(Mode.B) "
+               "&& field.isAnnotationPresent(Property.class) "
+               "&& field.getAnnotation(Property.class).mode().equals(Mode.A); "
+               "} }\n")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        project-root (:project-root emission)
+        annotated
+        (slurp
+         (str (paths/resolve-path
+               project-root "src/Example/Java/Library/Annotated.cs")))
+        property
+        (slurp
+         (str (paths/resolve-path
+               project-root "src/Example/Java/Library/Property.cs")))
+        consumer-root (temp-directory)
+        generated-project
+        (paths/resolve-path project-root (:project-file emission))
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                 "<PropertyGroup><OutputType>Exe</OutputType>"
+                 "<TargetFramework>net10.0</TargetFramework>"
+                 "<ImplicitUsings>disable</ImplicitUsings>"
+                 "<Nullable>enable</Nullable>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 generated-project
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "return global::Example.Java.Library.Annotated"
+                 ".annotationsWork() ? 0 : 1;\n")})
+        result
+        (process/run! {:directory consumer-root
+                       :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                 "--configuration" "Release"
+                                 "--verbosity:quiet"]})]
+    (is (str/includes?
+         annotated
+         "[global::Example.Java.Library.StructuredAttribute(\"urn:test\", \"B\")]"))
+    (is (str/includes?
+         annotated
+         "[global::Example.Java.Library.PropertyAttribute(\"A\")]"))
+    (is (str/includes?
+         property
+         "internal sealed class PropertyAttribute : global::System.Attribute, Property"))
+    (is (zero? (:exit result)))))
+
 (deftest resolved-nullable-annotations-emit-csharp-nullable-types
   (let [fixture
         (model! {"example/NullableValues.java"
@@ -823,11 +894,15 @@
 (deftest neutral-map-hash-and-string-builder-chains-preserve-java-semantics
   (let [fixture
         (model! {"example/Text.java"
-                 (str "package example; import java.util.Map; import java.util.Optional; "
+                 (str "package example; import java.util.Calendar; import java.util.Map; import java.util.Optional; "
                       "public final class Text { public static int hash("
                       "Map<String, String> values) { return values.hashCode(); } "
                       "public static int listHash(java.util.List<String> values) { "
                       "return values.hashCode(); } "
+                      "public static boolean objectEquals(Object left, Object right) { "
+                      "return left.equals(right); } "
+                      "public static boolean calendarEquals(Calendar left, Calendar right) { "
+                      "return left.equals(right); } "
                       "public static String objectText(Object value) { return value.toString(); } "
                       "static String optionalText(Optional<Object> value) { "
                       "return value.map(Object::toString).orElse(\"\"); } "
@@ -844,6 +919,12 @@
         second-source
         (slurp (str (paths/resolve-path (:project-root second)
                                         "src/Example/Java/Library/Text.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.Equals(left, right);"))
+    (is (= 2 (count (re-seq
+                     #"return global::Vibeformer\.Runtime\.JavaCompat\.Equals\(left, right\);"
+                     first-source))))
     (is (str/includes?
          first-source
          (str "global::System.Text.StringBuilder builder = "
@@ -1972,17 +2053,31 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-list-remove-method-reference-remains-fail-closed
+(deftest list-remove-method-reference-discards-java-boolean-result
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.util.List; "
                       "import java.util.function.Consumer; "
                       "public final class Unsupported { static Consumer<String> remove("
                       "List<String> values) { return values::remove; } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
-                       "method reference requires a supported resolved method"))))
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Unsupported.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         first-source
+         "return (value0) => { values.Remove(value0); };"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest list-contains-uses-exact-java-equality-semantics
   (let [fixture
@@ -3081,16 +3176,31 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-string-replace-all-remains-fail-closed
+(deftest string-replace-all-uses-the-reusable-java-regex-contract
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; public final class Unsupported { "
                       "static String replace(String value) { "
                       "return value.replaceAll(\"x\", \"y\"); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.lang.String#replaceAll(java.lang.String,java.lang.String)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Unsupported.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.StringReplaceAll(value, \"x\", \"y\");"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest thread-local-rfc1123-date-state-uses-reusable-time-semantics
   (let [fixture

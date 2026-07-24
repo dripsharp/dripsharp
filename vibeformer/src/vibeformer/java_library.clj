@@ -25,7 +25,7 @@
             CtNewArray CtOperatorAssignment CtReturn CtStatement CtSuperAccess CtThisAccess CtThrow CtTry
             CtSwitch CtSynchronized CtTryWithResource CtTypeAccess CtUnaryOperator CtVariableAccess CtWhile
             CtVariableRead CtVariableWrite]
-           [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass CtConstructor CtElement
+           [spoon.reflect.declaration CtAnnotation CtAnnotationMethod CtAnnotationType CtAnonymousExecutable CtClass CtConstructor CtElement
             CtEnum CtEnumValue CtExecutable CtField CtInterface CtMethod
             CtModifiable CtParameter CtType ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtCatchVariableReference
@@ -44,6 +44,10 @@
                    :source-identity (or (spoon/declaration-key element)
                                         (spoon/frontend-identity element))
                    :source-location (spoon/source-location element)})))
+
+(defn- interface-type? [value]
+  (or (instance? CtInterface value)
+      (instance? CtAnnotationType value)))
 
 (defn- source-ref [^CtElement element rule extra]
   (merge {:frontend-class (.getName (class element))
@@ -277,7 +281,9 @@
                 actual-arguments (vec (.getActualTypeArguments reference))
                 arguments
                 (cond
-                  (= "java.lang.Class" (.getQualifiedName reference))
+                  (contains?
+                   #{"java.lang.Class" "java.lang.reflect.Constructor"}
+                   (.getQualifiedName reference))
                   []
 
                   (and (empty? actual-arguments)
@@ -474,7 +480,7 @@
 (defn- anonymous-project-type? [^CtConstructorCall call]
   (let [declaration (some-> call .getType .getTypeDeclaration)]
     (and (or (instance? CtClass declaration)
-             (and (instance? CtInterface declaration)
+             (and (interface-type? declaration)
                   (not (.isShadow ^CtType declaration))))
          (not (instance? CtEnum declaration)))))
 
@@ -488,6 +494,31 @@
                 name))
             (:capture-bindings ctx))))
 
+(defn- local-variable-owner [^CtLocalVariable variable]
+  (loop [current (when (.isParentInitialized variable)
+                   (.getParent variable))]
+    (cond
+      (nil? current) nil
+      (instance? CtExecutable current) current
+      (.isParentInitialized ^CtElement current)
+      (recur (.getParent ^CtElement current))
+      :else nil)))
+
+(defn- local-declaration-name [^CtElement declaration]
+  (if-not (instance? CtLocalVariable declaration)
+    (identifier (.getSimpleName declaration))
+    (let [base (identifier (.getSimpleName declaration))
+          owner (local-variable-owner declaration)
+          duplicates
+          (when owner
+            (filter #(= (.getSimpleName declaration)
+                        (.getSimpleName ^CtLocalVariable %))
+                    (.getElements owner (TypeFilter. CtLocalVariable))))]
+      (if (< 1 (count duplicates))
+        (let [{:keys [line column]} (spoon/source-location declaration)]
+          (str base "__" (or line 0) "_" (or column 0)))
+        base))))
+
 (defn- local-reference-name [ctx reference]
   (if-let [name (or (some-> reference .getDeclaration (capture-name ctx))
                     (let [matches
@@ -496,7 +527,9 @@
                                   (:capture-bindings ctx))]
                       (when (= 1 (count matches)) (:name (first matches)))))]
     (str "this." name)
-    (identifier (.getSimpleName ^CtElement reference))))
+    (if-let [declaration (some-> reference .getDeclaration)]
+      (local-declaration-name declaration)
+      (identifier (.getSimpleName ^CtElement reference)))))
 
 (defn- this-node [ctx ^CtThisAccess access]
   (if (and (:outer-type ctx)
@@ -569,10 +602,13 @@
 (defn- destination-field-name [ctx ^CtField field]
   (let [base (ordinary-member-name ctx field)
         owner (.getDeclaringType field)
+        type-collision?
+        (and owner
+             (= base (pascal (.getSimpleName ^CtType owner))))
         method-collision?
         (and owner
              (seq (.getMethodsByName ^CtType owner (.getSimpleName field))))]
-    (if-not method-collision?
+    (if-not (or type-collision? method-collision?)
       base
       (let [reserved (->> (concat (.getFields ^CtType owner)
                                   (.getMethods ^CtType owner))
@@ -619,12 +655,18 @@
     "executable:java.lang.Character#isDigit(int)"
     "executable:java.lang.Character#isWhitespace(char)"
     "executable:java.lang.Character#toString(char)"
+    "executable:java.lang.Class#asSubclass(java.lang.Class)"
+    "executable:java.lang.Class#cast(java.lang.Object)"
+    "executable:java.lang.Class#getAnnotation(java.lang.Class)"
+    "executable:java.lang.Class#getDeclaredConstructor(java.lang.Class[])"
+    "executable:java.lang.Class#getFields()"
     "executable:java.lang.Class#getResourceAsStream(java.lang.String)"
     "executable:java.lang.Double#valueOf(java.lang.String)"
     "executable:java.lang.Enum#toString()"
     "executable:java.lang.Float#compare(float,float)"
     "executable:java.lang.Float#floatToIntBits(float)"
     "executable:java.lang.Float#parseFloat(java.lang.String)"
+    "executable:java.lang.Float#toString(float)"
     "executable:java.lang.Integer#compare(int,int)"
     "executable:java.lang.Integer#equals(java.lang.Object)"
     "executable:java.lang.Integer#highestOneBit(int)"
@@ -640,12 +682,19 @@
     "executable:java.lang.Number#floatValue()"
     "executable:java.lang.Number#intValue()"
     "executable:java.lang.Object#clone()"
+    "executable:java.lang.Object#equals(java.lang.Object)"
+    "executable:java.lang.Enum#equals(java.lang.Object)"
+    "executable:java.lang.reflect.Constructor#newInstance(java.lang.Object[])"
+    "executable:java.lang.reflect.AccessibleObject#isAnnotationPresent(java.lang.Class)"
+    "executable:java.lang.reflect.Field#getAnnotation(java.lang.Class)"
+    "executable:java.lang.reflect.Field#isAnnotationPresent(java.lang.Class)"
     "executable:java.lang.String#charAt(int)"
     "executable:java.lang.String#codePointAt(int)"
     "executable:java.lang.String#compareTo(java.lang.String)"
     "executable:java.lang.String#format(java.util.Locale,java.lang.String,java.lang.Object[])"
     "executable:java.lang.String#indexOf(java.lang.String)"
     "executable:java.lang.String#replace(java.lang.CharSequence,java.lang.CharSequence)"
+    "executable:java.lang.String#replaceAll(java.lang.String,java.lang.String)"
     "executable:java.lang.String#toLowerCase(java.util.Locale)"
     "executable:java.lang.String#toUpperCase(java.util.Locale)"
     "executable:java.lang.String#valueOf(char[])"
@@ -666,10 +715,14 @@
     "executable:java.util.Arrays#toString(int[])"
     "executable:java.util.Arrays#toString(java.lang.Object[])"
     "executable:java.util.Calendar#getInstance(java.util.TimeZone)"
+    "executable:java.util.Calendar#clear()"
+    "executable:java.util.Calendar#equals(java.lang.Object)"
+    "executable:java.util.Calendar#get(int)"
     "executable:java.util.Calendar#getTimeInMillis()"
     "executable:java.util.Calendar#set(int,int)"
     "executable:java.util.Calendar#set(int,int,int,int,int,int)"
     "executable:java.util.Calendar#setTimeInMillis(long)"
+    "executable:java.util.GregorianCalendar#from(java.time.ZonedDateTime)"
     "executable:java.util.Collection#add(java.lang.Object)"
     "executable:java.util.Collection#isEmpty()"
     "executable:java.util.Collections#sort(java.util.List)"
@@ -700,12 +753,57 @@
     "executable:java.util.StringTokenizer#nextToken()"
     "executable:java.util.TimeZone#clone()"
     "executable:java.util.TimeZone#getTimeZone(java.lang.String)"
+    "executable:java.util.TimeZone#getRawOffset()"
+    "executable:java.util.TimeZone#setID(java.lang.String)"
     "executable:java.util.regex.Matcher#end()"
     "executable:java.util.regex.Matcher#find(int)"
     "executable:java.util.regex.Matcher#group()"
     "executable:java.util.regex.Matcher#start()"
+    "executable:java.util.regex.Pattern#matches(java.lang.String,java.lang.CharSequence)"
     "executable:java.util.stream.Stream#anyMatch(java.util.function.Predicate)"
-    "executable:java.util.stream.Stream#count()"})
+    "executable:java.util.stream.Stream#count()"
+    "executable:javax.xml.namespace.QName#getLocalPart()"
+    "executable:javax.xml.namespace.QName#getNamespaceURI()"
+    "executable:javax.xml.namespace.QName#getPrefix()"
+    "executable:javax.xml.parsers.DocumentBuilderFactory#newInstance()"
+    "executable:javax.xml.parsers.DocumentBuilderFactory#newDocumentBuilder()"
+    "executable:javax.xml.parsers.DocumentBuilderFactory#setExpandEntityReferences(boolean)"
+    "executable:javax.xml.parsers.DocumentBuilderFactory#setFeature(java.lang.String,boolean)"
+    "executable:javax.xml.parsers.DocumentBuilderFactory#setIgnoringComments(boolean)"
+    "executable:javax.xml.parsers.DocumentBuilderFactory#setNamespaceAware(boolean)"
+    "executable:javax.xml.parsers.DocumentBuilderFactory#setXIncludeAware(boolean)"
+    "executable:javax.xml.parsers.DocumentBuilder#newDocument()"
+    "executable:javax.xml.parsers.DocumentBuilder#parse(java.io.InputStream)"
+    "executable:javax.xml.parsers.DocumentBuilder#setErrorHandler(org.xml.sax.ErrorHandler)"
+    "executable:javax.xml.transform.TransformerFactory#newInstance()"
+    "executable:javax.xml.transform.TransformerFactory#newTransformer()"
+    "executable:javax.xml.transform.Transformer#setOutputProperty(java.lang.String,java.lang.String)"
+    "executable:javax.xml.transform.Transformer#transform(javax.xml.transform.Source,javax.xml.transform.Result)"
+    "executable:org.w3c.dom.Attr#getValue()"
+    "executable:org.w3c.dom.Document#createElement(java.lang.String)"
+    "executable:org.w3c.dom.Document#createElementNS(java.lang.String,java.lang.String)"
+    "executable:org.w3c.dom.Document#createProcessingInstruction(java.lang.String,java.lang.String)"
+    "executable:org.w3c.dom.Element#setAttribute(java.lang.String,java.lang.String)"
+    "executable:org.w3c.dom.Element#setAttributeNS(java.lang.String,java.lang.String,java.lang.String)"
+    "executable:org.w3c.dom.Element#getTagName()"
+    "executable:org.w3c.dom.Element#getAttributeNodeNS(java.lang.String,java.lang.String)"
+    "executable:org.w3c.dom.NamedNodeMap#getLength()"
+    "executable:org.w3c.dom.NamedNodeMap#item(int)"
+    "executable:org.w3c.dom.Node#getAttributes()"
+    "executable:org.w3c.dom.Node#getChildNodes()"
+    "executable:org.w3c.dom.Node#getFirstChild()"
+    "executable:org.w3c.dom.Node#getLocalName()"
+    "executable:org.w3c.dom.Node#getNamespaceURI()"
+    "executable:org.w3c.dom.Node#getNextSibling()"
+    "executable:org.w3c.dom.Node#getNodeName()"
+    "executable:org.w3c.dom.Node#getPrefix()"
+    "executable:org.w3c.dom.Node#getTextContent()"
+    "executable:org.w3c.dom.Node#appendChild(org.w3c.dom.Node)"
+    "executable:org.w3c.dom.Node#removeChild(org.w3c.dom.Node)"
+    "executable:org.w3c.dom.Node#setTextContent(java.lang.String)"
+    "executable:org.w3c.dom.NodeList#getLength()"
+    "executable:org.w3c.dom.NodeList#item(int)"
+    "executable:org.w3c.dom.ProcessingInstruction#getData()"})
 
 (def ^:private extended-neutral-field-keys
   #{"field:java.io.File#separator"
@@ -718,7 +816,25 @@
     "field:java.nio.charset.StandardCharsets#UTF_16"
     "field:java.nio.charset.StandardCharsets#UTF_16BE"
     "field:java.util.Calendar#MILLISECOND"
-    "field:java.util.Locale#US"})
+    "field:java.util.Calendar#YEAR"
+    "field:java.util.Calendar#MONTH"
+    "field:java.util.Calendar#DAY_OF_MONTH"
+    "field:java.util.Calendar#HOUR_OF_DAY"
+    "field:java.util.Calendar#MINUTE"
+    "field:java.util.Calendar#SECOND"
+    "field:java.util.Calendar#ZONE_OFFSET"
+    "field:java.util.Calendar#DST_OFFSET"
+    "field:java.util.Locale#US"
+    "field:java.time.format.DateTimeFormatter#ISO_LOCAL_DATE_TIME"
+    "field:javax.xml.XMLConstants#XMLNS_ATTRIBUTE"
+    "field:javax.xml.XMLConstants#XMLNS_ATTRIBUTE_NS_URI"
+    "field:javax.xml.XMLConstants#XML_NS_PREFIX"
+    "field:javax.xml.XMLConstants#XML_NS_URI"
+    "field:javax.xml.transform.OutputKeys#ENCODING"
+    "field:javax.xml.transform.OutputKeys#INDENT"
+    "field:javax.xml.transform.OutputKeys#OMIT_XML_DECLARATION"
+    "field:org.w3c.dom.Node#COMMENT_NODE"
+    "field:org.w3c.dom.Node#TEXT_NODE"})
 
 (defn- resolved-name [ctx occurrence reference]
   (cond
@@ -880,7 +996,17 @@
        "executable:java.time.Instant#plus(java.time.temporal.TemporalAmount)"
        "executable:java.time.Instant#isBefore(java.time.Instant)"
        "executable:java.time.ZonedDateTime#now(java.time.ZoneId)"
+       "executable:java.time.ZonedDateTime#parse(java.lang.CharSequence,java.time.format.DateTimeFormatter)"
+       "executable:java.time.LocalDateTime#atZone(java.time.ZoneId)"
+       "executable:java.time.LocalDateTime#parse(java.lang.CharSequence,java.time.format.DateTimeFormatter)"
+       "executable:java.time.ZoneId#of(java.lang.String)"
        "executable:java.time.format.DateTimeFormatter#format(java.time.temporal.TemporalAccessor)"
+       "executable:java.time.format.DateTimeFormatterBuilder#append(java.time.format.DateTimeFormatter)"
+       "executable:java.time.format.DateTimeFormatterBuilder#appendOffset(java.lang.String,java.lang.String)"
+       "executable:java.time.format.DateTimeFormatterBuilder#parseCaseInsensitive()"
+       "executable:java.time.format.DateTimeFormatterBuilder#parseLenient()"
+       "executable:java.time.format.DateTimeFormatterBuilder#parseStrict()"
+       "executable:java.time.format.DateTimeFormatterBuilder#toFormatter()"
        "executable:java.net.InetAddress#getLoopbackAddress()"
        "executable:java.lang.Thread#sleep(long)"
        "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
@@ -889,6 +1015,7 @@
        "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)"
        "executable:java.util.Map#entrySet()"
        "executable:java.util.Map#containsKey(java.lang.Object)"
+       "executable:java.util.Map#containsValue(java.lang.Object)"
        "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
        "executable:java.util.Map#forEach(java.util.function.BiConsumer)"
@@ -1141,12 +1268,8 @@
     (= "field:java.lang.Integer#MAX_VALUE" (:key occurrence))
     "MaxValue"
 
-    (contains? #{"field:java.lang.Object#class"
-                 "field:java.lang.Void#class"
-                 "field:java.nio.ByteBuffer#class"
-                 "field:java.nio.file.attribute.AclFileAttributeView#class"
-                 "field:java.util.Objects#class"}
-               (:key occurrence))
+    (and (= :field (:kind occurrence))
+         (str/ends-with? (:key occurrence) "#class"))
     "class"
 
     (contains? #{"field:java.nio.channels.FileChannel$MapMode#READ_ONLY"
@@ -1256,6 +1379,7 @@
                     "executable:java.lang.IllegalStateException#<init>()"
                     "executable:java.lang.IllegalArgumentException#<init>(java.lang.String)"
                     "executable:java.lang.IllegalArgumentException#<init>(java.lang.String,java.lang.Throwable)"
+                    "executable:java.lang.IllegalArgumentException#<init>(java.lang.Throwable)"
                     "executable:java.lang.IllegalArgumentException#<init>()"
                     "executable:java.lang.IndexOutOfBoundsException#<init>(java.lang.String)"
                     "executable:java.lang.NullPointerException#<init>(java.lang.String)"
@@ -1316,6 +1440,15 @@
                     "executable:java.util.BitSet#<init>()"
                     "executable:java.util.concurrent.ConcurrentHashMap#<init>()"
                     "executable:java.util.concurrent.ConcurrentHashMap#<init>(int)"
+                    "executable:java.time.format.DateTimeFormatterBuilder#<init>()"
+                    "executable:java.util.GregorianCalendar#<init>()"
+                    "executable:java.util.GregorianCalendar#<init>(java.util.TimeZone)"
+                    "executable:java.util.SimpleTimeZone#<init>(int,java.lang.String)"
+                    "executable:javax.xml.namespace.QName#<init>(java.lang.String)"
+                    "executable:javax.xml.namespace.QName#<init>(java.lang.String,java.lang.String)"
+                    "executable:javax.xml.namespace.QName#<init>(java.lang.String,java.lang.String,java.lang.String)"
+                    "executable:javax.xml.transform.dom.DOMSource#<init>(org.w3c.dom.Node)"
+                    "executable:javax.xml.transform.stream.StreamResult#<init>(java.io.OutputStream)"
                     "executable:java.awt.geom.GeneralPath#<init>()"
                     "executable:java.awt.geom.Point2D$Float#<init>(float,float)"
                     "executable:java.net.ServerSocket#<init>(int)"
@@ -1394,6 +1527,27 @@
   (or (first (.getActualTypeArguments (.getType invocation)))
       (unsupported! "Generic Java collection invocation has no resolved element type"
                     invocation)))
+
+(defn- project-invocation-type-arguments-node
+  [ctx ^CtInvocation invocation declaration]
+  (when (and (instance? CtMethod declaration)
+             (seq (.getFormalCtTypeParameters ^CtMethod declaration)))
+    (let [actual (vec (.getActualTypeArguments (.getExecutable invocation)))
+          inferred
+          (if (seq actual)
+            actual
+            (when (and (= 1 (count (.getFormalCtTypeParameters
+                                    ^CtMethod declaration)))
+                       (instance? CtTypeParameterReference
+                                  (.getType ^CtMethod declaration))
+                       (not (instance? CtTypeParameterReference
+                                      (.getType invocation))))
+              [(.getType invocation)]))]
+      (when (seq inferred)
+        (sequence-node
+         [(raw "<")
+          (sequence-node (mapv #(type-node ctx %) inferred) ", ")
+          (raw ">")])))))
 
 (defn- compat-call [name arguments]
   (sequence-node
@@ -1607,6 +1761,8 @@
     "executable:java.util.Map#putIfAbsent(java.lang.Object,java.lang.Object)"
     "executable:java.util.SortedSet#headSet(java.lang.Object)"})
 
+(declare covariant-value-override?)
+
 (defn- body-rules [ctx-holder]
   (java/structural-rules
    [{:id :java-library.expression/invocation
@@ -1648,8 +1804,8 @@
              (and target
                   (= :project (:origin occurrence))
                   (instance? CtMethod declaration)
-                  (instance? CtInterface
-                             (.getDeclaringType ^CtMethod declaration))
+                  (interface-type?
+                   (.getDeclaringType ^CtMethod declaration))
                   (some? (.getBody ^CtMethod declaration)))
              default-target-node
              (if default-interface?
@@ -1719,6 +1875,34 @@
                 "executable:java.lang.Character#toString(char)"
                 (compat-call "CodePointToString" arguments)
 
+                "executable:java.lang.Class#asSubclass(java.lang.Class)"
+                (compat-call "ClassAsSubclass" (into [target-node] arguments))
+
+                "executable:java.lang.Class#cast(java.lang.Object)"
+                (let [cast-type
+                      (or (some-> target .getType .getActualTypeArguments
+                                  first)
+                          (.getType element))]
+                  (sequence-node
+                   [(raw "global::Vibeformer.Runtime.JavaCompat.ClassCast<")
+                    (type-node @ctx-holder cast-type)
+                    (raw ">(") target-node (raw ", ")
+                    (sequence-node arguments ", ") (raw ")")]))
+
+                "executable:java.lang.Class#getAnnotation(java.lang.Class)"
+                (sequence-node
+                 [(raw "global::Vibeformer.Runtime.JavaCompat.ClassGetAnnotation<")
+                  (type-node @ctx-holder (.getType element))
+                  (raw ">(") target-node (raw ", ")
+                  (sequence-node arguments ", ") (raw ")!")])
+
+                "executable:java.lang.Class#getDeclaredConstructor(java.lang.Class[])"
+                (compat-call "ClassGetDeclaredConstructor"
+                             (into [target-node] arguments))
+
+                "executable:java.lang.Class#getFields()"
+                (sequence-node [target-node (raw ".GetFields()")])
+
                 "executable:java.lang.Class#getResourceAsStream(java.lang.String)"
                 (compat-call "ClassGetResourceAsStream"
                              (into [target-node] arguments))
@@ -1737,6 +1921,9 @@
 
                 "executable:java.lang.Float#parseFloat(java.lang.String)"
                 (compat-call "ParseFloat" arguments)
+
+                "executable:java.lang.Float#toString(float)"
+                (compat-call "StringValueOf" arguments)
 
                 "executable:java.lang.Integer#compare(int,int)"
                 (compat-call "CompareInt" arguments)
@@ -1793,6 +1980,31 @@
                 "executable:java.lang.Object#clone()"
                 (compat-call "Clone" [target-node])
 
+                ("executable:java.lang.Object#equals(java.lang.Object)"
+                 "executable:java.lang.Enum#equals(java.lang.Object)")
+                (compat-call "Equals" (into [target-node] arguments))
+
+                "executable:java.lang.reflect.Constructor#newInstance(java.lang.Object[])"
+                (sequence-node
+                 [(raw "global::Vibeformer.Runtime.JavaCompat.ConstructorInvoke<")
+                  (type-node @ctx-holder (.getType element))
+                  (raw ">(") target-node (raw ", ")
+                  (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.lang.reflect.Field#getAnnotation(java.lang.Class)"
+                (sequence-node
+                 [(raw "global::Vibeformer.Runtime.JavaCompat.FieldGetAnnotation<")
+                  (type-node @ctx-holder (.getType element))
+                  (raw ">(") target-node (raw ", ")
+                  (sequence-node arguments ", ") (raw ")!")])
+
+                ("executable:java.lang.reflect.AccessibleObject#isAnnotationPresent(java.lang.Class)"
+                 "executable:java.lang.reflect.Field#isAnnotationPresent(java.lang.Class)")
+                (sequence-node
+                 [(raw "global::Vibeformer.Runtime.JavaCompat.MemberIsAnnotationPresent(")
+                  target-node (raw ", ")
+                  (sequence-node arguments ", ") (raw ")")])
+
                 "executable:java.lang.String#charAt(int)"
                 (sequence-node [target-node (raw "[") (first arguments) (raw "]")])
 
@@ -1814,6 +2026,9 @@
                 (sequence-node
                  [target-node (raw ".Replace(") (sequence-node arguments ", ")
                   (raw ", global::System.StringComparison.Ordinal)")])
+
+                "executable:java.lang.String#replaceAll(java.lang.String,java.lang.String)"
+                (compat-call "StringReplaceAll" (into [target-node] arguments))
 
                 "executable:java.lang.String#toLowerCase(java.util.Locale)"
                 (sequence-node [target-node (raw ".ToLowerInvariant()")])
@@ -1865,6 +2080,15 @@
                 "executable:java.util.Calendar#getInstance(java.util.TimeZone)"
                 (compat-call "CalendarInstance" arguments)
 
+                "executable:java.util.Calendar#clear()"
+                (sequence-node [target-node (raw " = default")])
+
+                "executable:java.util.Calendar#equals(java.lang.Object)"
+                (compat-call "Equals" (into [target-node] arguments))
+
+                "executable:java.util.Calendar#get(int)"
+                (compat-call "CalendarGet" (into [target-node] arguments))
+
                 "executable:java.util.Calendar#getTimeInMillis()"
                 (sequence-node [target-node (raw ".ToUnixTimeMilliseconds()")])
 
@@ -1879,6 +2103,9 @@
                  [target-node
                   (raw " = global::System.DateTimeOffset.FromUnixTimeMilliseconds(")
                   (first arguments) (raw ")")])
+
+                "executable:java.util.GregorianCalendar#from(java.time.ZonedDateTime)"
+                (first arguments)
 
                 "executable:java.util.Deque#pop()"
                 (sequence-node [target-node (raw ".Pop()")])
@@ -1957,6 +2184,151 @@
                 "executable:java.util.TimeZone#getTimeZone(java.lang.String)"
                 (compat-call "GetTimeZone" arguments)
 
+                "executable:java.util.TimeZone#getRawOffset()"
+                (compat-call "TimeZoneRawOffset" [target-node])
+
+                "executable:java.util.TimeZone#setID(java.lang.String)"
+                (compat-call "TimeZoneSetId" (into [target-node] arguments))
+
+                "executable:javax.xml.namespace.QName#getLocalPart()"
+                (sequence-node [target-node (raw ".Name")])
+
+                "executable:javax.xml.namespace.QName#getNamespaceURI()"
+                (sequence-node [target-node (raw ".Namespace")])
+
+                "executable:javax.xml.namespace.QName#getPrefix()"
+                (compat-call "XmlQualifiedNamePrefix" [target-node])
+
+                "executable:javax.xml.parsers.DocumentBuilderFactory#newInstance()"
+                (raw "global::Vibeformer.Runtime.JavaCompat.NewXmlReaderSettings()")
+
+                "executable:javax.xml.parsers.DocumentBuilderFactory#newDocumentBuilder()"
+                (compat-call "XmlReaderSettingsClone" [target-node])
+
+                "executable:javax.xml.parsers.DocumentBuilderFactory#setFeature(java.lang.String,boolean)"
+                (compat-call "XmlReaderSetFeature" (into [target-node] arguments))
+
+                "executable:javax.xml.parsers.DocumentBuilderFactory#setXIncludeAware(boolean)"
+                (compat-call "XmlReaderSetXIncludeAware" (into [target-node] arguments))
+
+                "executable:javax.xml.parsers.DocumentBuilderFactory#setExpandEntityReferences(boolean)"
+                (compat-call "XmlReaderSetExpandEntityReferences"
+                             (into [target-node] arguments))
+
+                "executable:javax.xml.parsers.DocumentBuilderFactory#setIgnoringComments(boolean)"
+                (sequence-node [target-node (raw ".IgnoreComments = ")
+                                (first arguments)])
+
+                "executable:javax.xml.parsers.DocumentBuilderFactory#setNamespaceAware(boolean)"
+                (compat-call "XmlReaderSetNamespaceAware"
+                             (into [target-node] arguments))
+
+                "executable:javax.xml.parsers.DocumentBuilder#newDocument()"
+                (raw "new global::System.Xml.XmlDocument()")
+
+                "executable:javax.xml.parsers.DocumentBuilder#parse(java.io.InputStream)"
+                (compat-call "XmlParse" (into [target-node] arguments))
+
+                "executable:javax.xml.parsers.DocumentBuilder#setErrorHandler(org.xml.sax.ErrorHandler)"
+                (compat-call "XmlSetErrorHandler" (into [target-node] arguments))
+
+                "executable:javax.xml.transform.TransformerFactory#newInstance()"
+                (raw "new global::System.Xml.XmlWriterSettings()")
+
+                "executable:javax.xml.transform.TransformerFactory#newTransformer()"
+                (compat-call "XmlWriterSettingsClone" [target-node])
+
+                "executable:javax.xml.transform.Transformer#setOutputProperty(java.lang.String,java.lang.String)"
+                (compat-call "XmlSetOutputProperty" (into [target-node] arguments))
+
+                "executable:javax.xml.transform.Transformer#transform(javax.xml.transform.Source,javax.xml.transform.Result)"
+                (compat-call "XmlTransform" (into [target-node] arguments))
+
+                "executable:org.w3c.dom.NamedNodeMap#getLength()"
+                (sequence-node [target-node (raw ".Count")])
+
+                "executable:org.w3c.dom.NamedNodeMap#item(int)"
+                (sequence-node [target-node (raw ".Item(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:org.w3c.dom.Node#getAttributes()"
+                (sequence-node [target-node (raw ".Attributes!")])
+
+                "executable:org.w3c.dom.Node#getChildNodes()"
+                (sequence-node [target-node (raw ".ChildNodes")])
+
+                "executable:org.w3c.dom.Node#getFirstChild()"
+                (sequence-node [target-node (raw ".FirstChild")])
+
+                "executable:org.w3c.dom.Node#getLocalName()"
+                (sequence-node [target-node (raw ".LocalName")])
+
+                "executable:org.w3c.dom.Node#getNamespaceURI()"
+                (compat-call "XmlNodeNamespaceUri" [target-node])
+
+                "executable:org.w3c.dom.Node#getNextSibling()"
+                (sequence-node [target-node (raw ".NextSibling")])
+
+                "executable:org.w3c.dom.Node#getNodeName()"
+                (sequence-node [target-node (raw ".Name")])
+
+                "executable:org.w3c.dom.Node#getPrefix()"
+                (compat-call "XmlNodePrefix" [target-node])
+
+                "executable:org.w3c.dom.Node#getTextContent()"
+                (sequence-node [target-node (raw ".InnerText")])
+
+                "executable:org.w3c.dom.Node#appendChild(org.w3c.dom.Node)"
+                (sequence-node [target-node (raw ".AppendChild(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:org.w3c.dom.Node#removeChild(org.w3c.dom.Node)"
+                (sequence-node [target-node (raw ".RemoveChild(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:org.w3c.dom.Attr#getValue()"
+                (sequence-node [target-node (raw ".Value")])
+
+                "executable:org.w3c.dom.Document#createElementNS(java.lang.String,java.lang.String)"
+                (compat-call "XmlCreateElementNs" (into [target-node] arguments))
+
+                "executable:org.w3c.dom.Document#createElement(java.lang.String)"
+                (sequence-node [target-node (raw ".CreateElement(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:org.w3c.dom.Document#createProcessingInstruction(java.lang.String,java.lang.String)"
+                (sequence-node [target-node (raw ".CreateProcessingInstruction(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:org.w3c.dom.Element#setAttribute(java.lang.String,java.lang.String)"
+                (sequence-node [target-node (raw ".SetAttribute(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:org.w3c.dom.Element#setAttributeNS(java.lang.String,java.lang.String,java.lang.String)"
+                (compat-call "XmlSetAttributeNs" (into [target-node] arguments))
+
+                "executable:org.w3c.dom.Element#getTagName()"
+                (sequence-node [target-node (raw ".Name")])
+
+                "executable:org.w3c.dom.Element#getAttributeNodeNS(java.lang.String,java.lang.String)"
+                (sequence-node [target-node (raw ".GetAttributeNode(")
+                                (second arguments) (raw ", ")
+                                (first arguments) (raw ")")])
+
+                "executable:org.w3c.dom.Node#setTextContent(java.lang.String)"
+                (sequence-node [target-node (raw ".InnerText = ")
+                                (first arguments)])
+
+                "executable:org.w3c.dom.NodeList#getLength()"
+                (sequence-node [target-node (raw ".Count")])
+
+                "executable:org.w3c.dom.NodeList#item(int)"
+                (sequence-node [target-node (raw ".Item(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:org.w3c.dom.ProcessingInstruction#getData()"
+                (sequence-node [target-node (raw ".Data")])
+
                 "executable:java.util.regex.Matcher#end()"
                 (sequence-node [target-node (raw ".End()")])
 
@@ -1970,6 +2342,9 @@
 
                 "executable:java.util.regex.Matcher#start()"
                 (sequence-node [target-node (raw ".Start()")])
+
+                "executable:java.util.regex.Pattern#matches(java.lang.String,java.lang.CharSequence)"
+                (compat-call "StringMatches" [(second arguments) (first arguments)])
 
                 "executable:java.util.stream.Stream#anyMatch(java.util.function.Predicate)"
                 (compat-call "Any" (into [target-node] arguments))
@@ -2518,9 +2893,41 @@
                 "executable:java.time.ZonedDateTime#now(java.time.ZoneId)"
                 (raw "global::System.DateTimeOffset.UtcNow")
 
+                "executable:java.time.ZonedDateTime#parse(java.lang.CharSequence,java.time.format.DateTimeFormatter)"
+                (compat-call "ParseZonedDateTime" arguments)
+
+                "executable:java.time.LocalDateTime#parse(java.lang.CharSequence,java.time.format.DateTimeFormatter)"
+                (compat-call "ParseLocalDateTime" arguments)
+
+                "executable:java.time.LocalDateTime#atZone(java.time.ZoneId)"
+                (compat-call "LocalDateTimeAtZone" (into [target-node] arguments))
+
+                "executable:java.time.ZoneId#of(java.lang.String)"
+                (compat-call "ZoneIdOf" arguments)
+
                 "executable:java.time.format.DateTimeFormatter#format(java.time.temporal.TemporalAccessor)"
                 (sequence-node [target-node (raw ".Format(")
                                 (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.time.format.DateTimeFormatterBuilder#parseCaseInsensitive()"
+                (sequence-node [target-node (raw ".ParseCaseInsensitive()")])
+
+                "executable:java.time.format.DateTimeFormatterBuilder#append(java.time.format.DateTimeFormatter)"
+                (sequence-node [target-node (raw ".Append(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.time.format.DateTimeFormatterBuilder#parseLenient()"
+                (sequence-node [target-node (raw ".ParseLenient()")])
+
+                "executable:java.time.format.DateTimeFormatterBuilder#appendOffset(java.lang.String,java.lang.String)"
+                (sequence-node [target-node (raw ".AppendOffset(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.time.format.DateTimeFormatterBuilder#parseStrict()"
+                (sequence-node [target-node (raw ".ParseStrict()")])
+
+                "executable:java.time.format.DateTimeFormatterBuilder#toFormatter()"
+                (sequence-node [target-node (raw ".ToFormatter()")])
 
                 "executable:java.net.InetAddress#getLoopbackAddress()"
                 (raw "global::System.Net.IPAddress.Loopback")
@@ -2542,6 +2949,9 @@
 
                 "executable:java.util.Map#containsKey(java.lang.Object)"
                 (compat-call "MapContainsKey" (into [target-node] arguments))
+
+                "executable:java.util.Map#containsValue(java.lang.Object)"
+                (compat-call "MapContainsValue" (into [target-node] arguments))
 
                 "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
                 (compat-call "ComputeIfAbsent" (into [target-node] arguments))
@@ -2952,11 +3362,28 @@
                  [(when target
                     (sequence-node [default-target-node (raw ".")]))
                   (child-node children (.getExecutable element))
+                  (when (= :project (:origin occurrence))
+                    (project-invocation-type-arguments-node
+                     @ctx-holder element declaration))
                   (raw "(")
                   (sequence-node arguments ", ")
                   (raw ")")])))
              raw-node
-             (if (nullable-declaration? @ctx-holder (:declaration occurrence))
+             (if (and (= :project (:origin occurrence))
+                      (instance? CtMethod declaration)
+                      (covariant-value-override?
+                       (.getDeclaringType ^CtMethod declaration)
+                       declaration))
+               (sequence-node
+                [(raw "(")
+                 (type-node @ctx-holder (.getType ^CtMethod declaration))
+                 (raw ")(") raw-node (raw ")")])
+               raw-node)
+             raw-node
+             (if (and
+                  (nullable-declaration? @ctx-holder
+                                         (:declaration occurrence))
+                  (empty? (.getTypeCasts element)))
                (sequence-node [raw-node (raw "!")])
                raw-node)
              node (expression-cast-node @ctx-holder element raw-node)]
@@ -2996,7 +3423,7 @@
                (vec
                 (concat arguments
                         (when outer? [(raw "this")])
-                        (map #(raw (identifier (.getSimpleName ^CtElement %)))
+                        (map #(raw (local-declaration-name %))
                              captures)))
                ", ")
               (raw ")")])
@@ -3005,6 +3432,10 @@
             (case (:key occurrence)
               "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
               (sequence-node [(raw "new global::System.Exception(null, ")
+                              (first arguments) (raw ")")])
+
+              "executable:java.lang.IllegalArgumentException#<init>(java.lang.Throwable)"
+              (sequence-node [(raw "new global::System.ArgumentException(null, ")
                               (first arguments) (raw ")")])
 
               "executable:java.io.IOException#<init>(java.lang.Throwable)"
@@ -3040,6 +3471,24 @@
 
               "executable:java.lang.String#<init>(byte[],java.nio.charset.Charset)"
               (compat-call "NewString" arguments)
+
+              "executable:java.util.GregorianCalendar#<init>()"
+              (raw "global::System.DateTimeOffset.Now")
+
+              "executable:java.util.GregorianCalendar#<init>(java.util.TimeZone)"
+              (compat-call "CalendarInstance" arguments)
+
+              "executable:java.util.SimpleTimeZone#<init>(int,java.lang.String)"
+              (compat-call "NewSimpleTimeZone" arguments)
+
+              ("executable:javax.xml.namespace.QName#<init>(java.lang.String)"
+               "executable:javax.xml.namespace.QName#<init>(java.lang.String,java.lang.String)"
+               "executable:javax.xml.namespace.QName#<init>(java.lang.String,java.lang.String,java.lang.String)")
+              (compat-call "NewXmlQualifiedName" arguments)
+
+              ("executable:javax.xml.transform.dom.DOMSource#<init>(org.w3c.dom.Node)"
+               "executable:javax.xml.transform.stream.StreamResult#<init>(java.io.OutputStream)")
+              (first arguments)
 
               "executable:java.util.EnumMap#<init>(java.lang.Class)"
               (sequence-node
@@ -3135,6 +3584,8 @@
                         #{"executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
                           "executable:java.lang.Object#toString()"
                           "executable:java.util.List#add(java.lang.Object)"
+                          "executable:java.util.List#remove(java.lang.Object)"
+                          "executable:org.w3c.dom.Node#removeChild(org.w3c.dom.Node)"
                           "executable:java.util.StringJoiner#add(java.lang.CharSequence)"
                           "executable:java.util.ArrayList#<init>()"
                           "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"}
@@ -3154,6 +3605,15 @@
              (= "executable:java.util.List#add(java.lang.Object)" (:key occurrence))
              (sequence-node
               [(raw "(value0) => { ") target (raw ".Add(value0); }")])
+
+             (= "executable:java.util.List#remove(java.lang.Object)" (:key occurrence))
+             (sequence-node
+              [(raw "(value0) => { ") target (raw ".Remove(value0); }")])
+
+             (= "executable:org.w3c.dom.Node#removeChild(org.w3c.dom.Node)"
+                (:key occurrence))
+             (sequence-node
+              [(raw "(value0) => { ") target (raw ".RemoveChild(value0); }")])
 
              (= "executable:java.util.StringJoiner#add(java.lang.CharSequence)"
                 (:key occurrence))
@@ -3256,10 +3716,20 @@
      :class CtBinaryOperator
      :emit
      (fn [{:keys [^CtBinaryOperator element children]}]
-       (let [left (child-node children (.getLeftHandOperand element))
-             right (child-node children (.getRightHandOperand element))
+       (let [kind (str (.getKind element))
+             unbox-operands? (contains? #{"AND" "OR"} kind)
+             left-expression (.getLeftHandOperand element)
+             right-expression (.getRightHandOperand element)
+             left-node (child-node children left-expression)
+             right-node (child-node children right-expression)
+             left (if unbox-operands?
+                    (maybe-unbox-node @ctx-holder left-expression left-node)
+                    left-node)
+             right (if unbox-operands?
+                     (maybe-unbox-node @ctx-holder right-expression right-node)
+                     right-node)
              node
-             (if (and (= "PLUS" (str (.getKind element)))
+             (if (and (= "PLUS" kind)
                       (string-expression? element)
                       (contains? (get-in @ctx-holder
                                          [:configuration :destination-capabilities])
@@ -3356,8 +3826,62 @@
                "field:java.util.Calendar#MILLISECOND"
                (raw "14")
 
+               "field:java.util.Calendar#YEAR"
+               (raw "1")
+
+               "field:java.util.Calendar#MONTH"
+               (raw "2")
+
+               "field:java.util.Calendar#DAY_OF_MONTH"
+               (raw "5")
+
+               "field:java.util.Calendar#HOUR_OF_DAY"
+               (raw "11")
+
+               "field:java.util.Calendar#MINUTE"
+               (raw "12")
+
+               "field:java.util.Calendar#SECOND"
+               (raw "13")
+
+               "field:java.util.Calendar#ZONE_OFFSET"
+               (raw "15")
+
+               "field:java.util.Calendar#DST_OFFSET"
+               (raw "16")
+
                "field:java.util.Locale#US"
                (raw "global::System.Globalization.CultureInfo.GetCultureInfo(\"en-US\")")
+
+               "field:java.time.format.DateTimeFormatter#ISO_LOCAL_DATE_TIME"
+               (raw "global::Vibeformer.Runtime.JavaDateTimeFormatter.IsoLocalDateTime")
+
+               "field:javax.xml.XMLConstants#XMLNS_ATTRIBUTE"
+               (raw "\"xmlns\"")
+
+               "field:javax.xml.XMLConstants#XMLNS_ATTRIBUTE_NS_URI"
+               (raw "\"http://www.w3.org/2000/xmlns/\"")
+
+               "field:javax.xml.XMLConstants#XML_NS_PREFIX"
+               (raw "\"xml\"")
+
+               "field:javax.xml.XMLConstants#XML_NS_URI"
+               (raw "\"http://www.w3.org/XML/1998/namespace\"")
+
+               "field:javax.xml.transform.OutputKeys#ENCODING"
+               (raw "\"encoding\"")
+
+               "field:javax.xml.transform.OutputKeys#INDENT"
+               (raw "\"indent\"")
+
+               "field:javax.xml.transform.OutputKeys#OMIT_XML_DECLARATION"
+               (raw "\"omit-xml-declaration\"")
+
+               "field:org.w3c.dom.Node#COMMENT_NODE"
+               (raw "global::System.Xml.XmlNodeType.Comment")
+
+               "field:org.w3c.dom.Node#TEXT_NODE"
+               (raw "global::System.Xml.XmlNodeType.Text")
 
                (if (and (instance? CtTypeAccess target)
                         (= "class" (.getSimpleName (.getVariable element))))
@@ -3491,7 +4015,7 @@
                                     .getVariable
                                     .getDeclaration))
                (.getElements (.getBody element) (TypeFilter. CtVariableWrite))))
-             variable-name (identifier (.getSimpleName variable))
+             variable-name (local-declaration-name variable)
              iteration-name (str "__foreachValue_" variable-name)]
          {:node
           (sequence-node
@@ -3795,7 +4319,7 @@
            [(if (.isInferred element)
               (raw "var")
               (declaration-type-node @ctx-holder element (.getType element)))
-            (raw (str " " (identifier (.getSimpleName element))))
+            (raw (str " " (local-declaration-name element)))
             (when initializer
               (sequence-node [(raw " = ")
                               initializer-node]))
@@ -3946,10 +4470,17 @@
     (or (.hasModifier ^CtModifiable type ModifierKind/PUBLIC)
         (public-derived-type? type))
     "public"
+    (.hasModifier ^CtModifiable type ModifierKind/PROTECTED)
+    "protected internal"
     :else "internal"))
 
 (defn- canonical-visibility [visibility]
   (str/replace visibility " " "-"))
+
+(defn- metadata-identifier [value]
+  (if (str/starts-with? value "@")
+    (subs value 1)
+    value))
 
 (defn- executable-implementation [^CtType owner ^CtElement member]
   (cond
@@ -3961,7 +4492,7 @@
     (instance? CtMethod member)
     (cond
       (.getBody ^CtMethod member) :translated-body
-      (or (instance? CtInterface owner)
+      (or (interface-type? owner)
           (.hasModifier ^CtMethod member ModifierKind/ABSTRACT))
       :abstract-contract
       :else :public-stub)
@@ -3978,7 +4509,9 @@
                              :namespace (destination-namespace ctx type)
                              :owner (destination-owner-name ctx type)
                              :kind "type" :name name :parameter-count "0"
-                             :visibility (emitted-type-visibility type)}
+                             :visibility
+                             (canonical-visibility
+                              (emitted-type-visibility type))}
                :source (source-ref type rule nil)}]
     (when (.containsKey ^IdentityHashMap (:emitted ctx) type)
       (fail! "A Java library declaration was emitted more than once"
@@ -4025,7 +4558,9 @@
                                       :type "type"
                                       :initializer "initializer"
                                       "member")
-                              :name (if (= :constructor kind) ".ctor" name)
+                              :name (if (= :constructor kind)
+                                      ".ctor"
+                                      (metadata-identifier name))
                               :parameter-count (str parameter-count)
                               :visibility
                               (some-> emitted-visibility canonical-visibility)}
@@ -4058,6 +4593,10 @@
     (if (.hasModifier member ModifierKind/PROTECTED)
       "protected internal"
       (visibility member default))))
+
+(defn- implicit-constructor-visibility
+  [^CtType owner ^CtConstructor constructor]
+  (member-visibility owner constructor (emitted-type-visibility owner)))
 
 (defn- type-formals-node [^CtType type]
   (let [parameters (vec (.getFormalCtTypeParameters type))]
@@ -4127,7 +4666,7 @@
 (defn- type-words [^CtType type]
   (let [visibility (emitted-type-visibility type)]
     (cond
-      (instance? CtInterface type) [visibility "interface"]
+      (interface-type? type) [visibility "interface"]
       (instance? CtEnum type) [visibility "sealed" "class"]
       (instance? CtClass type)
       (remove nil?
@@ -4232,10 +4771,32 @@
                     (.getMethodsByName ^CtClass declaration (.getSimpleName method)))
               (recur (.getSuperclass ^CtClass declaration))))))))
 
+(def ^:private clr-value-type-covariant-returns
+  #{"java.lang.Boolean" "java.lang.Byte" "java.lang.Character"
+    "java.lang.Double" "java.lang.Float" "java.lang.Integer"
+    "java.lang.Long" "java.lang.Short" "java.util.Calendar"
+    "java.time.Instant" "java.time.LocalDateTime"
+    "java.time.OffsetDateTime" "java.time.ZonedDateTime"})
+
+(defn- covariant-value-override?
+  [^CtType owner ^CtMethod method]
+  (when-let [super-method (superclass-method owner method)]
+    (and
+     (= "java.lang.Object"
+        (.getQualifiedName (.getType ^CtMethod super-method)))
+     (contains? clr-value-type-covariant-returns
+                (.getQualifiedName (.getType method))))))
+
+(defn- emitted-method-return-type
+  [^CtType owner ^CtMethod method]
+  (if (covariant-value-override? owner method)
+    (.getType ^CtMethod (superclass-method owner method))
+    (.getType method)))
+
 (defn- interface-methods [^CtType type]
   (letfn [(methods-for [^CtTypeReference reference]
             (when-let [declaration (.getTypeDeclaration reference)]
-              (when (and (instance? CtInterface declaration)
+              (when (and (interface-type? declaration)
                          (not (.isShadow ^CtType declaration)))
                 (concat
                  (map (fn [^CtMethod method] [reference method])
@@ -4310,7 +4871,7 @@
 
 (defn- method-words [^CtType owner ^CtMethod method]
   (let [static? (.hasModifier method ModifierKind/STATIC)
-        abstract? (and (not (instance? CtInterface owner))
+        abstract? (and (not (interface-type? owner))
                        (.hasModifier method ModifierKind/ABSTRACT))
         super-method (when-not static? (superclass-method owner method))
         inherited-interface-method
@@ -4322,7 +4883,7 @@
              (not= (str (.getType method)) (str (.getType ^CtMethod super-method))))
         widened-override-family? (public-override-family? owner method)
         interface-dispose?
-        (and (instance? CtInterface owner)
+        (and (interface-type? owner)
              (= "close" (.getSimpleName method))
              (empty? (.getParameters method)))
         override? (and (not static?)
@@ -4355,7 +4916,7 @@
 
                :else
                (member-visibility owner method
-                                  (if (instance? CtInterface owner)
+                                  (if (interface-type? owner)
                                     "public"
                                     "internal")))
              (when static? "static")
@@ -4411,6 +4972,68 @@
    (when-let [initializer (.getDefaultExpression field)]
      (seq (.getElements initializer (TypeFilter. CtThisAccess))))))
 
+(defn- annotation-methods [^CtAnnotationType annotation-type]
+  (->> (.getAnnotationMethods annotation-type)
+       (sort-by
+        (fn [^CtAnnotationMethod method]
+          (let [{:keys [file line column]} (spoon/source-location method)]
+            [file line column (.getSimpleName method)])))
+       vec))
+
+(defn- project-annotation-declaration
+  [ctx ^CtAnnotation annotation]
+  (let [occurrence (occurrence! ctx annotation :annotation)
+        declaration (:declaration occurrence)]
+    (when (and (= :project (:origin occurrence))
+               (instance? CtAnnotationType declaration))
+      declaration)))
+
+(defn- enum-reference? [^CtTypeReference reference]
+  (instance? CtEnum (.getTypeDeclaration reference)))
+
+(defn- annotation-value-node
+  [ctx ^CtAnnotation annotation ^CtAnnotationMethod method]
+  (let [value (.getValue annotation (.getSimpleName method))]
+    (when-not value
+      (unsupported! "Java annotation value and default are both absent" annotation))
+    (if (enum-reference? (.getType method))
+      (if (instance? CtVariableAccess value)
+        (raw (pr-str (.getSimpleName
+                      (.getVariable ^CtVariableAccess value))))
+        (unsupported! "Java enum annotation value is not a resolved enum constant"
+                      value))
+      (translated-node ctx value))))
+
+(defn- annotation-attribute-name-node
+  [ctx ^CtAnnotationType annotation-type]
+  (raw
+   (str "global::" (destination-namespace ctx annotation-type) "."
+        (pascal (.getSimpleName annotation-type)) "Attribute")))
+
+(defn- project-annotation-node
+  [ctx ^CtAnnotation annotation]
+  (when-let [annotation-type
+             (project-annotation-declaration ctx annotation)]
+    (sequence-node
+     [(raw "[")
+      (annotation-attribute-name-node ctx annotation-type)
+      (raw "(")
+      (sequence-node
+       (mapv #(annotation-value-node ctx annotation %)
+             (annotation-methods annotation-type))
+       ", ")
+      (raw ")]\n")])))
+
+(defn- project-annotation-attributes-node [ctx ^CtElement element]
+  (sequence-node
+   (keep #(project-annotation-node ctx %) (.getAnnotations element))))
+
+(defn- java-serialization-uid? [^CtField field]
+  (and (= "serialVersionUID" (.getSimpleName field))
+       (= "long" (.getQualifiedName (.getType field)))
+       (.hasModifier field ModifierKind/STATIC)
+       (.hasModifier field ModifierKind/FINAL)))
+
 (defn- field-node [ctx ^CtType owner ^CtField field]
   (let [enum-value? (instance? CtEnumValue field)
         initializer (.getDefaultExpression field)
@@ -4450,17 +5073,19 @@
                :java-library.declaration/enum-value
                :java-library.declaration/field)
         emitted-visibility
-        (if enum-value?
-          "public"
-          (member-visibility owner field "internal"))
+        (cond
+          enum-value? "public"
+          (java-serialization-uid? field) "internal"
+          :else (member-visibility owner field "internal"))
         id (register-member! ctx owner field name rule nil emitted-visibility)]
     (csharp/with-source
       (sequence-node
-       [(raw (str (str/join " "
+       [(project-annotation-attributes-node ctx field)
+        (raw (str (str/join " "
                             (remove nil?
                                     [(if enum-value?
                                        "public"
-                                       (member-visibility owner field "internal"))
+                                       emitted-visibility)
                                      (when (or enum-value?
                                                (.hasModifier field ModifierKind/STATIC))
                                        (when-not compile-time-constant? "static"))
@@ -4496,7 +5121,8 @@
         (csharp/with-source
           (sequence-node
            [(raw (str (str/join " " words) " "))
-            (declaration-type-node ctx method (.getType method))
+            (declaration-type-node ctx method
+                                   (emitted-method-return-type owner method))
             (raw (str " " name))
             (executable-formals-node method)
             (raw "(")
@@ -4588,7 +5214,10 @@
                               (executable-anonymous-calls constructor))
         name (pascal (.getSimpleName owner))
         rule :java-library.declaration/constructor
-        emitted-visibility (member-visibility owner constructor "internal")
+        emitted-visibility
+        (if (.isImplicit constructor)
+          (implicit-constructor-visibility owner constructor)
+          (member-visibility owner constructor "internal"))
         id (register-member! ctx owner constructor name rule nil emitted-visibility)
         body (.getBody constructor)
         first-statement (some-> body .getStatements first)
@@ -4645,7 +5274,7 @@
     (let [constructor-declaration
           (csharp/with-source
             (sequence-node
-             [(raw (str (member-visibility owner constructor "internal") " " name "("))
+             [(raw (str emitted-visibility " " name "("))
               (sequence-node (mapv #(parameter-node ctx %) (.getParameters constructor))
                              ", ")
               (raw ")")
@@ -4740,7 +5369,7 @@
        vec))
 
 (defn- functional-interface-method [^CtType type]
-  (when (instance? CtInterface type)
+  (when (interface-type? type)
     (let [methods (abstract-interface-methods type)]
       (when (= 1 (count methods))
         (first methods)))))
@@ -4830,13 +5459,13 @@
         outer (.getDeclaringType type)
         deferred-fields (:deferred-field-initializers ctx)
         rule :java-library.declaration/implicit-member-constructor
-        emitted-visibility (member-visibility type constructor "internal")
+        emitted-visibility (implicit-constructor-visibility type constructor)
         id (register-member! ctx type constructor name rule 1 emitted-visibility)]
     (csharp/with-source
       (sequence-node
        [(raw "private readonly ") (owner-type-node ctx outer)
         (raw (str " " outer-field-name ";\n\n"))
-        (raw (str (member-visibility type constructor "internal") " " name "("))
+        (raw (str emitted-visibility " " name "("))
         (owner-type-node ctx outer) (raw (str " " outer-field-name ") {\nthis."))
         (raw outer-field-name) (raw (str " = " outer-field-name ";\n"))
         (sequence-node
@@ -5008,33 +5637,173 @@
         (fn [^CtAnnotation annotation]
           (let [occurrence (occurrence! ctx annotation :annotation)
                 key (:key occurrence)
+                project-annotation?
+                (and (= :project (:origin occurrence))
+                     (instance? CtAnnotationType (:declaration occurrence)))
                 strategy
-                (case key
-                  "annotation:javax.annotation.Nullable"
-                  :csharp-nullable-metadata
-                  "annotation:javax.annotation.Nonnull"
-                  :csharp-nonnullable-metadata
-                  "annotation:java.lang.Override"
-                  :csharp-language-semantics
-                  "annotation:java.lang.FunctionalInterface"
-                  :csharp-functional-contract
-                  "annotation:java.lang.Deprecated"
-                  :source-deprecation-metadata
-                  "annotation:java.lang.SuppressWarnings"
-                  :source-analysis-only
-                  (unsupported! "Java library annotation has no neutral mapping"
-                                annotation))]
+                (if project-annotation?
+                  :csharp-runtime-attribute
+                  (case key
+                    "annotation:javax.annotation.Nullable"
+                    :csharp-nullable-metadata
+                    "annotation:javax.annotation.Nonnull"
+                    :csharp-nonnullable-metadata
+                    "annotation:java.lang.Override"
+                    :csharp-language-semantics
+                    "annotation:java.lang.FunctionalInterface"
+                    :csharp-functional-contract
+                    "annotation:java.lang.Deprecated"
+                    :source-deprecation-metadata
+                    "annotation:java.lang.SuppressWarnings"
+                    :source-analysis-only
+                    "annotation:java.lang.annotation.Retention"
+                    :csharp-attribute-retention
+                    "annotation:java.lang.annotation.Target"
+                    :csharp-attribute-target
+                    (unsupported! "Java library annotation has no neutral mapping"
+                                  annotation)))]
             {:source (source-ref annotation :java-library.annotation/resolved nil)
              :resolved-key key
              :origin (:origin occurrence)
              :strategy strategy
-             :emitted-runtime-attribute false})))))
+             :emitted-runtime-attribute project-annotation?})))))
+
+(defn- annotation-by-name
+  [^CtAnnotationType annotation-type qualified-name]
+  (some
+   (fn [^CtAnnotation annotation]
+     (when (= qualified-name
+              (.getQualifiedName (.getAnnotationType annotation)))
+       annotation))
+   (.getAnnotations annotation-type)))
+
+(defn- annotation-enum-value-names
+  [^CtAnnotation annotation value-name]
+  (when-let [value (.getValue annotation value-name)]
+    (->> (concat
+          (when (instance? CtVariableAccess value) [value])
+          (.getElements value (TypeFilter. CtVariableAccess)))
+         (map #(.getSimpleName
+                (.getVariable ^CtVariableAccess %)))
+         distinct
+         vec)))
+
+(def ^:private annotation-targets
+  {"ANNOTATION_TYPE" ["Interface"]
+   "CONSTRUCTOR" ["Constructor"]
+   "FIELD" ["Field"]
+   "METHOD" ["Method"]
+   "PARAMETER" ["Parameter"]
+   "TYPE" ["Class" "Interface" "Struct" "Enum" "Delegate"]})
+
+(defn- annotation-targets-node [^CtAnnotationType annotation-type]
+  (let [target-annotation
+        (annotation-by-name annotation-type
+                            "java.lang.annotation.Target")
+        java-targets
+        (when target-annotation
+          (annotation-enum-value-names target-annotation "value"))
+        unsupported-targets
+        (remove #(contains? annotation-targets %) java-targets)]
+    (when (seq unsupported-targets)
+      (unsupported!
+       (str "Java runtime annotation targets have no CLR metadata target: "
+            (str/join ", " unsupported-targets))
+       target-annotation))
+    (let [targets (distinct (mapcat annotation-targets java-targets))]
+      (raw
+       (if (seq targets)
+         (str/join
+          " | "
+          (map #(str "global::System.AttributeTargets." %) targets))
+         "global::System.AttributeTargets.All")))))
+
+(defn- annotation-meta-present?
+  [^CtAnnotationType annotation-type qualified-name]
+  (boolean (annotation-by-name annotation-type qualified-name)))
+
+(defn- annotation-storage-type-node
+  [ctx ^CtAnnotationMethod method]
+  (if (enum-reference? (.getType method))
+    (raw "string")
+    (declaration-type-node ctx method (.getType method))))
+
+(defn- annotation-storage-name [^CtAnnotationMethod method]
+  (identifier (str "__" (.getSimpleName method))))
+
+(defn- annotation-companion-method-node
+  [ctx ^CtAnnotationType annotation-type ^CtAnnotationMethod method]
+  (let [storage-name (annotation-storage-name method)
+        enum? (enum-reference? (.getType method))]
+    (sequence-node
+     [(raw "public ")
+      (declaration-type-node ctx method (.getType method))
+      (raw (str " " (method-name ctx annotation-type method) "() {\nreturn "))
+      (when enum?
+        (sequence-node
+         [(declaration-type-node ctx method (.getType method))
+          (raw ".valueOf(")]))
+      (raw (str "this." storage-name))
+      (when enum? (raw ")"))
+      (raw ";\n}")])))
+
+(defn- annotation-companion-node
+  [ctx ^CtAnnotationType annotation-type]
+  (let [name (pascal (.getSimpleName annotation-type))
+        methods (annotation-methods annotation-type)
+        parameters
+        (mapv
+         (fn [^CtAnnotationMethod method]
+           (sequence-node
+            [(annotation-storage-type-node ctx method)
+             (raw (str " " (identifier (.getSimpleName method))))]))
+         methods)
+        fields
+        (mapv
+         (fn [^CtAnnotationMethod method]
+           (sequence-node
+            [(raw "private readonly ")
+             (annotation-storage-type-node ctx method)
+             (raw (str " " (annotation-storage-name method) ";"))]))
+         methods)
+        assignments
+        (mapv
+         (fn [^CtAnnotationMethod method]
+           (raw
+            (str "this." (annotation-storage-name method) " = "
+                 (identifier (.getSimpleName method)) ";")))
+         methods)
+        inherited?
+        (annotation-meta-present? annotation-type
+                                  "java.lang.annotation.Inherited")
+        repeatable?
+        (annotation-meta-present? annotation-type
+                                  "java.lang.annotation.Repeatable")]
+    (sequence-node
+     [(raw "[global::System.AttributeUsage(")
+      (annotation-targets-node annotation-type)
+      (raw (str ", AllowMultiple = " (if repeatable? "true" "false")
+                ", Inherited = " (if inherited? "true" "false") ")]\n"
+                "internal sealed class " name
+                "Attribute : global::System.Attribute, " name " {\n"))
+      (sequence-node fields "\n")
+      (when (seq fields) (raw "\n\n"))
+      (raw (str "public " name "Attribute("))
+      (sequence-node parameters ", ")
+      (raw ") {\n")
+      (sequence-node assignments "\n")
+      (raw "\n}")
+      (when (seq methods) (raw "\n\n"))
+      (sequence-node
+       (mapv #(annotation-companion-method-node ctx annotation-type %) methods)
+       "\n\n")
+      (raw "\n}")])))
 
 (defn- emit-root [ctx ^CtType type]
-  (when-not (or (instance? CtClass type) (instance? CtInterface type))
+  (when-not (or (instance? CtClass type) (interface-type? type))
     (unsupported! "Java library declaration shape is not implemented" type))
   (let [name (pascal (.getSimpleName type))
-        rule (if (instance? CtInterface type)
+        rule (if (interface-type? type)
                :java-library.declaration/interface
                :java-library.declaration/class)
         id (register-type! ctx type name rule)
@@ -5100,6 +5869,7 @@
                    (and (instance? CtClass type)
                         (.hasModifier ^CtModifiable type
                                       ModifierKind/ABSTRACT))
+                   (.hasModifier ^CtModifiable type ModifierKind/PROTECTED)
                    (public-derived-type? type)))
           (conj (constructor-node member-ctx type implicit-constructor))
           (seq functional-bases)
@@ -5141,7 +5911,8 @@
     (sequence-node
      [(csharp/with-source
         (sequence-node
-         [(raw (str (str/join " " (type-words type)) " " name))
+         [(project-annotation-attributes-node ctx type)
+          (raw (str (str/join " " (type-words type)) " " name))
           (type-formals-node type)
           (when (seq base-nodes)
             (sequence-node [(raw " : ")
@@ -5153,7 +5924,9 @@
             (raw " {}"))])
         source)
       (when functional-method
-        (project-functional-adapter-node ctx type functional-method))]
+        (project-functional-adapter-node ctx type functional-method))
+      (when (instance? CtAnnotationType type)
+        (annotation-companion-node ctx type))]
      "\n\n")))
 
 (def ^:private bridge-capabilities

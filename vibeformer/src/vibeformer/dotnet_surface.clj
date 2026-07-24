@@ -234,6 +234,7 @@
 
 (def ^:private compatibility-types
   #{"IJavaOptional" "JavaByteBuffer" "JavaExecutorService"
+    "JavaDateTimeFormatter"
     "JavaFilterOutputStream" "JavaInputStream" "JavaIterator" "JavaOptional"
     "JavaOutputStream" "JavaPath" "JavaServerSocket" "JavaSslContext"
     "JavaStream"})
@@ -246,7 +247,7 @@
   (let [name (compatibility-type-name owner)
         file (paths/resolve-path workspace compatibility-source)
         lines (str/split-lines (Files/readString file StandardCharsets/UTF_8))
-        pattern (re-pattern (str "^(?:sealed |abstract )?(?:class|interface) "
+        pattern (re-pattern (str "^(?:public )?(?:sealed |abstract )?(?:class|interface) "
                                  (java.util.regex.Pattern/quote name)
                                  "(?:<|[ :{]|$)"))
         matches (keep-indexed (fn [index line]

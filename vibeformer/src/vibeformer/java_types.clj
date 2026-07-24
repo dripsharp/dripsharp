@@ -44,6 +44,14 @@
                                          :dotnet.type/argument-exception]
    "java.lang.IllegalStateException" ["global::System.InvalidOperationException"
                                       :dotnet.type/invalid-operation]
+   "java.lang.IllegalAccessException" ["global::System.MemberAccessException"
+                                       :dotnet.type/member-access-exception]
+   "java.lang.InstantiationException" ["global::System.MemberAccessException"
+                                       :dotnet.type/member-access-exception]
+   "java.lang.NoSuchMethodException" ["global::System.MissingMethodException"
+                                      :dotnet.type/missing-method-exception]
+   "java.lang.NoSuchMethodError" ["global::System.MissingMethodException"
+                                  :dotnet.type/missing-method-exception]
    "java.lang.ReflectiveOperationException" ["global::System.Reflection.TargetException"
                                              :dotnet.type/reflection-exception]
    "java.lang.SecurityException" ["global::System.Security.SecurityException"
@@ -129,8 +137,25 @@
                                   :dotnet.type/method-type]
    "java.lang.reflect.Field" ["global::System.Reflection.FieldInfo"
                               :dotnet.type/reflection-field]
+   "java.lang.reflect.AccessibleObject" ["global::System.Reflection.MemberInfo"
+                                        :dotnet.type/reflection-member]
    "java.lang.reflect.Method" ["global::System.Reflection.MethodInfo"
                                :dotnet.type/reflection-method]
+   "java.lang.reflect.Constructor" ["global::System.Reflection.ConstructorInfo"
+                                    :dotnet.type/reflection-constructor]
+   "java.lang.reflect.InvocationTargetException"
+   ["global::System.Reflection.TargetInvocationException"
+    :dotnet.type/target-invocation-exception]
+   "java.lang.annotation.Annotation" ["global::System.Attribute"
+                                      :dotnet.type/attribute]
+   "java.lang.annotation.ElementType" ["global::System.AttributeTargets"
+                                       :dotnet.type/attribute-targets]
+   "java.lang.annotation.Retention" ["global::System.Attribute"
+                                     :dotnet.type/source-annotation]
+   "java.lang.annotation.RetentionPolicy" ["global::System.AttributeTargets"
+                                           :dotnet.type/source-annotation-policy]
+   "java.lang.annotation.Target" ["global::System.Attribute"
+                                  :dotnet.type/source-annotation]
 
    "java.net.URI" ["global::System.Uri" :dotnet.type/uri]
    "java.net.URL" ["global::System.Uri" :dotnet.type/uri]
@@ -215,6 +240,13 @@
    "java.time.ZonedDateTime" ["global::System.DateTimeOffset" :dotnet.type/date-time-offset]
    "java.time.format.DateTimeFormatter" ["global::Vibeformer.Runtime.JavaDateTimeFormatter"
                                          :dotnet.type/date-time-formatter]
+   "java.time.format.DateTimeFormatterBuilder"
+   ["global::Vibeformer.Runtime.JavaDateTimeFormatterBuilder"
+    :dotnet.type/date-time-formatter-builder]
+   "java.time.format.DateTimeParseException" ["global::System.FormatException"
+                                              :dotnet.type/format-exception]
+   "java.time.LocalDateTime" ["global::System.DateTime"
+                              :dotnet.type/local-date-time]
    "java.time.temporal.TemporalAccessor" ["global::System.DateTimeOffset"
                                           :dotnet.type/date-time-offset]
    "java.time.temporal.TemporalAmount" ["global::System.TimeSpan" :dotnet.type/time-span]
@@ -267,6 +299,8 @@
                                        :dotnet.type/invalid-operation]
    "java.util.Calendar" ["global::System.DateTimeOffset"
                          :dotnet.type/date-time-offset]
+   "java.util.GregorianCalendar" ["global::System.DateTimeOffset"
+                                  :dotnet.type/date-time-offset]
    "java.util.Locale" ["global::System.Globalization.CultureInfo"
                        :dotnet.type/culture-info]
    "java.util.Objects" ["global::Vibeformer.Runtime.JavaCompat"
@@ -289,6 +323,8 @@
                                 :dotnet.type/string-tokenizer]
    "java.util.TimeZone" ["global::System.TimeZoneInfo"
                          :dotnet.type/time-zone-info]
+   "java.util.SimpleTimeZone" ["global::System.TimeZoneInfo"
+                               :dotnet.type/time-zone-info]
    "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary"
                         :dotnet.type/sorted-dictionary]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet"
@@ -353,6 +389,53 @@
                                 :dotnet.type/nullable-annotation]
    "javax.annotation.Nonnull" ["global::System.Diagnostics.CodeAnalysis.NotNullAttribute"
                                :dotnet.type/nonnullable-annotation]
+   "javax.xml.XMLConstants" ["global::Vibeformer.Runtime.JavaCompat"
+                             :dotnet.type/xml-constants]
+   "javax.xml.namespace.QName" ["global::System.Xml.XmlQualifiedName"
+                                :dotnet.type/xml-qualified-name]
+   "javax.xml.parsers.DocumentBuilder" ["global::System.Xml.XmlReaderSettings"
+                                        :dotnet.type/xml-reader-settings]
+   "javax.xml.parsers.DocumentBuilderFactory" ["global::System.Xml.XmlReaderSettings"
+                                               :dotnet.type/xml-reader-settings]
+   "javax.xml.parsers.ParserConfigurationException" ["global::System.Xml.XmlException"
+                                                      :dotnet.type/xml-exception]
+   "javax.xml.transform.OutputKeys" ["global::Vibeformer.Runtime.JavaCompat"
+                                     :dotnet.type/xml-output-keys]
+   "javax.xml.transform.Result" ["global::System.IO.Stream"
+                                 :dotnet.type/xml-result]
+   "javax.xml.transform.Source" ["global::System.Xml.XmlNode"
+                                 :dotnet.type/xml-node]
+   "javax.xml.transform.Transformer" ["global::System.Xml.XmlWriterSettings"
+                                      :dotnet.type/xml-writer-settings]
+   "javax.xml.transform.TransformerException" ["global::System.Xml.XmlException"
+                                               :dotnet.type/xml-exception]
+   "javax.xml.transform.TransformerFactory" ["global::System.Xml.XmlWriterSettings"
+                                             :dotnet.type/xml-writer-settings]
+   "javax.xml.transform.dom.DOMSource" ["global::System.Xml.XmlNode"
+                                       :dotnet.type/xml-node]
+   "javax.xml.transform.stream.StreamResult" ["global::System.IO.Stream"
+                                              :dotnet.type/xml-result]
+   "org.w3c.dom.Attr" ["global::System.Xml.XmlAttribute"
+                       :dotnet.type/xml-attribute]
+   "org.w3c.dom.Comment" ["global::System.Xml.XmlComment"
+                          :dotnet.type/xml-comment]
+   "org.w3c.dom.Document" ["global::System.Xml.XmlDocument"
+                           :dotnet.type/xml-document]
+   "org.w3c.dom.Element" ["global::System.Xml.XmlElement"
+                          :dotnet.type/xml-element]
+   "org.w3c.dom.NamedNodeMap" ["global::System.Xml.XmlAttributeCollection"
+                               :dotnet.type/xml-attribute-collection]
+   "org.w3c.dom.Node" ["global::System.Xml.XmlNode"
+                       :dotnet.type/xml-node]
+   "org.w3c.dom.NodeList" ["global::System.Xml.XmlNodeList"
+                           :dotnet.type/xml-node-list]
+   "org.w3c.dom.ProcessingInstruction" ["global::System.Xml.XmlProcessingInstruction"
+                                        :dotnet.type/xml-processing-instruction]
+   "org.w3c.dom.Text" ["global::System.Xml.XmlText"
+                       :dotnet.type/xml-text]
+   "org.xml.sax.SAXException" ["global::System.Xml.XmlException"
+                               :dotnet.type/xml-exception]
+   "org.xml.sax.ErrorHandler" ["object" :dotnet.type/xml-error-handler]
    "javax.net.ServerSocketFactory" ["global::Vibeformer.Runtime.JavaSslServerSocketFactory"
                                     :dotnet.type/server-socket-factory]
    "javax.net.SocketFactory" ["global::Vibeformer.Runtime.JavaSocketFactory"

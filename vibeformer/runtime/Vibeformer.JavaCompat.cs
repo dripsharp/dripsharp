@@ -1344,14 +1344,39 @@ internal sealed class JavaThreadLocal<T> : IDisposable
     public void Dispose() => value.Dispose();
 }
 
-internal sealed class JavaDateTimeFormatter
+public sealed class JavaDateTimeFormatter
 {
-    internal static readonly JavaDateTimeFormatter Rfc1123 = new();
+    private enum FormatterKind
+    {
+        Rfc1123,
+        IsoLocalDateTime,
+        IsoLocalDateTimeOffset
+    }
 
-    private JavaDateTimeFormatter() { }
+    internal static readonly JavaDateTimeFormatter Rfc1123 = new(FormatterKind.Rfc1123);
+    internal static readonly JavaDateTimeFormatter IsoLocalDateTime =
+        new(FormatterKind.IsoLocalDateTime);
+    private readonly FormatterKind kind;
+
+    private JavaDateTimeFormatter(FormatterKind kind) => this.kind = kind;
 
     internal string Format(DateTimeOffset value) =>
-        value.UtcDateTime.ToString("ddd, d MMM yyyy HH:mm:ss 'GMT'", CultureInfo.InvariantCulture);
+        kind == FormatterKind.Rfc1123
+            ? value.UtcDateTime.ToString("ddd, d MMM yyyy HH:mm:ss 'GMT'", CultureInfo.InvariantCulture)
+            : value.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK", CultureInfo.InvariantCulture);
+
+    internal static JavaDateTimeFormatter IsoLocalDateTimeOffset() =>
+        new(FormatterKind.IsoLocalDateTimeOffset);
+}
+
+internal sealed class JavaDateTimeFormatterBuilder
+{
+    internal JavaDateTimeFormatterBuilder ParseCaseInsensitive() => this;
+    internal JavaDateTimeFormatterBuilder Append(JavaDateTimeFormatter formatter) => this;
+    internal JavaDateTimeFormatterBuilder ParseLenient() => this;
+    internal JavaDateTimeFormatterBuilder AppendOffset(string pattern, string zeroOffsetText) => this;
+    internal JavaDateTimeFormatterBuilder ParseStrict() => this;
+    internal JavaDateTimeFormatter ToFormatter() => JavaDateTimeFormatter.IsoLocalDateTimeOffset();
 }
 
 internal sealed class JavaKeyStore
@@ -3675,6 +3700,25 @@ internal static class JavaCompat
     }
     internal static DateTimeOffset CalendarInstance(TimeZoneInfo zone) =>
         TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
+    internal static TimeZoneInfo NewSimpleTimeZone(int rawOffsetMilliseconds, string id) =>
+        TimeZoneInfo.CreateCustomTimeZone(
+            id,
+            TimeSpan.FromMilliseconds(rawOffsetMilliseconds),
+            id,
+            id);
+    private sealed class JavaTimeZoneMetadata
+    {
+        internal string Id = "";
+    }
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        TimeZoneInfo, JavaTimeZoneMetadata> TimeZoneMetadata = new();
+    internal static int TimeZoneRawOffset(TimeZoneInfo zone) =>
+        checked((int)zone.BaseUtcOffset.TotalMilliseconds);
+    internal static void TimeZoneSetId(TimeZoneInfo zone, string id)
+    {
+        TimeZoneMetadata.Remove(zone);
+        TimeZoneMetadata.Add(zone, new JavaTimeZoneMetadata { Id = id });
+    }
     internal static DateTimeOffset CalendarSet(
         DateTimeOffset value,
         int year,
@@ -3689,8 +3733,48 @@ internal static class JavaCompat
             ? new DateTimeOffset(value.Year, value.Month, value.Day, value.Hour, value.Minute,
                 value.Second, fieldValue, value.Offset)
             : throw new ArgumentOutOfRangeException(nameof(field));
+    internal static int CalendarGet(DateTimeOffset value, int field) => field switch
+    {
+        1 => value.Year,
+        2 => value.Month - 1,
+        5 => value.Day,
+        11 => value.Hour,
+        12 => value.Minute,
+        13 => value.Second,
+        14 => value.Millisecond,
+        15 => checked((int)value.Offset.TotalMilliseconds),
+        16 => 0,
+        _ => throw new ArgumentOutOfRangeException(nameof(field))
+    };
+    internal static DateTimeOffset ParseZonedDateTime(
+        string value,
+        JavaDateTimeFormatter formatter) =>
+        DateTimeOffset.Parse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces);
+    internal static DateTime ParseLocalDateTime(
+        string value,
+        JavaDateTimeFormatter formatter) =>
+        DateTime.Parse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.RoundtripKind);
+    internal static TimeSpan ZoneIdOf(string id) =>
+        string.Equals(id, "UTC", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(id, "GMT", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(id, "Z", StringComparison.OrdinalIgnoreCase)
+            ? TimeSpan.Zero
+            : TimeZoneInfo.FindSystemTimeZoneById(id).GetUtcOffset(DateTime.UtcNow);
+    internal static DateTimeOffset LocalDateTimeAtZone(DateTime value, TimeSpan offset) =>
+        new(DateTime.SpecifyKind(value, DateTimeKind.Unspecified), offset);
     internal static T ClassCast<T>(Type type, object value) =>
         type.IsInstanceOfType(value) ? (T)value : throw new InvalidCastException();
+    internal static Type ClassAsSubclass(Type type, Type parentType) =>
+        parentType.IsAssignableFrom(type)
+            ? type
+            : throw new InvalidCastException(
+                $"{type.FullName ?? type.Name} is not a subclass of {parentType.FullName ?? parentType.Name}.");
     private static string? ClassResourceName(Assembly assembly, Type? type, string name)
     {
         var absolute = name.TrimStart('/').Replace('/', '.');
@@ -3717,7 +3801,278 @@ internal static class JavaCompat
     internal static Stream? ClassGetResourceAsStream(Assembly assembly, string name) =>
         assembly.GetManifestResourceStream(name.TrimStart('/'));
     internal static T? ClassGetAnnotation<T>(Type type, Type annotationType) where T : class =>
-        type.GetCustomAttributes(annotationType, true).FirstOrDefault() as T;
+        type.GetCustomAttributes(true).FirstOrDefault(annotationType.IsInstanceOfType) as T;
+    internal static ConstructorInfo ClassGetDeclaredConstructor(Type type, params Type[] parameterTypes) =>
+        type.GetConstructor(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: parameterTypes,
+            modifiers: null)
+        ?? throw new MissingMethodException(type.FullName, ".ctor");
+    internal static T ConstructorInvoke<T>(ConstructorInfo constructor, params object?[] arguments) =>
+        (T)constructor.Invoke(arguments);
+    internal static T? FieldGetAnnotation<T>(FieldInfo field, Type annotationType) where T : class =>
+        field.GetCustomAttributes(true).FirstOrDefault(annotationType.IsInstanceOfType) as T;
+    internal static bool MemberIsAnnotationPresent(MemberInfo member, Type annotationType) =>
+        member.GetCustomAttributes(true).Any(annotationType.IsInstanceOfType);
+    private sealed class XmlQualifiedNameMetadata
+    {
+        internal string Prefix = "";
+    }
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        System.Xml.XmlQualifiedName, XmlQualifiedNameMetadata> XmlQualifiedNameMetadataTable = new();
+    internal static System.Xml.XmlQualifiedName NewXmlQualifiedName(string localName) =>
+        NewXmlQualifiedName("", localName, "");
+    internal static System.Xml.XmlQualifiedName NewXmlQualifiedName(string namespaceUri, string localName) =>
+        NewXmlQualifiedName(namespaceUri, localName, "");
+    internal static System.Xml.XmlQualifiedName NewXmlQualifiedName(
+        string namespaceUri,
+        string localName,
+        string prefix)
+    {
+        var name = new System.Xml.XmlQualifiedName(localName, namespaceUri);
+        XmlQualifiedNameMetadataTable.Add(name, new XmlQualifiedNameMetadata { Prefix = prefix });
+        return name;
+    }
+    internal static string XmlQualifiedNamePrefix(System.Xml.XmlQualifiedName name) =>
+        XmlQualifiedNameMetadataTable.TryGetValue(name, out var metadata) ? metadata.Prefix : "";
+    internal static string? XmlNodePrefix(System.Xml.XmlNode node) =>
+        string.IsNullOrEmpty(node.Prefix) ? null : node.Prefix;
+    internal static string? XmlNodeNamespaceUri(System.Xml.XmlNode node) =>
+        string.IsNullOrEmpty(node.NamespaceURI) ? null : node.NamespaceURI;
+    internal static System.Xml.XmlReaderSettings NewXmlReaderSettings() =>
+        new()
+        {
+            DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+            XmlResolver = null
+        };
+    internal static System.Xml.XmlReaderSettings XmlReaderSettingsClone(
+        System.Xml.XmlReaderSettings settings) =>
+        settings.Clone();
+    internal static void XmlReaderSetFeature(
+        System.Xml.XmlReaderSettings settings,
+        string feature,
+        bool enabled)
+    {
+        switch (feature)
+        {
+            case "http://apache.org/xml/features/disallow-doctype-decl":
+                settings.DtdProcessing = enabled
+                    ? System.Xml.DtdProcessing.Prohibit
+                    : System.Xml.DtdProcessing.Parse;
+                break;
+            case "http://xml.org/sax/features/external-general-entities":
+            case "http://xml.org/sax/features/external-parameter-entities":
+            case "http://apache.org/xml/features/nonvalidating/load-external-dtd":
+                if (enabled)
+                    throw new System.Xml.XmlException(
+                        $"External XML feature '{feature}' is not supported.");
+                settings.XmlResolver = null;
+                break;
+            default:
+                throw new System.Xml.XmlException($"Unknown XML feature '{feature}'.");
+        }
+    }
+    internal static void XmlReaderSetXIncludeAware(
+        System.Xml.XmlReaderSettings settings,
+        bool enabled)
+    {
+        _ = settings;
+        if (enabled) throw new System.Xml.XmlException("XInclude is not supported.");
+    }
+    internal static void XmlReaderSetExpandEntityReferences(
+        System.Xml.XmlReaderSettings settings,
+        bool enabled)
+    {
+        _ = settings;
+        if (enabled)
+            throw new System.Xml.XmlException(
+                "Entity-reference expansion requires an enabled DTD.");
+    }
+    internal static void XmlReaderSetNamespaceAware(
+        System.Xml.XmlReaderSettings settings,
+        bool enabled)
+    {
+        _ = settings;
+        if (!enabled)
+            throw new System.Xml.XmlException(
+                "System.Xml readers are always namespace-aware.");
+    }
+    internal static void XmlSetErrorHandler(
+        System.Xml.XmlReaderSettings settings,
+        object? errorHandler)
+    {
+        _ = settings;
+        _ = errorHandler;
+    }
+    internal static System.Xml.XmlDocument XmlParse(
+        System.Xml.XmlReaderSettings settings,
+        Stream input)
+    {
+        using var reader = System.Xml.XmlReader.Create(input, settings);
+        var document = new System.Xml.XmlDocument { PreserveWhitespace = false };
+        document.Load(reader);
+        return document;
+    }
+    internal static System.Xml.XmlWriterSettings XmlWriterSettingsClone(
+        System.Xml.XmlWriterSettings settings) =>
+        settings.Clone();
+    internal static void XmlSetOutputProperty(
+        System.Xml.XmlWriterSettings settings,
+        string name,
+        string value)
+    {
+        switch (name)
+        {
+            case "indent":
+                settings.Indent = string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+                break;
+            case "{http://xml.apache.org/xslt}indent-amount":
+                settings.IndentChars = new string(' ', ParseInt(value, 10));
+                break;
+            case "encoding":
+                settings.Encoding = Encoding.GetEncoding(value);
+                break;
+            case "omit-xml-declaration":
+                settings.OmitXmlDeclaration =
+                    string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+                break;
+            default:
+                throw new ArgumentException($"Unsupported XML output property '{name}'.", nameof(name));
+        }
+    }
+    internal static void XmlTransform(
+        System.Xml.XmlWriterSettings settings,
+        System.Xml.XmlNode source,
+        Stream result)
+    {
+        using var writer = System.Xml.XmlWriter.Create(result, settings);
+        var namespaces = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["xml"] = "http://www.w3.org/XML/1998/namespace",
+            ["xmlns"] = "http://www.w3.org/2000/xmlns/"
+        };
+        WriteJavaDomNode(writer, source, namespaces);
+        writer.Flush();
+    }
+    private static void WriteJavaDomNode(
+        System.Xml.XmlWriter writer,
+        System.Xml.XmlNode node,
+        IReadOnlyDictionary<string, string> inheritedNamespaces)
+    {
+        switch (node.NodeType)
+        {
+            case System.Xml.XmlNodeType.Document:
+                foreach (System.Xml.XmlNode child in node.ChildNodes)
+                    WriteJavaDomNode(writer, child, inheritedNamespaces);
+                return;
+            case System.Xml.XmlNodeType.Element:
+                var element = (System.Xml.XmlElement)node;
+                var namespaces =
+                    new Dictionary<string, string>(inheritedNamespaces, StringComparer.Ordinal);
+                if (!string.IsNullOrEmpty(element.NamespaceURI))
+                    namespaces[element.Prefix] = element.NamespaceURI;
+                foreach (System.Xml.XmlAttribute attribute in element.Attributes)
+                {
+                    if (string.Equals(attribute.Name, "xmlns", StringComparison.Ordinal))
+                        namespaces[""] = attribute.Value;
+                    else if (string.Equals(attribute.Prefix, "xmlns", StringComparison.Ordinal))
+                        namespaces[attribute.LocalName] = attribute.Value;
+                    else if (!string.IsNullOrEmpty(attribute.Prefix) &&
+                             !string.IsNullOrEmpty(attribute.NamespaceURI))
+                        namespaces[attribute.Prefix] = attribute.NamespaceURI;
+                }
+                var elementNamespace =
+                    ResolveJavaDomNamespace(element.Prefix, element.NamespaceURI, namespaces);
+                writer.WriteStartElement(element.Prefix, element.LocalName, elementNamespace);
+                foreach (System.Xml.XmlAttribute attribute in element.Attributes)
+                {
+                    if (string.Equals(attribute.Name, "xmlns", StringComparison.Ordinal))
+                    {
+                        writer.WriteAttributeString("xmlns", attribute.Value);
+                    }
+                    else if (string.Equals(attribute.Prefix, "xmlns", StringComparison.Ordinal))
+                    {
+                        writer.WriteAttributeString(
+                            "xmlns", attribute.LocalName, null, attribute.Value);
+                    }
+                    else
+                    {
+                        var attributeNamespace =
+                            ResolveJavaDomNamespace(
+                                attribute.Prefix, attribute.NamespaceURI, namespaces);
+                        writer.WriteAttributeString(
+                            attribute.Prefix,
+                            attribute.LocalName,
+                            attributeNamespace,
+                            attribute.Value);
+                    }
+                }
+                foreach (System.Xml.XmlNode child in element.ChildNodes)
+                    WriteJavaDomNode(writer, child, namespaces);
+                writer.WriteEndElement();
+                return;
+            case System.Xml.XmlNodeType.Text:
+                writer.WriteString(node.Value ?? "");
+                return;
+            case System.Xml.XmlNodeType.CDATA:
+                writer.WriteCData(node.Value ?? "");
+                return;
+            case System.Xml.XmlNodeType.Whitespace:
+            case System.Xml.XmlNodeType.SignificantWhitespace:
+                writer.WriteWhitespace(node.Value ?? "");
+                return;
+            case System.Xml.XmlNodeType.Comment:
+                writer.WriteComment(node.Value ?? "");
+                return;
+            case System.Xml.XmlNodeType.ProcessingInstruction:
+                writer.WriteProcessingInstruction(node.Name, node.Value);
+                return;
+            case System.Xml.XmlNodeType.XmlDeclaration:
+                return;
+            default:
+                throw new System.Xml.XmlException(
+                    $"Unsupported Java DOM node type '{node.NodeType}'.");
+        }
+    }
+    private static string ResolveJavaDomNamespace(
+        string prefix,
+        string namespaceUri,
+        IReadOnlyDictionary<string, string> namespaces)
+    {
+        if (string.IsNullOrEmpty(prefix) || !string.IsNullOrEmpty(namespaceUri))
+            return namespaceUri;
+        return namespaces.TryGetValue(prefix, out var resolved)
+            ? resolved
+            : throw new System.Xml.XmlException(
+                $"XML prefix '{prefix}' has no in-scope namespace declaration.");
+    }
+    private static (string Prefix, string LocalName) SplitXmlQualifiedName(string qualifiedName)
+    {
+        var separator = qualifiedName.IndexOf(':');
+        return separator < 0
+            ? ("", qualifiedName)
+            : (qualifiedName[..separator], qualifiedName[(separator + 1)..]);
+    }
+    internal static System.Xml.XmlElement XmlCreateElementNs(
+        System.Xml.XmlDocument document,
+        string namespaceUri,
+        string qualifiedName)
+    {
+        var (prefix, localName) = SplitXmlQualifiedName(qualifiedName);
+        return document.CreateElement(prefix, localName, namespaceUri);
+    }
+    internal static void XmlSetAttributeNs(
+        System.Xml.XmlElement element,
+        string namespaceUri,
+        string qualifiedName,
+        string value)
+    {
+        var (prefix, localName) = SplitXmlQualifiedName(qualifiedName);
+        var attribute = element.OwnerDocument.CreateAttribute(prefix, localName, namespaceUri);
+        attribute.Value = value;
+        element.Attributes.SetNamedItem(attribute);
+    }
     internal static System.Diagnostics.StackFrame[] GetStackTrace(Exception exception) =>
         new System.Diagnostics.StackTrace(exception, true).GetFrames();
     internal static void SetStackTrace(Exception exception, object? stackTrace)
