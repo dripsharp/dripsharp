@@ -524,7 +524,8 @@
                                                  [:rules :product-runtime-assets :assets])]
                          (assets asset-context))]
     (mapv
-     (fn [{:keys [source destination strategy missing-kind missing-message]}]
+     (fn [{:keys [source destination strategy missing-kind missing-message
+                  text-replacements]}]
        (let [source (paths/absolute
                      (let [path (paths/path source)]
                        (if (.isAbsolute path) path (paths/resolve-path root path))))
@@ -538,9 +539,25 @@
                             :bundle (:id rule-bundle)})))
          (Files/createDirectories (.getParent destination)
                                   (make-array java.nio.file.attribute.FileAttribute 0))
-         (Files/copy source destination
-                     (into-array java.nio.file.CopyOption
-                                 [StandardCopyOption/REPLACE_EXISTING]))
+         (if (seq text-replacements)
+           (let [text (Files/readString source)
+                 transformed
+                 (reduce-kv
+                  (fn [value from to]
+                    (when-not (and (string? from) (not (str/blank? from))
+                                   (string? to))
+                      (throw
+                       (ex-info "Destination asset text replacement is invalid"
+                                {:kind :invalid-destination-asset-replacement
+                                 :source (portable root source)
+                                 :from from :to to})))
+                    (str/replace value from to))
+                  text
+                  text-replacements)]
+             (write-text! destination transformed))
+           (Files/copy source destination
+                       (into-array java.nio.file.CopyOption
+                                   [StandardCopyOption/REPLACE_EXISTING])))
          {:file (portable project-root destination)
           :source {:file (portable root source) :line 1 :column 1}
           :mappings []
@@ -656,6 +673,14 @@
                                                   "\nnamespace " namespace ";\n\n"))
                                  (emit-root-node ctx type) (csharp/raw "\n")])
                           rendered (csharp/render node)
+                          rendered
+                          (if-let [transform
+                                   (get-in rule-bundle
+                                           [:rules :project-policy
+                                            :transform-source-text])]
+                            (assoc rendered :text
+                                   (transform configuration (:text rendered)))
+                            rendered)
                           result (context-results rule-bundle ctx)]
                       (write-text! file (:text rendered))
                       {:index index
@@ -839,6 +864,7 @@
       {:project-root project-root
        :project-file project-file
        :manifest-file manifest-file
+       :configuration configuration
        :rule-bundle (:id rule-bundle)
        :summary summary
        :emission-profile @emission-profile

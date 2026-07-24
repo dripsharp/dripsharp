@@ -285,6 +285,8 @@
   to an explicitly public reusable compatibility declaration/CLR accessor."
   [workspace reflected-rows public-metadata]
   (let [metadata-rows (:rows public-metadata)
+        compatibility-namespace
+        (or (:compatibility-namespace public-metadata) "Vibeformer.Runtime")
         metadata-by-shape (group-by generated-shape metadata-rows)
         reflected-by-shape (group-by reflected-shape reflected-rows)
         type-metadata
@@ -328,7 +330,9 @@
              (fn [row]
                (or
                 (closeable-disposable-row workspace row type-metadata)
-                (when (str/starts-with? (:owner row) "Vibeformer.Runtime.")
+                (when (str/starts-with?
+                       (:owner row)
+                       (str compatibility-namespace "."))
                   (assoc row
                          :source-provenance
                          (compatibility-provenance workspace (:owner row))

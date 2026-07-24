@@ -43,13 +43,41 @@
     :pdfcube.type/microsoft-logger]
    "org.apache.commons.logging.LogFactory"
    ["global::Microsoft.Extensions.Logging.Abstractions.NullLogger"
-    :pdfcube.type/microsoft-null-logger]})
+    :pdfcube.type/microsoft-null-logger]
+   "java.awt.geom.AffineTransform"
+   ["global::SkiaSharp.SKMatrix" :pdfcube.type/skia-matrix]
+   "java.awt.geom.GeneralPath"
+   ["global::SkiaSharp.SKPath" :pdfcube.type/skia-path]
+   "java.awt.geom.Path2D"
+   ["global::SkiaSharp.SKPath" :pdfcube.type/skia-path]
+   "java.awt.geom.Path2D$Float"
+   ["global::SkiaSharp.SKPath" :pdfcube.type/skia-path]
+   "java.awt.geom.PathIterator"
+   ["global::SkiaSharp.SKPath" :pdfcube.type/skia-path]
+   "java.awt.geom.Point2D"
+   ["global::Vibeformer.Runtime.JavaPoint2D" :pdfcube.type/point]
+   "java.awt.geom.Point2D$Float"
+   ["global::Vibeformer.Runtime.JavaPoint2D" :pdfcube.type/point]
+   "java.awt.geom.Rectangle2D"
+   ["global::SkiaSharp.SKRect" :pdfcube.type/skia-rectangle]})
 
 (defn- raw [text]
   (csharp/raw text))
 
 (defn- sequence-node [nodes]
   (csharp/sequence-node (vec (remove nil? nodes))))
+
+(defn- call-node [target member arguments]
+  (sequence-node
+   [target (raw (str "." member "("))
+    (csharp/sequence-node arguments ", ")
+    (raw ")")]))
+
+(defn- font-compat-call [member arguments]
+  (sequence-node
+   [(raw (str "global::Vibeformer.Runtime.PdfCubeFontCompat." member "("))
+    (csharp/sequence-node arguments ", ")
+    (raw ")")]))
 
 (defn- logger-message-node [message]
   (sequence-node
@@ -69,10 +97,20 @@
       (logger-message-node message)
       (raw ")")])))
 
+(defn- logger-enabled-node [target level]
+  (sequence-node
+   [target
+    (raw (str ".IsEnabled(global::Microsoft.Extensions.Logging.LogLevel."
+              level ")"))]))
+
 (def ^:private commons-invocation-adaptations
   {"executable:org.apache.commons.logging.LogFactory#getLog(java.lang.Class)"
    (fn [_target _arguments]
      (raw "global::Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance"))
+
+   "executable:org.apache.commons.logging.Log#debug(java.lang.Object)"
+   (fn [target arguments]
+     (logger-call-node "LogDebug" target arguments false))
 
    "executable:org.apache.commons.logging.Log#debug(java.lang.Object,java.lang.Throwable)"
    (fn [target arguments]
@@ -86,13 +124,106 @@
    (fn [target arguments]
      (logger-call-node "LogError" target arguments true))
 
+   "executable:org.apache.commons.logging.Log#info(java.lang.Object)"
+   (fn [target arguments]
+     (logger-call-node "LogInformation" target arguments false))
+
+   "executable:org.apache.commons.logging.Log#trace(java.lang.Object)"
+   (fn [target arguments]
+     (logger-call-node "LogTrace" target arguments false))
+
    "executable:org.apache.commons.logging.Log#warn(java.lang.Object)"
    (fn [target arguments]
      (logger-call-node "LogWarning" target arguments false))
 
    "executable:org.apache.commons.logging.Log#warn(java.lang.Object,java.lang.Throwable)"
    (fn [target arguments]
-     (logger-call-node "LogWarning" target arguments true))})
+     (logger-call-node "LogWarning" target arguments true))
+
+   "executable:org.apache.commons.logging.Log#isDebugEnabled()"
+   (fn [target _arguments]
+     (logger-enabled-node target "Debug"))
+
+   "executable:org.apache.commons.logging.Log#isTraceEnabled()"
+   (fn [target _arguments]
+     (logger-enabled-node target "Trace"))
+
+   "executable:org.apache.commons.logging.Log#isWarnEnabled()"
+   (fn [target _arguments]
+     (logger-enabled-node target "Warning"))
+
+   "executable:java.awt.geom.AffineTransform#getTranslateInstance(double,double)"
+   (fn [_target arguments]
+     (font-compat-call "Translation" arguments))
+
+   "executable:java.awt.geom.Path2D#closePath()"
+   (fn [target _arguments]
+     (font-compat-call "Close" [target]))
+
+   "executable:java.awt.geom.Path2D#getCurrentPoint()"
+   (fn [target _arguments]
+     (font-compat-call "CurrentPoint" [target]))
+
+   "executable:java.awt.geom.Path2D$Float#append(java.awt.geom.PathIterator,boolean)"
+   (fn [target arguments]
+     (font-compat-call "AddPath" [target (first arguments)]))
+
+   "executable:java.awt.geom.Path2D$Float#curveTo(float,float,float,float,float,float)"
+   (fn [target arguments]
+     (font-compat-call "CurveTo" (into [target] arguments)))
+
+   "executable:java.awt.geom.Path2D$Float#getBounds2D()"
+   (fn [target _arguments]
+     (sequence-node [target (raw ".Bounds")]))
+
+   "executable:java.awt.geom.Path2D$Float#getPathIterator(java.awt.geom.AffineTransform)"
+   (fn [target arguments]
+     (font-compat-call "PathIterator" (into [target] arguments)))
+
+   "executable:java.awt.geom.Path2D$Float#lineTo(float,float)"
+   (fn [target arguments]
+     (font-compat-call "LineTo" (into [target] arguments)))
+
+   "executable:java.awt.geom.Path2D$Float#moveTo(double,double)"
+   (fn [target arguments]
+     (font-compat-call "MoveTo" (into [target] arguments)))
+
+   "executable:java.awt.geom.Path2D$Float#moveTo(float,float)"
+   (fn [target arguments]
+     (font-compat-call "MoveTo" (into [target] arguments)))
+
+   "executable:java.awt.geom.Path2D$Float#quadTo(float,float,float,float)"
+   (fn [target arguments]
+     (font-compat-call "QuadTo" (into [target] arguments)))
+
+   "executable:java.awt.geom.Point2D#setLocation(java.awt.geom.Point2D)"
+   (fn [target arguments]
+     (call-node target "SetLocation" arguments))
+
+   "executable:java.awt.geom.Point2D$Float#getX()"
+   (fn [target _arguments]
+     (sequence-node [target (raw ".X")]))
+
+   "executable:java.awt.geom.Point2D$Float#getY()"
+   (fn [target _arguments]
+     (sequence-node [target (raw ".Y")]))
+
+   "executable:java.awt.geom.Point2D$Float#setLocation(double,double)"
+   (fn [target arguments]
+     (call-node target "SetLocation" arguments))
+
+   "executable:java.awt.geom.Point2D$Float#setLocation(float,float)"
+   (fn [target arguments]
+     (call-node target "SetLocation" arguments))
+
+   "executable:org.apache.pdfbox.io.RandomAccessRead#read(byte[])"
+   (fn [target arguments]
+     (sequence-node
+      [(raw "((global::PdfCube.IO.RandomAccessRead)")
+       target
+       (raw ").Read(")
+       (csharp/sequence-node arguments ", ")
+       (raw ")")]))})
 
 (def ^:private bouncy-dependencies
   {"org.bouncycastle:bcpkix-jdk18on:jar:1.84"
@@ -185,7 +316,8 @@
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package]
     :internal-capabilities #{:font-discovery :skia-geometry}
-    :destination-capabilities #{:java-compat :java-regex-unicode}}
+    :destination-capabilities #{:java-compat :java-regex-unicode}
+    :compatibility-namespace "PdfCube.FB.Runtime"}
 
    :xmpbox
    {:profile "pdfcube-xmpbox"
@@ -380,6 +512,8 @@
              [:internal-capabilities (:internal-capabilities configuration)]
              [:destination-capabilities
               (:destination-capabilities configuration)]
+             [:compatibility-namespace
+              (:compatibility-namespace configuration)]
              [:legal-files (:legal-files configuration)]
              [:resource-policy (:resource-policy configuration)]]]
       (let [expected
@@ -403,6 +537,7 @@
               :runtime-packages (:runtime-packages product)
               :internal-capabilities (:internal-capabilities product)
               :destination-capabilities (:destination-capabilities product)
+              :compatibility-namespace (:compatibility-namespace product)
               :legal-files legal-files
               :resource-policy {:strategy :embedded-resource-preserve-path})]
         (exact! "PdfCube destination differs from its approved product contract"
@@ -507,6 +642,33 @@
         (str/replace "  </ItemGroup>\n</Project>\n"
                      (str items "  </ItemGroup>\n</Project>\n")))))
 
+(def ^:private base-compatibility-namespace "Vibeformer.Runtime")
+
+(defn- compatibility-namespace [configuration]
+  (or (:compatibility-namespace configuration)
+      base-compatibility-namespace))
+
+(defn- transform-source-text [configuration text]
+  (let [destination (compatibility-namespace configuration)]
+    (when-not (= (count base-compatibility-namespace) (count destination))
+      (fail! "PdfCube compatibility namespace must preserve source-map offsets"
+             {:kind :invalid-pdfcube-compatibility-namespace
+              :expected-length (count base-compatibility-namespace)
+              :actual destination
+              :actual-length (count destination)}))
+    (str/replace text
+                 (str "global::" base-compatibility-namespace)
+                 (str "global::" destination))))
+
+(defn- compatibility-asset [configuration asset]
+  (if (= base-compatibility-namespace
+         (compatibility-namespace configuration))
+    asset
+    (assoc asset
+           :text-replacements
+           {(str "namespace " base-compatibility-namespace ";")
+            (str "namespace " (compatibility-namespace configuration) ";")})))
+
 (defn- legal-assets [{:keys [workspace-root configuration]}]
   (validate-legal-inputs! workspace-root configuration)
   (mapv (fn [{:keys [kind source destination]}]
@@ -516,6 +678,16 @@
            :missing-kind :missing-pdfcube-legal-input
            :missing-message "Configured PdfCube license or notice input is missing"})
         (:legal-files configuration)))
+
+(defn- internal-capability-assets [{:keys [configuration]}]
+  (cond-> []
+    (contains? (:internal-capabilities configuration) :skia-geometry)
+    (conj
+     {:source "vibeformer/runtime/PdfCube.FontBox.Compat.cs"
+      :destination "Vibeformer/Runtime/PdfCubeFontBoxCompat.cs"
+      :strategy :pdfcube.fontbox/skia-geometry
+      :missing-kind :missing-pdfcube-fontbox-compatibility-source
+      :missing-message "PdfCube FontBox compatibility source is missing"})))
 
 (defn rule-bundle
   "Returns the PdfCube rule bundle composed over reusable Java-library rules."
@@ -532,7 +704,8 @@
                 :validate-project-input! validate-project-input!})
         (assoc-in [:rules :project-policy]
                   {:validate-configuration! validate-configuration!
-                   :project-text project-text})
+                   :project-text project-text
+                   :transform-source-text transform-source-text})
         (assoc-in
          [:rules :structural-declarations :create-context]
          (fn [options]
@@ -543,7 +716,12 @@
                    commons-invocation-adaptations))))
         (assoc-in [:rules :destination-bridges :assets]
                   (fn [context]
-                    (into (base-assets context) (legal-assets context)))))))
+                    (let [configuration (:configuration context)
+                          code-assets
+                          (mapv #(compatibility-asset configuration %)
+                                (concat (base-assets context)
+                                        (internal-capability-assets context)))]
+                      (into code-assets (legal-assets context))))))))
 
 (defn public-surface-strategy
   "Provides the target-family wrapper used by the five configurations."

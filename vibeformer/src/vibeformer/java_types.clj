@@ -45,9 +45,9 @@
    "java.lang.IllegalStateException" ["global::System.InvalidOperationException"
                                       :dotnet.type/invalid-operation]
    "java.lang.ReflectiveOperationException" ["global::System.Reflection.TargetException"
-                                              :dotnet.type/reflection-exception]
+                                             :dotnet.type/reflection-exception]
    "java.lang.SecurityException" ["global::System.Security.SecurityException"
-                                   :dotnet.type/security-exception]
+                                  :dotnet.type/security-exception]
    "java.lang.InterruptedException" ["global::System.Threading.ThreadInterruptedException"
                                      :dotnet.type/thread-interrupted]
    "java.lang.IndexOutOfBoundsException" ["global::System.ArgumentOutOfRangeException"
@@ -58,6 +58,8 @@
                                      :dotnet.type/null-reference]
    "java.lang.UnsupportedOperationException" ["global::System.NotSupportedException"
                                               :dotnet.type/not-supported]
+   "java.lang.Deprecated" ["global::System.ObsoleteAttribute"
+                           :dotnet.type/source-annotation]
    "java.lang.NumberFormatException" ["global::System.FormatException"
                                       :dotnet.type/format-exception]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder"
@@ -91,6 +93,13 @@
                                            :dotnet.type/argument-exception]
    "java.io.InputStream" ["global::System.IO.Stream" :dotnet.type/stream]
    "java.io.OutputStream" ["global::System.IO.Stream" :dotnet.type/stream]
+   "java.io.Reader" ["global::System.IO.TextReader" :dotnet.type/text-reader]
+   "java.io.InputStreamReader" ["global::System.IO.StreamReader"
+                                :dotnet.type/stream-reader]
+   "java.io.LineNumberReader" ["global::Vibeformer.Runtime.JavaLineNumberReader"
+                               :dotnet.type/line-number-reader]
+   "java.io.DataOutputStream" ["global::Vibeformer.Runtime.JavaDataOutputStream"
+                               :dotnet.type/data-output-stream]
    "java.io.FilterOutputStream" ["global::Vibeformer.Runtime.JavaFilterOutputStream"
                                  :dotnet.type/filter-output-stream]
    "java.io.BufferedInputStream" ["global::System.IO.BufferedStream"
@@ -144,7 +153,11 @@
    "java.nio.charset.Charset" ["global::System.Text.Encoding" :dotnet.type/encoding]
    "java.nio.charset.StandardCharsets" ["global::Vibeformer.Runtime.JavaStandardCharsets"
                                         :dotnet.type/standard-charsets]
+   "java.nio.BufferUnderflowException" ["global::System.IO.EndOfStreamException"
+                                        :dotnet.type/end-of-stream-exception]
    "java.nio.file.Files" ["global::Vibeformer.Runtime.JavaCompat"
+                          :dotnet.type/java-compat]
+   "java.nio.file.Paths" ["global::Vibeformer.Runtime.JavaCompat"
                           :dotnet.type/java-compat]
    "java.nio.file.Path" ["global::Vibeformer.Runtime.JavaPath"
                          :dotnet.type/path]
@@ -170,23 +183,23 @@
    "java.nio.file.StandardOpenOption" ["global::Vibeformer.Runtime.JavaStandardOpenOption"
                                        :dotnet.type/standard-open-option]
    "java.nio.file.attribute.AclEntry" ["global::Vibeformer.Runtime.JavaAclEntry"
-                                      :dotnet.type/acl-entry]
+                                       :dotnet.type/acl-entry]
    "java.nio.file.attribute.AclEntry$Builder" ["global::Vibeformer.Runtime.JavaAclEntryBuilder"
-                                              :dotnet.type/acl-entry-builder]
+                                               :dotnet.type/acl-entry-builder]
    "java.nio.file.attribute.AclEntryPermission" ["global::Vibeformer.Runtime.JavaAclEntryPermission"
-                                                :dotnet.type/acl-entry-permission]
+                                                 :dotnet.type/acl-entry-permission]
    "java.nio.file.attribute.AclEntryType" ["global::Vibeformer.Runtime.JavaAclEntryType"
-                                          :dotnet.type/acl-entry-type]
+                                           :dotnet.type/acl-entry-type]
    "java.nio.file.attribute.AclFileAttributeView" ["global::Vibeformer.Runtime.JavaAclFileAttributeView"
-                                                  :dotnet.type/acl-file-attribute-view]
+                                                   :dotnet.type/acl-file-attribute-view]
    "java.nio.file.attribute.FileAttribute" ["global::Vibeformer.Runtime.JavaFileAttribute"
                                             :dotnet.type/file-attribute]
    "java.nio.file.attribute.FileOwnerAttributeView" ["global::Vibeformer.Runtime.JavaAclFileAttributeView"
                                                      :dotnet.type/file-owner-attribute-view]
    "java.nio.file.attribute.PosixFilePermission" ["global::System.IO.UnixFileMode"
-                                                 :dotnet.type/unix-file-mode]
+                                                  :dotnet.type/unix-file-mode]
    "java.nio.file.attribute.PosixFilePermissions" ["global::Vibeformer.Runtime.JavaCompat"
-                                                  :dotnet.type/java-compat]
+                                                   :dotnet.type/java-compat]
    "java.nio.file.attribute.UserPrincipal" ["global::Vibeformer.Runtime.JavaUserPrincipal"
                                             :dotnet.type/user-principal]
 
@@ -210,6 +223,8 @@
                             :dotnet.type/map-interface]
    "java.util.ArrayList" ["global::System.Collections.Generic.List"
                           :dotnet.type/list]
+   "java.util.ArrayDeque" ["global::Vibeformer.Runtime.JavaDeque"
+                           :dotnet.type/deque]
    "java.util.Arrays" ["global::Vibeformer.Runtime.JavaCompat"
                        :dotnet.type/java-compat]
    "java.util.BitSet" ["global::Vibeformer.Runtime.JavaBitSet"
@@ -220,6 +235,10 @@
                             :dotnet.type/java-compat]
    "java.util.Comparator" ["global::System.Collections.Generic.IComparer"
                            :dotnet.type/comparer]
+   "java.util.Deque" ["global::Vibeformer.Runtime.JavaDeque"
+                      :dotnet.type/deque]
+   "java.util.EnumMap" ["global::System.Collections.Generic.Dictionary"
+                        :dotnet.type/dictionary]
    "java.util.EnumSet" ["global::System.Collections.Generic.ISet"
                         :dotnet.type/set-interface]
    "java.util.HashMap" ["global::System.Collections.Generic.Dictionary"
@@ -232,6 +251,8 @@
                               :dotnet.type/linked-dictionary]
    "java.util.LinkedHashSet" ["global::System.Collections.Generic.HashSet"
                               :dotnet.type/linked-hash-set]
+   "java.util.LinkedList" ["global::System.Collections.Generic.List"
+                           :dotnet.type/list]
    "java.util.List" ["global::System.Collections.Generic.IList"
                      :dotnet.type/list-interface]
    "java.util.Map" ["global::System.Collections.Generic.IDictionary"
@@ -244,6 +265,10 @@
                                                  :dotnet.type/simple-immutable-map-entry]
    "java.util.NoSuchElementException" ["global::System.InvalidOperationException"
                                        :dotnet.type/invalid-operation]
+   "java.util.Calendar" ["global::System.DateTimeOffset"
+                         :dotnet.type/date-time-offset]
+   "java.util.Locale" ["global::System.Globalization.CultureInfo"
+                       :dotnet.type/culture-info]
    "java.util.Objects" ["global::Vibeformer.Runtime.JavaCompat"
                         :dotnet.type/java-compat]
    "java.util.Optional" ["global::Vibeformer.Runtime.JavaOptional"
@@ -254,6 +279,20 @@
                               :dotnet.type/service-loader]
    "java.util.Set" ["global::System.Collections.Generic.ISet"
                     :dotnet.type/set-interface]
+   "java.util.SortedMap" ["global::System.Collections.Generic.IDictionary"
+                          :dotnet.type/map-interface]
+   "java.util.SortedSet" ["global::System.Collections.Generic.ISet"
+                          :dotnet.type/set-interface]
+   "java.util.StringJoiner" ["global::Vibeformer.Runtime.JavaStringJoiner"
+                             :dotnet.type/string-joiner]
+   "java.util.StringTokenizer" ["global::Vibeformer.Runtime.JavaStringTokenizer"
+                                :dotnet.type/string-tokenizer]
+   "java.util.TimeZone" ["global::System.TimeZoneInfo"
+                         :dotnet.type/time-zone-info]
+   "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary"
+                        :dotnet.type/sorted-dictionary]
+   "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet"
+                        :dotnet.type/sorted-set]
 
    "java.util.concurrent.Callable" ["global::System.Func" :dotnet.type/func]
    "java.util.concurrent.ConcurrentHashMap" ["global::System.Collections.Concurrent.ConcurrentDictionary"

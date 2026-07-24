@@ -124,17 +124,18 @@
           package)))))
 
 (defn- mapped-namespace [ctx package exact-key prefixes-key]
-  (or (get-in ctx [:configuration exact-key package])
-      (some (fn [[source destination]]
-              (when (or (= package source)
-                        (str/starts-with? package (str source ".")))
-                (let [suffix (subs package (count source))
-                      segments (remove str/blank? (str/split suffix #"\."))]
-                  (str destination
-                       (when (seq segments)
-                         (str "." (str/join "." (map pascal segments))))))))
-            (sort-by (comp - count key)
-                     (get-in ctx [:configuration prefixes-key])))))
+  (when package
+    (or (get-in ctx [:configuration exact-key package])
+        (some (fn [[source destination]]
+                (when (or (= package source)
+                          (str/starts-with? package (str source ".")))
+                  (let [suffix (subs package (count source))
+                        segments (remove str/blank? (str/split suffix #"\."))]
+                    (str destination
+                         (when (seq segments)
+                           (str "." (str/join "." (map pascal segments))))))))
+              (sort-by (comp - count key)
+                       (get-in ctx [:configuration prefixes-key]))))))
 
 (defn- destination-namespace [ctx ^CtType type]
   (let [package (package-name type)]
@@ -423,9 +424,11 @@
   (= "javax.net.ssl.X509TrustManager"
      (some-> call .getType .getQualifiedName)))
 
-(defn- anonymous-project-subclass? [^CtConstructorCall call]
+(defn- anonymous-project-type? [^CtConstructorCall call]
   (let [declaration (some-> call .getType .getTypeDeclaration)]
-    (and (instance? CtClass declaration)
+    (and (or (instance? CtClass declaration)
+             (and (instance? CtInterface declaration)
+                  (not (.isShadow ^CtType declaration))))
          (not (instance? CtEnum declaration)))))
 
 (defn- capture-name [ctx ^CtElement declaration]
@@ -543,6 +546,133 @@
               (recur (if suffix (inc suffix) 2))
               candidate)))))))
 
+(def ^:private extended-neutral-executable-keys
+  #{"executable:java.io.ByteArrayOutputStream#write(byte[],int,int)"
+    "executable:java.io.DataOutputStream#flush()"
+    "executable:java.io.DataOutputStream#write(byte[],int,int)"
+    "executable:java.io.DataOutputStream#writeByte(int)"
+    "executable:java.io.DataOutputStream#writeInt(int)"
+    "executable:java.io.DataOutputStream#writeLong(long)"
+    "executable:java.io.DataOutputStream#writeShort(int)"
+    "executable:java.io.File#canRead()"
+    "executable:java.io.File#getName()"
+    "executable:java.io.File#isHidden()"
+    "executable:java.io.File#listFiles()"
+    "executable:java.io.File#toURI()"
+    "executable:java.io.FilterOutputStream#write(byte[])"
+    "executable:java.io.InputStream#mark(int)"
+    "executable:java.io.InputStream#markSupported()"
+    "executable:java.io.InputStream#reset()"
+    "executable:java.io.InputStream#skip(long)"
+    "executable:java.io.LineNumberReader#readLine()"
+    "executable:java.lang.Boolean#parseBoolean(java.lang.String)"
+    "executable:java.lang.Character#digit(char,int)"
+    "executable:java.lang.Character#getType(int)"
+    "executable:java.lang.Character#isDigit(char)"
+    "executable:java.lang.Character#isDigit(int)"
+    "executable:java.lang.Character#isWhitespace(char)"
+    "executable:java.lang.Character#toString(char)"
+    "executable:java.lang.Class#getResourceAsStream(java.lang.String)"
+    "executable:java.lang.Double#valueOf(java.lang.String)"
+    "executable:java.lang.Enum#toString()"
+    "executable:java.lang.Float#compare(float,float)"
+    "executable:java.lang.Float#floatToIntBits(float)"
+    "executable:java.lang.Float#parseFloat(java.lang.String)"
+    "executable:java.lang.Integer#compare(int,int)"
+    "executable:java.lang.Integer#equals(java.lang.Object)"
+    "executable:java.lang.Integer#highestOneBit(int)"
+    "executable:java.lang.Integer#toHexString(int)"
+    "executable:java.lang.Integer#valueOf(java.lang.String)"
+    "executable:java.lang.Long#compare(long,long)"
+    "executable:java.lang.Math#abs(int)"
+    "executable:java.lang.Math#floor(double)"
+    "executable:java.lang.Math#log(double)"
+    "executable:java.lang.Math#pow(double,double)"
+    "executable:java.lang.Math#round(float)"
+    "executable:java.lang.Number#doubleValue()"
+    "executable:java.lang.Number#floatValue()"
+    "executable:java.lang.Number#intValue()"
+    "executable:java.lang.Object#clone()"
+    "executable:java.lang.String#charAt(int)"
+    "executable:java.lang.String#codePointAt(int)"
+    "executable:java.lang.String#compareTo(java.lang.String)"
+    "executable:java.lang.String#format(java.util.Locale,java.lang.String,java.lang.Object[])"
+    "executable:java.lang.String#indexOf(java.lang.String)"
+    "executable:java.lang.String#replace(java.lang.CharSequence,java.lang.CharSequence)"
+    "executable:java.lang.String#toLowerCase(java.util.Locale)"
+    "executable:java.lang.String#toUpperCase(java.util.Locale)"
+    "executable:java.lang.String#valueOf(char[])"
+    "executable:java.lang.StringBuilder#append(java.lang.Object)"
+    "executable:java.lang.System#getProperty(java.lang.String)"
+    "executable:java.lang.System#getenv(java.lang.String)"
+    "executable:java.nio.Buffer#hasRemaining()"
+    "executable:java.nio.ByteBuffer#get(byte[])"
+    "executable:java.nio.ByteBuffer#mark()"
+    "executable:java.nio.ByteBuffer#reset()"
+    "executable:java.nio.file.Files#readAllBytes(java.nio.file.Path)"
+    "executable:java.nio.file.Paths#get(java.lang.String,java.lang.String[])"
+    "executable:java.util.Arrays#binarySearch(int[],int)"
+    "executable:java.util.Arrays#binarySearch(java.lang.Object[],java.lang.Object,java.util.Comparator)"
+    "executable:java.util.Arrays#copyOfRange(byte[],int,int)"
+    "executable:java.util.Arrays#deepToString(java.lang.Object[])"
+    "executable:java.util.Arrays#fill(int[],int)"
+    "executable:java.util.Arrays#toString(int[])"
+    "executable:java.util.Arrays#toString(java.lang.Object[])"
+    "executable:java.util.Calendar#getInstance(java.util.TimeZone)"
+    "executable:java.util.Calendar#getTimeInMillis()"
+    "executable:java.util.Calendar#set(int,int)"
+    "executable:java.util.Calendar#set(int,int,int,int,int,int)"
+    "executable:java.util.Calendar#setTimeInMillis(long)"
+    "executable:java.util.Collection#add(java.lang.Object)"
+    "executable:java.util.Collection#isEmpty()"
+    "executable:java.util.Collections#sort(java.util.List)"
+    "executable:java.util.Collections#unmodifiableSet(java.util.Set)"
+    "executable:java.util.Deque#pop()"
+    "executable:java.util.Deque#push(java.lang.Object)"
+    "executable:java.util.List#add(int,java.lang.Object)"
+    "executable:java.util.List#indexOf(java.lang.Object)"
+    "executable:java.util.List#remove(int)"
+    "executable:java.util.List#set(int,java.lang.Object)"
+    "executable:java.util.List#sort(java.util.Comparator)"
+    "executable:java.util.List#subList(int,int)"
+    "executable:java.util.Map#isEmpty()"
+    "executable:java.util.Set#addAll(java.util.Collection)"
+    "executable:java.util.Set#isEmpty()"
+    "executable:java.util.Set#iterator()"
+    "executable:java.util.Set#size()"
+    "executable:java.util.SortedMap#entrySet()"
+    "executable:java.util.SortedMap#firstKey()"
+    "executable:java.util.SortedMap#lastKey()"
+    "executable:java.util.SortedSet#headSet(java.lang.Object)"
+    "executable:java.util.SortedSet#last()"
+    "executable:java.util.SortedSet#subSet(java.lang.Object,java.lang.Object)"
+    "executable:java.util.StringJoiner#add(java.lang.CharSequence)"
+    "executable:java.util.StringJoiner#toString()"
+    "executable:java.util.StringTokenizer#countTokens()"
+    "executable:java.util.StringTokenizer#hasMoreTokens()"
+    "executable:java.util.StringTokenizer#nextToken()"
+    "executable:java.util.TimeZone#clone()"
+    "executable:java.util.TimeZone#getTimeZone(java.lang.String)"
+    "executable:java.util.regex.Matcher#end()"
+    "executable:java.util.regex.Matcher#find(int)"
+    "executable:java.util.regex.Matcher#group()"
+    "executable:java.util.regex.Matcher#start()"
+    "executable:java.util.stream.Stream#anyMatch(java.util.function.Predicate)"
+    "executable:java.util.stream.Stream#count()"})
+
+(def ^:private extended-neutral-field-keys
+  #{"field:java.io.File#separator"
+    "field:java.lang.Boolean#FALSE"
+    "field:java.lang.Boolean#TRUE"
+    "field:java.lang.Character#MAX_CODE_POINT"
+    "field:java.lang.Character#MIN_CODE_POINT"
+    "field:java.lang.Character#UNASSIGNED"
+    "field:java.lang.Integer#MIN_VALUE"
+    "field:java.nio.charset.StandardCharsets#UTF_16"
+    "field:java.nio.charset.StandardCharsets#UTF_16BE"
+    "field:java.util.Calendar#MILLISECOND"
+    "field:java.util.Locale#US"})
+
 (defn- resolved-name [ctx occurrence reference]
   (cond
     (and (= :intrinsic (:origin occurrence))
@@ -562,6 +692,20 @@
         (identifier (.getSimpleName ^CtElement reference))))
 
     (contains? (:destination-invocation-adaptations ctx) (:key occurrence))
+    (identifier (.getSimpleName ^CtElement reference))
+
+    (and (= :dependency (:origin occurrence))
+         (some->> reference
+                  .getDeclaringType
+                  (translated-external-type-base ctx)))
+    (csharp-public-name (.getSimpleName ^CtElement reference))
+
+    (and (= :intrinsic (:origin occurrence))
+         (= :enum-synthetic-method (:resolution occurrence)))
+    (identifier (.getSimpleName ^CtElement reference))
+
+    (or (contains? extended-neutral-executable-keys (:key occurrence))
+        (contains? extended-neutral-field-keys (:key occurrence)))
     (identifier (.getSimpleName ^CtElement reference))
 
     (contains?
@@ -1032,6 +1176,12 @@
                  (= :project (:origin occurrence))
                  {:node (raw "<init>")}
 
+                 (and (= :dependency (:origin occurrence))
+                      (some->> element
+                               .getDeclaringType
+                               (translated-external-type-base @ctx-holder)))
+                 {:node (raw "<init>")}
+
                  (and (= :intrinsic (:origin occurrence))
                       (= :enum-synthetic-constructor (:resolution occurrence)))
                  {:node (raw "<init>")}
@@ -1044,6 +1194,7 @@
                     "executable:java.io.IOException#<init>()"
                     "executable:java.io.IOException#<init>(java.lang.String)"
                     "executable:java.io.IOException#<init>(java.lang.Throwable)"
+                    "executable:java.io.IOException#<init>(java.lang.String,java.lang.Throwable)"
                     "executable:java.io.EOFException#<init>()"
                     "executable:java.io.EOFException#<init>(java.lang.String)"
                     "executable:java.io.File#<init>(java.lang.String)"
@@ -1055,11 +1206,14 @@
                     "executable:java.lang.RuntimeException#<init>(java.lang.String,java.lang.Throwable)"
                     "executable:java.util.concurrent.TimeoutException#<init>(java.lang.String)"
                     "executable:java.lang.IllegalStateException#<init>(java.lang.String)"
+                    "executable:java.lang.IllegalStateException#<init>()"
                     "executable:java.lang.IllegalArgumentException#<init>(java.lang.String)"
                     "executable:java.lang.IllegalArgumentException#<init>(java.lang.String,java.lang.Throwable)"
+                    "executable:java.lang.IllegalArgumentException#<init>()"
                     "executable:java.lang.IndexOutOfBoundsException#<init>(java.lang.String)"
                     "executable:java.lang.NullPointerException#<init>(java.lang.String)"
                     "executable:java.lang.UnsupportedOperationException#<init>(java.lang.String)"
+                    "executable:java.lang.UnsupportedOperationException#<init>()"
                     "executable:java.lang.StringBuilder#<init>()"
                     "executable:java.lang.StringBuilder#<init>(int)"
                     "executable:java.lang.StringBuilder#<init>(java.lang.String)"
@@ -1074,6 +1228,9 @@
                     "executable:java.io.PipedInputStream#<init>()"
                     "executable:java.io.PipedOutputStream#<init>()"
                     "executable:java.io.PushbackInputStream#<init>(java.io.InputStream)"
+                    "executable:java.io.DataOutputStream#<init>(java.io.OutputStream)"
+                    "executable:java.io.InputStreamReader#<init>(java.io.InputStream,java.nio.charset.Charset)"
+                    "executable:java.io.LineNumberReader#<init>(java.io.Reader)"
                     "executable:java.util.zip.GZIPInputStream#<init>(java.io.InputStream)"
                     "executable:java.util.zip.InflaterOutputStream#<init>(java.io.OutputStream)"
                     "executable:java.net.URI#<init>(java.lang.String)"
@@ -1081,11 +1238,22 @@
                     "executable:java.util.HashMap#<init>()"
                     "executable:java.util.HashMap#<init>(int)"
                     "executable:java.util.HashSet#<init>(int)"
+                    "executable:java.util.HashSet#<init>()"
                     "executable:java.util.HashSet#<init>(java.util.Collection)"
                     "executable:java.util.LinkedHashSet#<init>(int)"
                     "executable:java.util.ArrayList#<init>()"
                     "executable:java.util.ArrayList#<init>(int)"
                     "executable:java.util.ArrayList#<init>(java.util.Collection)"
+                    "executable:java.util.ArrayDeque#<init>()"
+                    "executable:java.util.EnumMap#<init>(java.lang.Class)"
+                    "executable:java.util.LinkedList#<init>()"
+                    "executable:java.util.StringJoiner#<init>(java.lang.CharSequence,java.lang.CharSequence,java.lang.CharSequence)"
+                    "executable:java.util.StringTokenizer#<init>(java.lang.String)"
+                    "executable:java.util.StringTokenizer#<init>(java.lang.String,java.lang.String)"
+                    "executable:java.util.TreeMap#<init>()"
+                    "executable:java.util.TreeMap#<init>(java.util.Comparator)"
+                    "executable:java.util.TreeSet#<init>()"
+                    "executable:java.util.TreeSet#<init>(java.util.Comparator)"
                     "executable:java.util.LinkedHashMap#<init>()"
                     "executable:java.util.LinkedHashMap#<init>(int)"
                     "executable:java.util.LinkedHashMap#<init>(int,float,boolean)"
@@ -1100,6 +1268,9 @@
                     "executable:java.util.concurrent.atomic.AtomicReference#<init>()"
                     "executable:java.util.BitSet#<init>()"
                     "executable:java.util.concurrent.ConcurrentHashMap#<init>()"
+                    "executable:java.util.concurrent.ConcurrentHashMap#<init>(int)"
+                    "executable:java.awt.geom.GeneralPath#<init>()"
+                    "executable:java.awt.geom.Point2D$Float#<init>(float,float)"
                     "executable:java.net.ServerSocket#<init>(int)"
                     "executable:java.net.Socket#<init>(java.net.InetAddress,int)"
                     "executable:java.net.Socket#<init>(java.lang.String,int)"}
@@ -1347,974 +1518,1288 @@
              (or
               destination-adaptation
               (case (:key occurrence)
-               "executable:java.util.Collections#emptyList()"
-               (sequence-node
-                [(raw "global::System.Array.Empty<")
-                 (type-node @ctx-holder (collection-element-type element))
-                 (raw ">()")])
+                ("executable:java.io.ByteArrayOutputStream#write(byte[],int,int)"
+                 "executable:java.io.FilterOutputStream#write(byte[])")
+                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
-               "executable:java.util.Collections#emptyMap()"
-               (let [type-arguments (.getActualTypeArguments (.getType element))]
-                 (sequence-node
-                  [(csharp/generic-name
-                    (raw "global::Vibeformer.Runtime.JavaCompat.EmptyMap")
-                    (mapv #(type-node @ctx-holder %) type-arguments))
-                   (raw "()")]))
+                "executable:java.io.File#canRead()"
+                (compat-call "FileCanRead" [target-node])
 
-               "executable:java.util.Collections#singletonList(java.lang.Object)"
-               (sequence-node
-                [(csharp/generic-name
-                  (raw "global::Vibeformer.Runtime.JavaCompat.ListOf")
-                  [(type-node @ctx-holder (collection-element-type element))])
-                 (raw "(") (sequence-node arguments ", ") (raw ")")])
+                "executable:java.io.File#getName()"
+                (sequence-node [target-node (raw ".Name")])
 
-               "executable:java.util.Collections#synchronizedMap(java.util.Map)"
-               (first arguments)
+                "executable:java.io.File#isHidden()"
+                (compat-call "FileIsHidden" [target-node])
 
-               "executable:java.util.Collections#synchronizedList(java.util.List)"
-               (compat-call "SynchronizedList" arguments)
+                "executable:java.io.File#listFiles()"
+                (compat-call "FileListFiles" [target-node])
 
-               "executable:java.util.Collections#unmodifiableList(java.util.List)"
-               (compat-call "UnmodifiableList" arguments)
+                "executable:java.io.File#toURI()"
+                (compat-call "FileToUri" [target-node])
 
-               "executable:java.util.Collections#unmodifiableMap(java.util.Map)"
-               (compat-call "UnmodifiableMap" arguments)
+                "executable:java.io.InputStream#mark(int)"
+                (compat-call "InputStreamMark" (into [target-node] arguments))
 
-               "executable:java.net.URI#getHost()"
-               (sequence-node [(compat-call "UriHost" [target-node]) (raw "!")])
+                "executable:java.io.InputStream#markSupported()"
+                (compat-call "InputStreamMarkSupported" [target-node])
 
-               "executable:java.net.URI#getPort()"
-               (compat-call "UriPort" [target-node])
+                "executable:java.io.InputStream#reset()"
+                (compat-call "InputStreamReset" [target-node])
 
-               "executable:java.net.URI#getScheme()"
-               (sequence-node [(compat-call "UriScheme" [target-node]) (raw "!")])
+                "executable:java.io.InputStream#skip(long)"
+                (compat-call "InputStreamSkip" (into [target-node] arguments))
 
-               "executable:java.net.URI#getUserInfo()"
-               (sequence-node [(compat-call "UriUserInfo" [target-node]) (raw "!")])
+                "executable:java.lang.Boolean#parseBoolean(java.lang.String)"
+                (compat-call "ParseBoolean" arguments)
 
-               "executable:java.net.URI#getRawPath()"
-               (sequence-node [(compat-call "UriRawPath" [target-node]) (raw "!")])
+                "executable:java.lang.Character#digit(char,int)"
+                (compat-call "CharacterDigit" arguments)
 
-               "executable:java.net.URI#getPath()"
-               (sequence-node [(compat-call "UriPath" [target-node]) (raw "!")])
+                "executable:java.lang.Character#getType(int)"
+                (compat-call "CharacterType" arguments)
 
-               "executable:java.net.URI#getRawQuery()"
-               (sequence-node [(compat-call "UriRawQuery" [target-node]) (raw "!")])
+                ("executable:java.lang.Character#isDigit(char)"
+                 "executable:java.lang.Character#isDigit(int)")
+                (compat-call "IsDigit" arguments)
 
-               "executable:java.net.URI#getRawFragment()"
-               (sequence-node [(compat-call "UriRawFragment" [target-node]) (raw "!")])
+                "executable:java.lang.Character#isWhitespace(char)"
+                (compat-call "IsWhitespace" arguments)
 
-               "executable:java.net.URI#equals(java.lang.Object)"
-               (compat-call "Equals" (into [target-node] arguments))
+                "executable:java.lang.Character#toString(char)"
+                (compat-call "CodePointToString" arguments)
 
-               "executable:java.net.URI#toString()"
-               (sequence-node [target-node (raw ".OriginalString")])
+                "executable:java.lang.Class#getResourceAsStream(java.lang.String)"
+                (compat-call "ClassGetResourceAsStream"
+                             (into [target-node] arguments))
 
-               "executable:java.net.URI#create(java.lang.String)"
-               (sequence-node [(raw "new global::System.Uri(")
-                               (sequence-node arguments ", ")
-                               (raw ", global::System.UriKind.RelativeOrAbsolute)")])
+                "executable:java.lang.Double#valueOf(java.lang.String)"
+                (compat-call "ParseDouble" arguments)
 
-               "executable:java.lang.String#toUpperCase()"
-               (sequence-node [target-node (raw ".ToUpper()")])
+                "executable:java.lang.Enum#toString()"
+                (sequence-node [target-node (raw ".ToString()")])
 
-               "executable:java.lang.String#toLowerCase()"
-               (sequence-node [target-node (raw ".ToLowerInvariant()")])
+                "executable:java.lang.Float#compare(float,float)"
+                (compat-call "CompareFloat" arguments)
 
-               "executable:java.lang.Object#toString()"
-               (sequence-node [target-node (raw ".ToString()!")])
+                "executable:java.lang.Float#floatToIntBits(float)"
+                (compat-call "FloatToIntBits" arguments)
 
-               "executable:java.lang.String#format(java.lang.String,java.lang.Object[])"
-               (compat-call "JavaStringFormat" arguments)
+                "executable:java.lang.Float#parseFloat(java.lang.String)"
+                (compat-call "ParseFloat" arguments)
 
-               "executable:java.lang.String#trim()"
-               (compat-call "StringTrim" [target-node])
+                "executable:java.lang.Integer#compare(int,int)"
+                (compat-call "CompareInt" arguments)
 
-               "executable:java.lang.String#split(java.lang.String)"
-               (compat-call "StringSplit" (into [target-node] (conj arguments (raw "0"))))
+                "executable:java.lang.Integer#equals(java.lang.Object)"
+                (compat-call "Equals" (into [target-node] arguments))
 
-               "executable:java.lang.String#split(java.lang.String,int)"
-               (compat-call "StringSplit" (into [target-node] arguments))
+                "executable:java.lang.Integer#highestOneBit(int)"
+                (compat-call "HighestOneBit" arguments)
 
-               "executable:java.lang.String#length()"
-               (sequence-node [target-node (raw ".Length")])
+                "executable:java.lang.Integer#toHexString(int)"
+                (compat-call "ToHexString" arguments)
 
-               "executable:java.lang.String#isEmpty()"
-               (sequence-node [(raw "(") target-node (raw ".Length == 0)")])
+                "executable:java.lang.Integer#valueOf(java.lang.String)"
+                (compat-call "ParseInt" (conj arguments (raw "10")))
 
-               "executable:java.lang.String#startsWith(java.lang.String)"
-               (compat-call "StringStartsWith" (into [target-node] arguments))
+                "executable:java.lang.Long#compare(long,long)"
+                (compat-call "CompareLong" arguments)
 
-               "executable:java.lang.String#endsWith(java.lang.String)"
-               (compat-call "StringEndsWith" (into [target-node] arguments))
+                "executable:java.lang.Math#abs(int)"
+                (sequence-node [(raw "global::System.Math.Abs(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.String#substring(int)"
-               (sequence-node [target-node (raw ".Substring(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.Math#floor(double)"
+                (sequence-node [(raw "global::System.Math.Floor(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.String#substring(int,int)"
-               (compat-call "StringSubstring" (into [target-node] arguments))
+                "executable:java.lang.Math#log(double)"
+                (sequence-node [(raw "global::System.Math.Log(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.String#indexOf(int)"
-               (compat-call "StringIndexOf" (into [target-node] arguments))
+                "executable:java.lang.Math#pow(double,double)"
+                (sequence-node [(raw "global::System.Math.Pow(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.String#indexOf(int,int)"
-               (compat-call "StringIndexOf" (into [target-node] arguments))
+                "executable:java.lang.Math#round(float)"
+                (compat-call "MathRoundFloat" arguments)
 
-               "executable:java.lang.String#lastIndexOf(int)"
-               (compat-call "StringLastIndexOf" (into [target-node] arguments))
+                "executable:java.lang.Number#doubleValue()"
+                (sequence-node
+                 [(raw "global::System.Convert.ToDouble(") target-node
+                  (raw ", global::System.Globalization.CultureInfo.InvariantCulture)")])
 
-               "executable:java.lang.String#contains(java.lang.CharSequence)"
-               (compat-call "StringContains" (into [target-node] arguments))
+                "executable:java.lang.Number#floatValue()"
+                (sequence-node
+                 [(raw "global::System.Convert.ToSingle(") target-node
+                  (raw ", global::System.Globalization.CultureInfo.InvariantCulture)")])
 
-               "executable:java.lang.String#matches(java.lang.String)"
-               (compat-call "StringMatches" (into [target-node] arguments))
+                "executable:java.lang.Number#intValue()"
+                (sequence-node
+                 [(raw "global::System.Convert.ToInt32(") target-node
+                  (raw ", global::System.Globalization.CultureInfo.InvariantCulture)")])
 
-               "executable:java.lang.String#hashCode()"
-               (compat-call "HashCode" [target-node])
+                "executable:java.lang.Object#clone()"
+                (compat-call "Clone" [target-node])
 
-               "executable:java.lang.String#equals(java.lang.Object)"
-               (compat-call "Equals" (into [target-node] arguments))
+                "executable:java.lang.String#charAt(int)"
+                (sequence-node [target-node (raw "[") (first arguments) (raw "]")])
 
-               "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
-               (compat-call "EqualsIgnoreCase" (into [target-node] arguments))
+                "executable:java.lang.String#codePointAt(int)"
+                (compat-call "CodePointAt" (into [target-node] arguments))
 
-               "executable:java.lang.String#toCharArray()"
-               (sequence-node [target-node (raw ".ToCharArray()")])
+                "executable:java.lang.String#compareTo(java.lang.String)"
+                (compat-call "StringCompareTo" (into [target-node] arguments))
 
-               "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
-               (compat-call "StringGetBytes" (into [target-node] arguments))
+                "executable:java.lang.String#format(java.util.Locale,java.lang.String,java.lang.Object[])"
+                (compat-call "JavaStringFormat" arguments)
 
-               "executable:java.lang.String#getBytes()"
-               (compat-call "StringGetBytes"
-                            [target-node (raw "global::System.Text.Encoding.UTF8")])
+                "executable:java.lang.String#indexOf(java.lang.String)"
+                (sequence-node
+                 [target-node (raw ".IndexOf(") (first arguments)
+                  (raw ", global::System.StringComparison.Ordinal)")])
 
-               "executable:java.lang.String#join(java.lang.CharSequence,java.lang.Iterable)"
-               (compat-call "StringJoin" arguments)
+                "executable:java.lang.String#replace(java.lang.CharSequence,java.lang.CharSequence)"
+                (sequence-node
+                 [target-node (raw ".Replace(") (sequence-node arguments ", ")
+                  (raw ", global::System.StringComparison.Ordinal)")])
 
-               "executable:java.lang.Integer#toString(int,int)"
-               (compat-call "ToStringRadix" arguments)
+                "executable:java.lang.String#toLowerCase(java.util.Locale)"
+                (sequence-node [target-node (raw ".ToLowerInvariant()")])
 
-               "executable:java.lang.Integer#toString(int)"
-               (compat-call "StringValueOf" arguments)
+                "executable:java.lang.String#toUpperCase(java.util.Locale)"
+                (sequence-node [target-node (raw ".ToUpperInvariant()")])
 
-               "executable:java.lang.Integer#parseInt(java.lang.String)"
-               (compat-call "ParseInt" (conj arguments (raw "10")))
+                "executable:java.lang.String#valueOf(char[])"
+                (sequence-node [(raw "new string(") (first arguments) (raw ")")])
 
-               "executable:java.lang.Long#parseLong(java.lang.String)"
-               (compat-call "ParseLong" arguments)
+                "executable:java.lang.StringBuilder#append(java.lang.Object)"
+                (sequence-node
+                 [target-node (raw ".Append(")
+                  (compat-call "StringValueOf" arguments)
+                  (raw ")")])
 
-               "executable:java.lang.Long#toString(long)"
-               (compat-call "StringValueOf" arguments)
+                "executable:java.lang.System#getProperty(java.lang.String)"
+                (compat-call "GetProperty" arguments)
 
-               ("executable:java.lang.Math#min(long,long)"
-                "executable:java.lang.Math#min(int,int)")
-               (sequence-node [(raw "global::System.Math.Min(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.System#getenv(java.lang.String)"
+                (compat-call "Getenv" arguments)
 
-               ("executable:java.lang.Math#max(long,long)"
-                "executable:java.lang.Math#max(int,int)")
-               (sequence-node [(raw "global::System.Math.Max(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.nio.Buffer#hasRemaining()"
+                (sequence-node [(raw "(") target-node (raw ".Remaining > 0)")])
 
-               "executable:java.lang.Math#toIntExact(long)"
-               (compat-call "ToIntExact" arguments)
+                "executable:java.nio.file.Files#readAllBytes(java.nio.file.Path)"
+                (compat-call "ReadAllBytes" arguments)
 
-               "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)"
-               (compat-call "ArrayCopy" arguments)
+                "executable:java.nio.file.Paths#get(java.lang.String,java.lang.String[])"
+                (compat-call "PathOf" arguments)
 
-               "executable:java.lang.System#currentTimeMillis()"
-               (raw "global::System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()")
+                ("executable:java.util.Arrays#binarySearch(int[],int)"
+                 "executable:java.util.Arrays#binarySearch(java.lang.Object[],java.lang.Object,java.util.Comparator)")
+                (compat-call "BinarySearch" arguments)
 
-               "executable:java.lang.ThreadLocal#withInitial(java.util.function.Supplier)"
-               (sequence-node
-                [(csharp/generic-name
-                  (raw "global::Vibeformer.Runtime.JavaThreadLocal")
-                  [(type-node @ctx-holder (collection-element-type element))])
-                 (raw ".WithInitial(") (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Arrays#copyOfRange(byte[],int,int)"
+                (compat-call "CopyOfRange" arguments)
 
-               "executable:java.lang.ThreadLocal#get()"
-               (sequence-node [target-node (raw ".Get()")])
+                "executable:java.util.Arrays#deepToString(java.lang.Object[])"
+                (compat-call "DeepArrayString" arguments)
 
-               "executable:java.lang.ThreadLocal#set(java.lang.Object)"
-               (sequence-node [target-node (raw ".Set(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Arrays#fill(int[],int)"
+                (compat-call "Fill" arguments)
 
-               "executable:java.util.Arrays#equals(byte[],byte[])"
-               (compat-call "ArrayEquals" arguments)
+                ("executable:java.util.Arrays#toString(int[])"
+                 "executable:java.util.Arrays#toString(java.lang.Object[])")
+                (compat-call "ArrayToString" arguments)
 
-               "executable:java.util.Arrays#hashCode(byte[])"
-               (compat-call "ArrayHash" arguments)
+                "executable:java.util.Calendar#getInstance(java.util.TimeZone)"
+                (compat-call "CalendarInstance" arguments)
 
-               "executable:java.util.Arrays#asList(java.lang.Object[])"
-               (compat-call "AsList" arguments)
+                "executable:java.util.Calendar#getTimeInMillis()"
+                (sequence-node [target-node (raw ".ToUnixTimeMilliseconds()")])
 
-               "executable:java.lang.Enum#name()"
-               (compat-call "EnumName" [target-node])
+                ("executable:java.util.Calendar#set(int,int)"
+                 "executable:java.util.Calendar#set(int,int,int,int,int,int)")
+                (sequence-node
+                 [target-node (raw " = ")
+                  (compat-call "CalendarSet" (into [target-node] arguments))])
 
-               "executable:java.lang.Enum#ordinal()"
-               (compat-call "EnumOrdinal" [target-node])
+                "executable:java.util.Calendar#setTimeInMillis(long)"
+                (sequence-node
+                 [target-node
+                  (raw " = global::System.DateTimeOffset.FromUnixTimeMilliseconds(")
+                  (first arguments) (raw ")")])
 
-               "executable:java.lang.Integer#parseInt(java.lang.String,int)"
-               (compat-call "ParseInt" arguments)
+                "executable:java.util.Deque#pop()"
+                (sequence-node [target-node (raw ".Pop()")])
 
-               "executable:java.net.Socket#getInputStream()"
-               (compat-call "SocketStream" [target-node])
+                "executable:java.util.Deque#push(java.lang.Object)"
+                (sequence-node
+                 [target-node (raw ".Push(")
+                  (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.net.Socket#getOutputStream()"
-               (compat-call "SocketStream" [target-node])
+                "executable:java.util.Collection#add(java.lang.Object)"
+                (compat-call "Add" (into [target-node] arguments))
 
-               "executable:java.net.Socket#getRemoteSocketAddress()"
-               (sequence-node [target-node (raw ".RemoteEndPoint")])
+                "executable:java.util.Collection#isEmpty()"
+                (compat-call "CollectionIsEmpty" [target-node])
 
-               "executable:java.net.Socket#close()"
-               (sequence-node [target-node (raw ".Close()")])
+                "executable:java.util.Collections#sort(java.util.List)"
+                (compat-call "SortList" arguments)
 
-               "executable:java.net.Socket#isClosed()"
-               (compat-call "SocketIsClosed" [target-node])
+                "executable:java.util.Collections#unmodifiableSet(java.util.Set)"
+                (compat-call "UnmodifiableSet" arguments)
 
-               "executable:java.net.Socket#isConnected()"
-               (compat-call "SocketIsConnected" [target-node])
+                "executable:java.util.List#add(int,java.lang.Object)"
+                (compat-call "ListAdd" (into [target-node] arguments))
 
-               "executable:java.net.Socket#setSoTimeout(int)"
-               (compat-call "SocketSetSoTimeout" (into [target-node] arguments))
+                "executable:java.util.List#indexOf(java.lang.Object)"
+                (compat-call "ListIndexOf" (into [target-node] arguments))
 
-               "executable:java.net.ServerSocket#accept()"
-               (sequence-node [target-node (raw ".Accept()")])
+                "executable:java.util.List#remove(int)"
+                (compat-call "ListRemove" (into [target-node] arguments))
 
-               "executable:java.net.ServerSocket#close()"
-               (sequence-node [target-node (raw ".Close()")])
+                "executable:java.util.List#set(int,java.lang.Object)"
+                (compat-call "ListSet" (into [target-node] arguments))
 
-               "executable:java.net.ServerSocket#isClosed()"
-               (sequence-node [target-node (raw ".IsClosed()")])
+                "executable:java.util.List#sort(java.util.Comparator)"
+                (compat-call "SortList" (into [target-node] arguments))
 
-               "executable:java.net.InetSocketAddress#getAddress()"
-               (compat-call "InetSocketAddressAddress" [target-node])
+                "executable:java.util.List#subList(int,int)"
+                (compat-call "SubList" (into [target-node] arguments))
 
-               "executable:java.net.URL#openStream()"
-               (compat-call "OpenUrlStream" [target-node])
+                "executable:java.util.Map#isEmpty()"
+                (compat-call "MapIsEmpty" [target-node])
 
-               "executable:java.net.URLDecoder#decode(java.lang.String,java.lang.String)"
-               (compat-call "UrlDecode" arguments)
+                "executable:java.util.Set#addAll(java.util.Collection)"
+                (compat-call "AddAll" (into [target-node] arguments))
 
-               "executable:java.security.KeyStore#getDefaultType()"
-               (raw "global::Vibeformer.Runtime.JavaKeyStore.GetDefaultType()")
+                "executable:java.util.Set#isEmpty()"
+                (compat-call "CollectionIsEmpty" [target-node])
 
-               "executable:java.security.KeyStore#getInstance(java.lang.String)"
-               (sequence-node [(raw "global::Vibeformer.Runtime.JavaKeyStore.GetInstance(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Set#iterator()"
+                (compat-call "Iterator" [target-node])
 
-               "executable:java.security.KeyStore#load(java.io.InputStream,char[])"
-               (sequence-node [target-node (raw ".Load(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Set#size()"
+                (sequence-node [target-node (raw ".Count")])
 
-               "executable:javax.net.ssl.KeyManagerFactory#getDefaultAlgorithm()"
-               (raw "global::Vibeformer.Runtime.JavaKeyManagerFactory.GetDefaultAlgorithm()")
+                "executable:java.util.SortedMap#entrySet()"
+                (compat-call "MapEntrySet" [target-node])
 
-               "executable:javax.net.ssl.KeyManagerFactory#getInstance(java.lang.String)"
-               (sequence-node
-                [(raw "global::Vibeformer.Runtime.JavaKeyManagerFactory.GetInstance(")
-                 (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.SortedMap#firstKey()"
+                (compat-call "SortedFirstKey" [target-node])
 
-               "executable:javax.net.ssl.KeyManagerFactory#init(java.security.KeyStore,char[])"
-               (sequence-node [target-node (raw ".Init(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.SortedMap#lastKey()"
+                (compat-call "SortedLastKey" [target-node])
 
-               "executable:javax.net.ssl.KeyManagerFactory#getKeyManagers()"
-               (sequence-node [target-node (raw ".GetKeyManagers()")])
+                "executable:java.util.SortedSet#headSet(java.lang.Object)"
+                (compat-call "SortedHeadSet" (into [target-node] arguments))
 
-               "executable:javax.net.ssl.TrustManagerFactory#getDefaultAlgorithm()"
-               (raw "global::Vibeformer.Runtime.JavaTrustManagerFactory.GetDefaultAlgorithm()")
+                "executable:java.util.SortedSet#last()"
+                (compat-call "SortedLast" [target-node])
 
-               "executable:javax.net.ssl.TrustManagerFactory#getInstance(java.lang.String)"
-               (sequence-node
-                [(raw "global::Vibeformer.Runtime.JavaTrustManagerFactory.GetInstance(")
-                 (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.SortedSet#subSet(java.lang.Object,java.lang.Object)"
+                (compat-call "SortedSubSet" (into [target-node] arguments))
 
-               "executable:javax.net.ssl.TrustManagerFactory#init(java.security.KeyStore)"
-               (sequence-node [target-node (raw ".Init(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.TimeZone#clone()"
+                (compat-call "Clone" [target-node])
 
-               "executable:javax.net.ssl.TrustManagerFactory#getTrustManagers()"
-               (sequence-node [target-node (raw ".GetTrustManagers()")])
+                "executable:java.util.TimeZone#getTimeZone(java.lang.String)"
+                (compat-call "GetTimeZone" arguments)
 
-               "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)"
-               (sequence-node [(raw "global::Vibeformer.Runtime.JavaSslContext.GetInstance(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.regex.Matcher#end()"
+                (sequence-node [target-node (raw ".End()")])
 
-               "executable:javax.net.ssl.SSLContext#init(javax.net.ssl.KeyManager[],javax.net.ssl.TrustManager[],java.security.SecureRandom)"
-               (sequence-node [target-node (raw ".Init(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.regex.Matcher#find(int)"
+                (sequence-node
+                 [target-node (raw ".Find(") (sequence-node arguments ", ")
+                  (raw ")")])
 
-               "executable:javax.net.ssl.SSLSocketFactory#getDefault()"
-               (raw "global::Vibeformer.Runtime.JavaSocketFactory.Default")
+                "executable:java.util.regex.Matcher#group()"
+                (sequence-node [target-node (raw ".Group()")])
 
-               "executable:javax.net.ssl.SSLContext#getSocketFactory()"
-               (sequence-node [target-node (raw ".GetSocketFactory()")])
+                "executable:java.util.regex.Matcher#start()"
+                (sequence-node [target-node (raw ".Start()")])
 
-               "executable:javax.net.ssl.SSLContext#getServerSocketFactory()"
-               (sequence-node [target-node (raw ".GetServerSocketFactory()")])
+                "executable:java.util.stream.Stream#anyMatch(java.util.function.Predicate)"
+                (compat-call "Any" (into [target-node] arguments))
 
-               "executable:javax.net.ServerSocketFactory#createServerSocket(int)"
-               (sequence-node [target-node (raw ".CreateServerSocket(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.stream.Stream#count()"
+                (sequence-node
+                 [(raw "global::System.Linq.Enumerable.LongCount(") target-node
+                  (raw ")")])
 
-               "executable:javax.net.SocketFactory#createSocket()"
-               (sequence-node [target-node (raw ".CreateSocket()")])
+                "executable:java.util.Collections#emptyList()"
+                (sequence-node
+                 [(raw "global::System.Array.Empty<")
+                  (type-node @ctx-holder (collection-element-type element))
+                  (raw ">()")])
 
-               "executable:javax.net.SocketFactory#createSocket(java.lang.String,int)"
-               (sequence-node [target-node (raw ".CreateSocket(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Collections#emptyMap()"
+                (let [type-arguments (.getActualTypeArguments (.getType element))]
+                  (sequence-node
+                   [(csharp/generic-name
+                     (raw "global::Vibeformer.Runtime.JavaCompat.EmptyMap")
+                     (mapv #(type-node @ctx-holder %) type-arguments))
+                    (raw "()")]))
 
-               "executable:java.io.OutputStream#flush()"
-               (sequence-node [target-node (raw ".Flush()")])
+                "executable:java.util.Collections#singletonList(java.lang.Object)"
+                (sequence-node
+                 [(csharp/generic-name
+                   (raw "global::Vibeformer.Runtime.JavaCompat.ListOf")
+                   [(type-node @ctx-holder (collection-element-type element))])
+                  (raw "(") (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.io.FilterOutputStream#flush()"
-               (sequence-node [target-node (raw ".Flush()")])
+                "executable:java.util.Collections#synchronizedMap(java.util.Map)"
+                (first arguments)
 
-               "executable:java.io.OutputStream#close()"
-               (sequence-node [target-node (raw ".Dispose()")])
+                "executable:java.util.Collections#synchronizedList(java.util.List)"
+                (compat-call "SynchronizedList" arguments)
 
-               "executable:java.io.Closeable#close()"
-               (sequence-node [target-node (raw ".Dispose()")])
+                "executable:java.util.Collections#unmodifiableList(java.util.List)"
+                (compat-call "UnmodifiableList" arguments)
 
-               "executable:java.io.InputStream#close()"
-               (sequence-node [target-node (raw ".Dispose()")])
+                "executable:java.util.Collections#unmodifiableMap(java.util.Map)"
+                (compat-call "UnmodifiableMap" arguments)
 
-               "executable:java.io.InputStream#available()"
-               (compat-call "InputStreamAvailable" [target-node])
+                "executable:java.net.URI#getHost()"
+                (sequence-node [(compat-call "UriHost" [target-node]) (raw "!")])
 
-               "executable:java.io.File#toPath()"
-               (sequence-node [(raw "new global::Vibeformer.Runtime.JavaPath(")
-                               target-node (raw ".FullName)")])
+                "executable:java.net.URI#getPort()"
+                (compat-call "UriPort" [target-node])
 
-               "executable:java.io.File#length()"
-               (sequence-node [target-node (raw ".Length")])
+                "executable:java.net.URI#getScheme()"
+                (sequence-node [(compat-call "UriScheme" [target-node]) (raw "!")])
 
-               "executable:java.io.File#delete()"
-               (compat-call "FileDelete" [target-node])
+                "executable:java.net.URI#getUserInfo()"
+                (sequence-node [(compat-call "UriUserInfo" [target-node]) (raw "!")])
 
-               "executable:java.io.File#exists()"
-               (compat-call "FileExists" [target-node])
+                "executable:java.net.URI#getRawPath()"
+                (sequence-node [(compat-call "UriRawPath" [target-node]) (raw "!")])
 
-               "executable:java.io.File#getAbsolutePath()"
-               (sequence-node [target-node (raw ".FullName")])
+                "executable:java.net.URI#getPath()"
+                (sequence-node [(compat-call "UriPath" [target-node]) (raw "!")])
 
-               "executable:java.io.File#isDirectory()"
-               (compat-call "FileIsDirectory" [target-node])
+                "executable:java.net.URI#getRawQuery()"
+                (sequence-node [(compat-call "UriRawQuery" [target-node]) (raw "!")])
 
-               "executable:java.io.File#setReadable(boolean,boolean)"
-               (compat-call "SetFileReadable" (into [target-node] arguments))
+                "executable:java.net.URI#getRawFragment()"
+                (sequence-node [(compat-call "UriRawFragment" [target-node]) (raw "!")])
 
-               "executable:java.io.File#setWritable(boolean,boolean)"
-               (compat-call "SetFileWritable" (into [target-node] arguments))
+                "executable:java.net.URI#equals(java.lang.Object)"
+                (compat-call "Equals" (into [target-node] arguments))
 
-               "executable:java.io.File#setExecutable(boolean,boolean)"
-               (compat-call "SetFileExecutable" (into [target-node] arguments))
+                "executable:java.net.URI#toString()"
+                (sequence-node [target-node (raw ".OriginalString")])
 
-               "executable:java.io.RandomAccessFile#close()"
-               (sequence-node [target-node (raw ".Dispose()")])
+                "executable:java.net.URI#create(java.lang.String)"
+                (sequence-node [(raw "new global::System.Uri(")
+                                (sequence-node arguments ", ")
+                                (raw ", global::System.UriKind.RelativeOrAbsolute)")])
 
-               "executable:java.nio.file.Files#newInputStream(java.nio.file.Path,java.nio.file.OpenOption[])"
-               (compat-call "OpenInputStream" arguments)
+                "executable:java.lang.String#toUpperCase()"
+                (sequence-node [target-node (raw ".ToUpper()")])
 
-               "executable:java.nio.file.Path#toFile()"
-               (sequence-node [(raw "new global::System.IO.FileInfo(")
-                               target-node (raw ")")])
+                "executable:java.lang.String#toLowerCase()"
+                (sequence-node [target-node (raw ".ToLowerInvariant()")])
 
-               "executable:java.io.ByteArrayOutputStream#writeTo(java.io.OutputStream)"
-               (compat-call "MemoryStreamWriteTo" (into [target-node] arguments))
+                "executable:java.lang.Object#toString()"
+                (sequence-node [target-node (raw ".ToString()!")])
 
-               "executable:java.io.ByteArrayOutputStream#toByteArray()"
-               (compat-call "ToSignedBytes" [target-node])
+                "executable:java.lang.String#format(java.lang.String,java.lang.Object[])"
+                (compat-call "JavaStringFormat" arguments)
 
-               "executable:java.io.ByteArrayOutputStream#write(int)"
-               (compat-call "OutputStreamWrite" (into [target-node] arguments))
+                "executable:java.lang.String#trim()"
+                (compat-call "StringTrim" [target-node])
 
-               "executable:java.io.OutputStream#write(byte[])"
-               (compat-call "OutputStreamWrite" (into [target-node] arguments))
+                "executable:java.lang.String#split(java.lang.String)"
+                (compat-call "StringSplit" (into [target-node] (conj arguments (raw "0"))))
 
-               "executable:java.io.OutputStream#write(byte[],int,int)"
-               (compat-call "OutputStreamWrite" (into [target-node] arguments))
+                "executable:java.lang.String#split(java.lang.String,int)"
+                (compat-call "StringSplit" (into [target-node] arguments))
 
-               "executable:java.io.OutputStream#write(int)"
-               (compat-call "OutputStreamWrite" (into [target-node] arguments))
+                "executable:java.lang.String#length()"
+                (sequence-node [target-node (raw ".Length")])
 
-               "executable:java.io.PrintStream#println(java.lang.String)"
-               (sequence-node [target-node (raw ".WriteLine(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.String#isEmpty()"
+                (sequence-node [(raw "(") target-node (raw ".Length == 0)")])
 
-               "executable:java.io.PipedOutputStream#connect(java.io.PipedInputStream)"
-               (sequence-node [target-node (raw ".Connect(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.String#startsWith(java.lang.String)"
+                (compat-call "StringStartsWith" (into [target-node] arguments))
 
-               "executable:java.io.PipedOutputStream#write(byte[],int,int)"
-               (compat-call "OutputStreamWrite" (into [target-node] arguments))
+                "executable:java.lang.String#endsWith(java.lang.String)"
+                (compat-call "StringEndsWith" (into [target-node] arguments))
 
-               "executable:java.io.PipedOutputStream#close()"
-               (sequence-node [target-node (raw ".Dispose()")])
+                "executable:java.lang.String#substring(int)"
+                (sequence-node [target-node (raw ".Substring(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.io.PipedOutputStream#flush()"
-               (sequence-node [target-node (raw ".Flush()")])
+                "executable:java.lang.String#substring(int,int)"
+                (compat-call "StringSubstring" (into [target-node] arguments))
 
-               "executable:java.io.InputStream#read()"
-               (compat-call "InputStreamRead" [target-node])
+                "executable:java.lang.String#indexOf(int)"
+                (compat-call "StringIndexOf" (into [target-node] arguments))
 
-               "executable:java.io.InputStream#read(byte[])"
-               (compat-call "InputStreamRead" (into [target-node] arguments))
+                "executable:java.lang.String#indexOf(int,int)"
+                (compat-call "StringIndexOf" (into [target-node] arguments))
 
-               "executable:java.io.InputStream#read(byte[],int,int)"
-               (compat-call "InputStreamRead" (into [target-node] arguments))
+                "executable:java.lang.String#lastIndexOf(int)"
+                (compat-call "StringLastIndexOf" (into [target-node] arguments))
 
-               "executable:java.io.ByteArrayInputStream#read()"
-               (compat-call "InputStreamRead" [target-node])
+                "executable:java.lang.String#contains(java.lang.CharSequence)"
+                (compat-call "StringContains" (into [target-node] arguments))
 
-               "executable:java.io.PushbackInputStream#read()"
-               (compat-call "InputStreamRead" [target-node])
+                "executable:java.lang.String#matches(java.lang.String)"
+                (compat-call "StringMatches" (into [target-node] arguments))
 
-               "executable:java.io.PushbackInputStream#unread(int)"
-               (sequence-node [target-node (raw ".Unread(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.String#hashCode()"
+                (compat-call "HashCode" [target-node])
 
-               "executable:java.io.PushbackInputStream#close()"
-               (sequence-node [target-node (raw ".Close()")])
+                "executable:java.lang.String#equals(java.lang.Object)"
+                (compat-call "Equals" (into [target-node] arguments))
 
-               "executable:java.util.zip.GZIPInputStream#read(byte[],int,int)"
-               (compat-call "InputStreamRead" (into [target-node] arguments))
+                "executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
+                (compat-call "EqualsIgnoreCase" (into [target-node] arguments))
 
-               "executable:java.lang.StringBuilder#append(java.lang.String)"
-               (sequence-node [target-node (raw ".Append(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.String#toCharArray()"
+                (sequence-node [target-node (raw ".ToCharArray()")])
 
-               "executable:java.lang.StringBuilder#append(char)"
-               (sequence-node [target-node (raw ".Append(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.String#getBytes(java.nio.charset.Charset)"
+                (compat-call "StringGetBytes" (into [target-node] arguments))
 
-               "executable:java.lang.StringBuilder#append(int)"
-               (sequence-node [target-node (raw ".Append(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.String#getBytes()"
+                (compat-call "StringGetBytes"
+                             [target-node (raw "global::System.Text.Encoding.UTF8")])
 
-               "executable:java.lang.StringBuilder#length()"
-               (sequence-node [target-node (raw ".Length")])
+                "executable:java.lang.String#join(java.lang.CharSequence,java.lang.Iterable)"
+                (compat-call "StringJoin" arguments)
 
-               "executable:java.lang.AbstractStringBuilder#length()"
-               (sequence-node [target-node (raw ".Length")])
+                "executable:java.lang.Integer#toString(int,int)"
+                (compat-call "ToStringRadix" arguments)
 
-               "executable:java.lang.StringBuilder#toString()"
-               (sequence-node [target-node (raw ".ToString()")])
+                "executable:java.lang.Integer#toString(int)"
+                (compat-call "StringValueOf" arguments)
 
-               "executable:java.util.Collection#stream()"
-               target-node
+                "executable:java.lang.Integer#parseInt(java.lang.String)"
+                (compat-call "ParseInt" (conj arguments (raw "10")))
 
-               "executable:java.lang.Object#getClass()"
-               (sequence-node [target-node (raw ".GetType()")])
+                "executable:java.lang.Long#parseLong(java.lang.String)"
+                (compat-call "ParseLong" arguments)
 
-               "executable:java.lang.Class#forName(java.lang.String)"
-               (compat-call "ClassForName" arguments)
+                "executable:java.lang.Long#toString(long)"
+                (compat-call "StringValueOf" arguments)
 
-               "executable:java.lang.Class#getDeclaredField(java.lang.String)"
-               (compat-call "GetDeclaredField" (into [target-node] arguments))
+                ("executable:java.lang.Math#min(long,long)"
+                 "executable:java.lang.Math#min(int,int)")
+                (sequence-node [(raw "global::System.Math.Min(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.Class#getMethod(java.lang.String,java.lang.Class[])"
-               (compat-call "GetMethod" (into [target-node] arguments))
+                ("executable:java.lang.Math#max(long,long)"
+                 "executable:java.lang.Math#max(int,int)")
+                (sequence-node [(raw "global::System.Math.Max(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.Class#getName()"
-               (sequence-node [(raw "(") target-node (raw ".FullName ?? ")
-                               target-node (raw ".Name)")])
+                "executable:java.lang.Math#toIntExact(long)"
+                (compat-call "ToIntExact" arguments)
 
-               "executable:java.lang.Class#getSimpleName()"
-               (sequence-node [target-node (raw ".Name")])
+                "executable:java.lang.System#arraycopy(java.lang.Object,int,java.lang.Object,int,int)"
+                (compat-call "ArrayCopy" arguments)
 
-               "executable:java.lang.Class#isInstance(java.lang.Object)"
-               (sequence-node [target-node (raw ".IsInstanceOfType(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.System#currentTimeMillis()"
+                (raw "global::System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()")
 
-               "executable:java.lang.Class#getClassLoader()"
-               (sequence-node [target-node (raw ".Assembly")])
+                "executable:java.lang.ThreadLocal#withInitial(java.util.function.Supplier)"
+                (sequence-node
+                 [(csharp/generic-name
+                   (raw "global::Vibeformer.Runtime.JavaThreadLocal")
+                   [(type-node @ctx-holder (collection-element-type element))])
+                  (raw ".WithInitial(") (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.reflect.Field#get(java.lang.Object)"
-               (sequence-node [target-node (raw ".GetValue(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.ThreadLocal#get()"
+                (sequence-node [target-node (raw ".Get()")])
 
-               ("executable:java.lang.reflect.Field#setAccessible(boolean)"
-                "executable:java.lang.reflect.Method#setAccessible(boolean)")
-               (compat-call "SetAccessible" (into [target-node] arguments))
+                "executable:java.lang.ThreadLocal#set(java.lang.Object)"
+                (sequence-node [target-node (raw ".Set(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.lang.Throwable#getCause()"
-               (sequence-node
-                [target-node (raw ".InnerException")
-                 (when (empty? (.getTypeCasts element)) (raw "!"))])
+                "executable:java.util.Arrays#equals(byte[],byte[])"
+                (compat-call "ArrayEquals" arguments)
 
-               "executable:java.lang.Throwable#getMessage()"
-               (sequence-node [target-node (raw ".Message")])
+                "executable:java.util.Arrays#hashCode(byte[])"
+                (compat-call "ArrayHash" arguments)
 
-               "executable:java.net.URISyntaxException#getMessage()"
-               (sequence-node [target-node (raw ".Message")])
+                "executable:java.util.Arrays#asList(java.lang.Object[])"
+                (sequence-node
+                 [(csharp/generic-name
+                   (raw "global::Vibeformer.Runtime.JavaCompat.AsList")
+                   [(type-node @ctx-holder (collection-element-type element))])
+                  (raw "(") (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.net.URISyntaxException#getReason()"
-               (compat-call "UriSyntaxReason" [target-node])
+                "executable:java.lang.Enum#name()"
+                (compat-call "EnumName" [target-node])
 
-               "executable:java.net.URISyntaxException#getIndex()"
-               (compat-call "UriSyntaxIndex" [target-node])
+                "executable:java.lang.Enum#ordinal()"
+                (compat-call "EnumOrdinal" [target-node])
 
-               "executable:java.lang.Throwable#printStackTrace()"
-               (compat-call "PrintStackTrace" [target-node])
+                "executable:java.lang.Integer#parseInt(java.lang.String,int)"
+                (compat-call "ParseInt" arguments)
 
-               "executable:java.time.Duration#ofSeconds(long)"
-               (sequence-node [(raw "global::System.TimeSpan.FromSeconds(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.net.Socket#getInputStream()"
+                (compat-call "SocketStream" [target-node])
 
-               "executable:java.time.Duration#toMillis()"
-               (sequence-node [(raw "checked((long)") target-node
-                               (raw ".TotalMilliseconds)")])
+                "executable:java.net.Socket#getOutputStream()"
+                (compat-call "SocketStream" [target-node])
 
-               "executable:java.time.Instant#now()"
-               (raw "global::System.DateTimeOffset.UtcNow")
+                "executable:java.net.Socket#getRemoteSocketAddress()"
+                (sequence-node [target-node (raw ".RemoteEndPoint")])
 
-               "executable:java.time.Instant#plus(java.time.temporal.TemporalAmount)"
-               (sequence-node [target-node (raw ".Add(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.net.Socket#close()"
+                (sequence-node [target-node (raw ".Close()")])
 
-               "executable:java.time.Instant#isBefore(java.time.Instant)"
-               (sequence-node [(raw "(") target-node (raw " < ")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.net.Socket#isClosed()"
+                (compat-call "SocketIsClosed" [target-node])
 
-               "executable:java.time.ZonedDateTime#now(java.time.ZoneId)"
-               (raw "global::System.DateTimeOffset.UtcNow")
+                "executable:java.net.Socket#isConnected()"
+                (compat-call "SocketIsConnected" [target-node])
 
-               "executable:java.time.format.DateTimeFormatter#format(java.time.temporal.TemporalAccessor)"
-               (sequence-node [target-node (raw ".Format(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.net.Socket#setSoTimeout(int)"
+                (compat-call "SocketSetSoTimeout" (into [target-node] arguments))
 
-               "executable:java.net.InetAddress#getLoopbackAddress()"
-               (raw "global::System.Net.IPAddress.Loopback")
+                "executable:java.net.ServerSocket#accept()"
+                (sequence-node [target-node (raw ".Accept()")])
 
-               "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
-               (compat-call "Equals" arguments)
+                "executable:java.net.ServerSocket#close()"
+                (sequence-node [target-node (raw ".Close()")])
 
-               "executable:java.util.Objects#hash(java.lang.Object[])"
-               (compat-call "Hash" arguments)
+                "executable:java.net.ServerSocket#isClosed()"
+                (sequence-node [target-node (raw ".IsClosed()")])
 
-               "executable:java.util.Objects#requireNonNull(java.lang.Object)"
-               (compat-call "RequireNonNull" arguments)
+                "executable:java.net.InetSocketAddress#getAddress()"
+                (compat-call "InetSocketAddressAddress" [target-node])
 
-               "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)"
-               (compat-call "RequireNonNull" arguments)
+                "executable:java.net.URL#openStream()"
+                (compat-call "OpenUrlStream" [target-node])
 
-               "executable:java.util.Map#entrySet()"
-               (compat-call "MapEntrySet" [target-node])
+                "executable:java.net.URLDecoder#decode(java.lang.String,java.lang.String)"
+                (compat-call "UrlDecode" arguments)
 
-               "executable:java.util.Map#containsKey(java.lang.Object)"
-               (compat-call "MapContainsKey" (into [target-node] arguments))
+                "executable:java.security.KeyStore#getDefaultType()"
+                (raw "global::Vibeformer.Runtime.JavaKeyStore.GetDefaultType()")
 
-               "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
-               (compat-call "ComputeIfAbsent" (into [target-node] arguments))
+                "executable:java.security.KeyStore#getInstance(java.lang.String)"
+                (sequence-node [(raw "global::Vibeformer.Runtime.JavaKeyStore.GetInstance(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
-               (compat-call "ComputeIfAbsent" (into [target-node] arguments))
+                "executable:java.security.KeyStore#load(java.io.InputStream,char[])"
+                (sequence-node [target-node (raw ".Load(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Map#forEach(java.util.function.BiConsumer)"
-               (compat-call "ForEach" (into [target-node] arguments))
+                "executable:javax.net.ssl.KeyManagerFactory#getDefaultAlgorithm()"
+                (raw "global::Vibeformer.Runtime.JavaKeyManagerFactory.GetDefaultAlgorithm()")
 
-               "executable:java.util.Map#getOrDefault(java.lang.Object,java.lang.Object)"
-               (compat-call "MapGetOrDefault" (into [target-node] arguments))
+                "executable:javax.net.ssl.KeyManagerFactory#getInstance(java.lang.String)"
+                (sequence-node
+                 [(raw "global::Vibeformer.Runtime.JavaKeyManagerFactory.GetInstance(")
+                  (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Map#putIfAbsent(java.lang.Object,java.lang.Object)"
-               (compat-call "MapPutIfAbsent" (into [target-node] arguments))
+                "executable:javax.net.ssl.KeyManagerFactory#init(java.security.KeyStore,char[])"
+                (sequence-node [target-node (raw ".Init(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.HashMap#putIfAbsent(java.lang.Object,java.lang.Object)"
-               (compat-call "MapPutIfAbsent" (into [target-node] arguments))
+                "executable:javax.net.ssl.KeyManagerFactory#getKeyManagers()"
+                (sequence-node [target-node (raw ".GetKeyManagers()")])
 
-               "executable:java.util.LinkedHashMap#getOrDefault(java.lang.Object,java.lang.Object)"
-               (compat-call "MapGetOrDefault" (into [target-node] arguments))
+                "executable:javax.net.ssl.TrustManagerFactory#getDefaultAlgorithm()"
+                (raw "global::Vibeformer.Runtime.JavaTrustManagerFactory.GetDefaultAlgorithm()")
 
-               "executable:java.util.Map#keySet()"
-               (compat-call "MapKeySet" [target-node])
+                "executable:javax.net.ssl.TrustManagerFactory#getInstance(java.lang.String)"
+                (sequence-node
+                 [(raw "global::Vibeformer.Runtime.JavaTrustManagerFactory.GetInstance(")
+                  (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.LinkedHashMap#keySet()"
-               (compat-call "MapKeySet" [target-node])
+                "executable:javax.net.ssl.TrustManagerFactory#init(java.security.KeyStore)"
+                (sequence-node [target-node (raw ".Init(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Map#values()"
-               (sequence-node [target-node (raw ".Values")])
+                "executable:javax.net.ssl.TrustManagerFactory#getTrustManagers()"
+                (sequence-node [target-node (raw ".GetTrustManagers()")])
 
-               "executable:java.util.Map#clear()"
-               (sequence-node [target-node (raw ".Clear()")])
+                "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)"
+                (sequence-node [(raw "global::Vibeformer.Runtime.JavaSslContext.GetInstance(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
-               (compat-call "MapPut" (into [target-node] arguments))
+                "executable:javax.net.ssl.SSLContext#init(javax.net.ssl.KeyManager[],javax.net.ssl.TrustManager[],java.security.SecureRandom)"
+                (sequence-node [target-node (raw ".Init(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Map#putAll(java.util.Map)"
-               (compat-call "MapPutAll" (into [target-node] arguments))
+                "executable:javax.net.ssl.SSLSocketFactory#getDefault()"
+                (raw "global::Vibeformer.Runtime.JavaSocketFactory.Default")
 
-               "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
-               (compat-call "MapPut" (into [target-node] arguments))
+                "executable:javax.net.ssl.SSLContext#getSocketFactory()"
+                (sequence-node [target-node (raw ".GetSocketFactory()")])
 
-               "executable:java.util.HashMap#putAll(java.util.Map)"
-               (compat-call "MapPutAll" (into [target-node] arguments))
+                "executable:javax.net.ssl.SSLContext#getServerSocketFactory()"
+                (sequence-node [target-node (raw ".GetServerSocketFactory()")])
 
-               "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
-               (compat-call "MapPut" (into [target-node] arguments))
+                "executable:javax.net.ServerSocketFactory#createServerSocket(int)"
+                (sequence-node [target-node (raw ".CreateServerSocket(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Map#size()"
-               (compat-call "MapCount" [target-node])
+                "executable:javax.net.SocketFactory#createSocket()"
+                (sequence-node [target-node (raw ".CreateSocket()")])
 
-               "executable:java.util.HashMap#size()"
-               (sequence-node [target-node (raw ".Count")])
+                "executable:javax.net.SocketFactory#createSocket(java.lang.String,int)"
+                (sequence-node [target-node (raw ".CreateSocket(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Map#get(java.lang.Object)"
-               (compat-call "MapGet" (into [target-node] arguments))
+                "executable:java.io.OutputStream#flush()"
+                (sequence-node [target-node (raw ".Flush()")])
 
-               "executable:java.util.Map#remove(java.lang.Object)"
-               (compat-call "MapRemove" (into [target-node] arguments))
+                "executable:java.io.FilterOutputStream#flush()"
+                (sequence-node [target-node (raw ".Flush()")])
 
-               "executable:java.util.HashMap#remove(java.lang.Object)"
-               (compat-call "MapRemove" (into [target-node] arguments))
+                "executable:java.io.OutputStream#close()"
+                (sequence-node [target-node (raw ".Dispose()")])
 
-               "executable:java.util.LinkedHashMap#remove(java.lang.Object)"
-               (compat-call "MapRemove" (into [target-node] arguments))
+                "executable:java.io.Closeable#close()"
+                (sequence-node [target-node (raw ".Dispose()")])
 
-               "executable:java.util.Map#hashCode()"
-               (compat-call "HashCode" [target-node])
+                "executable:java.io.InputStream#close()"
+                (sequence-node [target-node (raw ".Dispose()")])
 
-               "executable:java.util.Map$Entry#getKey()"
-               (sequence-node [target-node (raw ".Key")])
+                "executable:java.io.InputStream#available()"
+                (compat-call "InputStreamAvailable" [target-node])
 
-               "executable:java.lang.Iterable#forEach(java.util.function.Consumer)"
-               (compat-call "ForEach" (into [target-node] arguments))
+                "executable:java.io.File#toPath()"
+                (sequence-node [(raw "new global::Vibeformer.Runtime.JavaPath(")
+                                target-node (raw ".FullName)")])
 
-               "executable:java.util.Map$Entry#getValue()"
-               (sequence-node [target-node (raw ".Value")])
+                "executable:java.io.File#length()"
+                (sequence-node [target-node (raw ".Length")])
 
-               "executable:java.util.Map$Entry#setValue(java.lang.Object)"
-               (sequence-node [target-node (raw ".SetValue(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.io.File#delete()"
+                (compat-call "FileDelete" [target-node])
 
-               "executable:java.util.List#isEmpty()"
-               (compat-call "ListIsEmpty" [target-node])
+                "executable:java.io.File#exists()"
+                (compat-call "FileExists" [target-node])
 
-               "executable:java.util.ArrayList#isEmpty()"
-               (compat-call "ListIsEmpty" [target-node])
+                "executable:java.io.File#getAbsolutePath()"
+                (sequence-node [target-node (raw ".FullName")])
 
-               "executable:java.util.List#add(java.lang.Object)"
-               (compat-call "Add" (into [target-node] arguments))
+                "executable:java.io.File#isDirectory()"
+                (compat-call "FileIsDirectory" [target-node])
 
-               "executable:java.util.List#clear()"
-               (sequence-node [target-node (raw ".Clear()")])
+                "executable:java.io.File#setReadable(boolean,boolean)"
+                (compat-call "SetFileReadable" (into [target-node] arguments))
 
-               "executable:java.util.List#remove(java.lang.Object)"
-               (compat-call "CollectionRemove" (into [target-node] arguments))
+                "executable:java.io.File#setWritable(boolean,boolean)"
+                (compat-call "SetFileWritable" (into [target-node] arguments))
 
-               "executable:java.util.List#removeIf(java.util.function.Predicate)"
-               (compat-call "RemoveIf" (into [target-node] arguments))
+                "executable:java.io.File#setExecutable(boolean,boolean)"
+                (compat-call "SetFileExecutable" (into [target-node] arguments))
 
-               "executable:java.util.Collection#removeIf(java.util.function.Predicate)"
-               (compat-call "RemoveIf" (into [target-node] arguments))
+                "executable:java.io.RandomAccessFile#close()"
+                (sequence-node [target-node (raw ".Dispose()")])
 
-               "executable:java.util.List#addAll(java.util.Collection)"
-               (compat-call "AddAll" (into [target-node] arguments))
+                "executable:java.nio.file.Files#newInputStream(java.nio.file.Path,java.nio.file.OpenOption[])"
+                (compat-call "OpenInputStream" arguments)
 
-               "executable:java.util.List#equals(java.lang.Object)"
-               (compat-call "Equals" (into [target-node] arguments))
+                "executable:java.nio.file.Path#toFile()"
+                (sequence-node [(raw "new global::System.IO.FileInfo(")
+                                target-node (raw ")")])
 
-               "executable:java.util.List#hashCode()"
-               (compat-call "HashCode" [target-node])
+                "executable:java.io.ByteArrayOutputStream#writeTo(java.io.OutputStream)"
+                (compat-call "MemoryStreamWriteTo" (into [target-node] arguments))
 
-               "executable:java.util.List#get(int)"
-               (compat-call "ListGet" (into [target-node] arguments))
+                "executable:java.io.ByteArrayOutputStream#toByteArray()"
+                (compat-call "ToSignedBytes" [target-node])
 
-               "executable:java.util.ArrayList#get(int)"
-               (compat-call "ListGet" (into [target-node] arguments))
+                "executable:java.io.ByteArrayOutputStream#write(int)"
+                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
-               "executable:java.util.List#contains(java.lang.Object)"
-               (compat-call "CollectionContains" (into [target-node] arguments))
+                "executable:java.io.OutputStream#write(byte[])"
+                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
-               "executable:java.util.List#size()"
-               (sequence-node [target-node (raw ".Count")])
+                "executable:java.io.OutputStream#write(byte[],int,int)"
+                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
-               "executable:java.util.ArrayList#size()"
-               (sequence-node [target-node (raw ".Count")])
+                "executable:java.io.OutputStream#write(int)"
+                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
-               "executable:java.util.ArrayList#remove(int)"
-               (compat-call "ListRemove" (into [target-node] arguments))
+                "executable:java.io.PrintStream#println(java.lang.String)"
+                (sequence-node [target-node (raw ".WriteLine(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.List#iterator()"
-               (compat-call "Iterator" [target-node])
+                "executable:java.io.PipedOutputStream#connect(java.io.PipedInputStream)"
+                (sequence-node [target-node (raw ".Connect(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Iterator#next()"
-               (sequence-node [target-node (raw ".Next()")])
+                "executable:java.io.PipedOutputStream#write(byte[],int,int)"
+                (compat-call "OutputStreamWrite" (into [target-node] arguments))
 
-               "executable:java.util.Iterator#hasNext()"
-               (sequence-node [target-node (raw ".HasNext()")])
+                "executable:java.io.PipedOutputStream#close()"
+                (sequence-node [target-node (raw ".Dispose()")])
 
-               "executable:java.util.Iterator#remove()"
-               (sequence-node [target-node (raw ".Remove()")])
+                "executable:java.io.PipedOutputStream#flush()"
+                (sequence-node [target-node (raw ".Flush()")])
 
-               "executable:java.util.Collection#remove(java.lang.Object)"
-               (compat-call "CollectionRemove" (into [target-node] arguments))
+                "executable:java.io.InputStream#read()"
+                (compat-call "InputStreamRead" [target-node])
 
-               "executable:java.util.Optional#empty()"
-               (sequence-node [(type-node @ctx-holder (.getType element))
-                               (raw ".Empty()")])
+                "executable:java.io.InputStream#read(byte[])"
+                (compat-call "InputStreamRead" (into [target-node] arguments))
 
-               "executable:java.util.Optional#of(java.lang.Object)"
-               (sequence-node [(type-node @ctx-holder (.getType element))
-                               (raw ".Of(") (sequence-node arguments ", ")
-                               (raw ")")])
+                "executable:java.io.InputStream#read(byte[],int,int)"
+                (compat-call "InputStreamRead" (into [target-node] arguments))
 
-               "executable:java.util.Optional#ofNullable(java.lang.Object)"
-               (sequence-node [(type-node @ctx-holder (.getType element))
-                               (raw ".OfNullable(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.io.ByteArrayInputStream#read()"
+                (compat-call "InputStreamRead" [target-node])
 
-               "executable:java.util.Optional#get()"
-               (sequence-node [target-node (raw ".Get()")])
+                "executable:java.io.PushbackInputStream#read()"
+                (compat-call "InputStreamRead" [target-node])
 
-               "executable:java.util.Optional#isPresent()"
-               (sequence-node [target-node (raw ".IsPresent()")])
+                "executable:java.io.PushbackInputStream#unread(int)"
+                (sequence-node [target-node (raw ".Unread(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Optional#equals(java.lang.Object)"
-               (compat-call "Equals" (into [target-node] arguments))
+                "executable:java.io.PushbackInputStream#close()"
+                (sequence-node [target-node (raw ".Close()")])
 
-               "executable:java.util.Optional#map(java.util.function.Function)"
-               (sequence-node [target-node (raw ".Map(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.zip.GZIPInputStream#read(byte[],int,int)"
+                (compat-call "InputStreamRead" (into [target-node] arguments))
 
-               "executable:java.util.Optional#orElse(java.lang.Object)"
-               (sequence-node [target-node (raw ".OrElse(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.StringBuilder#append(java.lang.String)"
+                (sequence-node [target-node (raw ".Append(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Optional#orElseGet(java.util.function.Supplier)"
-               (sequence-node [target-node (raw ".OrElseGet(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.StringBuilder#append(char)"
+                (sequence-node [target-node (raw ".Append(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Optional#ifPresent(java.util.function.Consumer)"
-               (sequence-node [target-node (raw ".IfPresent(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.StringBuilder#append(int)"
+                (sequence-node [target-node (raw ".Append(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)"
-               (sequence-node [target-node (raw ".OrElseThrow(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.StringBuilder#length()"
+                (sequence-node [target-node (raw ".Length")])
 
-               "executable:java.util.OptionalInt#isPresent()"
-               (sequence-node [target-node (raw ".HasValue")])
+                "executable:java.lang.AbstractStringBuilder#length()"
+                (sequence-node [target-node (raw ".Length")])
 
-               "executable:java.util.OptionalInt#getAsInt()"
-               (sequence-node [target-node (raw ".Value")])
+                "executable:java.lang.StringBuilder#toString()"
+                (sequence-node [target-node (raw ".ToString()")])
 
-               "executable:java.util.OptionalInt#empty()"
-               (raw "(int?)null")
+                "executable:java.util.Collection#stream()"
+                target-node
 
-               "executable:java.util.OptionalInt#of(int)"
-               (first arguments)
+                "executable:java.lang.Object#getClass()"
+                (sequence-node [target-node (raw ".GetType()")])
 
-               "executable:java.util.OptionalLong#empty()"
-               (raw "(long?)null")
+                "executable:java.lang.Class#forName(java.lang.String)"
+                (compat-call "ClassForName" arguments)
 
-               "executable:java.util.OptionalLong#of(long)"
-               (first arguments)
+                "executable:java.lang.Class#getDeclaredField(java.lang.String)"
+                (compat-call "GetDeclaredField" (into [target-node] arguments))
 
-               "executable:java.util.OptionalLong#ifPresent(java.util.function.LongConsumer)"
-               (compat-call "OptionalLongIfPresent" (into [target-node] arguments))
+                "executable:java.lang.Class#getMethod(java.lang.String,java.lang.Class[])"
+                (compat-call "GetMethod" (into [target-node] arguments))
 
-               "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
-               (sequence-node [target-node (raw "(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.Class#getName()"
+                (sequence-node [(raw "(") target-node (raw ".FullName ?? ")
+                                target-node (raw ".Name)")])
 
-               "executable:java.util.function.BiFunction#apply(java.lang.Object,java.lang.Object)"
-               (sequence-node [target-node (raw "(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.Class#getSimpleName()"
+                (sequence-node [target-node (raw ".Name")])
 
-               "executable:java.util.function.Consumer#accept(java.lang.Object)"
-               (sequence-node [target-node (raw "(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.lang.Class#isInstance(java.lang.Object)"
+                (sequence-node [target-node (raw ".IsInstanceOfType(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.function.Supplier#get()"
-               (sequence-node [target-node (raw "()")])
+                "executable:java.lang.Class#getClassLoader()"
+                (sequence-node [target-node (raw ".Assembly")])
 
-               "executable:java.util.Comparator#reverseOrder()"
-               (sequence-node
-                [(csharp/generic-name
-                  (raw "global::Vibeformer.Runtime.JavaCompat.ReverseComparer")
-                  [(type-node @ctx-holder (collection-element-type element))])
-                 (raw "()")])
+                "executable:java.lang.reflect.Field#get(java.lang.Object)"
+                (sequence-node [target-node (raw ".GetValue(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.EnumSet#of(java.lang.Enum)"
-               (sequence-node
-                [(csharp/generic-name
-                  (raw "global::Vibeformer.Runtime.JavaCompat.EnumSetOf")
-                  [(type-node @ctx-holder (collection-element-type element))])
-                 (raw "(") (sequence-node arguments ", ") (raw ")")])
+                ("executable:java.lang.reflect.Field#setAccessible(boolean)"
+                 "executable:java.lang.reflect.Method#setAccessible(boolean)")
+                (compat-call "SetAccessible" (into [target-node] arguments))
 
-               "executable:java.util.Set#contains(java.lang.Object)"
-               (compat-call "CollectionContains" (into [target-node] arguments))
+                "executable:java.lang.Throwable#getCause()"
+                (sequence-node
+                 [target-node (raw ".InnerException")
+                  (when (empty? (.getTypeCasts element)) (raw "!"))])
 
-               "executable:java.util.Set#equals(java.lang.Object)"
-               (compat-call "Equals" (into [target-node] arguments))
+                "executable:java.lang.Throwable#getMessage()"
+                (sequence-node [target-node (raw ".Message")])
 
-               "executable:java.util.Set#add(java.lang.Object)"
-               (sequence-node [target-node (raw ".Add(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.net.URISyntaxException#getMessage()"
+                (sequence-node [target-node (raw ".Message")])
 
-               "executable:java.util.Set#removeAll(java.util.Collection)"
-               (compat-call "RemoveAll" (into [target-node] arguments))
+                "executable:java.net.URISyntaxException#getReason()"
+                (compat-call "UriSyntaxReason" [target-node])
 
-               "executable:java.util.regex.Pattern#compile(java.lang.String)"
-               (compat-call "CompileRegex" arguments)
+                "executable:java.net.URISyntaxException#getIndex()"
+                (compat-call "UriSyntaxIndex" [target-node])
 
-               "executable:java.util.regex.Pattern#matcher(java.lang.CharSequence)"
-               (compat-call "RegexMatcher" (into [target-node] arguments))
+                "executable:java.lang.Throwable#printStackTrace()"
+                (compat-call "PrintStackTrace" [target-node])
 
-               "executable:java.util.regex.Matcher#matches()"
-               (sequence-node [target-node (raw ".Matches()")])
+                "executable:java.time.Duration#ofSeconds(long)"
+                (sequence-node [(raw "global::System.TimeSpan.FromSeconds(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.stream.Stream#of(java.lang.Object[])"
-               (compat-call "StreamOf" arguments)
+                "executable:java.time.Duration#toMillis()"
+                (sequence-node [(raw "checked((long)") target-node
+                                (raw ".TotalMilliseconds)")])
 
-               "executable:java.util.stream.Stream#filter(java.util.function.Predicate)"
-               (compat-call "StreamFilter" (into [target-node] arguments))
+                "executable:java.time.Instant#now()"
+                (raw "global::System.DateTimeOffset.UtcNow")
 
-               "executable:java.util.stream.Stream#sorted(java.util.Comparator)"
-               (compat-call "StreamSorted" (into [target-node] arguments))
+                "executable:java.time.Instant#plus(java.time.temporal.TemporalAmount)"
+                (sequence-node [target-node (raw ".Add(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.stream.Stream#forEach(java.util.function.Consumer)"
-               (compat-call "ForEach" (into [target-node] arguments))
+                "executable:java.time.Instant#isBefore(java.time.Instant)"
+                (sequence-node [(raw "(") target-node (raw " < ")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.ServiceLoader#load(java.lang.Class,java.lang.ClassLoader)"
-               (sequence-node
-                [(csharp/generic-name
-                  (raw "global::Vibeformer.Runtime.JavaCompat.LoadServices")
-                  [(type-node @ctx-holder (collection-element-type element))])
-                 (raw "(") (sequence-node arguments ", ") (raw ")")])
+                "executable:java.time.ZonedDateTime#now(java.time.ZoneId)"
+                (raw "global::System.DateTimeOffset.UtcNow")
 
-               "executable:java.util.stream.Stream#flatMap(java.util.function.Function)"
-               (compat-call "FlatMap" (into [target-node] arguments))
+                "executable:java.time.format.DateTimeFormatter#format(java.time.temporal.TemporalAccessor)"
+                (sequence-node [target-node (raw ".Format(")
+                                (sequence-node arguments ", ") (raw ")")])
 
-               "executable:java.util.stream.Stream#map(java.util.function.Function)"
-               (compat-call "Map" (into [target-node] arguments))
+                "executable:java.net.InetAddress#getLoopbackAddress()"
+                (raw "global::System.Net.IPAddress.Loopback")
 
-               "executable:java.util.stream.Stream#mapToLong(java.util.function.ToLongFunction)"
-               (compat-call "MapToLong" (into [target-node] arguments))
+                "executable:java.util.Objects#equals(java.lang.Object,java.lang.Object)"
+                (compat-call "Equals" arguments)
 
-               "executable:java.util.stream.LongStream#sum()"
-               (compat-call "Sum" [target-node])
+                "executable:java.util.Objects#hash(java.lang.Object[])"
+                (compat-call "Hash" arguments)
 
-               "executable:java.util.stream.Collectors#toList()"
-               (raw "global::Vibeformer.Runtime.JavaCompat.ToList<object>()")
+                "executable:java.util.Objects#requireNonNull(java.lang.Object)"
+                (compat-call "RequireNonNull" arguments)
 
-               "executable:java.util.stream.Collectors#toSet()"
-               (sequence-node
-                [(csharp/generic-name
-                  (raw "global::Vibeformer.Runtime.JavaCompat.ToSet")
-                  [(type-node @ctx-holder (collection-element-type element))])
-                 (raw "()")])
+                "executable:java.util.Objects#requireNonNull(java.lang.Object,java.lang.String)"
+                (compat-call "RequireNonNull" arguments)
 
-               "executable:java.util.stream.Collectors#toCollection(java.util.function.Supplier)"
-               (compat-call "ToCollection" arguments)
+                "executable:java.util.Map#entrySet()"
+                (compat-call "MapEntrySet" [target-node])
 
-               "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
-               (case (some-> element .getType .getQualifiedName)
-                 "java.util.Set"
-                 (sequence-node
-                  [(csharp/generic-name
-                    (raw "global::Vibeformer.Runtime.JavaCompat.SetOfValues")
-                    [(type-node @ctx-holder (collection-element-type element))])
-                   (raw "(") target-node (raw ")")])
+                "executable:java.util.Map#containsKey(java.lang.Object)"
+                (compat-call "MapContainsKey" (into [target-node] arguments))
 
-                 "java.util.ArrayList"
-                 (sequence-node
-                  [(raw "new ") (type-node @ctx-holder (.getType element))
-                   (raw "(") target-node (raw ")")])
+                "executable:java.util.Map#computeIfAbsent(java.lang.Object,java.util.function.Function)"
+                (compat-call "ComputeIfAbsent" (into [target-node] arguments))
 
-                 (compat-call "ToListValues" [target-node]))
+                "executable:java.util.HashMap#computeIfAbsent(java.lang.Object,java.util.function.Function)"
+                (compat-call "ComputeIfAbsent" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
-               (sequence-node [target-node (raw ".Submit(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Map#forEach(java.util.function.BiConsumer)"
+                (compat-call "ForEach" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.ExecutorService#submit(java.util.concurrent.Callable)"
-               (sequence-node [target-node (raw ".Submit(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Map#getOrDefault(java.lang.Object,java.lang.Object)"
+                (compat-call "MapGetOrDefault" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.ExecutorService#shutdown()"
-               (sequence-node [target-node (raw ".Shutdown()")])
+                "executable:java.util.Map#putIfAbsent(java.lang.Object,java.lang.Object)"
+                (compat-call "MapPutIfAbsent" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.ExecutorService#shutdownNow()"
-               (sequence-node [target-node (raw ".ShutdownNow()")])
+                "executable:java.util.HashMap#putIfAbsent(java.lang.Object,java.lang.Object)"
+                (compat-call "MapPutIfAbsent" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.ExecutorService#awaitTermination(long,java.util.concurrent.TimeUnit)"
-               (sequence-node [target-node (raw ".AwaitTermination(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.LinkedHashMap#getOrDefault(java.lang.Object,java.lang.Object)"
+                (compat-call "MapGetOrDefault" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.Executors#newFixedThreadPool(int,java.util.concurrent.ThreadFactory)"
-               (sequence-node
-                [(raw "new global::Vibeformer.Runtime.JavaExecutorService(")
-                 (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Map#keySet()"
+                (compat-call "MapKeySet" [target-node])
 
-               "executable:java.util.concurrent.Executors#newSingleThreadExecutor()"
-               (raw "new global::Vibeformer.Runtime.JavaExecutorService(1)")
+                "executable:java.util.LinkedHashMap#keySet()"
+                (compat-call "MapKeySet" [target-node])
 
-               "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
-               (sequence-node [target-node (raw ".Get(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Map#values()"
+                (sequence-node [target-node (raw ".Values")])
 
-               "executable:java.util.concurrent.atomic.AtomicBoolean#get()"
-               (sequence-node [target-node (raw ".Get()")])
+                "executable:java.util.Map#clear()"
+                (sequence-node [target-node (raw ".Clear()")])
 
-               "executable:java.util.concurrent.atomic.AtomicBoolean#compareAndSet(boolean,boolean)"
-               (sequence-node [target-node (raw ".CompareAndSet(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
+                (compat-call "MapPut" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.atomic.AtomicInteger#incrementAndGet()"
-               (sequence-node [target-node (raw ".IncrementAndGet()")])
+                "executable:java.util.Map#putAll(java.util.Map)"
+                (compat-call "MapPutAll" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.atomic.AtomicReference#get()"
-               (sequence-node
-                [target-node (raw ".Get()")
-                 (when-not (statement-expression? element) (raw "!"))])
+                "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
+                (compat-call "MapPut" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.atomic.AtomicReference#getAndSet(java.lang.Object)"
-               (sequence-node [target-node (raw ".GetAndSet(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.HashMap#putAll(java.util.Map)"
+                (compat-call "MapPutAll" (into [target-node] arguments))
 
-               "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"
-               (sequence-node [target-node (raw ".Set(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
+                (compat-call "MapPut" (into [target-node] arguments))
 
-               "executable:java.lang.Thread#setDaemon(boolean)"
-               (sequence-node [target-node (raw ".SetDaemon(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.Map#size()"
+                (compat-call "MapCount" [target-node])
 
-               "executable:java.lang.Thread#setName(java.lang.String)"
-               (sequence-node [target-node (raw ".SetName(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.HashMap#size()"
+                (sequence-node [target-node (raw ".Count")])
 
-               "executable:java.lang.Thread#start()"
-               (sequence-node [target-node (raw ".Start()")])
+                "executable:java.util.Map#get(java.lang.Object)"
+                (compat-call "MapGet" (into [target-node] arguments))
 
-               "executable:java.lang.Thread#currentThread()"
-               (raw "global::Vibeformer.Runtime.JavaThread.CurrentThread()")
+                "executable:java.util.Map#remove(java.lang.Object)"
+                (compat-call "MapRemove" (into [target-node] arguments))
 
-               "executable:java.lang.Thread#interrupt()"
-               (sequence-node [target-node (raw ".Interrupt()")])
+                "executable:java.util.HashMap#remove(java.lang.Object)"
+                (compat-call "MapRemove" (into [target-node] arguments))
 
-               "executable:java.lang.Thread#sleep(long)"
-               (sequence-node [(raw "global::Vibeformer.Runtime.JavaThread.Sleep(")
-                               (sequence-node arguments ", ") (raw ")")])
+                "executable:java.util.LinkedHashMap#remove(java.lang.Object)"
+                (compat-call "MapRemove" (into [target-node] arguments))
 
-               ("executable:java.lang.Object#<init>()"
-                "executable:java.lang.Enum#<init>(java.lang.String,int)"
-                "executable:java.io.InputStream#<init>()"
-                "executable:java.io.OutputStream#<init>()"
-                "executable:java.io.FilterOutputStream#<init>(java.io.OutputStream)")
-               (raw "")
+                "executable:java.util.Map#hashCode()"
+                (compat-call "HashCode" [target-node])
 
-               (sequence-node
-                [(when target
-                   (sequence-node [default-target-node (raw ".")]))
-                 (child-node children (.getExecutable element))
-                 (raw "(")
-                 (sequence-node arguments ", ")
-                 (raw ")")])))
+                "executable:java.util.Map$Entry#getKey()"
+                (sequence-node [target-node (raw ".Key")])
+
+                "executable:java.lang.Iterable#forEach(java.util.function.Consumer)"
+                (compat-call "ForEach" (into [target-node] arguments))
+
+                "executable:java.util.Map$Entry#getValue()"
+                (sequence-node [target-node (raw ".Value")])
+
+                "executable:java.util.Map$Entry#setValue(java.lang.Object)"
+                (sequence-node [target-node (raw ".SetValue(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.List#isEmpty()"
+                (compat-call "ListIsEmpty" [target-node])
+
+                "executable:java.util.ArrayList#isEmpty()"
+                (compat-call "ListIsEmpty" [target-node])
+
+                "executable:java.util.List#add(java.lang.Object)"
+                (compat-call "Add" (into [target-node] arguments))
+
+                "executable:java.util.List#clear()"
+                (sequence-node [target-node (raw ".Clear()")])
+
+                "executable:java.util.List#remove(java.lang.Object)"
+                (compat-call "CollectionRemove" (into [target-node] arguments))
+
+                "executable:java.util.List#removeIf(java.util.function.Predicate)"
+                (compat-call "RemoveIf" (into [target-node] arguments))
+
+                "executable:java.util.Collection#removeIf(java.util.function.Predicate)"
+                (compat-call "RemoveIf" (into [target-node] arguments))
+
+                "executable:java.util.List#addAll(java.util.Collection)"
+                (compat-call "AddAll" (into [target-node] arguments))
+
+                "executable:java.util.List#equals(java.lang.Object)"
+                (compat-call "Equals" (into [target-node] arguments))
+
+                "executable:java.util.List#hashCode()"
+                (compat-call "HashCode" [target-node])
+
+                "executable:java.util.List#get(int)"
+                (compat-call "ListGet" (into [target-node] arguments))
+
+                "executable:java.util.ArrayList#get(int)"
+                (compat-call "ListGet" (into [target-node] arguments))
+
+                "executable:java.util.List#contains(java.lang.Object)"
+                (compat-call "CollectionContains" (into [target-node] arguments))
+
+                "executable:java.util.List#size()"
+                (sequence-node [target-node (raw ".Count")])
+
+                "executable:java.util.ArrayList#size()"
+                (sequence-node [target-node (raw ".Count")])
+
+                "executable:java.util.ArrayList#remove(int)"
+                (compat-call "ListRemove" (into [target-node] arguments))
+
+                "executable:java.util.List#iterator()"
+                (compat-call "Iterator" [target-node])
+
+                "executable:java.util.Iterator#next()"
+                (sequence-node [target-node (raw ".Next()")])
+
+                "executable:java.util.Iterator#hasNext()"
+                (sequence-node [target-node (raw ".HasNext()")])
+
+                "executable:java.util.Iterator#remove()"
+                (sequence-node [target-node (raw ".Remove()")])
+
+                "executable:java.util.Collection#remove(java.lang.Object)"
+                (compat-call "CollectionRemove" (into [target-node] arguments))
+
+                "executable:java.util.Optional#empty()"
+                (sequence-node [(type-node @ctx-holder (.getType element))
+                                (raw ".Empty()")])
+
+                "executable:java.util.Optional#of(java.lang.Object)"
+                (sequence-node [(type-node @ctx-holder (.getType element))
+                                (raw ".Of(") (sequence-node arguments ", ")
+                                (raw ")")])
+
+                "executable:java.util.Optional#ofNullable(java.lang.Object)"
+                (sequence-node [(type-node @ctx-holder (.getType element))
+                                (raw ".OfNullable(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.Optional#get()"
+                (sequence-node [target-node (raw ".Get()")])
+
+                "executable:java.util.Optional#isPresent()"
+                (sequence-node [target-node (raw ".IsPresent()")])
+
+                "executable:java.util.Optional#equals(java.lang.Object)"
+                (compat-call "Equals" (into [target-node] arguments))
+
+                "executable:java.util.Optional#map(java.util.function.Function)"
+                (sequence-node [target-node (raw ".Map(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.Optional#orElse(java.lang.Object)"
+                (sequence-node [target-node (raw ".OrElse(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.Optional#orElseGet(java.util.function.Supplier)"
+                (sequence-node [target-node (raw ".OrElseGet(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.Optional#ifPresent(java.util.function.Consumer)"
+                (sequence-node [target-node (raw ".IfPresent(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.Optional#orElseThrow(java.util.function.Supplier)"
+                (sequence-node [target-node (raw ".OrElseThrow(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.OptionalInt#isPresent()"
+                (sequence-node [target-node (raw ".HasValue")])
+
+                "executable:java.util.OptionalInt#getAsInt()"
+                (sequence-node [target-node (raw ".Value")])
+
+                "executable:java.util.OptionalInt#empty()"
+                (raw "(int?)null")
+
+                "executable:java.util.OptionalInt#of(int)"
+                (first arguments)
+
+                "executable:java.util.OptionalLong#empty()"
+                (raw "(long?)null")
+
+                "executable:java.util.OptionalLong#of(long)"
+                (first arguments)
+
+                "executable:java.util.OptionalLong#ifPresent(java.util.function.LongConsumer)"
+                (compat-call "OptionalLongIfPresent" (into [target-node] arguments))
+
+                "executable:java.util.function.BiConsumer#accept(java.lang.Object,java.lang.Object)"
+                (sequence-node [target-node (raw "(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.function.BiFunction#apply(java.lang.Object,java.lang.Object)"
+                (sequence-node [target-node (raw "(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.function.Consumer#accept(java.lang.Object)"
+                (sequence-node [target-node (raw "(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.function.Supplier#get()"
+                (sequence-node [target-node (raw "()")])
+
+                "executable:java.util.Comparator#reverseOrder()"
+                (sequence-node
+                 [(csharp/generic-name
+                   (raw "global::Vibeformer.Runtime.JavaCompat.ReverseComparer")
+                   [(type-node @ctx-holder (collection-element-type element))])
+                  (raw "()")])
+
+                "executable:java.util.EnumSet#of(java.lang.Enum)"
+                (sequence-node
+                 [(csharp/generic-name
+                   (raw "global::Vibeformer.Runtime.JavaCompat.EnumSetOf")
+                   [(type-node @ctx-holder (collection-element-type element))])
+                  (raw "(") (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.Set#contains(java.lang.Object)"
+                (compat-call "CollectionContains" (into [target-node] arguments))
+
+                "executable:java.util.Set#equals(java.lang.Object)"
+                (compat-call "Equals" (into [target-node] arguments))
+
+                "executable:java.util.Set#add(java.lang.Object)"
+                (sequence-node [target-node (raw ".Add(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.Set#removeAll(java.util.Collection)"
+                (compat-call "RemoveAll" (into [target-node] arguments))
+
+                "executable:java.util.regex.Pattern#compile(java.lang.String)"
+                (compat-call "CompileRegex" arguments)
+
+                "executable:java.util.regex.Pattern#matcher(java.lang.CharSequence)"
+                (compat-call "RegexMatcher" (into [target-node] arguments))
+
+                "executable:java.util.regex.Matcher#matches()"
+                (sequence-node [target-node (raw ".Matches()")])
+
+                "executable:java.util.stream.Stream#of(java.lang.Object[])"
+                (compat-call "StreamOf" arguments)
+
+                "executable:java.util.stream.Stream#filter(java.util.function.Predicate)"
+                (compat-call "StreamFilter" (into [target-node] arguments))
+
+                "executable:java.util.stream.Stream#sorted(java.util.Comparator)"
+                (compat-call "StreamSorted" (into [target-node] arguments))
+
+                "executable:java.util.stream.Stream#forEach(java.util.function.Consumer)"
+                (compat-call "ForEach" (into [target-node] arguments))
+
+                "executable:java.util.ServiceLoader#load(java.lang.Class,java.lang.ClassLoader)"
+                (sequence-node
+                 [(csharp/generic-name
+                   (raw "global::Vibeformer.Runtime.JavaCompat.LoadServices")
+                   [(type-node @ctx-holder (collection-element-type element))])
+                  (raw "(") (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.stream.Stream#flatMap(java.util.function.Function)"
+                (compat-call "FlatMap" (into [target-node] arguments))
+
+                "executable:java.util.stream.Stream#map(java.util.function.Function)"
+                (compat-call "Map" (into [target-node] arguments))
+
+                "executable:java.util.stream.Stream#mapToLong(java.util.function.ToLongFunction)"
+                (compat-call "MapToLong" (into [target-node] arguments))
+
+                "executable:java.util.stream.LongStream#sum()"
+                (compat-call "Sum" [target-node])
+
+                "executable:java.util.stream.Collectors#toList()"
+                (raw "global::Vibeformer.Runtime.JavaCompat.ToList<object>()")
+
+                "executable:java.util.stream.Collectors#toSet()"
+                (sequence-node
+                 [(csharp/generic-name
+                   (raw "global::Vibeformer.Runtime.JavaCompat.ToSet")
+                   [(type-node @ctx-holder (collection-element-type element))])
+                  (raw "()")])
+
+                "executable:java.util.stream.Collectors#toCollection(java.util.function.Supplier)"
+                (compat-call "ToCollection" arguments)
+
+                "executable:java.util.stream.Stream#collect(java.util.stream.Collector)"
+                (case (some-> element .getType .getQualifiedName)
+                  "java.util.Set"
+                  (sequence-node
+                   [(csharp/generic-name
+                     (raw "global::Vibeformer.Runtime.JavaCompat.SetOfValues")
+                     [(type-node @ctx-holder (collection-element-type element))])
+                    (raw "(") target-node (raw ")")])
+
+                  "java.util.ArrayList"
+                  (sequence-node
+                   [(raw "new ") (type-node @ctx-holder (.getType element))
+                    (raw "(") target-node (raw ")")])
+
+                  (compat-call "ToListValues" [target-node]))
+
+                "executable:java.util.concurrent.ExecutorService#submit(java.lang.Runnable)"
+                (sequence-node [target-node (raw ".Submit(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.concurrent.ExecutorService#submit(java.util.concurrent.Callable)"
+                (sequence-node [target-node (raw ".Submit(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.concurrent.ExecutorService#shutdown()"
+                (sequence-node [target-node (raw ".Shutdown()")])
+
+                "executable:java.util.concurrent.ExecutorService#shutdownNow()"
+                (sequence-node [target-node (raw ".ShutdownNow()")])
+
+                "executable:java.util.concurrent.ExecutorService#awaitTermination(long,java.util.concurrent.TimeUnit)"
+                (sequence-node [target-node (raw ".AwaitTermination(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.concurrent.Executors#newFixedThreadPool(int,java.util.concurrent.ThreadFactory)"
+                (sequence-node
+                 [(raw "new global::Vibeformer.Runtime.JavaExecutorService(")
+                  (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.concurrent.Executors#newSingleThreadExecutor()"
+                (raw "new global::Vibeformer.Runtime.JavaExecutorService(1)")
+
+                "executable:java.util.concurrent.Future#get(long,java.util.concurrent.TimeUnit)"
+                (sequence-node [target-node (raw ".Get(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.concurrent.atomic.AtomicBoolean#get()"
+                (sequence-node [target-node (raw ".Get()")])
+
+                "executable:java.util.concurrent.atomic.AtomicBoolean#compareAndSet(boolean,boolean)"
+                (sequence-node [target-node (raw ".CompareAndSet(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.concurrent.atomic.AtomicInteger#incrementAndGet()"
+                (sequence-node [target-node (raw ".IncrementAndGet()")])
+
+                "executable:java.util.concurrent.atomic.AtomicReference#get()"
+                (sequence-node
+                 [target-node (raw ".Get()")
+                  (when-not (statement-expression? element) (raw "!"))])
+
+                "executable:java.util.concurrent.atomic.AtomicReference#getAndSet(java.lang.Object)"
+                (sequence-node [target-node (raw ".GetAndSet(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"
+                (sequence-node [target-node (raw ".Set(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.lang.Thread#setDaemon(boolean)"
+                (sequence-node [target-node (raw ".SetDaemon(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.lang.Thread#setName(java.lang.String)"
+                (sequence-node [target-node (raw ".SetName(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                "executable:java.lang.Thread#start()"
+                (sequence-node [target-node (raw ".Start()")])
+
+                "executable:java.lang.Thread#currentThread()"
+                (raw "global::Vibeformer.Runtime.JavaThread.CurrentThread()")
+
+                "executable:java.lang.Thread#interrupt()"
+                (sequence-node [target-node (raw ".Interrupt()")])
+
+                "executable:java.lang.Thread#sleep(long)"
+                (sequence-node [(raw "global::Vibeformer.Runtime.JavaThread.Sleep(")
+                                (sequence-node arguments ", ") (raw ")")])
+
+                ("executable:java.lang.Object#<init>()"
+                 "executable:java.lang.Enum#<init>(java.lang.String,int)"
+                 "executable:java.io.InputStream#<init>()"
+                 "executable:java.io.OutputStream#<init>()"
+                 "executable:java.io.FilterOutputStream#<init>(java.io.OutputStream)")
+                (raw "")
+
+                (sequence-node
+                 [(when target
+                    (sequence-node [default-target-node (raw ".")]))
+                  (child-node children (.getExecutable element))
+                  (raw "(")
+                  (sequence-node arguments ", ")
+                  (raw ")")])))
              raw-node
              (if (nullable-declaration? @ctx-holder (:declaration occurrence))
                (sequence-node [raw-node (raw "!")])
@@ -2401,6 +2886,26 @@
               "executable:java.lang.String#<init>(byte[],java.nio.charset.Charset)"
               (compat-call "NewString" arguments)
 
+              "executable:java.util.EnumMap#<init>(java.lang.Class)"
+              (sequence-node
+               [(raw "new ") (type-node @ctx-holder (.getType element))
+                (raw "()")])
+
+              "executable:java.util.concurrent.ConcurrentHashMap#<init>(int)"
+              (sequence-node
+               [(raw "new ") (type-node @ctx-holder (.getType element))
+                (raw "()")])
+
+              ("executable:java.util.TreeMap#<init>(java.util.Comparator)"
+               "executable:java.util.TreeSet#<init>(java.util.Comparator)")
+              (let [element-type
+                    (first (.getActualTypeArguments (.getType element)))]
+                (sequence-node
+                 [(raw "new ") (type-node @ctx-holder (.getType element))
+                  (raw "(global::System.Collections.Generic.Comparer<")
+                  (type-node @ctx-holder element-type)
+                  (raw ">.Create(") (first arguments) (raw "))")]))
+
               (sequence-node
                [(raw "new ") (type-node @ctx-holder (.getType element)) (raw "(")
                 (sequence-node arguments ", ")
@@ -2449,6 +2954,7 @@
                         #{"executable:java.lang.String#equalsIgnoreCase(java.lang.String)"
                           "executable:java.lang.Object#toString()"
                           "executable:java.util.List#add(java.lang.Object)"
+                          "executable:java.util.StringJoiner#add(java.lang.CharSequence)"
                           "executable:java.util.ArrayList#<init>()"
                           "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"}
                         (:key occurrence)))
@@ -2467,6 +2973,11 @@
              (= "executable:java.util.List#add(java.lang.Object)" (:key occurrence))
              (sequence-node
               [(raw "(value0) => { ") target (raw ".Add(value0); }")])
+
+             (= "executable:java.util.StringJoiner#add(java.lang.CharSequence)"
+                (:key occurrence))
+             (sequence-node
+              [(raw "(value0) => { ") target (raw ".add(value0); }")])
 
              (= "executable:java.util.concurrent.atomic.AtomicReference#set(java.lang.Object)"
                 (:key occurrence))
@@ -2525,12 +3036,24 @@
              leaf (:leaf references)
              depth (:depth references)]
          (when-not (and (instance? CtArrayTypeReference array-type)
-                        (or (and (= 1 (count dimensions)) (empty? values))
-                            (and (empty? dimensions) (seq values))))
+                        (or (and (<= 1 (count dimensions) 2)
+                                 (empty? values)
+                                 (<= (count dimensions) depth))
+                            (empty? dimensions)))
            (unsupported! "Java array creation shape requires explicit lowering"
                          element))
          {:node
-          (if (seq dimensions)
+          (cond
+            (= 2 (count dimensions))
+            (sequence-node
+             [(csharp/generic-name
+               (raw "global::Vibeformer.Runtime.JavaCompat.NewJaggedArray")
+               [(type-node @ctx-holder leaf)])
+              (raw "(")
+              (sequence-node (mapv #(child-node children %) dimensions) ", ")
+              (raw ")")])
+
+            (seq dimensions)
             (sequence-node
              (vec
               (concat
@@ -2539,6 +3062,8 @@
                          [(raw "[") (child-node children dimension) (raw "]")])
                        dimensions)
                (repeat (- depth (count dimensions)) (raw "[]")))))
+
+            :else
             (sequence-node [(raw "new ")
                             (type-node @ctx-holder leaf)
                             (sequence-node (repeat depth (raw "[]")))
@@ -2614,15 +3139,47 @@
                    (sequence-node [(raw "(") node (raw ")")])
                    node)))
              node
-             (if (and (instance? CtTypeAccess target)
-                      (= "class" (.getSimpleName (.getVariable element))))
-               (sequence-node [(raw "typeof(") target-node (raw ")")])
-               (sequence-node
-                [(when target
-                   (sequence-node [target-node (raw ".")]))
-                 (if (= "field:<array>#length" (:key occurrence))
-                   (raw "Length")
-                   (child-node children (.getVariable element)))]))]
+             (case (:key occurrence)
+               "field:java.io.File#separator"
+               (raw "global::System.IO.Path.DirectorySeparatorChar.ToString()")
+
+               "field:java.lang.Boolean#FALSE"
+               (raw "false")
+
+               "field:java.lang.Boolean#TRUE"
+               (raw "true")
+
+               "field:java.lang.Character#MAX_CODE_POINT"
+               (raw "0x10ffff")
+
+               ("field:java.lang.Character#MIN_CODE_POINT"
+                "field:java.lang.Character#UNASSIGNED")
+               (raw "0")
+
+               "field:java.lang.Integer#MIN_VALUE"
+               (raw "int.MinValue")
+
+               "field:java.nio.charset.StandardCharsets#UTF_16"
+               (raw "global::Vibeformer.Runtime.JavaStandardCharsets.UTF16")
+
+               "field:java.nio.charset.StandardCharsets#UTF_16BE"
+               (raw "global::Vibeformer.Runtime.JavaStandardCharsets.UTF16BE")
+
+               "field:java.util.Calendar#MILLISECOND"
+               (raw "14")
+
+               "field:java.util.Locale#US"
+               (raw "global::System.Globalization.CultureInfo.GetCultureInfo(\"en-US\")")
+
+               (if (and (instance? CtTypeAccess target)
+                        (= "class" (.getSimpleName (.getVariable element))))
+                 (sequence-node [(raw "typeof(") target-node (raw ")")])
+                 (sequence-node
+                  [(when target
+                     (sequence-node [target-node (raw ".")]))
+                   (if (= "field:<array>#length" (:key occurrence))
+                     (raw "Length")
+                     (child-node children (.getVariable element)))])))]
          {:node
           (expression-cast-node @ctx-holder element node)}))}
 
@@ -2642,13 +3199,26 @@
      :emit
      (fn [{:keys [^CtOperatorAssignment element children]}]
        (let [statement? (statement-expression? element)
-             for-update? (= "forUpdate" (role element))]
+             for-update? (= "forUpdate" (role element))
+             assigned (.getAssigned element)
+             narrow-byte-add?
+             (and (= "byte" (some-> assigned .getType .getQualifiedName))
+                  (= "+" (assignment-operator element)))
+             node
+             (if narrow-byte-add?
+               (compat-call
+                "AddAssign"
+                [(sequence-node [(raw "ref ")
+                                 (child-node children assigned)])
+                 (child-node children (.getAssignment element))])
+               (sequence-node
+                [(child-node children assigned)
+                 (raw (str " " (assignment-operator element) "= "))
+                 (child-node children (.getAssignment element))]))]
          {:node
           (sequence-node
            [(when-not (or statement? for-update?) (raw "("))
-            (child-node children (.getAssigned element))
-            (raw (str " " (assignment-operator element) "= "))
-            (child-node children (.getAssignment element))
+            node
             (raw (cond statement? ";"
                        for-update? ""
                        :else ")"))])}))}
@@ -2675,11 +3245,12 @@
      :class CtArrayRead
      :emit
      (fn [{:keys [^CtArrayRead element children]}]
-       {:node
-        (sequence-node [(child-node children (.getTarget element))
-                        (raw "[")
-                        (child-node children (.getIndexExpression element))
-                        (raw "]")])})}
+       (let [node
+             (sequence-node [(child-node children (.getTarget element))
+                             (raw "[")
+                             (child-node children (.getIndexExpression element))
+                             (raw "]")])]
+         {:node (expression-cast-node @ctx-holder element node)}))}
 
     {:id :java-library.expression/array-write
      :class CtArrayWrite
@@ -2723,39 +3294,88 @@
      :class CtForEach
      :emit
      (fn [{:keys [^CtForEach element children]}]
-       (let [variable (.getVariable element)]
+       (let [variable (.getVariable element)
+             mutable?
+             (boolean
+              (some
+               #(identical? variable
+                            (some-> ^CtVariableWrite %
+                                    .getVariable
+                                    .getDeclaration))
+               (.getElements (.getBody element) (TypeFilter. CtVariableWrite))))
+             variable-name (identifier (.getSimpleName variable))
+             iteration-name (str "__foreachValue_" variable-name)]
          {:node
           (sequence-node
            [(raw "foreach (")
             (type-node @ctx-holder (.getType variable))
-            (raw (str " " (identifier (.getSimpleName variable)) " in "))
+            (raw (str " " (if mutable? iteration-name variable-name) " in "))
             (child-node children (.getExpression element))
             (raw ") ")
-            (statement-node children (.getBody element))])}))}
+            (if mutable?
+              (sequence-node
+               [(raw "{\n")
+                (type-node @ctx-holder (.getType variable))
+                (raw (str " " variable-name " = " iteration-name ";\n"))
+                (statement-node children (.getBody element))
+                (raw "\n}")])
+              (statement-node children (.getBody element)))])}))}
 
     {:id :java-library.statement/for
      :class CtFor
      :emit
      (fn [{:keys [^CtFor element children]}]
        (let [initializers (vec (.getForInit element))
-             updates (vec (.getForUpdate element))]
-         (when-not (= 1 (count initializers))
-           (unsupported! "Java for loop requires one explicit initializer"
+             updates (vec (.getForUpdate element))
+             local-declarations? (every? #(instance? CtLocalVariable %)
+                                         initializers)
+             declaration-types
+             (when (seq initializers)
+               (->> initializers
+                    (map #(some-> ^CtLocalVariable % .getType .getQualifiedName))
+                    set))]
+         (when (and local-declarations?
+                    (> (count declaration-types) 1))
+           (unsupported! "Java for loop local declarations require one shared type"
                          element))
-         (let [^CtLocalVariable initializer (first initializers)]
-           (when-not (instance? CtLocalVariable initializer)
-             (unsupported! "Java for initializer is not a local declaration"
-                           initializer))
-           {:node
-            (sequence-node
-             [(raw "for (")
-              (child-node children initializer)
-              (raw "; ")
-              (child-node children (.getExpression element))
-              (raw "; ")
-              (sequence-node (mapv #(child-node children %) updates) ", ")
-              (raw ") ")
-              (statement-node children (.getBody element))])})))}
+         {:node
+          (sequence-node
+           [(raw "for (")
+            (cond
+              (empty? initializers)
+              nil
+
+              local-declarations?
+              (let [initializer-nodes
+                    (mapv #(child-node children %) initializers)
+                    declarator-node
+                    (fn [node]
+                      (when-not (and (= :sequence (:kind node))
+                                     (<= 2 (count (:nodes node)))
+                                     (= :raw (:kind (second (:nodes node)))))
+                        (unsupported!
+                         "Java for loop local declaration has an unsupported destination shape"
+                         element))
+                      (let [name-node (second (:nodes node))]
+                        (assoc node
+                               :nodes
+                               (assoc (subvec (:nodes node) 1)
+                                      0
+                                      (update name-node :text str/triml)))))]
+                (sequence-node
+                 (into [(first initializer-nodes)]
+                       (map declarator-node (rest initializer-nodes)))
+                 ", "))
+
+              :else
+              (sequence-node (mapv #(child-node children %) initializers) ", "))
+            (raw "; ")
+            (when-let [condition (.getExpression element)]
+              (child-node children condition))
+            (raw "; ")
+            (sequence-node (mapv #(child-node children %) updates) ", ")
+            (raw ") ")
+            (statement-node children (.getBody element))])}))}
 
     {:id :java-library.statement/while
      :class CtWhile
@@ -2879,18 +3499,22 @@
              catches (vec (.getCatchers element))
              finalizer (.getFinalizer element)]
          (when (and (seq resources)
-                    (not (and (= 1 (count resources))
-                              (instance? CtLocalVariable resource)
-                              (.getDefaultExpression ^CtLocalVariable resource))))
-           (unsupported! "Java try-with-resources requires one declared resource"
+                    (not-every? #(and (instance? CtLocalVariable %)
+                                      (.getDefaultExpression ^CtLocalVariable %))
+                                resources))
+           (unsupported! "Java try-with-resources requires declared resources"
                          element))
          (let [body (child-node children (.getBody element))
                using-node
-               (when resource
-                 (sequence-node
-                  [(raw "using (")
-                   (child-node children resource)
-                   (raw ") ") body]))
+               (when (seq resources)
+                 (reduce
+                  (fn [guarded resource]
+                    (sequence-node
+                     [(raw "using (")
+                      (child-node children resource)
+                      (raw ") ") guarded]))
+                  body
+                  (reverse resources)))
                guarded-body
                (if (and using-node (or (seq catches) finalizer))
                  (sequence-node [(raw "{\n") using-node (raw "\n}")])
@@ -2930,7 +3554,7 @@
                                  (TypeFilter. CtCatchVariableReference)))]
          {:node
           (sequence-node
-            [(raw "catch (")
+           [(raw "catch (")
             (cond
               (or used? filtered?)
               (child-node children parameter)
@@ -3097,10 +3721,29 @@
            (str/join "." (map #(pascal (.getSimpleName ^CtType %))
                               (declaring-types type))))))
 
+(defn- public-derived-type? [^CtType type]
+  (let [qualified-name (.getQualifiedName type)
+        all-types (.getAllTypes (.getModel (.getFactory type)))]
+    (boolean
+     (some
+      (fn [^CtType candidate]
+        (when (and (instance? CtClass candidate)
+                   (.hasModifier ^CtModifiable candidate ModifierKind/PUBLIC))
+          (loop [reference (.getSuperclass ^CtClass candidate)]
+            (when reference
+              (or (= qualified-name (.getQualifiedName ^CtTypeReference reference))
+                  (when-let [declaration
+                             (.getTypeDeclaration ^CtTypeReference reference)]
+                    (when (instance? CtClass declaration)
+                      (recur (.getSuperclass ^CtClass declaration)))))))))
+      all-types))))
+
 (defn- emitted-type-visibility [^CtType type]
   (cond
     (or (anonymous-class? type) (local-type? type)) "private"
-    (.hasModifier ^CtModifiable type ModifierKind/PUBLIC) "public"
+    (or (.hasModifier ^CtModifiable type ModifierKind/PUBLIC)
+        (public-derived-type? type))
+    "public"
     :else "internal"))
 
 (defn- canonical-visibility [visibility]
@@ -3210,7 +3853,9 @@
   (if (and (.getDeclaringType owner)
            (.hasModifier member ModifierKind/PRIVATE))
     "internal"
-    (visibility member default)))
+    (if (.hasModifier member ModifierKind/PROTECTED)
+      "protected internal"
+      (visibility member default))))
 
 (defn- type-formals-node [^CtType type]
   (let [parameters (vec (.getFormalCtTypeParameters type))]
@@ -3241,7 +3886,9 @@
     (sequence-node
      [(when (.isVarArgs parameter) (raw "params "))
       (if object-equals-parameter?
-        (raw "object?")
+        (raw (if (= "enable" (get-in ctx [:configuration :project :nullable]))
+               "object?"
+               "object"))
         (declaration-type-node ctx parameter (.getType parameter)))
       (raw (str " " (identifier (.getSimpleName parameter))))])))
 
@@ -3383,6 +4030,35 @@
                     (.getMethodsByName ^CtClass declaration (.getSimpleName method)))
               (recur (.getSuperclass ^CtClass declaration))))))))
 
+(defn- interface-methods [^CtType type]
+  (letfn [(methods-for [^CtTypeReference reference]
+            (when-let [declaration (.getTypeDeclaration reference)]
+              (when (and (instance? CtInterface declaration)
+                         (not (.isShadow ^CtType declaration)))
+                (concat
+                 (map (fn [^CtMethod method] [reference method])
+                      (.getMethods ^CtInterface declaration))
+                 (mapcat methods-for (.getSuperInterfaces ^CtInterface declaration))))))]
+    (->> (.getSuperInterfaces type)
+         (mapcat methods-for)
+         (sort-by (fn [[^CtTypeReference reference ^CtMethod method]]
+                    [(.getQualifiedName reference) (.getSignature method)]))
+         vec)))
+
+(defn- inherited-interface-method [^CtType owner ^CtMethod method]
+  (loop [reference (when (instance? CtClass owner)
+                     (.getSuperclass ^CtClass owner))]
+    (when reference
+      (let [declaration (.getTypeDeclaration ^CtTypeReference reference)]
+        (when (instance? CtClass declaration)
+          (or
+           (some
+            (fn [[_ ^CtMethod candidate]]
+              (when (= (.getSignature method) (.getSignature candidate))
+                candidate))
+            (interface-methods declaration))
+           (recur (.getSuperclass ^CtClass declaration))))))))
+
 (defn- subtype-of? [^CtType candidate ^CtType ancestor]
   (loop [reference (when (instance? CtClass candidate)
                      (.getSuperclass ^CtClass candidate))]
@@ -3435,6 +4111,8 @@
         abstract? (and (not (instance? CtInterface owner))
                        (.hasModifier method ModifierKind/ABSTRACT))
         super-method (when-not static? (superclass-method owner method))
+        inherited-interface-method
+        (when-not static? (inherited-interface-method owner method))
         generic-return-conflict?
         (and super-method
              (= (.getQualifiedName (.getType method))
@@ -3452,7 +4130,7 @@
                                 (superclass-implements-closeable? owner))
                            (and (not (and (= "getMessage" (.getSimpleName method))
                                           (empty? (.getParameters method))))
-                                super-method
+                                (or super-method inherited-interface-method)
                                 (not generic-return-conflict?))))
         virtual? (and (instance? CtClass owner)
                       (not (instance? CtEnum owner))
@@ -3481,7 +4159,11 @@
              (when static? "static")
              (when abstract? "abstract")
              (when override? "override")
-             (when (or generic-return-conflict? interface-dispose?) "new")
+             (when (or generic-return-conflict?
+                       interface-dispose?
+                       (and (= "getType" (.getSimpleName method))
+                            (empty? (.getParameters method))))
+               "new")
              (when virtual? "virtual")])))
 
 (declare member-node emit-root emit-anonymous-type)
@@ -3530,6 +4212,13 @@
 (defn- field-node [ctx ^CtType owner ^CtField field]
   (let [enum-value? (instance? CtEnumValue field)
         initializer (.getDefaultExpression field)
+        compile-time-constant?
+        (and (not enum-value?)
+             (.hasModifier field ModifierKind/STATIC)
+             (.hasModifier field ModifierKind/FINAL)
+             (instance? CtLiteral initializer)
+             (or (.isPrimitive (.getType field))
+                 (= "java.lang.String" (.getQualifiedName (.getType field)))))
         deferred?
         (boolean
          (some #(identical? field %)
@@ -3540,8 +4229,20 @@
         (and (nil? initializer)
              (not enum-value?)
              (not (.isPrimitive (.getType field)))
+             (not (contains?
+                   #{"java.lang.Boolean" "java.lang.Byte" "java.lang.Character"
+                     "java.lang.Double" "java.lang.Float" "java.lang.Integer"
+                     "java.lang.Long" "java.lang.Short" "java.util.Calendar"}
+                   (.getQualifiedName (.getType field))))
              (not (resolved-annotation?
                    ctx field "annotation:javax.annotation.Nullable")))
+        java-default-value?
+        (and (nil? initializer)
+             (contains?
+              #{"java.lang.Boolean" "java.lang.Byte" "java.lang.Character"
+                "java.lang.Double" "java.lang.Float" "java.lang.Integer"
+                "java.lang.Long" "java.lang.Short" "java.util.Calendar"}
+              (.getQualifiedName (.getType field))))
         name (destination-field-name ctx field)
         rule (if enum-value?
                :java-library.declaration/enum-value
@@ -3560,11 +4261,13 @@
                                        (member-visibility owner field "internal"))
                                      (when (or enum-value?
                                                (.hasModifier field ModifierKind/STATIC))
-                                       "static")
+                                       (when-not compile-time-constant? "static"))
                                      (when (.hasModifier field ModifierKind/VOLATILE)
                                        "volatile")
-                                     (when (or enum-value?
-                                               (.hasModifier field ModifierKind/FINAL))
+                                     (when compile-time-constant? "const")
+                                     (when (and (not compile-time-constant?)
+                                                (or enum-value?
+                                                    (.hasModifier field ModifierKind/FINAL)))
                                        "readonly")]))
                   " "))
         (declaration-type-node ctx field (.getType field))
@@ -3572,6 +4275,7 @@
         (when initializer-node
           (sequence-node [(raw " = ") initializer-node]))
         (when java-default-null? (raw " = null!"))
+        (when java-default-value? (raw " = default"))
         (raw ";")])
       (source-ref field rule {:declaration-id id :declaration-kind :field}))))
 
@@ -3606,6 +4310,74 @@
            (concat (map #(emit-root ctx %) local-types)
                    anonymous-types))
      "\n\n")))
+
+(defn- matching-class-method [^CtType owner ^CtMethod interface-method]
+  (or
+   (some
+    #(when (= (.getSignature interface-method) (.getSignature ^CtMethod %)) %)
+    (.getMethodsByName owner (.getSimpleName interface-method)))
+   (superclass-method owner interface-method)))
+
+(defn- interface-contract-nodes [ctx ^CtType owner]
+  (when (instance? CtClass owner)
+    (->> (interface-methods owner)
+         (keep
+          (fn [[^CtTypeReference interface-reference ^CtMethod interface-method]]
+            (when (and (nil? (.getBody interface-method))
+                       (not (.hasModifier interface-method ModifierKind/STATIC)))
+              (let [implementation
+                    (matching-class-method owner interface-method)
+                    interface-return
+                    (.getQualifiedName (.getType interface-method))
+                    implementation-return
+                    (some-> ^CtMethod implementation .getType .getQualifiedName)
+                    name (method-name ctx
+                                      (.getDeclaringType interface-method)
+                                      interface-method)]
+                (cond
+                  (and implementation
+                       (not= interface-return implementation-return))
+                  (let [parameters (vec (.getParameters interface-method))]
+                    (sequence-node
+                     [(declaration-type-node ctx
+                                             interface-method
+                                             (.getType interface-method))
+                      (raw " ")
+                      (type-node ctx interface-reference)
+                      (raw (str "." name))
+                      (executable-formals-node interface-method)
+                      (raw "(")
+                      (sequence-node (mapv #(parameter-node ctx %) parameters) ", ")
+                      (raw ") => this.")
+                      (raw (method-name ctx owner implementation))
+                      (raw "(")
+                      (sequence-node
+                       (mapv #(raw (identifier (.getSimpleName ^CtParameter %)))
+                             parameters)
+                       ", ")
+                      (raw ");")]))
+
+                  implementation
+                  nil
+
+                  (.hasModifier ^CtModifiable owner ModifierKind/ABSTRACT)
+                  (let [parameters (vec (.getParameters interface-method))]
+                    (sequence-node
+                     [(raw "public abstract ")
+                      (declaration-type-node ctx
+                                             interface-method
+                                             (.getType interface-method))
+                      (raw (str " " name))
+                      (executable-formals-node interface-method)
+                      (raw "(")
+                      (sequence-node (mapv #(parameter-node ctx %) parameters) ", ")
+                      (raw ");")]))
+
+                  :else
+                  (unsupported!
+                   "Concrete Java class has no resolved interface implementation"
+                   owner))))))
+         vec)))
 
 (defn- constructor-node [ctx ^CtType owner ^CtConstructor constructor]
   (let [local-types (mapv validate-local-type!
@@ -3650,8 +4422,15 @@
                        (translated-node ctx (.getDefaultExpression field))
                        (raw ";")]))
                    deferred-fields))
-                statements (remove #(identical? constructor-invocation %)
-                                   (.getStatements body))]
+                statements
+                (remove
+                 #(or (identical? constructor-invocation %)
+                      (and (instance? CtInvocation %)
+                           (.isImplicit ^CtInvocation %)
+                           (str/includes?
+                            (:key (invocation-occurrence ctx %))
+                            "#<init>(")))
+                 (.getStatements body))]
             (sequence-node
              [(raw "{\n")
               (sequence-node initializers "\n")
@@ -3691,14 +4470,33 @@
   (when-not (.hasModifier initializer ModifierKind/STATIC)
     (unsupported! "Java library instance initializer lowering is not implemented"
                   initializer))
-  (let [name (pascal (.getSimpleName owner))
+  (let [initializers
+        (->> (explicit-members owner)
+             (filter #(instance? CtAnonymousExecutable %))
+             vec)
+        first-initializer (first initializers)
+        name (pascal (.getSimpleName owner))
         rule :java-library.declaration/static-initializer
         id (register-member! ctx owner initializer ".cctor" rule)]
-    (csharp/with-source
-      (sequence-node [(raw (str "static " name "() "))
-                      (translated-node ctx (.getBody initializer))])
-      (source-ref initializer rule
-                  {:declaration-id id :declaration-kind :initializer}))))
+    (if-not (identical? initializer first-initializer)
+      (csharp/with-source
+        (raw "/* merged static initializer */")
+        (source-ref initializer rule
+                    {:declaration-id id :declaration-kind :initializer}))
+      (csharp/with-source
+        (sequence-node
+         [(raw (str "static " name "() {\n"))
+          (sequence-node
+           (mapv
+            (fn [^CtAnonymousExecutable current]
+              (csharp/with-source
+                (translated-node ctx (.getBody current))
+                (source-ref current rule nil)))
+            initializers)
+           "\n")
+          (raw "\n}")])
+        (source-ref initializer rule
+                    {:declaration-id id :declaration-kind :initializer})))))
 
 (defn- member-node [ctx ^CtType owner member]
   (cond
@@ -3828,6 +4626,7 @@
   [ctx ^CtType type ^CtConstructor constructor outer-field-name]
   (let [name (pascal (.getSimpleName type))
         outer (.getDeclaringType type)
+        deferred-fields (:deferred-field-initializers ctx)
         rule :java-library.declaration/implicit-member-constructor
         emitted-visibility (member-visibility type constructor "internal")
         id (register-member! ctx type constructor name rule 1 emitted-visibility)]
@@ -3837,7 +4636,18 @@
         (raw (str " " outer-field-name ";\n\n"))
         (raw (str (member-visibility type constructor "internal") " " name "("))
         (owner-type-node ctx outer) (raw (str " " outer-field-name ") {\nthis."))
-        (raw outer-field-name) (raw (str " = " outer-field-name ";\n}"))])
+        (raw outer-field-name) (raw (str " = " outer-field-name ";\n"))
+        (sequence-node
+         (mapv
+          (fn [^CtField field]
+            (sequence-node
+             [(raw (str "this." (destination-field-name ctx field) " = "))
+              (translated-node ctx (.getDefaultExpression field))
+              (raw ";")]))
+          deferred-fields)
+         "\n")
+        (when (seq deferred-fields) (raw "\n"))
+        (raw "}")])
       (source-ref constructor rule
                   {:declaration-id id :declaration-kind :constructor}))))
 
@@ -3857,7 +4667,7 @@
   (let [^CtClass anonymous-class (anonymous-class-for-call call)]
     (when-not (or (anonymous-iterator? call)
                   (anonymous-x509-trust-manager? call)
-                  (anonymous-project-subclass? call))
+                  (anonymous-project-type? call))
       (unsupported! "Anonymous class requires exact Iterator, X509TrustManager, or project-class semantics"
                     anonymous-class))
     (when (and (or (anonymous-iterator? call)
@@ -4006,6 +4816,8 @@
                   :csharp-language-semantics
                   "annotation:java.lang.FunctionalInterface"
                   :csharp-functional-contract
+                  "annotation:java.lang.Deprecated"
+                  :source-deprecation-metadata
                   "annotation:java.lang.SuppressWarnings"
                   :source-analysis-only
                   (unsupported! "Java library annotation has no neutral mapping"
@@ -4047,8 +4859,14 @@
                                (seq (field-anonymous-calls %)))))
              vec)
         explicit-constructors (filter #(instance? CtConstructor %) members)
+        implicit-constructor
+        (some #(when (and (instance? CtConstructor %)
+                          (.isImplicit ^CtConstructor %))
+                 %)
+              (.getTypeMembers type))
         _ (when (and (seq deferred-fields)
-                     (empty? explicit-constructors))
+                     (empty? explicit-constructors)
+                     (nil? implicit-constructor))
             (unsupported!
              "Java instance-context field initialization requires an explicit constructor"
              type))
@@ -4061,23 +4879,27 @@
         member-nodes (if-let [emit-members (:emit-members ctx)]
                        (emit-members member-ctx type members)
                        (mapv #(member-node member-ctx type %) members))
+        interface-contracts (interface-contract-nodes member-ctx type)
         field-anonymous-types
         (mapv #(emit-anonymous-type member-ctx type %)
               (mapcat #(if (instance? CtField %)
                          (field-anonymous-calls %)
                          [])
                       members))
-        implicit-constructor
-        (when inner?
-          (some #(when (and (instance? CtConstructor %)
-                            (.isImplicit ^CtConstructor %))
-                   %)
-                (.getTypeMembers type)))
         member-nodes
-        (cond-> (vec member-nodes)
-          implicit-constructor
+        (cond-> (into (vec member-nodes) interface-contracts)
+          (and inner? implicit-constructor)
           (conj (implicit-member-constructor-node member-ctx type implicit-constructor
                                                   outer-field-name))
+          (and (not inner?)
+               implicit-constructor
+               (empty? explicit-constructors)
+               (or (seq deferred-fields)
+                   (and (instance? CtClass type)
+                        (.hasModifier ^CtModifiable type
+                                      ModifierKind/ABSTRACT))
+                   (public-derived-type? type)))
+          (conj (constructor-node member-ctx type implicit-constructor))
           (seq functional-bases)
           (into (mapv #(functional-adapter-node member-ctx type %) functional-bases)))
         closeable? (some #(= "java.io.Closeable" (.getQualifiedName ^CtTypeReference %))
@@ -4364,7 +5186,8 @@
 (defn- effectively-accessible-type? [^CtType type]
   (loop [current type]
     (or (nil? current)
-        (and (accessible? current)
+        (and (or (accessible? current)
+                 (public-derived-type? current))
              (recur (.getDeclaringType ^CtType current))))))
 
 (defn- surface-row
@@ -4418,9 +5241,19 @@
        distinct
        (mapcat (fn [^CtType type]
                  (when (effectively-accessible-type? type)
-                   (let [type-shape
+                   (let [promoted-base?
+                         (and (not (accessible? type))
+                              (public-derived-type? type))
+                         type-adaptation
+                         (when promoted-base?
+                           {:kind :java-public-base-type-promotion
+                            :identity "java-public-base-type-promotion"})
+                         type-shape
                          (assoc (live-shape type)
-                                :visibility (declared-visibility type))
+                                :visibility
+                                (if promoted-base?
+                                  "public"
+                                  (declared-visibility type)))
                          declarations
                          (filter
                           #(and (accessible? %)
@@ -4430,8 +5263,10 @@
                           (.getTypeMembers type))]
                      (concat
                       [{:declaration type
+                        :systematic-adaptation
+                        (some-> type-adaptation :kind)
                         :shape type-shape
-                        :row (surface-row type type-shape)}]
+                        :row (surface-row type type-shape type-adaptation)}]
                       (map
                        (fn [^CtModifiable declaration]
                          (let [shape
@@ -4470,18 +5305,41 @@
                                 (conj ["ToString" 0
                                        :java-enum-name-to-string])))))
                       (when (instance? CtClass type)
-                        (map
-                         (fn [^CtTypeReference reference]
-                           (synthetic-surface-entry
-                            type "op_Implicit" 1
-                            {:kind :java-functional-implicit-operator
-                             :identity
-                             (str "java-functional-implicit-operator:"
-                                  (.getQualifiedName reference))}))
-                         (filter
-                          #(contains? functional-interface-types
-                                      (.getQualifiedName ^CtTypeReference %))
-                          (.getSuperInterfaces type)))))))))
+                        (concat
+                         (map
+                          (fn [^CtTypeReference reference]
+                            (synthetic-surface-entry
+                             type "op_Implicit" 1
+                             {:kind :java-functional-implicit-operator
+                              :identity
+                              (str "java-functional-implicit-operator:"
+                                   (.getQualifiedName reference))}))
+                          (filter
+                           #(contains? functional-interface-types
+                                       (.getQualifiedName ^CtTypeReference %))
+                           (.getSuperInterfaces type)))
+                         (when (.hasModifier ^CtModifiable type
+                                             ModifierKind/ABSTRACT)
+                           (keep
+                            (fn [[^CtTypeReference interface-reference
+                                  ^CtMethod interface-method]]
+                              (when (and (nil? (.getBody interface-method))
+                                         (not (.hasModifier interface-method
+                                                            ModifierKind/STATIC))
+                                         (nil? (matching-class-method
+                                                type interface-method)))
+                                (assoc
+                                 (synthetic-surface-entry
+                                  type
+                                  (.getSimpleName interface-method)
+                                  (count (.getParameters interface-method))
+                                  {:kind :java-abstract-interface-contract
+                                   :identity
+                                   (str "java-abstract-interface-contract:"
+                                        (.getQualifiedName interface-reference)
+                                        "#" (.getSignature interface-method))})
+                                 :interface-method interface-method)))
+                            (interface-methods type))))))))))
        (remove (comp nil? :shape))
        (sort-by (juxt (comp pr-str :shape)
                       #(spoon/declaration-key (:declaration %))))
@@ -4525,7 +5383,7 @@
                (mapcat
                 (fn [[shape rows]]
                   (map (fn [row {:keys [declaration synthetic?
-                                        systematic-adaptation]}]
+                                        systematic-adaptation interface-method]}]
                          {:row row
                           :declaration-key (spoon/declaration-key declaration)
                           :owner-declaration-key
@@ -4534,6 +5392,7 @@
                                     spoon/declaration-key))
                           :implicit? (.isImplicit ^CtElement declaration)
                           :synthetic? (boolean synthetic?)
+                          :interface-method interface-method
                           :systematic-adaptation systematic-adaptation
                           :expansion :body
                           :representation :live-declaration})
@@ -4556,6 +5415,10 @@
    "A Java enum without an override receives the CLR ToString enum-name adaptation."
    :java-functional-implicit-operator
    "A supported Java functional base receives a CLR implicit delegate conversion."
+   :java-abstract-interface-contract
+   "A Java abstract class receives CLR abstract declarations for unimplemented interface members."
+   :java-public-base-type-promotion
+   "A package-visible Java base class is public in CLR metadata when required by a public subclass."
    :protected-override-family-widening
    "A protected Java override-family member is widened to public when a public override requires one CLR visibility."
    :protected-package-visibility
@@ -4613,7 +5476,8 @@
   (let [by-key (group-by :java-key (filter :java-key (:declarations emission)))
         rows
         (mapv
-         (fn [{:keys [declaration-key owner-declaration-key implicit? synthetic?]
+         (fn [{:keys [declaration-key owner-declaration-key implicit? synthetic?
+                      interface-method]
                :as evidence}]
            (let [matches (get by-key declaration-key)
                  implicit-constructor?
@@ -4642,7 +5506,15 @@
                           (assoc :destination
                                  (assoc (:destination synthetic-match)
                                         :kind (get-in evidence [:row :kind])
-                                        :name (get-in evidence [:row :name])
+                                        :name
+                                        (if interface-method
+                                          (method-name
+                                           {:configuration
+                                            (:configuration emission)}
+                                           (.getDeclaringType
+                                            ^CtMethod interface-method)
+                                           interface-method)
+                                          (get-in evidence [:row :name]))
                                         :parameter-count
                                         (str (get-in evidence
                                                      [:row :parameter-count]))))))
@@ -4670,7 +5542,7 @@
                         {:kind :public-java-library-stub
                          :source-declaration (get-in evidence [:row :identity])
                          :destination (:destination generated)}))
-               (cond-> (assoc evidence
+               (cond-> (assoc (dissoc evidence :interface-method)
                               :source-mapping
                               (if adaptation
                                 :documented-systematic-adaptation
@@ -4683,6 +5555,9 @@
      {:schema-version 1
       :strategy :complete-accessible-java-library
       :surface-derivation (:derivation surface)
+      :compatibility-namespace
+      (or (get-in emission [:configuration :compatibility-namespace])
+          "Vibeformer.Runtime")
       :required-rows (count rows)
       :rows rows
       :systematic-adaptations

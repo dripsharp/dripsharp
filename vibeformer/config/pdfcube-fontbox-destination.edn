@@ -28,6 +28,11 @@
           :manifest-file "generation-manifest.edn"
           :public-metadata-file "public-metadata.edn"
           :annotation-decisions-file "annotation-decisions.edn"}
+ :package-consumer
+ {:strategy :source-file
+  :project-file "PdfCube.FontBox.PackageConsumer.csproj"
+  :source-path "vibeformer/validation/pdfcube-fontbox/PdfCube.FontBox.FocusedConsumer.cs"
+  :success-message "PdfCube.FontBox focused behavior passed."}
  :name-policy {:public-identifiers :csharp
                :methods :methods
                :fields :fields
@@ -57,6 +62,7 @@
    :projection :skia-sharp}]
  :internal-capabilities #{:font-discovery :skia-geometry}
  :destination-capabilities #{:java-compat :java-regex-unicode}
+ :compatibility-namespace "PdfCube.FB.Runtime"
  :legal-files
  [{:kind :license
    :source "research/pdfbox/LICENSE.txt"

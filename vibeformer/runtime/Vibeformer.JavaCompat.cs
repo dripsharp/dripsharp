@@ -27,6 +27,8 @@ namespace Vibeformer.Runtime;
 internal static class JavaStandardCharsets
 {
     internal static readonly Encoding UTF8 = new UTF8Encoding(false);
+    internal static readonly Encoding UTF16 = Encoding.Unicode;
+    internal static readonly Encoding UTF16BE = Encoding.BigEndianUnicode;
     internal static readonly Encoding USASCII = Encoding.ASCII;
     internal static readonly Encoding ISO88591 = Encoding.Latin1;
 }
@@ -322,6 +324,7 @@ sealed class JavaByteBuffer : IDisposable
     private readonly int capacity;
     private int cursor;
     private int upperBound;
+    private int markedCursor = -1;
     private bool disposed;
 
     private JavaByteBuffer(sbyte[] bytes, bool direct = false)
@@ -412,6 +415,21 @@ sealed class JavaByteBuffer : IDisposable
             Buffer.BlockCopy(unsigned, 0, destination, offset, length);
         }
         cursor += length;
+        return this;
+    }
+    public JavaByteBuffer get(sbyte[] destination) =>
+        get(destination, 0, destination.Length);
+    public JavaByteBuffer mark()
+    {
+        ThrowIfDisposed();
+        markedCursor = cursor;
+        return this;
+    }
+    public JavaByteBuffer reset()
+    {
+        ThrowIfDisposed();
+        if (markedCursor < 0) throw new InvalidOperationException("ByteBuffer mark is not set.");
+        cursor = markedCursor;
         return this;
     }
     public bool isDirect()
@@ -2181,6 +2199,32 @@ internal sealed class JavaReadOnlySet<T> : IReadOnlySet<T>, JavaReadOnlyAdapter
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
+internal sealed class JavaUnmodifiableSet<T> : ISet<T>
+{
+    private readonly ISet<T> values;
+    internal JavaUnmodifiableSet(ISet<T> values) => this.values = values;
+    public int Count => values.Count;
+    public bool IsReadOnly => true;
+    bool ISet<T>.Add(T item) => throw new NotSupportedException();
+    void ICollection<T>.Add(T item) => throw new NotSupportedException();
+    public void ExceptWith(IEnumerable<T> other) => throw new NotSupportedException();
+    public void IntersectWith(IEnumerable<T> other) => throw new NotSupportedException();
+    public bool IsProperSubsetOf(IEnumerable<T> other) => values.IsProperSubsetOf(other);
+    public bool IsProperSupersetOf(IEnumerable<T> other) => values.IsProperSupersetOf(other);
+    public bool IsSubsetOf(IEnumerable<T> other) => values.IsSubsetOf(other);
+    public bool IsSupersetOf(IEnumerable<T> other) => values.IsSupersetOf(other);
+    public bool Overlaps(IEnumerable<T> other) => values.Overlaps(other);
+    public bool SetEquals(IEnumerable<T> other) => values.SetEquals(other);
+    public void SymmetricExceptWith(IEnumerable<T> other) => throw new NotSupportedException();
+    public void UnionWith(IEnumerable<T> other) => throw new NotSupportedException();
+    public void Clear() => throw new NotSupportedException();
+    public bool Contains(T item) => values.Contains(item);
+    public void CopyTo(T[] array, int arrayIndex) => values.CopyTo(array, arrayIndex);
+    public bool Remove(T item) => throw new NotSupportedException();
+    public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
 internal sealed class JavaMapEntrySet<K, V> : ISet<JavaMapEntry<K, V>> where K : notnull
 {
     private readonly IDictionary<K, V> source;
@@ -2386,6 +2430,12 @@ internal static class JavaCompat
             throw new JavaAssertionError(message?.Invoke()?.ToString());
     }
 
+    // Java compound assignment includes the narrowing conversion back to the
+    // left-hand type. A ref helper also preserves Java's single evaluation of
+    // array indexes and other assignable expressions.
+    internal static sbyte AddAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target + value));
+
     internal static JavaIterator<T> Iterator<T>(IEnumerable<T> values) =>
         new JavaListIterator<T>(values);
 
@@ -2446,6 +2496,12 @@ internal static class JavaCompat
     };
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IEnumerator, IteratorState>
         IteratorStates = new();
+    private sealed class StreamMark
+    {
+        internal long Position;
+    }
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Stream, StreamMark>
+        StreamMarks = new();
 
     private sealed class IteratorState
     {
@@ -2569,6 +2625,15 @@ internal static class JavaCompat
         UnicodeCategory.FinalQuotePunctuation => 30,
         _ => 0
     };
+    internal static int CharacterDigit(char value, int radix)
+    {
+        var digit = value is >= '0' and <= '9' ? value - '0'
+            : value is >= 'a' and <= 'z' ? value - 'a' + 10
+            : value is >= 'A' and <= 'Z' ? value - 'A' + 10
+            : (int)char.GetNumericValue(value);
+        return digit >= 0 && digit < radix ? digit : -1;
+    }
+    internal static bool IsWhitespace(char value) => char.IsWhiteSpace(value);
     internal static int ToUpperCase(int codePoint) => Rune.ToUpperInvariant(new Rune(codePoint)).Value;
     internal static StringBuilder AppendCodePoint(StringBuilder builder, int codePoint) =>
         builder.Append(CodePointToString(codePoint));
@@ -3443,6 +3508,8 @@ internal static class JavaCompat
 
     internal static int ParseInt(string value, int radix) =>
         checked((int)ParseSignedRadix(value, radix, int.MinValue, int.MaxValue));
+    internal static bool ParseBoolean(string value) =>
+        string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
 
     internal static long ParseLong(string value)
     {
@@ -3496,14 +3563,20 @@ internal static class JavaCompat
         return magnitude == negativeLimit ? minimum : -(long)magnitude;
     }
     internal static double ParseDouble(string value) => double.Parse(value, CultureInfo.InvariantCulture);
+    internal static float ParseFloat(string value) => float.Parse(value, CultureInfo.InvariantCulture);
     internal static int CompareLong(long left, long right) => left.CompareTo(right);
     internal static int CompareInt(int left, int right) => left.CompareTo(right);
+    internal static int CompareFloat(float left, float right) => left.CompareTo(right);
     internal static int CompareDouble(double left, double right) => left.CompareTo(right);
     internal static int StringCompareTo(string left, string right) =>
         string.Compare(left, right, StringComparison.Ordinal);
     internal static int LongLeadingZeros(long value) => BitOperations.LeadingZeroCount(unchecked((ulong)value));
     internal static int LongTrailingZeros(long value) => BitOperations.TrailingZeroCount(unchecked((ulong)value));
     internal static int IntLeadingZeros(int value) => BitOperations.LeadingZeroCount(unchecked((uint)value));
+    internal static int HighestOneBit(int value) =>
+        value == 0 ? 0 : 1 << (31 - BitOperations.LeadingZeroCount(unchecked((uint)value)));
+    internal static int FloatToIntBits(float value) =>
+        float.IsNaN(value) ? 0x7fc00000 : BitConverter.SingleToInt32Bits(value);
     internal static int Signum(long value) => Math.Sign(value);
     internal static string ToHexString(long value) => unchecked((ulong)value).ToString("x", CultureInfo.InvariantCulture);
     internal static string ToUnsignedString(long value, int radix)
@@ -3563,6 +3636,40 @@ internal static class JavaCompat
     internal static TimeSpan DurationOfSeconds(long seconds) => TimeSpan.FromSeconds(seconds);
     internal static TimeSpan DurationOfSeconds(long seconds, long nanos) =>
         TimeSpan.FromSeconds(seconds) + TimeSpan.FromTicks(nanos / 100);
+    internal static TimeZoneInfo GetTimeZone(string id)
+    {
+        if (string.Equals(id, "UTC", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(id, "GMT", StringComparison.OrdinalIgnoreCase))
+            return TimeZoneInfo.Utc;
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(id);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.Utc;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Utc;
+        }
+    }
+    internal static DateTimeOffset CalendarInstance(TimeZoneInfo zone) =>
+        TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
+    internal static DateTimeOffset CalendarSet(
+        DateTimeOffset value,
+        int year,
+        int zeroBasedMonth,
+        int day,
+        int hour,
+        int minute,
+        int second) =>
+        new(year, zeroBasedMonth + 1, day, hour, minute, second, value.Offset);
+    internal static DateTimeOffset CalendarSet(DateTimeOffset value, int field, int fieldValue) =>
+        field == 14
+            ? new DateTimeOffset(value.Year, value.Month, value.Day, value.Hour, value.Minute,
+                value.Second, fieldValue, value.Offset)
+            : throw new ArgumentOutOfRangeException(nameof(field));
     internal static T ClassCast<T>(Type type, object value) =>
         type.IsInstanceOfType(value) ? (T)value : throw new InvalidCastException();
     private static string? ClassResourceName(Assembly assembly, Type? type, string name)
@@ -3777,6 +3884,14 @@ internal static class JavaCompat
 
     internal static string? GetProperty(string name) =>
         SystemProperties.TryGetValue(name, out var value) ? value : null;
+
+    internal static T Clone<T>(T value) =>
+        value is TimeZoneInfo or string
+            ? value
+            : value is ICloneable cloneable
+                ? (T)cloneable.Clone()!
+                : throw new NotSupportedException(
+                    $"Java clone is not available for destination type {value!.GetType()}.");
 
     internal static string? SetProperty(string name, string value)
     {
@@ -4241,6 +4356,18 @@ internal static class JavaCompat
 
     internal static bool MapIsEmpty<K, V>(IDictionary<K, V> map) where K : notnull => map.Count == 0;
     internal static bool MapIsEmpty<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull => map.Count == 0;
+    internal static K SortedFirstKey<K, V>(IDictionary<K, V> map) where K : notnull =>
+        map.Keys.First();
+    internal static K SortedLastKey<K, V>(IDictionary<K, V> map) where K : notnull =>
+        map.Keys.Last();
+    internal static ISet<T> SortedHeadSet<T>(ISet<T> values, T upper) =>
+        new SortedSet<T>(values.Where(value => JavaCompare(value, upper) < 0),
+            Comparer<T>.Create(JavaCompare));
+    internal static ISet<T> SortedSubSet<T>(ISet<T> values, T lower, T upper) =>
+        new SortedSet<T>(values.Where(value =>
+                JavaCompare(value, lower) >= 0 && JavaCompare(value, upper) < 0),
+            Comparer<T>.Create(JavaCompare));
+    internal static T SortedLast<T>(ISet<T> values) => values.Last();
     internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull =>
         map is JavaLinkedHashMap<K, V> linked
             ? linked.KeySet()
@@ -5513,6 +5640,8 @@ internal static class JavaCompat
 
     internal static ReadOnlyCollection<T> UnmodifiableList<T>(IEnumerable<T> values) =>
         new(values is IList<T> list ? list : values.ToList());
+    internal static ISet<T> UnmodifiableSet<T>(ISet<T> values) =>
+        new JavaUnmodifiableSet<T>(values);
 
     internal static IDictionary<K, V> UnmodifiableMap<K, V>(IDictionary<K, V> values)
         where K : notnull => new ReadOnlyDictionary<K, V>(values);
@@ -5607,6 +5736,12 @@ internal static class JavaCompat
         Array.Copy(source, result, Math.Min(source.Length, length));
         return result;
     }
+    internal static T[][] NewJaggedArray<T>(int outerLength, int innerLength)
+    {
+        if (outerLength < 0 || innerLength < 0)
+            throw new ArgumentOutOfRangeException("Java array dimensions cannot be negative.");
+        return Enumerable.Range(0, outerLength).Select(_ => new T[innerLength]).ToArray();
+    }
     internal static T[] CopyOfRange<T>(T[] source, int fromIndex, int toIndex) => source[fromIndex..toIndex];
     internal static void Fill<T>(T[] values, T value) => Array.Fill(values, value);
     internal static void Fill<T>(T[] values, int fromIndex, int toIndex, T value) =>
@@ -5615,6 +5750,15 @@ internal static class JavaCompat
     internal static IEnumerator<T> EmptyIterator<T>() => Enumerable.Empty<T>().GetEnumerator();
     internal static string ArrayString(Array value) => string.Join(", ", value.Cast<object?>().Select(StringValueOf));
     internal static string ArrayString<T>(T[] value) => ArrayString((Array)value);
+    internal static string ArrayToString(Array value) => "[" + ArrayString(value) + "]";
+    internal static string DeepArrayString(Array value) =>
+        "[" + string.Join(", ", value.Cast<object?>().Select(item =>
+            item is Array nested ? DeepArrayString(nested) : StringValueOf(item))) + "]";
+    internal static int BinarySearch(int[] values, int value) => Array.BinarySearch(values, value);
+    internal static int BinarySearch<T>(T[] values, T value, IComparer<T> comparer) =>
+        Array.BinarySearch(values, value, comparer);
+    internal static int BinarySearch<T>(T[] values, T value, Comparison<T> comparison) =>
+        Array.BinarySearch(values, value, Comparer<T>.Create(comparison));
     internal static string IndentSpace(int count) => new(' ', Math.Max(0, count));
     internal static T[] InsertIntoArrayAt<T>(T value, T[] source, int index, Type? _) =>
         SpliceIntoArrayAt(value, source, index, null);
@@ -5669,6 +5813,19 @@ internal static class JavaCompat
         values.RemoveAt(index);
         return previous;
     }
+    internal static int ListIndexOf<T>(IList<T> values, object? value)
+    {
+        for (var index = 0; index < values.Count; index++)
+            if (Equals(values[index], value)) return index;
+        return -1;
+    }
+    internal static void SortList<T>(IList<T> values, IComparer<T>? comparer = null)
+    {
+        var sorted = values.OrderBy(value => value, comparer ?? Comparer<T>.Create(JavaCompare)).ToArray();
+        for (var index = 0; index < sorted.Length; index++) values[index] = sorted[index];
+    }
+    internal static void SortList<T>(IList<T> values, Comparison<T> comparison) =>
+        SortList(values, Comparer<T>.Create(comparison));
     internal static int ListLastIndexOf<T>(IList<T> values, object? value)
     {
         for (var index = values.Count - 1; index >= 0; index--)
@@ -6138,6 +6295,45 @@ internal static class JavaCompat
     }
     internal static void OutputStreamWrite(Stream stream, int value) =>
         stream.WriteByte(unchecked((byte)value));
+    internal static void OutputStreamWrite(JavaDataOutputStream stream, sbyte[] values) =>
+        stream.write(values);
+    internal static void OutputStreamWrite(
+        JavaDataOutputStream stream,
+        sbyte[] values,
+        int offset,
+        int count) =>
+        stream.write(values, offset, count);
+    internal static bool InputStreamMarkSupported(Stream stream) => stream.CanSeek;
+    internal static void InputStreamMark(Stream stream, int _)
+    {
+        if (stream.CanSeek) StreamMarks.GetOrCreateValue(stream).Position = stream.Position;
+    }
+    internal static void InputStreamReset(Stream stream)
+    {
+        if (!stream.CanSeek || !StreamMarks.TryGetValue(stream, out var mark))
+            throw new IOException("Stream mark is not available.");
+        stream.Position = mark.Position;
+    }
+    internal static long InputStreamSkip(Stream stream, long count)
+    {
+        if (count <= 0) return 0;
+        if (stream.CanSeek)
+        {
+            var available = Math.Max(0, stream.Length - stream.Position);
+            var skipped = Math.Min(available, count);
+            stream.Position += skipped;
+            return skipped;
+        }
+        var buffer = new byte[8192];
+        long total = 0;
+        while (total < count)
+        {
+            var read = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, count - total));
+            if (read == 0) break;
+            total += read;
+        }
+        return total;
+    }
     internal static int InputStreamRead(Stream stream) => stream.ReadByte();
     internal static int InputStreamRead(Stream stream, sbyte[] values) =>
         InputStreamRead(stream, values, 0, values.Length);
@@ -6253,6 +6449,33 @@ internal static class JavaCompat
 
     internal static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
     internal static bool IsDirectory(string path) => Directory.Exists(path);
+    internal static bool FileCanRead(FileInfo file)
+    {
+        try
+        {
+            if (Directory.Exists(file.FullName)) return true;
+            using var stream = File.Open(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            return stream.CanRead;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+    internal static bool FileIsHidden(FileInfo file) =>
+        file.Name.StartsWith(".", StringComparison.Ordinal) ||
+        (file.Exists && (file.Attributes & FileAttributes.Hidden) != 0);
+    internal static FileInfo[] FileListFiles(FileInfo directory) =>
+        Directory.Exists(directory.FullName)
+            ? Directory.EnumerateFileSystemEntries(directory.FullName)
+                .Select(path => new FileInfo(path))
+                .ToArray()
+            : Array.Empty<FileInfo>();
+    internal static Uri FileToUri(FileInfo file) => new(file.FullName);
     internal static void DeleteIfExists(string path)
     {
         if (File.Exists(path)) File.Delete(path);
@@ -6675,6 +6898,13 @@ sealed class JavaRegexMatcher
     }
 
     internal bool Find() => nextIndex <= regionEnd && Accept(MatchRegion(Math.Max(regionStart, nextIndex)), regionStart);
+    internal bool Find(int start)
+    {
+        if (start < 0 || start > input.Length) throw new ArgumentOutOfRangeException(nameof(start));
+        current = null;
+        nextIndex = start;
+        return Find();
+    }
     internal bool Matches()
     {
         var match = MatchRegion(regionStart);
@@ -6824,6 +7054,123 @@ internal sealed class JavaDirectoryStream<T> : IEnumerable<T>, IDisposable
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     public void Dispose() { }
     internal void Close() => Dispose();
+}
+
+internal sealed class JavaDataOutputStream : Stream
+{
+    private readonly Stream output;
+
+    internal JavaDataOutputStream(Stream output) =>
+        this.output = output ?? throw new ArgumentNullException(nameof(output));
+
+    internal void write(sbyte[] values) =>
+        JavaCompat.OutputStreamWrite(output, values);
+
+    internal void write(sbyte[] values, int offset, int count) =>
+        JavaCompat.OutputStreamWrite(output, values, offset, count);
+
+    internal void writeByte(int value) => output.WriteByte(unchecked((byte)value));
+
+    internal void writeShort(int value)
+    {
+        Span<byte> bytes = stackalloc byte[2];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt16BigEndian(bytes, unchecked((short)value));
+        output.Write(bytes);
+    }
+
+    internal void writeInt(int value)
+    {
+        Span<byte> bytes = stackalloc byte[4];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(bytes, value);
+        output.Write(bytes);
+    }
+
+    internal void writeLong(long value)
+    {
+        Span<byte> bytes = stackalloc byte[8];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64BigEndian(bytes, value);
+        output.Write(bytes);
+    }
+
+    internal void flush() => output.Flush();
+    public override bool CanRead => false;
+    public override bool CanSeek => output.CanSeek;
+    public override bool CanWrite => output.CanWrite;
+    public override long Length => output.Length;
+    public override long Position
+    {
+        get => output.Position;
+        set => output.Position = value;
+    }
+    public override void Flush() => output.Flush();
+    public override int Read(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => output.Seek(offset, origin);
+    public override void SetLength(long value) => output.SetLength(value);
+    public override void Write(byte[] buffer, int offset, int count) =>
+        output.Write(buffer, offset, count);
+    public override void Write(ReadOnlySpan<byte> buffer) => output.Write(buffer);
+    public override void WriteByte(byte value) => output.WriteByte(value);
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) output.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
+internal sealed class JavaLineNumberReader : IDisposable
+{
+    private readonly TextReader reader;
+
+    internal JavaLineNumberReader(TextReader reader) =>
+        this.reader = reader ?? throw new ArgumentNullException(nameof(reader));
+
+    internal string? readLine() => reader.ReadLine();
+    public void Dispose() => reader.Dispose();
+}
+
+internal sealed class JavaStringJoiner
+{
+    private readonly string delimiter;
+    private readonly string prefix;
+    private readonly string suffix;
+    private readonly List<string> values = new();
+
+    internal JavaStringJoiner(string delimiter, string prefix, string suffix)
+    {
+        this.delimiter = delimiter ?? throw new ArgumentNullException(nameof(delimiter));
+        this.prefix = prefix ?? throw new ArgumentNullException(nameof(prefix));
+        this.suffix = suffix ?? throw new ArgumentNullException(nameof(suffix));
+    }
+
+    internal JavaStringJoiner add(string value)
+    {
+        values.Add(value ?? "null");
+        return this;
+    }
+
+    public override string ToString() => prefix + string.Join(delimiter, values) + suffix;
+    internal string toString() => ToString();
+}
+
+internal sealed class JavaStringTokenizer
+{
+    private readonly string[] tokens;
+    private int index;
+
+    internal JavaStringTokenizer(string value) : this(value, " \t\n\r\f") { }
+
+    internal JavaStringTokenizer(string value, string delimiters)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(delimiters);
+        tokens = value.Split(delimiters.ToCharArray(), StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    internal int countTokens() => tokens.Length - index;
+    internal bool hasMoreTokens() => index < tokens.Length;
+    internal string nextToken() =>
+        hasMoreTokens() ? tokens[index++] : throw new InvalidOperationException("No more tokens");
 }
 
 internal sealed class JavaDeque<T> : ICollection<T>
