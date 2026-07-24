@@ -380,6 +380,75 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest erased-generic-collection-casts-use-runtime-element-conversion
+  (let [fixture
+        (model! {"example/GenericCasts.java"
+                 (str "package example; import java.util.List; import java.util.Map; "
+                      "public final class GenericCasts { "
+                      "@SuppressWarnings(\"unchecked\") "
+                      "public static List<byte[]> list(Object value) { "
+                      "return (List<byte[]>) value; } "
+                      "@SuppressWarnings(\"unchecked\") "
+                      "public static Map<String, byte[]> map(Object value) { "
+                      "return (Map<String, byte[]>) value; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/GenericCasts.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/GenericCasts.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.CastList<sbyte[]>(value);"))
+    (is (str/includes?
+         first-source
+         (str "return global::Vibeformer.Runtime.JavaCompat."
+              "CastDictionary<string, sbyte[]>(value);")))
+    (is (= first-source second-source))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest boxed-primitives-preserve-java-null
+  (let [fixture
+        (model! {"example/Boxed.java"
+                 (str "package example; import java.util.List; "
+                      "public final class Boxed { "
+                      "private Boolean state = null; "
+                      "public Integer maybe(boolean present) { "
+                      "return present ? 7 : null; } "
+                      "public int required() { return maybe(true); } "
+                      "public void add(List<Integer> values) { "
+                      "values.add(maybe(true)); } "
+                      "public Boolean state() { return state; } "
+                      "public void state(Boolean value) { state = value; } }")})
+        emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emitted)
+                                        "src/Example/Java/Library/Boxed.cs")))]
+    (is (str/includes? source "private bool? __field_state = default!;"))
+    (is (str/includes? source "public int? maybe(bool present)"))
+    (is (str/includes?
+         source
+         (str "return global::Vibeformer.Runtime.JavaCompat.Unbox("
+              "this.maybe(true));")))
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaCompat.Add(values, "
+              "global::Vibeformer.Runtime.JavaCompat.Unbox(this.maybe(true)));")))
+    (is (str/includes? source "public bool? state()"))
+    (is (str/includes? source "public void state(bool? value)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest private-nested-members-widen-for-java-nestmate-access
   (let [fixture
         (model! {"example/Nest.java"

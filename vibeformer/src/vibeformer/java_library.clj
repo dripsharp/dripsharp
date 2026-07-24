@@ -317,11 +317,58 @@
        (resolved-annotation?
         ctx declaration "annotation:javax.annotation.Nullable")))
 
+(def ^:private boxed-primitive-types
+  #{"java.lang.Boolean" "java.lang.Byte" "java.lang.Character"
+    "java.lang.Double" "java.lang.Float" "java.lang.Integer"
+    "java.lang.Long" "java.lang.Short"})
+
+(defn- boxed-primitive-reference? [^CtTypeReference reference]
+  (and reference
+       (contains? boxed-primitive-types (.getQualifiedName reference))))
+
+(defn- anonymous-method? [^CtElement element]
+  (and (instance? CtMethod element)
+       (let [owner (.getDeclaringType ^CtMethod element)]
+         (and (instance? CtClass owner)
+              (.isAnonymous ^CtClass owner)))))
+
+(defn- nullable-boxed-declaration?
+  [ctx ^CtElement element ^CtTypeReference reference]
+  (and
+   (boxed-primitive-reference? reference)
+   (cond
+     (instance? CtField element)
+     true
+
+     (instance? CtParameter element)
+     (let [parent (when (.isParentInitialized element) (.getParent element))]
+       (not (instance? CtLambda parent)))
+
+     (instance? CtMethod element)
+     (not (anonymous-method? element))
+
+     (instance? CtLocalVariable element)
+     (let [initializer (.getDefaultExpression ^CtLocalVariable element)]
+       (or (and (instance? CtLiteral initializer)
+                (nil? (.getValue ^CtLiteral initializer)))
+           (and (instance? CtInvocation initializer)
+                (let [occurrence
+                      (occurrence! ctx (.getExecutable ^CtInvocation initializer)
+                                   :executable)]
+                  (or (= "executable:java.util.Map#get(java.lang.Object)"
+                         (:key occurrence))
+                      (and (= :project (:origin occurrence))
+                           (instance? CtMethod (:declaration occurrence))
+                           (not (anonymous-method? (:declaration occurrence)))))))))
+
+     :else false)))
+
 (defn- declaration-type-node [ctx ^CtElement element ^CtTypeReference reference]
   (let [base (type-node ctx reference)]
     (if (and (not (.isPrimitive reference))
-             (resolved-annotation?
-              ctx element "annotation:javax.annotation.Nullable"))
+             (or (resolved-annotation?
+                  ctx element "annotation:javax.annotation.Nullable")
+                 (nullable-boxed-declaration? ctx element reference)))
       (sequence-node [base (raw "?")])
       base)))
 
@@ -1309,9 +1356,29 @@
 
 (defn- expression-cast-node [ctx ^CtExpression expression node]
   (reduce (fn [inner ^CtTypeReference cast]
-            (sequence-node [(raw "(") (type-node ctx cast)
-                            (raw ")(") inner
-                            (raw (if (.isPrimitive cast) ")" "!)"))]))
+            (let [qualified-name (.getQualifiedName cast)
+                  arguments (vec (.getActualTypeArguments cast))]
+              (cond
+                (and (= "java.util.List" qualified-name)
+                     (= 1 (count arguments)))
+                (sequence-node
+                 [(raw "global::Vibeformer.Runtime.JavaCompat.CastList<")
+                  (type-node ctx (first arguments))
+                  (raw ">(") inner (raw ")")])
+
+                (and (= "java.util.Map" qualified-name)
+                     (= 2 (count arguments)))
+                (sequence-node
+                 [(raw "global::Vibeformer.Runtime.JavaCompat.CastDictionary<")
+                  (type-node ctx (first arguments))
+                  (raw ", ")
+                  (type-node ctx (second arguments))
+                  (raw ">(") inner (raw ")")])
+
+                :else
+                (sequence-node [(raw "(") (type-node ctx cast)
+                                (raw ")(") inner
+                                (raw (if (.isPrimitive cast) ")" "!)"))]))))
           node
           (.getTypeCasts expression)))
 
@@ -1333,6 +1400,57 @@
    [(raw (str "global::Vibeformer.Runtime.JavaCompat." name "("))
     (sequence-node arguments ", ")
     (raw ")")]))
+
+(defn- nullable-boxed-expression? [ctx ^CtExpression expression]
+  (cond
+    (instance? CtInvocation expression)
+    (let [occurrence (invocation-occurrence ctx expression)
+          referenced-declaration
+          (some-> expression .getExecutable .getDeclaration)
+          declaration
+          (if (instance? CtMethod referenced-declaration)
+            referenced-declaration
+            (:declaration occurrence))]
+      (or (and (= "executable:java.util.Map#get(java.lang.Object)"
+                  (:key occurrence))
+               (boxed-primitive-reference? (.getType expression)))
+          (and (instance? CtMethod declaration)
+               (boxed-primitive-reference? (.getType ^CtMethod declaration))
+               (not (.isShadow ^CtMethod declaration))
+               (not (anonymous-method? declaration)))))
+
+    (instance? CtVariableRead expression)
+    (let [declaration (some-> expression .getVariable .getDeclaration)]
+      (and (boxed-primitive-reference? (.getType expression))
+           declaration
+           (nullable-boxed-declaration?
+            ctx declaration (.getType declaration))))
+
+    (instance? CtFieldRead expression)
+    (let [declaration (some-> expression .getVariable .getDeclaration)]
+      (and (boxed-primitive-reference? (.getType expression))
+           declaration
+           (nullable-boxed-declaration?
+            ctx declaration (.getType declaration))))
+
+    (instance? CtConditional expression)
+    (boxed-primitive-reference? (.getType expression))
+
+    :else false))
+
+(defn- maybe-unbox-node [ctx ^CtExpression expression node]
+  (if (nullable-boxed-expression? ctx expression)
+    (compat-call "Unbox" [node])
+    node))
+
+(defn- enclosing-method [^CtElement element]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (nil? current) nil
+      (instance? CtMethod current) current
+      (.isParentInitialized ^CtElement current)
+      (recur (.getParent ^CtElement current))
+      :else nil)))
 
 (defn- invocation-statement [^CtInvocation invocation node]
   (if (statement-expression? invocation)
@@ -1476,6 +1594,19 @@
        "\n")
       (raw "default:"))))
 
+(def ^:private generic-value-argument-executables
+  #{"executable:java.util.Collection#add(java.lang.Object)"
+    "executable:java.util.Deque#push(java.lang.Object)"
+    "executable:java.util.HashMap#put(java.lang.Object,java.lang.Object)"
+    "executable:java.util.HashMap#putIfAbsent(java.lang.Object,java.lang.Object)"
+    "executable:java.util.LinkedHashMap#put(java.lang.Object,java.lang.Object)"
+    "executable:java.util.List#add(int,java.lang.Object)"
+    "executable:java.util.List#add(java.lang.Object)"
+    "executable:java.util.List#set(int,java.lang.Object)"
+    "executable:java.util.Map#put(java.lang.Object,java.lang.Object)"
+    "executable:java.util.Map#putIfAbsent(java.lang.Object,java.lang.Object)"
+    "executable:java.util.SortedSet#headSet(java.lang.Object)"})
+
 (defn- body-rules [ctx-holder]
   (java/structural-rules
    [{:id :java-library.expression/invocation
@@ -1483,6 +1614,8 @@
      :emit
      (fn [{:keys [context ^CtInvocation element children]}]
        (let [target (.getTarget element)
+             occurrence (invocation-occurrence context element)
+             declaration (:declaration occurrence)
              target-node
              (when target
                (let [node (child-node children target)]
@@ -1490,9 +1623,27 @@
                           (seq (.getTypeCasts ^CtExpression target)))
                    (sequence-node [(raw "(") node (raw ")")])
                    node)))
-             arguments (mapv #(child-node children %) (.getArguments element))
-             occurrence (invocation-occurrence context element)
-             declaration (:declaration occurrence)
+             parameters
+             (when (instance? CtExecutable declaration)
+               (vec (.getParameters ^CtExecutable declaration)))
+             arguments
+             (mapv
+              (fn [index ^CtExpression argument]
+                (let [node (child-node children argument)
+                      parameter
+                      (when (seq parameters)
+                        (nth parameters
+                             (min index (dec (count parameters)))))
+                      expected (some-> ^CtParameter parameter .getType)]
+                  (if (or (and expected
+                               (or (.isPrimitive ^CtTypeReference expected)
+                                   (instance? CtTypeParameterReference expected)))
+                          (contains? generic-value-argument-executables
+                                     (:key occurrence)))
+                    (maybe-unbox-node @ctx-holder argument node)
+                    node)))
+              (range)
+              (.getArguments element))
              default-interface?
              (and target
                   (= :project (:origin occurrence))
@@ -2447,7 +2598,11 @@
                 (sequence-node [target-node (raw ".Count")])
 
                 "executable:java.util.Map#get(java.lang.Object)"
-                (compat-call "MapGet" (into [target-node] arguments))
+                (compat-call
+                 (if (boxed-primitive-reference? (.getType element))
+                   "MapGetNullable"
+                   "MapGet")
+                 (into [target-node] arguments))
 
                 "executable:java.util.Map#remove(java.lang.Object)"
                 (compat-call "MapRemove" (into [target-node] arguments))
@@ -3098,16 +3253,23 @@
      :class CtConditional
      :emit
      (fn [{:keys [^CtConditional element children]}]
-       {:node
-        (expression-cast-node
-         @ctx-holder element
-         (sequence-node [(raw "(")
-                         (child-node children (.getCondition element))
-                         (raw " ? ")
-                         (child-node children (.getThenExpression element))
-                         (raw " : ")
-                         (child-node children (.getElseExpression element))
-                         (raw ")")]))})}
+       (let [primitive-result? (.isPrimitive (.getType element))
+             branch-node
+             (fn [^CtExpression expression]
+               (let [node (child-node children expression)]
+                 (if primitive-result?
+                   (maybe-unbox-node @ctx-holder expression node)
+                   node)))]
+         {:node
+          (expression-cast-node
+           @ctx-holder element
+           (sequence-node [(raw "(")
+                           (child-node children (.getCondition element))
+                           (raw " ? ")
+                           (branch-node (.getThenExpression element))
+                           (raw " : ")
+                           (branch-node (.getElseExpression element))
+                           (raw ")")]))}))}
 
     {:id :java-library.expression/unary
      :class CtUnaryOperator
@@ -3480,12 +3642,20 @@
      :class CtReturn
      :emit
      (fn [{:keys [^CtReturn element children]}]
-       (let [returned (.getReturnedExpression element)]
+       (let [returned (.getReturnedExpression element)
+             method (enclosing-method element)
+             returned-node
+             (when returned
+               (let [node (child-node children returned)]
+                 (if (and method
+                          (.isPrimitive (.getType ^CtMethod method)))
+                   (maybe-unbox-node @ctx-holder returned node)
+                   node)))]
          {:node
           (sequence-node
            [(raw "return")
             (when returned
-              (sequence-node [(raw " ") (child-node children returned)]))
+              (sequence-node [(raw " ") returned-node]))
             (raw ";")])}))}
 
     {:id :java-library.statement/try
@@ -3587,7 +3757,13 @@
      :class CtLocalVariable
      :emit
      (fn [{:keys [^CtLocalVariable element children]}]
-       (let [initializer (.getDefaultExpression element)]
+       (let [initializer (.getDefaultExpression element)
+             initializer-node
+             (when initializer
+               (let [node (child-node children initializer)]
+                 (if (.isPrimitive (.getType element))
+                   (maybe-unbox-node @ctx-holder initializer node)
+                   node)))]
          {:node
           (sequence-node
            [(if (.isInferred element)
@@ -3596,7 +3772,7 @@
             (raw (str " " (identifier (.getSimpleName element))))
             (when initializer
               (sequence-node [(raw " = ")
-                              (child-node children initializer)]))
+                              initializer-node]))
             (when-not (or (= "forInit" (role element))
                           (and (.isParentInitialized element)
                                (instance? CtTryWithResource (.getParent element))))

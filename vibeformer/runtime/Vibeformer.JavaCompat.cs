@@ -4429,6 +4429,18 @@ internal static class JavaCompat
     internal static V MapGet<K, V>(IReadOnlyDictionary<K, V> map, object? key) where K : notnull =>
         key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
 
+    internal static V? MapGetNullable<K, V>(IDictionary<K, V> map, object? key)
+        where K : notnull
+        where V : struct =>
+        key is K typed && map.TryGetValue(typed, out var value) ? value : null;
+    internal static V? MapGetNullable<K, V>(IReadOnlyDictionary<K, V> map, object? key)
+        where K : notnull
+        where V : struct =>
+        key is K typed && map.TryGetValue(typed, out var value) ? value : null;
+
+    internal static V Unbox<V>(V? value) where V : struct =>
+        value ?? throw new NullReferenceException("Cannot unbox a null Java boxed value.");
+
     internal static V MapPut<K, V>(IDictionary<K, V> map, K key, V value) where K : notnull
     {
         if (map is JavaLinkedHashMap<K, V> linked) return linked.Put(key, value);

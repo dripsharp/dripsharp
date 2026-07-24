@@ -1,0 +1,29 @@
+encoding	standard	.notdef|space|p|guilsinglleft|32|112|172|null
+encoding	standard-map-view	149|unsupported
+encoding	mac-roman	.notdef|space|p|germandbls|167
+encoding	cff-built-in	germandbls|251|psmall|251|253|agravesmall
+cff	font-model	sourcesanspro-bold|-231|-384|1223|974|824|824
+cff	charset-encoding	false|space|585|872|cffstandardencoding
+cff	font-matrix-and-private	0.001,0,0,0.001,0,0|-12,0,496,508,578,590,635,647,652,664,701,713|146,150
+cff	type1-font-util	000102ff7f80|0,1,2,255,127,128|0,1,2,255,127,128|0,1,2,255,127,128
+afm	helvetica-model	4.1|helvetica|medium|-166|931|4|315|2705
+afm	char-metric	202|333|75|756
+afm	reduced-dataset	315|0
+afm	nullable-fixed-v	false|true|false
+cmap	fixture-mappings	a|p|*|65|280|520
+cmap	embedded-resources	65|12345|0|adobe-gb1-ucs2|false|true
+cmap	lenient-malformed-range	0|true
+cmap	strict-malformed-range	true|false
+cmap	codespace	2|true|true|false|false
+cmap	direct-zero-precedes-range	0
+pfb	segments	4498|95911|533|4498|95911|100942
+type1	open-sans	1.10|opensans-regular|open sans regular|open sans|book|builtinencoding|4498|95911|938|true|false
+type1	multiple-binary-segments	version 2.33|dejavuserifcondensed|5959|1056090|3399
+failure	empty-pfb	io
+failure	negative-pfb-record	io
+failure	odd-hex	argument
+failure	missing-cmap-resource	io
+failure	bad-codespace	argument
+failure	malformed-cff	io
+failure	malformed-afm-start	io
+failure	malformed-afm-number	io
