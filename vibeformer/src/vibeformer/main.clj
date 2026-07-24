@@ -8,6 +8,8 @@
             [vibeformer.packaging :as packaging]
             [vibeformer.pdfcube.fontbox-differential :as pdfcube-fontbox-differential]
             [vibeformer.pdfcube.io-differential :as pdfcube-io-differential]
+            [vibeformer.pdfcube.xmpbox-metadata-differential
+             :as pdfcube-xmpbox-metadata-differential]
             [vibeformer.pkl-core-corpus-runner :as pkl-core-corpus-runner]
             [vibeformer.pkl-core-test-contract :as pkl-core-test-contract])
   (:import [clojure.lang ExceptionInfo]))
@@ -23,12 +25,13 @@
   (if-not (or (contains? #{["generate"] ["verify"] ["pack"] ["package"] ["differential"]
                            ["pdfcube-io-differential"]
                            ["pdfcube-fontbox-differential"]
+                           ["pdfcube-xmpbox-metadata-differential"]
                            ["language-snippet-contract"] ["language-snippet-package"]
                            ["pkl-core-test-contract"] ["pkl-core-corpus"]}
                          (vec args))
               (and (= 2 (count args))
                    (contains? #{"generate" "verify" "pack" "package"} (first args))))
-    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|pdfcube-io-differential|pdfcube-fontbox-differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus" 2)
+    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|pdfcube-io-differential|pdfcube-fontbox-differential|pdfcube-xmpbox-metadata-differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus" 2)
     (try
       (case (first args)
         "generate" (harness/generate! {:profile (or (second args) "pkl-parser")})
@@ -40,6 +43,8 @@
         "differential" (differential/verify-differential!)
         "pdfcube-io-differential" (pdfcube-io-differential/verify!)
         "pdfcube-fontbox-differential" (pdfcube-fontbox-differential/verify!)
+        "pdfcube-xmpbox-metadata-differential"
+        (pdfcube-xmpbox-metadata-differential/verify!)
         "language-snippet-contract" (language-snippet-contract/verify-contract!)
         "language-snippet-package" (language-snippet-runner/verify-package-runner!)
         "pkl-core-test-contract" (pkl-core-test-contract/verify-contract!)

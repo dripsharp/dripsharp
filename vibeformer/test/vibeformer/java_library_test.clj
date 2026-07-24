@@ -903,6 +903,8 @@
                       "return left.equals(right); } "
                       "public static boolean calendarEquals(Calendar left, Calendar right) { "
                       "return left.equals(right); } "
+                      "public static Calendar calendarClear(Calendar value) { "
+                      "value.clear(); return value; } "
                       "public static String objectText(Object value) { return value.toString(); } "
                       "static String optionalText(Optional<Object> value) { "
                       "return value.map(Object::toString).orElse(\"\"); } "
@@ -925,6 +927,10 @@
     (is (= 2 (count (re-seq
                      #"return global::Vibeformer\.Runtime\.JavaCompat\.Equals\(left, right\);"
                      first-source))))
+    (is (str/includes?
+         first-source
+         (str "value = global::Vibeformer.Runtime.JavaCompat.CalendarClear(value);\n"
+              "return value;")))
     (is (str/includes?
          first-source
          (str "global::System.Text.StringBuilder builder = "
@@ -2182,6 +2188,9 @@
         (slurp (str (paths/resolve-path (:project-root second)
                                         "src/Example/Java/Library/Mode.cs")))]
     (is (str/includes? first-source "public sealed class Mode"))
+    (is (str/includes?
+         first-source
+         "[global::Vibeformer.Runtime.JavaEnumNameAttribute(\"ALPHA\")]"))
     (is (str/includes?
          first-source
          "public static readonly global::Example.Java.Library.Mode ALPHA = new global::Example.Java.Library.Mode(1);"))

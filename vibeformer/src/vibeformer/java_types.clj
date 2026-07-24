@@ -68,8 +68,8 @@
                                               :dotnet.type/not-supported]
    "java.lang.Deprecated" ["global::System.ObsoleteAttribute"
                            :dotnet.type/source-annotation]
-   "java.lang.NumberFormatException" ["global::System.FormatException"
-                                      :dotnet.type/format-exception]
+   "java.lang.NumberFormatException" ["global::Vibeformer.Runtime.JavaNumberFormatException"
+                                      :dotnet.type/number-format-exception]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder"
                               :dotnet.type/string-builder]
    "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder"

@@ -96,6 +96,20 @@ internal sealed class JavaCancellationException : OperationCanceledException
 
 internal sealed class JavaAssertionError(string? message) : Exception(message);
 
+[Serializable]
+internal sealed class JavaNumberFormatException : ArgumentException
+{
+    internal JavaNumberFormatException(string message) : base(message) { }
+    internal JavaNumberFormatException(string message, Exception cause)
+        : base(message, cause) { }
+}
+
+[AttributeUsage(AttributeTargets.Field, AllowMultiple = false, Inherited = false)]
+internal sealed class JavaEnumNameAttribute(string name) : Attribute
+{
+    internal string Name { get; } = name;
+}
+
 internal sealed class JavaUriSyntaxException : UriFormatException
 {
     internal string InputText { get; }
@@ -2147,17 +2161,27 @@ interface JavaIterator<out T>
         "This Java iterator does not expose mutable removal semantics.");
 }
 
-internal sealed class JavaListIterator<T>(IEnumerable<T> values) : JavaIterator<T>
+internal sealed class JavaListIterator<T> : JavaIterator<T>
 {
-    private readonly IEnumerator<T> iterator = values.GetEnumerator();
+    private readonly IList<T>? list;
+    private readonly IEnumerator<T>? iterator;
+    private int cursor;
+    private int lastReturned = -1;
     private bool prepared;
     private bool hasNext;
 
+    internal JavaListIterator(IEnumerable<T> values)
+    {
+        list = values as IList<T>;
+        if (list is null) iterator = values.GetEnumerator();
+    }
+
     public bool HasNext()
     {
+        if (list is not null) return cursor < list.Count;
         if (!prepared)
         {
-            hasNext = iterator.MoveNext();
+            hasNext = iterator!.MoveNext();
             prepared = true;
         }
         return hasNext;
@@ -2166,12 +2190,27 @@ internal sealed class JavaListIterator<T>(IEnumerable<T> values) : JavaIterator<
     public T Next()
     {
         if (!HasNext()) throw new InvalidOperationException("Iterator has no next element.");
+        if (list is not null)
+        {
+            lastReturned = cursor;
+            return list[cursor++];
+        }
         prepared = false;
-        return iterator.Current;
+        return iterator!.Current;
     }
 
-    public void Remove() => throw new NotSupportedException(
-        "This Java iterator does not expose mutable removal semantics.");
+    public void Remove()
+    {
+        if (list is null)
+            throw new NotSupportedException(
+                "This Java iterator does not expose mutable removal semantics.");
+        if (lastReturned < 0)
+            throw new InvalidOperationException(
+                "Iterator.remove() requires one preceding next() call.");
+        list.RemoveAt(lastReturned);
+        if (lastReturned < cursor) cursor--;
+        lastReturned = -1;
+    }
 }
 
 internal interface JavaReadOnlyAdapter
@@ -3502,8 +3541,12 @@ internal static class JavaCompat
     internal static string EnumName(object value)
     {
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
-        return value.GetType().GetFields(flags).FirstOrDefault(field => ReferenceEquals(field.GetValue(null), value))?.Name
-               ?? value.ToString() ?? string.Empty;
+        var field = value.GetType().GetFields(flags)
+            .FirstOrDefault(candidate => ReferenceEquals(candidate.GetValue(null), value));
+        return field?.GetCustomAttribute<JavaEnumNameAttribute>()?.Name
+               ?? field?.Name
+               ?? value.ToString()
+               ?? string.Empty;
     }
 
     internal static int EnumOrdinal(object value)
@@ -3522,7 +3565,14 @@ internal static class JavaCompat
     internal static T EnumValueOf<T>(string name)
     {
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
-        var field = typeof(T).GetField(name, flags);
+        var field = typeof(T).GetFields(flags)
+            .Where(candidate => typeof(T).IsAssignableFrom(candidate.FieldType))
+            .FirstOrDefault(candidate =>
+                string.Equals(
+                    candidate.GetCustomAttribute<JavaEnumNameAttribute>()?.Name
+                    ?? candidate.Name,
+                    name,
+                    StringComparison.Ordinal));
         return field?.GetValue(null) is T value
             ? value
             : throw new ArgumentException($"No enum constant {typeof(T).FullName}.{name}", nameof(name));
@@ -3544,9 +3594,9 @@ internal static class JavaCompat
         {
             return int.Parse(value, CultureInfo.InvariantCulture);
         }
-        catch (OverflowException error)
+        catch (Exception error) when (error is FormatException or OverflowException)
         {
-            throw new FormatException(error.Message, error);
+            throw new JavaNumberFormatException(error.Message, error);
         }
     }
 
@@ -3561,9 +3611,9 @@ internal static class JavaCompat
         {
             return long.Parse(value, CultureInfo.InvariantCulture);
         }
-        catch (OverflowException error)
+        catch (Exception error) when (error is FormatException or OverflowException)
         {
-            throw new FormatException(error.Message, error);
+            throw new JavaNumberFormatException(error.Message, error);
         }
     }
     internal static long ParseLong(string value, int radix) =>
@@ -3572,20 +3622,29 @@ internal static class JavaCompat
         ParseLong(value.Substring(beginIndex, endIndex - beginIndex), radix);
     internal static sbyte ParseByte(string value, int radix)
     {
-        return checked((sbyte)ParseSignedRadix(value, radix, sbyte.MinValue, sbyte.MaxValue));
+        try
+        {
+            return checked((sbyte)ParseSignedRadix(value, radix, sbyte.MinValue, sbyte.MaxValue));
+        }
+        catch (OverflowException error)
+        {
+            throw new JavaNumberFormatException(error.Message, error);
+        }
     }
 
     private static long ParseSignedRadix(string value, int radix, long minimum, long maximum)
     {
         if (radix is < 2 or > 36) throw new ArgumentException($"Invalid radix {radix}.");
-        if (string.IsNullOrEmpty(value)) throw new FormatException("Input string was empty.");
+        if (string.IsNullOrEmpty(value))
+            throw new JavaNumberFormatException("Input string was empty.");
         var index = 0;
         var negative = false;
         if (value[0] is '+' or '-')
         {
             negative = value[0] == '-';
             index++;
-            if (index == value.Length) throw new FormatException($"Invalid number `{value}`.");
+            if (index == value.Length)
+                throw new JavaNumberFormatException($"Invalid number `{value}`.");
         }
         ulong magnitude = 0;
         var negativeLimit = unchecked((ulong)(-(minimum + 1))) + 1UL;
@@ -3598,16 +3657,36 @@ internal static class JavaCompat
                 : character is >= 'A' and <= 'Z' ? character - 'A' + 10
                 : -1;
             if (digit < 0 || digit >= radix)
-                throw new FormatException($"Invalid number `{value}` for radix {radix}.");
+                throw new JavaNumberFormatException($"Invalid number `{value}` for radix {radix}.");
             if (magnitude > (limit - (uint)digit) / (uint)radix)
-                throw new FormatException($"Number `{value}` is out of range.");
+                throw new JavaNumberFormatException($"Number `{value}` is out of range.");
             magnitude = magnitude * (uint)radix + (uint)digit;
         }
         if (!negative) return (long)magnitude;
         return magnitude == negativeLimit ? minimum : -(long)magnitude;
     }
-    internal static double ParseDouble(string value) => double.Parse(value, CultureInfo.InvariantCulture);
-    internal static float ParseFloat(string value) => float.Parse(value, CultureInfo.InvariantCulture);
+    internal static double ParseDouble(string value)
+    {
+        try
+        {
+            return double.Parse(value, CultureInfo.InvariantCulture);
+        }
+        catch (Exception error) when (error is FormatException or OverflowException)
+        {
+            throw new JavaNumberFormatException(error.Message, error);
+        }
+    }
+    internal static float ParseFloat(string value)
+    {
+        try
+        {
+            return float.Parse(value, CultureInfo.InvariantCulture);
+        }
+        catch (Exception error) when (error is FormatException or OverflowException)
+        {
+            throw new JavaNumberFormatException(error.Message, error);
+        }
+    }
     internal static int CompareLong(long left, long right) => left.CompareTo(right);
     internal static int CompareInt(int left, int right) => left.CompareTo(right);
     internal static int CompareFloat(float left, float right) => left.CompareTo(right);
@@ -3700,6 +3779,8 @@ internal static class JavaCompat
     }
     internal static DateTimeOffset CalendarInstance(TimeZoneInfo zone) =>
         TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
+    internal static DateTimeOffset CalendarClear(DateTimeOffset value) =>
+        new(1970, 1, 1, 0, 0, 0, value.Offset);
     internal static TimeZoneInfo NewSimpleTimeZone(int rawOffsetMilliseconds, string id) =>
         TimeZoneInfo.CreateCustomTimeZone(
             id,

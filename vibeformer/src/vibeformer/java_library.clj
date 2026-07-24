@@ -2081,7 +2081,9 @@
                 (compat-call "CalendarInstance" arguments)
 
                 "executable:java.util.Calendar#clear()"
-                (sequence-node [target-node (raw " = default")])
+                (sequence-node
+                 [target-node (raw " = ")
+                  (compat-call "CalendarClear" [target-node])])
 
                 "executable:java.util.Calendar#equals(java.lang.Object)"
                 (compat-call "Equals" (into [target-node] arguments))
@@ -5080,7 +5082,12 @@
         id (register-member! ctx owner field name rule nil emitted-visibility)]
     (csharp/with-source
       (sequence-node
-       [(project-annotation-attributes-node ctx field)
+       [(when enum-value?
+          (raw
+           (str "[global::Vibeformer.Runtime.JavaEnumNameAttribute(\""
+                (.getSimpleName field)
+                "\")]\n")))
+        (project-annotation-attributes-node ctx field)
         (raw (str (str/join " "
                             (remove nil?
                                     [(if enum-value?
