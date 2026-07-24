@@ -17,7 +17,9 @@
 
 (def required-trace-families
   #{"namespace" "registry" "simple" "structured" "array" "lang-alt"
-    "date" "invalid" "fixture"})
+    "date" "invalid" "fixture" "parser" "parser-failure"
+    "strict-lenient" "extension" "serialization" "round-trip"
+    "security" "lifetime"})
 
 (defn- fail! [message data]
   (throw
@@ -230,7 +232,8 @@
 
 (defn verify!
   "Runs clean XmpBox generation, compilation, public-surface validation, and
-  the pinned Java/generated-.NET metadata object-model differential."
+  the pinned Java/generated-.NET metadata, DOM parser, PDF/A extension, and
+  serialization differential."
   ([] (verify! {}))
   ([{:keys [workspace-root build-fn run-command!]
      :or {build-fn compiler/verify-clean-build!
@@ -266,7 +269,16 @@
             :comparison comparison
             :fixtures
             ["org/apache/xmpbox/parser/AltBagSeqTest.xml"
-             "org/apache/xmpbox/parser/ThumbisartorStyle.xml"]}]
+             "org/apache/xmpbox/parser/ThumbisartorStyle.xml"
+             "org/apache/xmpbox/parser/structured_recursive.xml"
+             "org/apache/xmpbox/parser/empty_list.xml"
+             "org/apache/xmpbox/xml/PDFBOX-3882-dematbox.xml"
+             "validxmp/attr_as_props.xml"
+             "validxmp/only_space_fields.xmp"
+             "validxmp/override_ns.rdf"
+             "validxmp/PDFBOX-6099.xmp"
+             "undefinedxmp/prism.xmp"
+             "invalidxmp/*.xml"]}]
        (write-text! (paths/resolve-path proof-root "summary.edn")
                     (str (pr-str summary) "\n"))
        (println

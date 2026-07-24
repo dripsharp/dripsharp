@@ -1894,6 +1894,36 @@
     (is (= "executable:java.io.InputStream#readNBytes(int)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
 
+(deftest dom-named-node-map-items-use-java-name-order
+  (let [fixture
+        (model! {"example/XmlAttributes.java"
+                 (str "package example; import org.w3c.dom.Element; "
+                      "import org.w3c.dom.NamedNodeMap; import org.w3c.dom.Node; "
+                      "public final class XmlAttributes { "
+                      "public static Node first(Element element) { "
+                      "NamedNodeMap attributes = element.getAttributes(); "
+                      "return attributes.item(0); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/XmlAttributes.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/XmlAttributes.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return global::Vibeformer.Runtime.JavaCompat.XmlAttributeItem("
+              "attributes, 0);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest switch-fallthrough-and-labeled-break-preserve-control-flow
   (let [fixture
         (model! {"example/Switches.java"

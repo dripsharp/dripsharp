@@ -3921,11 +3921,19 @@ internal static class JavaCompat
         string.IsNullOrEmpty(node.Prefix) ? null : node.Prefix;
     internal static string? XmlNodeNamespaceUri(System.Xml.XmlNode node) =>
         string.IsNullOrEmpty(node.NamespaceURI) ? null : node.NamespaceURI;
+    internal static System.Xml.XmlAttribute XmlAttributeItem(
+        System.Xml.XmlAttributeCollection attributes,
+        int index) =>
+        attributes
+            .Cast<System.Xml.XmlAttribute>()
+            .OrderBy(attribute => attribute.Name, StringComparer.Ordinal)
+            .ElementAtOrDefault(index)!;
     internal static System.Xml.XmlReaderSettings NewXmlReaderSettings() =>
         new()
         {
             DtdProcessing = System.Xml.DtdProcessing.Prohibit,
-            XmlResolver = null
+            XmlResolver = null,
+            CloseInput = true
         };
     internal static System.Xml.XmlReaderSettings XmlReaderSettingsClone(
         System.Xml.XmlReaderSettings settings) =>
@@ -3991,9 +3999,34 @@ internal static class JavaCompat
         Stream input)
     {
         using var reader = System.Xml.XmlReader.Create(input, settings);
-        var document = new System.Xml.XmlDocument { PreserveWhitespace = false };
+        var document = new System.Xml.XmlDocument { PreserveWhitespace = true };
         document.Load(reader);
+        if (document.FirstChild is System.Xml.XmlDeclaration declaration)
+            document.RemoveChild(declaration);
+        NormalizeJavaDomWhitespace(document, document);
         return document;
+    }
+    private static void NormalizeJavaDomWhitespace(
+        System.Xml.XmlDocument document,
+        System.Xml.XmlNode parent)
+    {
+        foreach (System.Xml.XmlNode child in parent.ChildNodes.Cast<System.Xml.XmlNode>().ToArray())
+        {
+            if (child.NodeType is System.Xml.XmlNodeType.Whitespace
+                or System.Xml.XmlNodeType.SignificantWhitespace)
+            {
+                if (parent is System.Xml.XmlDocument)
+                    parent.RemoveChild(child);
+                else
+                    parent.ReplaceChild(
+                        document.CreateTextNode(child.Value ?? ""),
+                        child);
+            }
+            else
+            {
+                NormalizeJavaDomWhitespace(document, child);
+            }
+        }
     }
     internal static System.Xml.XmlWriterSettings XmlWriterSettingsClone(
         System.Xml.XmlWriterSettings settings) =>
@@ -4012,7 +4045,10 @@ internal static class JavaCompat
                 settings.IndentChars = new string(' ', ParseInt(value, 10));
                 break;
             case "encoding":
-                settings.Encoding = Encoding.GetEncoding(value);
+                settings.Encoding =
+                    string.Equals(value, "UTF-8", StringComparison.OrdinalIgnoreCase)
+                        ? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)
+                        : Encoding.GetEncoding(value);
                 break;
             case "omit-xml-declaration":
                 settings.OmitXmlDeclaration =
@@ -4027,6 +4063,7 @@ internal static class JavaCompat
         System.Xml.XmlNode source,
         Stream result)
     {
+        settings.CloseOutput = false;
         using var writer = System.Xml.XmlWriter.Create(result, settings);
         var namespaces = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -4034,6 +4071,7 @@ internal static class JavaCompat
             ["xmlns"] = "http://www.w3.org/2000/xmlns/"
         };
         WriteJavaDomNode(writer, source, namespaces);
+        writer.WriteWhitespace(settings.NewLineChars);
         writer.Flush();
     }
     private static void WriteJavaDomNode(
@@ -4045,7 +4083,17 @@ internal static class JavaCompat
         {
             case System.Xml.XmlNodeType.Document:
                 foreach (System.Xml.XmlNode child in node.ChildNodes)
-                    WriteJavaDomNode(writer, child, inheritedNamespaces);
+                {
+                    if (child is System.Xml.XmlProcessingInstruction instruction)
+                    {
+                        writer.WriteRaw(
+                            $"<?{instruction.Name} {instruction.Value}?>");
+                    }
+                    else
+                    {
+                        WriteJavaDomNode(writer, child, inheritedNamespaces);
+                    }
+                }
                 return;
             case System.Xml.XmlNodeType.Element:
                 var element = (System.Xml.XmlElement)node;
@@ -4053,7 +4101,36 @@ internal static class JavaCompat
                     new Dictionary<string, string>(inheritedNamespaces, StringComparer.Ordinal);
                 if (!string.IsNullOrEmpty(element.NamespaceURI))
                     namespaces[element.Prefix] = element.NamespaceURI;
-                foreach (System.Xml.XmlAttribute attribute in element.Attributes)
+                var orderedAttributes =
+                    element.Attributes
+                        .Cast<System.Xml.XmlAttribute>()
+                        .Where(
+                            attribute =>
+                                string.Equals(
+                                    attribute.Name,
+                                    "xmlns",
+                                    StringComparison.Ordinal) ||
+                                string.Equals(
+                                    attribute.Prefix,
+                                    "xmlns",
+                                    StringComparison.Ordinal))
+                        .OrderBy(
+                            attribute => attribute.LocalName,
+                            StringComparer.Ordinal)
+                        .Concat(
+                            element.Attributes
+                                .Cast<System.Xml.XmlAttribute>()
+                                .Where(
+                                    attribute =>
+                                        !string.Equals(
+                                            attribute.Name,
+                                            "xmlns",
+                                            StringComparison.Ordinal) &&
+                                        !string.Equals(
+                                            attribute.Prefix,
+                                            "xmlns",
+                                            StringComparison.Ordinal)));
+                foreach (System.Xml.XmlAttribute attribute in orderedAttributes)
                 {
                     if (string.Equals(attribute.Name, "xmlns", StringComparison.Ordinal))
                         namespaces[""] = attribute.Value;
@@ -4066,16 +4143,32 @@ internal static class JavaCompat
                 var elementNamespace =
                     ResolveJavaDomNamespace(element.Prefix, element.NamespaceURI, namespaces);
                 writer.WriteStartElement(element.Prefix, element.LocalName, elementNamespace);
-                foreach (System.Xml.XmlAttribute attribute in element.Attributes)
+                foreach (System.Xml.XmlAttribute attribute in orderedAttributes)
                 {
                     if (string.Equals(attribute.Name, "xmlns", StringComparison.Ordinal))
                     {
-                        writer.WriteAttributeString("xmlns", attribute.Value);
+                        if (!inheritedNamespaces.TryGetValue("", out var inheritedDefault) ||
+                            !string.Equals(
+                                inheritedDefault,
+                                attribute.Value,
+                                StringComparison.Ordinal))
+                        {
+                            writer.WriteAttributeString("xmlns", attribute.Value);
+                        }
                     }
                     else if (string.Equals(attribute.Prefix, "xmlns", StringComparison.Ordinal))
                     {
-                        writer.WriteAttributeString(
-                            "xmlns", attribute.LocalName, null, attribute.Value);
+                        if (!inheritedNamespaces.TryGetValue(
+                                attribute.LocalName,
+                                out var inheritedNamespace) ||
+                            !string.Equals(
+                                inheritedNamespace,
+                                attribute.Value,
+                                StringComparison.Ordinal))
+                        {
+                            writer.WriteAttributeString(
+                                "xmlns", attribute.LocalName, null, attribute.Value);
+                        }
                     }
                     else
                     {

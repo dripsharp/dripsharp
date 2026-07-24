@@ -2250,8 +2250,7 @@
                 (sequence-node [target-node (raw ".Count")])
 
                 "executable:org.w3c.dom.NamedNodeMap#item(int)"
-                (sequence-node [target-node (raw ".Item(")
-                                (sequence-node arguments ", ") (raw ")")])
+                (compat-call "XmlAttributeItem" (into [target-node] arguments))
 
                 "executable:org.w3c.dom.Node#getAttributes()"
                 (sequence-node [target-node (raw ".Attributes!")])

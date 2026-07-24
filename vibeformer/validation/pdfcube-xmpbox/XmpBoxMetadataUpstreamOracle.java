@@ -1,9 +1,14 @@
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.List;
@@ -31,6 +36,8 @@ import org.apache.xmpbox.type.ThumbnailType;
 import org.apache.xmpbox.type.TypeMapping;
 import org.apache.xmpbox.type.Types;
 import org.apache.xmpbox.xml.DomXmpParser;
+import org.apache.xmpbox.xml.XmpParsingException;
+import org.apache.xmpbox.xml.XmpSerializer;
 
 public final class XmpBoxMetadataUpstreamOracle {
     private interface ThrowingAction {
@@ -57,6 +64,10 @@ public final class XmpBoxMetadataUpstreamOracle {
             observeDates();
             observeInvalidValues();
             observeFixtures(new File(args[1]));
+            observeDomParsing(new File(args[1]));
+            observePdfaExtensions(new File(args[1]));
+            observeSerializationAndRoundTrips(new File(args[1]), new File(args[0]));
+            observeXmlSecurityAndLifetimes();
         } finally {
             TimeZone.setDefault(original);
         }
@@ -394,6 +405,390 @@ public final class XmpBoxMetadataUpstreamOracle {
                         first.getFormat(),
                         first.getImage(),
                         thumbs.getXMPMediaManagementSchema().getDocumentID()));
+    }
+
+    private static void observeDomParsing(File resources) throws Exception {
+        String[] valid = {
+            "org/apache/xmpbox/parser/structured_recursive.xml",
+            "org/apache/xmpbox/parser/empty_list.xml",
+            "org/apache/xmpbox/xml/PDFBOX-5649.xml",
+            "org/apache/xmpbox/xml/PDFBOX-5835.xml",
+            "validxmp/PDFBOX-6099.xmp",
+            "validxmp/attr_as_props.xml",
+            "validxmp/only_space_fields.xmp",
+            "validxmp/override_ns.rdf"
+        };
+        for (String path : valid) {
+            XMPMetadata metadata = parseFile(resources, path, true);
+            observe(
+                    "parser",
+                    path,
+                    join(
+                            metadata.getAllSchemas().size(),
+                            metadata.getXpacketId(),
+                            metadata.getEndXPacket()));
+        }
+
+        String[] invalid = {
+            "invalidxmp/invalidroot.xml",
+            "invalidxmp/invalidroot2.xml",
+            "invalidxmp/noroot.xml",
+            "invalidxmp/noxpacket.xml",
+            "invalidxmp/noxpacketend.xml",
+            "invalidxmp/tworoot.xml",
+            "invalidxmp/undefinedpropertyindefinedschema.xml",
+            "invalidxmp/undefinedschema.xml",
+            "invalidxmp/undefinedstructuredindefinedschema.xml"
+        };
+        for (String path : invalid) {
+            observe(
+                    "parser-failure",
+                    path,
+                    parsingFailure(() -> parseFile(resources, path, true)));
+        }
+
+        XMPMetadata prism = parseFile(resources, "undefinedxmp/prism.xmp", false);
+        observe(
+                "strict-lenient",
+                "undefined-schema",
+                join(
+                        parsingFailure(
+                                () -> parseFile(resources, "undefinedxmp/prism.xmp", true)),
+                        prism.getSchema("http://prismstandard.org/namespaces/basic/2.0/")
+                                .getUnqualifiedTextPropertyValue("aggregationType")));
+
+        XMPMetadata noPacket = parseFile(resources, "invalidxmp/noxpacket.xml", false);
+        observe(
+                "strict-lenient",
+                "missing-packet",
+                join(
+                        parsingFailure(
+                                () -> parseFile(resources, "invalidxmp/noxpacket.xml", true)),
+                        noPacket.getXpacketId(),
+                        noPacket.getEndXPacket(),
+                        noPacket.getAllSchemas().size()));
+
+        String duplicate =
+                packet(
+                        "<rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\" rdf:about=\"\">"
+                                + "<dc:format>first</dc:format>"
+                                + "<dc:format>second</dc:format>"
+                                + "</rdf:Description>");
+        XMPMetadata duplicateMetadata =
+                new DomXmpParser().parse(duplicate.getBytes(StandardCharsets.UTF_8));
+        observe(
+                "parser",
+                "duplicate-properties",
+                join(
+                        duplicateMetadata.getDublinCoreSchema().getAllProperties().size(),
+                        duplicateMetadata.getDublinCoreSchema().getFormat()));
+
+        String namespaceConflict =
+                "<?xpacket begin=\"\" id=\"id\"?>"
+                        + "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">"
+                        + "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+                        + "<rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\""
+                        + " xmlns:dc=\"urn:conflict\"/>"
+                        + "</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+        observe(
+                "parser-failure",
+                "namespace-conflict",
+                parsingFailure(
+                        () ->
+                                new DomXmpParser()
+                                        .parse(
+                                                namespaceConflict.getBytes(
+                                                        StandardCharsets.UTF_8))));
+    }
+
+    private static void observePdfaExtensions(File resources) throws Exception {
+        XMPMetadata dematbox =
+                parseFile(resources, "org/apache/xmpbox/xml/PDFBOX-3882-dematbox.xml", true);
+        XMPSchema extension =
+                dematbox.getSchema("http://www.sagemcom.com/documents/xmlns/dematbox");
+        ArrayProperty pageInfo = (ArrayProperty) extension.getProperty("PageInfo");
+        AbstractStructuredType page =
+                (AbstractStructuredType) pageInfo.getAllProperties().get(0);
+        observe(
+                "extension",
+                "defined-structured-type",
+                join(
+                        extension.getPrefix(),
+                        pageInfo.getArrayType(),
+                        page.getProperty("number").toString(),
+                        page.getProperty("origNumber").toString()));
+
+        String isartor =
+                new String(
+                        Files.readAllBytes(
+                                new File(
+                                                resources,
+                                                "org/apache/xmpbox/parser/isartorStyleXMPOK.xml")
+                                        .toPath()),
+                        StandardCharsets.UTF_8);
+        String missingProperty =
+                isartor.replaceFirst(
+                        "(?s)<pdfaSchema:property>.*?</pdfaSchema:property>", "");
+        DomXmpParser lenient = new DomXmpParser();
+        lenient.setStrictParsing(false);
+        XMPMetadata lenientMetadata =
+                lenient.parse(missingProperty.getBytes(StandardCharsets.UTF_8));
+        observe(
+                "extension",
+                "missing-property",
+                join(
+                        parsingFailure(
+                                () ->
+                                        new DomXmpParser()
+                                                .parse(
+                                                        missingProperty.getBytes(
+                                                                StandardCharsets.UTF_8))),
+                        lenientMetadata.getAllSchemas().size()));
+
+        String unknownType =
+                isartor.replaceFirst(
+                        "(?s)<pdfaProperty:valueType>.*?</pdfaProperty:valueType>",
+                        "<pdfaProperty:valueType>Bogus</pdfaProperty:valueType>");
+        observe(
+                "extension",
+                "unknown-value-type",
+                parsingFailure(
+                        () ->
+                                new DomXmpParser()
+                                        .parse(
+                                                unknownType.getBytes(
+                                                        StandardCharsets.UTF_8))));
+
+        String invalidNamespace =
+                packet(
+                        "<rdf:Description xmlns:pdfaExtension=\"urn:wrong\" rdf:about=\"\">"
+                                + "<pdfaExtension:schemas><rdf:Bag/></pdfaExtension:schemas>"
+                                + "</rdf:Description>");
+        observe(
+                "extension",
+                "invalid-namespace",
+                parsingFailure(
+                        () ->
+                                new DomXmpParser()
+                                        .parse(
+                                                invalidNamespace.getBytes(
+                                                        StandardCharsets.UTF_8))));
+    }
+
+    private static void observeSerializationAndRoundTrips(File resources, File trace)
+            throws Exception {
+        XMPMetadata metadata =
+                XMPMetadata.createXMPMetadata("\uFEFF", "packet-id", "4096", "UTF-8");
+        metadata.setEndXPacket("r");
+        DublinCoreSchema dc = metadata.createAndAddDublinCoreSchema();
+        dc.setTitle("x-default", "A <tag> & \"quote\"");
+        dc.setTitle("fr-FR", "Caf\u00E9");
+        dc.addCreator("first");
+        dc.addCreator("second");
+
+        TrackingOutputStream first = new TrackingOutputStream();
+        new XmpSerializer().serialize(metadata, first, true);
+        byte[] firstBytes = first.toByteArray();
+        Files.write(
+                new File(trace.getParentFile(), "upstream-programmatic.xml").toPath(),
+                firstBytes);
+        TrackingOutputStream second = new TrackingOutputStream();
+        new XmpSerializer().serialize(metadata, second, true);
+        byte[] secondBytes = second.toByteArray();
+        String serialized = new String(firstBytes, StandardCharsets.UTF_8);
+        observe(
+                "serialization",
+                "deterministic-packet",
+                join(
+                        normalizedSha256(firstBytes),
+                        normalizedSha256(secondBytes),
+                        Arrays.equals(firstBytes, secondBytes),
+                        firstBytes.length,
+                        startsWithUtf8Bom(firstBytes),
+                        serialized.startsWith("<?xpacket begin=\"\uFEFF\" id=\"packet-id\"?>"),
+                        serialized.trim().endsWith("<?xpacket end=\"r\"?>"),
+                        !serialized.contains("<?xml"),
+                        serialized.endsWith("\n")));
+        observe(
+                "serialization",
+                "escaping-and-order",
+                join(
+                        serialized.contains("A &lt;tag&gt; &amp; \"quote\""),
+                        serialized.indexOf(">first<") < serialized.indexOf(">second<"),
+                        serialized.indexOf("x-default") < serialized.indexOf("fr-FR"),
+                        serialized.contains("xmlns:dc=\"http://purl.org/dc/elements/1.1/\"")));
+        observe(
+                "serialization",
+                "programmatic-bytes",
+                Base64.getEncoder().encodeToString(firstBytes));
+
+        ByteArrayOutputStream noPacket = new ByteArrayOutputStream();
+        new XmpSerializer().serialize(metadata, noPacket, false);
+        String noPacketXml = noPacket.toString(StandardCharsets.UTF_8.name());
+        observe(
+                "serialization",
+                "without-packet",
+                join(
+                        !noPacketXml.contains("xpacket"),
+                        noPacketXml.startsWith("<x:xmpmeta"),
+                        normalizedSha256(noPacket.toByteArray())));
+
+        XMPMetadata roundTrip = new DomXmpParser().parse(firstBytes);
+        observe(
+                "round-trip",
+                "programmatic",
+                join(
+                        roundTrip.getAllSchemas().size(),
+                        roundTrip.getDublinCoreSchema().getTitle(),
+                        roundTrip.getDublinCoreSchema().getTitle("fr-FR"),
+                        String.join(",", roundTrip.getDublinCoreSchema().getCreators()),
+                        roundTrip.getEndXPacket()));
+
+        String[] fixturePaths = {
+            "org/apache/xmpbox/parser/structured_recursive.xml",
+            "org/apache/xmpbox/parser/empty_list.xml",
+            "org/apache/xmpbox/parser/AltBagSeqTest.xml",
+            "org/apache/xmpbox/parser/ThumbisartorStyle.xml",
+            "validxmp/attr_as_props.xml",
+            "validxmp/only_space_fields.xmp"
+        };
+        for (String path : fixturePaths) {
+            XMPMetadata parsed = parseFile(resources, path, true);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            new XmpSerializer().serialize(parsed, output, true);
+            Files.write(
+                    new File(
+                                    trace.getParentFile(),
+                                    "upstream-" + path.replace('/', '_'))
+                            .toPath(),
+                    output.toByteArray());
+            XMPMetadata reparsed = new DomXmpParser().parse(output.toByteArray());
+            observe(
+                    "round-trip",
+                    path,
+                    join(
+                            normalizedSha256(output.toByteArray()),
+                            parsed.getAllSchemas().size(),
+                            reparsed.getAllSchemas().size()));
+        }
+    }
+
+    private static void observeXmlSecurityAndLifetimes() throws Exception {
+        String internalEntity =
+                "<?xpacket begin=\"\" id=\"id\"?>"
+                        + "<!DOCTYPE x:xmpmeta [<!ENTITY injected \"boom\">]>"
+                        + "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">"
+                        + "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+                        + "<rdf:Description rdf:about=\"\">&injected;</rdf:Description>"
+                        + "</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+        String externalEntity =
+                "<?xpacket begin=\"\" id=\"id\"?>"
+                        + "<!DOCTYPE x:xmpmeta [<!ENTITY injected SYSTEM \"file:///etc/passwd\">]>"
+                        + "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">"
+                        + "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+                        + "<rdf:Description rdf:about=\"\">&injected;</rdf:Description>"
+                        + "</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+        observe(
+                "security",
+                "doctype-and-entities",
+                join(
+                        parsingFailure(
+                                () ->
+                                        new DomXmpParser()
+                                                .parse(
+                                                        internalEntity.getBytes(
+                                                                StandardCharsets.UTF_8))),
+                        parsingFailure(
+                                () ->
+                                        new DomXmpParser()
+                                                .parse(
+                                                        externalEntity.getBytes(
+                                                                StandardCharsets.UTF_8)))));
+
+        TrackingInputStream successInput =
+                new TrackingInputStream(packet("").getBytes(StandardCharsets.UTF_8));
+        new DomXmpParser().parse(successInput);
+        TrackingInputStream failureInput =
+                new TrackingInputStream("<broken".getBytes(StandardCharsets.UTF_8));
+        parsingFailure(() -> new DomXmpParser().parse(failureInput));
+        TrackingOutputStream output = new TrackingOutputStream();
+        new XmpSerializer().serialize(XMPMetadata.createXMPMetadata(), output, true);
+        observe(
+                "lifetime",
+                "caller-owned-streams",
+                join(!successInput.closed, !failureInput.closed, !output.closed));
+    }
+
+    private static XMPMetadata parseFile(File resources, String path, boolean strict)
+            throws Exception {
+        DomXmpParser parser = new DomXmpParser();
+        parser.setStrictParsing(strict);
+        try (FileInputStream input = new FileInputStream(new File(resources, path))) {
+            return parser.parse(input);
+        }
+    }
+
+    private static String packet(String descriptions) {
+        return "<?xpacket begin=\"\" id=\"id\"?>"
+                + "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">"
+                + "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+                + descriptions
+                + "</rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+    }
+
+    private static String parsingFailure(ThrowingAction action) {
+        try {
+            action.run();
+            return "none";
+        } catch (XmpParsingException exception) {
+            return exception.getErrorType().toString();
+        } catch (Exception exception) {
+            return exception.getClass().getSimpleName();
+        }
+    }
+
+    private static String normalizedSha256(byte[] bytes) throws Exception {
+        String normalized =
+                new String(bytes, StandardCharsets.UTF_8).replace("\r\n", "\n");
+        byte[] digest =
+                MessageDigest.getInstance("SHA-256")
+                        .digest(normalized.getBytes(StandardCharsets.UTF_8));
+        StringBuilder result = new StringBuilder();
+        for (byte value : digest) {
+            result.append(String.format("%02X", value & 0xFF));
+        }
+        return result.toString();
+    }
+
+    private static boolean startsWithUtf8Bom(byte[] bytes) {
+        return bytes.length >= 3
+                && (bytes[0] & 0xFF) == 0xEF
+                && (bytes[1] & 0xFF) == 0xBB
+                && (bytes[2] & 0xFF) == 0xBF;
+    }
+
+    private static final class TrackingInputStream extends ByteArrayInputStream {
+        private boolean closed;
+
+        private TrackingInputStream(byte[] bytes) {
+            super(bytes);
+        }
+
+        @Override
+        public void close() throws java.io.IOException {
+            closed = true;
+            super.close();
+        }
+    }
+
+    private static final class TrackingOutputStream extends ByteArrayOutputStream {
+        private boolean closed;
+
+        @Override
+        public void close() throws java.io.IOException {
+            closed = true;
+            super.close();
+        }
     }
 
     private static String failureKind(ThrowingAction action) {

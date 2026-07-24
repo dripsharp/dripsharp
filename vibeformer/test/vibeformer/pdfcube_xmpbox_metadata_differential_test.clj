@@ -22,12 +22,20 @@
          "lang-alt\tlocale\tvalue\n"
          "date\toffset\tvalue\n"
          "invalid\tvalues\tvalue\n"
-         "fixture\tupstream\tvalue\n")
+         "fixture\tupstream\tvalue\n"
+         "parser\tvalid\tvalue\n"
+         "parser-failure\tinvalid\tvalue\n"
+         "strict-lenient\tmode\tvalue\n"
+         "extension\tpdfa\tvalue\n"
+         "serialization\tbytes\tvalue\n"
+         "round-trip\tmetadata\tvalue\n"
+         "security\tdoctype\tvalue\n"
+         "lifetime\tstreams\tvalue\n")
         summary (xmpbox-differential/trace-summary (trace-file contents))]
-    (is (= 9 (:observations summary)))
+    (is (= 17 (:observations summary)))
     (is (= xmpbox-differential/required-trace-families
            (set (:families summary))))
-    (is (= 9 (count (set (:identities summary)))))))
+    (is (= 17 (count (set (:identities summary)))))))
 
 (deftest trace-validation-fails-closed
   (testing "a missing behavior family is rejected"
