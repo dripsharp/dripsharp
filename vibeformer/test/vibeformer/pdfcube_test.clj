@@ -5,7 +5,9 @@
             [vibeformer.harness :as harness]
             [vibeformer.java-project :as project-emission]
             [vibeformer.paths :as paths]
+            [vibeformer.pdfcube.io-differential :as io-differential]
             [vibeformer.pdfcube.java-project :as pdfcube]
+            [vibeformer.pdfcube.source-sync :as source-sync]
             [vibeformer.process :as process]
             [vibeformer.public-surface :as public-surface]
             [vibeformer.spoon :as spoon])
@@ -41,6 +43,80 @@
     (thunk)
     nil
     (catch clojure.lang.ExceptionInfo error error)))
+
+(deftest stable-pdfbox-release-selection-is-numeric-monotonic-and-fail-closed
+  (let [baseline
+        {:version "3.0.8"
+         :revision "8888888888888888888888888888888888888888"}
+        tags
+        (source-sync/parse-remote-tags
+         (str
+          "2222222222222222222222222222222222222222\trefs/tags/2.0.37\n"
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\trefs/tags/3.0.8\n"
+          "8888888888888888888888888888888888888888\trefs/tags/3.0.8^{}\n"
+          "9999999999999999999999999999999999999999\trefs/tags/3.0.9-RC1\n"
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/3.0.9\n"
+          "1010101010101010101010101010101010101010\trefs/tags/3.0.10\n"
+          "cccccccccccccccccccccccccccccccccccccccc\trefs/tags/3.1.0-M1\n"))
+        selected (source-sync/select-stable-release baseline tags)]
+    (is (= ["2.0.37" "3.0.8" "3.0.9" "3.0.10"]
+           (mapv :version tags)))
+    (is (= {:version "3.0.10"
+            :components [(biginteger 3) (biginteger 0) (biginteger 10)]
+            :revision "1010101010101010101010101010101010101010"}
+           selected))
+    (testing "greater stable patch, minor, and major releases advance"
+      (doseq [[version revision]
+              [["3.0.9" "9999999999999999999999999999999999999999"]
+               ["3.1.0" "1111111111111111111111111111111111111111"]
+               ["4.0.0" "4444444444444444444444444444444444444444"]]]
+        (is (= version
+               (:version
+                (source-sync/select-stable-release
+                 baseline
+                 [baseline {:version version :revision revision}]))))))
+    (testing "lower maintained lines and prereleases never replace the baseline"
+      (is (= baseline
+             (dissoc
+              (source-sync/select-stable-release
+               baseline
+               (source-sync/parse-remote-tags
+                (str
+                 "2222222222222222222222222222222222222222\trefs/tags/2.0.37\n"
+                 "8888888888888888888888888888888888888888\trefs/tags/3.0.8\n"
+                 "9999999999999999999999999999999999999999\trefs/tags/4.0.0-SNAPSHOT\n")))
+              :components))))
+    (testing "a moved baseline tag is rejected"
+      (let [error
+            (caught
+             #(source-sync/select-stable-release
+               baseline
+               [{:version "3.0.8"
+                 :revision "7777777777777777777777777777777777777777"}]))]
+        (is (= :pdfbox-baseline-tag-moved (:kind (ex-data error))))))))
+
+(deftest five-profiles-pin-the-selected-pdfbox-release-and-commit
+  (let [workspace (paths/workspace-root)
+        family (pdfcube/product-family)
+        version (:source-version family)
+        revision (:source-revision family)
+        prepared (mapv read-profile-and-destination profile-names)]
+    (is (= "3.0.8" version))
+    (is (= "9286e47d89d6877005c9d2d0f2fd38793a62519a" revision))
+    (is (= revision io-differential/pinned-revision))
+    (doseq [{:keys [profile destination]} prepared]
+      (is (= revision (:revision profile)))
+      (is (= revision (get-in destination [:package :repository-commit])))
+      (is (str/ends-with? (:maven-project-id profile) (str ":" version)))
+      (is (str/ends-with? (:source-project-id destination) (str ":" version)))
+      (is (= (str version "-vibeformer.0")
+             (get-in destination [:package :version]))))
+    (is (= revision
+           (str/trim
+            (:output
+             (process/run!
+              {:command ["git" "rev-parse" "HEAD"]
+               :directory (paths/resolve-path workspace "research/pdfbox")})))))))
 
 (defn- model!
   ([source-relative source]

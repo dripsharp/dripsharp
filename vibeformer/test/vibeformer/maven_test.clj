@@ -2,7 +2,10 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [vibeformer.maven :as maven]
+            [vibeformer.harness :as harness]
+            [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths]
+            [vibeformer.pdfcube.java-project :as pdfcube]
             [vibeformer.project-input :as project-input]
             [vibeformer.spoon :as spoon])
   (:import [clojure.lang ExceptionInfo]
@@ -186,11 +189,21 @@
     (is (seq (:command (ex-data error))))))
 
 (deftest pinned-pdfbox-reactor-discovers-selected-production-trees
-  (let [reactor
+  (let [workspace (paths/workspace-root)
+        profiles
+        (mapv harness/read-profile
+              (repeat workspace)
+              ["pdfcube-io" "pdfcube-fontbox" "pdfcube-xmpbox"
+               "pdfcube-pdfbox" "pdfcube-preflight"])
+        destinations
+        (mapv #(java-project/read-configuration
+                workspace (:destination-config %))
+              profiles)
+        reactor
         (maven/discover-reactor!
          {:project-root "research/pdfbox"
-          :selected-projects [":pdfbox-io" ":fontbox" ":xmpbox"
-                              ":pdfbox" ":preflight"]})
+          :selected-projects
+          (mapv (comp first :maven-selected-projects) profiles)})
         expected
         {"pdfbox-io" [18 0]
          "fontbox" [143 93]
@@ -206,6 +219,31 @@
                      [artifact input]))))
               reactor)]
     (is (= (set (keys expected)) (set (keys selected))))
+    (is (= (set (map :maven-project-id profiles))
+           (set (map :project-id (vals selected)))))
+    (doseq [[profile destination] (map vector profiles destinations)
+            :let [input (maven/project-by-id!
+                         reactor (:maven-project-id profile))]]
+      (testing (str (:profile profile) " effective dependency contract")
+        ((get-in (pdfcube/rule-bundle)
+                 [:orchestration :validate-profile!])
+         {:workspace-root workspace
+          :profile profile
+          :configuration destination})
+        ((get-in (pdfcube/rule-bundle)
+                 [:orchestration :validate-project-input!])
+         {:workspace-root workspace
+          :profile profile
+          :configuration destination
+          :project-input input})
+        (is (vector? (:generated-production-sources input)))
+        (is (vector? (:production-resources input)))
+        (is (every? #{:compile :runtime}
+                    (map :scope (:project-dependencies input))))
+        (is (every? #{:compile :runtime}
+                    (map :scope (:external-dependencies input))))
+        (is (every? paths/exists?
+                    (project-input/compile-classpath input)))))
     (doseq [[artifact [source-count resource-count]] expected
             :let [input (get selected artifact)]]
       (testing artifact
