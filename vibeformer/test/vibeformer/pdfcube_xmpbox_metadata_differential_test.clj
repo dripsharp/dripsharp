@@ -60,3 +60,14 @@
               (catch clojure.lang.ExceptionInfo caught caught))]
         (is (= :pdfcube-xmpbox-metadata-differential-failed
                (:kind (ex-data error))))))))
+
+(deftest supported-host-matrix-is-exact
+  (is (= #{["windows" "x64"] ["windows" "arm64"]
+           ["linux" "x64"] ["linux" "arm64"]
+           ["macos" "x64"] ["macos" "arm64"]}
+         (set (map (juxt :os :architecture)
+                   xmpbox-differential/supported-hosts))))
+  (is (= #{"windows-2025" "windows-11-arm"
+           "ubuntu-24.04" "ubuntu-24.04-arm"
+           "macos-15-intel" "macos-15"}
+         (set (map :runner xmpbox-differential/supported-hosts)))))

@@ -82,6 +82,36 @@ internal static class Program
                    StringComparison.Ordinal),
             "DOM parsing must preserve ordered collection values.");
 
+        parsedDublinCore.SetTitle("en-US", "Mutated package metadata");
+        parsedDublinCore.RemoveCreator("Vibeformer first");
+        Assert(string.Equals(
+                   parsedDublinCore.GetTitle("en-US"),
+                   "Mutated package metadata",
+                   StringComparison.Ordinal) &&
+               parsedDublinCore.GetCreators().Count == 1 &&
+               string.Equals(
+                   parsedDublinCore.GetCreators()[0],
+                   "Vibeformer second",
+                   StringComparison.Ordinal),
+            "Parsed metadata must support property replacement and removal.");
+        AssertBadFieldFailure(
+            () => parsedDublinCore.SetAbout(
+                new PdfCube.XmpBox.Type.Attribute(
+                    "urn:pdfcube:invalid",
+                    "not-about",
+                    "value")),
+            "Schema validation must reject an invalid rdf:about attribute.");
+        using var mutatedOutput = new MemoryStream();
+        new XmpSerializer().Serialize(parsed, mutatedOutput, withXpacket: true);
+        var reparsedMutation =
+            new DomXmpParser().Parse(new MemoryStream(mutatedOutput.ToArray()));
+        Assert(string.Equals(
+                   reparsedMutation.GetDublinCoreSchema()!.GetTitle("en-US"),
+                   "Mutated package metadata",
+                   StringComparison.Ordinal) &&
+               reparsedMutation.GetDublinCoreSchema()!.GetCreators().Count == 1,
+            "Mutated metadata must survive a package-only serialization round trip.");
+
         using var withoutPacket = new MemoryStream();
         new XmpSerializer().Serialize(metadata, withoutPacket, withXpacket: false);
         var withoutPacketBytes = withoutPacket.ToArray();
@@ -168,6 +198,18 @@ internal static class Program
             Assert(ReferenceEquals(exception.GetErrorType(), expected), message);
             Assert(!input.CanRead,
                 "Failed DOM parsing must still close the consumed input stream.");
+        }
+    }
+
+    private static void AssertBadFieldFailure(Action action, string message)
+    {
+        try
+        {
+            action();
+            throw new InvalidOperationException(message);
+        }
+        catch (PdfCube.XmpBox.Type.BadFieldValueException)
+        {
         }
     }
 

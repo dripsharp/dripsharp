@@ -12,6 +12,9 @@ using PdfCube.XmpBox;
 using PdfCube.XmpBox.Schema;
 using PdfCube.XmpBox.Type;
 using PdfCube.XmpBox.Xml;
+using Architecture = System.Runtime.InteropServices.Architecture;
+using OSPlatform = System.Runtime.InteropServices.OSPlatform;
+using RuntimeInformation = System.Runtime.InteropServices.RuntimeInformation;
 
 internal static class Program
 {
@@ -19,10 +22,11 @@ internal static class Program
 
     private static void Main(string[] args)
     {
-        if (args.Length != 2)
+        if (args.Length is not (2 or 3 or 5))
         {
             throw new ArgumentException(
-                "Expected output trace and XmpBox test-resource directory.");
+                "Expected output trace, XmpBox test-resource directory, " +
+                "optional canonical trace, and optional OS/architecture.");
         }
 
         CultureInfo originalCulture = CultureInfo.CurrentCulture;
@@ -54,9 +58,13 @@ internal static class Program
             TimeZoneInfo.ClearCachedData();
         }
 
-        File.WriteAllLines(args[0], Observations);
+        File.WriteAllLines(args[0], Observations, new UTF8Encoding(false));
+        if (args.Length >= 3)
+            ValidateCanonical(args[2]);
+        if (args.Length == 5)
+            ValidateHost(args[3], args[4]);
         Console.WriteLine(
-            "Generated PdfCube.XmpBox metadata probe passed: " +
+            "PdfCube.XmpBox package differential passed: " +
             Observations.Count.ToString(CultureInfo.InvariantCulture) +
             " observations.");
     }
@@ -868,6 +876,64 @@ internal static class Program
         {
             return exception.GetType().Name;
         }
+    }
+
+    private static void ValidateCanonical(string canonicalPath)
+    {
+        string[] expected = File.ReadAllLines(canonicalPath, Encoding.UTF8);
+        if (!expected.SequenceEqual(Observations, StringComparer.Ordinal))
+        {
+            int mismatch =
+                Enumerable.Range(
+                        0,
+                        Math.Max(expected.Length, Observations.Count))
+                    .First(
+                        index =>
+                            index >= expected.Length ||
+                            index >= Observations.Count ||
+                            !string.Equals(
+                                expected[index],
+                                Observations[index],
+                                StringComparison.Ordinal));
+            throw new InvalidOperationException(
+                $"Canonical differential mismatch at line {mismatch + 1}: " +
+                $"expected `{At(expected, mismatch)}`, " +
+                $"observed `{At(Observations, mismatch)}`.");
+        }
+    }
+
+    private static void ValidateHost(
+        string expectedOs,
+        string expectedArchitecture)
+    {
+        bool osMatches = expectedOs switch
+        {
+            "linux" => RuntimeInformation.IsOSPlatform(OSPlatform.Linux),
+            "windows" => RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
+            "macos" => RuntimeInformation.IsOSPlatform(OSPlatform.OSX),
+            _ => false
+        };
+        bool architectureMatches = expectedArchitecture switch
+        {
+            "x64" => RuntimeInformation.ProcessArchitecture == Architecture.X64,
+            "arm64" => RuntimeInformation.ProcessArchitecture == Architecture.Arm64,
+            _ => false
+        };
+        if (!osMatches || !architectureMatches)
+        {
+            throw new InvalidOperationException(
+                $"Expected {expectedOs}/{expectedArchitecture}, observed " +
+                $"{RuntimeInformation.OSDescription}/" +
+                $"{RuntimeInformation.ProcessArchitecture}.");
+        }
+        Console.WriteLine(
+            $"PdfCube.XmpBox host smoke passed: " +
+            $"{expectedOs}/{expectedArchitecture}.");
+    }
+
+    private static string At(IReadOnlyList<string> values, int index)
+    {
+        return index < values.Count ? values[index] : "<missing>";
     }
 
     private static void Observe(string family, string id, string value)

@@ -1,19 +1,28 @@
 (ns vibeformer.pdfcube.xmpbox-metadata-differential
-  "Pinned PDFBox 3.0.8 versus generated PdfCube.XmpBox metadata differential."
+  "Pinned PDFBox 3.0.8 versus package-only PdfCube.XmpBox differential proof."
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [vibeformer.compiler :as compiler]
             [vibeformer.differential :as differential]
             [vibeformer.harness :as harness]
+            [vibeformer.packaging :as packaging]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files OpenOption Path]
+           [java.nio.file Files OpenOption Path StandardCopyOption
+            StandardOpenOption]
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
   "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+
+(def supported-hosts
+  [{:os "windows" :architecture "x64" :runner "windows-2025"}
+   {:os "windows" :architecture "arm64" :runner "windows-11-arm"}
+   {:os "linux" :architecture "x64" :runner "ubuntu-24.04"}
+   {:os "linux" :architecture "arm64" :runner "ubuntu-24.04-arm"}
+   {:os "macos" :architecture "x64" :runner "macos-15-intel"}
+   {:os "macos" :architecture "arm64" :runner "macos-15"}])
 
 (def required-trace-families
   #{"namespace" "registry" "simple" "structured" "array" "lang-alt"
@@ -78,19 +87,32 @@
      :families (vec (sort families))
      :identities identities}))
 
-(defn- assert-match! [expected actual]
+(defn- assert-match! [subject expected actual]
   (let [expected-summary (trace-summary expected)
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! "Generated PdfCube.XmpBox metadata behavior differs from PDFBox 3.0.8"
+      (fail! (str subject " differs from the pinned PDFBox 3.0.8 oracle")
              {:expected (str expected)
               :actual (str actual)
               :comparison comparison
               :mismatch mismatch}))
     (when-not (= expected-summary actual-summary)
-      (fail! "Generated XmpBox metadata trace coverage differs from the oracle"
+      (fail! (str subject " trace coverage differs from the oracle")
              {:expected expected-summary :actual actual-summary}))
+    comparison))
+
+(defn- prove-perturbation! [^Path oracle ^Path perturbed]
+  (Files/copy oracle perturbed
+              (into-array StandardCopyOption
+                          [StandardCopyOption/REPLACE_EXISTING]))
+  (Files/writeString perturbed
+                     "failure\tperturbed-comparator\tvalue\n"
+                     (into-array OpenOption [StandardOpenOption/APPEND]))
+  (let [comparison (differential/compare-results oracle perturbed)]
+    (when-not (:mismatch comparison)
+      (fail! "XmpBox differential comparator missed a deliberate perturbation"
+             {:oracle (str oracle) :perturbed (str perturbed)}))
     comparison))
 
 (defn- java-tools [^Path root generation]
@@ -147,104 +169,136 @@
                    :directory root
                    :timeout-ms 120000})))
 
-(defn- xml-escape [value]
-  (-> (str value)
-      (str/replace "&" "&amp;")
-      (str/replace "\"" "&quot;")
-      (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;")))
-
-(defn- run-generated-probe!
-  [run-command! ^Path root build-proof ^Path proof-root ^Path output
-   ^Path resources]
-  (let [generation (:generation build-proof)
-        generated-project
-        (get-in generation [:emission :project-file])
-        probe-source
+(defn- run-package-probe!
+  [run-command! ^Path root package-proof ^Path output ^Path resources]
+  (let [generation (get-in package-proof [:verification :generation])
+        consumer-profile (get-in generation [:destination :package-consumer])
+        consumer-root (:consumer-root package-proof)
+        project
+        (paths/resolve-path consumer-root (:project-file consumer-profile))
+        source (paths/resolve-path consumer-root "Program.cs")
+        probe
         (paths/resolve-path root "vibeformer" "validation"
                             "pdfcube-xmpbox"
-                            "PdfCube.XmpBox.MetadataProbe.cs")
-        probe-root
-        (doto (paths/resolve-path proof-root "dotnet-probe")
-          (Files/createDirectories (make-array FileAttribute 0)))
-        probe-project
-        (paths/resolve-path probe-root "PdfCube.XmpBox.MetadataProbe.csproj")]
-    (write-text!
-     probe-project
-     (str
-      "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
-      "  <PropertyGroup>\n"
-      "    <OutputType>Exe</OutputType>\n"
-      "    <TargetFramework>net10.0</TargetFramework>\n"
-      "    <Nullable>enable</Nullable>\n"
-      "    <ImplicitUsings>disable</ImplicitUsings>\n"
-      "    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>\n"
-      "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
-      "  </PropertyGroup>\n"
-      "  <ItemGroup>\n"
-      "    <Compile Include=\"" (xml-escape probe-source)
-      "\" Link=\"Program.cs\" />\n"
-      "    <ProjectReference Include=\"" (xml-escape generated-project)
-      "\" />\n"
-      "  </ItemGroup>\n"
-      "</Project>\n"))
-    (run-command! {:command ["dotnet" "build" (str probe-project)
-                             "--nologo" "--configuration" "Release"
-                             "--verbosity:minimal" "--no-incremental"
-                             "-p:RestoreIgnoreFailedSources=true"
-                             "-warnaserror"]
-                   :directory probe-root
+                            "PdfCube.XmpBox.MetadataProbe.cs")]
+    (Files/copy probe source
+                (into-array StandardCopyOption
+                            [StandardCopyOption/REPLACE_EXISTING]))
+    (run-command! {:command ["dotnet" "build" (str project)
+                             "--nologo" "--verbosity:minimal"
+                             "--no-restore" "--no-incremental" "-warnaserror"]
+                   :directory consumer-root
                    :timeout-ms 300000})
-    (run-command! {:command ["dotnet" "run" "--project" (str probe-project)
-                             "--configuration" "Release"
+    (run-command! {:command ["dotnet" "run" "--project" (str project)
                              "--no-build" "--no-restore" "--"
                              (str output) (str resources)]
-                   :directory probe-root
+                   :directory consumer-root
                    :timeout-ms 120000})))
 
-(defn- validate-build-contract! [build-proof]
-  (let [generation (:generation build-proof)
+(defn- current-host []
+  (let [os-name (str/lower-case (System/getProperty "os.name" ""))
+        architecture (str/lower-case (System/getProperty "os.arch" ""))
+        os (cond
+             (str/includes? os-name "win") "windows"
+             (str/includes? os-name "mac") "macos"
+             (str/includes? os-name "linux") "linux"
+             :else os-name)
+        architecture (case architecture
+                       "amd64" "x64"
+                       "x86_64" "x64"
+                       "aarch64" "arm64"
+                       "arm64" "arm64"
+                       architecture)]
+    {:os os :architecture architecture}))
+
+(defn- validate-package-contract! [package-proof]
+  (let [generation (get-in package-proof [:verification :generation])
         project-input (:project-input generation)
+        destination (:destination generation)
+        identity (:identity package-proof)
+        inspection (:inspection package-proof)
+        primary (first (filter :primary? (:packages package-proof)))
+        resource-proof (:resource-proof primary)
+        compiled-surface
+        (get-in package-proof [:verification :public-surface])
         public-metadata (get-in generation [:emission :public-metadata])
         xmpbox-surface
         (first
          (filter #(= "PdfCube.XmpBox" (:assembly %))
-                 (get-in build-proof [:public-surface :assemblies])))
+                 (:assemblies compiled-surface)))
+        public-stubs
+        (count
+         (filter #(= :public-stub
+                     (get-in % [:generated :implementation]))
+                 (:rows public-metadata)))
         expected
         {:project-id "org.apache.pdfbox:xmpbox:3.0.8"
          :revision pinned-revision
          :production-sources 74
          :generated-production-sources 0
-         :public-rows 1199
-         :compiled-contract-members 1199}
+         :clean-builds 2
+         :package-id "PdfCube.XmpBox"
+         :version "3.0.8-vibeformer.0"
+         :target-framework "net10.0"
+         :assembly
+         {:name "PdfCube.XmpBox" :version "3.0.8.0"
+          :dependency-assemblies []}
+         :dependencies
+         [{:id "Microsoft.Extensions.Logging.Abstractions"
+           :version "10.0.0"}]
+         :resource-count 0
+         :package-files
+         [{:kind :license :path "LICENSE.txt"
+           :sha256
+           "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
+          {:kind :notice :path "NOTICE.txt"
+           :sha256
+           "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+         :public-contract
+         {:strategy :complete-accessible-java-library
+          :required-rows 1199
+          :compiled-contract-members 1199
+          :public-stubs 0}}
         actual
         {:project-id (:project-id project-input)
          :revision (get-in generation [:source-project :revision])
          :production-sources (count (:production-sources project-input))
          :generated-production-sources
          (count (:generated-production-sources project-input))
-         :public-rows (:required-rows public-metadata)
-         :compiled-contract-members (:contract-members xmpbox-surface)}]
+         :clean-builds (get-in package-proof [:packing-summary :clean-builds])
+         :package-id (:id identity)
+         :version (:version identity)
+         :target-framework (get-in destination [:project :target-framework])
+         :assembly (:assembly-identity resource-proof)
+         :dependencies (:dependencies inspection)
+         :resource-count (:resources resource-proof)
+         :package-files (:package-files inspection)
+         :public-contract
+         {:strategy (:strategy compiled-surface)
+          :required-rows (:required-rows public-metadata)
+          :compiled-contract-members (:contract-members xmpbox-surface)
+          :public-stubs public-stubs}}]
     (when-not (= expected actual)
-      (fail! "Clean XmpBox generation or public-surface contract drifted"
+      (fail! "Packed PdfCube.XmpBox identity or target contract is incorrect"
              {:expected expected :actual actual}))
     actual))
 
 (defn verify!
-  "Runs clean XmpBox generation, compilation, public-surface validation, and
-  the pinned Java/generated-.NET metadata, DOM parser, PDF/A extension, and
-  serialization differential."
+  "Runs clean deterministic packing, isolated consumption, complete public
+  surface and zero-public-stub gates, and the pinned Java/package XmpBox
+  differential."
   ([] (verify! {}))
-  ([{:keys [workspace-root build-fn run-command!]
-     :or {build-fn compiler/verify-clean-build!
+  ([{:keys [workspace-root package-fn run-command!]
+     :or {package-fn packaging/verify-package-consumption!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         build-proof
-         (build-fn {:workspace-root root
-                    :profile "pdfcube-xmpbox"
-                    :run-command! run-command!})
-         build-contract (validate-build-contract! build-proof)
-         generation (:generation build-proof)
+         package-proof
+         (package-fn {:workspace-root root
+                      :profile "pdfcube-xmpbox"
+                      :run-command! run-command!})
+         package-contract (validate-package-contract! package-proof)
+         generation (get-in package-proof [:verification :generation])
+         primary (first (filter :primary? (:packages package-proof)))
          proof-root
          (harness/clean-directory!
           (paths/resolve-path root "vibeformer" "validation-output"
@@ -253,20 +307,34 @@
          (paths/resolve-path root "research" "pdfbox" "xmpbox"
                              "src" "test" "resources")
          oracle (paths/resolve-path proof-root "upstream-java.tsv")
-         generated (paths/resolve-path proof-root "generated-dotnet.tsv")]
+         packaged (paths/resolve-path proof-root "package-dotnet.tsv")
+         perturbed (paths/resolve-path proof-root "perturbed.tsv")]
      (compile-and-run-oracle!
       run-command! root generation proof-root oracle resources)
-     (run-generated-probe!
-      run-command! root build-proof proof-root generated resources)
-     (let [comparison (assert-match! oracle generated)
+     (run-package-probe!
+      run-command! root package-proof packaged resources)
+     (let [package-comparison
+           (assert-match! "Package-only PdfCube.XmpBox behavior"
+                          oracle packaged)
+           perturbation (prove-perturbation! oracle perturbed)
            trace (trace-summary oracle)
            summary
            {:profile "pdfcube-xmpbox"
             :source {:version "3.0.8" :revision pinned-revision}
-            :build build-contract
-            :public-surface (:public-surface build-proof)
+            :package
+            (merge package-contract
+                   {:sha256 (get-in package-proof [:identity :sha256])
+                    :assembly
+                    (get-in primary [:resource-proof :assembly-identity])
+                    :public-surface (:public-surface primary)
+                    :resources (:resources primary)
+                    :external-packages (:external-packages package-proof)})
+            :consumer (:dependency-proof package-proof)
             :trace trace
-            :comparison comparison
+            :package-comparison package-comparison
+            :perturbation-line (get-in perturbation [:mismatch :line])
+            :host (current-host)
+            :supported-hosts supported-hosts
             :fixtures
             ["org/apache/xmpbox/parser/AltBagSeqTest.xml"
              "org/apache/xmpbox/parser/ThumbisartorStyle.xml"
@@ -282,6 +350,6 @@
        (write-text! (paths/resolve-path proof-root "summary.edn")
                     (str (pr-str summary) "\n"))
        (println
-        "Pinned Java/generated-.NET PdfCube.XmpBox metadata differential passed:"
-        (pr-str (select-keys summary [:source :build :trace :fixtures])))
+        "Pinned Java/package PdfCube.XmpBox differential passed:"
+        (pr-str (select-keys summary [:source :trace :host])))
        (assoc summary :proof-root proof-root)))))
