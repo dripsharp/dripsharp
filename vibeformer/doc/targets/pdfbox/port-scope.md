@@ -5,8 +5,10 @@
 PdfCube mechanically translates the reusable library modules of the latest
 stable Apache PDFBox release into separately consumable .NET packages. The
 initial baseline is PDFBox `3.0.8`; later stable releases, including stable major
-releases, replace that baseline through the synchronization workflow defined in
-the [product goal](product-goal.md).
+releases, replace that baseline only when their numeric major, minor, and patch
+version is greater than the current baseline, through the synchronization
+workflow defined in the [product goal](product-goal.md). Publication of a
+maintenance release on a lower major line does not downgrade PdfCube.
 
 Development snapshots and release candidates may provide advance compatibility
 evidence, but they are not the product baseline while a stable release exists.

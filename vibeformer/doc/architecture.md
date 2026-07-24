@@ -32,7 +32,8 @@ flowchart TD
   CLI -->|verify| Verify["compiler/verify-clean-build!"]
   CLI -->|pack| Pack["packaging/pack-verified-profile!"]
   CLI -->|package| Consume["packaging/verify-package-consumption!"]
-  CLI -->|differential| Differential["differential/verify-differential!"]
+  CLI -->|differential| PklDifferential["differential/verify-differential!"]
+  CLI -->|pdfcube-io-differential| PdfCubeIoDifferential["pdfcube.io-differential/verify!"]
 
   Verify -->|regenerates| Generate
   Verify --> Build["dotnet build with warnings as errors"]
@@ -49,14 +50,18 @@ flowchart TD
   Feed --> Restore
   Restore --> ConsumerRun["consumer build and run"]
 
-  Differential --> ParserProof["parser proof"]
-  Differential --> CoreProof["Pkl.Core proof"]
+  PklDifferential --> ParserProof["parser proof"]
+  PklDifferential --> CoreProof["Pkl.Core proof"]
+  PdfCubeIoDifferential --> PdfCubeIoProof["PdfCube.IO proof"]
   ParserProof --> Consume
   CoreProof --> Consume
+  PdfCubeIoProof --> Consume
   ParserProof --> JavaOracle["upstream JVM oracle"]
   CoreProof --> JavaOracle
+  PdfCubeIoProof --> JavaOracle
   ParserProof --> PackageProbe["package-only .NET probe"]
   CoreProof --> PackageProbe
+  PdfCubeIoProof --> PackageProbe
   JavaOracle --> Compare["normalized observation comparison"]
   PackageProbe --> Compare
 ```
@@ -65,7 +70,9 @@ This composition is implemented by
 [`vibeformer.main`](../src/vibeformer/main.clj),
 [`vibeformer.compiler`](../src/vibeformer/compiler.clj),
 [`vibeformer.packaging`](../src/vibeformer/packaging.clj), and
-[`vibeformer.differential`](../src/vibeformer/differential.clj).
+[`vibeformer.differential`](../src/vibeformer/differential.clj). The current
+PdfCube.IO proof is implemented by
+[`vibeformer.pdfcube.io-differential`](../src/vibeformer/pdfcube/io_differential.clj).
 
 ### Source-to-Project Generation
 
@@ -80,7 +87,7 @@ flowchart LR
     Destination["destination EDN"]
     JavaSource["verified Java checkout"]
     SurfaceContract["public-surface contract"]
-    RuntimeSource["Java compatibility and Pkl runtime C# sources"]
+    RuntimeSource["reusable compatibility and destination-runtime C# sources"]
   end
 
   subgraph Discovery["Discovery and semantic frontend"]
@@ -98,7 +105,7 @@ flowchart LR
 
   subgraph DestinationLayer["Destination composition and emission"]
     Bundle["explicit destination rule bundle"]
-    PklRules["Pkl declaration and body rules"]
+    DestinationRules["destination declaration, body, and semantic rules"]
     CommonRules["common project and resource policies"]
     Emitter["product-neutral java-project emitter"]
     Scheduler["bounded deterministic root/member scheduling"]
@@ -133,9 +140,9 @@ flowchart LR
   Closure --> SelectedSurface
   SurfaceContract --> SelectedSurface
 
-  Bundle --> PklRules
+  Bundle --> DestinationRules
   Bundle --> CommonRules
-  PklRules --> Emitter
+  DestinationRules --> Emitter
   CommonRules --> Emitter
   SelectedSurface --> Emitter
   ProjectInput --> Emitter
@@ -157,10 +164,12 @@ The orchestration and boundaries above come from
 [`vibeformer.project`](../src/vibeformer/project.clj),
 [`vibeformer.project-input`](../src/vibeformer/project_input.clj),
 [`vibeformer.spoon`](../src/vibeformer/spoon.clj),
-[`vibeformer.java-project`](../src/vibeformer/java_project.clj), and the
-[`vibeformer.pkl.java-project`](../src/vibeformer/pkl/java_project.clj) rule
-bundle. Destination files such as
-[`pkl-parser.edn`](../config/pkl-parser.edn) select the bundle and output
+and [`vibeformer.java-project`](../src/vibeformer/java_project.clj).
+Product-owned composition is supplied by rule bundles such as
+[`vibeformer.pkl.java-project`](../src/vibeformer/pkl/java_project.clj) and
+[`vibeformer.pdfcube.java-project`](../src/vibeformer/pdfcube/java_project.clj).
+Destination files such as [`pkl-parser.edn`](../config/pkl-parser.edn) and
+[`pdfcube-io.edn`](../config/pdfcube-io.edn) select the bundle and output
 contract explicitly.
 
 ### Recursive Translation Kernel
@@ -288,10 +297,11 @@ when .NET already provides suitable semantics.
 The product-neutral recursive dispatch and resolved-symbol registry live in
 `vibeformer.java-translate`. Product rule bundles depend inward on that kernel;
 the Pkl body, declaration, destination, and runtime-bridge rules live under
-`vibeformer.pkl.*`. Generic namespaces must not depend on a product bundle.
-Future Java targets supply their own structural and semantic registries to the
-same kernel instead of inheriting Pkl source identities or `Pkl.Core`
-destinations.
+`vibeformer.pkl.*`, while PdfCube destination policy and adaptations live under
+`vibeformer.pdfcube.*`. Generic namespaces must not depend on a product bundle.
+Each Java target supplies its own structural and semantic registries to the same
+kernel instead of inheriting another target's source identities, destination
+assemblies, or product semantics.
 
 Native .NET code is appropriate only when generated C# and existing .NET APIs
 cannot faithfully provide the required behavior. Native replacements must be:
@@ -318,9 +328,9 @@ packed package     -> independent consumer
 source behavior    -> compare with generated-package behavior
 ```
 
-Product tests must be independent of the implementation generator. Upstream Pkl
-tests and fixtures are authoritative behavior evidence for the in-scope .NET
-library.
+Product tests must be independent of the implementation generator. Upstream
+tests and fixtures for each selected source product are authoritative behavior
+evidence for that target's in-scope .NET libraries.
 
 ## First Architectural Proof
 

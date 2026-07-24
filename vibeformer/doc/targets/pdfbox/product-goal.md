@@ -68,11 +68,20 @@ PdfCube tracks the latest stable Apache PDFBox release. The initial stable
 baseline is PDFBox `3.0.8`, tag commit
 `9286e47d89d6877005c9d2d0f2fd38793a62519a`.
 
-Synchronization includes later stable patch, minor, and major releases. A
+For this target, "latest stable" is monotonic: select the greatest stable
+Apache PDFBox version under numeric major, minor, and patch ordering that is not
+lower than the current baseline. Publication chronology across simultaneously
+maintained release lines does not cause a downgrade. In particular, PDFBox
+`2.0.37` does not replace `3.0.8` even though `2.0.37` was published later. A
+future stable `3.0.9`, `3.1.0`, or `4.0.0` would advance the baseline, while a
+later-published release on a lower major line would not.
+
+Synchronization includes those later stable patch, minor, and major releases. A
 pre-release, snapshot, release candidate, or development branch does not replace
-the current stable baseline. When Apache publishes a new stable release, moving
-the source baseline and preserving the selected modules' updated public behavior
-is PdfCube maintenance work, not a reason to freeze or narrow the target.
+the current stable baseline. When Apache publishes a greater stable release,
+moving the source baseline and preserving the selected modules' updated public
+behavior is PdfCube maintenance work, not a reason to freeze or narrow the
+target.
 
 An upstream module rename, split, merge, or removal does not silently remove an
 already selected PdfCube library or behavior. The package mapping must be

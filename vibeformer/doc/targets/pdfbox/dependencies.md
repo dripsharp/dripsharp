@@ -12,8 +12,9 @@ The absence of a resolved mapping is not a product exclusion. It is blocking
 product work under the [authoritative product goal](product-goal.md).
 
 The initial source baseline is Apache PDFBox `3.0.8`. Dependency versions and
-usage must be re-audited whenever PdfCube moves to a later stable upstream
-release.
+usage must be re-audited whenever PdfCube advances to a greater stable upstream
+release under the monotonic version-selection policy in the
+[authoritative product goal](product-goal.md).
 
 ## PdfCube Package Dependencies
 
