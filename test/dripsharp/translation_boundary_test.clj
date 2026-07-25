@@ -22,6 +22,31 @@
   (Files/writeString file value (make-array OpenOption 0))
   file)
 
+(def ^:private configurable-java-compat-types
+  [["JavaWeakHashMap" "JavaWeakHashMap<,>"]
+   ["JavaStack" "JavaStack<>"]
+   ["JavaExecutorService" "JavaExecutorService"]
+   ["JavaByteBuffer" "JavaByteBuffer"]
+   ["JavaCharsetDecoder" "JavaCharsetDecoder"]
+   ["JavaPath" "JavaPath"]
+   ["JavaInputStream" "JavaInputStream"]
+   ["JavaFilterInputStream" "JavaFilterInputStream"]
+   ["JavaOutputStream" "JavaOutputStream"]
+   ["JavaInflater" "JavaInflater"]
+   ["JavaDeflater" "JavaDeflater"]
+   ["JavaDeflaterOutputStream" "JavaDeflaterOutputStream"]
+   ["JavaFilterOutputStream" "JavaFilterOutputStream"]
+   ["JavaKeyStore" "JavaKeyStore"]
+   ["JavaSslContext" "JavaSslContext"]
+   ["JavaServerSocket" "JavaServerSocket"]
+   ["IJavaOptional" "IJavaOptional"]
+   ["JavaOptional" "JavaOptional<>"]
+   ["JavaIterator" "JavaIterator<>"]
+   ["JavaIterableContract" "JavaIterableContract<>"]
+   ["JavaListContract" "JavaListContract<>"]
+   ["JavaListIterator" "JavaListIterator<>"]
+   ["JavaStream" "JavaStream<>"]])
+
 (def ^:private generic-economic-map-fixture
   (str
    "#nullable enable\n"
@@ -56,10 +81,53 @@
    "}\n\n"
    "internal static class Program\n"
    "{\n"
+   "  private static void Assert(bool condition, string message)\n"
+   "  {\n"
+   "    if (!condition) throw new global::System.Exception(message);\n"
+   "  }\n\n"
+   "  private static void AssertConfigurableVisibility()\n"
+   "  {\n"
+   "#if DRIPSHARP_INTERNAL_JAVA_COMPAT\n"
+   "    const bool expectedPublic = false;\n"
+   "#else\n"
+   "    const bool expectedPublic = true;\n"
+   "#endif\n"
+   "    foreach (var type in new global::System.Type[]\n"
+   "    {\n"
+   (apply str
+          (map (fn [[_ type]]
+                 (str "      typeof(" type "),\n"))
+               configurable-java-compat-types))
+   "    })\n"
+   "      Assert(type.IsPublic == expectedPublic,\n"
+   "             $\"{type.Name} did not honor the configured visibility boundary\");\n"
+   "  }\n\n"
    "  private static global::System.Collections.Generic.KeyValuePair<K, V> Entry<K, V>(K key, V value)\n"
    "    where K : notnull => new(key, value);\n"
    "  public static void Main()\n"
    "  {\n"
+   "    AssertConfigurableVisibility();\n"
+   "    var setValue = typeof(JavaMapEntry<,>).GetMethod(\"SetValue\");\n"
+   "    Assert(setValue is { IsPublic: true }, \"JavaMapEntry.SetValue must be public\");\n"
+   "    var liveMap = new global::System.Collections.Generic.Dictionary<string, string>\n"
+   "      { [\"key\"] = \"before\" };\n"
+   "    using var liveEntries = JavaCompat.MapEntrySet(\n"
+   "      (global::System.Collections.Generic.IDictionary<string, string>)liveMap).GetEnumerator();\n"
+   "    Assert(liveEntries.MoveNext(), \"map entry set did not expose its entry\");\n"
+   "    var liveEntry = liveEntries.Current;\n"
+   "    Assert(liveEntry.SetValue(\"after\") == \"before\" &&\n"
+   "           liveMap[\"key\"] == \"after\" && liveEntry.Value == \"after\",\n"
+   "           \"JavaMapEntry.SetValue did not replace and return the live value\");\n"
+   "    liveMap[\"key\"] = \"external\";\n"
+   "    Assert(liveEntry.Value == \"external\" &&\n"
+   "           liveEntry.SetValue(\"final\") == \"external\" && liveMap[\"key\"] == \"final\",\n"
+   "           \"JavaMapEntry stopped reflecting its source map\");\n"
+   "    sbyte byteValue = -128;\n"
+   "    Assert(JavaCompat.OrAssign(ref byteValue, 1) == -127 && byteValue == -127,\n"
+   "           \"signed-byte OR assignment lost its narrowing contract\");\n"
+   "    byteValue = 1;\n"
+   "    Assert(JavaCompat.OrAssign(ref byteValue, 0x180) == -127 && byteValue == -127,\n"
+   "           \"signed-byte OR assignment did not preserve low-byte semantics\");\n"
    "    var firstKey = new global::System.Uri(\"package://example.test/first@1\");\n"
    "    var secondKey = new global::System.Uri(\"package://example.test/second@1\");\n"
    "    var absentKey = new global::System.Uri(\"package://example.test/absent@1\");\n"
@@ -106,7 +174,7 @@
    "  }\n"
    "}\n"))
 
-(defn- compile-and-run-generic-runtime! [assets]
+(defn- compile-and-run-generic-runtime! [assets internal-visibility?]
   (let [root (Files/createTempDirectory "dripsharp-generic-runtime"
                                         (make-array FileAttribute 0))
         runtime-output (:output (process/run! {:directory root
@@ -128,6 +196,8 @@
                       "    <Nullable>enable</Nullable>\n"
                       "    <ImplicitUsings>disable</ImplicitUsings>\n"
                       "    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>\n"
+                      (when internal-visibility?
+                        "    <DefineConstants>DRIPSHARP_INTERNAL_JAVA_COMPAT</DefineConstants>\n")
                       "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
                       "  </PropertyGroup>\n"
                       "  <ItemGroup><Compile Include=\"src/**/*.cs\" /></ItemGroup>\n"
@@ -177,14 +247,25 @@
         (is (str/includes? content "namespace DripSharp.Runtime"))
         (is (not (re-find #"(?i)org\\.pkl|Pkl\\.(?:Core|Parser)" content)))
         (is (not (re-find #"(?i)#if[^\n]*PKL" content)))))
-    (is (= "OK" (compile-and-run-generic-runtime! assets)))))
+    (testing "the reusable runtime is public to independently generated products"
+      (is (= "OK" (compile-and-run-generic-runtime! assets false))))
+    (testing "Pkl products can keep the reusable runtime internal"
+      (is (= "OK" (compile-and-run-generic-runtime! assets true))))))
 
 (deftest product-bundles-select-java-compatibility-visibility-explicitly
   (let [runtime (slurp "runtime/DripSharp.JavaCompat.cs")
+        guarded-types
+        (map second
+             (re-seq
+              #"(?m)#if DRIPSHARP_INTERNAL_JAVA_COMPAT\ninternal\n#else\npublic\n#endif\n(?:(?:sealed|abstract)\s+)?(?:class|interface|enum)\s+([A-Za-z0-9_]+)"
+              runtime))
+        expected-types (map first configurable-java-compat-types)
         pkl-parser (slurp "config/pkl-parser.edn")
         pkl-core (slurp "config/pkl-core-value-model-destination.edn")
         rawhttp (slurp "config/rawhttp-core-destination.edn")]
-    (is (= 12 (count (re-seq #"#if DRIPSHARP_INTERNAL_JAVA_COMPAT" runtime))))
+    (is (= (sort expected-types) (sort guarded-types))
+        (str "Unexpected configurable JavaCompat boundary: "
+             (sort guarded-types)))
     (doseq [configuration [pkl-parser pkl-core]]
       (is (str/includes? configuration
                          ":define-constants [\"DRIPSHARP_INTERNAL_JAVA_COMPAT\"]")))
@@ -300,7 +381,7 @@
     (is (str/includes? runtime
                        "internal sealed class JavaMapEntrySet<K, V>"))
     (is (str/includes? runtime
-                       "public V SetValue(V replacement)"))
+                       "public virtual V SetValue(V replacement)"))
     (is (str/includes? runtime
                        "internal static void IteratorRemove(IEnumerator iterator)"))
     (is (not (re-find #"(?i)org\\.pkl|Pkl\\.Core|Pkl\\.Parser"

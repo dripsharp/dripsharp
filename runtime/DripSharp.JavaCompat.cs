@@ -4237,7 +4237,7 @@ internal static class JavaCompat
     internal static sbyte AndAssign(ref sbyte target, int value) =>
         target = unchecked((sbyte)(target & value));
     internal static sbyte OrAssign(ref sbyte target, int value) =>
-        target = unchecked((sbyte)(target | value));
+        target = unchecked((sbyte)((byte)target | value));
     internal static sbyte XorAssign(ref sbyte target, int value) =>
         target = unchecked((sbyte)(target ^ value));
     internal static sbyte ShiftLeftAssign(ref sbyte target, int value) =>
