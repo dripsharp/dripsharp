@@ -28,16 +28,31 @@ using System.Xml;
 
 namespace DripSharp.Runtime;
 
-public interface JavaCloneable
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+interface JavaCloneable
 {
 }
 
-public enum JavaRoundingMode
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+enum JavaRoundingMode
 {
     Ceiling
 }
 
-public sealed class JavaPriorityQueue<T>
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaPriorityQueue<T>
 {
     private readonly List<T> values;
     private readonly IComparer<T> comparer = Comparer<T>.Default;
@@ -96,7 +111,12 @@ public sealed class JavaPriorityQueue<T>
     }
 }
 
-public sealed class JavaIdentityHashMap<K, V> : Dictionary<K, V> where K : notnull
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaIdentityHashMap<K, V> : Dictionary<K, V> where K : notnull
 {
     private sealed class IdentityComparer : IEqualityComparer<K>
     {
@@ -370,16 +390,31 @@ internal sealed class JavaMessageDigest
             right.Select(item => unchecked((byte)item)).ToArray());
 }
 
-public interface JavaSecretKey
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+interface JavaSecretKey
 {
     sbyte[] GetEncoded();
 }
 
-public sealed class JavaSecurityProvider
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaSecurityProvider
 {
 }
 
-public sealed class JavaAlgorithmParameters
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaAlgorithmParameters
 {
     private readonly sbyte[] encoded;
 
@@ -400,7 +435,12 @@ public sealed class JavaAlgorithmParameters
     }
 }
 
-public sealed class JavaAlgorithmParameterGenerator
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaAlgorithmParameterGenerator
 {
     private readonly string algorithm;
 
@@ -438,7 +478,12 @@ public sealed class JavaAlgorithmParameterGenerator
     }
 }
 
-public sealed class JavaKeyGenerator
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaKeyGenerator
 {
     private readonly string algorithm;
     private int keySize;
@@ -494,7 +539,12 @@ public sealed class JavaKeyGenerator
     }
 }
 
-public sealed class JavaSecretKeySpec : JavaSecretKey
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaSecretKeySpec : JavaSecretKey
 {
     private readonly sbyte[] encoded;
 
@@ -511,7 +561,12 @@ public sealed class JavaSecretKeySpec : JavaSecretKey
     public sbyte[] GetEncoded() => (sbyte[])encoded.Clone();
 }
 
-public sealed class JavaIvParameterSpec
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaIvParameterSpec
 {
     public JavaIvParameterSpec(sbyte[] iv)
     {
@@ -522,7 +577,12 @@ public sealed class JavaIvParameterSpec
     internal sbyte[] Iv { get; }
 }
 
-public sealed class JavaCipher : IDisposable
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaCipher : IDisposable
 {
     public const int ENCRYPT_MODE = 1;
     public const int DECRYPT_MODE = 2;
@@ -686,7 +746,12 @@ public sealed class JavaCipher : IDisposable
     public void Dispose() => DisposeTransform();
 }
 
-public sealed class JavaCipherInputStream : Stream
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaCipherInputStream : Stream
 {
     private readonly JavaCipher cipher;
     private readonly CryptoStream stream;
@@ -729,13 +794,23 @@ public sealed class JavaCipherInputStream : Stream
     }
 }
 
-public abstract class JavaReference<T> where T : class
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+abstract class JavaReference<T> where T : class
 {
     public abstract T? Get();
     public abstract void Clear();
 }
 
-public sealed class JavaSoftReference<T> : JavaReference<T> where T : class
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaSoftReference<T> : JavaReference<T> where T : class
 {
     private WeakReference<T>? reference;
 
@@ -754,7 +829,12 @@ public sealed class JavaSoftReference<T> : JavaReference<T> where T : class
     public override void Clear() => reference = null;
 }
 
-public sealed class JavaWeakReference<T> : JavaReference<T> where T : class
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaWeakReference<T> : JavaReference<T> where T : class
 {
     private WeakReference<T>? reference;
 
@@ -773,14 +853,24 @@ public sealed class JavaWeakReference<T> : JavaReference<T> where T : class
     public override void Clear() => reference = null;
 }
 
-public static class JavaBase64
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+static class JavaBase64
 {
     private static readonly JavaBase64Decoder Decoder = new();
 
     public static JavaBase64Decoder GetDecoder() => Decoder;
 }
 
-public sealed class JavaBase64Decoder
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaBase64Decoder
 {
     public sbyte[] Decode(string value)
     {
@@ -1523,7 +1613,12 @@ sealed class JavaByteBuffer : IDisposable
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
 }
 
-public enum JavaCodingErrorAction
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+enum JavaCodingErrorAction
 {
     Report
 }
@@ -2636,7 +2731,12 @@ internal sealed class JavaThreadLocal<T> : IDisposable
     public void Dispose() => value.Dispose();
 }
 
-public sealed class JavaDateTimeFormatter
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaDateTimeFormatter
 {
     private enum FormatterKind
     {
@@ -2661,7 +2761,12 @@ public sealed class JavaDateTimeFormatter
         new(FormatterKind.IsoLocalDateTimeOffset);
 }
 
-public sealed class JavaParsePosition
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaParsePosition
 {
     public JavaParsePosition(int index)
     {
@@ -2684,7 +2789,12 @@ public sealed class JavaParsePosition
     public void SetErrorIndex(int index) => ErrorIndex = index;
 }
 
-public sealed class JavaSimpleDateFormat
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaSimpleDateFormat
 {
     private readonly string pattern;
     private readonly CultureInfo culture;
@@ -3234,7 +3344,12 @@ sealed class JavaServerSocket : IDisposable
     public void Dispose() => Close();
 }
 
-public sealed class JavaRandom
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaRandom
 {
     public void NextBytes(sbyte[] destination)
     {
@@ -3257,7 +3372,12 @@ public sealed class JavaRandom
     }
 }
 
-public sealed class JavaCrc32
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaCrc32
 {
     private uint crc = uint.MaxValue;
 
@@ -3566,7 +3686,12 @@ internal interface JavaMapValueUpdater<K, V>
     void ReplaceValueWithoutAccess(K key, V value);
 }
 
-public class JavaMapEntry<K, V>
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+class JavaMapEntry<K, V>
 {
     private readonly IDictionary<K, V>? source;
     private readonly K key;
@@ -3748,7 +3873,12 @@ interface JavaListContract<T> : IList<T>
         ((IEnumerable<T>)this).GetEnumerator();
 }
 
-public interface JavaMapContract<K, V> : IDictionary<K, V>
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+interface JavaMapContract<K, V> : IDictionary<K, V>
 {
     int Size();
     bool ContainsKey(object? key);
@@ -9948,7 +10078,12 @@ internal sealed class JavaStringTokenizer
         hasMoreTokens() ? tokens[index++] : throw new InvalidOperationException("No more tokens");
 }
 
-public sealed class JavaDeque<T> : ICollection<T>
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaDeque<T> : ICollection<T>
 {
     private readonly LinkedList<T> values = new();
     internal JavaDeque()

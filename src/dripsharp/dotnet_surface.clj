@@ -172,7 +172,8 @@
         (fail! "Compiled .NET surface assembly is missing"
                {:kind :missing-dotnet-surface-assembly :assembly (str assembly)}))
       (process/run! {:command ["dotnet" "build" probe "--configuration" "Release"
-                               "--nologo" "--verbosity:quiet" "-warnaserror"]
+                               "--nologo" "--verbosity:quiet" "--no-incremental"
+                               "-warnaserror"]
                      :directory workspace})
       (process/run! {:command
                      (if (paths/regular-file? dependency-manifest)

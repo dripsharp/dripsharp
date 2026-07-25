@@ -53,7 +53,7 @@
     :source-sha256
     "d03b8db1a0d36ba65550ba30a51c7897f4b48b0eae7582d3f0576ea41e23d48e"
     :sha256
-    "5e38cf7f36337e264d45e7c026e2878cebec1aecd9b6d50737437c3bd095b93c"}])
+    "a9347286ee61b53992fab8c8bd1378f18408e6e548c672ee3f1776b524006715"}])
 
 (def ^:private notice-appendix
   (str "\n---\n"

@@ -313,7 +313,7 @@
         (fail! "Package reflection assembly is missing"
                {:kind :missing-package-assembly :assembly (str assembly)})))
     (command-output {:command ["dotnet" "build" package-probe "--configuration"
-                               "Release" "--nologo"]
+                               "Release" "--nologo" "--no-incremental"]
                      :directory workspace})
     (let [text (command-output
                 {:command (into ["dotnet" "run" "--project" package-probe
@@ -1122,7 +1122,8 @@
               :findings (vec (take 50 source-findings))
               :finding-count (count source-findings)}))
     (command-output {:command ["dotnet" "build" contract-compiler
-                               "--configuration" "Release" "--nologo"]
+                               "--configuration" "Release" "--nologo"
+                               "--no-incremental"]
                      :directory workspace})
     (command-output
      {:command (into ["dotnet" "run" "--project" contract-compiler

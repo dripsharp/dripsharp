@@ -23,7 +23,34 @@
   file)
 
 (def ^:private configurable-java-compat-types
-  [["JavaWeakHashMap" "JavaWeakHashMap<,>"]
+  [["JavaCloneable" "JavaCloneable"]
+   ["JavaRoundingMode" "JavaRoundingMode"]
+   ["JavaPriorityQueue" "JavaPriorityQueue<>"]
+   ["JavaIdentityHashMap" "JavaIdentityHashMap<,>"]
+   ["JavaSecretKey" "JavaSecretKey"]
+   ["JavaSecurityProvider" "JavaSecurityProvider"]
+   ["JavaAlgorithmParameters" "JavaAlgorithmParameters"]
+   ["JavaAlgorithmParameterGenerator" "JavaAlgorithmParameterGenerator"]
+   ["JavaKeyGenerator" "JavaKeyGenerator"]
+   ["JavaSecretKeySpec" "JavaSecretKeySpec"]
+   ["JavaIvParameterSpec" "JavaIvParameterSpec"]
+   ["JavaCipher" "JavaCipher"]
+   ["JavaCipherInputStream" "JavaCipherInputStream"]
+   ["JavaReference" "JavaReference<>"]
+   ["JavaSoftReference" "JavaSoftReference<>"]
+   ["JavaWeakReference" "JavaWeakReference<>"]
+   ["JavaBase64" "JavaBase64"]
+   ["JavaBase64Decoder" "JavaBase64Decoder"]
+   ["JavaCodingErrorAction" "JavaCodingErrorAction"]
+   ["JavaDateTimeFormatter" "JavaDateTimeFormatter"]
+   ["JavaParsePosition" "JavaParsePosition"]
+   ["JavaSimpleDateFormat" "JavaSimpleDateFormat"]
+   ["JavaRandom" "JavaRandom"]
+   ["JavaCrc32" "JavaCrc32"]
+   ["JavaMapEntry" "JavaMapEntry<,>"]
+   ["JavaMapContract" "JavaMapContract<,>"]
+   ["JavaDeque" "JavaDeque<>"]
+   ["JavaWeakHashMap" "JavaWeakHashMap<,>"]
    ["JavaStack" "JavaStack<>"]
    ["JavaExecutorService" "JavaExecutorService"]
    ["JavaByteBuffer" "JavaByteBuffer"]
@@ -257,7 +284,7 @@
         guarded-types
         (map second
              (re-seq
-              #"(?m)#if DRIPSHARP_INTERNAL_JAVA_COMPAT\ninternal\n#else\npublic\n#endif\n(?:(?:sealed|abstract)\s+)?(?:class|interface|enum)\s+([A-Za-z0-9_]+)"
+              #"(?m)#if DRIPSHARP_INTERNAL_JAVA_COMPAT\ninternal\n#else\npublic\n#endif\n(?:(?:sealed|abstract|static)\s+)?(?:class|interface|enum)\s+([A-Za-z0-9_]+)"
               runtime))
         expected-types (map first configurable-java-compat-types)
         pkl-parser (slurp "config/pkl-parser.edn")
@@ -269,6 +296,11 @@
     (doseq [configuration [pkl-parser pkl-core]]
       (is (str/includes? configuration
                          ":define-constants [\"DRIPSHARP_INTERNAL_JAVA_COMPAT\"]")))
+    (is (not (str/includes? pkl-parser "CS0436")))
+    (is (str/includes?
+         pkl-core
+         ":no-warn [\"CS0108\" \"CS0109\" \"CS0414\" \"CS0436\"")
+        "Pkl.Core alone suppresses the intentional duplicate internal JavaCompat types")
     (is (not (str/includes? rawhttp "DRIPSHARP_INTERNAL_JAVA_COMPAT")))))
 
 (deftest pkl-rules-depend-inward-on-the-reusable-kernel

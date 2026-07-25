@@ -374,7 +374,8 @@
       (fail! "RawHTTP generated source contains implementation placeholders"
              {:reason :source-placeholders :findings source-findings}))
     (bounded-run! {:command ["dotnet" "build" (str compiler) "--configuration"
-                             "Release" "--nologo" "--verbosity:quiet" "-warnaserror"]
+                             "Release" "--nologo" "--verbosity:quiet"
+                             "--no-incremental" "-warnaserror"]
                    :directory root})
     (bounded-run! {:command ["dotnet" "run" "--project" (str compiler)
                              "--configuration" "Release" "--no-build" "--"

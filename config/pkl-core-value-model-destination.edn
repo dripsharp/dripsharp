@@ -12,7 +12,7 @@
            :implicit-usings false
            :define-constants ["DRIPSHARP_INTERNAL_JAVA_COMPAT"]
            :warnings-as-errors true
-           :no-warn ["CS0108" "CS0109" "CS0414" "CS0649" "CS0693"
+           :no-warn ["CS0108" "CS0109" "CS0414" "CS0436" "CS0649" "CS0693"
                      "CS8600" "CS8601" "CS8602" "CS8603" "CS8604"
                      "CS8619" "CS8620" "CS8629" "CS8605" "CS0162"
                      "CS8714" "CS8764" "CS8765" "CS8767"]}
@@ -61,6 +61,6 @@
    :destination "Legal/NOTICE.txt"
    :package-path "NOTICE.txt"
    :source-sha256 "d03b8db1a0d36ba65550ba30a51c7897f4b48b0eae7582d3f0576ea41e23d48e"
-   :sha256 "5e38cf7f36337e264d45e7c026e2878cebec1aecd9b6d50737437c3bd095b93c"}]
+   :sha256 "a9347286ee61b53992fab8c8bd1378f18408e6e548c672ee3f1776b524006715"}]
  :notice-appendix "\n---\nDripSharp translation appendix\n\nThis package is an independent mechanical translation of the above software to C#/.NET, produced by DripSharp. It is not developed, endorsed, or supported by Apple Inc. or the Pkl project.\n"
  :resource-policy {:strategy :embedded-resource-preserve-path}}

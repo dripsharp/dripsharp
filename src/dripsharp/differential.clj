@@ -1160,7 +1160,8 @@
       (let [strong-summary
             (public-api-contract/write-strong-contract-keys! root strong-keys)]
         (run-command! {:command ["dotnet" "build" (str contract-tool)
-                                 "--configuration" "Release" "--nologo"]
+                                 "--configuration" "Release" "--nologo"
+                                 "--no-incremental"]
                        :directory root})
         (let [generation-run
               (run-command!

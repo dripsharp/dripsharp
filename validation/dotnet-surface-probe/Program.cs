@@ -66,7 +66,8 @@ internal static class Program
         var duplicate = rows.GroupBy(row => row.Identity, StringComparer.Ordinal)
             .FirstOrDefault(group => group.Count() > 1);
         if (duplicate is not null)
-            throw new InvalidOperationException("Duplicate reflected row: " + duplicate.Key);
+            throw new InvalidOperationException(
+                "Duplicate reflected row: " + duplicate.Key.Replace('\0', '|'));
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         var text = new StringBuilder("# ").Append(Magic).Append('\n');
