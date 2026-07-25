@@ -1528,7 +1528,12 @@ public enum JavaCodingErrorAction
     Report
 }
 
-public sealed class JavaCharsetDecoder
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaCharsetDecoder
 {
     private readonly Encoding encoding;
 
@@ -2791,7 +2796,12 @@ internal sealed class JavaDateTimeFormatterBuilder
     internal JavaDateTimeFormatter ToFormatter() => JavaDateTimeFormatter.IsoLocalDateTimeOffset();
 }
 
-public sealed class JavaKeyStore
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaKeyStore
 {
     private readonly System.Security.Cryptography.X509Certificates.X509Certificate2Collection certificates = new();
 
@@ -3653,7 +3663,12 @@ interface JavaIterator<out T>
         "This Java iterator does not expose mutable removal semantics.");
 }
 
-public interface JavaIterableContract<out T> : IEnumerable<T>
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+interface JavaIterableContract<out T> : IEnumerable<T>
 {
     JavaIterator<T> Iterator();
 
@@ -3679,7 +3694,12 @@ internal sealed class JavaIterableAdapter<T> : JavaIterableContract<T>
     public JavaIterator<T> Iterator() => iteratorFactory();
 }
 
-public interface JavaListContract<T> : IList<T>
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+interface JavaListContract<T> : IList<T>
 {
     int Size();
     bool Contains(object? value);
