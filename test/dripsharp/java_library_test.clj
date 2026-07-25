@@ -442,6 +442,38 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest declaration-type-guard-preserves-kind-specific-covariant-lists
+  (let [fixture
+        (model! {"example/Variance.java"
+                 (str "package example; import java.util.List; "
+                      "public final class Variance { "
+                      "private List<? extends String> field; "
+                      "public List<? extends String> values() { return null; } "
+                      "public void accept(List<? extends String> input) {} "
+                      "public void copy() { "
+                      "List<? extends String> local = field; field = local; } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Variance.cs")))]
+    (is (str/includes?
+         source
+         "private global::System.Collections.Generic.IList<string> field"))
+    (is (str/includes?
+         source
+         "public global::System.Collections.Generic.IReadOnlyList<string> values()"))
+    (is (str/includes?
+         source
+         "public void accept(global::System.Collections.Generic.IEnumerable<string> input)"))
+    (is (str/includes?
+         source
+         "global::System.Collections.Generic.IList<string> local = this.field;"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest java-null-literals-and-reference-field-defaults-preserve-jvm-state
   (let [fixture
         (model! {"example/NullState.java"

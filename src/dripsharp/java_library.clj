@@ -462,8 +462,8 @@
          [(type-node ctx (.getBoundingType ^CtWildcardReference argument))])))))
 
 (defn- declaration-type-node [ctx ^CtElement element ^CtTypeReference reference]
-  (let [base (or (when (or (instance? CtParameter element
-                                      (instance? CtMethod element)))
+  (let [base (or (when (or (instance? CtParameter element)
+                            (instance? CtMethod element))
                    (covariant-list-node ctx element reference))
                  (type-node ctx reference))]
     (if (and (not (.isPrimitive reference))
