@@ -1,7 +1,9 @@
 (ns vibeformer.packaging-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [vibeformer.packaging :as packaging])
+            [vibeformer.packaging :as packaging]
+            [vibeformer.paths :as paths]
+            [vibeformer.pkl.java-project :as pkl-project])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path Paths StandardCopyOption]
            [java.nio.file.attribute FileAttribute]
@@ -449,6 +451,77 @@
             (catch clojure.lang.ExceptionInfo caught caught))]
       (is (= :package-consumption-failed (:kind (ex-data error))))
       (is (= "NOTICE.txt" (:path (ex-data error)))))))
+
+(deftest pkl-core-package-inspection-requires-pinned-license-and-notice
+  (let [workspace (paths/workspace-root)
+        destination
+        (pkl-project/read-configuration
+         workspace "vibeformer/config/pkl-core-value-model-destination.edn")
+        package
+        (assoc (:package destination)
+               :repository-commit
+               "0123456789abcdef0123456789abcdef01234567")
+        license (Files/readString
+                 (paths/resolve-path workspace "research/pkl/LICENSE.txt"))
+        upstream-notice
+        (Files/readString
+         (paths/resolve-path workspace "research/pkl/NOTICE.txt"))
+        notice (str upstream-notice (:notice-appendix destination))
+        nuspec
+        (str "<package xmlns=\"" dependency-nuspec-namespace "\"><metadata>"
+             "<id>" (:id package) "</id>"
+             "<version>" (:version package) "</version>"
+             "<title>" (:title package) "</title>"
+             "<description>" (:description package) "</description>"
+             "<authors>" (:authors package) "</authors>"
+             "<tags>" (:tags package) "</tags>"
+             "<license type=\"file\">LICENSE.txt</license>"
+             "<licenseUrl>https://aka.ms/deprecateLicenseUrl</licenseUrl>"
+             "<projectUrl>" (:project-url package) "</projectUrl>"
+             "<repository type=\"" (:repository-type package)
+             "\" url=\"" (:repository-url package)
+             "\" commit=\"" (:repository-commit package) "\" />"
+             "<dependencies><group targetFramework=\"net8.0\">"
+             "<dependency id=\"Pkl.Parser\" version=\"0.0.0-development\" "
+             "exclude=\"Build,Analyzers\" />"
+             "</group></dependencies>"
+             "</metadata></package>")
+        content-types-with-text
+        (str/replace
+         (content-types)
+         "</Types>"
+         "<Default Extension=\"txt\" ContentType=\"application/octet\" /></Types>")
+        base-entries
+        {"Pkl.Core.nuspec" nuspec
+         "lib/net8.0/Pkl.Core.dll" "assembly"
+         "LICENSE.txt" license
+         "[Content_Types].xml" content-types-with-text
+         "_rels/.rels" (relationships "Pkl.Core.nuspec")
+         "package/services/metadata/core-properties/core-properties.psmdcp"
+         (core-properties package)}
+        artifact (archive! (assoc base-entries "NOTICE.txt" notice))
+        expected-files
+        (mapv (fn [{:keys [kind package-path sha256]}]
+                {:kind kind :path package-path :sha256 sha256})
+              (:legal-files destination))
+        dependencies [{:id "Pkl.Parser" :version "0.0.0-development"}]
+        inspection
+        (packaging/inspect-package!
+         artifact package "net8.0" "Pkl.Core" dependencies expected-files)
+        missing-notice (archive! base-entries)
+        error
+        (try
+          (packaging/inspect-package!
+           missing-notice package "net8.0" "Pkl.Core"
+           dependencies expected-files)
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= expected-files (:package-files inspection)))
+    (is (str/starts-with? notice upstream-notice))
+    (is (= (:notice-appendix destination)
+           (subs notice (count upstream-notice))))
+    (is (= :package-consumption-failed (:kind (ex-data error))))
+    (is (some #{"NOTICE.txt"} (:expected (ex-data error))))))
 
 (deftest package-inspection-rejects-a-bundled-project-dependency-assembly
   (let [artifact (package-archive! {"Pkl.Core.nuspec" (core-nuspec)

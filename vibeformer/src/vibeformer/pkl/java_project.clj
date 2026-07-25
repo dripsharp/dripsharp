@@ -12,7 +12,9 @@
             [vibeformer.paths :as paths]
             [vibeformer.pkl.java-body :as java-body]
             [vibeformer.spoon :as spoon])
-  (:import [java.util IdentityHashMap]
+  (:import [java.nio.file Files OpenOption Path]
+           [java.security MessageDigest]
+           [java.util IdentityHashMap]
            [spoon.reflect.code CtConstructorCall CtExpression CtLambda CtLiteral CtLocalVariable
             CtThisAccess CtVariableAccess]
            [spoon.reflect.declaration CtAnnotation CtAnonymousExecutable CtClass
@@ -24,6 +26,36 @@
            [spoon.reflect.visitor.filter TypeFilter]))
 
 (def ^:private default-config-file "vibeformer/config/pkl-parser.edn")
+
+(def ^:private core-profile "pkl-core-value-model")
+
+(def ^:private source-revision
+  "f7cac257ade5775c1dfc255f4fda2eacc296e9d0")
+
+(def ^:private core-legal-files
+  [{:kind :license
+    :source "research/pkl/LICENSE.txt"
+    :destination "Legal/LICENSE.txt"
+    :package-path "LICENSE.txt"
+    :source-sha256
+    "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    :sha256
+    "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"}
+   {:kind :notice
+    :source "research/pkl/NOTICE.txt"
+    :destination "Legal/NOTICE.txt"
+    :package-path "NOTICE.txt"
+    :source-sha256
+    "d03b8db1a0d36ba65550ba30a51c7897f4b48b0eae7582d3f0576ea41e23d48e"
+    :sha256
+    "5e38cf7f36337e264d45e7c026e2878cebec1aecd9b6d50737437c3bd095b93c"}])
+
+(def ^:private notice-appendix
+  (str "\n---\n"
+       "Vibeformer translation appendix\n\n"
+       "This package is an independent mechanical translation of the above "
+       "software to C#/.NET, produced by Vibeformer. It is not developed, "
+       "endorsed, or supported by Apple Inc. or the Pkl project.\n"))
 
 (def ^:private csharp-keywords
   #{"abstract" "as" "base" "bool" "break" "byte" "case" "catch" "char"
@@ -3182,17 +3214,162 @@
     :missing-kind :missing-java-compatibility-source
     :missing-message "Java compatibility source is missing"}])
 
+(defn- fail! [message data]
+  (throw (ex-info message data)))
+
+(defn- digest-file [^Path input]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (with-open [stream (Files/newInputStream input (make-array OpenOption 0))]
+      (let [buffer (byte-array 16384)]
+        (loop [read (.read stream buffer)]
+          (when-not (neg? read)
+            (when (pos? read)
+              (.update digest buffer 0 read))
+            (recur (.read stream buffer))))))
+    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+
+(defn- core-destination? [configuration]
+  (= "Pkl.Core" (get-in configuration [:package :id])))
+
+(defn- validate-core-legal-configuration! [configuration]
+  (when (core-destination? configuration)
+    (when-not (= core-legal-files (:legal-files configuration))
+      (fail! "Pkl.Core legal files differ from the pinned package contract"
+             {:kind :invalid-pkl-core-legal-configuration
+              :expected core-legal-files
+              :actual (:legal-files configuration)}))
+    (when-not (= notice-appendix (:notice-appendix configuration))
+      (fail! "Pkl.Core NOTICE appendix differs from the translation contract"
+             {:kind :invalid-pkl-core-notice-appendix
+              :expected notice-appendix
+              :actual (:notice-appendix configuration)}))
+    (when (get-in configuration [:package :license-expression])
+      (fail! "Pkl.Core must use its packed license file instead of a license expression"
+             {:kind :conflicting-pkl-core-license-metadata
+              :license-expression
+              (get-in configuration [:package :license-expression])})))
+  configuration)
+
+(defn- validate-configuration! [configuration]
+  (-> configuration
+      project-emission/validate-configuration!
+      validate-core-legal-configuration!))
+
+(defn- validate-legal-inputs! [workspace-root configuration]
+  (when (core-destination? configuration)
+    (validate-core-legal-configuration! configuration)
+    (doseq [{:keys [kind source source-sha256]}
+            (:legal-files configuration)]
+      (let [file (paths/resolve-path (paths/absolute workspace-root) source)]
+        (when-not (paths/regular-file? file)
+          (fail! "Configured Pkl.Core license or notice input is missing"
+                 {:kind :missing-pkl-core-legal-input
+                  :legal-kind kind
+                  :path (str file)}))
+        (let [actual (digest-file file)]
+          (when-not (= source-sha256 actual)
+            (fail! "Configured Pkl.Core license or notice input changed"
+                   {:kind :pkl-core-legal-input-mismatch
+                    :legal-kind kind
+                    :path (str file)
+                    :expected source-sha256
+                    :actual actual}))))))
+  configuration)
+
+(defn- validate-profile! [{:keys [workspace-root profile configuration]}]
+  (if-not (core-destination? configuration)
+    configuration
+    (let [configuration (validate-configuration! configuration)]
+      (let [expected {:profile core-profile
+                      :product-family :pkl
+                      :project-root "research/pkl"
+                      :revision source-revision
+                      :gradle-project ":pkl-core"}
+            actual (select-keys profile (keys expected))]
+        (when-not (= expected actual)
+          (fail! "Pkl.Core generation profile differs from its pinned source contract"
+                 {:kind :invalid-pkl-core-profile
+                  :expected expected
+                  :actual actual})))
+      (validate-legal-inputs! workspace-root configuration)
+      configuration)))
+
+(defn- xml-escape [value]
+  (-> (str value)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")
+      (str/replace "\"" "&quot;")
+      (str/replace "'" "&apos;")))
+
+(defn- project-text [configuration resource-artifacts]
+  (let [base-text (project-emission/project-text configuration resource-artifacts)]
+    (if-not (core-destination? configuration)
+      base-text
+      (let [license
+            (some #(when (= :license (:kind %)) %)
+                  (:legal-files configuration))
+            properties
+            (str "    <PackageLicenseFile>"
+                 (xml-escape (:package-path license))
+                 "</PackageLicenseFile>\n")
+            items
+            (apply
+             str
+             (for [{:keys [destination package-path]}
+                   (sort-by :package-path (:legal-files configuration))]
+               (str "    <None Include=\""
+                    (xml-escape
+                     (str (get-in configuration [:output :source-directory])
+                          "/" destination))
+                    "\" Pack=\"true\" PackagePath=\""
+                    (xml-escape package-path)
+                    "\" />\n")))]
+        (-> base-text
+            (str/replace
+             "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
+             (str properties
+                  "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"))
+            (str/replace "  </ItemGroup>\n</Project>\n"
+                         (str items "  </ItemGroup>\n</Project>\n")))))))
+
+(defn- legal-assets [{:keys [workspace-root configuration]}]
+  (if-not (core-destination? configuration)
+    []
+    (do
+      (validate-legal-inputs! workspace-root configuration)
+      (mapv
+       (fn [{:keys [kind source destination]}]
+         (let [base {:source source
+                     :destination destination
+                     :strategy (keyword "pkl-core.legal" (name kind))
+                     :missing-kind :missing-pkl-core-legal-input
+                     :missing-message
+                     "Configured Pkl.Core license or notice input is missing"}]
+           (if (= :notice kind)
+             (let [upstream (Files/readString
+                             (paths/resolve-path
+                              (paths/absolute workspace-root)
+                              source))]
+               (assoc base
+                      :text-replacements
+                      {upstream (str upstream (:notice-appendix configuration))}))
+             base)))
+       (:legal-files configuration)))))
+
 (defn- product-runtime-assets
-  [{:keys [configuration]}]
-  (mapv
-   (fn [relative]
-     {:source relative
-      :destination (str "Pkl/Core/Runtime/Substrate/"
-                        (.getFileName (paths/path relative)))
-      :strategy :reviewable-product-runtime-source
-      :missing-kind :missing-runtime-source
-      :missing-message "Configured runtime source is missing"})
-   (:runtime-sources configuration)))
+  [{:keys [configuration] :as context}]
+  (into
+   (mapv
+    (fn [relative]
+      {:source relative
+       :destination (str "Pkl/Core/Runtime/Substrate/"
+                         (.getFileName (paths/path relative)))
+       :strategy :reviewable-product-runtime-source
+       :missing-kind :missing-runtime-source
+       :missing-message "Configured runtime source is missing"})
+    (:runtime-sources configuration))
+   (legal-assets context)))
 
 (defn rule-bundle
   "Returns the Pkl-owned declaration, mapping, visibility, bridge, and runtime
@@ -3201,6 +3378,7 @@
   {:schema-version 1
    :id :pkl
    :product-family :pkl
+   :orchestration {:validate-profile! validate-profile!}
    :rules
    {:structural-declarations
     {:create-template emission-template
@@ -3220,7 +3398,8 @@
     {:destination-namespace destination-namespace
      :destination-file-name
      (fn [_ type] (str (identifier (.getSimpleName ^CtType type)) ".cs"))}
-    :project-policy project-emission/common-project-policy
+    :project-policy {:validate-configuration! validate-configuration!
+                     :project-text project-text}
     :resource-policy project-emission/common-resource-policy
     :destination-bridges {:assets bridge-assets}
     :product-runtime-assets {:assets product-runtime-assets}}})

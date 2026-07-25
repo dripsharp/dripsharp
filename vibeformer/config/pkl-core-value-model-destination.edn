@@ -45,4 +45,18 @@
                    "vibeformer/runtime/Pkl.Core.DotNet.cs"
                    "vibeformer/runtime/Pkl.Core.ValueModel.DotNet.cs"
                    "vibeformer/runtime/Pkl.Core.Loading.cs"]
+ :legal-files
+ [{:kind :license
+   :source "research/pkl/LICENSE.txt"
+   :destination "Legal/LICENSE.txt"
+   :package-path "LICENSE.txt"
+   :source-sha256 "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+   :sha256 "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"}
+  {:kind :notice
+   :source "research/pkl/NOTICE.txt"
+   :destination "Legal/NOTICE.txt"
+   :package-path "NOTICE.txt"
+   :source-sha256 "d03b8db1a0d36ba65550ba30a51c7897f4b48b0eae7582d3f0576ea41e23d48e"
+   :sha256 "5e38cf7f36337e264d45e7c026e2878cebec1aecd9b6d50737437c3bd095b93c"}]
+ :notice-appendix "\n---\nVibeformer translation appendix\n\nThis package is an independent mechanical translation of the above software to C#/.NET, produced by Vibeformer. It is not developed, endorsed, or supported by Apple Inc. or the Pkl project.\n"
  :resource-policy {:strategy :embedded-resource-preserve-path}}
