@@ -1,6 +1,10 @@
 {:schema-version 1
  :product-family :java-library
  :destination-bundle vibeformer.java-library/rule-bundle
+ :mechanical-source
+ {:repository "https://github.com/renatoathaydes/rawhttp.git"
+  :revision "947cfdc619100a23f5e429ccb3c42ba6fedc8141"
+  :notice-reference nil}
  :project {:assembly-name "RawHttp.Core"
            :root-namespace "RawHttp.Core"
            :target-framework "net8.0"

@@ -1,6 +1,7 @@
 (ns vibeformer.packaging-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [vibeformer.java-project :as java-project]
             [vibeformer.packaging :as packaging]
             [vibeformer.paths :as paths]
             [vibeformer.pkl.java-project :as pkl-project])
@@ -143,7 +144,19 @@
   (let [verification-count (atom 0)
         project-root (.resolve root "generated/pkl-parser")
         project-file (.resolve project-root "Pkl.Parser.csproj")
+        generated-source (.resolve project-root "src/Pkl/Parser/Parser.cs")
         assembly (.resolve project-root "bin/Release/net8.0/Pkl.Parser.dll")
+        mechanical-header
+        (java-project/mechanical-source-header
+         {:repository "https://github.com/apple/pkl.git"
+          :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+          :notice-reference "NOTICE.txt"}
+         "org/pkl/parser/Parser.java")
+        mechanical-proof
+        {:schema-version 1
+         :translator "Vibeformer"
+         :translator-version "0.1.0"
+         :verified-files 1}
         destination {:project {:assembly-name "Pkl.Parser"
                                :target-framework "net8.0"}
                      :package package}
@@ -151,6 +164,9 @@
         (fn [_]
           (let [build (swap! verification-count inc)]
             (write-file! project-file "<Project />")
+            (write-file! generated-source
+                         (str mechanical-header
+                              "#nullable enable\nnamespace Pkl.Parser;\n"))
             (write-file! assembly
                          (if (and divergent? (= 2 build))
                            "different second clean build"
@@ -160,7 +176,17 @@
               :dependency-emissions []
               :emission {:project-root project-root
                          :project-file project-file
-                         :resource-artifacts []}
+                         :resource-artifacts []
+                         :configuration
+                         {:mechanical-source
+                          {:repository "https://github.com/apple/pkl.git"
+                           :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+                           :notice-reference "NOTICE.txt"}}
+                         :artifacts
+                         [{:file "src/Pkl/Parser/Parser.cs"
+                           :upstream-source "org/pkl/parser/Parser.java"
+                           :mechanical-source-header mechanical-header}]
+                         :mechanical-source-header-proof mechanical-proof}
               :destination destination}
              :build-configuration "Release"}))
         run-command!
@@ -206,6 +232,12 @@
                                     :sha256 (apply str (repeat 64 "a"))}})})]
     (is (= 2 @verification-count))
     (is (= 2 (get-in proof [:summary :clean-builds])))
+    (is (= {:schema-version 1
+            :translator "Vibeformer"
+            :translator-version "0.1.0"
+            :verified-files 1}
+           (get-in proof [:summary :mechanical-source-headers "Pkl.Parser"])
+           (get-in proof [:packages 0 :mechanical-source-headers])))
     (is (Files/isRegularFile ^Path (:artifact proof)
                              (make-array java.nio.file.LinkOption 0)))))
 
@@ -249,7 +281,13 @@
            :project-file
            (Paths/get (str "/generated/" profile "/" profile ".csproj")
                       (make-array String 0))
-           :resource-artifacts []})
+           :resource-artifacts []
+           :artifacts []
+           :mechanical-source-header-proof
+           {:schema-version 1
+            :translator "Vibeformer"
+            :translator-version "0.1.0"
+            :verified-files 0}})
         dependency-emissions
         [(emission "io" [] [])
          (emission "fontbox" ["io"] ["../io/io.csproj"])

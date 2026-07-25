@@ -107,6 +107,10 @@
     (doseq [{:keys [profile destination]} prepared]
       (is (= revision (:revision profile)))
       (is (= revision (get-in destination [:package :repository-commit])))
+      (is (= {:repository "https://github.com/apache/pdfbox.git"
+              :revision revision
+              :notice-reference "NOTICE.txt"}
+             (:mechanical-source destination)))
       (is (str/ends-with? (:maven-project-id profile) (str ":" version)))
       (is (str/ends-with? (:source-project-id destination) (str ":" version)))
       (is (= (str version "-vibeformer.0")

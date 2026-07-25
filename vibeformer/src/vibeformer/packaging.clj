@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [vibeformer.compiler :as compiler]
             [vibeformer.harness :as harness]
+            [vibeformer.java-project :as java-project]
             [vibeformer.paths :as paths]
             [vibeformer.process :as process])
   (:import [java.io ByteArrayInputStream]
@@ -876,6 +877,11 @@
     (mapv
      (fn [{:keys [profile destination dependency-profiles] :as emission}]
        (let [dependency-profiles (or dependency-profiles [])
+             _ (when-not (:mechanical-source-header-proof emission)
+                 (fail! "Package plan is missing mechanical source header evidence"
+                        {:profile profile}))
+             mechanical-source-headers
+             (java-project/verify-mechanical-source-headers! emission)
              dependency-emissions
              (mapv
               (fn [dependency-profile]
@@ -915,6 +921,7 @@
          {:profile profile
           :emission emission
           :destination destination
+          :mechanical-source-headers mechanical-source-headers
           :expected-dependencies expected-dependencies
           :expected-package-files
           (mapv (fn [{:keys [kind package-path sha256]}]
@@ -934,11 +941,13 @@
      emissions)))
 
 (defn- package-reproducibility-plan [specs]
-  (mapv (fn [{:keys [profile destination expected-dependencies
+  (mapv (fn [{:keys [profile destination mechanical-source-headers
+                     expected-dependencies
                      expected-package-files expected-assembly-dependencies
                      primary?]}]
           {:profile profile
            :destination destination
+           :mechanical-source-headers mechanical-source-headers
            :expected-dependencies
            (mapv #(select-keys % [:id :version]) expected-dependencies)
            :expected-package-files expected-package-files
@@ -1080,7 +1089,8 @@
              (pack-project! run-command! build-configuration second-output spec))
            (let [packages
                  (mapv
-                  (fn [{:keys [profile emission destination expected-dependencies
+                  (fn [{:keys [profile emission destination mechanical-source-headers
+                               expected-dependencies
                                expected-package-files
                                expected-assembly-dependencies primary?]}]
                     (let [{:keys [id version] :as package} (:package destination)
@@ -1133,6 +1143,7 @@
                         {:profile profile :primary? primary? :artifact artifact
                          :identity {:id id :version version :sha256 first-hash
                                     :file (str (.getFileName ^Path artifact))}
+                         :mechanical-source-headers mechanical-source-headers
                          :inspection inspection :resource-proof resource-proof
                          :public-surface (:public-surface resource-proof)
                          :resources expected-resources})))
@@ -1146,6 +1157,10 @@
                   :repository-commit repository-commit
                   :packages (mapv :identity packages)
                   :external-packages external-packages
+                  :mechanical-source-headers
+                  (into (sorted-map)
+                        (map (juxt #(get-in % [:identity :id])
+                                   :mechanical-source-headers) packages))
                   :resource-counts
                   (into (sorted-map)
                         (map (juxt #(get-in % [:identity :id])

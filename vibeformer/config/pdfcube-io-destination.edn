@@ -3,6 +3,10 @@
  :pdfcube-product :io
  :destination-bundle vibeformer.pdfcube.java-project/rule-bundle
  :source-project-id "org.apache.pdfbox:pdfbox-io:3.0.8"
+ :mechanical-source
+ {:repository "https://github.com/apache/pdfbox.git"
+  :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+  :notice-reference "NOTICE.txt"}
  :project {:assembly-name "PdfCube.IO"
            :root-namespace "PdfCube.IO"
            :target-framework "net10.0"

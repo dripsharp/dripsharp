@@ -1,6 +1,10 @@
 {:schema-version 1
  :product-family :pkl
  :destination-bundle vibeformer.pkl.java-project/rule-bundle
+ :mechanical-source
+ {:repository "https://github.com/apple/pkl.git"
+  :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+  :notice-reference "NOTICE.txt"}
  :project {:assembly-name "Pkl.Parser"
            :root-namespace "Pkl.Parser"
            :target-framework "net8.0"

@@ -32,6 +32,11 @@
 (def ^:private source-revision
   "f7cac257ade5775c1dfc255f4fda2eacc296e9d0")
 
+(def ^:private mechanical-source
+  {:repository "https://github.com/apple/pkl.git"
+   :revision source-revision
+   :notice-reference "NOTICE.txt"})
+
 (def ^:private core-legal-files
   [{:kind :license
     :source "research/pkl/LICENSE.txt"
@@ -3250,9 +3255,18 @@
               (get-in configuration [:package :license-expression])})))
   configuration)
 
+(defn- validate-mechanical-source! [configuration]
+  (when-not (= mechanical-source (:mechanical-source configuration))
+    (fail! "Pkl mechanical-source provenance differs from its pinned source contract"
+           {:kind :invalid-pkl-mechanical-source
+            :expected mechanical-source
+            :actual (:mechanical-source configuration)}))
+  configuration)
+
 (defn- validate-configuration! [configuration]
   (-> configuration
       project-emission/validate-configuration!
+      validate-mechanical-source!
       validate-core-legal-configuration!))
 
 (defn- validate-legal-inputs! [workspace-root configuration]
@@ -3277,22 +3291,23 @@
   configuration)
 
 (defn- validate-profile! [{:keys [workspace-root profile configuration]}]
-  (if-not (core-destination? configuration)
-    configuration
-    (let [configuration (validate-configuration! configuration)]
-      (let [expected {:profile core-profile
-                      :product-family :pkl
-                      :project-root "research/pkl"
-                      :revision source-revision
-                      :gradle-project ":pkl-core"}
-            actual (select-keys profile (keys expected))]
-        (when-not (= expected actual)
-          (fail! "Pkl.Core generation profile differs from its pinned source contract"
-                 {:kind :invalid-pkl-core-profile
-                  :expected expected
-                  :actual actual})))
-      (validate-legal-inputs! workspace-root configuration)
-      configuration)))
+  (let [configuration (validate-configuration! configuration)]
+    (if-not (core-destination? configuration)
+      configuration
+      (do
+        (let [expected {:profile core-profile
+                        :product-family :pkl
+                        :project-root "research/pkl"
+                        :revision source-revision
+                        :gradle-project ":pkl-core"}
+              actual (select-keys profile (keys expected))]
+          (when-not (= expected actual)
+            (fail! "Pkl.Core generation profile differs from its pinned source contract"
+                   {:kind :invalid-pkl-core-profile
+                    :expected expected
+                    :actual actual})))
+        (validate-legal-inputs! workspace-root configuration)
+        configuration))))
 
 (defn- xml-escape [value]
   (-> (str value)

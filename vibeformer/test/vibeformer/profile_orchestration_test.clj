@@ -80,6 +80,10 @@
         {:schema-version 1
          :product-family :java-library
          :destination-bundle 'vibeformer.java-library/rule-bundle
+         :mechanical-source
+         {:repository "https://example.invalid/upstream/profile-library.git"
+          :revision "4444444444444444444444444444444444444444"
+          :notice-reference "NOTICE.txt"}
          :project {:assembly-name "Example.Profile.Library"
                    :root-namespace "Example.Profile.Library"
                    :target-framework "net8.0"

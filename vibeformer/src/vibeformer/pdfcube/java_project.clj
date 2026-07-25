@@ -18,6 +18,11 @@
 
 (def ^:private source-version "3.0.8")
 
+(def ^:private mechanical-source
+  {:repository "https://github.com/apache/pdfbox.git"
+   :revision source-revision
+   :notice-reference "NOTICE.txt"})
+
 (def ^:private bundle-selector
   'vibeformer.pdfcube.java-project/rule-bundle)
 
@@ -2931,6 +2936,7 @@
              [[:package :version] (get-in configuration [:package :version])]
              [[:package :repository-commit]
               (get-in configuration [:package :repository-commit])]
+             [:mechanical-source (:mechanical-source configuration)]
              [:source-project-id (:source-project-id configuration)]
              [:namespaces (:namespaces configuration)]
              [:namespace-prefixes (:namespace-prefixes configuration)]
@@ -2960,6 +2966,7 @@
               [:package :id] package-id
               [:package :version] "3.0.8-vibeformer.0"
               [:package :repository-commit] source-revision
+              :mechanical-source mechanical-source
               :source-project-id (:source-project-id product)
               :namespaces {}
               :namespace-prefixes (:namespace-prefixes product)

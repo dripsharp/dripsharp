@@ -45,6 +45,10 @@
   {:schema-version 1
    :product-family :java-library
    :destination-bundle 'vibeformer.java-library/rule-bundle
+   :mechanical-source
+   {:repository "https://example.invalid/upstream/linked-hash-map.git"
+    :revision "3333333333333333333333333333333333333333"
+    :notice-reference nil}
    :project {:assembly-name "Vibeformer.LinkedHashMap.Fixture"
              :root-namespace "Fixture.LinkedHashMap"
              :target-framework "net8.0"

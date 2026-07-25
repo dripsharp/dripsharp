@@ -67,6 +67,10 @@
            (validate-profile! {:workspace-root workspace
                                :profile profile
                                :configuration destination})))
+    (is (= {:repository "https://github.com/apple/pkl.git"
+            :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+            :notice-reference "NOTICE.txt"}
+           (:mechanical-source destination)))
     (is (= #{:license :notice} (set (keys package-files))))
     (is (= 2 (count legal-assets)))
     (is (= (:source-sha256 (:license package-files))
