@@ -911,7 +911,11 @@
                       "public static String render(String name) { "
                       "StringBuilder builder = new StringBuilder(\"prefix\"); "
                       "builder.append(name).append(\": \"); "
-                      "return builder.toString(); } }")})
+                      "return builder.toString(); } "
+                      "public static String slice(String value, int start, int end) { "
+                      "return new StringBuilder().append(value, start, end).toString(); } "
+                      "public static String reverse(String value) { "
+                      "return new StringBuilder(value).reverse().toString(); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -951,6 +955,13 @@
     (is (str/includes?
          first-source
          "return value.Map((value0) => value0.ToString()!).OrElse(\"\");"))
+    (is (str/includes?
+         first-source
+         "return new global::System.Text.StringBuilder().Append(value, start, (end - start)).ToString();"))
+    (is (str/includes?
+         first-source
+         (str "return global::Vibeformer.Runtime.JavaCompat.Reverse("
+              "new global::System.Text.StringBuilder(value)).ToString();")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -963,16 +974,34 @@
 (deftest neutral-capacity-set-add-and-list-size-use-direct-dotnet-contracts
   (let [fixture
         (model! {"example/Visited.java"
-                 (str "package example; import java.util.HashSet; import java.util.LinkedHashSet; "
+                 (str "package example; import java.util.Collections; import java.util.Comparator; "
+                      "import java.util.HashSet; import java.util.LinkedHashSet; "
                       "import java.util.List; import java.util.Set; "
                       "public final class Visited { public static boolean addFirst("
                       "List<String> names, String name) { "
                       "Set<String> visited = new HashSet<>(names.size()); "
                       "return visited.add(name); } "
+                      "public static boolean addConcrete(String name) { "
+                      "HashSet<String> visited = new HashSet<>(); "
+                      "visited.add(name); return visited.contains(name); } "
                       "public static Set<String> ordered(int capacity) { "
-                      "return new LinkedHashSet<>(capacity); } }")})
-        first (emit! fixture 1)
-        second (emit! fixture 3)
+                      "return new LinkedHashSet<>(capacity); } "
+                      "public static String[] copy(List<String> names) { "
+                      "return names.toArray(new String[names.size()]); } "
+                      "public static Object[] objects(List<String> names) { "
+                      "return names.toArray(); } "
+                      "public static void sort(List<String> names, Comparator<String> comparator) { "
+                      "Collections.sort(names, comparator); } "
+                      "public static int limits(Set<Integer> values) { "
+                      "return Collections.min(values) + Collections.max(values); } "
+                      "public static Set<String> none() { return Collections.emptySet(); } "
+                      "public static void clearConcrete() { "
+                      "java.util.ArrayList<String> names = new java.util.ArrayList<>(); "
+                      "java.util.HashMap<String, String> values = new java.util.HashMap<>(); "
+                      "names.clear(); values.clear(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
         first-source
         (slurp (str (paths/resolve-path (:project-root first)
                                         "src/Example/Java/Library/Visited.cs")))
@@ -986,8 +1015,32 @@
               "return visited.Add(name);")))
     (is (str/includes?
          first-source
+         (str "global::System.Collections.Generic.HashSet<string> visited = "
+              "new global::System.Collections.Generic.HashSet<string>();\n"
+              "visited.Add(name);\n"
+              "return visited.Contains(name);")))
+    (is (str/includes?
+         first-source
          (str "return new global::System.Collections.Generic.HashSet<string>("
               "capacity);")))
+    (is (str/includes?
+         first-source
+         (str "return global::Vibeformer.Runtime.JavaCompat.CollectionToArray("
+              "names, new string[names.Count]);")))
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.ToArray(names);"))
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.SortList(names, comparator);"))
+    (is (str/includes?
+         first-source
+         (str "return (global::Vibeformer.Runtime.JavaCompat.CollectionMin(values) + "
+              "global::Vibeformer.Runtime.JavaCompat.CollectionMax(values));")))
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.EmptySet<string>();"))
+    (is (= 2 (count (re-seq #"\.Clear\(\);" first-source))))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -996,6 +1049,139 @@
                                :command ["dotnet" "build" (:project-file first)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-float-limit-fields-preserve-java-values
+  (let [fixture
+        (model! {"example/Limits.java"
+                 (str "package example; public final class Limits { "
+                      "public static float max() { return Float.MAX_VALUE; } "
+                      "public static float min() { return Float.MIN_VALUE; } "
+                      "public static float normal() { return Float.MIN_NORMAL; } "
+                      "public static float positiveInfinity() { "
+                      "return Float.POSITIVE_INFINITY; } "
+                      "public static float negativeInfinity() { "
+                      "return Float.NEGATIVE_INFINITY; } "
+                      "public static boolean finite(float value) { "
+                      "return Float.isFinite(value); } "
+                      "public static boolean infinite(float value) { "
+                      "return Float.isInfinite(value); } "
+                      "public static boolean nan(float value) { "
+                      "return Float.isNaN(value); } "
+                      "public static int hash(float value) { "
+                      "return Float.hashCode(value); } }")})
+        result (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Limits.cs")))]
+    (is (str/includes? source "return float.MaxValue;"))
+    (is (str/includes? source "return float.Epsilon;"))
+    (is (str/includes? source "return 1.17549435E-38f;"))
+    (is (str/includes? source "return float.PositiveInfinity;"))
+    (is (str/includes? source "return float.NegativeInfinity;"))
+    (is (str/includes? source "return float.IsFinite(value);"))
+    (is (str/includes? source "return float.IsInfinity(value);"))
+    (is (str/includes? source "return float.IsNaN(value);"))
+    (is (str/includes?
+         source
+         "return global::Vibeformer.Runtime.JavaCompat.FloatToIntBits(value);"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-bidi-maps-to-the-pinned-uax9-runtime
+  (let [fixture
+        (model! {"example/Directions.java"
+                 (str "package example; import java.text.Bidi; import java.text.Normalizer; "
+                      "public final class Directions { public static int summary("
+                      "String word) { "
+                      "Bidi bidi = new Bidi(word, Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT); "
+                      "int count = bidi.getRunCount(); "
+                      "int result = bidi.getBaseLevel() * 1000000 + count * 100000; "
+                      "if (count > 0) { result += bidi.getRunLimit(0) * 1000; "
+                      "result += bidi.getRunLevel(0); } "
+                      "if (bidi.isMixed()) { result += bidi.getRunStart(1) * 100; "
+                      "result += bidi.getRunLimit(1) * 10 + bidi.getRunLevel(1); } "
+                      "return result; } "
+                      "public static int reordered() { "
+                      "byte[] levels = { 0, 1, 1 }; Integer[] runs = { 1, 2, 3 }; "
+                      "Bidi.reorderVisually(levels, 0, runs, 0, runs.length); "
+                      "return runs[0] * 100 + runs[1] * 10 + runs[2] "
+                      "+ Bidi.DIRECTION_LEFT_TO_RIGHT * 0 "
+                      "+ Bidi.DIRECTION_RIGHT_TO_LEFT * 0 "
+                      "+ Bidi.DIRECTION_DEFAULT_RIGHT_TO_LEFT * 0; } "
+                      "public static boolean mirrored() { "
+                      "return Character.isMirrored('('); } "
+                      "public static String normalized(String value) { "
+                      "return Normalizer.normalize(value, Normalizer.Form.NFKC); } }")})
+        capabilities #{:java-bidi :java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        project-root (:project-root emission)
+        source
+        (slurp (str (paths/resolve-path project-root
+                                        "src/Example/Java/Library/Directions.cs")))]
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaBidi bidi = "
+              "new global::Vibeformer.Runtime.JavaBidi(word, "
+              "global::Vibeformer.Runtime.JavaBidi.DirectionDefaultLeftToRight);")))
+    (is (str/includes? source "bidi.GetRunCount()"))
+    (is (str/includes? source "bidi.IsMixed()"))
+    (is (str/includes? source "bidi.GetBaseLevel()"))
+    (is (str/includes? source "bidi.GetRunLevel(0)"))
+    (is (str/includes? source "bidi.GetRunStart(1)"))
+    (is (str/includes? source "bidi.GetRunLimit(0)"))
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaBidi.ReorderVisually("
+              "levels, 0, runs, 0, runs.Length);")))
+    (is (str/includes?
+         source
+         "return global::Vibeformer.Runtime.JavaBidi.IsMirrored('(');"))
+    (is (str/includes?
+         source
+         (str "return global::Vibeformer.Runtime.JavaCompat.Normalize(value, "
+              "global::System.Text.NormalizationForm.FormKC);")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))
+    (let [consumer-root (temp-directory)
+          generated-project
+          (paths/resolve-path project-root (:project-file emission))
+          _ (write-sources!
+             consumer-root
+             {"Consumer.csproj"
+              (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                   "<PropertyGroup><OutputType>Exe</OutputType>"
+                   "<TargetFramework>net10.0</TargetFramework>"
+                   "<ImplicitUsings>disable</ImplicitUsings>"
+                   "<Nullable>enable</Nullable>"
+                   "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                   "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                   generated-project
+                   "\" /></ItemGroup></Project>")
+              "Program.cs"
+              (str "if (global::Example.Java.Library.Directions"
+                   ".summary(\"abc \\u05d0\\u05d1\\u05d2\") != 204471) return 1;\n"
+                   "if (global::Example.Java.Library.Directions"
+                   ".summary(\"\\u05d0\\u05d1\\u05d2\") != 1103001) return 2;\n"
+                   "if (!global::Example.Java.Library.Directions"
+                   ".mirrored()) return 3;\n"
+                   "if (global::Example.Java.Library.Directions"
+                   ".normalized(\"\\ufb01\") != \"fi\") return 4;\n"
+                   "return global::Example.Java.Library.Directions"
+                   ".reordered() == 132 ? 0 : 5;\n")})
+          result
+          (process/run! {:directory consumer-root
+                         :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                   "--configuration" "Release"
+                                   "--verbosity:quiet"]})]
+      (is (zero? (:exit result))))))
 
 (deftest neighboring-load-factor-linked-set-construction-remains-fail-closed
   (let [fixture
@@ -1008,6 +1194,132 @@
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
     (is (= "executable:java.util.LinkedHashSet#<init>(int,float)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-deque-collection-operations-and-add-reference-compose
+  (let [fixture
+        (model! {"example/Queues.java"
+                 (str "package example; import java.util.ArrayDeque; "
+                      "import java.util.Deque; import java.util.List; "
+                      "public final class Queues { "
+                      "public static String drain(List<String> values) { "
+                      "Deque<String> queue = new ArrayDeque<>(); "
+                      "queue.addAll(values); values.forEach(queue::add); "
+                      "if (queue.contains(\"first\") && !queue.isEmpty()) { "
+                      "return queue.removeFirst(); } "
+                      "queue.push(\"fallback\"); return queue.pop(); } "
+                      "static String peek(Deque<String> queue) { "
+                      "return queue.peek(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Queues.cs")))]
+    (is (str/includes?
+         source
+         "global::Vibeformer.Runtime.JavaCompat.AddAll(queue, values);"))
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaCompat.ForEach(values, "
+              "(value0) => { global::Vibeformer.Runtime.JavaCompat.Add("
+              "queue, value0); });")))
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaCompat.CollectionContains("
+              "queue, \"first\")")))
+    (is (str/includes? source "return queue.Pop();"))
+    (is (str/includes?
+         source
+         "return global::Vibeformer.Runtime.JavaCompat.DequePeek(queue);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-sorted-map-range-uses-java-half-open-bounds
+  (let [fixture
+        (model! {"example/Ranges.java"
+                 (str "package example; import java.util.SortedMap; import java.util.TreeMap; "
+                      "import java.util.TreeSet; "
+                      "public final class Ranges { static boolean empty("
+                      "TreeMap<Float, String> values, float lower, float upper) { "
+                      "SortedMap<Float, String> matches = values.subMap(lower, upper); "
+                      "return matches.values().isEmpty(); } "
+                      "static String ensure(TreeMap<Float, String> values, float key) { "
+                      "return values.computeIfAbsent(key, k -> \"value\"); } "
+                      "static boolean setEmpty(TreeSet<Float> values, float lower, float upper) { "
+                      "values.add(lower); "
+                      "return values.subSet(lower, upper).isEmpty(); } "
+                      "static TreeSet<String> reverseSet() { "
+                      "return new TreeSet<>((left, right) -> right.compareTo(left)); } "
+                      "static TreeMap<String, Integer> reverseMap() { "
+                      "return new TreeMap<>((left, right) -> right.compareTo(left)); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Ranges.cs")))]
+    (is (str/includes?
+         source
+         (str "return global::Vibeformer.Runtime.JavaCompat.CollectionIsEmpty("
+              "matches.Values);")))
+    (is (str/includes?
+         source
+         (str "global::System.Collections.Generic.IDictionary<float, string> matches = "
+              "global::Vibeformer.Runtime.JavaCompat.SortedSubMap("
+              "values, lower, upper);")))
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaCompat.CollectionIsEmpty("
+              "global::Vibeformer.Runtime.JavaCompat.SortedSubSet("
+              "values, lower, upper))")))
+    (is (str/includes? source "values.Add(lower);"))
+    (is (str/includes?
+         source
+         (str "return global::Vibeformer.Runtime.JavaCompat.ComputeIfAbsent("
+              "values, key, (k) => \"value\");")))
+    (is (str/includes?
+         source
+         (str "new global::System.Collections.Generic.SortedSet<string>("
+              "global::System.Collections.Generic.Comparer<string>.Create(")))
+    (is (str/includes?
+         source
+         (str "new global::System.Collections.Generic.SortedDictionary<string, int>("
+              "global::System.Collections.Generic.Comparer<string>.Create(")))
+    (is (not (str/includes?
+              source
+              ".Create(global::System.Collections.Generic.Comparer<string>.Create(")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest external-nested-dependency-types-use-the-configured-project-namespace
+  (let [fixture
+        (model!
+         {"example/Consumer.java"
+          (str "package example; "
+               "import external.api.Container.Factory; "
+               "public final class Consumer { "
+               "public Factory identity(Factory value) { return value; } }")}
+         {"external/api/Container.java"
+          (str "package external.api; "
+               "public final class Container { "
+               "public interface Factory { Object create(); } }")})
+        emission
+        (emit! fixture 1 #{} {:external-namespace-prefixes
+                              {"external.api" "Example.External"}})
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emission)
+                     "src/Example/Java/Library/Consumer.cs")))]
+    (is (str/includes?
+         source
+         (str "public global::Example.External.Container.Factory identity("
+              "global::Example.External.Container.Factory value)")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))))
 
 (deftest neutral-primitive-arrays-for-loops-and-conditionals-are-structural
   (let [fixture
@@ -1057,7 +1369,9 @@
         (model! {"example/Wire.java"
                  (str "package example; import java.io.ByteArrayInputStream; "
                       "import java.io.IOException; import java.io.InputStream; "
-                      "import java.io.OutputStream; import java.nio.charset.StandardCharsets; "
+                      "import java.io.OutputStream; import java.io.SequenceInputStream; "
+                      "import java.io.StringWriter; import java.io.Writer; "
+                      "import java.nio.charset.StandardCharsets; "
                       "import java.util.OptionalInt; "
                       "public final class Wire { public static void write("
                       "OutputStream output, String value) throws IOException { "
@@ -1067,6 +1381,14 @@
                       "output.write(value.length()); } "
                       "public static InputStream input(String value) { return new "
                       "ByteArrayInputStream(value.getBytes(StandardCharsets.US_ASCII)); } "
+                      "public static InputStream concat(byte[] first, byte[] second) { "
+                      "return new SequenceInputStream(new ByteArrayInputStream(first), "
+                      "new ByteArrayInputStream(second)); } "
+                      "public static void text(Writer writer, String value) "
+                      "throws IOException { writer.write(value); } "
+                      "public static String text(String value) throws IOException { "
+                      "StringWriter writer = new StringWriter(); "
+                      "writer.write(value); return writer.toString(); } "
                       "public static String roundTrip(String value) throws IOException { "
                       "java.io.ByteArrayOutputStream output = "
                       "new java.io.ByteArrayOutputStream(8); "
@@ -1098,6 +1420,17 @@
          (str "return global::Vibeformer.Runtime.JavaCompat.NewMemoryStream("
               "global::Vibeformer.Runtime.JavaCompat.StringGetBytes(value, "
               "global::Vibeformer.Runtime.JavaStandardCharsets.USASCII));")))
+    (is (str/includes?
+         first-source
+         (str "return new global::Vibeformer.Runtime.JavaSequenceInputStream("
+              "global::Vibeformer.Runtime.JavaCompat.NewMemoryStream(first), "
+              "global::Vibeformer.Runtime.JavaCompat.NewMemoryStream(second));")))
+    (is (str/includes? first-source "writer.Write(value);"))
+    (is (str/includes?
+         first-source
+         (str "global::System.IO.StringWriter writer = "
+              "new global::System.IO.StringWriter();\n"
+              "writer.Write(value);\nreturn writer.ToString();")))
     (is (str/includes?
          first-source
          (str "return global::Vibeformer.Runtime.JavaCompat.NewString("
@@ -1135,6 +1468,97 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest linked-list-add-first-uses-reusable-list-ordering
+  (let [fixture
+        (model! {"example/Prepending.java"
+                 (str "package example; import java.util.LinkedList; "
+                      "public final class Prepending { "
+                      "static LinkedList<String> values(String value) { "
+                      "LinkedList<String> values = new LinkedList<>(); "
+                      "values.addFirst(value); return values; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Prepending.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Prepending.cs")))]
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.ListAddFirst(values, value);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest class-cast-exception-uses-the-managed-invalid-cast-type
+  (let [fixture
+        (model! {"example/Rejecting.java"
+                 (str "package example; public final class Rejecting { "
+                      "static RuntimeException reject() { "
+                      "return new ClassCastException(\"wrong type\"); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Rejecting.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Rejecting.cs")))]
+    (is (str/includes?
+         first-source
+         "return new global::System.InvalidCastException(\"wrong type\");"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest filter-input-stream-super-reads-use-reusable-stream-contracts
+  (let [fixture
+        (model! {"example/Filtering.java"
+                 (str "package example; import java.io.FilterInputStream; "
+                      "import java.io.InputStream; public final class Filtering "
+                      "extends FilterInputStream { Filtering(InputStream input) { super(input); } "
+                      "public int readOnce() throws java.io.IOException { return super.read(); } "
+                      "public int readChunk(byte[] values, int offset, int count) "
+                      "throws java.io.IOException { return super.read(values, offset, count); } "
+                      "public long skipChunk(long count) throws java.io.IOException { "
+                      "return super.skip(count); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Filtering.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Filtering.cs")))]
+    (is (str/includes?
+         first-source
+         "return base.Read();"))
+    (is (str/includes?
+         first-source
+         "return base.Read(values, offset, count);"))
+    (is (str/includes?
+         first-source
+         "return base.Skip(count);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -1524,16 +1948,52 @@
     (is (= "executable:java.util.Map#compute(java.lang.Object,java.util.function.BiFunction)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
 
+(deftest neutral-hashtable-construction-uses-the-synchronized-null-rejecting-map
+  (let [fixture
+        (model! {"example/Tables.java"
+                 (str "package example; import java.util.Hashtable; "
+                      "import java.util.Map; public final class Tables { "
+                      "public static Map<String, String> create() { "
+                      "Map<String, String> result = new Hashtable<>(); "
+                      "result.put(\"key\", \"value\"); return result; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Tables.cs")))]
+    (is (str/includes?
+         source
+         (str "global::System.Collections.Generic.IDictionary<string, string> "
+              "result = new global::Vibeformer.Runtime.JavaHashtable<string, string>();")))
+    (is (str/includes?
+         source
+         "global::Vibeformer.Runtime.JavaCompat.MapPut(result, \"key\", \"value\");"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neutral-method-references-stream-map-and-set-collection-are-resolved
   (let [fixture
         (model! {"example/References.java"
-                 (str "package example; import java.util.Map; import java.util.Set; "
+                 (str "package example; import java.util.List; "
+                      "import java.util.Map; import java.util.Set; "
+                      "import static java.util.stream.Collectors.toList; "
                       "import static java.util.stream.Collectors.toSet; "
                       "public final class References { "
                       "public static Set<String> normalize(Set<String> values) { "
-                      "return values.stream().map(References::upper).collect(toSet()); } "
+                      "return values.stream().map(References::upper).sorted()"
+                      ".collect(toSet()); } "
                       "private static String upper(String value) { return value.toUpperCase(); } "
                       "public void copy(Map<String, String> values) { values.forEach(this::with); } "
+                      "public void copyMissing(Map<String, String> source, "
+                      "Map<String, String> target) { "
+                      "source.forEach(target::putIfAbsent); } "
+                      "public static List<String> strings(List<Object> values) { "
+                      "return values.stream().filter(String.class::isInstance)"
+                      ".map(String.class::cast).collect(toList()); } "
                       "private References with(String key, String value) { return this; } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
@@ -1547,15 +2007,60 @@
     (is (str/includes?
          first-source
          (str "return global::Vibeformer.Runtime.JavaCompat.SetOfValues<string>("
+              "global::Vibeformer.Runtime.JavaCompat.StreamSorted("
               "global::Vibeformer.Runtime.JavaCompat.Map(values, "
-              "global::Example.Java.Library.References.upper));")))
+              "global::Example.Java.Library.References.upper)));")))
     (is (str/includes?
          first-source
          (str "global::Vibeformer.Runtime.JavaCompat.ForEach(values, "
               "(value0, value1) => { this.with(value0, value1); });")))
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaCompat.ForEach(source, "
+              "(value0, value1) => { "
+              "global::Vibeformer.Runtime.JavaCompat.MapPutIfAbsent("
+              "target, value0, value1); });")))
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaCompat.StreamFilter(values, "
+              "(value0) => typeof(string).IsInstanceOfType(value0))")))
+    (is (str/includes?
+         first-source
+         (str "(value0) => global::Vibeformer.Runtime.JavaCompat.ClassCast<string>("
+              "typeof(string), value0)")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-stream-reduce-expands-binary-operator-and-static-max
+  (let [fixture
+        (model! {"example/References.java"
+                 (str "package example; import java.util.Map; "
+                      "import java.util.Optional; "
+                      "public final class References { "
+                      "public static Optional<Long> maximum(Map<Long, String> values) { "
+                      "return values.keySet().stream().reduce(Long::max); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/References.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/References.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return global::Vibeformer.Runtime.JavaCompat.ReduceOptional("
+              "global::Vibeformer.Runtime.JavaCompat.MapKeySet(values), "
+              "global::System.Math.Max);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
@@ -1851,6 +2356,209 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest standalone-constructor-calls-remain-valid-expression-statements
+  (let [fixture
+        (model! {"example/Construct.java"
+                 (str "package example; import java.util.ArrayList; "
+                      "public final class Construct { public void discard() { "
+                      "new ArrayList<String>(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        result (emit! fixture 2 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Construct.cs")))]
+    (is (str/includes?
+         source
+         "new global::System.Collections.Generic.List<string>();"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest nested-static-generic-types-close-their-clr-declaring-types
+  (let [fixture
+        (model! {"example/Outer.java"
+                 (str "package example; public final class Outer<T> { "
+                      "static final class Node<T> { T value; } "
+                      "private Node<T> root = new Node<T>(); "
+                      "public T value() { return root.value; } }")})
+        result (emit! fixture 2)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Outer.cs")))]
+    (is (str/includes? source "class Node<NestedT>"))
+    (is (str/includes?
+         source
+         "global::Example.Java.Library.Outer<object>.Node<T>"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest java-iterable-and-map-entry-contracts-compile-through-runtime-adapters
+  (let [fixture
+        (model!
+         {"example/Values.java"
+          (str "package example; import java.util.*; "
+               "public final class Values implements Iterable<String> { "
+               "private final List<String> values = new ArrayList<>(); "
+               "public Iterator<String> iterator() { return values.iterator(); } }")
+          "example/Entry.java"
+          (str "package example; import java.util.Map; "
+               "public final class Entry<K,V> implements Map.Entry<K,V> { "
+               "private final K key; private V value; "
+               "public Entry(K key, V value) { this.key = key; this.value = value; } "
+               "public K getKey() { return key; } "
+               "public V getValue() { return value; } "
+               "public V setValue(V replacement) { V old = value; value = replacement; return old; } "
+               "}")})
+        capabilities #{:java-compat :java-regex-unicode}
+        result (emit! fixture 2 capabilities)
+        iterable-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Values.cs")))
+        entry-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Entry.cs")))]
+    (is (str/includes?
+         iterable-source
+         "global::Vibeformer.Runtime.JavaIterableContract<string>"))
+    (is (str/includes?
+         entry-source
+         "global::Vibeformer.Runtime.JavaMapEntry<K, V>"))
+    (is (str/includes? entry-source "public override K Key => this.GetKey();"))
+    (is (str/includes? entry-source "public override V Value => this.GetValue();"))
+    (is (str/includes? entry-source "public override V SetValue("))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest concrete-subclasses-override-synthesized-abstract-interface-contracts
+  (let [fixture
+        (model! {"example/Glyph.java"
+                 (str "package example; public interface Glyph { "
+                      "String path(String name); }")
+                 "example/Base.java"
+                 "package example; public abstract class Base implements Glyph {}"
+                 "example/Child.java"
+                 (str "package example; public final class Child extends Base { "
+                      "public String path(String name) { return name; } }")})
+        result (emit! fixture 2)
+        base-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Base.cs")))
+        child-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Child.cs")))]
+    (is (str/includes? base-source "public abstract string path(string name);"))
+    (is (str/includes? child-source "public override string path(string name)"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest overloads-do-not-become-clr-overrides
+  (let [fixture
+        (model! {"example/Base.java"
+                 (str "package example; public class Base { "
+                      "public void setValue(String value) {} }")
+                 "example/Child.java"
+                 (str "package example; public final class Child extends Base { "
+                      "public void setValue(int value) {} }")})
+        result (emit! fixture 2)
+        child-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Child.cs")))]
+    (is (str/includes? child-source "public void setValue(int value)"))
+    (is (not (str/includes? child-source "override void setValue(int value)")))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest override-families-use-one-clr-accessibility
+  (let [fixture
+        (model! {"example/Base.java"
+                 (str "package example; public abstract class Base { "
+                      "abstract int value(); }")
+                 "example/Child.java"
+                 (str "package example; public final class Child extends Base { "
+                      "@Override protected int value() { return 1; } }")})
+        result (emit! fixture 2)
+        base-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Base.cs")))
+        child-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Child.cs")))]
+    (is (str/includes?
+         base-source "protected internal abstract int value();"))
+    (is (str/includes?
+         child-source "protected internal override int value()"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest exposed-signature-types-are-promoted-transitively
+  (let [fixture
+        (model! {"example/Api.java"
+                 (str "package example; public final class Api { "
+                      "public Base create() { return new Base(); } }")
+                 "example/Base.java"
+                 (str "package example; class Base { "
+                      "protected Leaf leaf() { return new Leaf(); } }")
+                 "example/Leaf.java"
+                 "package example; class Leaf {}"})
+        result (emit! fixture 2)
+        base-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Base.cs")))
+        leaf-source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Leaf.cs")))]
+    (is (str/includes? base-source "public class Base"))
+    (is (str/includes? leaf-source "public class Leaf"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest nested-signature-types-use-their-canonical-project-declarations
+  (let [fixture
+        (model! {"example/Formatter.java"
+                 (str "package example; public final class Formatter { "
+                      "enum Alignment { LEFT, RIGHT } "
+                      "public static final class Builder { "
+                      "public Builder align(Alignment value) { return this; } } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        result (emit! fixture 2 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Formatter.cs")))]
+    (is (str/includes? source "public sealed class Alignment"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest signed-input-stream-reads-use-exact-java-eof-semantics
   (let [fixture
         (model! {"example/Reads.java"
@@ -2046,9 +2754,11 @@
         second-source
         (slurp (str (paths/resolve-path (:project-root second)
                                         "src/Example/Java/Library/PrimitiveConversions.cs")))]
-    (is (str/includes? first-source "char result = (char)(value);"))
-    (is (str/includes? first-source "result[0] = (sbyte)'\\r';"))
-    (is (str/includes? first-source "result[1] = (sbyte)'\\n';"))
+    (is (str/includes? first-source "char result = (char)((char)(value));"))
+    (is (str/includes?
+         first-source "result[0] = unchecked((sbyte)('\\r'));"))
+    (is (str/includes?
+         first-source "result[1] = unchecked((sbyte)('\\n'));"))
     (is (= first-source second-source))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
@@ -2243,6 +2953,33 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest enum-constant-specific-classes-use-valid-stable-derived-type-names
+  (let [fixture
+        (model! {"example/ImageType.java"
+                 (str "package example; public enum ImageType { "
+                      "BINARY { @Override int code() { return 1; } }; "
+                      "abstract int code(); }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/ImageType.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/ImageType.cs")))]
+    (is (str/includes? first-source "public abstract class ImageType"))
+    (is (str/includes? first-source "private sealed class Anonymous_"))
+    (is (not (re-find #"Anonymous_[0-9]+_-" first-source)))
+    (is (= 1 (count (re-seq #"private ImageType\(\) \{\}" first-source))))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neighboring-enum-comparison-remains-fail-closed
   (let [fixture
         (model! {"example/Mode.java"
@@ -2252,6 +2989,263 @@
     (is (= :java-translation-coverage-failed (:kind (ex-data error))))
     (is (= "executable:java.lang.Enum#compareTo(java.lang.Enum)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
+
+(deftest neutral-number-format-mapping-preserves-fixed-width-and-fraction-settings
+  (let [fixture
+        (model! {"example/Formats.java"
+                 (str "package example; import java.text.DecimalFormat; "
+                      "import java.text.DecimalFormatSymbols; "
+                      "import java.text.NumberFormat; import java.util.Locale; "
+                      "public final class Formats { "
+                      "private static final NumberFormat FIXED = new DecimalFormat("
+                      "\"00000\", DecimalFormatSymbols.getInstance(Locale.US)); "
+                      "private static final NumberFormat DECIMAL = "
+                      "NumberFormat.getNumberInstance(Locale.US); "
+                      "public static String fixed(long value) { return FIXED.format(value); } "
+                      "public static String decimal(double value) { "
+                      "DECIMAL.setMaximumFractionDigits(4); "
+                      "DECIMAL.setGroupingUsed(false); "
+                      "return DECIMAL.format(value); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Formats.cs")))]
+    (is (str/includes?
+         source
+         (str "new global::Vibeformer.Runtime.JavaDecimalFormat(\"00000\", "
+              "global::System.Globalization.CultureInfo.GetCultureInfo("
+              "\"en-US\").NumberFormat)")))
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaDecimalFormat.GetNumberInstance("
+              "global::System.Globalization.CultureInfo.GetCultureInfo(\"en-US\"))")))
+    (is (str/includes?
+         source
+         "return global::Example.Java.Library.Formats.FIXED.Format(value);"))
+    (is (str/includes?
+         source
+         (str "global::Example.Java.Library.Formats.DECIMAL."
+              "SetMaximumFractionDigits(4);\n"
+              "global::Example.Java.Library.Formats.DECIMAL."
+              "SetGroupingUsed(false);\n"
+              "return global::Example.Java.Library.Formats.DECIMAL.Format(value);")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))
+    (let [consumer-root (temp-directory)
+          generated-project
+          (paths/resolve-path (:project-root emission) (:project-file emission))
+          _ (write-sources!
+             consumer-root
+             {"Consumer.csproj"
+              (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                   "<PropertyGroup><OutputType>Exe</OutputType>"
+                   "<TargetFramework>net10.0</TargetFramework>"
+                   "<ImplicitUsings>disable</ImplicitUsings>"
+                   "<Nullable>enable</Nullable>"
+                   "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                   "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                   generated-project
+                   "\" /></ItemGroup></Project>")
+              "Program.cs"
+              (str "return global::Example.Java.Library.Formats"
+                   ".@decimal(1234.56789) == \"1234.5679\" ? 0 : 1;\n")})
+          result
+          (process/run! {:directory consumer-root
+                         :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                   "--configuration" "Release"
+                                   "--verbosity:quiet"]})]
+      (is (zero? (:exit result))))))
+
+(deftest neutral-message-digest-mapping-covers-incremental-and-one-shot-hashes
+  (let [fixture
+        (model! {"example/Digests.java"
+                 (str "package example; import java.security.MessageDigest; "
+                      "public final class Digests { "
+                      "public static byte[] hash(byte[] input) throws Exception { "
+                      "MessageDigest digest = MessageDigest.getInstance(\"SHA-256\"); "
+                      "digest.update(input); digest.update(input, 0, 1); "
+                      "digest.update((byte) 1); return digest.digest(input); } "
+                      "public static boolean equal(byte[] left, byte[] right) { "
+                      "return MessageDigest.isEqual(left, right); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Digests.cs")))]
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaMessageDigest digest = "
+              "global::Vibeformer.Runtime.JavaMessageDigest.GetInstance(\"SHA-256\");")))
+    (is (str/includes?
+         source
+         (str "digest.Update(input);\n"
+              "digest.Update(input, 0, 1);\n"
+              "digest.Update(1);\n"
+              "return digest.Digest(input);")))
+    (is (str/includes?
+         source
+         "return global::Vibeformer.Runtime.JavaMessageDigest.IsEqual(left, right);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest secure-random-maps-to-the-cryptographic-runtime
+  (let [fixture
+        (model! {"example/RandomBytes.java"
+                 (str "package example; import java.security.SecureRandom; "
+                      "import java.util.Random; public final class RandomBytes { "
+                      "public static int fill(byte[] destination) { "
+                      "Random random = new SecureRandom(); "
+                      "random.nextBytes(destination); return random.nextInt(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/RandomBytes.cs")))
+        runtime-source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Vibeformer/Runtime/JavaCompat.cs")))]
+    (is (str/includes?
+         source
+         "global::Vibeformer.Runtime.JavaRandom random = new global::Vibeformer.Runtime.JavaRandom();"))
+    (is (str/includes? source "random.NextBytes(destination);"))
+    (is (str/includes? source "return random.NextInt();"))
+    (is (str/includes?
+         runtime-source
+         "RandomNumberGenerator.Fill(MemoryMarshal.AsBytes(destination.AsSpan()));"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest aes-cipher-maps-to-the-managed-cryptography-runtime
+  (let [fixture
+        (model! {"example/Aes.java"
+                 (str "package example; import javax.crypto.Cipher; "
+                      "import javax.crypto.spec.IvParameterSpec; "
+                      "import javax.crypto.spec.SecretKeySpec; "
+                      "public final class Aes { public static byte[] encrypt("
+                      "byte[] key, byte[] iv, byte[] value) throws Exception { "
+                      "Cipher cipher = Cipher.getInstance(\"AES/CBC/NoPadding\"); "
+                      "cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, \"AES\"), "
+                      "new IvParameterSpec(iv)); return cipher.doFinal(value); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        project-root (:project-root emission)
+        source
+        (slurp (str (paths/resolve-path project-root
+                                        "src/Example/Java/Library/Aes.cs")))]
+    (is (str/includes?
+         source
+         (str "global::Vibeformer.Runtime.JavaCipher cipher = "
+              "global::Vibeformer.Runtime.JavaCipher.GetInstance("
+              "\"AES/CBC/NoPadding\");")))
+    (is (str/includes? source "cipher.Init(global::Vibeformer.Runtime.JavaCipher.ENCRYPT_MODE"))
+    (is (str/includes? source "return cipher.DoFinal(value);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory project-root
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))
+    (let [consumer-root (temp-directory)
+          generated-project
+          (paths/resolve-path project-root (:project-file emission))
+          _ (write-sources!
+             consumer-root
+             {"Consumer.csproj"
+              (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                   "<PropertyGroup><OutputType>Exe</OutputType>"
+                   "<TargetFramework>net10.0</TargetFramework>"
+                   "<ImplicitUsings>disable</ImplicitUsings>"
+                   "<Nullable>enable</Nullable>"
+                   "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                   "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                   generated-project
+                   "\" /></ItemGroup></Project>")
+              "Program.cs"
+              (str "var zero = new sbyte[16];\n"
+                   "var encrypted = global::Example.Java.Library.Aes"
+                   ".encrypt(zero, zero, zero);\n"
+                   "var expected = new sbyte[] { 0x66, unchecked((sbyte)0xe9), "
+                   "0x4b, unchecked((sbyte)0xd4), unchecked((sbyte)0xef), "
+                   "unchecked((sbyte)0x8a), 0x2c, 0x3b, unchecked((sbyte)0x88), "
+                   "0x4c, unchecked((sbyte)0xfa), 0x59, unchecked((sbyte)0xca), "
+                   "0x34, 0x2b, 0x2e };\n"
+                   "return global::System.Linq.Enumerable.SequenceEqual("
+                   "encrypted, expected) ? 0 : 1;\n")})
+          result
+          (process/run! {:directory consumer-root
+                         :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                   "--configuration" "Release"
+                                   "--verbosity:quiet"]})]
+      (is (zero? (:exit result))))))
+
+(deftest primitive-array-copy-rules-share-the-generic-java-runtime-contract
+  (let [fixture
+        (model! {"example/Copies.java"
+                 (str "package example; import java.util.Arrays; "
+                      "public final class Copies { "
+                      "static byte[] bytes(byte[] value) { return Arrays.copyOf(value, 16); } "
+                      "static float[] floats(float[] value) { return Arrays.copyOf(value, 4); } "
+                      "static byte[] range(byte[] value) { "
+                      "return Arrays.copyOfRange(value, 2, 12); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Copies.cs")))]
+    (is (str/includes?
+         source
+         "return global::Vibeformer.Runtime.JavaCompat.CopyOf(value, 16);"))
+    (is (str/includes?
+         source
+         "return global::Vibeformer.Runtime.JavaCompat.CopyOf(value, 4);"))
+    (is (str/includes?
+         source
+         "return global::Vibeformer.Runtime.JavaCompat.CopyOfRange(value, 2, 12);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest big-integer-preserves-java-byte-order-and-positive-modulo
+  (let [fixture
+        (model! {"example/BigNumbers.java"
+                 (str "package example; import java.math.BigInteger; "
+                      "public final class BigNumbers { "
+                      "public static byte[] bytes(long value) { "
+                      "return BigInteger.valueOf(value).toByteArray(); } "
+                      "public static int remainder(byte[] magnitude) { "
+                      "BigInteger value = new BigInteger(1, magnitude); "
+                      "return value.mod(BigInteger.valueOf(3)).intValue(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        project-root (:project-root emission)
+        source
+        (slurp (str (paths/resolve-path project-root
+                                        "src/Example/Java/Library/BigNumbers.cs")))]
+    (is (str/includes? source "JavaCompat.BigIntegerToByteArray("))
+    (is (str/includes? source "JavaCompat.NewBigInteger(1, magnitude)"))
+    (is (str/includes? source "JavaCompat.BigIntegerMod("))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory project-root
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest radix-default-encoding-and-long-stream-rules-compose
   (let [fixture
@@ -2265,6 +3259,23 @@
                       "static long total(List<Chunks> chunks) { "
                       "return chunks.stream().mapToLong(Chunks::size).sum(); } "
                       "static int smaller(int left, int right) { return Math.min(left, right); } "
+                      "static float smaller(float left, float right) { "
+                      "return Math.min(left, right); } "
+                      "static float larger(float left, float right) { "
+                      "return Math.max(left, right); } "
+                      "static long distance(long left, long right) { "
+                      "return Math.abs(left - right); } "
+                      "static float magnitude(float value) { return Math.abs(value); } "
+                      "static float direction(float value) { return Math.signum(value); } "
+                      "static double functions(double value) { "
+                      "return Math.acos(value) + Math.atan2(value, value) + Math.ceil(value) "
+                      "+ Math.cos(value) + Math.log10(value) + Math.sin(value) "
+                      "+ Math.sqrt(value) + Math.toDegrees(value) + Math.toRadians(value); } "
+                      "static long rounded(double value) { return Math.round(value); } "
+                      "static int floorDivision(int left, int right) { "
+                      "return Math.floorDiv(left, right); } "
+                      "static String decimal(long value) { return String.valueOf(value); } "
+                      "static String newline() { return System.lineSeparator(); } "
                       "static byte[] copy(byte[] source, long length) { "
                       "byte[] result = new byte[Math.toIntExact(length)]; "
                       "System.arraycopy(source, 0, result, 0, source.length); "
@@ -2297,6 +3308,35 @@
     (is (str/includes?
          first-source
          "return global::System.Math.Min(left, right);"))
+    (is (str/includes?
+         first-source
+         "return global::System.Math.Max(left, right);"))
+    (is (str/includes?
+         first-source
+         "return global::System.Math.Abs((left - right));"))
+    (is (str/includes?
+         first-source
+         "return global::System.Math.Abs(value);"))
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.SignumFloat(value);"))
+    (is (str/includes? first-source "global::System.Math.Acos(value)"))
+    (is (str/includes? first-source "global::System.Math.Atan2(value, value)"))
+    (is (str/includes? first-source "global::System.Math.Ceiling(value)"))
+    (is (str/includes? first-source "global::System.Math.Cos(value)"))
+    (is (str/includes? first-source "global::System.Math.Log10(value)"))
+    (is (str/includes? first-source "global::System.Math.Sin(value)"))
+    (is (str/includes? first-source "global::System.Math.Sqrt(value)"))
+    (is (str/includes? first-source "global::Vibeformer.Runtime.JavaCompat.ToDegrees(value)"))
+    (is (str/includes? first-source "global::Vibeformer.Runtime.JavaCompat.ToRadians(value)"))
+    (is (str/includes? first-source "return global::Vibeformer.Runtime.JavaCompat.MathRound(value);"))
+    (is (str/includes? first-source "return global::Vibeformer.Runtime.JavaCompat.FloorDiv(left, right);"))
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.StringValueOf(value);"))
+    (is (str/includes?
+         first-source
+         "return global::System.Environment.NewLine;"))
     (is (str/includes?
          first-source
          (str "sbyte[] result = new sbyte[global::Vibeformer.Runtime.JavaCompat.ToIntExact(length)];\n"
@@ -2742,6 +3782,40 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest inflater-uses-the-reusable-streaming-compatibility-type
+  (let [fixture
+        (model! {"example/Inflating.java"
+                 (str "package example; import java.util.zip.Inflater; "
+                      "public final class Inflating { static int decode(byte[] input, byte[] output) "
+                      "throws Exception { Inflater inflater = new Inflater(true); "
+                      "inflater.setInput(input, 0, input.length); "
+                      "if (inflater.finished() || inflater.needsInput()) return -1; "
+                      "int count = inflater.inflate(output); inflater.end(); return count; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Inflating.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Inflating.cs")))]
+    (is (str/includes?
+         first-source
+         (str "global::Vibeformer.Runtime.JavaInflater inflater = "
+              "new global::Vibeformer.Runtime.JavaInflater(true);")))
+    (is (str/includes? first-source "inflater.SetInput(input, 0, input.Length);"))
+    (is (str/includes? first-source "inflater.Finished() || inflater.NeedsInput()"))
+    (is (str/includes? first-source "int count = inflater.Inflate(output);"))
+    (is (str/includes? first-source "inflater.End();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neighboring-sized-pushback-construction-remains-fail-closed
   (let [fixture
         (model! {"example/Unsupported.java"
@@ -3076,7 +4150,9 @@
                       "static String takeLast(ArrayList<String> values) { "
                       "if (values.isEmpty()) return \"\"; "
                       "String value = values.get(values.size() - 1); "
-                      "return values.remove(values.size() - 1) + value; } }")})
+                      "return values.remove(values.size() - 1) + value; } "
+                      "static void append(ArrayList<String> values, String value) { "
+                      "values.add(value); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -3095,6 +4171,9 @@
     (is (str/includes?
          first-source
          "global::Vibeformer.Runtime.JavaCompat.ListRemove(values, (values.Count - 1))"))
+    (is (str/includes?
+         first-source
+         "global::Vibeformer.Runtime.JavaCompat.Add(values, value);"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -3103,16 +4182,23 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-array-list-capacity-operation-remains-fail-closed
+(deftest concrete-array-list-capacity-operation-uses-dotnet-capacity
   (let [fixture
-        (model! {"example/Unsupported.java"
+        (model! {"example/Lists.java"
                  (str "package example; import java.util.ArrayList; "
-                      "public final class Unsupported { static void reserve("
+                      "public final class Lists { static void reserve("
                       "ArrayList<String> values) { values.ensureCapacity(10); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.util.ArrayList#ensureCapacity(int)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        result (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Lists.cs")))]
+    (is (str/includes? source "values.EnsureCapacity(10);"))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest collector-suppliers-materialize-concrete-array-lists
   (let [fixture
@@ -3233,6 +4319,32 @@
     (is (str/includes?
          first-source
          "return global::Vibeformer.Runtime.JavaCompat.StringReplaceAll(value, \"x\", \"y\");"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest string-replace-first-uses-the-reusable-java-regex-contract
+  (let [fixture
+        (model! {"example/Replacing.java"
+                 (str "package example; public final class Replacing { "
+                      "static String replace(String value) { "
+                      "return value.replaceFirst(\"x\", \"y\"); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Replacing.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Replacing.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::Vibeformer.Runtime.JavaCompat.StringReplaceFirst(value, \"x\", \"y\");"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -3753,6 +4865,58 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest explicit-member-class-constructors-carry-their-java-outer-instance
+  (let [fixture
+        (model! {"example/Outer.java"
+                 (str "package example; public final class Outer { "
+                      "private final int value; public Outer(int value) { this.value = value; } "
+                      "public Inner child(int offset) { return new Inner(offset); } "
+                      "public class Inner { private final int offset; "
+                      "Inner() { this(0); } Inner(int offset) { this.offset = offset; } "
+                      "public int value() { return Outer.this.value + offset; } } }")})
+        result (emit! fixture 2)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Outer.cs")))]
+    (is (str/includes?
+         source
+         "new global::Example.Java.Library.Outer.Inner(offset, this)"))
+    (is (str/includes?
+         source
+         "internal Inner(int offset, global::Example.Java.Library.Outer __outer)"))
+    (is (str/includes? source "this.__outer = __outer;"))
+    (is (str/includes? source "internal Inner(global::Example.Java.Library.Outer __outer) : this(0, __outer)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest byte-literals-and-char-array-elements-use-unchecked-java-narrowing
+  (let [fixture
+        (model! {"example/Bytes.java"
+                 (str "package example; public final class Bytes { "
+                      "static byte[] values() { byte[] values = "
+                      "new byte[] { (byte) 0xff, 'A' }; "
+                      "values[0] = (byte) 0xfe; return values; } "
+                      "static byte[][] nested() { return new byte[][] { "
+                      "new byte[1], new byte[] { (byte) 0xfd } }; } }")})
+        result (emit! fixture 2)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/Bytes.cs")))]
+    (is (str/includes? source "unchecked((sbyte)(255))"))
+    (is (str/includes? source "unchecked((sbyte)('A'))"))
+    (is (str/includes? source "unchecked((sbyte)(254))"))
+    (is (str/includes?
+         source
+         "new sbyte[][] { new sbyte[1], new sbyte[] { unchecked((sbyte)(253)) } }"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 

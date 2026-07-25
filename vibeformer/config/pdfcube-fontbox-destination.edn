@@ -64,7 +64,7 @@
    :version "4.150.1"
    :projection :skia-sharp-native-assets}]
  :internal-capabilities #{:font-discovery :skia-geometry}
- :destination-capabilities #{:java-compat :java-regex-unicode}
+ :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
  :compatibility-namespace "PdfCube.FB.Runtime"
  :legal-files
  [{:kind :license

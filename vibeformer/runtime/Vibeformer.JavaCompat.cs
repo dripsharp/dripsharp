@@ -17,13 +17,192 @@ using System.Linq;
 using System.Reflection;
 using System.Resources;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 
 namespace Vibeformer.Runtime;
+
+public interface JavaCloneable
+{
+}
+
+public enum JavaRoundingMode
+{
+    Ceiling
+}
+
+public sealed class JavaPriorityQueue<T>
+{
+    private readonly List<T> values;
+    private readonly IComparer<T> comparer = Comparer<T>.Default;
+
+    public JavaPriorityQueue() : this(0)
+    {
+    }
+
+    public JavaPriorityQueue(int initialCapacity)
+    {
+        if (initialCapacity < 0) throw new ArgumentException("Initial capacity cannot be negative.");
+        values = new List<T>(initialCapacity);
+    }
+
+    public int Count => values.Count;
+
+    public bool Add(T value)
+    {
+        values.Add(value);
+        var index = values.Count - 1;
+        while (index > 0)
+        {
+            var parent = (index - 1) / 2;
+            if (comparer.Compare(values[index], values[parent]) >= 0) break;
+            (values[index], values[parent]) = (values[parent], values[index]);
+            index = parent;
+        }
+        return true;
+    }
+
+    public T? Peek() => values.Count == 0 ? default : values[0];
+
+    public T? Poll()
+    {
+        if (values.Count == 0) return default;
+        var result = values[0];
+        var last = values[^1];
+        values.RemoveAt(values.Count - 1);
+        if (values.Count == 0) return result;
+        values[0] = last;
+        var index = 0;
+        while (true)
+        {
+            var left = index * 2 + 1;
+            if (left >= values.Count) break;
+            var right = left + 1;
+            var child = right < values.Count &&
+                        comparer.Compare(values[right], values[left]) < 0
+                ? right
+                : left;
+            if (comparer.Compare(values[index], values[child]) <= 0) break;
+            (values[index], values[child]) = (values[child], values[index]);
+            index = child;
+        }
+        return result;
+    }
+}
+
+public sealed class JavaIdentityHashMap<K, V> : Dictionary<K, V> where K : notnull
+{
+    private sealed class IdentityComparer : IEqualityComparer<K>
+    {
+        public bool Equals(K? left, K? right) => ReferenceEquals(left, right);
+        public int GetHashCode(K value) =>
+            System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value);
+    }
+
+    public JavaIdentityHashMap() : base(new IdentityComparer())
+    {
+    }
+}
+
+internal sealed class JavaMapBackedSet<T> : ISet<T> where T : notnull
+{
+    private readonly IDictionary<T, bool> map;
+
+    internal JavaMapBackedSet(IDictionary<T, bool> map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        if (map.Count != 0) throw new ArgumentException("Backing map must be empty.");
+        this.map = map;
+    }
+
+    public int Count => map.Count;
+    public bool IsReadOnly => map.IsReadOnly;
+    public bool Add(T item)
+    {
+        if (map.ContainsKey(item)) return false;
+        map.Add(item, true);
+        return true;
+    }
+    void ICollection<T>.Add(T item) => Add(item);
+    public void Clear() => map.Clear();
+    public bool Contains(T item) => map.ContainsKey(item);
+    public void CopyTo(T[] array, int arrayIndex) => map.Keys.CopyTo(array, arrayIndex);
+    public bool Remove(T item) => map.Remove(item);
+    public IEnumerator<T> GetEnumerator() => map.Keys.GetEnumerator();
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    public void ExceptWith(IEnumerable<T> other)
+    {
+        foreach (var item in other) Remove(item);
+    }
+    public void IntersectWith(IEnumerable<T> other)
+    {
+        var retained = new HashSet<T>(other);
+        foreach (var item in map.Keys.ToArray())
+            if (!retained.Contains(item)) Remove(item);
+    }
+    public bool IsProperSubsetOf(IEnumerable<T> other) => map.Keys.ToHashSet().IsProperSubsetOf(other);
+    public bool IsProperSupersetOf(IEnumerable<T> other) => map.Keys.ToHashSet().IsProperSupersetOf(other);
+    public bool IsSubsetOf(IEnumerable<T> other) => map.Keys.ToHashSet().IsSubsetOf(other);
+    public bool IsSupersetOf(IEnumerable<T> other) => map.Keys.ToHashSet().IsSupersetOf(other);
+    public bool Overlaps(IEnumerable<T> other) => map.Keys.ToHashSet().Overlaps(other);
+    public bool SetEquals(IEnumerable<T> other) => map.Keys.ToHashSet().SetEquals(other);
+    public void SymmetricExceptWith(IEnumerable<T> other)
+    {
+        foreach (var item in other.ToArray())
+            if (!Remove(item)) Add(item);
+    }
+    public void UnionWith(IEnumerable<T> other)
+    {
+        foreach (var item in other) Add(item);
+    }
+}
+
+internal sealed class JavaAssertionError : Exception
+{
+    internal JavaAssertionError(object? detail)
+        : base(JavaCompat.StringValueOf(detail), detail as Exception)
+    {
+    }
+}
+
+internal static class JavaXPathConstants
+{
+    internal static readonly XmlQualifiedName NODE = new("NODE");
+    internal static readonly XmlQualifiedName NODESET = new("NODESET");
+}
+
+internal sealed class JavaXPathFactory
+{
+    internal static readonly JavaXPathFactory Instance = new();
+    internal JavaXPath NewXPath() => new();
+}
+
+internal sealed class JavaXPath
+{
+    internal string Evaluate(string expression, object context)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(expression);
+        var node = context as XmlNode
+            ?? throw new ArgumentException("XPath context must be an XML node.", nameof(context));
+        return node.SelectSingleNode(expression)?.InnerText ?? string.Empty;
+    }
+
+    internal object? Evaluate(string expression, object context, XmlQualifiedName returnType)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(expression);
+        var node = context as XmlNode
+            ?? throw new ArgumentException("XPath context must be an XML node.", nameof(context));
+        if (returnType == JavaXPathConstants.NODESET) return node.SelectNodes(expression);
+        if (returnType == JavaXPathConstants.NODE) return node.SelectSingleNode(expression);
+        return Evaluate(expression, context);
+    }
+}
 
 internal static class JavaStandardCharsets
 {
@@ -33,6 +212,7 @@ internal static class JavaStandardCharsets
     // UTF-16BE remains a BOM-agnostic fixed-endian charset.
     internal static readonly Encoding UTF16 = new UnicodeEncoding(true, true);
     internal static readonly Encoding UTF16BE = Encoding.BigEndianUnicode;
+    internal static readonly Encoding UTF16LE = Encoding.Unicode;
     internal static readonly Encoding USASCII = Encoding.ASCII;
     internal static readonly Encoding ISO88591 = Encoding.Latin1;
 }
@@ -94,14 +274,820 @@ internal sealed class JavaCancellationException : OperationCanceledException
         : base("The translated Java operation was cancelled.", token) { }
 }
 
-internal sealed class JavaAssertionError(string? message) : Exception(message);
-
 [Serializable]
 internal sealed class JavaNumberFormatException : ArgumentException
 {
     internal JavaNumberFormatException(string message) : base(message) { }
     internal JavaNumberFormatException(string message, Exception cause)
         : base(message, cause) { }
+}
+
+internal sealed class JavaDecimalFormat
+{
+    private readonly string integerPattern;
+    private readonly NumberFormatInfo format;
+    private int maximumFractionDigits;
+    private bool groupingUsed;
+
+    internal JavaDecimalFormat(string pattern, NumberFormatInfo format)
+    {
+        this.format = (NumberFormatInfo)format.Clone();
+        var decimalPoint = pattern.IndexOf('.');
+        integerPattern = decimalPoint < 0 ? pattern : pattern[..decimalPoint];
+        groupingUsed = integerPattern.Contains(',');
+        maximumFractionDigits = decimalPoint < 0 ? 0 : pattern.Length - decimalPoint - 1;
+    }
+
+    internal static JavaDecimalFormat GetNumberInstance(CultureInfo culture) =>
+        new("#,##0.###", culture.NumberFormat);
+
+    private string Pattern =>
+        (groupingUsed ? integerPattern : integerPattern.Replace(",", string.Empty, StringComparison.Ordinal)) +
+        (maximumFractionDigits == 0 ? string.Empty : "." + new string('#', maximumFractionDigits));
+
+    internal string Format(long value) => value.ToString(Pattern, format);
+    internal string Format(double value) => value.ToString(Pattern, format);
+    internal string Format(object? value) =>
+        value is IFormattable formattable
+            ? formattable.ToString(Pattern, format) ?? string.Empty
+            : value?.ToString() ?? string.Empty;
+
+    internal int GetMaximumFractionDigits() => maximumFractionDigits;
+
+    internal void SetMaximumFractionDigits(int value)
+    {
+        maximumFractionDigits = Math.Max(0, value);
+    }
+
+    internal void SetGroupingUsed(bool value) => groupingUsed = value;
+}
+
+internal sealed class JavaMessageDigest
+{
+    private readonly IncrementalHash digest;
+
+    private JavaMessageDigest(HashAlgorithmName algorithm) =>
+        digest = IncrementalHash.CreateHash(algorithm);
+
+    internal static JavaMessageDigest GetInstance(string algorithm)
+    {
+        var normalized = algorithm.Replace("-", string.Empty, StringComparison.Ordinal)
+            .ToUpperInvariant();
+        var name = normalized switch
+        {
+            "MD5" => HashAlgorithmName.MD5,
+            "SHA1" => HashAlgorithmName.SHA1,
+            "SHA256" => HashAlgorithmName.SHA256,
+            "SHA384" => HashAlgorithmName.SHA384,
+            "SHA512" => HashAlgorithmName.SHA512,
+            _ => throw new CryptographicException($"Unsupported message digest `{algorithm}`")
+        };
+        return new JavaMessageDigest(name);
+    }
+
+    internal void Update(sbyte value) => digest.AppendData(new[] { unchecked((byte)value) });
+
+    internal void Update(sbyte[] value) =>
+        digest.AppendData(value.Select(item => unchecked((byte)item)).ToArray());
+
+    internal void Update(sbyte[] value, int offset, int length) =>
+        digest.AppendData(value.Skip(offset).Take(length)
+            .Select(item => unchecked((byte)item)).ToArray());
+
+    internal sbyte[] Digest() =>
+        digest.GetHashAndReset().Select(item => unchecked((sbyte)item)).ToArray();
+
+    internal sbyte[] Digest(sbyte[] value)
+    {
+        Update(value);
+        return Digest();
+    }
+
+    internal static bool IsEqual(sbyte[] left, sbyte[] right) =>
+        left.Length == right.Length &&
+        CryptographicOperations.FixedTimeEquals(
+            left.Select(item => unchecked((byte)item)).ToArray(),
+            right.Select(item => unchecked((byte)item)).ToArray());
+}
+
+public interface JavaSecretKey
+{
+    sbyte[] GetEncoded();
+}
+
+public sealed class JavaSecurityProvider
+{
+}
+
+public sealed class JavaAlgorithmParameters
+{
+    private readonly sbyte[] encoded;
+
+    internal JavaAlgorithmParameters(sbyte[] encoded, sbyte[] iv)
+    {
+        this.encoded = (sbyte[])encoded.Clone();
+        Iv = (sbyte[])iv.Clone();
+    }
+
+    internal sbyte[] Iv { get; }
+
+    public sbyte[] GetEncoded(string format)
+    {
+        if (!string.Equals(format, "ASN.1", StringComparison.OrdinalIgnoreCase))
+            throw new CryptographicException(
+                $"Unsupported algorithm-parameter encoding `{format}`.");
+        return (sbyte[])encoded.Clone();
+    }
+}
+
+public sealed class JavaAlgorithmParameterGenerator
+{
+    private readonly string algorithm;
+
+    private JavaAlgorithmParameterGenerator(string algorithm)
+    {
+        this.algorithm = algorithm;
+    }
+
+    public static JavaAlgorithmParameterGenerator GetInstance(
+        string algorithm,
+        JavaSecurityProvider _)
+    {
+        if (!string.Equals(
+                algorithm, "1.2.840.113549.3.2", StringComparison.Ordinal) &&
+            !string.Equals(algorithm, "RC2", StringComparison.OrdinalIgnoreCase))
+            throw new CryptographicException(
+                $"Unsupported algorithm-parameter generator `{algorithm}`.");
+        return new JavaAlgorithmParameterGenerator(algorithm);
+    }
+
+    public JavaAlgorithmParameters GenerateParameters()
+    {
+        _ = algorithm;
+        var iv = new byte[8];
+        RandomNumberGenerator.Fill(iv);
+        var writer = new System.Formats.Asn1.AsnWriter(
+            System.Formats.Asn1.AsnEncodingRules.DER);
+        writer.PushSequence();
+        writer.WriteInteger(58);
+        writer.WriteOctetString(iv);
+        writer.PopSequence();
+        return new JavaAlgorithmParameters(
+            JavaCompat.ToSignedBytes(writer.Encode()),
+            JavaCompat.ToSignedBytes(iv));
+    }
+}
+
+public sealed class JavaKeyGenerator
+{
+    private readonly string algorithm;
+    private int keySize;
+
+    private JavaKeyGenerator(string algorithm)
+    {
+        this.algorithm = algorithm;
+        keySize = string.Equals(algorithm, "AES", StringComparison.OrdinalIgnoreCase)
+            ? 256
+            : 128;
+    }
+
+    public static JavaKeyGenerator GetInstance(string algorithm) =>
+        new(ValidateAlgorithm(algorithm));
+
+    public static JavaKeyGenerator GetInstance(
+        string algorithm,
+        JavaSecurityProvider _) =>
+        new(ValidateAlgorithm(algorithm));
+
+    public void Init(int bits)
+    {
+        if (bits <= 0 || bits % 8 != 0)
+            throw new CryptographicException($"Invalid key size `{bits}`.");
+        keySize = bits;
+    }
+
+    public void Init(int bits, JavaRandom _)
+    {
+        Init(bits);
+    }
+
+    public JavaSecretKey GenerateKey()
+    {
+        var key = new byte[keySize / 8];
+        RandomNumberGenerator.Fill(key);
+        return new JavaSecretKeySpec(
+            JavaCompat.ToSignedBytes(key),
+            string.Equals(algorithm, "1.2.840.113549.3.2", StringComparison.Ordinal)
+                ? "RC2"
+                : algorithm);
+    }
+
+    private static string ValidateAlgorithm(string algorithm)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(algorithm);
+        if (!string.Equals(algorithm, "AES", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(algorithm, "RC2", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(algorithm, "1.2.840.113549.3.2", StringComparison.Ordinal))
+            throw new CryptographicException(
+                $"Unsupported key-generator algorithm `{algorithm}`.");
+        return algorithm;
+    }
+}
+
+public sealed class JavaSecretKeySpec : JavaSecretKey
+{
+    private readonly sbyte[] encoded;
+
+    public JavaSecretKeySpec(sbyte[] encoded, string algorithm)
+    {
+        ArgumentNullException.ThrowIfNull(encoded);
+        ArgumentException.ThrowIfNullOrEmpty(algorithm);
+        this.encoded = (sbyte[])encoded.Clone();
+        Algorithm = algorithm;
+    }
+
+    internal string Algorithm { get; }
+
+    public sbyte[] GetEncoded() => (sbyte[])encoded.Clone();
+}
+
+public sealed class JavaIvParameterSpec
+{
+    public JavaIvParameterSpec(sbyte[] iv)
+    {
+        ArgumentNullException.ThrowIfNull(iv);
+        Iv = (sbyte[])iv.Clone();
+    }
+
+    internal sbyte[] Iv { get; }
+}
+
+public sealed class JavaCipher : IDisposable
+{
+    public const int ENCRYPT_MODE = 1;
+    public const int DECRYPT_MODE = 2;
+
+    private readonly string transformation;
+    private SymmetricAlgorithm? algorithm;
+    private ICryptoTransform? transform;
+    private RSA? rsa;
+    private int asymmetricMode;
+
+    private JavaCipher(string transformation)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(transformation);
+        this.transformation = transformation;
+    }
+
+    public static JavaCipher GetInstance(string transformation) => new(transformation);
+
+    public static JavaCipher GetInstance(
+        string transformation,
+        JavaSecurityProvider _) =>
+        new(transformation);
+
+    public static int GetMaxAllowedKeyLength(string algorithm)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(algorithm);
+        return int.MaxValue;
+    }
+
+    public void Init(int mode, object key) => Init(mode, key, (JavaIvParameterSpec?)null);
+
+    public void Init(int mode, object key, JavaAlgorithmParameters parameters)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+        Init(mode, key, new JavaIvParameterSpec(parameters.Iv));
+    }
+
+    public void Init(int mode, object key, JavaIvParameterSpec? parameters)
+    {
+        DisposeTransform();
+        if (key is RSA rsaKey)
+        {
+            if (!string.Equals(
+                    transformation, "1.2.840.113549.1.1.1", StringComparison.Ordinal) &&
+                !string.Equals(transformation, "RSA", StringComparison.OrdinalIgnoreCase) &&
+                !transformation.StartsWith("RSA/", StringComparison.OrdinalIgnoreCase))
+                throw new CryptographicException(
+                    $"Unsupported asymmetric cipher transformation `{transformation}`.");
+            rsa = rsaKey;
+            asymmetricMode = mode;
+            return;
+        }
+        if (key is not JavaSecretKeySpec keySpec)
+            throw new CryptographicException("Cipher key must be a SecretKeySpec.");
+        if (!string.Equals(keySpec.Algorithm, "AES", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(keySpec.Algorithm, "RC2", StringComparison.OrdinalIgnoreCase))
+            throw new CryptographicException($"Unsupported cipher key algorithm `{keySpec.Algorithm}`.");
+
+        var parts = transformation.Split('/');
+        var rc2 = string.Equals(
+            transformation, "1.2.840.113549.3.2", StringComparison.Ordinal) ||
+            string.Equals(transformation, "RC2", StringComparison.OrdinalIgnoreCase);
+        if (!rc2 &&
+            (parts.Length != 3 ||
+             !string.Equals(parts[0], "AES", StringComparison.OrdinalIgnoreCase)))
+            throw new CryptographicException(
+                $"Unsupported cipher transformation `{transformation}`.");
+
+        SymmetricAlgorithm symmetric = rc2 ? RC2.Create() : Aes.Create();
+        symmetric.Key = JavaCompat.ToUnsignedBytes(keySpec.GetEncoded());
+        symmetric.Mode = (rc2 ? "CBC" : parts[1].ToUpperInvariant()) switch
+        {
+            "CBC" => CipherMode.CBC,
+            "ECB" => CipherMode.ECB,
+            _ => throw new CryptographicException(
+                $"Unsupported cipher mode `{parts[1]}`.")
+        };
+        symmetric.Padding = (rc2 ? "PKCS5PADDING" : parts[2].ToUpperInvariant()) switch
+        {
+            "NOPADDING" => PaddingMode.None,
+            "PKCS5PADDING" => PaddingMode.PKCS7,
+            _ => throw new CryptographicException(
+                $"Unsupported cipher padding `{parts[2]}`.")
+        };
+        if (symmetric.Mode != CipherMode.ECB)
+        {
+            if (parameters is null)
+                throw new CryptographicException("CBC mode requires an initialization vector.");
+            symmetric.IV = JavaCompat.ToUnsignedBytes(parameters.Iv);
+        }
+
+        algorithm = symmetric;
+        transform = mode switch
+        {
+            ENCRYPT_MODE => symmetric.CreateEncryptor(),
+            DECRYPT_MODE => symmetric.CreateDecryptor(),
+            _ => throw new CryptographicException($"Unsupported cipher mode constant `{mode}`.")
+        };
+    }
+
+    public sbyte[]? Update(sbyte[] input, int offset, int length)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        var current = RequireTransform();
+        var source = JavaCompat.ToUnsignedBytes(input);
+        var destination = new byte[length + current.OutputBlockSize];
+        var written = current.TransformBlock(source, offset, length, destination, 0);
+        return written == 0
+            ? null
+            : JavaCompat.ToSignedBytes(destination.AsSpan(0, written).ToArray());
+    }
+
+    public sbyte[] DoFinal() => DoFinal(Array.Empty<sbyte>());
+
+    public sbyte[] DoFinal(sbyte[] input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        if (rsa is not null)
+        {
+            var asymmetricResult = asymmetricMode switch
+            {
+                ENCRYPT_MODE => rsa.Encrypt(
+                    JavaCompat.ToUnsignedBytes(input), RSAEncryptionPadding.Pkcs1),
+                DECRYPT_MODE => rsa.Decrypt(
+                    JavaCompat.ToUnsignedBytes(input), RSAEncryptionPadding.Pkcs1),
+                _ => throw new CryptographicException(
+                    $"Unsupported cipher mode constant `{asymmetricMode}`.")
+            };
+            rsa = null;
+            asymmetricMode = 0;
+            return JavaCompat.ToSignedBytes(asymmetricResult);
+        }
+        var finalResult = RequireTransform().TransformFinalBlock(
+            JavaCompat.ToUnsignedBytes(input), 0, input.Length);
+        DisposeTransform();
+        return JavaCompat.ToSignedBytes(finalResult);
+    }
+
+    internal CryptoStream CreateInputStream(Stream input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        var current = transform ??
+            throw new InvalidOperationException("Cipher has not been initialized.");
+        transform = null;
+        return new CryptoStream(input, current, CryptoStreamMode.Read, leaveOpen: true);
+    }
+
+    private ICryptoTransform RequireTransform() =>
+        transform ?? throw new InvalidOperationException("Cipher has not been initialized.");
+
+    private void DisposeTransform()
+    {
+        transform?.Dispose();
+        transform = null;
+        algorithm?.Dispose();
+        algorithm = null;
+        rsa = null;
+        asymmetricMode = 0;
+    }
+
+    public void Dispose() => DisposeTransform();
+}
+
+public sealed class JavaCipherInputStream : Stream
+{
+    private readonly JavaCipher cipher;
+    private readonly CryptoStream stream;
+
+    public JavaCipherInputStream(Stream input, JavaCipher cipher)
+    {
+        ArgumentNullException.ThrowIfNull(cipher);
+        this.cipher = cipher;
+        stream = cipher.CreateInputStream(input);
+    }
+
+    public override bool CanRead => stream.CanRead;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush() => stream.Flush();
+    public override int Read(byte[] buffer, int offset, int count) =>
+        stream.Read(buffer, offset, count);
+    public override int Read(Span<byte> buffer) => stream.Read(buffer);
+    public override long Seek(long offset, SeekOrigin origin) =>
+        throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            stream.Dispose();
+            cipher.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+}
+
+public abstract class JavaReference<T> where T : class
+{
+    public abstract T? Get();
+    public abstract void Clear();
+}
+
+public sealed class JavaSoftReference<T> : JavaReference<T> where T : class
+{
+    private WeakReference<T>? reference;
+
+    public JavaSoftReference(T value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        reference = new WeakReference<T>(value);
+    }
+
+    public override T? Get()
+    {
+        var current = reference;
+        return current is not null && current.TryGetTarget(out var value) ? value : null;
+    }
+
+    public override void Clear() => reference = null;
+}
+
+public sealed class JavaWeakReference<T> : JavaReference<T> where T : class
+{
+    private WeakReference<T>? reference;
+
+    public JavaWeakReference(T value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        reference = new WeakReference<T>(value);
+    }
+
+    public override T? Get()
+    {
+        var current = reference;
+        return current is not null && current.TryGetTarget(out var value) ? value : null;
+    }
+
+    public override void Clear() => reference = null;
+}
+
+public static class JavaBase64
+{
+    private static readonly JavaBase64Decoder Decoder = new();
+
+    public static JavaBase64Decoder GetDecoder() => Decoder;
+}
+
+public sealed class JavaBase64Decoder
+{
+    public sbyte[] Decode(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return JavaCompat.ToSignedBytes(Convert.FromBase64String(value));
+    }
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaWeakHashMap<K, V> : IDictionary<K, V> where K : class
+{
+    private sealed class Entry
+    {
+        internal Entry(K key, V value)
+        {
+            Key = new WeakReference<K>(key);
+            Value = value;
+        }
+
+        internal WeakReference<K> Key { get; }
+        internal V Value { get; set; }
+    }
+
+    private readonly List<Entry> entries = new();
+
+    public V this[K key]
+    {
+        get => TryGetValue(key, out var value)
+            ? value
+            : throw new KeyNotFoundException();
+        set
+        {
+            ArgumentNullException.ThrowIfNull(key);
+            if (Find(key) is { } entry)
+                entry.Value = value;
+            else
+                entries.Add(new Entry(key, value));
+        }
+    }
+
+    public ICollection<K> Keys => Snapshot()
+        .Select(pair => pair.Key)
+        .ToArray();
+
+    public ICollection<V> Values => Snapshot()
+        .Select(pair => pair.Value)
+        .ToArray();
+
+    public int Count
+    {
+        get
+        {
+            RemoveCollectedEntries();
+            return entries.Count;
+        }
+    }
+
+    public bool IsReadOnly => false;
+
+    public void Add(K key, V value)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        if (ContainsKey(key)) throw new ArgumentException("An item with the same key already exists.");
+        entries.Add(new Entry(key, value));
+    }
+
+    public bool ContainsKey(K key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return Find(key) is not null;
+    }
+
+    public bool Remove(K key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        RemoveCollectedEntries();
+        for (var index = 0; index < entries.Count; index++)
+        {
+            if (entries[index].Key.TryGetTarget(out var candidate) &&
+                JavaCompat.Equals(candidate, key))
+            {
+                entries.RemoveAt(index);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public bool TryGetValue(K key, out V value)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        if (Find(key) is { } entry)
+        {
+            value = entry.Value;
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    public void Add(KeyValuePair<K, V> item) => Add(item.Key, item.Value);
+
+    public void Clear() => entries.Clear();
+
+    public bool Contains(KeyValuePair<K, V> item) =>
+        TryGetValue(item.Key, out var value) &&
+        EqualityComparer<V>.Default.Equals(value, item.Value);
+
+    public void CopyTo(KeyValuePair<K, V>[] array, int arrayIndex) =>
+        Snapshot().CopyTo(array, arrayIndex);
+
+    public bool Remove(KeyValuePair<K, V> item) =>
+        Contains(item) && Remove(item.Key);
+
+    public IEnumerator<KeyValuePair<K, V>> GetEnumerator() =>
+        Snapshot().GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
+        GetEnumerator();
+
+    private Entry? Find(K key)
+    {
+        RemoveCollectedEntries();
+        foreach (var entry in entries)
+        {
+            if (entry.Key.TryGetTarget(out var candidate) &&
+                JavaCompat.Equals(candidate, key))
+            {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private List<KeyValuePair<K, V>> Snapshot()
+    {
+        RemoveCollectedEntries();
+        var snapshot = new List<KeyValuePair<K, V>>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (entry.Key.TryGetTarget(out var key))
+                snapshot.Add(new KeyValuePair<K, V>(key, entry.Value));
+        }
+        return snapshot;
+    }
+
+    private void RemoveCollectedEntries()
+    {
+        for (var index = entries.Count - 1; index >= 0; index--)
+        {
+            if (!entries[index].Key.TryGetTarget(out _))
+                entries.RemoveAt(index);
+        }
+    }
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaStack<T> : IEnumerable<T>
+{
+    private readonly List<T> values = new();
+
+    public int Count => values.Count;
+    public bool IsEmpty => values.Count == 0;
+
+    public T Push(T value)
+    {
+        values.Add(value);
+        return value;
+    }
+
+    public T Pop()
+    {
+        if (values.Count == 0) throw new InvalidOperationException("Stack is empty.");
+        var index = values.Count - 1;
+        var value = values[index];
+        values.RemoveAt(index);
+        return value;
+    }
+
+    public T Peek() =>
+        values.Count == 0
+            ? throw new InvalidOperationException("Stack is empty.")
+            : values[^1];
+
+    public T Get(int index) => values[index];
+
+    public bool AddAll(IEnumerable<T> additions)
+    {
+        ArgumentNullException.ThrowIfNull(additions);
+        var originalCount = values.Count;
+        values.AddRange(additions);
+        return values.Count != originalCount;
+    }
+
+    public IList<T> SubList(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || toIndex < fromIndex || toIndex > values.Count)
+            throw new ArgumentOutOfRangeException();
+        return values.GetRange(fromIndex, toIndex - fromIndex);
+    }
+
+    public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+internal sealed class JavaHashtable<K, V> : IDictionary<K, V> where K : notnull
+{
+    private readonly Dictionary<K, V> values = new();
+    private readonly object sync = new();
+
+    private static K RequireKey(K key) =>
+        key is null ? throw new ArgumentNullException(nameof(key)) : key;
+
+    private static V RequireValue(V value) =>
+        value is null ? throw new ArgumentNullException(nameof(value)) : value;
+
+    public V this[K key]
+    {
+        get { lock (sync) return values[RequireKey(key)]; }
+        set { lock (sync) values[RequireKey(key)] = RequireValue(value); }
+    }
+
+    public ICollection<K> Keys
+    {
+        get { lock (sync) return values.Keys.ToArray(); }
+    }
+
+    public ICollection<V> Values
+    {
+        get { lock (sync) return values.Values.ToArray(); }
+    }
+
+    public int Count
+    {
+        get { lock (sync) return values.Count; }
+    }
+
+    public bool IsReadOnly => false;
+
+    public void Add(K key, V value)
+    {
+        lock (sync) values.Add(RequireKey(key), RequireValue(value));
+    }
+
+    public void Add(KeyValuePair<K, V> item) => Add(item.Key, item.Value);
+
+    public void Clear()
+    {
+        lock (sync) values.Clear();
+    }
+
+    public bool Contains(KeyValuePair<K, V> item)
+    {
+        lock (sync)
+            return ((ICollection<KeyValuePair<K, V>>)values).Contains(item);
+    }
+
+    public bool ContainsKey(K key)
+    {
+        lock (sync) return values.ContainsKey(RequireKey(key));
+    }
+
+    public void CopyTo(KeyValuePair<K, V>[] array, int arrayIndex)
+    {
+        lock (sync)
+            ((ICollection<KeyValuePair<K, V>>)values).CopyTo(array, arrayIndex);
+    }
+
+    public IEnumerator<KeyValuePair<K, V>> GetEnumerator()
+    {
+        lock (sync) return values.ToArray().AsEnumerable().GetEnumerator();
+    }
+
+    public bool Remove(K key)
+    {
+        lock (sync) return values.Remove(RequireKey(key));
+    }
+
+    public bool Remove(KeyValuePair<K, V> item)
+    {
+        lock (sync)
+            return ((ICollection<KeyValuePair<K, V>>)values).Remove(item);
+    }
+
+    public bool TryGetValue(K key, out V value)
+    {
+        lock (sync)
+        {
+            if (values.TryGetValue(RequireKey(key), out var found))
+            {
+                value = found;
+                return true;
+            }
+            value = default!;
+            return false;
+        }
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 [AttributeUsage(AttributeTargets.Field, AllowMultiple = false, Inherited = false)]
@@ -537,6 +1523,37 @@ sealed class JavaByteBuffer : IDisposable
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
 }
 
+public enum JavaCodingErrorAction
+{
+    Report
+}
+
+public sealed class JavaCharsetDecoder
+{
+    private readonly Encoding encoding;
+
+    public JavaCharsetDecoder(Encoding encoding)
+    {
+        ArgumentNullException.ThrowIfNull(encoding);
+        this.encoding = (Encoding)encoding.Clone();
+    }
+
+    public JavaCharsetDecoder ReportErrors(JavaCodingErrorAction action)
+    {
+        if (action != JavaCodingErrorAction.Report)
+            throw new ArgumentOutOfRangeException(nameof(action));
+        encoding.DecoderFallback = DecoderFallback.ExceptionFallback;
+        return this;
+    }
+
+    public string Decode(JavaByteBuffer buffer)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+        return encoding.GetString(JavaCompat.ToUnsignedBytes(
+            buffer.ReadRemaining(buffer.Remaining)));
+    }
+}
+
 #if VIBEFORMER_INTERNAL_JAVA_COMPAT
 internal
 #else
@@ -889,6 +1906,9 @@ abstract class JavaInputStream : Stream
         while (skipped < count && Read() >= 0) skipped++;
         return skipped;
     }
+    public virtual void Mark(int readLimit) => _ = readLimit;
+    public virtual void Reset() =>
+        throw new IOException("mark/reset is not supported by this input stream.");
     public virtual bool MarkSupported() => false;
     public override bool CanRead => true;
     public override bool CanSeek => false;
@@ -910,9 +1930,49 @@ abstract class JavaInputStream : Stream
 
     public override int ReadByte() => Read();
     public override void Flush() { }
+    public new virtual void Dispose() => base.Dispose();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+class JavaFilterInputStream : JavaInputStream
+{
+    protected readonly Stream @in;
+
+    protected JavaFilterInputStream(Stream input) =>
+        @in = input ?? throw new ArgumentNullException(nameof(input));
+
+    public override int Read() => @in.ReadByte();
+
+    public override int Read(sbyte[] buffer, int offset, int count) =>
+        JavaCompat.InputStreamRead(@in, buffer, offset, count);
+
+    public override int Available() =>
+        @in.CanSeek ? checked((int)Math.Min(int.MaxValue, @in.Length - @in.Position)) : 0;
+
+    public override long Skip(long count)
+    {
+        if (count <= 0) return 0;
+        if (@in.CanSeek)
+        {
+            var original = @in.Position;
+            @in.Position = Math.Min(@in.Length, original + count);
+            return @in.Position - original;
+        }
+        return base.Skip(count);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) @in.Dispose();
+        base.Dispose(disposing);
+    }
 }
 
 #if VIBEFORMER_INTERNAL_JAVA_COMPAT
@@ -951,6 +2011,7 @@ abstract class JavaOutputStream : Stream
 
     public override void WriteByte(byte value) => Write(value);
     public override void Flush() { }
+    public new virtual void Dispose() => base.Dispose();
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
@@ -989,35 +2050,54 @@ internal sealed class JavaPipedInputStream : Stream
 internal sealed class JavaPushbackInputStream : Stream
 {
     private readonly Stream source;
-    private int pushedBack = -1;
+    private readonly byte[] pushback;
+    private int position;
 
     internal JavaPushbackInputStream(Stream source) =>
+        (this.source, pushback, position) =
+            (JavaCompat.RequireNonNull(source), new byte[1], 1);
+
+    internal JavaPushbackInputStream(Stream source, int size)
+    {
+        if (size <= 0) throw new ArgumentOutOfRangeException(nameof(size));
         this.source = JavaCompat.RequireNonNull(source);
+        pushback = new byte[size];
+        position = size;
+    }
 
     internal void Unread(int value)
     {
-        if (pushedBack >= 0) throw new IOException("Push back buffer is full");
-        pushedBack = value & 0xff;
+        if (position == 0) throw new IOException("Push back buffer is full");
+        pushback[--position] = unchecked((byte)value);
+    }
+
+    internal void Unread(sbyte[] values, int offset, int length)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (offset < 0 || length < 0 || offset > values.Length - length)
+            throw new IndexOutOfRangeException();
+        if (length > position) throw new IOException("Push back buffer is full");
+        position -= length;
+        for (var index = 0; index < length; index++)
+            pushback[position + index] = unchecked((byte)values[offset + index]);
     }
 
     public override int ReadByte()
     {
-        if (pushedBack < 0) return source.ReadByte();
-        var value = pushedBack;
-        pushedBack = -1;
-        return value;
+        return position < pushback.Length
+            ? pushback[position++]
+            : source.ReadByte();
     }
 
     public override int Read(byte[] buffer, int offset, int count)
     {
         if (count == 0) return 0;
         var copied = 0;
-        if (pushedBack >= 0)
+        while (count > 0 && position < pushback.Length)
         {
-            buffer[offset++] = (byte)pushedBack;
-            pushedBack = -1;
+            buffer[offset++] = pushback[position++];
             count--;
-            copied = 1;
+            copied++;
         }
         if (count == 0) return copied;
         return copied + source.Read(buffer, offset, count);
@@ -1039,6 +2119,72 @@ internal sealed class JavaPushbackInputStream : Stream
     protected override void Dispose(bool disposing)
     {
         if (disposing) source.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
+internal sealed class JavaSequenceInputStream : Stream
+{
+    private readonly Stream first;
+    private readonly Stream second;
+    private bool readingFirst = true;
+
+    internal JavaSequenceInputStream(Stream first, Stream second)
+    {
+        this.first = first ?? throw new ArgumentNullException(nameof(first));
+        this.second = second ?? throw new ArgumentNullException(nameof(second));
+    }
+
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        if (readingFirst)
+        {
+            var read = first.Read(buffer, offset, count);
+            if (read != 0) return read;
+            readingFirst = false;
+        }
+        return second.Read(buffer, offset, count);
+    }
+
+    public override int Read(Span<byte> buffer)
+    {
+        if (readingFirst)
+        {
+            var read = first.Read(buffer);
+            if (read != 0) return read;
+            readingFirst = false;
+        }
+        return second.Read(buffer);
+    }
+
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            try
+            {
+                first.Dispose();
+            }
+            finally
+            {
+                second.Dispose();
+            }
+        }
         base.Dispose(disposing);
     }
 }
@@ -1090,6 +2236,133 @@ internal sealed class JavaInflaterOutputStream : Stream
         Flush();
         compressed.Dispose();
         destination.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaInflater
+{
+    private readonly MemoryStream compressed = new();
+    private readonly bool rawDeflate;
+    private int emitted;
+    private bool needsInput = true;
+    private bool ended;
+
+    internal JavaInflater(bool nowrap) => rawDeflate = nowrap;
+
+    public bool Finished() => false;
+    public bool NeedsInput() => needsInput;
+
+    public void SetInput(sbyte[] input, int offset, int length)
+    {
+        ObjectDisposedException.ThrowIf(ended, this);
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        if (offset > input.Length - length)
+            throw new ArgumentException("The input range exceeds the supplied buffer.");
+        compressed.Position = compressed.Length;
+        compressed.Write(JavaCompat.ToUnsignedBytes(input), offset, length);
+        needsInput = false;
+    }
+
+    public int Inflate(sbyte[] output)
+    {
+        ObjectDisposedException.ThrowIf(ended, this);
+        ArgumentNullException.ThrowIfNull(output);
+        if (output.Length == 0) return 0;
+
+        var inputPosition = compressed.Position;
+        compressed.Position = 0;
+        using var decoded = new MemoryStream();
+        using (Stream inflater = rawDeflate
+                   ? new DeflateStream(compressed, CompressionMode.Decompress, leaveOpen: true)
+                   : new ZLibStream(compressed, CompressionMode.Decompress, leaveOpen: true))
+        {
+            inflater.CopyTo(decoded);
+        }
+        compressed.Position = inputPosition;
+
+        var available = checked((int)decoded.Length - emitted);
+        if (available <= 0)
+        {
+            needsInput = true;
+            return 0;
+        }
+        var count = Math.Min(output.Length, available);
+        var bytes = decoded.GetBuffer();
+        for (var index = 0; index < count; index++)
+            output[index] = unchecked((sbyte)bytes[emitted + index]);
+        emitted += count;
+        needsInput = count == available;
+        return count;
+    }
+
+    public void End()
+    {
+        if (ended) return;
+        ended = true;
+        compressed.Dispose();
+    }
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaDeflater
+{
+    public const int DEFAULT_COMPRESSION = -1;
+    public const int BEST_COMPRESSION = 9;
+
+    internal JavaDeflater(int level)
+    {
+        if (level is < DEFAULT_COMPRESSION or > BEST_COMPRESSION)
+            throw new ArgumentOutOfRangeException(nameof(level));
+        CompressionLevel = level switch
+        {
+            <= 1 => System.IO.Compression.CompressionLevel.Fastest,
+            >= 8 => System.IO.Compression.CompressionLevel.SmallestSize,
+            _ => System.IO.Compression.CompressionLevel.Optimal
+        };
+    }
+
+    internal System.IO.Compression.CompressionLevel CompressionLevel { get; }
+    public void End()
+    {
+    }
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaDeflaterOutputStream : JavaOutputStream
+{
+    private readonly ZLibStream compressed;
+
+    internal JavaDeflaterOutputStream(Stream destination, JavaDeflater deflater)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(deflater);
+        compressed = new ZLibStream(destination, deflater.CompressionLevel, leaveOpen: true);
+    }
+
+    public override void Write(int value) => compressed.WriteByte(unchecked((byte)value));
+    public override void Write(sbyte[] buffer, int offset, int count) =>
+        compressed.Write(JavaCompat.ToUnsignedBytes(buffer), offset, count);
+    public override void Flush() => compressed.Flush();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) compressed.Dispose();
         base.Dispose(disposing);
     }
 }
@@ -1383,6 +2656,131 @@ public sealed class JavaDateTimeFormatter
         new(FormatterKind.IsoLocalDateTimeOffset);
 }
 
+public sealed class JavaParsePosition
+{
+    public JavaParsePosition(int index)
+    {
+        if (index < 0) throw new ArgumentOutOfRangeException(nameof(index));
+        Index = index;
+        ErrorIndex = -1;
+    }
+
+    public int Index { get; private set; }
+    public int ErrorIndex { get; private set; }
+
+    public int GetIndex() => Index;
+    public void SetIndex(int index)
+    {
+        if (index < 0) throw new ArgumentOutOfRangeException(nameof(index));
+        Index = index;
+    }
+
+    public int GetErrorIndex() => ErrorIndex;
+    public void SetErrorIndex(int index) => ErrorIndex = index;
+}
+
+public sealed class JavaSimpleDateFormat
+{
+    private readonly string pattern;
+    private readonly CultureInfo culture;
+    private TimeZoneInfo timeZone = TimeZoneInfo.Local;
+    private DateTimeOffset calendar = DateTimeOffset.Now;
+
+    public JavaSimpleDateFormat(string pattern, CultureInfo culture)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(pattern);
+        this.pattern = ConvertPattern(pattern);
+        this.culture = culture ?? throw new ArgumentNullException(nameof(culture));
+    }
+
+    public void SetTimeZone(TimeZoneInfo value)
+    {
+        timeZone = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    public void SetCalendar(DateTimeOffset value)
+    {
+        calendar = value;
+    }
+
+    public string Format(DateTimeOffset? value)
+    {
+        var date = TimeZoneInfo.ConvertTime(
+            value ?? DateTimeOffset.Now,
+            timeZone);
+        if (string.Equals(pattern, "zzz", StringComparison.Ordinal))
+            return date.ToString("zzz", culture).Replace(":", "", StringComparison.Ordinal);
+        return date.ToString(pattern, culture);
+    }
+
+    public DateTimeOffset? Parse(string text, JavaParsePosition position)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(position);
+        var start = position.Index;
+        if (start > text.Length)
+        {
+            position.SetErrorIndex(start);
+            return null;
+        }
+        for (var end = text.Length; end > start; end--)
+        {
+            var candidate = text[start..end];
+            if (!DateTime.TryParseExact(
+                    candidate,
+                    pattern,
+                    culture,
+                    DateTimeStyles.AllowWhiteSpaces,
+                    out var parsed))
+                continue;
+            var offset = timeZone.GetUtcOffset(parsed);
+            calendar = new DateTimeOffset(
+                DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified),
+                offset);
+            position.SetIndex(end);
+            position.SetErrorIndex(-1);
+            return calendar;
+        }
+        position.SetErrorIndex(start);
+        return null;
+    }
+
+    private static string ConvertPattern(string javaPattern)
+    {
+        var result = new StringBuilder(javaPattern.Length);
+        var quoted = false;
+        for (var index = 0; index < javaPattern.Length;)
+        {
+            var current = javaPattern[index];
+            if (current == '\'')
+            {
+                quoted = !quoted;
+                result.Append(current);
+                index++;
+                continue;
+            }
+            if (quoted || !char.IsLetter(current))
+            {
+                result.Append(current);
+                index++;
+                continue;
+            }
+            var end = index + 1;
+            while (end < javaPattern.Length && javaPattern[end] == current) end++;
+            var count = end - index;
+            result.Append(current switch
+            {
+                'E' => count >= 4 ? "dddd" : "ddd",
+                'a' => "tt",
+                'z' => "zzz",
+                _ => new string(current, count)
+            });
+            index = end;
+        }
+        return result.ToString();
+    }
+}
+
 internal sealed class JavaDateTimeFormatterBuilder
 {
     internal JavaDateTimeFormatterBuilder ParseCaseInsensitive() => this;
@@ -1393,15 +2791,15 @@ internal sealed class JavaDateTimeFormatterBuilder
     internal JavaDateTimeFormatter ToFormatter() => JavaDateTimeFormatter.IsoLocalDateTimeOffset();
 }
 
-internal sealed class JavaKeyStore
+public sealed class JavaKeyStore
 {
     private readonly System.Security.Cryptography.X509Certificates.X509Certificate2Collection certificates = new();
 
     private JavaKeyStore() { }
 
-    internal static string GetDefaultType() => "PKCS12";
+    public static string GetDefaultType() => "PKCS12";
 
-    internal static JavaKeyStore GetInstance(string type)
+    public static JavaKeyStore GetInstance(string type)
     {
         ArgumentNullException.ThrowIfNull(type);
         if (!string.Equals(type, "PKCS12", StringComparison.OrdinalIgnoreCase) &&
@@ -1412,7 +2810,7 @@ internal sealed class JavaKeyStore
         return new JavaKeyStore();
     }
 
-    internal void Load(Stream input, char[]? password)
+    public void Load(Stream input, char[]? password)
     {
         ArgumentNullException.ThrowIfNull(input);
         using var contents = new MemoryStream();
@@ -1437,8 +2835,57 @@ internal sealed class JavaKeyStore
 #endif
     }
 
+    public int Size() => certificates.Count;
+
+    public JavaIterator<string> Aliases() =>
+        JavaCompat.Iterator(
+            Enumerable.Range(0, certificates.Count)
+                .Select(index => AliasFor(index, certificates[index])));
+
+    public bool ContainsAlias(string? alias) =>
+        TryFind(alias, out _);
+
+    public System.Security.Cryptography.X509Certificates.X509Certificate2? GetCertificate(
+        string? alias) =>
+        TryFind(alias, out var certificate) ? certificate : null;
+
+    public object? GetKey(string? alias, char[]? _)
+    {
+        if (!TryFind(alias, out var certificate) || certificate is null)
+            return null;
+        return (object?)certificate.GetRSAPrivateKey() ??
+            (object?)certificate.GetECDsaPrivateKey() ??
+            (object?)certificate.GetDSAPrivateKey();
+    }
+
     internal System.Security.Cryptography.X509Certificates.X509Certificate2Collection Certificates =>
         certificates;
+
+    private bool TryFind(
+        string? alias,
+        out System.Security.Cryptography.X509Certificates.X509Certificate2? certificate)
+    {
+        for (var index = 0; index < certificates.Count; index++)
+        {
+            if (string.Equals(
+                    AliasFor(index, certificates[index]),
+                    alias,
+                    StringComparison.Ordinal))
+            {
+                certificate = certificates[index];
+                return true;
+            }
+        }
+        certificate = null;
+        return false;
+    }
+
+    private static string AliasFor(
+        int index,
+        System.Security.Cryptography.X509Certificates.X509Certificate2 certificate) =>
+        string.IsNullOrWhiteSpace(certificate.FriendlyName)
+            ? index.ToString(CultureInfo.InvariantCulture)
+            : certificate.FriendlyName;
 }
 
 internal sealed class JavaKeyManager
@@ -1777,17 +3224,49 @@ sealed class JavaServerSocket : IDisposable
     public void Dispose() => Close();
 }
 
-internal sealed class JavaRandom
+public sealed class JavaRandom
 {
-    private readonly Random random = new();
-    private readonly object sync = new();
+    public void NextBytes(sbyte[] destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        RandomNumberGenerator.Fill(MemoryMarshal.AsBytes(destination.AsSpan()));
+    }
 
-    internal long NextLong()
+    public int NextInt()
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(int)];
+        RandomNumberGenerator.Fill(bytes);
+        return BitConverter.ToInt32(bytes);
+    }
+
+    public long NextLong()
     {
         Span<byte> bytes = stackalloc byte[sizeof(long)];
-        lock (sync) random.NextBytes(bytes);
+        RandomNumberGenerator.Fill(bytes);
         return BitConverter.ToInt64(bytes);
     }
+}
+
+public sealed class JavaCrc32
+{
+    private uint crc = uint.MaxValue;
+
+    public void Update(sbyte[] values, int offset, int length)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        if (offset < 0 || length < 0 || offset > values.Length - length)
+            throw new IndexOutOfRangeException();
+        for (var index = offset; index < offset + length; index++)
+        {
+            crc ^= unchecked((byte)values[index]);
+            for (var bit = 0; bit < 8; bit++)
+            {
+                crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0u : 0xedb88320u);
+            }
+        }
+    }
+
+    public long GetValue() => crc ^ uint.MaxValue;
 }
 
 internal sealed class JavaProcessBuilder
@@ -2000,6 +3479,8 @@ internal sealed class JavaProperties
     }
 
     internal string? GetProperty(string key) => values.TryGetValue(key, out var value) ? value : null;
+    internal string? GetProperty(string key, string? fallback) =>
+        values.TryGetValue(key, out var value) ? value : fallback;
 
     private static string Unescape(string value) => Regex.Replace(
         value,
@@ -2070,12 +3551,23 @@ sealed class JavaOptional<T> : IJavaOptional
 // A Java Map.Entry is a reference object whose value can remain backed by the
 // source map. KeyValuePair cannot model setValue(), so translated declarations
 // use this reusable compatibility type instead of taking an entry snapshot.
-internal class JavaMapEntry<K, V> where K : notnull
+internal interface JavaMapValueUpdater<K, V>
+{
+    void ReplaceValueWithoutAccess(K key, V value);
+}
+
+public class JavaMapEntry<K, V>
 {
     private readonly IDictionary<K, V>? source;
     private readonly K key;
     private V value;
     private readonly bool mutable;
+
+    protected JavaMapEntry()
+    {
+        key = default!;
+        value = default!;
+    }
 
     internal JavaMapEntry(IDictionary<K, V> source, K key)
     {
@@ -2096,12 +3588,12 @@ internal class JavaMapEntry<K, V> where K : notnull
         this.mutable = mutable;
     }
 
-    public K Key => key;
-    public V Value => source is not null && source.TryGetValue(key, out var current)
+    public virtual K Key => key;
+    public virtual V Value => source is not null && source.TryGetValue(key, out var current)
         ? current
         : value;
 
-    public V SetValue(V replacement)
+    public virtual V SetValue(V replacement)
     {
         if (source is null)
         {
@@ -2111,7 +3603,7 @@ internal class JavaMapEntry<K, V> where K : notnull
             return previousValue;
         }
         var previous = Value;
-        if (source is JavaLinkedHashMap<K, V> linked)
+        if (source is JavaMapValueUpdater<K, V> linked)
             linked.ReplaceValueWithoutAccess(key, replacement);
         else
             source[key] = replacement;
@@ -2161,7 +3653,166 @@ interface JavaIterator<out T>
         "This Java iterator does not expose mutable removal semantics.");
 }
 
-internal sealed class JavaListIterator<T> : JavaIterator<T>
+public interface JavaIterableContract<out T> : IEnumerable<T>
+{
+    JavaIterator<T> Iterator();
+
+    IEnumerator<T> IEnumerable<T>.GetEnumerator()
+    {
+        var iterator = Iterator();
+        while (iterator.HasNext())
+            yield return iterator.Next();
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() =>
+        ((IEnumerable<T>)this).GetEnumerator();
+}
+
+internal sealed class JavaIterableAdapter<T> : JavaIterableContract<T>
+{
+    private readonly Func<JavaIterator<T>> iteratorFactory;
+
+    internal JavaIterableAdapter(Func<JavaIterator<T>> iteratorFactory) =>
+        this.iteratorFactory = iteratorFactory ??
+            throw new ArgumentNullException(nameof(iteratorFactory));
+
+    public JavaIterator<T> Iterator() => iteratorFactory();
+}
+
+public interface JavaListContract<T> : IList<T>
+{
+    int Size();
+    bool Contains(object? value);
+    JavaIterator<T> Iterator();
+    new bool Add(T value);
+    bool Remove(object? value);
+    T Get(int index);
+    T Set(int index, T value);
+    void Add(int index, T value);
+    T Remove(int index);
+    int IndexOf(object? value);
+    new void Clear();
+
+    int ICollection<T>.Count => Size();
+    bool ICollection<T>.IsReadOnly => false;
+
+    T IList<T>.this[int index]
+    {
+        get => Get(index);
+        set => Set(index, value);
+    }
+
+    void ICollection<T>.Add(T item) => Add(item);
+    bool ICollection<T>.Contains(T item) => Contains(item);
+
+    void ICollection<T>.CopyTo(T[] array, int arrayIndex)
+    {
+        ArgumentNullException.ThrowIfNull(array);
+        foreach (var item in (IEnumerable<T>)this)
+            array[arrayIndex++] = item;
+    }
+
+    bool ICollection<T>.Remove(T item) => Remove(item);
+    int IList<T>.IndexOf(T item) => IndexOf(item);
+    void IList<T>.Insert(int index, T item) => Add(index, item);
+    void IList<T>.RemoveAt(int index) => Remove(index);
+
+    IEnumerator<T> IEnumerable<T>.GetEnumerator()
+    {
+        var iterator = Iterator();
+        while (iterator.HasNext())
+            yield return iterator.Next();
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() =>
+        ((IEnumerable<T>)this).GetEnumerator();
+}
+
+public interface JavaMapContract<K, V> : IDictionary<K, V>
+{
+    int Size();
+    bool ContainsKey(object? key);
+    V Get(object? key);
+    V Put(K key, V value);
+    V Remove(object? key);
+    new void Clear();
+    ISet<K> KeySet();
+    new ICollection<V> Values();
+    ISet<JavaMapEntry<K, V>> EntrySet();
+
+    V IDictionary<K, V>.this[K key]
+    {
+        get => Get(key);
+        set => Put(key, value);
+    }
+
+    ICollection<K> IDictionary<K, V>.Keys => KeySet();
+    ICollection<V> IDictionary<K, V>.Values => Values();
+    int ICollection<KeyValuePair<K, V>>.Count => Size();
+    bool ICollection<KeyValuePair<K, V>>.IsReadOnly => false;
+    void IDictionary<K, V>.Add(K key, V value) => Put(key, value);
+    bool IDictionary<K, V>.ContainsKey(K key) => ContainsKey(key);
+
+    bool IDictionary<K, V>.Remove(K key)
+    {
+        if (!ContainsKey(key))
+            return false;
+        Remove(key);
+        return true;
+    }
+
+    bool IDictionary<K, V>.TryGetValue(K key, out V value)
+    {
+        if (ContainsKey(key))
+        {
+            value = Get(key);
+            return true;
+        }
+        value = default!;
+        return false;
+    }
+
+    void ICollection<KeyValuePair<K, V>>.Add(KeyValuePair<K, V> item) =>
+        Put(item.Key, item.Value);
+
+    bool ICollection<KeyValuePair<K, V>>.Contains(KeyValuePair<K, V> item) =>
+        ContainsKey(item.Key) &&
+        JavaCompat.Equals(Get(item.Key), item.Value);
+
+    void ICollection<KeyValuePair<K, V>>.CopyTo(
+        KeyValuePair<K, V>[] array,
+        int arrayIndex)
+    {
+        ArgumentNullException.ThrowIfNull(array);
+        foreach (var item in (IEnumerable<KeyValuePair<K, V>>)this)
+            array[arrayIndex++] = item;
+    }
+
+    bool ICollection<KeyValuePair<K, V>>.Remove(KeyValuePair<K, V> item)
+    {
+        if (!((ICollection<KeyValuePair<K, V>>)this).Contains(item))
+            return false;
+        Remove(item.Key);
+        return true;
+    }
+
+    IEnumerator<KeyValuePair<K, V>>
+        IEnumerable<KeyValuePair<K, V>>.GetEnumerator()
+    {
+        foreach (var entry in EntrySet())
+            yield return new KeyValuePair<K, V>(entry.Key, entry.Value);
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() =>
+        ((IEnumerable<KeyValuePair<K, V>>)this).GetEnumerator();
+}
+
+#if VIBEFORMER_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaListIterator<T> : JavaIterator<T>
 {
     private readonly IList<T>? list;
     private readonly IEnumerator<T>? iterator;
@@ -2171,9 +3822,26 @@ internal sealed class JavaListIterator<T> : JavaIterator<T>
     private bool hasNext;
 
     internal JavaListIterator(IEnumerable<T> values)
+        : this(values, 0)
+    {
+    }
+
+    internal JavaListIterator(IEnumerable<T> values, int index)
     {
         list = values as IList<T>;
-        if (list is null) iterator = values.GetEnumerator();
+        if (list is not null)
+        {
+            if (index < 0 || index > list.Count)
+                throw new IndexOutOfRangeException();
+            cursor = index;
+        }
+        else
+        {
+            if (index != 0)
+                throw new NotSupportedException(
+                    "Indexed iteration requires an IList source.");
+            iterator = values.GetEnumerator();
+        }
     }
 
     public bool HasNext()
@@ -2209,6 +3877,41 @@ internal sealed class JavaListIterator<T> : JavaIterator<T>
                 "Iterator.remove() requires one preceding next() call.");
         list.RemoveAt(lastReturned);
         if (lastReturned < cursor) cursor--;
+        lastReturned = -1;
+    }
+
+    public bool HasPrevious() => list is not null && cursor > 0;
+
+    public T Previous()
+    {
+        if (list is null || cursor <= 0)
+            throw new InvalidOperationException("Iterator has no previous element.");
+        cursor--;
+        lastReturned = cursor;
+        return list[cursor];
+    }
+
+    public int NextIndex() => cursor;
+    public int PreviousIndex() => cursor - 1;
+
+    public void Set(T value)
+    {
+        if (list is null)
+            throw new NotSupportedException(
+                "This Java iterator does not expose mutable set semantics.");
+        if (lastReturned < 0)
+            throw new InvalidOperationException(
+                "Iterator.set() requires one preceding next() or previous() call.");
+        list[lastReturned] = value;
+    }
+
+    public void Add(T value)
+    {
+        if (list is null)
+            throw new NotSupportedException(
+                "This Java iterator does not expose mutable add semantics.");
+        list.Insert(cursor, value);
+        cursor++;
         lastReturned = -1;
     }
 }
@@ -2503,9 +4206,37 @@ internal static class JavaCompat
     // array indexes and other assignable expressions.
     internal static sbyte AddAssign(ref sbyte target, int value) =>
         target = unchecked((sbyte)(target + value));
+    internal static sbyte SubtractAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target - value));
+    internal static sbyte MultiplyAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target * value));
+    internal static sbyte DivideAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target / value));
+    internal static sbyte RemainderAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target % value));
+    internal static sbyte AndAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target & value));
+    internal static sbyte OrAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target | value));
+    internal static sbyte XorAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target ^ value));
+    internal static sbyte ShiftLeftAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target << (value & 0x1f)));
+    internal static sbyte ShiftRightAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)(target >> (value & 0x1f)));
+    internal static sbyte UnsignedShiftRightAssign(ref sbyte target, int value) =>
+        target = unchecked((sbyte)((uint)target >> (value & 0x1f)));
 
     internal static JavaIterator<T> Iterator<T>(IEnumerable<T> values) =>
         new JavaListIterator<T>(values);
+
+    internal static JavaListIterator<T> ListIterator<T>(
+        IList<T> values,
+        int index = 0) =>
+        new(values, index);
+
+    internal static JavaIterator<T> EmptyJavaIterator<T>() =>
+        new JavaListIterator<T>(Array.Empty<T>());
 
     private static object ReadOnlyAdapter(Type targetType, object source, Func<object> create)
     {
@@ -2726,6 +4457,10 @@ internal static class JavaCompat
         string.Equals(value, other, StringComparison.OrdinalIgnoreCase);
     internal static bool StringStartsWith(string value, string prefix) =>
         value.StartsWith(prefix, StringComparison.Ordinal);
+    internal static bool StringStartsWith(string value, string prefix, int offset) =>
+        offset >= 0 &&
+        offset <= value.Length &&
+        value.AsSpan(offset).StartsWith(prefix.AsSpan(), StringComparison.Ordinal);
     internal static bool StringEndsWith(string value, string suffix) =>
         value.EndsWith(suffix, StringComparison.Ordinal);
     internal static string StringSubstring(string value, int beginIndex, int endIndex) =>
@@ -2746,6 +4481,9 @@ internal static class JavaCompat
         while (end > start && value[end - 1] <= '\u0020') end--;
         return value.Substring(start, end - start);
     }
+
+    internal static int LongHashCode(long value) =>
+        unchecked((int)(value ^ (long)((ulong)value >> 32)));
 
     internal static int StringHashCode(string value)
     {
@@ -2774,6 +4512,8 @@ internal static class JavaCompat
         string.Join(delimiter, values);
     internal static string StringValueOf(float value) => JavaFloatingString(value);
     internal static string StringValueOf(double value) => JavaFloatingString(value);
+    internal static string Normalize(string value, NormalizationForm form) =>
+        value.Normalize(form);
     internal static StringBuilder AppendValue(StringBuilder builder, object? value)
     {
         builder.Append(StringValueOf(value));
@@ -2787,9 +4527,13 @@ internal static class JavaCompat
     }
     internal static string[] StringSplit(string value, string pattern, int limit)
         => RegexSplit(CompileRegex(pattern), value, limit);
+    internal static void ListAddFirst<T>(IList<T> values, T value) =>
+        values.Insert(0, value);
     internal static bool StringMatches(string value, string pattern) => RegexMatcher(CompileRegex(pattern), value).Matches();
     internal static string StringReplaceAll(string value, string pattern, string replacement) =>
         RegexMatcher(CompileRegex(pattern), value).ReplaceAll(replacement);
+    internal static string StringReplaceFirst(string value, string pattern, string replacement) =>
+        RegexMatcher(CompileRegex(pattern), value).ReplaceFirst(replacement);
     internal static sbyte[] StringGetBytes(string value, Encoding encoding)
     {
         if (ReferenceEquals(encoding, JavaStandardCharsets.UTF16))
@@ -3588,6 +5332,21 @@ internal static class JavaCompat
             .ToArray();
     }
 
+    internal static int ReflectionFieldModifiers(FieldInfo field)
+    {
+        ArgumentNullException.ThrowIfNull(field);
+        var modifiers = 0;
+        if (field.IsPublic) modifiers |= 0x0001;
+        if (field.IsPrivate) modifiers |= 0x0002;
+        if (field.IsFamily) modifiers |= 0x0004;
+        if (field.IsStatic) modifiers |= 0x0008;
+        if (field.IsInitOnly || field.IsLiteral) modifiers |= 0x0010;
+        return modifiers;
+    }
+
+    internal static bool ReflectionModifierIsFinal(int modifiers) =>
+        (modifiers & 0x0010) != 0;
+
     internal static int ParseInt(string value)
     {
         try
@@ -3690,7 +5449,16 @@ internal static class JavaCompat
     internal static int CompareLong(long left, long right) => left.CompareTo(right);
     internal static int CompareInt(int left, int right) => left.CompareTo(right);
     internal static int CompareFloat(float left, float right) => left.CompareTo(right);
-    internal static int CompareDouble(double left, double right) => left.CompareTo(right);
+    internal static int CompareDouble(double left, double right)
+    {
+        if (left < right) return -1;
+        if (left > right) return 1;
+        if (double.IsNaN(left)) return double.IsNaN(right) ? 0 : 1;
+        if (double.IsNaN(right)) return -1;
+        var leftBits = BitConverter.DoubleToInt64Bits(left);
+        var rightBits = BitConverter.DoubleToInt64Bits(right);
+        return leftBits == rightBits ? 0 : leftBits < rightBits ? -1 : 1;
+    }
     internal static int StringCompareTo(string left, string right) =>
         string.Compare(left, right, StringComparison.Ordinal);
     internal static int LongLeadingZeros(long value) => BitOperations.LeadingZeroCount(unchecked((ulong)value));
@@ -3723,11 +5491,110 @@ internal static class JavaCompat
         return "-" + ToUnsignedString(unchecked(-value), radix);
     }
     internal static string ToStringRadix(int value, int radix) => ToStringRadix((long)value, radix);
+    internal static string ToStringRadix(BigInteger value, int radix)
+    {
+        const string digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+        if (radix is < 2 or > 36) radix = 10;
+        if (value.IsZero) return "0";
+        var negative = value.Sign < 0;
+        var remaining = BigInteger.Abs(value);
+        var result = new StringBuilder();
+        while (!remaining.IsZero)
+        {
+            remaining = BigInteger.DivRem(remaining, radix, out var remainder);
+            result.Append(digits[(int)remainder]);
+        }
+        if (negative) result.Append('-');
+        var characters = result.ToString().ToCharArray();
+        Array.Reverse(characters);
+        return new string(characters);
+    }
     internal static int ToUnsignedInt(sbyte value) => unchecked((byte)value);
+
+    internal static int CharacterCharCount(int codePoint) => codePoint >= 0x10000 ? 2 : 1;
+
+    internal static string CharacterName(int codePoint)
+    {
+        if (!IsValidCodePoint(codePoint))
+            throw new ArgumentException("Invalid Unicode code point.", nameof(codePoint));
+        if (codePoint is >= 'A' and <= 'Z')
+            return $"LATIN CAPITAL LETTER {(char)codePoint}";
+        if (codePoint is >= 'a' and <= 'z')
+            return $"LATIN SMALL LETTER {char.ToUpperInvariant((char)codePoint)}";
+        if (codePoint is >= '0' and <= '9')
+        {
+            string[] digitNames =
+                ["ZERO", "ONE", "TWO", "THREE", "FOUR",
+                 "FIVE", "SIX", "SEVEN", "EIGHT", "NINE"];
+            return $"DIGIT {digitNames[codePoint - '0']}";
+        }
+        if (codePoint == ' ') return "SPACE";
+        return $"U+{codePoint:X4}";
+    }
+
+    internal static bool CharacterIsDefined(int codePoint)
+    {
+        if (codePoint is >= 0xd800 and <= 0xdfff) return true;
+        return Rune.IsValid(codePoint) &&
+            Rune.GetUnicodeCategory(new Rune(codePoint)) !=
+                UnicodeCategory.OtherNotAssigned;
+    }
+    internal static bool IsBmpCodePoint(int codePoint) => (uint)codePoint <= 0xffff;
+    internal static bool IsValidCodePoint(int codePoint) => (uint)codePoint <= 0x10ffff;
+
+    internal static IEnumerable<int> StringCodePoints(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        for (var index = 0; index < value.Length; index++)
+        {
+            var first = value[index];
+            if (char.IsHighSurrogate(first) &&
+                index + 1 < value.Length &&
+                char.IsLowSurrogate(value[index + 1]))
+            {
+                yield return char.ConvertToUtf32(first, value[++index]);
+            }
+            else
+            {
+                yield return first;
+            }
+        }
+    }
+
+    internal static int StringCodePointCount(string value, int beginIndex, int endIndex)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (beginIndex < 0 || endIndex > value.Length || beginIndex > endIndex)
+        {
+            throw new IndexOutOfRangeException();
+        }
+        var count = 0;
+        for (var index = beginIndex; index < endIndex; index++, count++)
+        {
+            if (char.IsHighSurrogate(value[index]) &&
+                index + 1 < endIndex &&
+                char.IsLowSurrogate(value[index + 1]))
+            {
+                index++;
+            }
+        }
+        return count;
+    }
+
+    internal static Encoding CharsetForName(string name)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        return Encoding.GetEncoding(name);
+    }
+
+    internal static string CharsetName(Encoding encoding)
+    {
+        ArgumentNullException.ThrowIfNull(encoding);
+        return encoding.WebName;
+    }
     internal static int ToUnsignedInt(byte value) => value;
     internal static long ToUnsignedLong(sbyte value) => unchecked((byte)value);
-    internal static bool IsBmpCodePoint(int value) => value is >= char.MinValue and <= char.MaxValue;
-    internal static bool IsValidCodePoint(int value) => Rune.IsValid(value);
     internal static bool IsUpperCase(int value) => Rune.IsUpper(new Rune(value));
     internal static bool IsUpperCase(char value) => char.IsUpper(value);
     internal static int ToTitleCase(int value) => value is >= char.MinValue and <= char.MaxValue
@@ -3741,12 +5608,24 @@ internal static class JavaCompat
         : value >= int.MaxValue ? int.MaxValue
         : value <= int.MinValue ? int.MinValue
         : (int)Math.Floor(value + 0.5f);
+    internal static int FloorDiv(int left, int right)
+    {
+        if (left == int.MinValue && right == -1) return int.MinValue;
+        var quotient = left / right;
+        var remainder = left % right;
+        return remainder != 0 && (left ^ right) < 0 ? quotient - 1 : quotient;
+    }
+    internal static double ToDegrees(double value) => value * (180d / Math.PI);
+    internal static double ToRadians(double value) => value * (Math.PI / 180d);
     internal static long AddExact(long left, long right) => checked(left + right);
     internal static long MultiplyExact(long left, long right) => checked(left * right);
     internal static int MultiplyExactInt(int left, int right) => checked(left * right);
     internal static double SignumDouble(double value) => double.IsNaN(value) || value == 0.0
         ? value
         : value > 0.0 ? 1.0 : -1.0;
+    internal static float SignumFloat(float value) => float.IsNaN(value) || value == 0.0f
+        ? value
+        : value > 0.0f ? 1.0f : -1.0f;
     internal static long SubtractExact(long left, long right) => checked(left - right);
     internal static long NegateExact(long value) => checked(-value);
     internal static int ToIntExact(long value) => checked((int)value);
@@ -3756,6 +5635,24 @@ internal static class JavaCompat
         new BigInteger(magnitude.Select(value => unchecked((byte)value)).ToArray(), true, true) * Math.Sign(signum);
     internal static BigInteger NewBigInteger(int signum, byte[] magnitude) =>
         new BigInteger(magnitude, true, true) * Math.Sign(signum);
+    internal static sbyte[] BigIntegerToByteArray(BigInteger value) =>
+        ToSignedBytes(value.ToByteArray(isUnsigned: false, isBigEndian: true));
+    internal static BigInteger BigIntegerMod(BigInteger value, BigInteger modulus)
+    {
+        if (modulus.Sign <= 0)
+            throw new ArithmeticException("BigInteger modulus must be positive.");
+        var remainder = value % modulus;
+        return remainder.Sign < 0 ? remainder + modulus : remainder;
+    }
+    internal static int BigIntegerIntValue(BigInteger value) =>
+        unchecked((int)(uint)(value & uint.MaxValue));
+
+    internal static IComparer<T> ComparatorComparing<T, U>(Func<T, U> extractor)
+    {
+        ArgumentNullException.ThrowIfNull(extractor);
+        return Comparer<T>.Create(
+            (left, right) => JavaCompare(extractor(left), extractor(right)));
+    }
     internal static TimeSpan DurationOfSeconds(long seconds) => TimeSpan.FromSeconds(seconds);
     internal static TimeSpan DurationOfSeconds(long seconds, long nanos) =>
         TimeSpan.FromSeconds(seconds) + TimeSpan.FromTicks(nanos / 100);
@@ -3790,16 +5687,69 @@ internal static class JavaCompat
     private sealed class JavaTimeZoneMetadata
     {
         internal string Id = "";
+        internal int? RawOffsetMilliseconds;
     }
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
         TimeZoneInfo, JavaTimeZoneMetadata> TimeZoneMetadata = new();
     internal static int TimeZoneRawOffset(TimeZoneInfo zone) =>
-        checked((int)zone.BaseUtcOffset.TotalMilliseconds);
+        TimeZoneMetadata.TryGetValue(zone, out var metadata) &&
+        metadata.RawOffsetMilliseconds.HasValue
+            ? metadata.RawOffsetMilliseconds.Value
+            : checked((int)zone.BaseUtcOffset.TotalMilliseconds);
     internal static void TimeZoneSetId(TimeZoneInfo zone, string id)
     {
-        TimeZoneMetadata.Remove(zone);
-        TimeZoneMetadata.Add(zone, new JavaTimeZoneMetadata { Id = id });
+        var metadata = TimeZoneMetadata.GetOrCreateValue(zone);
+        metadata.Id = id;
     }
+    internal static string TimeZoneId(TimeZoneInfo zone) =>
+        TimeZoneMetadata.TryGetValue(zone, out var metadata) &&
+        !string.IsNullOrEmpty(metadata.Id)
+            ? metadata.Id
+            : zone.Id;
+    internal static int TimeZoneOffset(TimeZoneInfo zone, long unixTimeMilliseconds)
+    {
+        if (TimeZoneMetadata.TryGetValue(zone, out var metadata) &&
+            metadata.RawOffsetMilliseconds.HasValue)
+            return metadata.RawOffsetMilliseconds.Value;
+        var instant = DateTimeOffset.FromUnixTimeMilliseconds(unixTimeMilliseconds);
+        return checked((int)zone.GetUtcOffset(instant).TotalMilliseconds);
+    }
+    internal static void TimeZoneSetRawOffset(
+        TimeZoneInfo zone,
+        int rawOffsetMilliseconds)
+    {
+        var metadata = TimeZoneMetadata.GetOrCreateValue(zone);
+        metadata.RawOffsetMilliseconds = rawOffsetMilliseconds;
+    }
+    internal static void CalendarSetLenient(DateTimeOffset _, bool __)
+    {
+    }
+    internal static DateTimeOffset CalendarSetTimeZone(
+        DateTimeOffset value,
+        TimeZoneInfo zone)
+    {
+        var offset = TimeSpan.FromMilliseconds(TimeZoneRawOffset(zone));
+        return new DateTimeOffset(value.DateTime, offset);
+    }
+    internal static TimeZoneInfo CalendarGetTimeZone(DateTimeOffset value) =>
+        NewSimpleTimeZone(
+            checked((int)value.Offset.TotalMilliseconds),
+            value.Offset == TimeSpan.Zero ? "GMT" : $"GMT{value:zzz}");
+    internal static DateTimeOffset CalendarAdd(
+        DateTimeOffset value,
+        int field,
+        int amount) =>
+        field switch
+        {
+            1 => value.AddYears(amount),
+            2 => value.AddMonths(amount),
+            5 => value.AddDays(amount),
+            10 or 11 => value.AddHours(amount),
+            12 => value.AddMinutes(amount),
+            13 => value.AddSeconds(amount),
+            14 => value.AddMilliseconds(amount),
+            _ => throw new ArgumentOutOfRangeException(nameof(field))
+        };
     internal static DateTimeOffset CalendarSet(
         DateTimeOffset value,
         int year,
@@ -4393,6 +6343,15 @@ internal static class JavaCompat
 
     internal static string Substring(string value, int begin, int end) => value.Substring(begin, end - begin);
 
+    internal static string CharBufferWrap(char[] value, int start, int length) =>
+        new(value, start, length);
+
+    internal static bool ReaderReady(TextReader reader)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        return reader.Peek() >= 0;
+    }
+
     internal static StringBuilder AppendRange(StringBuilder builder, string value, int start, int end) =>
         builder.Append(value, start, end - start);
 
@@ -4418,6 +6377,108 @@ internal static class JavaCompat
 
     internal static T[] ArrayCopy<T>(T[] source, int length, Type? _) => CopyOf(source, length);
 
+    internal static void ResetMemoryStream(MemoryStream stream)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        stream.SetLength(0);
+        stream.Position = 0;
+    }
+
+    internal static string MemoryStreamToString(MemoryStream stream, string encodingName)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        return CharsetForName(encodingName).GetString(stream.ToArray());
+    }
+
+    internal static Stream OpenFileInput(FileInfo file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return OpenFileInput(file.FullName);
+    }
+
+    internal static Stream OpenFileInput(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+    }
+
+    internal static Stream OpenFileOutput(FileInfo file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return OpenFileOutput(file.FullName);
+    }
+
+    internal static Stream OpenFileOutput(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        return new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+    }
+
+    internal static long FileLastModified(FileInfo file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        file.Refresh();
+        return file.Exists
+            ? new DateTimeOffset(file.LastWriteTimeUtc).ToUnixTimeMilliseconds()
+            : 0;
+    }
+
+    internal static FileInfo NewFileInfo(Uri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        if (!uri.IsAbsoluteUri || !uri.IsFile)
+            throw new ArgumentException("File URI must be absolute and use the file scheme.", nameof(uri));
+        return new FileInfo(uri.LocalPath);
+    }
+
+    internal static FileInfo NewFileInfo(string parent, string child)
+    {
+        ArgumentNullException.ThrowIfNull(parent);
+        ArgumentNullException.ThrowIfNull(child);
+        return new FileInfo(Path.Combine(parent, child));
+    }
+
+    internal static bool FileCanWrite(FileInfo file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        try
+        {
+            if (Directory.Exists(file.FullName))
+            {
+                var probe = Path.Combine(file.FullName, $".vibeformer-write-{Guid.NewGuid():N}.tmp");
+                using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+                File.Delete(probe);
+                return true;
+            }
+            if (!file.Exists) return false;
+            using var stream = new FileStream(
+                file.FullName, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    internal static void WriterWriteCharCode(TextWriter writer, int value)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        writer.Write(unchecked((char)value));
+    }
+
+    internal static bool FileEquals(FileInfo file, object? other)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return other is FileInfo candidate &&
+            string.Equals(
+                file.ToString(),
+                candidate.ToString(),
+                OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal);
+    }
+
     internal static bool ArrayEquals<T>(T[]? left, T[]? right) =>
         ReferenceEquals(left, right) ||
         (left is not null && right is not null && left.AsSpan().SequenceEqual(right));
@@ -4432,6 +6493,9 @@ internal static class JavaCompat
 
     internal static string? GetProperty(string name) =>
         SystemProperties.TryGetValue(name, out var value) ? value : null;
+
+    internal static string GetProperty(string name, string fallback) =>
+        GetProperty(name) ?? fallback;
 
     internal static T Clone<T>(T value) =>
         value is TimeZoneInfo or string
@@ -4914,6 +6978,8 @@ internal static class JavaCompat
 
     internal static ISet<JavaMapEntry<K, V>> MapEntrySet<K, V>(IDictionary<K, V> map) where K : notnull =>
         new JavaMapEntrySet<K, V>(map);
+    internal static ISet<JavaMapEntry<K, V>> MapEntrySet<K, V>(SortedDictionary<K, V> map) where K : notnull =>
+        new JavaMapEntrySet<K, V>(map);
     internal static IEnumerable<KeyValuePair<K, V>> MapEntrySet<K, V>(IReadOnlyDictionary<K, V> map)
         where K : notnull => map;
 
@@ -4923,6 +6989,11 @@ internal static class JavaCompat
         map.Keys.First();
     internal static K SortedLastKey<K, V>(IDictionary<K, V> map) where K : notnull =>
         map.Keys.Last();
+    internal static IDictionary<K, V> SortedSubMap<K, V>(
+        IDictionary<K, V> map, K lower, K upper) where K : notnull =>
+        map.Where(pair => JavaCompare(pair.Key, lower) >= 0
+            && JavaCompare(pair.Key, upper) < 0)
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
     internal static ISet<T> SortedHeadSet<T>(ISet<T> values, T upper) =>
         new SortedSet<T>(values.Where(value => JavaCompare(value, upper) < 0),
             Comparer<T>.Create(JavaCompare));
@@ -4930,11 +7001,14 @@ internal static class JavaCompat
         new SortedSet<T>(values.Where(value =>
                 JavaCompare(value, lower) >= 0 && JavaCompare(value, upper) < 0),
             Comparer<T>.Create(JavaCompare));
+    internal static T SortedFirst<T>(ISet<T> values) => values.First();
     internal static T SortedLast<T>(ISet<T> values) => values.Last();
     internal static ISet<K> MapKeySet<K, V>(IDictionary<K, V> map) where K : notnull =>
         map is JavaLinkedHashMap<K, V> linked
             ? linked.KeySet()
             : new JavaMapKeySet<K, V>(map);
+    internal static ISet<K> MapKeySet<K, V>(SortedDictionary<K, V> map) where K : notnull =>
+        new JavaMapKeySet<K, V>(map);
     internal static ISet<K> MapKeySet<K, V>(IReadOnlyDictionary<K, V> map) where K : notnull =>
         new HashSet<K>(map.Keys, new JavaEqualityComparer<K>());
     internal static int MapCount<K, V>(IDictionary<K, V> map) where K : notnull => map.Count;
@@ -4965,6 +7039,8 @@ internal static class JavaCompat
         map.TryGetValue(key, out var value) ? value : fallback;
     internal static V MapPutIfAbsent<K, V>(IDictionary<K, V> map, K key, V value) where K : notnull
     {
+        if (map is ConcurrentDictionary<K, V> concurrent)
+            return concurrent.TryAdd(key, value) ? default! : concurrent[key];
         if (map is JavaLinkedHashMap<K, V> linked) return linked.PutIfAbsent(key, value);
         if (map.TryGetValue(key, out var previous) && previous is not null) return previous;
         return MapPut(map, key, value);
@@ -4993,6 +7069,10 @@ internal static class JavaCompat
         key is K typed && map.TryGetValue(typed, out var value) ? value : default!;
 
     internal static V? MapGetNullable<K, V>(IDictionary<K, V> map, object? key)
+        where K : notnull
+        where V : struct =>
+        key is K typed && map.TryGetValue(typed, out var value) ? value : null;
+    internal static V? MapGetNullable<K, V>(SortedDictionary<K, V> map, object? key)
         where K : notnull
         where V : struct =>
         key is K typed && map.TryGetValue(typed, out var value) ? value : null;
@@ -6217,6 +8297,10 @@ internal static class JavaCompat
         new(values is IList<T> list ? list : values.ToList());
     internal static ISet<T> UnmodifiableSet<T>(ISet<T> values) =>
         new JavaUnmodifiableSet<T>(values);
+    internal static ISet<T> EmptySet<T>() =>
+        new JavaUnmodifiableSet<T>(new HashSet<T>(new JavaEqualityComparer<T>()));
+    internal static ISet<T> NewSetFromMap<T>(IDictionary<T, bool> map) where T : notnull =>
+        new JavaMapBackedSet<T>(map);
 
     internal static IDictionary<K, V> UnmodifiableMap<K, V>(IDictionary<K, V> values)
         where K : notnull => new ReadOnlyDictionary<K, V>(values);
@@ -6298,6 +8382,9 @@ internal static class JavaCompat
         if (method is not null) return (int)method.Invoke(left, new object?[] { right })!;
         throw new ArgumentException($"{left.GetType()} does not implement Java Comparable semantics.");
     }
+
+    internal static int CompareNatural<T>(T? left, T? right) =>
+        JavaCompare(left, right);
 
     private sealed class JavaEqualityComparer<T> : IEqualityComparer<T>
     {
@@ -6446,7 +8533,7 @@ internal static class JavaCompat
     }
 
     internal static T DequeGetFirst<T>(JavaDeque<T> deque) => deque.GetFirst();
-    internal static T? DequePeek<T>(JavaDeque<T> deque) => deque.Peek();
+    internal static T DequePeek<T>(JavaDeque<T> deque) => deque.Peek()!;
     internal static T DequePop<T>(JavaDeque<T> deque) => deque.Pop();
     internal static void DequePush<T>(JavaDeque<T> deque, T value) => deque.Push(value);
 
@@ -6688,6 +8775,55 @@ internal static class JavaCompat
     internal static IEnumerable<long> MapToLong<T>(IEnumerable<T> values, JavaToLongFunction<T> mapper) =>
         values.Select(value => mapper(value));
     internal static long Sum(IEnumerable<long> values) => values.Sum();
+    internal static decimal BigDecimalParse(string value) =>
+        decimal.Parse(
+            value,
+            NumberStyles.Number | NumberStyles.AllowExponent,
+            CultureInfo.InvariantCulture);
+
+    internal static decimal BigDecimalValueOf(double value) =>
+        BigDecimalParse(value.ToString("R", CultureInfo.InvariantCulture));
+
+    internal static decimal BigDecimalSetScale(
+        decimal value,
+        int scale,
+        JavaRoundingMode roundingMode)
+    {
+        if (scale is < 0 or > 28) throw new ArithmeticException("Scale is outside System.Decimal range.");
+        return roundingMode switch
+        {
+            JavaRoundingMode.Ceiling => decimal.Round(
+                value,
+                scale,
+                MidpointRounding.ToPositiveInfinity),
+            _ => throw new ArgumentOutOfRangeException(nameof(roundingMode))
+        };
+    }
+
+    internal static int BigDecimalIntValue(decimal value) =>
+        decimal.ToInt32(decimal.Truncate(value));
+
+    internal static decimal BigDecimalStripTrailingZeros(decimal value)
+    {
+        if (value == 0) return decimal.Zero;
+        return decimal.Parse(
+            value.ToString("G29", CultureInfo.InvariantCulture),
+            NumberStyles.Number,
+            CultureInfo.InvariantCulture);
+    }
+
+    internal static string BigDecimalToPlainString(decimal value) =>
+        value.ToString(CultureInfo.InvariantCulture);
+
+    internal static string? XmlEncoding(XmlDocument document) =>
+        document.FirstChild is XmlDeclaration declaration &&
+        !string.IsNullOrEmpty(declaration.Encoding)
+            ? declaration.Encoding
+            : null;
+
+    internal static string? XmlInputEncoding(XmlDocument document) =>
+        XmlEncoding(document);
+
     internal static decimal DecimalDivide(decimal left, decimal right, int scale, object rounding)
     {
         var rounded = decimal.Round(
@@ -6719,6 +8855,14 @@ internal static class JavaCompat
     internal static Comparison<T> ReverseComparison<T>(Comparison<T> comparison) =>
         (left, right) => comparison(right, left);
     internal static T[] ToArray<T>(IEnumerable<T> values) => values.ToArray();
+    internal static T[] CollectionToArray<T>(IEnumerable<T> values, T[] target)
+    {
+        var source = values.ToArray();
+        if (target.Length < source.Length) return source;
+        Array.Copy(source, target, source.Length);
+        if (target.Length > source.Length) target[source.Length] = default!;
+        return target;
+    }
     internal static T[] ToArrayLoose<T>(System.Collections.IEnumerable values) =>
         values.Cast<object?>().Select(value => (T)value!).ToArray();
     internal static IList<T> ToListValues<T>(IEnumerable<T> values) => values.ToList();
@@ -6968,6 +9112,7 @@ internal static class JavaCompat
     internal static T? FirstOrDefault<T>(IEnumerable<T> values) => values.FirstOrDefault();
     internal static bool Any<T>(IEnumerable<T> values, Func<T, bool> predicate) => values.Any(predicate);
     internal static bool AllValues<T>(IEnumerable<T> values, Func<T, bool> predicate) => values.All(predicate);
+    internal static bool NoValues<T>(IEnumerable<T> values, Func<T, bool> predicate) => !values.Any(predicate);
     internal static IEnumerable<T> ConcatValues<T>(IEnumerable<T> left, IEnumerable<T> right) => left.Concat(right);
     internal static IEnumerable<T> TakeValues<T>(IEnumerable<T> values, long count) => values.Take(checked((int)count));
     internal static IEnumerable<T> DropValues<T>(IEnumerable<T> values, long count) => values.Skip(checked((int)count));
@@ -6984,6 +9129,13 @@ internal static class JavaCompat
         var result = iterator.Current;
         while (iterator.MoveNext()) result = reducer(result, iterator.Current);
         return JavaOptional<T>.Of(result);
+    }
+    internal static JavaOptional<T> FindFirstOptional<T>(IEnumerable<T> values)
+    {
+        using var iterator = values.GetEnumerator();
+        return iterator.MoveNext()
+            ? JavaOptional<T>.Of(iterator.Current)
+            : JavaOptional<T>.Empty();
     }
     internal static Func<T, T> AndThen<T>(Func<T, T> first, Func<T, T> second) => value => second(first(value));
     internal static void ForEachRemaining<T>(IEnumerator<T> iterator, Action<T> action)
@@ -7203,6 +9355,22 @@ internal static class JavaCompat
     }
     internal static MemoryStream NewMemoryStream(sbyte[] bytes) =>
         new(bytes.Select(value => unchecked((byte)value)).ToArray());
+    internal static StringBuilder StringBuilderAppendInvariant(
+        StringBuilder builder,
+        object value)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        if (value is bool boolean) return builder.Append(boolean ? "true" : "false");
+        return builder.Append(((IFormattable)value).ToString(null, CultureInfo.InvariantCulture));
+    }
+    internal static MemoryStream NewMemoryStream(sbyte[] bytes, int offset, int length)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+        if (offset < 0 || length < 0 || offset > bytes.Length - length)
+            throw new IndexOutOfRangeException();
+        return new MemoryStream(
+            bytes.Skip(offset).Take(length).Select(value => unchecked((byte)value)).ToArray());
+    }
     internal static sbyte[] ToSignedBytes(MemoryStream stream) =>
         stream.ToArray().Select(value => unchecked((sbyte)value)).ToArray();
     internal static string WriteString(string path, object value, params object?[] _)
@@ -7346,6 +9514,10 @@ internal static class JavaCompat
     internal static IList<T> NCopies<T>(int count, T value) => Enumerable.Repeat(value, count).ToList();
     internal static T Min<T>(T left, T right) where T : IComparable<T> => left.CompareTo(right) <= 0 ? left : right;
     internal static T Min<T>(IEnumerable<T> values) => values.Min(Comparer<T>.Default)!;
+    internal static T CollectionMin<T>(IEnumerable<T> values) =>
+        values.Aggregate((left, right) => JavaCompare(left, right) <= 0 ? left : right);
+    internal static T CollectionMax<T>(IEnumerable<T> values) =>
+        values.Aggregate((left, right) => JavaCompare(left, right) >= 0 ? left : right);
     internal static IComparer<T> ReverseComparer<T>() =>
         Comparer<T>.Create((left, right) => Comparer<T>.Default.Compare(right, left));
     internal static IList<T> SynchronizedList<T>(IList<T> values) =>
@@ -7353,6 +9525,8 @@ internal static class JavaCompat
     internal static JavaStream<T> StreamFilter<T>(
         IEnumerable<T> values, Func<T, bool> predicate) =>
         new(values.Where(predicate));
+    internal static JavaStream<T> StreamSorted<T>(IEnumerable<T> values) =>
+        new(values.OrderBy(value => value, Comparer<T>.Create(JavaCompare)));
     internal static JavaStream<T> StreamSorted<T>(
         IEnumerable<T> values, IComparer<T> comparer) =>
         new(values.OrderBy(value => value, comparer));
@@ -7644,6 +9818,12 @@ internal sealed class JavaDataOutputStream : Stream
     internal void write(sbyte[] values, int offset, int count) =>
         JavaCompat.OutputStreamWrite(output, values, offset, count);
 
+    internal void Write(sbyte[] values) =>
+        JavaCompat.OutputStreamWrite(output, values);
+
+    internal void Write(sbyte[] values, int offset, int count) =>
+        JavaCompat.OutputStreamWrite(output, values, offset, count);
+
     internal void writeByte(int value) => output.WriteByte(unchecked((byte)value));
 
     internal void writeShort(int value)
@@ -7700,7 +9880,7 @@ internal sealed class JavaLineNumberReader : IDisposable
     internal JavaLineNumberReader(TextReader reader) =>
         this.reader = reader ?? throw new ArgumentNullException(nameof(reader));
 
-    internal string? readLine() => reader.ReadLine();
+    internal string? ReadLine() => reader.ReadLine();
     public void Dispose() => reader.Dispose();
 }
 
@@ -7748,13 +9928,26 @@ internal sealed class JavaStringTokenizer
         hasMoreTokens() ? tokens[index++] : throw new InvalidOperationException("No more tokens");
 }
 
-internal sealed class JavaDeque<T> : ICollection<T>
+public sealed class JavaDeque<T> : ICollection<T>
 {
     private readonly LinkedList<T> values = new();
+    internal JavaDeque()
+    {
+    }
+    internal JavaDeque(int initialCapacity)
+    {
+        if (initialCapacity < 0) throw new ArgumentException("Initial capacity must not be negative.");
+    }
     internal T GetFirst() => values.First is { } first
         ? first.Value
         : throw new InvalidOperationException("Deque is empty");
     internal T? Peek() => values.First is null ? default : values.First.Value;
+    internal T? Poll()
+    {
+        if (values.First is not { } first) return default;
+        values.RemoveFirst();
+        return first.Value;
+    }
     internal T Pop()
     {
         var value = GetFirst();
@@ -7777,7 +9970,11 @@ internal sealed class JavaDeque<T> : ICollection<T>
 }
 
 internal
-class JavaLinkedHashMap<K, V> : IDictionary<K, V>, IDictionary where K : notnull
+class JavaLinkedHashMap<K, V> :
+    IDictionary<K, V>,
+    IDictionary,
+    JavaMapValueUpdater<K, V>
+    where K : notnull
 {
     private sealed class Entry(K key, V value)
     {
@@ -7910,6 +10107,9 @@ class JavaLinkedHashMap<K, V> : IDictionary<K, V>, IDictionary where K : notnull
         if (!entries.TryGetValue(key, out var node)) throw new KeyNotFoundException();
         node.Value.Value = value;
     }
+
+    void JavaMapValueUpdater<K, V>.ReplaceValueWithoutAccess(K key, V value) =>
+        ReplaceValueWithoutAccess(key, value);
 
     internal ISet<K> KeySet() => new KeySetView(this);
 

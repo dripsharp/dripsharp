@@ -91,7 +91,8 @@
    :projection :skia-sharp}]
  :internal-capabilities
  #{:icc :jbig2 :jpx :managed-raster :printing :skia-graphics :unicode-bidi}
- :destination-capabilities #{:java-compat :java-regex-unicode}
+ :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
+ :bridge-capabilities #{:java-bidi}
  :legal-files
  [{:kind :license
    :source "research/pdfbox/LICENSE.txt"

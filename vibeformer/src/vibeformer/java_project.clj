@@ -310,6 +310,11 @@
                 (for [reference (sort (:project-references configuration))]
                   (str "    <ProjectReference Include=\"" (xml-escape reference) "\" />\n")))
          (apply str
+                (for [assembly (sort (:friend-assemblies configuration))]
+                  (str "    <AssemblyAttribute Include=\"System.Runtime.CompilerServices.InternalsVisibleToAttribute\">\n"
+                       "      <_Parameter1>" (xml-escape assembly) "</_Parameter1>\n"
+                       "    </AssemblyAttribute>\n")))
+         (apply str
                 (for [{:keys [destination logical-name]}
                       (sort-by :destination resource-artifacts)]
                   (str "    <EmbeddedResource Include=\""

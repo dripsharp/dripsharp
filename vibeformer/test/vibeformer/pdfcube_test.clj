@@ -208,6 +208,12 @@
             "PdfCube.PdfBox" ["PdfCube.IO" "PdfCube.FontBox"]
             "PdfCube.Preflight" ["PdfCube.PdfBox" "PdfCube.XmpBox"]}
            dependency-graph))
+    (is (= #{:java-bidi}
+           (:bridge-capabilities
+            (:destination (read-profile-and-destination "pdfcube-pdfbox")))))
+    (is (= #{"PdfCube.PdfBox"}
+           (:friend-assemblies
+            (:destination (read-profile-and-destination "pdfcube-io")))))
     (doseq [{:keys [profile destination]} prepared]
       (is (= :maven (:build-tool profile)))
       (is (= "net10.0" (get-in destination [:project :target-framework])))
@@ -344,6 +350,43 @@
     (is (= 2 (count (filter #(= "Read" (:name %)) methods))))
     (is (= #{"PageCount" "helperValue"} (set (map :name fields))))
     (is (not (str/includes? source "GetNumberOfPages { get;")))
+    (is (zero? (get-in emission [:summary :collisions])))
+    (is
+     (zero?
+      (:exit
+       (process/run! {:directory (:project-root emission)
+                      :command ["dotnet" "build" (:project-file emission)
+                                "--nologo" "--configuration" "Release"
+                                "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest pdfcube-public-field-case-collisions-preserve-both-source-identifiers
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-io")
+        fixture
+        (model!
+         "org/apache/pdfbox/io/FieldCaseFixture.java"
+         (str "package org.apache.pdfbox.io; "
+              "public final class FieldCaseFixture { "
+              "public static final String OFF = \"OFF\"; "
+              "public static final String Off = \"Off\"; "
+              "public static String upper() { return OFF; } "
+              "public static String mixed() { return Off; } }"))
+        emission (emit! fixture destination)
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               "src/PdfCube/IO/FieldCaseFixture.cs")))
+        fields (filter #(= :field (:kind %)) (:declarations emission))]
+    (is (str/includes? source "public const string OFF = \"OFF\";"))
+    (is (str/includes? source "public const string Off = \"Off\";"))
+    (is (str/includes?
+         source
+         "return global::PdfCube.IO.FieldCaseFixture.OFF;"))
+    (is (str/includes?
+         source
+         "return global::PdfCube.IO.FieldCaseFixture.Off;"))
+    (is (= #{"OFF" "Off"} (set (map :name fields))))
     (is (zero? (get-in emission [:summary :collisions])))
     (is
      (zero?
