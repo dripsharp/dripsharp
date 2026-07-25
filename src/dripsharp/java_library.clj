@@ -2096,7 +2096,7 @@
 
       (and (= "char" assigned-type)
            (not= "char" assignment-type))
-      (sequence-node [(raw "(char)(") node (raw ")")])
+      (sequence-node [(raw "unchecked((char)(") node (raw "))")])
 
       :else node)))
 
@@ -2183,7 +2183,7 @@
 
       (and (= "char" expected-name)
            (not= "char" argument-name))
-      (sequence-node [(raw "(char)(") value-node (raw ")")])
+      (sequence-node [(raw "unchecked((char)(") value-node (raw "))")])
 
       (and (= "java.lang.CharSequence" expected-name)
            (= "java.lang.StringBuilder" argument-name))
@@ -2401,13 +2401,16 @@
   (let [expressions (vec (.getCaseExpressions case))
         parent (when (.isParentInitialized case) (.getParent case))
         enum (when (instance? CtSwitch parent)
-               (enum-switch-declaration ctx parent))]
+               (enum-switch-declaration ctx parent))
+        selector (when (instance? CtSwitch parent)
+                   (.getSelector ^CtSwitch parent))]
     (if (seq expressions)
       (sequence-node
        (mapv #(sequence-node [(raw "case ")
                               (if enum
                                 (enum-case-node ctx enum %)
-                                (child-node children %))
+                                (assignment-value-node
+                                 ctx selector % (child-node children %)))
                               (raw ":")])
              expressions)
        "\n")

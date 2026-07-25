@@ -2938,7 +2938,8 @@
         second-source
         (slurp (str (paths/resolve-path (:project-root second)
                                         "src/Example/Java/Library/PrimitiveConversions.cs")))]
-    (is (str/includes? first-source "char result = (char)((char)(value));"))
+    (is (str/includes?
+         first-source "char result = unchecked((char)((char)(value)));"))
     (is (str/includes?
          first-source "result[0] = unchecked((sbyte)('\\r'));"))
     (is (str/includes?
@@ -4723,6 +4724,43 @@
          (str "catch (global::System.Exception failure) when (failure is "
               "global::System.IO.IOException or "
               "global::System.Security.Cryptography.CryptographicException)")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                               "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest switch-case-labels-use-the-selector-numeric-representation
+  (let [fixture
+        (model! {"example/SwitchCases.java"
+                 (str "package example; public final class SwitchCases { "
+                      "private static final byte LF = 10; "
+                      "static int character(char value) { switch (value) { "
+                      "case LF: return 1; case (char)-1: return 2; default: return 0; } } "
+                      "static int signedByte(byte value) { switch (value) { "
+                      "case '(': return 1; case '\\\\': return 2; default: return 0; } } }")})
+        first (emit! fixture 1)
+        second (emit! fixture 3)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/SwitchCases.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/SwitchCases.cs")))]
+    (is (str/includes?
+         first-source
+         "case unchecked((char)(global::Example.Java.Library.SwitchCases.LF)):"))
+    (is (str/includes?
+         first-source
+         "case unchecked((char)(-1)):"))
+    (is (str/includes?
+         first-source
+         "case unchecked((sbyte)('(')):"))
+    (is (str/includes?
+         first-source
+         "case unchecked((sbyte)('\\\\')):"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
