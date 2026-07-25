@@ -2249,6 +2249,44 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest raw-project-generics-use-their-java-erasure-bounds
+  (let [fixture
+        (model!
+         {"example/Value.java"
+          (str "package example; public interface Value {}")
+          "example/Box.java"
+          (str "package example; public abstract class Box<T extends Value> { "
+               "private static final int DEFAULT_COUNT = 3; "
+               "private int count = DEFAULT_COUNT; "
+               "public int count() { return count; } }")
+          "example/Factory.java"
+          (str "package example; public final class Factory { "
+               "public static Box<Value> identity(Box value) { return value; } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        box-source
+        (slurp (str (paths/resolve-path
+                     (:project-root emission)
+                     "src/Example/Java/Library/Box.cs")))
+        factory-source
+        (slurp (str (paths/resolve-path
+                     (:project-root emission)
+                     "src/Example/Java/Library/Factory.cs")))]
+    (is (str/includes?
+         box-source
+         (str "global::Example.Java.Library.Box<"
+              "global::Example.Java.Library.Value>.DEFAULT_COUNT")))
+    (is (str/includes?
+         factory-source
+         (str "identity(global::Example.Java.Library.Box<"
+              "global::Example.Java.Library.Value> value)")))
+    (is (not (str/includes? box-source "Box<object>")))
+    (is (not (str/includes? factory-source "Box<object>")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neutral-stream-reduce-expands-binary-operator-and-static-max
   (let [fixture
         (model! {"example/References.java"

@@ -291,6 +291,22 @@
    "java.util.Map" "global::System.Collections.IDictionary"
    "java.util.Set" "global::System.Collections.ICollection"})
 
+(defn- type-parameter-bound-references [^CtTypeParameter parameter]
+  (vec
+   (remove nil?
+           (concat [(.getSuperclass parameter)]
+                   (.getSuperInterfaces parameter)))))
+
+(defn- raw-project-type-argument-node
+  [ctx ^CtTypeParameter parameter]
+  (if-let [bound
+           (first
+            (remove
+             #(= "java.lang.Object" (.getQualifiedName ^CtTypeReference %))
+             (type-parameter-bound-references parameter)))]
+    (type-node ctx bound)
+    (raw "object")))
+
 (defn- project-reference-node
   [ctx ^CtTypeReference reference ^CtType declaration]
   (let [references (reference-declaring-types reference)
@@ -306,7 +322,8 @@
                  (count (.getFormalCtTypeParameters part-declaration))
                  arguments
                  (if (and (empty? actual-arguments) (pos? formal-count))
-                   (vec (repeat formal-count (raw "object")))
+                   (mapv #(raw-project-type-argument-node ctx %)
+                         (.getFormalCtTypeParameters part-declaration))
                    (mapv #(type-node ctx %) actual-arguments))]
              [(when (pos? index) (raw "."))
               (raw (pascal (.getSimpleName part-declaration)))
@@ -355,8 +372,8 @@
                   (and (empty? actual-arguments)
                        (instance? CtType declaration)
                        (seq (.getFormalCtTypeParameters ^CtType declaration)))
-                  (vec (repeat (count (.getFormalCtTypeParameters ^CtType declaration))
-                               (raw "object")))
+                  (mapv #(raw-project-type-argument-node ctx %)
+                        (.getFormalCtTypeParameters ^CtType declaration))
 
                   :else
                   (mapv #(type-node ctx %) actual-arguments))]
@@ -6653,12 +6670,6 @@
                        ", ")
                       (raw ">")]))))
 
-(defn- type-parameter-constraint-types [^CtTypeParameter parameter]
-  (vec
-   (remove nil?
-           (concat [(.getSuperclass parameter)]
-                   (.getSuperInterfaces parameter)))))
-
 (defn- constraints-node [ctx parameters]
   (let [clauses
         (keep
@@ -6667,7 +6678,7 @@
                  (remove
                   #(= "java.lang.Object"
                       (.getQualifiedName ^CtTypeReference %))
-                  (type-parameter-constraint-types parameter))]
+                  (type-parameter-bound-references parameter))]
              (when (seq bounds)
                (sequence-node
                 [(raw (str " where "
