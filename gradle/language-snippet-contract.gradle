@@ -1,0 +1,39 @@
+import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
+
+gradle.projectsEvaluated {
+  def selectedProject = gradle.rootProject.findProject(":pkl-core")
+  if (selectedProject != null) {
+    selectedProject.tasks.register("dripsharpLanguageSnippetOracle", JavaExec) {
+      group = "dripsharp"
+      description = "Executes the pinned upstream language-snippet contract"
+
+      def oracleClasses = providers.gradleProperty("dripsharp.oracleClasses")
+      def manifest = providers.gradleProperty("dripsharp.manifest")
+      def output = providers.gradleProperty("dripsharp.output")
+      if (!oracleClasses.present || !manifest.present || !output.present) {
+        throw new GradleException(
+          "Missing -Pdripsharp.oracleClasses, -Pdripsharp.manifest, or -Pdripsharp.output"
+        )
+      }
+
+      dependsOn(selectedProject.tasks.named("testClasses"))
+      dependsOn(gradle.rootProject.project(":pkl-commons-test").tasks.named("processResources"))
+
+      def sourceSets = selectedProject.extensions.getByType(SourceSetContainer)
+      classpath = selectedProject.files(oracleClasses.get()) + sourceSets.getByName("test").runtimeClasspath
+      mainClass.set("LanguageSnippetContractOracle")
+      args(manifest.get(), output.get())
+      workingDir(gradle.rootProject.projectDir)
+      maxHeapSize = "1g"
+
+      // The pinned source test excludes one diagnostic on experimental JVMs.
+      // Run on its supported Java 21 baseline so all 940 rows execute.
+      def toolchains = selectedProject.extensions.getByType(JavaToolchainService)
+      javaLauncher.set(toolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(21))
+      })
+    }
+  }
+}

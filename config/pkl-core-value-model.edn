@@ -1,0 +1,77 @@
+{:schema-version 1
+ :profile "pkl-core-value-model"
+ :product-family :pkl
+ :project-root "research/pkl"
+ :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+ :gradle-project ":pkl-core"
+ :destination-bundle dripsharp.pkl.java-project/rule-bundle
+ :destination-config "config/pkl-core-value-model-destination.edn"
+ :dependency-profiles ["pkl-parser"]
+ :seeds
+ [{:key "executable:org.pkl.core.EvaluatorImpl#evaluate(org.pkl.core.ModuleSource)"
+   :expand :body}
+  {:key "initializer:org.pkl.core.runtime.BaseModule#static@26:10" :expand :body}
+  ;; ModuleCache returns every standard-library singleton directly. Preserve
+  ;; each Java static initializer so the corresponding module object receives
+  ;; its class and module metadata before any renderer or API reads it.
+  {:key "initializer:org.pkl.core.runtime.AnalyzeModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.BenchmarkModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.CommandModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.JsonnetModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.PklBinaryModule#static@23:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.ReleaseModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.XmlModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.Release#static@52:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.RefModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.MathModule#static@23:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.MirrorFactories#static@109:10" :expand :body}
+  {:key "initializer:org.pkl.core.stdlib.base.RegexMatchFactory#static@36:10" :expand :body}
+  {:key "initializer:org.pkl.core.util.xml.Xml10Validator#static@28:10" :expand :body}
+  {:key "initializer:org.pkl.core.util.xml.Xml11Validator#static@28:10" :expand :body}
+  ;; Project and user-settings evaluation reaches these eagerly shared stdlib
+  ;; module singletons through ModuleCache. Their static bodies are observable
+  ;; runtime behavior: without them ModuleCache returns uninitialized modules.
+  {:key "initializer:org.pkl.core.runtime.PlatformModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.ProjectModule#static@23:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.ReflectModule#static@24:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.SemVerModule#static@25:10" :expand :body}
+  {:key "initializer:org.pkl.core.runtime.SettingsModule#static@23:10" :expand :body}
+  ;; LanguageSnippetTests modules extend pkl:test. ModuleCache returns this
+  ;; eager singleton directly, so its Java static initializer is part of the
+  ;; evaluator behavior rather than an optional test-infrastructure detail.
+  {:key "initializer:org.pkl.core.runtime.TestModule#static@23:10" :expand :body}
+  {:key "initializer:org.pkl.core.util.json.JsonEscaper#static@38:10" :expand :body}
+  {:key "initializer:org.pkl.core.resource.ResourceReaders$FromServiceProviders#static@651:12"
+   :expand :body}
+  {:key "initializer:org.pkl.core.module.ModuleKeyFactories$FromServiceProviders#static@255:12"
+   :expand :body}
+  {:key "executable:org.pkl.core.EvaluatorImpl#evaluateExpression(org.pkl.core.ModuleSource,java.lang.String)"
+   :expand :body}
+  {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValue(org.pkl.core.ModuleSource)"
+   :expand :body}
+  {:key "executable:org.pkl.core.EvaluatorImpl#evaluateOutputValueAs(org.pkl.core.ModuleSource,org.pkl.core.PClassInfo)"
+   :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmValue#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmValue#export(java.lang.Object)" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmValue#exportNullable(java.lang.Object)" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmTyped#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmNull#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmDuration#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmDataSize#export()" :expand :body}
+  {:key "executable:org.pkl.core.runtime.VmPair#export()" :expand :body}
+  ;; Product API types and their complete public bodies are derived from the
+  ;; executable surface contract above. The remaining explicit type seeds are
+  ;; implementation behavior entry points, not a curated product API list.
+  {:key "type:org.pkl.core.ast.expression.primary.GetEnclosingOwnerNode" :expand :public-api}
+  {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode" :expand :public-api}
+  {:key "executable:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNode#<init>(com.oracle.truffle.api.source.SourceSection,org.pkl.core.module.ModuleKey)"
+   :expand :body}
+  {:key "type:org.pkl.core.ast.expression.unary.ReadOrNullStdLibNodeGen" :expand :public-api}
+  {:key "executable:org.pkl.core.evaluatorSettings.Color#hasColor()" :expand :body}
+  {:key "type:org.pkl.core.runtime.VmFileDetector" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.TestReporter" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.BaseReporter" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.JUnitReporter" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.MinimalReporter" :expand :public-api}
+  {:key "type:org.pkl.core.stdlib.test.report.SpecReporter" :expand :public-api}
+  {:key "type:org.pkl.core.util.CodeGeneratorUtils" :expand :public-api}]}

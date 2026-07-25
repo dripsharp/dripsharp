@@ -8,10 +8,10 @@ permissions:
 
 jobs:
   package-proof:
-    runs-on: [self-hosted, linux, x64, vibeformer-proof]
+    runs-on: [self-hosted, linux, x64, dripsharp-proof]
     timeout-minutes: 60
     env:
-      VIBEFORMER_WORKERS: 22
+      DRIPSHARP_WORKERS: 22
       JAVA_TOOL_OPTIONS: -Xmx28g
     steps:
       - uses: actions/checkout@v4
@@ -43,27 +43,26 @@ jobs:
           fi
 
       - name: Pack, consume, and differentially verify
-        working-directory: vibeformer
         run: clojure -J-Xmx28g -M:run pdfcube-fontbox-differential
 
       - name: Upload complete local feed
         uses: actions/upload-artifact@v4
         with:
           name: pdfcube-fontbox-local-feed
-          path: vibeformer/target/package-proof/feed/*.nupkg
+          path: target/package-proof/feed/*.nupkg
           if-no-files-found: error
 
       - name: Upload canonical proof
         uses: actions/upload-artifact@v4
         with:
           name: pdfcube-fontbox-canonical-proof
-          path: vibeformer/validation-output/pdfcube-fontbox-differential
+          path: validation-output/pdfcube-fontbox-differential
           if-no-files-found: error
 
       - name: Stage synchronized FontBox fixtures
         shell: bash
         run: |
-          fixture_root="vibeformer/target/pdfcube-fontbox-host-fixtures"
+          fixture_root="target/pdfcube-fontbox-host-fixtures"
           mkdir -p "$fixture_root/resources" "$fixture_root/fonts"
           cp -R research/pdfbox/fontbox/src/test/resources/. "$fixture_root/resources/"
           cp -R research/pdfbox/fontbox/target/fonts/. "$fixture_root/fonts/"
@@ -72,7 +71,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pdfcube-fontbox-host-fixtures
-          path: vibeformer/target/pdfcube-fontbox-host-fixtures
+          path: target/pdfcube-fontbox-host-fixtures
           if-no-files-found: error
 
   host-smoke:
@@ -111,26 +110,26 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pdfcube-fontbox-local-feed
-          path: vibeformer/target/pdfcube-fontbox-host-feed
+          path: target/pdfcube-fontbox-host-feed
 
       - uses: actions/download-artifact@v4
         with:
           name: pdfcube-fontbox-host-fixtures
-          path: vibeformer/target/pdfcube-fontbox-host-fixtures
+          path: target/pdfcube-fontbox-host-fixtures
 
       - name: Build and smoke the package-only consumer
         shell: pwsh
         run: |
-          $project = "vibeformer/validation/pdfcube-fontbox/PdfCube.FontBox.HostSmoke.csproj"
-          $config = "vibeformer/validation/pdfcube-fontbox/NuGet.Config"
-          $packages = "vibeformer/target/pdfcube-fontbox-host-packages"
-          $fixtures = "vibeformer/target/pdfcube-fontbox-host-fixtures"
+          $project = "validation/pdfcube-fontbox/PdfCube.FontBox.HostSmoke.csproj"
+          $config = "validation/pdfcube-fontbox/NuGet.Config"
+          $packages = "target/pdfcube-fontbox-host-packages"
+          $fixtures = "target/pdfcube-fontbox-host-fixtures"
           $resources = "$fixtures/resources"
           $fonts = "$fixtures/fonts"
-          $trace = "vibeformer/target/fontbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
-          $canonical = "vibeformer/validation/pdfcube-fontbox/canonical-trace.tsv"
+          $trace = "target/fontbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
+          $canonical = "validation/pdfcube-fontbox/canonical-trace.tsv"
           dotnet --info | Out-File `
-            "vibeformer/target/fontbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt" `
+            "target/fontbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt" `
             -Encoding utf8
           dotnet restore $project --configfile $config --packages $packages `
             --no-cache --force --force-evaluate
@@ -145,6 +144,6 @@ jobs:
         with:
           name: pdfcube-fontbox-${{ matrix.os }}-${{ matrix.architecture }}
           path: |
-            vibeformer/target/fontbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv
-            vibeformer/target/fontbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt
+            target/fontbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv
+            target/fontbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt
           if-no-files-found: error

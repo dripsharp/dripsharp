@@ -8,10 +8,10 @@ permissions:
 
 jobs:
   package-proof:
-    runs-on: [self-hosted, linux, x64, vibeformer-proof]
+    runs-on: [self-hosted, linux, x64, dripsharp-proof]
     timeout-minutes: 60
     env:
-      VIBEFORMER_WORKERS: 22
+      DRIPSHARP_WORKERS: 22
       JAVA_TOOL_OPTIONS: -Xmx28g
     steps:
       - uses: actions/checkout@v4
@@ -40,21 +40,20 @@ jobs:
           fi
 
       - name: Pack, consume, and differentially verify
-        working-directory: vibeformer
         run: clojure -J-Xmx28g -M:run pdfcube-io-differential
 
       - name: Upload complete local feed
         uses: actions/upload-artifact@v4
         with:
           name: pdfcube-io-local-feed
-          path: vibeformer/target/package-proof/feed/*.nupkg
+          path: target/package-proof/feed/*.nupkg
           if-no-files-found: error
 
       - name: Upload canonical proof
         uses: actions/upload-artifact@v4
         with:
           name: pdfcube-io-canonical-proof
-          path: vibeformer/validation-output/pdfcube-io-differential
+          path: validation-output/pdfcube-io-differential
           if-no-files-found: error
 
   host-smoke:
@@ -93,18 +92,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pdfcube-io-local-feed
-          path: vibeformer/target/pdfcube-io-host-feed
+          path: target/pdfcube-io-host-feed
 
       - name: Build and smoke the package-only consumer
         shell: pwsh
         run: |
-          $project = "vibeformer/validation/pdfcube-io/PdfCube.IO.HostSmoke.csproj"
-          $config = "vibeformer/validation/pdfcube-io/NuGet.Config"
-          $packages = "vibeformer/target/pdfcube-io-host-packages"
-          $trace = "vibeformer/target/host-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
-          $canonical = "vibeformer/validation/pdfcube-io/CanonicalTrace.tsv"
+          $project = "validation/pdfcube-io/PdfCube.IO.HostSmoke.csproj"
+          $config = "validation/pdfcube-io/NuGet.Config"
+          $packages = "target/pdfcube-io-host-packages"
+          $trace = "target/host-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
+          $canonical = "validation/pdfcube-io/CanonicalTrace.tsv"
           dotnet --info | Out-File `
-            "vibeformer/target/dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt" `
+            "target/dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt" `
             -Encoding utf8
           dotnet restore $project --configfile $config --packages $packages `
             --no-cache --force --force-evaluate
@@ -118,6 +117,6 @@ jobs:
         with:
           name: pdfcube-io-${{ matrix.os }}-${{ matrix.architecture }}
           path: |
-            vibeformer/target/host-${{ matrix.os }}-${{ matrix.architecture }}.tsv
-            vibeformer/target/dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt
+            target/host-${{ matrix.os }}-${{ matrix.architecture }}.tsv
+            target/dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt
           if-no-files-found: error

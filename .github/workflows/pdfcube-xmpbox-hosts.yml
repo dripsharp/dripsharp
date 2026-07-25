@@ -8,10 +8,10 @@ permissions:
 
 jobs:
   package-proof:
-    runs-on: [self-hosted, linux, x64, vibeformer-proof]
+    runs-on: [self-hosted, linux, x64, dripsharp-proof]
     timeout-minutes: 60
     env:
-      VIBEFORMER_WORKERS: 22
+      DRIPSHARP_WORKERS: 22
       JAVA_TOOL_OPTIONS: -Xmx28g
     steps:
       - uses: actions/checkout@v4
@@ -43,27 +43,26 @@ jobs:
           fi
 
       - name: Pack, consume, and differentially verify
-        working-directory: vibeformer
         run: clojure -J-Xmx28g -M:run pdfcube-xmpbox-metadata-differential
 
       - name: Upload complete local feed
         uses: actions/upload-artifact@v4
         with:
           name: pdfcube-xmpbox-local-feed
-          path: vibeformer/target/package-proof/feed/*.nupkg
+          path: target/package-proof/feed/*.nupkg
           if-no-files-found: error
 
       - name: Upload canonical proof
         uses: actions/upload-artifact@v4
         with:
           name: pdfcube-xmpbox-canonical-proof
-          path: vibeformer/validation-output/pdfcube-xmpbox-metadata-differential
+          path: validation-output/pdfcube-xmpbox-metadata-differential
           if-no-files-found: error
 
       - name: Stage synchronized XmpBox fixtures
         shell: bash
         run: |
-          fixture_root="vibeformer/target/pdfcube-xmpbox-host-fixtures"
+          fixture_root="target/pdfcube-xmpbox-host-fixtures"
           mkdir -p "$fixture_root"
           cp -R research/pdfbox/xmpbox/src/test/resources/. "$fixture_root/"
 
@@ -71,7 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pdfcube-xmpbox-host-fixtures
-          path: vibeformer/target/pdfcube-xmpbox-host-fixtures
+          path: target/pdfcube-xmpbox-host-fixtures
           if-no-files-found: error
 
   host-smoke:
@@ -110,29 +109,29 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pdfcube-xmpbox-local-feed
-          path: vibeformer/target/pdfcube-xmpbox-host-feed
+          path: target/pdfcube-xmpbox-host-feed
 
       - uses: actions/download-artifact@v4
         with:
           name: pdfcube-xmpbox-canonical-proof
-          path: vibeformer/target/pdfcube-xmpbox-canonical-proof
+          path: target/pdfcube-xmpbox-canonical-proof
 
       - uses: actions/download-artifact@v4
         with:
           name: pdfcube-xmpbox-host-fixtures
-          path: vibeformer/target/pdfcube-xmpbox-host-fixtures
+          path: target/pdfcube-xmpbox-host-fixtures
 
       - name: Build and smoke the package-only consumer
         shell: pwsh
         run: |
-          $project = "vibeformer/validation/pdfcube-xmpbox/PdfCube.XmpBox.HostSmoke.csproj"
-          $config = "vibeformer/validation/pdfcube-xmpbox/NuGet.Config"
-          $packages = "vibeformer/target/pdfcube-xmpbox-host-packages"
-          $resources = "vibeformer/target/pdfcube-xmpbox-host-fixtures"
-          $canonical = "vibeformer/target/pdfcube-xmpbox-canonical-proof/upstream-java.tsv"
-          $trace = "vibeformer/target/xmpbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
+          $project = "validation/pdfcube-xmpbox/PdfCube.XmpBox.HostSmoke.csproj"
+          $config = "validation/pdfcube-xmpbox/NuGet.Config"
+          $packages = "target/pdfcube-xmpbox-host-packages"
+          $resources = "target/pdfcube-xmpbox-host-fixtures"
+          $canonical = "target/pdfcube-xmpbox-canonical-proof/upstream-java.tsv"
+          $trace = "target/xmpbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
           dotnet --info | Out-File `
-            "vibeformer/target/xmpbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt" `
+            "target/xmpbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt" `
             -Encoding utf8
           dotnet restore $project --configfile $config --packages $packages `
             --no-cache --force --force-evaluate
@@ -147,6 +146,6 @@ jobs:
         with:
           name: pdfcube-xmpbox-${{ matrix.os }}-${{ matrix.architecture }}
           path: |
-            vibeformer/target/xmpbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv
-            vibeformer/target/xmpbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt
+            target/xmpbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv
+            target/xmpbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt
           if-no-files-found: error

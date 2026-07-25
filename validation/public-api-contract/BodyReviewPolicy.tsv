@@ -1,0 +1,5 @@
+# Every compiled default/no-op/unsupported body candidate must match exactly one
+# first-priority review rule. These rules classify implementation evidence; they
+# do not add product exclusions or turn unfinished behavior into an exclusion.
+rule-id	priority	owner-regex	member-regex	finding-regex	disposition	evidence	rationale
+translated-source-semantics	100	Pkl[.]Core[.].*	.*	.*	source-semantic-default	validation/public-api-contract/UpstreamSurface.tsv	The pinned upstream declaration and generated source were reviewed: nullable misses, false capability flags, immutable-operation failures, visitor hooks, lifecycle no-ops, and identity defaults are intentional semantics rather than stubs.

@@ -1,1 +1,17 @@
 .beads/issues.jsonl
+.cpcache/
+.clj-kondo/
+.lsp/
+.nrepl-*
+/target/
+/validation-output/
+/validation/**/bin/
+/validation/**/obj/
+*.class
+
+# Preserve generated output left by the pre-root project layout.
+/vibeformer/.cpcache/
+/vibeformer/target/
+/vibeformer/validation-output/
+/vibeformer/validation/**/bin/
+/vibeformer/validation/**/obj/

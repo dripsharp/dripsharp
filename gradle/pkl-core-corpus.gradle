@@ -1,0 +1,67 @@
+import org.gradle.api.tasks.SourceSetContainer
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.JavaExec
+
+gradle.afterProject { project ->
+  if (project.path != ":pkl-core") {
+    return
+  }
+
+  def contractDir = project.providers.gradleProperty("dripsharp.contractDir")
+  def contractManifest = project.providers.gradleProperty("dripsharp.contractManifest")
+  def corpusOutput = project.providers.gradleProperty("dripsharp.corpusOutput")
+  def caseTimeout = project.providers.gradleProperty("dripsharp.caseTimeoutMs")
+  def workers = project.providers.gradleProperty("dripsharp.corpusWorkers")
+  def runnerBuildDir = project.layout.buildDirectory.dir("dripsharp-pkl-core-corpus")
+  def sourceSets = project.extensions.getByType(SourceSetContainer)
+  def externalReaderFixture = project.tasks.named("externalReaderFixture")
+
+  def compileRunner = project.tasks.register(
+    "dripsharpCompilePklCoreCorpusRunner", JavaCompile
+  ) { compileTask ->
+    compileTask.dependsOn(project.tasks.named("testClasses"))
+    compileTask.dependsOn(externalReaderFixture)
+    compileTask.source(
+      project.file("${contractDir.get()}/PklCoreUpstreamCorpusRunner.java")
+    )
+    compileTask.classpath = sourceSets.test.runtimeClasspath
+    compileTask.destinationDirectory.set(runnerBuildDir.map { it.dir("classes") })
+    compileTask.options.release.set(17)
+  }
+
+  project.tasks.register("dripsharpPklCoreCorpus", JavaExec) { runTask ->
+    runTask.group = "verification"
+    runTask.description =
+      "Runs every pinned non-language Pkl.Core JUnit row in a bounded child JVM"
+    runTask.dependsOn(compileRunner)
+    runTask.classpath(
+      project.files(compileRunner.flatMap { it.destinationDirectory }),
+      sourceSets.test.runtimeClasspath
+    )
+    runTask.mainClass.set("dripsharp.contract.PklCoreUpstreamCorpusRunner")
+    runTask.workingDir(project.projectDir)
+    runTask.maxHeapSize = "2g"
+    runTask.systemProperty("org.pkl.testMode", "true")
+    runTask.systemProperty("polyglotimpl.DisableClassPathIsolation", "true")
+    runTask.systemProperty(
+      "dripsharp.workspaceRoot", project.rootProject.projectDir.parentFile.parent
+    )
+    runTask.doFirst {
+      def fixture = externalReaderFixture.get().outputs.files.singleFile
+      runTask.systemProperty("org.pkl.core.testExternalReaderPath", fixture.absolutePath)
+      runTask.environment(
+        "PATH",
+        [System.getenv("PATH"), fixture.parentFile.absolutePath]
+          .join(File.pathSeparator)
+      )
+    }
+    runTask.args(
+      contractManifest.get(), corpusOutput.get(), caseTimeout.get(), workers.get()
+    )
+    runTask.inputs.file(project.file(contractManifest.get()))
+    runTask.inputs.file(
+      project.file("${contractDir.get()}/PklCoreUpstreamCorpusRunner.java")
+    )
+    runTask.outputs.file(project.file(corpusOutput.get()))
+  }
+}
