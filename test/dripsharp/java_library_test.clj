@@ -629,6 +629,43 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest boxed-primitives-auto-unbox-under-unary-operators
+  (let [fixture
+        (model! {"example/UnaryBoxed.java"
+                 (str "package example; "
+                      "public final class UnaryBoxed { "
+                      "private Long offset = 2L; "
+                      "private Float width = 3.0f; "
+                      "private Boolean enabled = true; "
+                      "public long negativeOffset() { return -offset; } "
+                      "public float negativeWidth() { return -width; } "
+                      "public boolean disabled() { return !enabled; } "
+                      "public long complement() { return ~offset; } "
+                      "public void increment() { offset++; } }")})
+        emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emitted)
+                     "src/Example/Java/Library/UnaryBoxed.cs")))]
+    (is (str/includes?
+         source
+         "return -global::DripSharp.Runtime.JavaCompat.Unbox(this.offset);"))
+    (is (str/includes?
+         source
+         "return -global::DripSharp.Runtime.JavaCompat.Unbox(this.width);"))
+    (is (str/includes?
+         source
+         "return !global::DripSharp.Runtime.JavaCompat.Unbox(this.enabled);"))
+    (is (str/includes?
+         source
+         "return ~global::DripSharp.Runtime.JavaCompat.Unbox(this.offset);"))
+    (is (str/includes? source "this.offset++;"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest super-adaptations-and-iterator-boxing-compile-as-values
   (let [fixture
         (model!

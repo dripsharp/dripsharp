@@ -5588,10 +5588,17 @@
      :class CtUnaryOperator
      :emit
      (fn [{:keys [^CtUnaryOperator element children]}]
-       (let [[prefix suffix] (unary-operator element)]
+       (let [kind (str (.getKind element))
+             [prefix suffix] (unary-operator element)
+             operand (.getOperand element)
+             operand-node (child-node children operand)
+             operand-node
+             (if (contains? #{"NOT" "NEG" "POS" "COMPL"} kind)
+               (maybe-unbox-node @ctx-holder operand operand-node)
+               operand-node)]
          {:node
           (sequence-node
-           [(raw prefix) (child-node children (.getOperand element)) (raw suffix)
+           [(raw prefix) operand-node (raw suffix)
             (when (statement-expression? element) (raw ";"))])}))}
 
     {:id :java-library.expression/type-access
