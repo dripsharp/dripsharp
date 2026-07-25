@@ -2760,8 +2760,16 @@
                                 (sequence-node arguments ", ") (raw ")")])
 
                 "executable:java.lang.Integer#compareTo(java.lang.Integer)"
-                (sequence-node [target-node (raw ".CompareTo(")
-                                (sequence-node arguments ", ") (raw ")")])
+                (let [value-target
+                      (maybe-unbox-node @ctx-holder target target-node)
+                      value-arguments
+                      (mapv (fn [^CtExpression argument node]
+                              (maybe-unbox-node @ctx-holder argument node))
+                            (.getArguments element)
+                            arguments)]
+                  (sequence-node
+                   [value-target (raw ".CompareTo(")
+                    (sequence-node value-arguments ", ") (raw ")")]))
 
                 "executable:java.lang.Integer#signum(int)"
                 (sequence-node [(raw "global::System.Math.Sign(")
@@ -5862,7 +5870,7 @@
                      "^" "XorAssign"
                      "<<" "ShiftLeftAssign"
                      ">>" "ShiftRightAssign"
-                    ">>>" "UnsignedShiftRightAssign"}
+                     ">>>" "UnsignedShiftRightAssign"}
                     operator))
              node
              (if helper

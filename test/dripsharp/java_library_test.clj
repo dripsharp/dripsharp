@@ -629,6 +629,44 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest boxed-local-nullability-evidence-unboxes-for-compare-to
+  (let [fixture
+        (model! {"example/BoxedLocals.java"
+                 (str "package example; import java.util.Set; "
+                      "public final class BoxedLocals { "
+                      "private static Integer maybe() { return 1; } "
+                      "public static boolean nullable() { "
+                      "Integer value = null; return value == null; } "
+                      "public static int compare() { "
+                      "Integer left = maybe(); Integer right = maybe(); "
+                      "return left.compareTo(right); } "
+                      "public static int total(Set<Integer> values) { "
+                      "int total = 0; for (Integer value : values) "
+                      "{ total += value; } return total; } }")})
+        emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emitted)
+                     "src/Example/Java/Library/BoxedLocals.cs")))]
+    (is (str/includes? source "int? value = default!;"))
+    (is (str/includes?
+         source
+         "int? left = global::Example.Java.Library.BoxedLocals.maybe();"))
+    (is (str/includes?
+         source
+         "int? right = global::Example.Java.Library.BoxedLocals.maybe();"))
+    (is (str/includes?
+         source
+         (str "return global::DripSharp.Runtime.JavaCompat.Unbox(left).CompareTo("
+              "global::DripSharp.Runtime.JavaCompat.Unbox(right));")))
+    (is (str/includes? source "foreach (int value in values)"))
+    (is (not (str/includes? source "Unbox(value)")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest boxed-primitives-auto-unbox-under-unary-operators
   (let [fixture
         (model! {"example/UnaryBoxed.java"
@@ -4868,7 +4906,7 @@
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
                                          "--nologo" "--configuration" "Release"
-                               "--verbosity:quiet" "-warnaserror"]}))))))
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest switch-case-labels-use-the-selector-numeric-representation
   (let [fixture
