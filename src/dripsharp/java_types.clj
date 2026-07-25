@@ -155,8 +155,9 @@
                                    :dotnet.type/buffered-stream]
    "java.io.ByteArrayInputStream" ["global::System.IO.MemoryStream"
                                    :dotnet.type/memory-stream]
-   "java.io.ByteArrayOutputStream" ["global::System.IO.MemoryStream"
-                                    :dotnet.type/memory-stream]
+   "java.io.ByteArrayOutputStream"
+   ["global::DripSharp.Runtime.JavaByteArrayOutputStream"
+    :dotnet.type/byte-array-output-stream]
    "java.io.PipedInputStream" ["global::DripSharp.Runtime.JavaPipedInputStream"
                                :dotnet.type/piped-input-stream]
    "java.io.PipedOutputStream" ["global::DripSharp.Runtime.JavaPipedOutputStream"

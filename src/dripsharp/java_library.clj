@@ -953,6 +953,7 @@
 
 (def ^:private extended-neutral-executable-keys
   #{"executable:java.io.ByteArrayOutputStream#write(byte[],int,int)"
+    "executable:java.io.ByteArrayOutputStream#close()"
     "executable:java.io.ByteArrayOutputStream#size()"
     "executable:java.io.ByteArrayInputStream#available()"
     "executable:java.io.ByteArrayInputStream#reset()"
@@ -2793,6 +2794,9 @@
 
                 "executable:java.io.ByteArrayOutputStream#write(byte[],int,int)"
                 (compat-call "OutputStreamWrite" (into [target-node] arguments))
+
+                "executable:java.io.ByteArrayOutputStream#close()"
+                (sequence-node [target-node (raw ".Dispose()")])
 
                 ("executable:java.io.FilterOutputStream#write(byte[])"
                  "executable:java.io.FilterOutputStream#write(byte[],int,int)"

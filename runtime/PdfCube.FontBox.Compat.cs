@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Formats.Asn1;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -825,6 +826,11 @@ public sealed class JavaImageReadParam
 
     public void SetSourceRegion(SKRectI sourceRegion)
     {
+        if (sourceRegion == default)
+        {
+            SourceRegion = null;
+            return;
+        }
         if (sourceRegion.Width <= 0 || sourceRegion.Height <= 0)
             throw new ArgumentException("The image source region must be non-empty.");
         SourceRegion = sourceRegion;
@@ -1039,9 +1045,16 @@ public sealed class JavaImageReader : IDisposable
         using var stream = new MemoryStream(
             RequireInput().Bytes,
             writable: false);
-        return SKBitmap.Decode(stream) ??
+        var bitmap = SKBitmap.Decode(stream) ??
             throw new IOException(
                 $"Unable to decode {formatName} image data.");
+        PdfCubeFontCompat.RegisterImageType(
+            bitmap,
+            string.Equals(formatName, "JPEG", StringComparison.OrdinalIgnoreCase) &&
+                bitmap.ColorType != SKColorType.Gray8
+                ? PdfCubeFontCompat.TYPE_3BYTE_BGR
+                : PdfCubeFontCompat.InferImageType(bitmap));
+        return bitmap;
     }
 
     private JavaImageInputStream RequireInput() =>
@@ -1097,6 +1110,7 @@ public sealed class JavaImageReader : IDisposable
                 outputHeight,
                 SKColorType.Bgra8888,
                 source.AlphaType));
+        var imageType = PdfCubeFontCompat.GetImageType(source);
         for (var y = 0; y < outputHeight; y++)
         {
             for (var x = 0; x < outputWidth; x++)
@@ -1109,6 +1123,7 @@ public sealed class JavaImageReader : IDisposable
                         firstY + y * parameters.SubsamplingY));
             }
         }
+        PdfCubeFontCompat.RegisterImageType(destination, imageType);
         source.Dispose();
         return destination;
     }
@@ -1374,7 +1389,8 @@ public sealed class JavaRaster
         numberOfBands =
             bitmap.ColorType == SKColorType.Gray8 ? 1 :
             bitmap.AlphaType == SKAlphaType.Opaque ? 3 : 4;
-        transferType = PdfCubeFontCompat.GetImageType(bitmap) switch
+        var imageType = PdfCubeFontCompat.GetImageType(bitmap);
+        transferType = imageType switch
         {
             PdfCubeFontCompat.TYPE_INT_RGB or
             PdfCubeFontCompat.TYPE_INT_ARGB or
@@ -1383,10 +1399,22 @@ public sealed class JavaRaster
         };
         pixelStride = numberOfBands;
         scanlineStride = checked(width * pixelStride);
-        bandOffsets = Enumerable.Range(0, numberOfBands).ToArray();
+        bandOffsets = imageType == PdfCubeFontCompat.TYPE_3BYTE_BGR
+            ? [2, 1, 0]
+            : Enumerable.Range(0, numberOfBands).ToArray();
     }
 
     internal JavaRaster(int dataType, int width, int height, int bands)
+        : this(dataType, width, height, bands, Enumerable.Range(0, bands).ToArray())
+    {
+    }
+
+    private JavaRaster(
+        int dataType,
+        int width,
+        int height,
+        int bands,
+        int[] bandOffsets)
     {
         if (dataType is not PdfCubeFontCompat.DATA_BUFFER_TYPE_BYTE and
             not PdfCubeFontCompat.DATA_BUFFER_TYPE_USHORT and
@@ -1400,7 +1428,7 @@ public sealed class JavaRaster
         transferType = dataType;
         pixelStride = bands;
         scanlineStride = checked(width * pixelStride);
-        bandOffsets = Enumerable.Range(0, bands).ToArray();
+        this.bandOffsets = (int[])bandOffsets.Clone();
         var length = checked(width * height * bands);
         storage = dataType switch
         {
@@ -1490,7 +1518,12 @@ public sealed class JavaRaster
                 Width,
                 Height,
                 new sbyte[checked(((Width + 7) / 8) * Height)])
-            : new(TransferType, Width, Height, NumberOfBands);
+            : new(
+                TransferType,
+                Width,
+                Height,
+                NumberOfBands,
+                bandOffsets);
 
     public JavaDataBuffer GetDataBuffer() =>
         TransferType switch
@@ -1857,7 +1890,7 @@ public sealed class JavaRaster
                 var color = bitmap.GetPixel(x, y);
                 for (var band = 0; band < NumberOfBands; band++)
                 {
-                    SetStoredValue((y * Width + x) * NumberOfBands + band, Component(color, band));
+                    SetStoredValue(StorageIndex(x, y, band), Component(color, band));
                 }
             }
         }
@@ -4278,6 +4311,12 @@ internal static class PdfCubeFontCompat
 
     private static readonly ConditionalWeakTable<SKBitmap, ImageMetadata> ImageMetadataByBitmap = new();
     private static readonly Lazy<JavaIccProfile> StandardSrgbProfile = new(CreateSrgbProfile);
+    // Apache PDFBox's bundled sRGB.icc, gzip-compressed for a compact authored
+    // runtime representation. Upstream SHA-256:
+    // bfb1c597bf5bf922bca57de556b972695e2ff60de305b43dc98c91f4d4154497.
+    private const string StandardSrgbProfileGzipBase64 = """
+        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
+        """;
 
     internal static SKBitmap ReadImage(FileInfo file)
     {
@@ -4586,11 +4625,15 @@ internal static class PdfCubeFontCompat
 
     private static JavaIccProfile CreateSrgbProfile()
     {
-        using var skColorSpace = SKColorSpace.CreateSrgb();
-        using var profile = skColorSpace.ToProfile();
-        var bytes = new byte[checked((int)profile.Size)];
-        Marshal.Copy(profile.Buffer, bytes, 0, bytes.Length);
-        return new JavaIccProfile(ToSignedBytes(bytes));
+        using var compressed = new MemoryStream(
+            Convert.FromBase64String(StandardSrgbProfileGzipBase64),
+            writable: false);
+        using var gzip = new GZipStream(
+            compressed,
+            System.IO.Compression.CompressionMode.Decompress);
+        using var profile = new MemoryStream();
+        gzip.CopyTo(profile);
+        return new JavaIccProfile(ToSignedBytes(profile.ToArray()));
     }
 
     internal static JavaColorSpace GetColorSpace(int colorSpace) =>
@@ -4660,13 +4703,13 @@ internal static class PdfCubeFontCompat
         return result;
     }
 
-    private static void RegisterImageType(SKBitmap bitmap, int type)
+    internal static void RegisterImageType(SKBitmap bitmap, int type)
     {
         ImageMetadataByBitmap.Remove(bitmap);
         ImageMetadataByBitmap.Add(bitmap, new ImageMetadata(type));
     }
 
-    private static int InferImageType(SKBitmap bitmap) =>
+    internal static int InferImageType(SKBitmap bitmap) =>
         bitmap.ColorType == SKColorType.Gray8
             ? TYPE_BYTE_GRAY
             : bitmap.AlphaType == SKAlphaType.Opaque ? TYPE_INT_RGB : TYPE_INT_ARGB;

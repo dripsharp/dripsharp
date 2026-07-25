@@ -2095,6 +2095,101 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest filter-output-stream-bulk-writes-and-stream-disposal-preserve-overrides
+  (let [fixture
+        (model! {"example/RuntimeFixture.java"
+                 (str "package example; import java.io.ByteArrayOutputStream; "
+                      "public final class RuntimeFixture { "
+                      "public static int byteArrayAfterClose() throws Exception { "
+                      "ByteArrayOutputStream output = new ByteArrayOutputStream(); "
+                      "output.write(7); output.close(); return output.size(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        project-root (:project-root emission)
+        generated-project
+        (paths/resolve-path project-root (:project-file emission))
+        runtime-source
+        (slurp (str (paths/resolve-path project-root
+                                        "src/DripSharp/Runtime/JavaCompat.cs")))
+        consumer-root (temp-directory)
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                 "<PropertyGroup><OutputType>Exe</OutputType>"
+                 "<TargetFramework>net10.0</TargetFramework>"
+                 "<ImplicitUsings>disable</ImplicitUsings>"
+                 "<Nullable>enable</Nullable>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 generated-project
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "var bytes = new global::System.IO.MemoryStream();\n"
+                 "global::System.IO.Stream output = new TransformingOutput(bytes);\n"
+                 "using (output) {\n"
+                 "  output.Write(new byte[] { 64, 65 }, 0, 2);\n"
+                 "}\n"
+                 "var actual = bytes.ToArray();\n"
+                 "if (actual.Length != 3 || actual[0] != 65 || "
+                 "actual[1] != 66 || actual[2] != 33) return 1;\n"
+                 "var javaBytes = new global::DripSharp.Runtime."
+                 "JavaByteArrayOutputStream();\n"
+                 "using (global::System.IO.Stream stream = javaBytes) {\n"
+                 "  stream.WriteByte(7);\n"
+                 "}\n"
+                 "if (javaBytes.Length != 1 || javaBytes.ToArray()[0] != 7 || "
+                 "global::Example.Java.Library.RuntimeFixture."
+                 "byteArrayAfterClose() != 1) return 2;\n"
+                 "var firstKey = global::DripSharp.Runtime.JavaByteBuffer."
+                 "wrap(new sbyte[] { 1, 2, 3 }).position(1);\n"
+                 "var equalKey = global::DripSharp.Runtime.JavaByteBuffer."
+                 "wrap(new sbyte[] { 9, 2, 3 }).position(1);\n"
+                 "var differentKey = global::DripSharp.Runtime.JavaByteBuffer."
+                 "wrap(new sbyte[] { 1, 2, 3 });\n"
+                 "var keyed = new global::System.Collections.Generic.Dictionary"
+                 "<global::DripSharp.Runtime.JavaByteBuffer, int> "
+                 "{{ firstKey, 7 }};\n"
+                 "if (!firstKey.Equals(equalKey) || "
+                 "firstKey.GetHashCode() != equalKey.GetHashCode() || "
+                 "firstKey.Equals(differentKey) || keyed[equalKey] != 7) return 3;\n"
+                 "var nestedBytes = new global::System.IO.MemoryStream();\n"
+                 "global::System.IO.Stream nested = new PassthroughOutput("
+                 "new TransformingOutput(nestedBytes));\n"
+                 "using (nested) {}\n"
+                 "var nestedActual = nestedBytes.ToArray();\n"
+                 "return nestedActual.Length == 1 && nestedActual[0] == 33 "
+                 "? 0 : 4;\n"
+                 "sealed class TransformingOutput "
+                 ": global::DripSharp.Runtime.JavaFilterOutputStream {\n"
+                 "  internal TransformingOutput(global::System.IO.Stream output) "
+                 ": base(output) {}\n"
+                 "  public override void Write(int value) => "
+                 "@out.WriteByte(unchecked((byte)(value + 1)));\n"
+                 "  public override void Dispose() {\n"
+                 "    @out.WriteByte(33);\n"
+                 "    base.Dispose();\n"
+                 "  }\n"
+                 "}\n"
+                 "sealed class PassthroughOutput "
+                 ": global::DripSharp.Runtime.JavaFilterOutputStream {\n"
+                 "  internal PassthroughOutput(global::System.IO.Stream output) "
+                 ": base(output) {}\n"
+                 "}\n")})
+        result
+        (process/run! {:directory consumer-root
+                       :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                 "--configuration" "Release"
+                                 "--verbosity:quiet"]})]
+    (is (str/includes?
+         runtime-source
+         "base.Write(buffer, offset, count);"))
+    (is (str/includes?
+         runtime-source
+         "void IDisposable.Dispose() => Dispose();"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit result)))))
+
 (deftest neutral-pipes-gzip-and-single-thread-executor-are-resolved
   (let [fixture
         (model! {"example/Pipes.java"

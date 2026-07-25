@@ -1637,6 +1637,29 @@ sealed class JavaByteBuffer : IDisposable
         get(result, 0, count);
         return result;
     }
+    public override bool Equals(object? value)
+    {
+        if (ReferenceEquals(this, value)) return true;
+        if (value is not JavaByteBuffer other) return false;
+        ThrowIfDisposed();
+        other.ThrowIfDisposed();
+        if (Remaining != other.Remaining) return false;
+        for (var offset = 0; offset < Remaining; offset++)
+        {
+            if (ReadByte(cursor + offset) !=
+                other.ReadByte(other.cursor + offset))
+                return false;
+        }
+        return true;
+    }
+    public override int GetHashCode()
+    {
+        ThrowIfDisposed();
+        var result = 1;
+        for (var index = upperBound - 1; index >= cursor; index--)
+            result = unchecked(31 * result + ReadByte(index));
+        return result;
+    }
     public void Dispose()
     {
         if (disposed) return;
@@ -2010,7 +2033,7 @@ internal
 #else
 public
 #endif
-abstract class JavaInputStream : Stream
+abstract class JavaInputStream : Stream, IDisposable
 {
     public abstract int Read();
 
@@ -2068,6 +2091,7 @@ abstract class JavaInputStream : Stream
     public override int ReadByte() => Read();
     public override void Flush() { }
     public new virtual void Dispose() => base.Dispose();
+    void IDisposable.Dispose() => Dispose();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
@@ -2107,7 +2131,7 @@ class JavaFilterInputStream : JavaInputStream
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) @in.Dispose();
+        if (disposing) ((IDisposable)@in).Dispose();
         base.Dispose(disposing);
     }
 }
@@ -2117,7 +2141,7 @@ internal
 #else
 public
 #endif
-abstract class JavaOutputStream : Stream
+abstract class JavaOutputStream : Stream, IDisposable
 {
     public abstract void Write(int value);
 
@@ -2149,9 +2173,33 @@ abstract class JavaOutputStream : Stream
     public override void WriteByte(byte value) => Write(value);
     public override void Flush() { }
     public new virtual void Dispose() => base.Dispose();
+    void IDisposable.Dispose() => Dispose();
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
+}
+
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+class JavaByteArrayOutputStream : MemoryStream
+{
+    public JavaByteArrayOutputStream()
+    {
+    }
+
+    public JavaByteArrayOutputStream(int capacity)
+        : base(capacity)
+    {
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        // java.io.ByteArrayOutputStream.close() has no effect. Its content,
+        // size, reset, and write operations remain available after close.
+    }
 }
 
 internal sealed class JavaPipedInputStream : Stream
@@ -2517,12 +2565,12 @@ class JavaFilterOutputStream : JavaOutputStream
     public override bool CanWrite => @out.CanWrite;
     public override void Write(int value) => @out.WriteByte(unchecked((byte)value));
     public override void Write(sbyte[] buffer, int offset, int count) =>
-        @out.Write(JavaCompat.ToUnsignedBytes(buffer), offset, count);
+        base.Write(buffer, offset, count);
     public override void Flush() => @out.Flush();
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) @out.Dispose();
+        if (disposing) ((IDisposable)@out).Dispose();
         base.Dispose(disposing);
     }
 }

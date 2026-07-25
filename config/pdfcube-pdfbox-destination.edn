@@ -32,6 +32,13 @@
           :manifest-file "generation-manifest.edn"
           :public-metadata-file "public-metadata.edn"
           :annotation-decisions-file "annotation-decisions.edn"}
+ :package-consumer
+ {:strategy :compile-only
+  :project-file "PdfCube.PdfBox.PackageConsumer.csproj"
+  :compile-types
+  ["PdfCube.PdfBox.Cos.COSDocument"
+   "PdfCube.PdfBox.Pdmodel.PDDocument"]
+  :success-message "PdfCube.PdfBox package boundary passed."}
  :name-policy {:public-identifiers :csharp
                :methods :methods
                :fields :fields
@@ -94,7 +101,8 @@
    :version "4.150.1"
    :projection :skia-sharp}]
  :internal-capabilities
- #{:icc :jbig2 :jpx :managed-raster :printing :skia-graphics :unicode-bidi}
+ #{:icc :jbig2 :jpx :managed-raster :printing :security-handler-erasure
+   :skia-graphics :unicode-bidi}
  :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
  :bridge-capabilities #{:java-bidi}
  :legal-files

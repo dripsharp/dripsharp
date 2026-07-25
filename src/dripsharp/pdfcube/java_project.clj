@@ -2727,6 +2727,11 @@
     :source-project-dependencies []
     :package-dependencies []
     :project-references []
+    :package-consumer
+    {:strategy :source-file
+     :project-file "PdfCube.IO.PackageConsumer.csproj"
+     :source-path "validation/pdfcube-io/PdfCube.IO.FocusedConsumer.cs"
+     :success-message "PdfCube.IO focused behavior passed."}
     :friend-assemblies #{"PdfCube.PdfBox"}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package]
@@ -2745,6 +2750,12 @@
     :source-project-dependencies ["org.apache.pdfbox:pdfbox-io:3.0.8"]
     :package-dependencies ["PdfCube.IO"]
     :project-references ["../pdfcube-io/PdfCube.IO.csproj"]
+    :package-consumer
+    {:strategy :source-file
+     :project-file "PdfCube.FontBox.PackageConsumer.csproj"
+     :source-path
+     "validation/pdfcube-fontbox/PdfCube.FontBox.FocusedConsumer.cs"
+     :success-message "PdfCube.FontBox focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package skia-linux-package]
     :internal-capabilities #{:font-discovery :skia-geometry}
@@ -2763,6 +2774,12 @@
     :source-project-dependencies []
     :package-dependencies []
     :project-references []
+    :package-consumer
+    {:strategy :source-file
+     :project-file "PdfCube.XmpBox.PackageConsumer.csproj"
+     :source-path
+     "validation/pdfcube-xmpbox/PdfCube.XmpBox.FocusedConsumer.cs"
+     :success-message "PdfCube.XmpBox focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package]
     :internal-capabilities #{:xml}
@@ -2786,11 +2803,19 @@
     :project-references
     ["../pdfcube-io/PdfCube.IO.csproj"
      "../pdfcube-fontbox/PdfCube.FontBox.csproj"]
+    :package-consumer
+    {:strategy :compile-only
+     :project-file "PdfCube.PdfBox.PackageConsumer.csproj"
+     :compile-types
+     ["PdfCube.PdfBox.Cos.COSDocument"
+      "PdfCube.PdfBox.Pdmodel.PDDocument"]
+     :success-message "PdfCube.PdfBox package boundary passed."}
     :external-dependencies
     (assoc bouncy-dependencies commons-coordinate commons-dependency)
     :runtime-packages [logging-package skia-package]
     :internal-capabilities
-    #{:icc :jbig2 :jpx :managed-raster :printing :skia-graphics :unicode-bidi}
+    #{:icc :jbig2 :jpx :managed-raster :printing :security-handler-erasure
+      :skia-graphics :unicode-bidi}
     :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
     :bridge-capabilities #{:java-bidi}}
 
@@ -2945,6 +2970,7 @@
              [:project-dependencies (:project-dependencies configuration)]
              [:package-dependencies (:package-dependencies configuration)]
              [:project-references (:project-references configuration)]
+             [:package-consumer (:package-consumer configuration)]
              [:friend-assemblies (:friend-assemblies configuration)]
              [:external-dependencies (:external-dependencies configuration)]
              [:runtime-packages (:runtime-packages configuration)]
@@ -2975,6 +3001,7 @@
               :project-dependencies (:source-project-dependencies product)
               :package-dependencies (:package-dependencies product)
               :project-references (:project-references product)
+              :package-consumer (:package-consumer product)
               :friend-assemblies (:friend-assemblies product)
               :external-dependencies (:external-dependencies product)
               :runtime-packages (:runtime-packages product)
@@ -3111,17 +3138,49 @@
         (update-in [:destination :start] + start-shift)
         (update-in [:destination :end] + end-shift))))
 
-(defn- transform-rendered [configuration {:keys [text mappings] :as rendered}]
-  (let [destination (compatibility-namespace configuration)]
-    (if (= base-compatibility-namespace destination)
+(defn- replace-rendered
+  [{:keys [text mappings] :as rendered} source-token destination-token]
+  (let [ranges (replacement-ranges text source-token)]
+    (if (empty? ranges)
       rendered
-      (let [source-token (str "global::" base-compatibility-namespace)
-            destination-token (str "global::" destination)
-            ranges (replacement-ranges text source-token)
-            delta (- (count destination-token) (count source-token))]
+      (let [delta (- (count destination-token) (count source-token))]
         (assoc rendered
                :text (str/replace text source-token destination-token)
                :mappings (mapv #(shift-mapping % ranges delta) mappings))))))
+
+(def ^:private security-handler-carrier
+  (str "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
+       "<global::PdfCube.PdfBox.Pdmodel.Encryption.ProtectionPolicy>"))
+
+(def ^:private erased-security-handler
+  "global::DripSharp.Runtime.PdfBoxSecurityHandler")
+
+(defn- erase-security-handler-carrier
+  [configuration {:keys [text] :as rendered}]
+  (if-not (contains? (:internal-capabilities configuration)
+                     :security-handler-erasure)
+    rendered
+    (if (str/includes?
+         text
+         "org/apache/pdfbox/pdmodel/encryption/SecurityHandler.java")
+      (replace-rendered
+       rendered
+       "public abstract class SecurityHandler<TPOLICY> where"
+       (str "public abstract class SecurityHandler<TPOLICY> : "
+            erased-security-handler " where"))
+      (replace-rendered
+       rendered security-handler-carrier erased-security-handler))))
+
+(defn- transform-rendered [configuration {:keys [text mappings] :as rendered}]
+  (let [destination (compatibility-namespace configuration)
+        rendered
+        (if (= base-compatibility-namespace destination)
+          rendered
+          (replace-rendered
+           rendered
+           (str "global::" base-compatibility-namespace)
+           (str "global::" destination)))]
+    (erase-security-handler-carrier configuration rendered)))
 
 (defn- compatibility-asset [configuration asset]
   (if (= base-compatibility-namespace
@@ -3159,7 +3218,16 @@
       :destination "DripSharp/Runtime/PdfCubeFontBoxCompat.cs"
       :strategy :pdfcube.fontbox/skia-geometry
       :missing-kind :missing-pdfcube-fontbox-compatibility-source
-      :missing-message "PdfCube FontBox compatibility source is missing"})))
+      :missing-message "PdfCube FontBox compatibility source is missing"})
+
+    (contains? (:internal-capabilities configuration)
+               :security-handler-erasure)
+    (conj
+     {:source "runtime/PdfCube.PdfBox.Compat.cs"
+      :destination "DripSharp/Runtime/PdfBoxSecurityHandler.cs"
+      :strategy :pdfcube.pdfbox/security-handler-erasure
+      :missing-kind :missing-pdfcube-pdfbox-compatibility-source
+      :missing-message "PdfCube PDFBox compatibility source is missing"})))
 
 (defn rule-bundle
   "Returns the PdfCube rule bundle composed over reusable Java-library rules."

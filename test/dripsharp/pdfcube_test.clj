@@ -48,6 +48,40 @@
             {:start (inc second-start) :end (+ 2 (count text))}]
            (mapv :destination (:mappings transformed))))))
 
+(deftest pdfbox-security-handler-erasure-preserves-specialized-handlers
+  (let [transform
+        (get-in (pdfcube/rule-bundle)
+                [:rules :project-policy :transform-rendered])
+        carrier
+        (str "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
+             "<global::PdfCube.PdfBox.Pdmodel.Encryption.ProtectionPolicy>")
+        erased "global::DripSharp.Runtime.PdfBoxSecurityHandler"
+        carrier-rendered
+        {:text (str "public " carrier " Create() => default!;")
+         :mappings [{:destination
+                     {:start 0
+                      :end (+ 29 (count carrier))}}]}
+        declaration-rendered
+        {:text
+         (str "// org/apache/pdfbox/pdmodel/encryption/SecurityHandler.java\n"
+              "public abstract class SecurityHandler<TPOLICY> where "
+              "TPOLICY : ProtectionPolicy {}")
+         :mappings []}
+        specialized
+        (str "public sealed class StandardSecurityHandler : "
+             "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
+             "<global::PdfCube.PdfBox.Pdmodel.Encryption.StandardProtectionPolicy> {}")
+        configuration {:internal-capabilities #{:security-handler-erasure}}]
+    (is (= (str "public " erased " Create() => default!;")
+           (:text (transform configuration carrier-rendered))))
+    (is (= (str "// org/apache/pdfbox/pdmodel/encryption/SecurityHandler.java\n"
+                "public abstract class SecurityHandler<TPOLICY> : "
+                erased " where TPOLICY : ProtectionPolicy {}")
+           (:text (transform configuration declaration-rendered))))
+    (is (= specialized
+           (:text (transform configuration
+                             {:text specialized :mappings []}))))))
+
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]
     (Files/createDirectories (.getParent file)
