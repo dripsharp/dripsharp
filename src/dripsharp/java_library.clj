@@ -5807,8 +5807,12 @@
                                     (role element))
              assigned (.getAssigned element)
              operator (assignment-operator element)
-             byte-helper
-             (when (= "byte" (some-> assigned .getType .getQualifiedName))
+             assigned-type (some-> assigned .getType .getQualifiedName)
+             assignment-type (some-> element .getAssignment .getType .getQualifiedName)
+             helper
+             (when (or (= "byte" assigned-type)
+                       (and (= "int" assigned-type)
+                            (contains? #{"long" "float" "double"} assignment-type)))
                (get {"+" "AddAssign"
                      "-" "SubtractAssign"
                      "*" "MultiplyAssign"
@@ -5819,12 +5823,12 @@
                      "^" "XorAssign"
                      "<<" "ShiftLeftAssign"
                      ">>" "ShiftRightAssign"
-                     ">>>" "UnsignedShiftRightAssign"}
+                    ">>>" "UnsignedShiftRightAssign"}
                     operator))
              node
-             (if byte-helper
+             (if helper
                (compat-call
-                byte-helper
+                helper
                 [(sequence-node [(raw "ref ")
                                  (child-node children assigned)])
                  (child-node children (.getAssignment element))])

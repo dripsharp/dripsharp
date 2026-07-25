@@ -5161,3 +5161,37 @@
                                :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest int-compound-assignment-preserves-java-narrowing-and-single-evaluation
+  (let [fixture
+        (model! {"example/Ints.java"
+                 (str "package example; public final class Ints { "
+                      "public static int multiply(int[] values, int index, float amount) { "
+                      "return values[index] *= amount; } "
+                      "public static int divide(int[] values, int index, float amount) { "
+                      "return values[index] /= amount; } "
+                      "public static int add(int[] values, int index, double amount) { "
+                      "return values[index] += amount; } "
+                      "public static int xor(int[] values, int index, long amount) { "
+                      "return values[index] ^= amount; } }")})
+        emission (emit! fixture 2 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Ints.cs")))]
+    (is (str/includes?
+         source
+         "JavaCompat.MultiplyAssign(ref values[index], amount)"))
+    (is (str/includes?
+         source
+         "JavaCompat.DivideAssign(ref values[index], amount)"))
+    (is (str/includes?
+         source
+         "JavaCompat.AddAssign(ref values[index], amount)"))
+    (is (str/includes?
+         source
+         "JavaCompat.XorAssign(ref values[index], amount)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))

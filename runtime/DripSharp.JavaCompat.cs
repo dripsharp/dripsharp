@@ -4377,6 +4377,61 @@ internal static class JavaCompat
     internal static sbyte UnsignedShiftRightAssign(ref sbyte target, int value) =>
         target = unchecked((sbyte)((uint)target >> (value & 0x1f)));
 
+    internal static int AddAssign(ref int target, long value) =>
+        target = unchecked((int)(target + value));
+    internal static int AddAssign(ref int target, float value) =>
+        target = NarrowToInt(target + value);
+    internal static int AddAssign(ref int target, double value) =>
+        target = NarrowToInt(target + value);
+    internal static int SubtractAssign(ref int target, long value) =>
+        target = unchecked((int)(target - value));
+    internal static int SubtractAssign(ref int target, float value) =>
+        target = NarrowToInt(target - value);
+    internal static int SubtractAssign(ref int target, double value) =>
+        target = NarrowToInt(target - value);
+    internal static int MultiplyAssign(ref int target, long value) =>
+        target = unchecked((int)(target * value));
+    internal static int MultiplyAssign(ref int target, float value) =>
+        target = NarrowToInt(target * value);
+    internal static int MultiplyAssign(ref int target, double value) =>
+        target = NarrowToInt(target * value);
+    internal static int DivideAssign(ref int target, long value) =>
+        target = unchecked((int)(target / value));
+    internal static int DivideAssign(ref int target, float value) =>
+        target = NarrowToInt(target / value);
+    internal static int DivideAssign(ref int target, double value) =>
+        target = NarrowToInt(target / value);
+    internal static int RemainderAssign(ref int target, long value) =>
+        target = unchecked((int)(target % value));
+    internal static int RemainderAssign(ref int target, float value) =>
+        target = NarrowToInt(target % value);
+    internal static int RemainderAssign(ref int target, double value) =>
+        target = NarrowToInt(target % value);
+    internal static int AndAssign(ref int target, long value) =>
+        target = unchecked((int)((uint)target & (ulong)value));
+    internal static int OrAssign(ref int target, long value) =>
+        target = unchecked((int)((uint)target | (ulong)value));
+    internal static int XorAssign(ref int target, long value) =>
+        target = unchecked((int)((uint)target ^ (ulong)value));
+    internal static int ShiftLeftAssign(ref int target, long value) =>
+        target <<= unchecked((int)value) & 0x1f;
+    internal static int ShiftRightAssign(ref int target, long value) =>
+        target >>= unchecked((int)value) & 0x1f;
+    internal static int UnsignedShiftRightAssign(ref int target, long value) =>
+        target = unchecked((int)((uint)target >> (unchecked((int)value) & 0x1f)));
+
+    private static int NarrowToInt(float value) =>
+        float.IsNaN(value) ? 0 :
+        value >= int.MaxValue ? int.MaxValue :
+        value <= int.MinValue ? int.MinValue :
+        (int)value;
+
+    private static int NarrowToInt(double value) =>
+        double.IsNaN(value) ? 0 :
+        value >= int.MaxValue ? int.MaxValue :
+        value <= int.MinValue ? int.MinValue :
+        (int)value;
+
     internal static JavaIterator<T> Iterator<T>(IEnumerable<T> values) =>
         new JavaListIterator<T>(values);
 
