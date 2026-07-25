@@ -5803,7 +5803,10 @@ internal static class JavaCompat
     internal static int FloatToIntBits(float value) =>
         float.IsNaN(value) ? 0x7fc00000 : BitConverter.SingleToInt32Bits(value);
     internal static int Signum(long value) => Math.Sign(value);
-    internal static string ToHexString(long value) => unchecked((ulong)value).ToString("x", CultureInfo.InvariantCulture);
+    internal static string ToHexString(int value) =>
+        unchecked((uint)value).ToString("x", CultureInfo.InvariantCulture);
+    internal static string ToHexString(long value) =>
+        unchecked((ulong)value).ToString("x", CultureInfo.InvariantCulture);
     internal static string ToUnsignedString(long value, int radix)
     {
         const string digits = "0123456789abcdefghijklmnopqrstuvwxyz";
