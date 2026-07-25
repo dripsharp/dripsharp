@@ -592,10 +592,10 @@
                                       :dotnet.type/cryptographic-exception]
    "java.security.InvalidKeyException" ["global::System.Security.Cryptography.CryptographicException"
                                        :dotnet.type/cryptographic-exception]
-   "java.security.NoSuchAlgorithmException" ["global::System.Security.Cryptography.CryptographicException"
-                                             :dotnet.type/cryptographic-exception]
-   "java.security.UnrecoverableKeyException" ["global::System.Security.Cryptography.CryptographicException"
-                                              :dotnet.type/cryptographic-exception]
+   "java.security.NoSuchAlgorithmException" ["global::DripSharp.Runtime.JavaNoSuchAlgorithmException"
+                                             :dotnet.type/no-such-algorithm-exception]
+   "java.security.UnrecoverableKeyException" ["global::DripSharp.Runtime.JavaUnrecoverableKeyException"
+                                              :dotnet.type/unrecoverable-key-exception]
    "java.security.KeyStore" ["global::DripSharp.Runtime.JavaKeyStore"
                              :dotnet.type/key-store]
    "java.security.Key" ["object" :dotnet.type/security-key]
@@ -642,8 +642,8 @@
                                              :dotnet.type/cryptographic-exception]
    "javax.crypto.KeyGenerator" ["global::DripSharp.Runtime.JavaKeyGenerator"
                                 :dotnet.type/key-generator]
-   "javax.crypto.NoSuchPaddingException" ["global::System.Security.Cryptography.CryptographicException"
-                                          :dotnet.type/cryptographic-exception]
+   "javax.crypto.NoSuchPaddingException" ["global::DripSharp.Runtime.JavaNoSuchPaddingException"
+                                          :dotnet.type/no-such-padding-exception]
    "javax.crypto.SecretKey" ["global::DripSharp.Runtime.JavaSecretKey"
                              :dotnet.type/secret-key]
    "javax.crypto.spec.IvParameterSpec" ["global::DripSharp.Runtime.JavaIvParameterSpec"

@@ -294,6 +294,42 @@ internal sealed class JavaCancellationException : OperationCanceledException
         : base("The translated Java operation was cancelled.", token) { }
 }
 
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaNoSuchAlgorithmException : CryptographicException
+{
+    public JavaNoSuchAlgorithmException(string message) : base(message) { }
+    public JavaNoSuchAlgorithmException(string message, Exception cause)
+        : base(message, cause) { }
+}
+
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaNoSuchPaddingException : CryptographicException
+{
+    public JavaNoSuchPaddingException(string message) : base(message) { }
+    public JavaNoSuchPaddingException(string message, Exception cause)
+        : base(message, cause) { }
+}
+
+#if DRIPSHARP_INTERNAL_JAVA_COMPAT
+internal
+#else
+public
+#endif
+sealed class JavaUnrecoverableKeyException : CryptographicException
+{
+    public JavaUnrecoverableKeyException(string message) : base(message) { }
+    public JavaUnrecoverableKeyException(string message, Exception cause)
+        : base(message, cause) { }
+}
+
 [Serializable]
 internal sealed class JavaNumberFormatException : ArgumentException
 {
@@ -360,7 +396,8 @@ internal sealed class JavaMessageDigest
             "SHA256" => HashAlgorithmName.SHA256,
             "SHA384" => HashAlgorithmName.SHA384,
             "SHA512" => HashAlgorithmName.SHA512,
-            _ => throw new CryptographicException($"Unsupported message digest `{algorithm}`")
+            _ => throw new JavaNoSuchAlgorithmException(
+                $"Unsupported message digest `{algorithm}`")
         };
         return new JavaMessageDigest(name);
     }
@@ -456,7 +493,7 @@ sealed class JavaAlgorithmParameterGenerator
         if (!string.Equals(
                 algorithm, "1.2.840.113549.3.2", StringComparison.Ordinal) &&
             !string.Equals(algorithm, "RC2", StringComparison.OrdinalIgnoreCase))
-            throw new CryptographicException(
+            throw new JavaNoSuchAlgorithmException(
                 $"Unsupported algorithm-parameter generator `{algorithm}`.");
         return new JavaAlgorithmParameterGenerator(algorithm);
     }
@@ -533,7 +570,7 @@ sealed class JavaKeyGenerator
         if (!string.Equals(algorithm, "AES", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(algorithm, "RC2", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(algorithm, "1.2.840.113549.3.2", StringComparison.Ordinal))
-            throw new CryptographicException(
+            throw new JavaNoSuchAlgorithmException(
                 $"Unsupported key-generator algorithm `{algorithm}`.");
         return algorithm;
     }
@@ -2973,9 +3010,16 @@ sealed class JavaKeyStore
     {
         if (!TryFind(alias, out var certificate) || certificate is null)
             return null;
-        return (object?)certificate.GetRSAPrivateKey() ??
-            (object?)certificate.GetECDsaPrivateKey() ??
-            (object?)certificate.GetDSAPrivateKey();
+        try
+        {
+            return (object?)certificate.GetRSAPrivateKey() ??
+                (object?)certificate.GetECDsaPrivateKey() ??
+                (object?)certificate.GetDSAPrivateKey();
+        }
+        catch (CryptographicException error)
+        {
+            throw new JavaUnrecoverableKeyException(error.Message, error);
+        }
     }
 
     internal System.Security.Cryptography.X509Certificates.X509Certificate2Collection Certificates =>

@@ -4852,11 +4852,11 @@
   (let [fixture
         (model! {"example/Security.java"
                  (str "package example; import java.security.KeyManagementException; "
-                      "import java.security.NoSuchAlgorithmException; import javax.net.ssl.SSLContext; "
-                      "public final class Security { static boolean initialize() { try { "
-                      "SSLContext context = SSLContext.getInstance(\"TLS\"); "
-                      "context.init(null, null, null); return true; "
-                      "} catch (KeyManagementException | NoSuchAlgorithmException failure) { "
+                      "import java.security.KeyStoreException; "
+                      "public final class Security { "
+                      "static void initialize() throws KeyManagementException, KeyStoreException {} "
+                      "static boolean run() { try { initialize(); return true; "
+                      "} catch (KeyManagementException | KeyStoreException failure) { "
                       "return failure.getMessage() == null; } } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
@@ -4878,6 +4878,47 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest sequential-java-security-catches-preserve-distinct-exception-identities
+  (let [fixture
+        (model! {"example/Security.java"
+                 (str "package example; import java.security.NoSuchAlgorithmException; "
+                      "import java.security.UnrecoverableKeyException; "
+                      "import javax.crypto.NoSuchPaddingException; "
+                      "public final class Security { "
+                      "static void recover() throws UnrecoverableKeyException, NoSuchAlgorithmException {} "
+                      "static void cipher() throws NoSuchAlgorithmException, NoSuchPaddingException {} "
+                      "static int run() { try { recover(); return 0; } "
+                      "catch (UnrecoverableKeyException failure) { return 1; } "
+                      "catch (NoSuchAlgorithmException failure) { return 2; } } "
+                      "static int padding() { try { cipher(); return 0; } "
+                      "catch (NoSuchAlgorithmException failure) { return 1; } "
+                      "catch (NoSuchPaddingException failure) { return 2; } } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Security.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Security.cs")))]
+    (is (str/includes?
+         first-source
+         "catch (global::DripSharp.Runtime.JavaUnrecoverableKeyException)"))
+    (is (str/includes?
+         first-source
+         "catch (global::DripSharp.Runtime.JavaNoSuchAlgorithmException)"))
+    (is (str/includes?
+         first-source
+         "catch (global::DripSharp.Runtime.JavaNoSuchPaddingException)"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest multi-catch-with-distinct-destination-types-uses-a-filtered-system-exception
   (let [fixture
         (model! {"example/Unsupported.java"
@@ -4887,8 +4928,9 @@
                       "static void second() throws NoSuchAlgorithmException {} static void run() { "
                       "try { first(); second(); } catch (IOException | NoSuchAlgorithmException failure) {} "
                       "} }")})
-        first (emit! fixture 1)
-        second (emit! fixture 3)
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
         first-source
         (slurp (str (paths/resolve-path (:project-root first)
                                         "src/Example/Java/Library/Unsupported.cs")))
@@ -4899,7 +4941,7 @@
          first-source
          (str "catch (global::System.Exception failure) when (failure is "
               "global::System.IO.IOException or "
-              "global::System.Security.Cryptography.CryptographicException)")))
+              "global::DripSharp.Runtime.JavaNoSuchAlgorithmException)")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
