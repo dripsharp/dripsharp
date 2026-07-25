@@ -48,7 +48,7 @@
                        #(spoon/select-resolved-closure!
                          frontend seeds))
         second-closure (concurrency/call-with-executor
-                        {:worker-count 4}
+                        {:worker-count 22}
                         #(spoon/select-resolved-closure!
                           frontend seeds))
         first-surface (public-api/validate-selected-surface! root surface first-closure)

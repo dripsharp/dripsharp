@@ -32,7 +32,7 @@
                      {:worker-count 1}
                      #(spoon/build-resolved-model! root discovery))
         second-model (concurrency/call-with-executor
-                      {:worker-count 4}
+                      {:worker-count 22}
                       #(spoon/build-resolved-model! root discovery))
         status-after (research-status root)]
     {:root root

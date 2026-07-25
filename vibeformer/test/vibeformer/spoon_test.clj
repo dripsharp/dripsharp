@@ -143,6 +143,47 @@
            (mapv #(select-keys % [:kind :key :origin :resolution :location])
                  (:occurrences second-model))))))
 
+(deftest lazy-resolution-is-serialized-and-retains-translator-failure-details
+  (let [{:keys [discovery] resolved :first} (fixture/models)
+        source-files
+        (set (map #(-> ^Path % .toFile .getCanonicalPath)
+                  (project-input/production-source-files discovery)))
+        frontend
+        (spoon/map->JavaFrontendModel
+         (assoc (select-keys resolved
+                             [:launcher :model :compilation-units
+                              :project-types :totals])
+                :source-files source-files))
+        project-type-declaration
+        (ns-resolve 'vibeformer.spoon 'project-type-declaration)
+        resolve-with-workers
+        (fn [worker-count]
+          (let [threads (atom #{})
+                error
+                (try
+                  (concurrency/call-with-executor
+                   {:worker-count worker-count}
+                   #(with-redefs-fn
+                      {project-type-declaration
+                       (fn [& _]
+                         (swap! threads conj (.getName (Thread/currentThread)))
+                         (throw (AssertionError. "synthetic resolver defect")))}
+                      (fn [] (spoon/resolve-complete-model! frontend))))
+                  nil
+                  (catch clojure.lang.ExceptionInfo caught caught))]
+            {:error error :threads @threads}))
+        serial (resolve-with-workers 1)
+        parallel (resolve-with-workers 22)
+        first-failure (-> serial :error ex-data :failures first)]
+    (is (= (ex-data (:error serial)) (ex-data (:error parallel))))
+    (is (= 1 (count (:threads serial)) (count (:threads parallel))))
+    (is (= (:threads serial) (:threads parallel)))
+    (is (= :semantic-resolution-failed
+           (:kind (ex-data (:error serial)))))
+    (is (= "java.lang.AssertionError" (:exception-class first-failure)))
+    (is (seq (:stack-summary first-failure)))
+    (is (<= (count (:stack-summary first-failure)) 8))))
+
 (deftest unresolved-symbols-fail-with-frontend-location
   (let [root (Files/createTempDirectory "vibeformer-unresolved"
                                         (make-array FileAttribute 0))
@@ -176,4 +217,8 @@
            (get-in failure [:location :file])))
     (is (= 1 (get-in failure [:location :line])))
     (is (str/includes? (get-in failure [:frontend :frontend-class])
-                       "spoon.compiler.ModelBuildingException"))))
+                       "spoon.compiler.ModelBuildingException"))
+    (is (str/includes? (:exception-class failure)
+                       "spoon.compiler.ModelBuildingException"))
+    (is (seq (:stack-summary failure)))
+    (is (<= (count (:stack-summary failure)) 8))))

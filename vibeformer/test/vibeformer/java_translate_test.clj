@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [vibeformer.complete-parser-fixture :as fixture]
+            [vibeformer.concurrency :as concurrency]
             [vibeformer.csharp :as csharp]
             [vibeformer.java-translate :as java]
             [vibeformer.spoon :as spoon])
@@ -242,6 +243,38 @@
            (frequencies (map :kind diagnostics))))
     (is (= 3 (:blocked (java/coverage-totals translation))))
     (is (not-any? #(= :translation-rule-failed (:kind %)) diagnostics))))
+
+(deftest translator-defects-retain-bounded-worker-independent-diagnostics
+  (let [rules
+        (mapv (fn [rule]
+                (if (= :java.declaration/method (:id rule))
+                  (assoc rule :emit
+                         (fn [_]
+                           (throw (AssertionError. "synthetic translator defect"))))
+                  rule))
+              parser-rules)
+        context (translation-context rules parser-mappings :accepted)
+        translate
+        (fn [worker-count]
+          (concurrency/call-with-executor
+           {:worker-count worker-count}
+           #(-> (concurrency/mapv-ordered
+                 :translator-defect-diagnostic
+                 (fn [_] (translate-method context))
+                 [nil])
+                first
+                :diagnostics
+                first)))
+        serial-diagnostic (translate 1)
+        parallel-diagnostic (translate 22)]
+    (is (= serial-diagnostic parallel-diagnostic))
+    (is (= :translation-rule-failed (:kind serial-diagnostic)))
+    (is (= "java.lang.AssertionError" (:exception-class serial-diagnostic)))
+    (is (seq (:stack-summary serial-diagnostic)))
+    (is (<= (count (:stack-summary serial-diagnostic)) 8))
+    (is (every? #(= #{:class-name :method-name :file-name :line-number}
+                    (set (keys %)))
+                (:stack-summary serial-diagnostic)))))
 
 (deftest diagnostic-mode-and-fallback-cannot-pass-accepted-coverage
   (let [rules (vec (remove #(= :java.expression/binary (:id %)) parser-rules))

@@ -5,7 +5,7 @@
   indexes are navigation aids over the frontend model, not a serialized semantic
   fact model or a replacement AST."
   (:require [clojure.string :as str]
-            [vibeformer.concurrency :as concurrency]
+            [vibeformer.diagnostics :as diagnostics]
             [vibeformer.project-input :as project-input])
   (:import [java.io File]
            [java.lang.reflect Constructor Field]
@@ -163,6 +163,11 @@
    :message message
    :location (source-location element)
    :frontend (frontend-diagnostic element)})
+
+(defn- throwable-diagnostic
+  [kind ^CtElement element message ^Throwable error]
+  (merge (diagnostic kind element message)
+         (diagnostics/throwable-summary error)))
 
 (defn- parent-of-type
   [^CtElement element klass]
@@ -335,10 +340,11 @@
                       (class-origin actual-class) reference actual-class
                       :runtime-class))))
     (catch Throwable error
-      {:failure (diagnostic
+      {:failure (throwable-diagnostic
                  :unresolved-type reference
                  (str "Cannot resolve type " (type-name reference) ": "
-                      (.getMessage error)))})))
+                      (.getMessage error))
+                 error)})))
 
 (defn- parameter-signature
   [^CtExecutableReference reference]
@@ -446,10 +452,11 @@
         {:failure (diagnostic :unresolved-executable reference
                               "Executable reference has no declaring type")}))
     (catch Throwable error
-      {:failure (diagnostic
+      {:failure (throwable-diagnostic
                  :unresolved-executable reference
                  (str "Cannot resolve executable " (executable-key reference)
-                      ": " (.getMessage error)))})))
+                      ": " (.getMessage error))
+                 error)})))
 
 (defn- record-component
   [^CtType owner name]
@@ -550,10 +557,11 @@
                         (class-origin declaring-class) reference field
                         :runtime-member)))))
     (catch Throwable error
-      {:failure (diagnostic
+      {:failure (throwable-diagnostic
                  :unresolved-field reference
                  (str "Cannot resolve field " (field-key reference) ": "
-                      (.getMessage error)))})))
+                      (.getMessage error))
+                 error)})))
 
 (defn- resolve-annotation
   [project-types ^CtAnnotation annotation]
@@ -646,8 +654,10 @@
         inputs (mapcat (fn [[klass resolver kind]]
                          (map #(vector kind resolver %) (elements-of model klass)))
                        groups)
-        results (concurrency/mapv-ordered
-                 :complete-model-reference-resolution
+        ;; Spoon resolution may populate lazy state on the shared live model.
+        ;; Preserve the canonical input order and keep these operations on the
+        ;; caller thread; bounded parallelism resumes after resolution.
+        results (mapv
                  (fn [[_kind resolver ^CtElement element]]
                    (if-let [failure (source-position-failure source-files element)]
                      {:failure failure}
@@ -815,8 +825,9 @@
                                 (map #(vector % resolver)
                                      (closure-elements declaration expansion klass))))
                       (sort-by (comp occurrence-sort-key first)))
-        results (concurrency/mapv-ordered
-                 :closure-reference-resolution
+        ;; A closure shares its frontend with every declaration selected below.
+        ;; Lazy Spoon lookups must therefore run serially in canonical order.
+        results (mapv
                  (fn [[^CtElement element resolver]]
                    (if-let [failure (source-position-failure source-files element)]
                      {:failure failure}
@@ -1086,13 +1097,15 @@
   (let [message (.getMessage ^Throwable error)
         [_ file line] (when message
                         (re-find #" at (.+):(\d+)$" message))]
-    {:kind :frontend-compilation-failed
-     :message message
-     :location (when file
-                 {:file (canonical-file cache (File. file))
-                  :line (Integer/parseInt line)})
-     :frontend {:frontend-class (.getName (class error))
-                :role "model-builder"}}))
+    (merge
+     {:kind :frontend-compilation-failed
+      :message message
+      :location (when file
+                  {:file (canonical-file cache (File. file))
+                   :line (Integer/parseInt line)})
+      :frontend {:frontend-class (.getName (class error))
+                 :role "model-builder"}}
+     (diagnostics/throwable-summary error))))
 
 (defn build-frontend-model!
   "Builds the complete live Spoon frontend from neutral project inputs with

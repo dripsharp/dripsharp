@@ -187,7 +187,7 @@
 (deftest minimal-non-product-destination-uses-the-reusable-emitter
   (let [fixture (minimal-model)
         first (emit! fixture (temp-directory) 1 (minimal-rule-bundle))
-        second (emit! fixture (temp-directory) 3 (minimal-rule-bundle))
+        second (emit! fixture (temp-directory) 22 (minimal-rule-bundle))
         source (paths/resolve-path (:project-root first)
                                    "src/Example/Library/Greeting.cs")]
     (is (= :minimal-java-library (:rule-bundle first) (:rule-bundle second)))

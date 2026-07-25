@@ -7,6 +7,7 @@
   vibeformer.spoon."
   (:require [clojure.string :as str]
             [vibeformer.csharp :as csharp]
+            [vibeformer.diagnostics :as diagnostics]
             [vibeformer.spoon :as spoon])
   (:import [java.util IdentityHashMap]
            [spoon.reflect.code CtBlock CtBreak CtContinue CtDo CtExpression CtFor
@@ -360,13 +361,16 @@
   ([kind ^CtElement element message]
    (blocking-diagnostic kind element message nil))
   ([kind ^CtElement element message resolved]
+   (blocking-diagnostic kind element message resolved nil))
+  ([kind ^CtElement element message resolved error]
    (cond-> {:severity :error
             :blocking? true
             :kind kind
             :message message
             :location (spoon/source-location element)
             :frontend (spoon/frontend-diagnostic element)}
-     resolved (assoc :resolved resolved))))
+     resolved (assoc :resolved resolved)
+     error (merge (diagnostics/throwable-summary error)))))
 
 (defn- reference-element?
   [element]
@@ -482,7 +486,8 @@
              :translation-rule-failed element
              (str "Translation rule " (:rule plan) " failed: " (.getMessage error))
              (when-let [occurrence (:occurrence plan)]
-               (select-keys occurrence [:kind :key :origin :resolution])))]})))
+               (select-keys occurrence [:kind :key :origin :resolution]))
+             error)]})))
 
     :else
     (let [diagnostic (:diagnostic plan)

@@ -771,7 +771,8 @@
 (defn generate!
   "Cleans disposable output, resolves a profile, and emits it through the shared
   bounded executor. Set :worker-count, VIBEFORMER_WORKERS, or
-  -Dvibeformer.workers; one worker provides the deterministic debug mode."
+  -Dvibeformer.workers; one worker provides the sequential performance and
+  debugging baseline."
   ([] (generate! {}))
   ([options]
    (concurrency/call-with-executor
