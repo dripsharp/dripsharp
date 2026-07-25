@@ -23,6 +23,31 @@
   (Files/createTempDirectory "dripsharp-pdfcube"
                              (make-array FileAttribute 0)))
 
+(deftest compatibility-namespace-transform-shifts-source-map-ranges
+  (let [transform
+        (get-in (pdfcube/rule-bundle)
+                [:rules :project-policy :transform-rendered])
+        source-token "global::DripSharp.Runtime"
+        destination-token "global::PdfCube.FB.Runtime"
+        text (str "a" source-token ".One b " source-token ".Two")
+        first-start 1
+        first-end (+ first-start (count source-token))
+        second-start (.lastIndexOf text source-token)
+        rendered
+        {:text text
+         :mappings
+         [{:destination {:start 0 :end (count text)}}
+          {:destination {:start first-start :end first-end}}
+          {:destination {:start second-start :end (count text)}}]}
+        transformed
+        (transform {:compatibility-namespace "PdfCube.FB.Runtime"} rendered)]
+    (is (= (str "a" destination-token ".One b " destination-token ".Two")
+           (:text transformed)))
+    (is (= [{:start 0 :end (+ 2 (count text))}
+            {:start first-start :end (inc first-end)}
+            {:start (inc second-start) :end (+ 2 (count text))}]
+           (mapv :destination (:mappings transformed))))))
+
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]
     (Files/createDirectories (.getParent file)
@@ -522,14 +547,14 @@
             result))
         stub-error
         (caught #((:validate-generated! strategy)
-                   selected (assoc emission :declarations stub-declarations)))
+                  selected (assoc emission :declarations stub-declarations)))
         unsupported-error
         (caught #((:validate-generated! strategy)
-                   selected
-                   (assoc-in emission
-                             [:summary :executable-coverage
-                              :unsupported-elements]
-                             1)))]
+                  selected
+                  (assoc-in emission
+                            [:summary :executable-coverage
+                             :unsupported-elements]
+                            1)))]
     (is (= :resolved-spoon-model (:derivation selected)))
     (is (= 16 (count (:rows selected))
            (:required-rows metadata)))

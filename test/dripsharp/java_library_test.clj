@@ -22,6 +22,21 @@
   (Files/createTempDirectory "dripsharp-java-library"
                              (make-array FileAttribute 0)))
 
+(deftest compiled-contract-file-is-serialized-in-generated-metadata
+  (let [validate-generated!
+        (:validate-generated! (java-library/public-surface-strategy))
+        metadata
+        (validate-generated!
+         {:derivation :compiled-contract
+          :selection-evidence []
+          :compiled-contract-file
+          (paths/path "validation/example-public-surface.tsv")}
+         {:summary {}
+          :declarations []
+          :configuration {}})]
+    (is (= "validation/example-public-surface.tsv"
+           (:compiled-contract-file metadata)))))
+
 (defn- write-sources! [source-root sources]
   (mapv
    (fn [[relative content]]
@@ -75,6 +90,24 @@
      {:root root :discovery discovery
       :model (spoon/build-resolved-model! root discovery)})))
 
+(deftest derived-enum-surface-includes-only-structured-synthetic-members
+  (let [fixture
+        (model! {"example/Choice.java"
+                 (str "package example; "
+                      "public enum Choice { FIRST, SECOND }")})
+        strategy (java-library/public-surface-strategy)
+        surface ((:read! strategy) (paths/workspace-root) {})
+        selected ((:validate-selected! strategy)
+                  (paths/workspace-root) surface (:model fixture))
+        adaptations
+        (set (keep :systematic-adaptation (:selection-evidence selected)))]
+    (is (every? map? (:selection-evidence selected)))
+    (is (every? map? (map :row (:selection-evidence selected))))
+    (is (every? adaptations
+                [:java-enum-values
+                 :java-enum-value-of
+                 :java-enum-name-to-string]))))
+
 (defn- configuration
   ([] (configuration #{}))
   ([capabilities]
@@ -125,7 +158,7 @@
    (concurrency/call-with-executor
     {:worker-count workers}
     #(project-emission/emit-project!
-      {:workspace-root (if (seq capabilities) (paths/absolute "..") root)
+      {:workspace-root (if (seq capabilities) (paths/workspace-root) root)
        :target (temp-directory)
        :project-input discovery
        :resolved-model model
@@ -590,6 +623,50 @@
               "global::DripSharp.Runtime.JavaCompat.Unbox(this.maybe(true)));")))
     (is (str/includes? source "public bool? state()"))
     (is (str/includes? source "public void state(bool? value)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest super-adaptations-and-iterator-boxing-compile-as-values
+  (let [fixture
+        (model!
+         {"example/SuperCalls.java"
+          (str "package example; import java.io.ByteArrayOutputStream; "
+               "import java.io.FilterInputStream; import java.io.InputStream; "
+               "public class SuperCalls extends FilterInputStream { "
+               "public SuperCalls(InputStream input) { super(input); } "
+               "public int read() throws java.io.IOException { return super.read(); } "
+               "public SuperCalls copy() throws CloneNotSupportedException { "
+               "return (SuperCalls) super.clone(); } "
+               "public static final class Buffer extends ByteArrayOutputStream { "
+               "public byte[] raw() { return buf; } } }")
+          "example/Numbers.java"
+          (str "package example; import java.util.Iterator; "
+               "public final class Numbers implements Iterator<Long> { "
+               "private long current; public boolean hasNext() { return true; } "
+               "public Long next() { return current++; } "
+               "public long read() { return next(); } }")})
+        emitted
+        (emit! fixture 1 #{:java-compat :java-regex-unicode}
+               {:name-policy {:public-identifiers :csharp
+                              :methods :methods
+                              :fields :fields
+                              :overloads :overloads}})
+        super-source
+        (slurp (str (paths/resolve-path (:project-root emitted)
+                                        "src/Example/Java/Library/SuperCalls.cs")))
+        numbers-source
+        (slurp (str (paths/resolve-path (:project-root emitted)
+                                        "src/Example/Java/Library/Numbers.cs")))]
+    (is (str/includes? super-source "return base.Read();"))
+    (is (str/includes? super-source "this.MemberwiseClone()"))
+    (is (str/includes?
+         super-source
+         "return global::DripSharp.Runtime.JavaCompat.ToSignedBytes(this);"))
+    (is (str/includes? numbers-source "return this.Next();"))
+    (is (not (str/includes? numbers-source "JavaCompat.Unbox(this.Next())")))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emitted)
                                :command ["dotnet" "build" (:project-file emitted)

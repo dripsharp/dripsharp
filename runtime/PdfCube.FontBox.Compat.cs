@@ -12,7 +12,6 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Xml;
-using Avalonia.Media.TextFormatting.Unicode;
 using SkiaSharp;
 
 namespace DripSharp.Runtime;

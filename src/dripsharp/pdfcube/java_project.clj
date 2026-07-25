@@ -3092,17 +3092,36 @@
   (or (:compatibility-namespace configuration)
       base-compatibility-namespace))
 
-(defn- transform-source-text [configuration text]
+(defn- replacement-ranges [text source]
+  (loop [from 0 ranges []]
+    (let [start (.indexOf ^String text ^String source (int from))]
+      (if (neg? start)
+        ranges
+        (let [end (+ start (count source))]
+          (recur end (conj ranges {:start start :end end})))))))
+
+(defn- shift-mapping
+  [mapping ranges delta]
+  (let [{:keys [start end]} (:destination mapping)
+        start-shift
+        (* delta (count (filter #(<= (:end %) start) ranges)))
+        end-shift
+        (* delta (count (filter #(< (:start %) end) ranges)))]
+    (-> mapping
+        (update-in [:destination :start] + start-shift)
+        (update-in [:destination :end] + end-shift))))
+
+(defn- transform-rendered [configuration {:keys [text mappings] :as rendered}]
   (let [destination (compatibility-namespace configuration)]
-    (when-not (= (count base-compatibility-namespace) (count destination))
-      (fail! "PdfCube compatibility namespace must preserve source-map offsets"
-             {:kind :invalid-pdfcube-compatibility-namespace
-              :expected-length (count base-compatibility-namespace)
-              :actual destination
-              :actual-length (count destination)}))
-    (str/replace text
-                 (str "global::" base-compatibility-namespace)
-                 (str "global::" destination))))
+    (if (= base-compatibility-namespace destination)
+      rendered
+      (let [source-token (str "global::" base-compatibility-namespace)
+            destination-token (str "global::" destination)
+            ranges (replacement-ranges text source-token)
+            delta (- (count destination-token) (count source-token))]
+        (assoc rendered
+               :text (str/replace text source-token destination-token)
+               :mappings (mapv #(shift-mapping % ranges delta) mappings))))))
 
 (defn- compatibility-asset [configuration asset]
   (if (= base-compatibility-namespace
@@ -3110,8 +3129,8 @@
     asset
     (assoc asset
            :text-replacements
-           {(str "namespace " base-compatibility-namespace ";")
-            (str "namespace " (compatibility-namespace configuration) ";")})))
+           {(str "namespace " base-compatibility-namespace)
+            (str "namespace " (compatibility-namespace configuration))})))
 
 (defn- legal-assets [{:keys [workspace-root configuration]}]
   (validate-legal-inputs! workspace-root configuration)
@@ -3158,7 +3177,7 @@
         (assoc-in [:rules :project-policy]
                   {:validate-configuration! validate-configuration!
                    :project-text project-text
-                   :transform-source-text transform-source-text})
+                   :transform-rendered transform-rendered})
         (assoc-in
          [:rules :structural-declarations :create-context]
          (fn [options]

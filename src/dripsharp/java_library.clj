@@ -463,7 +463,7 @@
 
 (defn- declaration-type-node [ctx ^CtElement element ^CtTypeReference reference]
   (let [base (or (when (or (instance? CtParameter element)
-                            (instance? CtMethod element))
+                           (instance? CtMethod element))
                    (covariant-list-node ctx element reference))
                  (type-node ctx reference))]
     (if (and (not (.isPrimitive reference))
@@ -2132,10 +2132,7 @@
       (or (and (= "executable:java.util.Map#get(java.lang.Object)"
                   (:key occurrence))
                (boxed-primitive-reference? (.getType expression)))
-          (and (instance? CtMethod declaration)
-               (boxed-primitive-reference? (.getType ^CtMethod declaration))
-               (not (.isShadow ^CtMethod declaration))
-               (not (anonymous-method? declaration)))))
+          (and (instance? CtMethod declaration) (not (.isShadow ^CtMethod declaration)) (nullable-boxed-declaration? ctx declaration (.getType ^CtMethod declaration)))))
 
     (instance? CtVariableRead expression)
     (let [declaration (some-> expression .getVariable .getDeclaration)]
@@ -2888,7 +2885,9 @@
                 (sequence-node [(raw "unchecked((short)") target-node (raw ")")])
 
                 "executable:java.lang.Object#clone()"
-                (compat-call "Clone" [target-node])
+                (if (instance? CtSuperAccess target)
+                  (raw "this.MemberwiseClone()")
+                  (compat-call "Clone" [target-node]))
 
                 ("executable:java.lang.Object#equals(java.lang.Object)"
                  "executable:java.lang.Enum#equals(java.lang.Object)"
@@ -4242,7 +4241,11 @@
                 ("executable:java.io.FilterInputStream#read()"
                  "executable:java.io.FilterInputStream#read(byte[])"
                  "executable:java.io.FilterInputStream#read(byte[],int,int)")
-                (compat-call "InputStreamRead" (into [target-node] arguments))
+                (if (instance? CtSuperAccess target)
+                  (sequence-node [(raw "base.Read(")
+                                  (sequence-node arguments ", ")
+                                  (raw ")")])
+                  (compat-call "InputStreamRead" (into [target-node] arguments)))
 
                 "executable:java.io.FilterInputStream#skip(long)"
                 (sequence-node [target-node (raw ".Skip(")
@@ -5563,7 +5566,11 @@
                  (raw "global::System.IO.Path.DirectorySeparatorChar.ToString()")
 
                  "field:java.io.ByteArrayOutputStream#buf"
-                 (compat-call "ToSignedBytes" [target-node])
+                 (compat-call
+                  "ToSignedBytes"
+                  [(if (instance? CtSuperAccess target)
+                     (raw "this")
+                     target-node)])
 
                  "field:java.io.FilterInputStream#in"
                  (raw "@in")
@@ -6072,11 +6079,7 @@
              (when returned
                (let [node (child-node children returned)]
                  (if method
-                   (assignment-value-node
-                    @ctx-holder method returned
-                    (if (.isPrimitive (.getType ^CtMethod method))
-                      (maybe-unbox-node @ctx-holder returned node)
-                      node))
+                   (assignment-value-node @ctx-holder method returned node)
                    node)))]
          {:node
           (sequence-node
@@ -6188,11 +6191,7 @@
              initializer-node
              (when initializer
                (let [node (child-node children initializer)]
-                 (assignment-value-node
-                  @ctx-holder element initializer
-                  (if (.isPrimitive (.getType element))
-                    (maybe-unbox-node @ctx-holder initializer node)
-                    node))))]
+                 (assignment-value-node @ctx-holder element initializer node)))]
          {:node
           (sequence-node
            [(if (.isInferred element)
@@ -6916,22 +6915,7 @@
            (when (.hasModifier ^CtModifiable declaration ModifierKind/ABSTRACT)
              (some
               (fn [[_ ^CtMethod candidate]]
-                (when
-                 (and
-                  (nil? (.getBody candidate))
-                  (not (.hasModifier candidate ModifierKind/STATIC))
-                  (or (.isOverriding method candidate)
-                      (= (.getSignature method) (.getSignature candidate))
-                      (override-compatible-method? method candidate))
-                  (not
-                   (some
-                    #(or (.isOverriding ^CtMethod % candidate)
-                         (= (.getSignature ^CtMethod %)
-                            (.getSignature candidate))
-                         (override-compatible-method? % candidate))
-                    (.getMethodsByName
-                     ^CtClass declaration (.getSimpleName candidate))))
-                  candidate)))
+                (when (and (nil? (.getBody candidate)) (not (.hasModifier candidate ModifierKind/STATIC)) (or (.isOverriding method candidate) (= (.getSignature method) (.getSignature candidate)) (override-compatible-method? method candidate))) candidate))
               (interface-methods declaration)))
            (recur (.getSuperclass ^CtClass declaration))))))))
 
@@ -8705,19 +8689,7 @@
                          (map (fn [[name parameter-count adaptation]]
                                 (synthetic-surface-entry
                                  type name parameter-count adaptation))
-                              (cond->
-                               [["values" 0 :java-enum-values]
-                                ["valueOf" 1 :java-enum-value-of]
-                                (not
-                                 (some
-                                  #(and (instance? CtMethod %)
-                                        (= "toString"
-                                           (.getSimpleName ^CtMethod %))
-                                        (empty?
-                                         (.getParameters ^CtMethod %)))
-                                  (.getTypeMembers type)))
-                                (conj ["ToString" 0
-                                       :java-enum-name-to-string])]))))
+                              (cond-> [["values" 0 :java-enum-values] ["valueOf" 1 :java-enum-value-of]] (not (some #(and (instance? CtMethod %) (= "toString" (.getSimpleName ^CtMethod %)) (empty? (.getParameters ^CtMethod %))) (.getTypeMembers type))) (conj ["ToString" 0 :java-enum-name-to-string])))))
                       (when (instance? CtClass type)
                         (concat
                          (map
@@ -8965,24 +8937,7 @@
                  adaptation
                  (assoc :systematic-adaptation adaptation)))))
          (:selection-evidence surface))]
-    (cond->
-     {:schema-version 1
-      :strategy :complete-accessible-java-library
-      :surface-derivation (:derivation surface)
-      :compatibility-namespace
-      (or (get-in emission [:configuration :compatibility-namespace])
-          "DripSharp.Runtime")
-      :required-rows (count rows)
-      :rows rows
-      :systematic-adaptations
-      (into (sorted-map)
-            (keep (fn [adaptation]
-                    (when adaptation
-                      [adaptation (get systematic-adaptations adaptation)])))
-            (map :systematic-adaptation rows))
-      (:compiled-contract-file surface)
-      (assoc :compiled-contract-file
-             (str (:compiled-contract-file surface)))})))
+    (cond-> {:schema-version 1 :strategy :complete-accessible-java-library :surface-derivation (:derivation surface) :compatibility-namespace (or (get-in emission [:configuration :compatibility-namespace]) "DripSharp.Runtime") :required-rows (count rows) :rows rows :systematic-adaptations (into (sorted-map) (keep (fn [adaptation] (when adaptation [adaptation (get systematic-adaptations adaptation)]))) (map :systematic-adaptation rows))} (:compiled-contract-file surface) (assoc :compiled-contract-file (str (:compiled-contract-file surface))))))
 
 (defn- verify-compiled! [workspace generation build-configuration]
   (let [emissions (concat (:dependency-emissions generation)

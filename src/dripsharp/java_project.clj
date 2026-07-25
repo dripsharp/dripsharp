@@ -793,13 +793,7 @@
                                  (emit-root-node ctx type) (csharp/raw "\n")])
                           rendered (csharp/render node)
                           rendered
-                          (if-let [transform
-                                   (get-in rule-bundle
-                                           [:rules :project-policy
-                                            :transform-source-text])]
-                            (assoc rendered :text
-                                   (transform configuration (:text rendered)))
-                            rendered)
+                          (if-let [transform (get-in rule-bundle [:rules :project-policy :transform-rendered])] (transform configuration rendered) rendered)
                           result (context-results rule-bundle ctx)]
                       (write-text! file (:text rendered))
                       {:index index
