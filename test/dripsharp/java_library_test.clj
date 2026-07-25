@@ -678,9 +678,10 @@
         (model! {"example/Nest.java"
                  (str "package example; public final class Nest { "
                       "public static String read() { "
-                      "return new Holder().get() + Holder.value; } "
+                      "return new Holder().get() + Holder.value + Holder.negative; } "
                       "private static final class Holder { "
                       "private static final String value = \"value\"; "
+                      "private static final int negative = -3000; "
                       "private Holder() {} private String get() { return value; } } }")})
         first (emit! fixture 1)
         second (emit! fixture 3)
@@ -692,6 +693,8 @@
                                         "src/Example/Java/Library/Nest.cs")))]
     (is (str/includes? first-source
                        "internal const string value = \"value\";"))
+    (is (str/includes? first-source
+                       "internal const int negative = -3000;"))
     (is (str/includes? first-source "internal Holder()"))
     (is (str/includes? first-source "internal string get()"))
     (is (= first-source second-source))
@@ -2811,6 +2814,34 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest labeled-continue-comment-only-case-and-terminating-try-compile
+  (let [fixture
+        (model! {"example/SwitchControl.java"
+                 (str "package example; public final class SwitchControl { "
+                      "public static int loop(int value) { "
+                      "mode: while (value < 3) { switch (value) { "
+                      "case 0: value++; continue mode; default: value++; } } "
+                      "return value; } "
+                      "public static int parse(int value) { switch (value) { "
+                      "case 0: if (value == 0) { try { return 1; } "
+                      "catch (RuntimeException exception) { return 2; } } "
+                      "else { return 3; } default: // no action\n"
+                      "} return 4; } }")})
+        result (emit! fixture 2)
+        source
+        (slurp (str (paths/resolve-path (:project-root result)
+                                        "src/Example/Java/Library/SwitchControl.cs")))]
+    (is (str/includes? source "goto __java_continue_0;"))
+    (is (str/includes? source "__java_continue_0:;"))
+    (is (str/includes? source "default:\nbreak;"))
+    (is (not (str/includes? source "return 2;\n}\nbreak;")))
+    (is (zero? (get-in result [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root result)
+                               :command ["dotnet" "build" (:project-file result)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 

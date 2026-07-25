@@ -670,6 +670,19 @@
       node
       (sequence-node [(raw "{\n") node (raw "\n}")]))))
 
+(defn- labeled-loop-body-node
+  [context children ^CtStatement body ^CtStatement loop]
+  (if-not (java/labeled-targeted? context loop :continue)
+    (statement-node children body)
+    (if (instance? CtBlock body)
+      (child-node children body)
+      (sequence-node
+       [(raw "{\n")
+        (child-node children body)
+        (raw (str "\n"
+                  (java/labeled-target-name context loop :continue)
+                  ":;\n}"))]))))
+
 (defn- escape-string [value]
   (str "\""
        (-> (str value)
@@ -2324,6 +2337,15 @@
       (and else-statement
            (terminating-statement? (.getThenStatement ^CtIf statement))
            (terminating-statement? else-statement)))
+    (instance? CtTry statement)
+    (let [body (.getBody ^CtTry statement)
+          catchers (vec (.getCatchers ^CtTry statement))
+          finalizer (.getFinalizer ^CtTry statement)]
+      (or (and finalizer (terminating-statement? finalizer))
+          (and (terminating-statement? body)
+               (every? #(terminating-statement?
+                         (.getBody ^CtCatch %))
+                       catchers))))
     :else false))
 
 (defn- enum-switch-declaration [ctx ^CtSwitch switch]
@@ -5858,15 +5880,28 @@
     {:id :java-library.statement/block
      :class CtBlock
      :emit
-     (fn [{:keys [^CtBlock element children]}]
-       (let [statements (vec (remove #(.isImplicit ^CtElement %)
-                                     (.getStatements element)))]
+     (fn [{:keys [context ^CtBlock element children]}]
+       (let [statements (vec (remove #(or (.isImplicit ^CtElement %)
+                                          (instance? CtComment %))
+                                     (.getStatements element)))
+             parent (when (.isParentInitialized element) (.getParent element))
+             continue-target
+             (when (and (or (instance? CtFor parent)
+                            (instance? CtForEach parent)
+                            (instance? CtWhile parent)
+                            (instance? CtDo parent))
+                        (java/labeled-targeted? context parent :continue))
+               parent)]
          {:node
           (sequence-node
            [(raw "{")
-            (when (seq statements) (raw "\n"))
+            (when (or (seq statements) continue-target) (raw "\n"))
             (sequence-node (mapv #(child-node children %) statements) "\n")
-            (when (seq statements) (raw "\n"))
+            (when continue-target
+              (raw (str (when (seq statements) "\n")
+                        (java/labeled-target-name context continue-target :continue)
+                        ":;")))
+            (when (or (seq statements) continue-target) (raw "\n"))
             (raw "}")])}))}
 
     {:id :java-library.statement/if
@@ -5886,7 +5921,7 @@
     {:id :java-library.statement/foreach
      :class CtForEach
      :emit
-     (fn [{:keys [^CtForEach element children]}]
+     (fn [{:keys [context ^CtForEach element children]}]
        (let [variable (.getVariable element)
              mutable?
              (boolean
@@ -5910,14 +5945,16 @@
                [(raw "{\n")
                 (type-node @ctx-holder (.getType variable))
                 (raw (str " " variable-name " = " iteration-name ";\n"))
-                (statement-node children (.getBody element))
+                (labeled-loop-body-node context children
+                                        (.getBody element) element)
                 (raw "\n}")])
-              (statement-node children (.getBody element)))])}))}
+              (labeled-loop-body-node context children
+                                      (.getBody element) element))])}))}
 
     {:id :java-library.statement/for
      :class CtFor
      :emit
-     (fn [{:keys [^CtFor element children]}]
+     (fn [{:keys [context ^CtFor element children]}]
        (let [initializers (vec (.getForInit element))
              updates (vec (.getForUpdate element))
              local-declarations? (every? #(instance? CtLocalVariable %)
@@ -5968,27 +6005,30 @@
             (raw "; ")
             (sequence-node (mapv #(child-node children %) updates) ", ")
             (raw ") ")
-            (statement-node children (.getBody element))])}))}
+            (labeled-loop-body-node context children
+                                    (.getBody element) element)])}))}
 
     {:id :java-library.statement/while
      :class CtWhile
      :emit
-     (fn [{:keys [^CtWhile element children]}]
+     (fn [{:keys [context ^CtWhile element children]}]
        {:node
         (sequence-node
          [(raw "while (")
           (child-node children (.getLoopingExpression element))
           (raw ") ")
-          (statement-node children (.getBody element))])})}
+          (labeled-loop-body-node context children
+                                  (.getBody element) element)])})}
 
     {:id :java-library.statement/do-while
      :class CtDo
      :emit
-     (fn [{:keys [^CtDo element children]}]
+     (fn [{:keys [context ^CtDo element children]}]
        {:node
         (sequence-node
          [(raw "do ")
-          (statement-node children (.getBody element))
+          (labeled-loop-body-node context children
+                                  (.getBody element) element)
           (raw " while (")
           (child-node children (.getLoopingExpression element))
           (raw ");")])})}
@@ -6024,9 +6064,12 @@
      :class CtCase
      :emit
      (fn [{:keys [^CtCase element children]}]
-       (let [source-statements (vec (.getStatements element))
+       (let [source-statements
+             (vec (remove #(or (instance? CtComment %)
+                               (.isImplicit ^CtElement %))
+                          (.getStatements element)))
              statements (mapv #(child-node children %) source-statements)
-             last-semantic (last (remove #(instance? CtComment %) source-statements))]
+             last-semantic (last source-statements)]
          {:node
           (sequence-node
            [(case-labels @ctx-holder children element)
@@ -7191,6 +7234,15 @@
        (.hasModifier field ModifierKind/STATIC)
        (.hasModifier field ModifierKind/FINAL)))
 
+(defn- compile-time-constant-expression?
+  [expression]
+  (or (instance? CtLiteral expression)
+      (and (instance? CtUnaryOperator expression)
+           (contains? #{"NEG" "POS" "COMPL" "NOT"}
+                      (str (.getKind ^CtUnaryOperator expression)))
+           (compile-time-constant-expression?
+            (.getOperand ^CtUnaryOperator expression)))))
+
 (def ^:private mapped-source-value-types
   #{"java.awt.Rectangle"
     "java.awt.geom.AffineTransform"
@@ -7223,7 +7275,7 @@
         (and (not enum-value?)
              (.hasModifier field ModifierKind/STATIC)
              (.hasModifier field ModifierKind/FINAL)
-             (instance? CtLiteral initializer)
+             (compile-time-constant-expression? initializer)
              (or (.isPrimitive (.getType field))
                  (= "java.lang.String" (.getQualifiedName (.getType field)))))
         deferred?
