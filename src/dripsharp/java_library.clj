@@ -4579,10 +4579,19 @@
                                 (sequence-node arguments ", ") (raw ")")])
 
                 "executable:java.util.Map$Entry#comparingByValue()"
-                (raw
-                 (str "(value0, value1) => "
-                      "global::DripSharp.Runtime.JavaCompat.CompareNatural("
-                      "value0.Value, value1.Value)"))
+                (let [comparator-arguments
+                      (vec (.getActualTypeArguments (.getType element)))
+                      comparison
+                      (raw
+                       (str "(value0, value1) => "
+                            "global::DripSharp.Runtime.JavaCompat.CompareNatural("
+                            "value0.Value, value1.Value)"))]
+                  (if (= 1 (count comparator-arguments))
+                    (sequence-node
+                     [(raw "global::System.Collections.Generic.Comparer<")
+                      (type-node @ctx-holder (first comparator-arguments))
+                      (raw ">.Create(") comparison (raw ")")])
+                    comparison))
 
                 "executable:java.util.List#isEmpty()"
                 (compat-call "ListIsEmpty" [target-node])
@@ -7771,8 +7780,10 @@
         (when reference (translated-external-type-base ctx reference))
         declaration
         (when (or (= :project (:origin occurrence)) external-target)
-          (or (:declaration occurrence)
-              (.getTypeDeclaration ^CtTypeReference reference)))
+          (let [resolved-declaration (:declaration occurrence)]
+            (if (instance? CtType resolved-declaration)
+              resolved-declaration
+              (.getTypeDeclaration ^CtTypeReference reference))))
         qualified-name (some-> reference .getQualifiedName)
         arguments (vec (.getActualTypeArguments ^CtTypeReference reference))]
     (cond

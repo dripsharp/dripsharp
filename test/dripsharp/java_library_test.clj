@@ -1477,6 +1477,33 @@
               "global::Example.External.Container.Factory value)")))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))))
 
+(deftest external-functional-interfaces-adapt-lambda-arguments
+  (let [fixture
+        (model!
+         {"example/Consumer.java"
+          (str "package example; import external.api.Container; "
+               "public final class Consumer { "
+               "public static void run() { "
+               "Container.process(value -> value.length()); } }")}
+         {"external/api/Container.java"
+          (str "package external.api; public final class Container { "
+               "@FunctionalInterface public interface Handler { "
+               "int apply(String value); } "
+               "public static void process(Handler handler) {} }")})
+        emission
+        (emit! fixture 1 #{} {:external-namespace-prefixes
+                              {"external.api" "Example.External"}})
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emission)
+                     "src/Example/Java/Library/Consumer.cs")))]
+    (is (str/includes?
+         source
+         (str "global::Example.External.Container.Process("
+              "new global::Example.External.Container."
+              "__HandlerFunctionalAdapter((value) => value.Length));")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))))
+
 (deftest neutral-primitive-arrays-for-loops-and-conditionals-are-structural
   (let [fixture
         (model! {"example/Ascii.java"
@@ -2190,6 +2217,35 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest map-entry-value-comparators-are-emitted-as-generic-comparers
+  (let [fixture
+        (model! {"example/Entries.java"
+                 (str "package example; import java.util.List; "
+                      "import java.util.Map; import java.util.stream.Collectors; "
+                      "public final class Entries { "
+                      "public static List<Map.Entry<String, Integer>> sorted("
+                      "Map<String, Integer> values) { "
+                      "return values.entrySet().stream()"
+                      ".sorted(Map.Entry.comparingByValue())"
+                      ".collect(Collectors.toList()); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Entries.cs")))]
+    (is (str/includes?
+         source
+         (str "global::System.Collections.Generic.Comparer<"
+              "global::DripSharp.Runtime.JavaMapEntry<string, int>>.Create("
+              "(value0, value1) => "
+              "global::DripSharp.Runtime.JavaCompat.CompareNatural("
+              "value0.Value, value1.Value))")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
