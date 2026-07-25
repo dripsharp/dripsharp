@@ -1732,7 +1732,7 @@ sealed class JavaPath : IEquatable<JavaPath>
         (OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
             .GetHashCode(Value);
     public override string ToString() => Value;
-    public static implicit operator string(JavaPath path) => path.Value;
+    public static implicit operator string(JavaPath? path) => path?.Value!;
     public static implicit operator JavaPath(string path) => new(path);
 }
 
@@ -2085,7 +2085,7 @@ abstract class JavaInputStream : Stream, IDisposable
         var signed = new sbyte[count];
         var readCount = Read(signed, 0, count);
         if (readCount > 0) Buffer.BlockCopy(signed, 0, buffer, offset, readCount);
-        return readCount;
+        return Math.Max(0, readCount);
     }
 
     public override int ReadByte() => Read();
@@ -2143,6 +2143,8 @@ public
 #endif
 abstract class JavaOutputStream : Stream, IDisposable
 {
+    private bool disposeDispatching;
+
     public abstract void Write(int value);
 
     public virtual void Write(sbyte[] buffer) => Write(buffer, 0, buffer.Length);
@@ -2172,7 +2174,41 @@ abstract class JavaOutputStream : Stream, IDisposable
 
     public override void WriteByte(byte value) => Write(value);
     public override void Flush() { }
-    public new virtual void Dispose() => base.Dispose();
+    public new virtual void Dispose()
+    {
+        if (disposeDispatching)
+        {
+            base.Dispose();
+            return;
+        }
+        disposeDispatching = true;
+        try
+        {
+            base.Dispose();
+        }
+        finally
+        {
+            disposeDispatching = false;
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && !disposeDispatching)
+        {
+            disposeDispatching = true;
+            try
+            {
+                Dispose();
+            }
+            finally
+            {
+                disposeDispatching = false;
+            }
+        }
+        base.Dispose(disposing);
+    }
+
     void IDisposable.Dispose() => Dispose();
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
@@ -2545,10 +2581,10 @@ sealed class JavaDeflaterOutputStream : JavaOutputStream
         compressed.Write(JavaCompat.ToUnsignedBytes(buffer), offset, count);
     public override void Flush() => compressed.Flush();
 
-    protected override void Dispose(bool disposing)
+    public override void Dispose()
     {
-        if (disposing) compressed.Dispose();
-        base.Dispose(disposing);
+        compressed.Dispose();
+        base.Dispose();
     }
 }
 
@@ -2568,10 +2604,10 @@ class JavaFilterOutputStream : JavaOutputStream
         base.Write(buffer, offset, count);
     public override void Flush() => @out.Flush();
 
-    protected override void Dispose(bool disposing)
+    public override void Dispose()
     {
-        if (disposing) ((IDisposable)@out).Dispose();
-        base.Dispose(disposing);
+        ((IDisposable)@out).Dispose();
+        base.Dispose();
     }
 }
 
@@ -2973,6 +3009,7 @@ sealed class JavaSimpleDateFormat
                 'E' => count >= 4 ? "dddd" : "ddd",
                 'a' => "tt",
                 'z' => "zzz",
+                'Z' => "zzz",
                 _ => new string(current, count)
             });
             index = end;
@@ -6026,7 +6063,7 @@ internal static class JavaCompat
         TimeZoneInfo zone)
     {
         var offset = TimeSpan.FromMilliseconds(TimeZoneRawOffset(zone));
-        return new DateTimeOffset(value.DateTime, offset);
+        return value.ToOffset(offset);
     }
     internal static TimeZoneInfo CalendarGetTimeZone(DateTimeOffset value) =>
         NewSimpleTimeZone(
@@ -6574,14 +6611,18 @@ internal static class JavaCompat
                 if (precisionStart == cursor) throw new FormatException("Invalid Java format precision");
                 precision = int.Parse(format[precisionStart..cursor], CultureInfo.InvariantCulture);
             }
-            if (cursor < format.Length && format[cursor] is 't' or 'T') cursor++;
+            var dateTimeConversion =
+                cursor < format.Length && format[cursor] is 't' or 'T';
+            if (dateTimeConversion) cursor++;
             if (cursor >= format.Length) throw new FormatException("Invalid Java format conversion");
             var conversion = format[cursor];
 
             var argumentIndex = explicitArgument ?? nextArgument++;
             if (argumentIndex < 0 || argumentIndex >= arguments.Length)
                 throw new FormatException("Missing Java format argument");
-            var rendered = FormatJavaArgument(arguments[argumentIndex], conversion, precision, locale);
+            var rendered = dateTimeConversion
+                ? FormatJavaDateArgument(arguments[argumentIndex], conversion, locale)
+                : FormatJavaArgument(arguments[argumentIndex], conversion, precision, locale);
             if (conversion is >= 'A' and <= 'Z') rendered = rendered.ToUpper(locale);
             if (flags.Contains('+') && rendered.Length > 0 && rendered[0] != '-') rendered = "+" + rendered;
             if (width > rendered.Length)
@@ -6594,6 +6635,56 @@ internal static class JavaCompat
             index = cursor;
         }
         return result.ToString();
+    }
+
+    private static string FormatJavaDateArgument(
+        object? value,
+        char conversion,
+        CultureInfo locale)
+    {
+        var date = value switch
+        {
+            DateTimeOffset dateTimeOffset => dateTimeOffset,
+            DateTime dateTime => new DateTimeOffset(dateTime),
+            long milliseconds => DateTimeOffset.FromUnixTimeMilliseconds(milliseconds),
+            _ => throw new FormatException(
+                $"Unsupported Java date/time format argument: {value?.GetType().FullName ?? "null"}")
+        };
+        return conversion switch
+        {
+            'Y' => date.ToString("yyyy", locale),
+            'y' => date.ToString("yy", locale),
+            'm' => date.ToString("MM", locale),
+            'd' => date.ToString("dd", locale),
+            'e' => date.Day.ToString(locale).PadLeft(2),
+            'H' => date.ToString("HH", locale),
+            'I' => date.ToString("hh", locale),
+            'M' => date.ToString("mm", locale),
+            'S' => date.ToString("ss", locale),
+            'L' => date.ToString("fff", locale),
+            'N' => (date.Ticks % TimeSpan.TicksPerSecond * 100)
+                .ToString("D9", CultureInfo.InvariantCulture),
+            'p' => date.ToString("tt", locale).ToLower(locale),
+            'z' => date.ToString("zzz", locale)
+                .Replace(":", "", StringComparison.Ordinal),
+            'Z' => TimeZoneInfo.Local.IsDaylightSavingTime(date.DateTime)
+                ? TimeZoneInfo.Local.DaylightName
+                : TimeZoneInfo.Local.StandardName,
+            's' => date.ToUnixTimeSeconds().ToString(locale),
+            'Q' => date.ToUnixTimeMilliseconds().ToString(locale),
+            'B' => date.ToString("MMMM", locale),
+            'b' or 'h' => date.ToString("MMM", locale),
+            'A' => date.ToString("dddd", locale),
+            'a' => date.ToString("ddd", locale),
+            'j' => date.DayOfYear.ToString("D3", locale),
+            'R' => date.ToString("HH:mm", locale),
+            'T' => date.ToString("HH:mm:ss", locale),
+            'D' => date.ToString("MM/dd/yy", locale),
+            'F' => date.ToString("yyyy-MM-dd", locale),
+            'c' => date.ToString("ddd MMM dd HH:mm:ss zzz yyyy", locale),
+            _ => throw new FormatException(
+                $"Unsupported Java date/time format conversion: {conversion}")
+        };
     }
 
     private static string FormatJavaArgument(object? value, char conversion, int? precision,

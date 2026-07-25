@@ -82,6 +82,46 @@
            (:text (transform configuration
                              {:text specialized :mappings []}))))))
 
+(deftest pdfbox-calendar-value-semantics-preserve-date-time-zone-mutations
+  (let [transform
+        (get-in (pdfcube/rule-bundle)
+                [:rules :project-policy :transform-rendered])
+        rendered
+        {:text
+         (str
+          "// org/apache/pdfbox/util/DateConverter.java\n"
+          "private static void adjustTimeZoneNicely("
+          "global::System.DateTimeOffset cal, global::System.TimeZoneInfo tz) {\n"
+          "cal = global::DripSharp.Runtime.JavaCompat.CalendarAdd(cal, 12, -offset);\n"
+          "}\n"
+          "internal static bool parseTZoffset(string text, "
+          "global::System.DateTimeOffset cal, Position initialWhere) {\n"
+          "global::PdfCube.PdfBox.Util.DateConverter.adjustTimeZoneNicely(cal, tz);\n"
+          "}\n"
+          "return global::PdfCube.PdfBox.Util.DateConverter."
+          "parseTZoffset(text, retCal, where);")
+         :mappings []}
+        transformed
+        (:text
+         (transform
+          {:internal-capabilities #{:calendar-value-semantics}}
+          rendered))]
+    (is (str/includes?
+         transformed
+         "private static global::System.DateTimeOffset adjustTimeZoneNicely("))
+    (is (str/includes?
+         transformed
+         "CalendarAdd(cal, 12, -offset);\nreturn cal;\n}"))
+    (is (str/includes?
+         transformed
+         "parseTZoffset(string text, ref global::System.DateTimeOffset cal,"))
+    (is (str/includes?
+         transformed
+         "cal = global::PdfCube.PdfBox.Util.DateConverter.adjustTimeZoneNicely(cal, tz);"))
+    (is (str/includes?
+         transformed
+         "parseTZoffset(text, ref retCal, where)"))))
+
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]
     (Files/createDirectories (.getParent file)

@@ -2814,8 +2814,8 @@
     (assoc bouncy-dependencies commons-coordinate commons-dependency)
     :runtime-packages [logging-package skia-package]
     :internal-capabilities
-    #{:icc :jbig2 :jpx :managed-raster :printing :security-handler-erasure
-      :skia-graphics :unicode-bidi}
+    #{:calendar-value-semantics :icc :jbig2 :jpx :managed-raster :printing
+      :security-handler-erasure :skia-graphics :unicode-bidi}
     :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
     :bridge-capabilities #{:java-bidi}}
 
@@ -3171,6 +3171,38 @@
       (replace-rendered
        rendered security-handler-carrier erased-security-handler))))
 
+(defn- preserve-calendar-value-semantics
+  [configuration {:keys [text] :as rendered}]
+  (cond
+    (not
+     (and
+      (contains? (:internal-capabilities configuration)
+                 :calendar-value-semantics)
+      (str/includes? text "org/apache/pdfbox/util/DateConverter.java")))
+    rendered
+
+    :else
+    (reduce
+     (fn [current [source destination]]
+       (replace-rendered current source destination))
+     rendered
+     [["private static void adjustTimeZoneNicely("
+       "private static global::System.DateTimeOffset adjustTimeZoneNicely("]
+      [(str "cal = global::DripSharp.Runtime.JavaCompat.CalendarAdd("
+            "cal, 12, -offset);\n}")
+       (str "cal = global::DripSharp.Runtime.JavaCompat.CalendarAdd("
+            "cal, 12, -offset);\nreturn cal;\n}")]
+      [(str "internal static bool parseTZoffset(string text, "
+            "global::System.DateTimeOffset cal,")
+       (str "internal static bool parseTZoffset(string text, "
+            "ref global::System.DateTimeOffset cal,")]
+      ["global::PdfCube.PdfBox.Util.DateConverter.adjustTimeZoneNicely(cal, tz);"
+       (str "cal = global::PdfCube.PdfBox.Util.DateConverter."
+            "adjustTimeZoneNicely(cal, tz);")]
+      ["global::PdfCube.PdfBox.Util.DateConverter.parseTZoffset(text, retCal, where)"
+       (str "global::PdfCube.PdfBox.Util.DateConverter."
+            "parseTZoffset(text, ref retCal, where)")]])))
+
 (defn- transform-rendered [configuration {:keys [text mappings] :as rendered}]
   (let [destination (compatibility-namespace configuration)
         rendered
@@ -3180,7 +3212,9 @@
            rendered
            (str "global::" base-compatibility-namespace)
            (str "global::" destination)))]
-    (erase-security-handler-carrier configuration rendered)))
+    (->> rendered
+         (erase-security-handler-carrier configuration)
+         (preserve-calendar-value-semantics configuration))))
 
 (defn- compatibility-asset [configuration asset]
   (if (= base-compatibility-namespace
