@@ -2794,8 +2794,14 @@
                                 (sequence-node arguments ", ") (raw ")")])
 
                 "executable:java.lang.Math#ceil(double)"
-                (sequence-node [(raw "global::System.Math.Ceiling(")
-                                (sequence-node arguments ", ") (raw ")")])
+                (let [argument (first (.getArguments element))
+                      argument-node
+                      (maybe-unbox-node
+                       @ctx-holder argument (child-node children argument))]
+                  (sequence-node
+                   [(raw "global::System.Math.Ceiling(")
+                    (raw "(double)(") argument-node (raw ")")
+                    (raw ")")]))
 
                 "executable:java.lang.Math#cos(double)"
                 (sequence-node [(raw "global::System.Math.Cos(")

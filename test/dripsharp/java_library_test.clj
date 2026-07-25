@@ -3456,6 +3456,8 @@
                       "return Math.acos(value) + Math.atan2(value, value) + Math.ceil(value) "
                       "+ Math.cos(value) + Math.log10(value) + Math.sin(value) "
                       "+ Math.sqrt(value) + Math.toDegrees(value) + Math.toRadians(value); } "
+                      "static int ceilingOfRatio(int value) { "
+                      "return (int) Math.ceil(value / 2); } "
                       "static long rounded(double value) { return Math.round(value); } "
                       "static int floorDivision(int left, int right) { "
                       "return Math.floorDiv(left, right); } "
@@ -3507,7 +3509,12 @@
          "return global::DripSharp.Runtime.JavaCompat.SignumFloat(value);"))
     (is (str/includes? first-source "global::System.Math.Acos(value)"))
     (is (str/includes? first-source "global::System.Math.Atan2(value, value)"))
-    (is (str/includes? first-source "global::System.Math.Ceiling(value)"))
+    (is (str/includes?
+         first-source
+         "global::System.Math.Ceiling((double)(value))"))
+    (is (str/includes?
+         first-source
+         "global::System.Math.Ceiling((double)((value / 2)))"))
     (is (str/includes? first-source "global::System.Math.Cos(value)"))
     (is (str/includes? first-source "global::System.Math.Log10(value)"))
     (is (str/includes? first-source "global::System.Math.Sin(value)"))
