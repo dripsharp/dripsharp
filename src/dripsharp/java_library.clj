@@ -456,12 +456,20 @@
            (and (instance? CtInvocation initializer)
                 (let [occurrence
                       (occurrence! ctx (.getExecutable ^CtInvocation initializer)
-                                   :executable)]
-                  (or (= "executable:java.util.Map#get(java.lang.Object)"
-                         (:key occurrence))
-                      (and (= :project (:origin occurrence))
-                           (instance? CtMethod (:declaration occurrence))
-                           (not (anonymous-method? (:declaration occurrence)))))))))
+                                   :executable)
+                      referenced-declaration
+                      (some-> initializer .getExecutable .getDeclaration)
+                      declaration
+                      (if (instance? CtMethod referenced-declaration)
+                        referenced-declaration
+                        (:declaration occurrence))]
+                  (or (contains?
+                       #{"executable:java.util.Map#get(java.lang.Object)"
+                         "executable:java.util.TreeMap#get(java.lang.Object)"}
+                       (:key occurrence))
+                      (and (instance? CtMethod declaration)
+                           (not (.isShadow ^CtMethod declaration))
+                           (not (anonymous-method? declaration))))))))
 
      :else false)))
 
@@ -2159,8 +2167,10 @@
           (if (instance? CtMethod referenced-declaration)
             referenced-declaration
             (:declaration occurrence))]
-      (or (and (= "executable:java.util.Map#get(java.lang.Object)"
-                  (:key occurrence))
+      (or (and (contains?
+                #{"executable:java.util.Map#get(java.lang.Object)"
+                  "executable:java.util.TreeMap#get(java.lang.Object)"}
+                (:key occurrence))
                (boxed-primitive-reference? (.getType expression)))
           (and (instance? CtMethod declaration) (not (.isShadow ^CtMethod declaration)) (nullable-boxed-declaration? ctx declaration (.getType ^CtMethod declaration)))))
 
@@ -2286,6 +2296,16 @@
 
 (defn- string-expression? [^CtExpression expression]
   (= "java.lang.String" (some-> expression .getType .getQualifiedName)))
+
+(def ^:private java-small-integral-types
+  #{"byte" "char" "short"})
+
+(defn- promoted-comparison-operand-node
+  [^CtExpression expression node]
+  (if (contains? java-small-integral-types
+                 (some-> expression .getType .getQualifiedName))
+    (sequence-node [(raw "(int)(") node (raw ")")])
+    node))
 
 (defn- binary-operator [^CtBinaryOperator expression]
   (case (str (.getKind expression))
@@ -5525,12 +5545,20 @@
              right-expression (.getRightHandOperand element)
              left-node (child-node children left-expression)
              right-node (child-node children right-expression)
-             left (if unbox-operands?
-                    (maybe-unbox-node @ctx-holder left-expression left-node)
-                    left-node)
-             right (if unbox-operands?
-                     (maybe-unbox-node @ctx-holder right-expression right-node)
-                     right-node)
+             left-value (if unbox-operands?
+                          (maybe-unbox-node @ctx-holder left-expression left-node)
+                          left-node)
+             right-value (if unbox-operands?
+                           (maybe-unbox-node @ctx-holder right-expression right-node)
+                           right-node)
+             numeric-comparison?
+             (contains? #{"EQ" "NE" "LT" "LE" "GT" "GE"} kind)
+             left (if numeric-comparison?
+                    (promoted-comparison-operand-node left-expression left-value)
+                    left-value)
+             right (if numeric-comparison?
+                     (promoted-comparison-operand-node right-expression right-value)
+                     right-value)
              generic-null-comparison?
              (and (contains? #{"EQ" "NE"} kind)
                   (or (and (instance? CtTypeParameterReference
@@ -7289,7 +7317,16 @@
            (contains? #{"NEG" "POS" "COMPL" "NOT"}
                       (str (.getKind ^CtUnaryOperator expression)))
            (compile-time-constant-expression?
-            (.getOperand ^CtUnaryOperator expression)))))
+            (.getOperand ^CtUnaryOperator expression)))
+      (and (instance? CtBinaryOperator expression)
+           (contains? #{"OR" "AND" "BITOR" "BITXOR" "BITAND"
+                        "EQ" "NE" "LT" "LE" "GT" "GE"
+                        "SL" "SR" "USR" "PLUS" "MINUS" "MUL" "DIV" "MOD"}
+                      (str (.getKind ^CtBinaryOperator expression)))
+           (compile-time-constant-expression?
+            (.getLeftHandOperand ^CtBinaryOperator expression))
+           (compile-time-constant-expression?
+            (.getRightHandOperand ^CtBinaryOperator expression)))))
 
 (def ^:private mapped-source-value-types
   #{"java.awt.Rectangle"

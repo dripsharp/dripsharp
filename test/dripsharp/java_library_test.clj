@@ -753,10 +753,12 @@
         (model! {"example/Nest.java"
                  (str "package example; public final class Nest { "
                       "public static String read() { "
-                      "return new Holder().get() + Holder.value + Holder.negative; } "
+                      "return new Holder().get() + Holder.value + Holder.negative "
+                      "+ Holder.shifted; } "
                       "private static final class Holder { "
                       "private static final String value = \"value\"; "
                       "private static final int negative = -3000; "
+                      "private static final int shifted = 1 << 14; "
                       "private Holder() {} private String get() { return value; } } }")})
         first (emit! fixture 1)
         second (emit! fixture 3)
@@ -770,12 +772,43 @@
                        "internal const string value = \"value\";"))
     (is (str/includes? first-source
                        "internal const int negative = -3000;"))
+    (is (str/includes? first-source
+                       "internal const int shifted = (1 << 14);"))
     (is (str/includes? first-source "internal Holder()"))
     (is (str/includes? first-source "internal string get()"))
     (is (= first-source second-source))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest boxed-tree-map-values-and-small-integral-comparisons-preserve-java-semantics
+  (let [fixture
+        (model! {"example/Promotions.java"
+                 (str "package example; import java.util.TreeMap; "
+                      "public final class Promotions { "
+                      "public static int required(TreeMap<Integer, Integer> values) { "
+                      "Integer value = values.get(1); return value == null ? 0 : value; } "
+                      "public static boolean marker(byte[] header) { "
+                      "return header[0] == 128 || header[1] >= 1; } }")})
+        emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emitted)
+                     "src/Example/Java/Library/Promotions.cs")))]
+    (is (str/includes?
+         source
+         (str "int? value = global::DripSharp.Runtime.JavaCompat."
+              "MapGetNullable(values, 1);")))
+    (is (str/includes?
+         source
+         "return ((value == default!) ? 0 : global::DripSharp.Runtime.JavaCompat.Unbox(value));"))
+    (is (str/includes? source "(int)(header[0]) == 128"))
+    (is (str/includes? source "(int)(header[1]) >= 1"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 

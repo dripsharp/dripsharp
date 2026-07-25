@@ -1901,7 +1901,7 @@
    "executable:java.awt.print.PrinterIOException#<init>(java.io.IOException)"
    (fn [arguments]
      (sequence-node
-      [(raw "new global::System.IO.IOException(")
+      [(raw "new global::System.IO.IOException(null, ")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))
 
