@@ -7171,20 +7171,21 @@ internal static class JavaCompat
         value is T typed && collection.Contains(typed);
     internal static bool CollectionRemove<T>(ICollection<T> collection, object? value) =>
         value is T typed && collection.Remove(typed);
-    internal static bool ContainsAll<T>(IEnumerable<T> collection, IEnumerable<T> values)
+    internal static bool ContainsAll<T>(IEnumerable<T> collection, System.Collections.IEnumerable values)
     {
         var set = new HashSet<T>(collection);
-        return values.All(set.Contains);
+        return values.Cast<object?>().All(value => value is T typed && set.Contains(typed));
     }
-    internal static bool RemoveAll<T>(ICollection<T> collection, IEnumerable<T> values)
+    internal static bool RemoveAll<T>(ICollection<T> collection, System.Collections.IEnumerable values)
     {
         var changed = false;
-        foreach (var value in values.ToArray()) changed |= collection.Remove(value);
+        foreach (var value in values.Cast<object?>().ToArray())
+            if (value is T typed) changed |= collection.Remove(typed);
         return changed;
     }
-    internal static bool RetainAll<T>(ICollection<T> collection, IEnumerable<T> values)
+    internal static bool RetainAll<T>(ICollection<T> collection, System.Collections.IEnumerable values)
     {
-        var retained = new HashSet<T>(values);
+        var retained = values.Cast<object?>().ToHashSet();
         var changed = false;
         foreach (var value in collection.Where(value => !retained.Contains(value)).ToArray())
             changed |= collection.Remove(value);
@@ -9104,14 +9105,23 @@ internal static class JavaCompat
     internal static Comparison<T> ReverseComparison<T>(Comparison<T> comparison) =>
         (left, right) => comparison(right, left);
     internal static T[] ToArray<T>(IEnumerable<T> values) => values.ToArray();
-    internal static T[] CollectionToArray<T>(IEnumerable<T> values, T[] target)
+    internal static object[] ToObjectArray(System.Collections.IEnumerable values) =>
+        values.Cast<object?>().ToArray()!;
+    internal static TTarget[] CollectionToArray<TSource, TTarget>(
+        IEnumerable<TSource> values, TTarget[] target)
     {
-        var source = values.ToArray();
+        var source = values.Select(value => (TTarget)(object?)value!).ToArray();
         if (target.Length < source.Length) return source;
         Array.Copy(source, target, source.Length);
         if (target.Length > source.Length) target[source.Length] = default!;
         return target;
     }
+    internal static ICollection<object> CastObjects(System.Collections.IEnumerable values) =>
+        values.Cast<object>().ToList();
+    internal static T CastReference<T>(object? value) => (T)value!;
+    internal static IComparer<object> EraseComparer<T>(IComparer<T> comparer) =>
+        Comparer<object>.Create(
+            (left, right) => comparer.Compare((T)left, (T)right));
     internal static T[] ToArrayLoose<T>(System.Collections.IEnumerable values) =>
         values.Cast<object?>().Select(value => (T)value!).ToArray();
     internal static IList<T> ToListValues<T>(IEnumerable<T> values) => values.ToList();

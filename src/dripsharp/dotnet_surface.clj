@@ -25,6 +25,8 @@
     "java-implicit-constructor"
     "java-synthetic-member"
     "java-closeable-disposable"
+    "java-functional-adapter-type"
+    "java-functional-adapter-member"
     "java-compatibility-type"
     "java-compatibility-member"
     "clr-special-accessor"})
@@ -192,11 +194,29 @@
         (Files/deleteIfExists output)
         (Files/deleteIfExists directory)))))
 
+(def ^:private csharp-keywords
+  #{"abstract" "as" "base" "bool" "break" "byte" "case" "catch" "char"
+    "checked" "class" "const" "continue" "decimal" "default" "delegate"
+    "do" "double" "else" "enum" "event" "explicit" "extern" "false"
+    "finally" "fixed" "float" "for" "foreach" "goto" "if" "implicit"
+    "in" "int" "interface" "internal" "is" "lock" "long" "namespace"
+    "new" "null" "object" "operator" "out" "override" "params" "private"
+    "protected" "public" "readonly" "ref" "return" "sbyte" "sealed"
+    "short" "sizeof" "stackalloc" "static" "string" "struct" "switch"
+    "this" "throw" "true" "try" "typeof" "uint" "ulong" "unchecked"
+    "unsafe" "ushort" "using" "virtual" "void" "volatile" "while"})
+
 (defn- normalize-owner [value]
-  (-> value
-      (str/replace #"`\d+" "")
-      (str/replace "$" ".")
-      (str/replace ".internal." ".@internal.")))
+  (->> (-> value
+           (str/replace #"`\d+" "")
+           (str/replace "$" ".")
+           (str/split #"\."))
+       (map (fn [segment]
+              (let [bare (str/replace segment #"^@" "")]
+                (if (contains? csharp-keywords bare)
+                  (str "@" bare)
+                  segment))))
+       (str/join ".")))
 
 (defn- reflected-shape [row]
   [(:assembly row) (normalize-owner (:owner row)) (:kind row) (:name row)
@@ -204,7 +224,8 @@
 
 (defn- generated-shape [row]
   (let [destination (get-in row [:generated :destination])]
-    [(:assembly destination) (:owner destination) (:kind destination)
+    [(:assembly destination) (normalize-owner (:owner destination))
+     (:kind destination)
      (:name destination) (:parameter-count destination)
      (:visibility destination)]))
 
@@ -230,35 +251,39 @@
     :java-synthetic-public-member "java-synthetic-member"
     "java-declaration"))
 
-(def ^:private compatibility-source
-  "runtime/DripSharp.JavaCompat.cs")
-
-(def ^:private compatibility-types
-  #{"IJavaOptional" "JavaByteBuffer" "JavaExecutorService"
-    "JavaDateTimeFormatter"
-    "JavaFilterOutputStream" "JavaInputStream" "JavaIterator" "JavaOptional"
-    "JavaOutputStream" "JavaPath" "JavaServerSocket" "JavaSslContext"
-    "JavaStream"})
-
 (defn- compatibility-type-name [owner]
   (let [simple (last (str/split owner #"[$.]"))]
     (str/replace simple #"`\d+$" "")))
 
-(defn- compatibility-provenance [workspace owner]
+(defn- compatibility-provenance [workspace owner sources]
   (let [name (compatibility-type-name owner)
-        file (paths/resolve-path workspace compatibility-source)
-        lines (str/split-lines (Files/readString file StandardCharsets/UTF_8))
-        pattern (re-pattern (str "^(?:public )?(?:sealed |abstract )?(?:class|interface) "
-                                 (java.util.regex.Pattern/quote name)
-                                 "(?:<|[ :{]|$)"))
-        matches (keep-indexed (fn [index line]
-                                (when (re-find pattern (str/trim line)) (inc index)))
-                              lines)]
-    (when-not (and (contains? compatibility-types name) (= 1 (count matches)))
+        pattern
+        (re-pattern
+         (str "^(?:(?:public|internal|protected|private|sealed|abstract|static|"
+              "readonly|partial)\\s+)*(?:class|interface|struct|enum|record)\\s+"
+              (java.util.regex.Pattern/quote name)
+              "(?:<|[\\s:{;]|$)"))
+        matches
+        (mapcat
+         (fn [source]
+           (let [file (paths/resolve-path workspace source)]
+             (when-not (paths/regular-file? file)
+               (fail! "Registered compatibility source is missing"
+                      {:kind :missing-java-compatibility-provenance-source
+                       :source source :owner owner}))
+             (keep-indexed
+              (fn [index line]
+                (when (re-find pattern (str/trim line))
+                  {:source source :line (inc index)}))
+              (str/split-lines (Files/readString file StandardCharsets/UTF_8)))))
+         sources)]
+    (when-not (= 1 (count matches))
       (fail! "Externally visible compatibility type lacks one exact source declaration"
              {:kind :unowned-java-compatibility-surface
-              :owner owner :type name :matches (vec matches)}))
-    (str compatibility-source ":" (first matches))))
+              :owner owner :type name :sources (vec sources)
+              :matches (vec matches)}))
+    (let [{:keys [source line]} (first matches)]
+      (str (str/replace source "\\" "/") ":" line))))
 
 (defn- compatibility-rule [row]
   (cond
@@ -282,6 +307,55 @@
              :source-declaration (get-in metadata [:row :identity])
              :translation-rule "java-closeable-disposable"))))
 
+(defn- functional-adapter-interface-owner [owner]
+  (let [segments (str/split (normalize-owner owner) #"\.")
+        adapter (last segments)]
+    (when-let [[_ interface-name]
+               (re-matches #"^__(.+)FunctionalAdapter$" adapter)]
+      (str/join "." (conj (vec (butlast segments)) interface-name)))))
+
+(defn- functional-adapter-row [workspace row metadata-rows]
+  (when-let [interface-owner
+             (functional-adapter-interface-owner (:owner row))]
+    (let [kind (:kind row)
+          owner-metadata
+          (filter
+           #(= interface-owner
+               (normalize-owner
+                (get-in % [:generated :destination :owner])))
+           metadata-rows)
+          method-candidates
+          (when (= "method" kind)
+            (filter
+             (fn [metadata]
+               (let [destination (get-in metadata [:generated :destination])]
+                 (and (= "method" (:kind destination))
+                      (= (:name row) (:name destination))
+                      (= (:parameter-count row)
+                         (:parameter-count destination)))))
+             owner-metadata))
+          candidates
+          (if (seq method-candidates)
+            method-candidates
+            (filter #(= "type"
+                        (get-in % [:generated :destination :kind]))
+                    owner-metadata))]
+      (when-not (= 1 (count candidates))
+        (fail! "Public functional adapter does not map to one Java interface declaration"
+               {:kind :unowned-java-functional-adapter-surface
+                :row row :interface-owner interface-owner
+                :matches (count candidates)}))
+      (let [metadata (first candidates)]
+        (assoc row
+               :source-provenance
+               (portable-provenance
+                workspace (get-in metadata [:generated :source :location]))
+               :source-declaration (get-in metadata [:row :identity])
+               :translation-rule
+               (if (= "type" kind)
+                 "java-functional-adapter-type"
+                 "java-functional-adapter-member"))))))
+
 (defn annotate-contract-rows!
   "Joins every reflected row either to one exact selected Java declaration or
   to an explicitly public reusable compatibility declaration/CLR accessor."
@@ -289,6 +363,7 @@
   (let [metadata-rows (:rows public-metadata)
         compatibility-namespace
         (or (:compatibility-namespace public-metadata) "DripSharp.Runtime")
+        compatibility-sources (:compatibility-sources public-metadata)
         metadata-by-shape (group-by generated-shape metadata-rows)
         reflected-by-shape (group-by reflected-shape reflected-rows)
         type-metadata
@@ -332,12 +407,14 @@
              (fn [row]
                (or
                 (closeable-disposable-row workspace row type-metadata)
+                (functional-adapter-row workspace row metadata-rows)
                 (when (str/starts-with?
                        (:owner row)
                        (str compatibility-namespace "."))
                   (assoc row
                          :source-provenance
-                         (compatibility-provenance workspace (:owner row))
+                         (compatibility-provenance
+                          workspace (:owner row) compatibility-sources)
                          :source-declaration
                          (str "clr|" (str/join "|" (surface-identity row)))
                          :translation-rule (compatibility-rule row)))
@@ -481,6 +558,7 @@
              "# java-implicit-constructor: a Java implicit default constructor emits .ctor.\n"
              "# java-synthetic-member: Java enum values/valueOf expansion emits a CLR row.\n"
              "# java-closeable-disposable: a public Java Closeable type emits its required IDisposable.Dispose member.\n"
+             "# java-functional-adapter-type/member: a public Java functional interface emits its reusable CLR delegate adapter.\n"
              "# java-compatibility-type/member: reusable Java compatibility shape is public because a selected public signature or base type requires it.\n"
              "# clr-special-accessor: CLR property/event metadata expands one compatibility declaration into its externally accessible special method.\n"
              (str/join "\t" contract-columns) "\n"

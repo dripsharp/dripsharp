@@ -108,6 +108,57 @@
                  :java-enum-value-of
                  :java-enum-name-to-string]))))
 
+(deftest derived-surface-includes-promoted-signature-types-and-override-roots
+  (let [fixture
+        (model!
+         {"example/Hidden.java"
+          (str "package example; class Hidden { "
+               "protected int value() { return 1; } }")
+          "example/Api.java"
+          (str "package example; public abstract class Api { "
+               "protected abstract Hidden hidden(); }")
+          "example/Base.java"
+          (str "package example; abstract class Base { "
+               "abstract void run(); }")
+          "example/Child.java"
+          (str "package example; public abstract class Child extends Base { "
+               "@Override protected abstract void run(); }")})
+        strategy (java-library/public-surface-strategy)
+        surface ((:read! strategy) (paths/workspace-root) {})
+        selected ((:validate-selected! strategy)
+                  (paths/workspace-root) surface (:model fixture))
+        evidence (:selection-evidence selected)
+        by-identity
+        (into {} (map (juxt #(get-in % [:row :identity]) identity) evidence))]
+    (is (= :java-public-signature-type-promotion
+           (:systematic-adaptation
+            (get by-identity
+                 (str "type:example.Hidden|systematic-adaptation="
+                      "java-public-signature-type-promotion")))))
+    (is (= :package-protected-override-family-widening
+           (:systematic-adaptation
+            (get by-identity
+                 (str "executable:example.Base#run()|systematic-adaptation="
+                      "package-protected-override-family-widening")))))))
+
+(deftest derived-surface-includes-mapped-runtime-interface-contracts
+  (let [fixture
+        (model!
+         {"example/PaintBase.java"
+          (str "package example; public abstract class PaintBase "
+               "implements java.awt.Paint {}")})
+        strategy (java-library/public-surface-strategy)
+        surface ((:read! strategy) (paths/workspace-root) {})
+        selected ((:validate-selected! strategy)
+                  (paths/workspace-root) surface (:model fixture))
+        adaptations
+        (->> (:selection-evidence selected)
+             (filter #(= :java-runtime-abstract-interface-contract
+                         (:systematic-adaptation %)))
+             (map #(get-in % [:row :name]))
+             set)]
+    (is (= #{"CreateContext" "GetTransparency"} adaptations))))
+
 (defn- configuration
   ([] (configuration #{}))
   ([capabilities]
@@ -248,10 +299,10 @@
                 "public interface Marker<T> {\n"
                 "public T convert(T value);\n"
                 "}\n\n"
-                "internal sealed class __MarkerFunctionalAdapter<T> : "
+                "public sealed class __MarkerFunctionalAdapter<T> : "
                 "global::Example.Java.Library.Marker<T> {\n"
                 "private readonly global::System.Func<T, T> implementation;\n\n"
-                "internal __MarkerFunctionalAdapter(global::System.Func<T, T> implementation) {\n"
+                "public __MarkerFunctionalAdapter(global::System.Func<T, T> implementation) {\n"
                 "this.implementation = implementation;\n"
                 "}\n\n"
                 "public T convert(T value) {\n"
@@ -311,7 +362,7 @@
         (slurp (str (paths/resolve-path (:project-root second)
                                         "src/Example/Java/Library/Handlers.cs")))]
     (is (str/includes? first-handler
-                       "internal sealed class __HandlerFunctionalAdapter"))
+                       "public sealed class __HandlerFunctionalAdapter"))
     (is (str/includes?
          first-handlers
          (str "return new global::Example.Java.Library.__HandlerFunctionalAdapter("
@@ -327,6 +378,31 @@
                                :command ["dotnet" "build" (:project-file first)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest functional-adapter-visibility-follows-its-java-interface
+  (let [fixture
+        (model!
+         {"example/Api.java"
+          (str "package example; public final class Api { "
+               "private interface Handler { String apply(String value); } "
+               "public static String run() { "
+               "Handler handler = value -> value; "
+               "return handler.apply(\"ok\"); } }")})
+        emission (emit! fixture 1)
+        source
+        (slurp
+         (str (paths/resolve-path (:project-root emission)
+                                  "src/Example/Java/Library/Api.cs")))]
+    (is (str/includes?
+         source "internal sealed class __HandlerFunctionalAdapter"))
+    (is (str/includes?
+         source "internal __HandlerFunctionalAdapter"))
+    (is (zero?
+         (:exit
+          (process/run! {:directory (:project-root emission)
+                         :command ["dotnet" "build" (:project-file emission)
+                                   "--nologo" "--configuration" "Release"
+                                   "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest type-mapping-is-exact-product-neutral-and-fails-closed
   (let [fixture
@@ -484,7 +560,9 @@
                       "public List<? extends String> values() { return null; } "
                       "public void accept(List<? extends String> input) {} "
                       "public void copy() { "
-                      "List<? extends String> local = field; field = local; } }")})
+                      "List<? extends String> local = field; field = local; } "
+                      "public void copyFromCall() { "
+                      "List<? extends String> local = values(); } }")})
         emission (emit! fixture 1)
         source
         (slurp (str (paths/resolve-path (:project-root emission)
@@ -501,9 +579,119 @@
     (is (str/includes?
          source
          "global::System.Collections.Generic.IList<string> local = this.field;"))
+    (is (str/includes?
+         source
+         (str "global::System.Collections.Generic.IReadOnlyList<string> local = "
+              "this.values();")))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest wildcard-collection-adaptation-preserves-java-generic-operations
+  (let [fixture
+        (model!
+         {"example/GenericCollections.java"
+          (str "package example; import java.util.Collection; "
+               "import java.util.Arrays; import java.util.Comparator; import java.util.HashSet; "
+               "import java.util.List; import java.util.Map; import java.util.Set; "
+               "import java.nio.file.attribute.AclEntryPermission; "
+               "public final class GenericCollections<E> { "
+               "public Object[] objects(Collection<E> values) { "
+               "return values.toArray(); } "
+               "public <X> X[] typed(Collection<E> values, X[] target) { "
+               "return values.toArray(target); } "
+               "public String text(E value) { return (String)value; } "
+               "public boolean update(Collection<E> values, Collection<?> other) { "
+               "return values.containsAll(other) || values.removeAll(other) "
+               "|| values.retainAll(other); } "
+               "private void accept(Collection<?> values) {} "
+               "public void pass(Collection<E> values) { accept(values); } "
+               "private void acceptMap(Map<?, ?> values) {} "
+               "public void passMap(Map<String, E> values) { acceptMap(values); } "
+               "private void acceptValues(Map<String, ?> values) {} "
+               "public void passValues(Map<String, E> values) { acceptValues(values); } "
+               "public Map<?, ?> copyMap(Map<String, E> values) { return values; } "
+               "public static <T> void sort(List<T> values, Comparator<? super T> cmp) { "
+               "Object[] array = values.toArray(); sortObjects(array, (Comparator)cmp); } "
+               "private static void sortObjects(Object[] values, Comparator<Object> cmp) {} "
+               "private Set<AclEntryPermission> permissions() { "
+               "return new HashSet<>(Arrays.asList(AclEntryPermission.READ_DATA)); } "
+               "public String first(List<String> values) { "
+               "return values.stream().findFirst().orElse(null); } }")})
+        emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emitted)
+                     "src/Example/Java/Library/GenericCollections.cs")))]
+    (is (str/includes? source "JavaCompat.ToObjectArray(values)"))
+    (is (str/includes? source "JavaCompat.CollectionToArray(values, target)"))
+    (is (str/includes? source "JavaCompat.CastReference<string>(value)"))
+    (is (str/includes? source "JavaCompat.CastObjects(other)"))
+    (is (str/includes?
+         source
+         "JavaCompat.CastDictionary<object, object>(values)"))
+    (is (str/includes?
+         source
+         "JavaCompat.CastDictionary<string, object>(values)"))
+    (is (str/includes? source "JavaCompat.EraseComparer(cmp)"))
+    (is (not (str/includes? source "CastObjects(global::DripSharp.Runtime.JavaCompat.AsList")))
+    (is (str/includes? source ".OrElse(default!)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest boxed-collection-with-explicit-null-preserves-nullable-elements
+  (let [fixture
+        (model!
+         {"example/NullableElements.java"
+          (str "package example; import java.util.ArrayList; "
+               "import java.util.Collections; import java.util.List; import java.util.Objects; "
+               "public final class NullableElements { "
+               "private List<Float> cached; "
+               "public List<Float> values() { "
+               "List<Float> values = new ArrayList<>(); "
+               "values.add(1.0f); values.add(null); return values; } "
+               "public List<Float> cached() { "
+               "if (cached == null) { cached = values(); } return cached; } "
+               "public List<Float> optional(boolean present) { "
+               "return present ? values() : Collections.emptyList(); } "
+               "public float first() { Float value = values().get(0); "
+               "return value == null ? 0 : value; } "
+               "public int ordinary(List<Integer> values) { "
+               "Integer value = values.get(0); return value; } "
+               "public boolean complete() { "
+               "return values().stream().allMatch(Objects::nonNull); } }")})
+        emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emitted)
+                     "src/Example/Java/Library/NullableElements.cs")))]
+    (is (str/includes?
+         source
+         "public global::System.Collections.Generic.IList<float?> values()"))
+    (is (str/includes?
+         source
+         "global::System.Collections.Generic.IList<float?> values = "))
+    (is (str/includes?
+         source
+         "private global::System.Collections.Generic.IList<float?> __field_cached"))
+    (is (str/includes?
+         source
+         "public global::System.Collections.Generic.IList<float?> optional(bool present)"))
+    (is (str/includes? source "JavaCompat.CastList<float?>"))
+    (is (str/includes?
+         source
+         "float? value = global::DripSharp.Runtime.JavaCompat.ListGet"))
+    (is (str/includes? source "JavaCompat.Unbox(value)"))
+    (is (str/includes? source "int value = global::DripSharp.Runtime.JavaCompat.ListGet"))
+    (is (str/includes? source "(value0) => value0 is not null"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -604,7 +792,8 @@
                       "return present ? 7 : null; } "
                       "public int required() { return maybe(true); } "
                       "public void add(List<Integer> values) { "
-                      "values.add(maybe(true)); } "
+                      "values.add(maybe(true)); "
+                      "values.add(Integer.valueOf(\"7\")); } "
                       "public Boolean state() { return state; } "
                       "public void state(Boolean value) { state = value; } }")})
         emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
@@ -621,6 +810,10 @@
          source
          (str "global::DripSharp.Runtime.JavaCompat.Add(values, "
               "global::DripSharp.Runtime.JavaCompat.Unbox(this.maybe(true)));")))
+    (is (str/includes?
+         source
+         (str "global::DripSharp.Runtime.JavaCompat.Add(values, "
+              "global::DripSharp.Runtime.JavaCompat.ParseInt(\"7\", 10));")))
     (is (str/includes? source "public bool? state()"))
     (is (str/includes? source "public void state(bool? value)"))
     (is (zero? (:exit
@@ -661,6 +854,51 @@
               "global::DripSharp.Runtime.JavaCompat.Unbox(right));")))
     (is (str/includes? source "foreach (int value in values)"))
     (is (not (str/includes? source "Unbox(value)")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest dependency-boxed-return-preserves-nullable-local-and-unboxing
+  (let [fixture
+        (model!
+         {"example/UsesDependency.java"
+          (str "package example; import dependency.Headers; "
+               "public final class UsesDependency { "
+               "public static int read(Headers headers) { "
+               "Integer value = headers.value(); "
+               "return value == null ? 0 : value; } }")}
+         {"dependency/Headers.java"
+          (str "package dependency; public final class Headers { "
+               "public Integer value() { return null; } }")})
+        emitted
+        (emit! fixture 1 #{:java-compat :java-regex-unicode}
+               {:external-namespace-prefixes
+                {"dependency" "Example.Dependency"}})
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emitted)
+                     "src/Example/Java/Library/UsesDependency.cs")))]
+    (is (str/includes?
+         source
+         "int? value = headers.Value();"))
+    (is (str/includes?
+         source
+         "return ((value == default!) ? 0 : global::DripSharp.Runtime.JavaCompat.Unbox(value));"))))
+
+(deftest generic-method-results-compare-to-null-with-unconstrained-semantics
+  (let [fixture
+        (model! {"example/GenericValue.java"
+                 (str "package example; public final class GenericValue<T> { "
+                      "private T value; public T get() { return value; } "
+                      "public boolean present() { return get() != null; } }")})
+        emitted (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emitted)
+                     "src/Example/Java/Library/GenericValue.cs")))]
+    (is (str/includes? source "return (this.get() is not null);"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emitted)
                                :command ["dotnet" "build" (:project-file emitted)
@@ -1275,7 +1513,8 @@
     (is (str/includes?
          first-source
          (str "global::System.Collections.Generic.ISet<string> visited = "
-              "new global::System.Collections.Generic.HashSet<string>(names.Count);\n"
+              "new global::System.Collections.Generic.HashSet<string>("
+              "global::DripSharp.Runtime.JavaCompat.CollectionCount(names));\n"
               "return visited.Add(name);")))
     (is (str/includes?
          first-source
@@ -1290,10 +1529,11 @@
     (is (str/includes?
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat.CollectionToArray("
-              "names, new string[names.Count]);")))
+              "names, new string[global::DripSharp.Runtime.JavaCompat."
+              "CollectionCount(names)]);")))
     (is (str/includes?
          first-source
-         "return global::DripSharp.Runtime.JavaCompat.ToArray(names);"))
+         "return global::DripSharp.Runtime.JavaCompat.ToObjectArray(names);"))
     (is (str/includes?
          first-source
          "global::DripSharp.Runtime.JavaCompat.SortList(names, comparator);"))
@@ -1644,7 +1884,8 @@
               "return new string(result);")))
     (is (str/includes?
          first-source
-         (str "return ((('a' <= value) && (value <= 'z')) ? "
+         (str "return ((((int)('a') <= (int)(value)) && "
+              "((int)(value) <= (int)('z'))) ? "
               "(char)((value - 32)) : value);")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
@@ -1701,7 +1942,8 @@
          (str "global::DripSharp.Runtime.JavaCompat.OutputStreamWrite(output, "
               "global::DripSharp.Runtime.JavaCompat.StringGetBytes(value, "
               "global::DripSharp.Runtime.JavaStandardCharsets.USASCII));\n"
-              "global::DripSharp.Runtime.JavaCompat.OutputStreamWrite(output, ':');\n"
+              "global::DripSharp.Runtime.JavaCompat.OutputStreamWrite("
+              "output, (int)(':'));\n"
               "global::DripSharp.Runtime.JavaCompat.OutputStreamWrite(output, "
               "global::DripSharp.Runtime.JavaCompat.StringGetBytes(value, "
               "global::DripSharp.Runtime.JavaStandardCharsets.ISO88591));\n"
@@ -1980,7 +2222,8 @@
          first-source
          (str "global::DripSharp.Runtime.JavaFuture<string> future = "
               "executor.Submit(callable);\n"
-              "return future.Get(5, global::DripSharp.Runtime.JavaTimeUnit.SECONDS);")))
+              "return future.Get((long)(5), "
+              "global::DripSharp.Runtime.JavaTimeUnit.SECONDS);")))
     (is (str/includes?
          first-source
          (str "global::DripSharp.Runtime.JavaCompat.PrintStackTrace(cause);\n"
@@ -2167,7 +2410,7 @@
     (is (str/includes?
          first-source
          (str "executor.Shutdown();\n"
-              "bool stopped = executor.AwaitTermination(1, "
+              "bool stopped = executor.AwaitTermination((long)(1), "
               "global::DripSharp.Runtime.JavaTimeUnit.SECONDS);\n"
               "if (!stopped) {\nexecutor.ShutdownNow();\n}\nreturn stopped;")))
     (is (str/includes?
@@ -2454,7 +2697,8 @@
               "return global::DripSharp.Runtime.JavaCompat.UriPort(uri);\n}\n}")))
     (is (str/includes?
          first-source
-         (str "if (((left == default!) || (left.GetType() != right.GetType()))) {\n"
+         (str "if (((left == default!) || (((object)(left)).GetType() != "
+              "((object)(right)).GetType()))) {\n"
               "return false;\n}\nreturn true;")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
@@ -2681,8 +2925,10 @@
                       "public void run() { } }; } }")})
         error (caught #(emit! fixture 1))]
     (is (= :unsupported-destination-rule (:kind (ex-data error))))
-    (is (str/includes? (.getMessage error)
-                       "Anonymous class requires exact Iterator, X509TrustManager, or project-class semantics"))))
+    (is (str/includes?
+         (.getMessage error)
+         (str "requires exact Iterator, X509TrustManager, FilterOutputStream, "
+              "LinkedHashMap, or project-class semantics")))))
 
 (deftest capturing-anonymous-project-subclasses-preserve-virtual-dispatch-and-super
   (let [fixture
@@ -3240,17 +3486,22 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-list-contains-all-remains-fail-closed
+(deftest list-contains-all-uses-the-reusable-collection-contract
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.util.List; "
                       "public final class Unsupported { static boolean hasAll("
                       "List<String> values, List<String> required) { "
                       "return values.containsAll(required); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.util.List#containsAll(java.util.Collection)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         (str "return global::DripSharp.Runtime.JavaCompat.ContainsAll("
+              "values, global::DripSharp.Runtime.JavaCompat.CastObjects(required));")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))))
 
 (deftest byte-array-equality-uses-exact-java-null-and-element-semantics
   (let [fixture
@@ -3472,7 +3723,7 @@
          source
          (str "digest.Update(input);\n"
               "digest.Update(input, 0, 1);\n"
-              "digest.Update(1);\n"
+              "digest.Update(unchecked((sbyte)(1)));\n"
               "return digest.Digest(input);")))
     (is (str/includes?
          source
@@ -3998,16 +4249,20 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-matcher-find-remains-fail-closed
+(deftest matcher-find-uses-the-reusable-matcher-contract
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.util.regex.Pattern; "
                       "public final class Unsupported { static boolean find("
                       "Pattern pattern, String value) { return pattern.matcher(value).find(); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.util.regex.Matcher#find()"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.RegexMatcher(pattern, value).Find();"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))))
 
 (deftest neighboring-pattern-flags-remain-fail-closed
   (let [fixture
@@ -4210,17 +4465,21 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-sized-pushback-construction-remains-fail-closed
+(deftest sized-pushback-construction-uses-the-reusable-stream
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.io.InputStream; "
                       "import java.io.PushbackInputStream; public final class Unsupported { "
                       "static PushbackInputStream create(InputStream source) { "
                       "return new PushbackInputStream(source, 2); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.io.PushbackInputStream#<init>(java.io.InputStream,int)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         "new global::DripSharp.Runtime.JavaPushbackInputStream(source, 2)"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))))
 
 (deftest static-initializer-blocks-emit-static-constructors
   (let [fixture
@@ -4373,7 +4632,8 @@
          "global::DripSharp.Runtime.JavaCompat.OpenUrlStream(location)"))
     (is (str/includes?
          first-source
-         "context.Init(keyManagers, trustManagers, default!);"))
+         (str "context.Init(keyManagers, trustManagers, "
+              "(global::DripSharp.Runtime.JavaRandom)default!);")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -4383,16 +4643,18 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-keystore-size-remains-fail-closed
+(deftest keystore-size-uses-the-reusable-runtime-contract
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.security.KeyStore; "
                       "public final class Unsupported { static int size(KeyStore store) "
                       "throws Exception { return store.size(); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.security.KeyStore#size()"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes? source "return store.Size();"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))))
 
 (deftest decimal-integer-parsing-uses-the-reusable-java-parser
   (let [fixture
@@ -4561,10 +4823,12 @@
          "global::DripSharp.Runtime.JavaCompat.ListIsEmpty(values)"))
     (is (str/includes?
          first-source
-         "global::DripSharp.Runtime.JavaCompat.ListGet(values, (values.Count - 1))"))
+         (str "global::DripSharp.Runtime.JavaCompat.ListGet(values, "
+              "(global::DripSharp.Runtime.JavaCompat.CollectionCount(values) - 1))")))
     (is (str/includes?
          first-source
-         "global::DripSharp.Runtime.JavaCompat.ListRemove(values, (values.Count - 1))"))
+         (str "global::DripSharp.Runtime.JavaCompat.ListRemove(values, "
+              "(global::DripSharp.Runtime.JavaCompat.CollectionCount(values) - 1))")))
     (is (str/includes?
          first-source
          "global::DripSharp.Runtime.JavaCompat.Add(values, value);"))
@@ -4651,7 +4915,8 @@
                                         "src/Example/Java/Library/Search.cs")))]
     (is (str/includes?
          first-source
-         "return global::DripSharp.Runtime.JavaCompat.StringLastIndexOf(value, ' ');"))
+         (str "return global::DripSharp.Runtime.JavaCompat.StringLastIndexOf("
+              "value, (int)(' '));")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit

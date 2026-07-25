@@ -17,6 +17,7 @@
             [dripsharp.spoon :as spoon])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files]
+           [java.lang.reflect Method]
            [java.util Base64 IdentityHashMap WeakHashMap]
            [spoon.reflect.code CtArrayRead CtArrayWrite CtAssert CtAssignment
             CtBinaryOperator CtBlock CtBreak CtCase CtCatch CtCatchVariable CtComment
@@ -423,6 +424,19 @@
   (and reference
        (contains? boxed-primitive-types (.getQualifiedName reference))))
 
+(declare nullable-boxed-collection-expression?)
+
+(def ^:private nonnullable-boxed-factory-keys
+  #{"executable:java.lang.Double#valueOf(java.lang.String)"
+    "executable:java.lang.Integer#valueOf(java.lang.String)"})
+
+(defn- nullable-runtime-boxed-primitive-method? [occurrence]
+  (let [declaration (:declaration occurrence)]
+    (and (instance? Method declaration)
+         (not (contains? nonnullable-boxed-factory-keys (:key occurrence)))
+         (contains? boxed-primitive-types
+                    (.getName (.getReturnType ^Method declaration))))))
+
 (defn- anonymous-method? [^CtElement element]
   (and (instance? CtMethod element)
        (let [owner (.getDeclaringType ^CtMethod element)]
@@ -467,6 +481,12 @@
                        #{"executable:java.util.Map#get(java.lang.Object)"
                          "executable:java.util.TreeMap#get(java.lang.Object)"}
                        (:key occurrence))
+                      (and
+                       (= "executable:java.util.List#get(int)"
+                          (:key occurrence))
+                       (nullable-boxed-collection-expression?
+                        (.getTarget ^CtInvocation initializer) []))
+                      (nullable-runtime-boxed-primitive-method? occurrence)
                       (and (instance? CtMethod declaration)
                            (not (.isShadow ^CtMethod declaration))
                            (not (anonymous-method? declaration))))))))
@@ -486,9 +506,154 @@
                 "global::System.Collections.Generic.IReadOnlyList"))
          [(type-node ctx (.getBoundingType ^CtWildcardReference argument))])))))
 
+(defn- unbounded-wildcard-reference? [^CtTypeReference reference]
+  (and (instance? CtWildcardReference reference)
+       (= "?" (.getSimpleName reference))
+       (= "java.lang.Object"
+          (some-> reference
+                  ^CtWildcardReference
+                  .getBoundingType
+                  .getQualifiedName))))
+
+(defn- unbounded-wildcard-collection-reference?
+  [^CtTypeReference reference]
+  (and (= "java.util.Collection" (some-> reference .getQualifiedName))
+       (= 1 (count (.getActualTypeArguments reference)))
+       (unbounded-wildcard-reference?
+        (first (.getActualTypeArguments reference)))))
+
+(defn- unbounded-wildcard-map-reference?
+  [^CtTypeReference reference]
+  (and (= "java.util.Map" (some-> reference .getQualifiedName))
+       (= 2 (count (.getActualTypeArguments reference)))
+       (some unbounded-wildcard-reference?
+             (.getActualTypeArguments reference))))
+
+(defn- boxed-primitive-collection-element
+  [^CtTypeReference reference]
+  (when (and (contains? #{"java.util.Collection" "java.util.List"}
+                        (some-> reference .getQualifiedName))
+             (= 1 (count (.getActualTypeArguments reference))))
+    (let [element (first (.getActualTypeArguments reference))]
+      (when (boxed-primitive-reference? element) element))))
+
+(defn- enclosing-executable-element [^CtElement element]
+  (loop [current (when (.isParentInitialized element) (.getParent element))]
+    (cond
+      (nil? current) nil
+      (instance? CtExecutable current) current
+      (.isParentInitialized ^CtElement current)
+      (recur (.getParent ^CtElement current))
+      :else nil)))
+
+(defn- null-adding-boxed-collection-local?
+  [^CtLocalVariable local]
+  (when (boxed-primitive-collection-element (.getType local))
+    (when-let [executable (enclosing-executable-element local)]
+      (some
+       (fn [^CtInvocation invocation]
+         (let [target (.getTarget invocation)]
+           (and (= "add" (.getSimpleName (.getExecutable invocation)))
+                (instance? CtVariableAccess target)
+                (identical?
+                 local
+                 (some-> target .getVariable .getDeclaration))
+                (some #(and (instance? CtLiteral %)
+                            (nil? (.getValue ^CtLiteral %)))
+                      (.getArguments invocation)))))
+       (.getElements executable (TypeFilter. CtInvocation))))))
+
+(declare nullable-boxed-collection-declaration?)
+
+(defn- nullable-boxed-collection-expression?
+  [^CtExpression expression seen]
+  (cond
+    (nil? expression)
+    false
+
+    (instance? CtConditional expression)
+    (or (nullable-boxed-collection-expression?
+         (.getThenExpression ^CtConditional expression) seen)
+        (nullable-boxed-collection-expression?
+         (.getElseExpression ^CtConditional expression) seen))
+
+    (instance? CtInvocation expression)
+    (let [declaration (some-> expression .getExecutable .getDeclaration)]
+      (and (instance? CtMethod declaration)
+           (nullable-boxed-collection-declaration?
+            declaration (.getType ^CtMethod declaration) seen)))
+
+    (instance? CtVariableAccess expression)
+    (let [declaration (some-> expression .getVariable .getDeclaration)]
+      (and (instance? CtElement declaration)
+           (nullable-boxed-collection-declaration?
+            declaration (.getType declaration) seen)))
+
+    :else false))
+
+(defn- nullable-boxed-collection-declaration?
+  ([^CtElement element ^CtTypeReference reference]
+   (nullable-boxed-collection-declaration? element reference []))
+  ([^CtElement element ^CtTypeReference reference seen]
+   (let [declaration
+         (if (instance? CtVariableAccess element)
+           (or (some-> element .getVariable .getDeclaration) element)
+           element)]
+     (and
+      (boxed-primitive-collection-element reference)
+      (not-any? #(identical? declaration %) seen)
+      (let [seen (conj seen declaration)]
+        (cond
+          (instance? CtLocalVariable declaration)
+          (or
+           (null-adding-boxed-collection-local? declaration)
+           (nullable-boxed-collection-expression?
+            (.getDefaultExpression ^CtLocalVariable declaration) seen))
+
+          (instance? CtField declaration)
+          (let [owner (.getDeclaringType ^CtField declaration)]
+            (some
+             (fn [^CtAssignment assignment]
+               (let [assigned (.getAssigned assignment)]
+                 (and
+                  (instance? CtVariableAccess assigned)
+                  (identical?
+                   declaration
+                   (some-> assigned .getVariable .getDeclaration))
+                  (nullable-boxed-collection-expression?
+                   (.getAssignment assignment) seen))))
+             (.getElements owner (TypeFilter. CtAssignment))))
+
+          (instance? CtMethod declaration)
+          (when-let [body (.getBody ^CtMethod declaration)]
+            (some
+             (fn [^CtReturn return]
+               (nullable-boxed-collection-expression?
+                (.getReturnedExpression return) seen))
+             (.getElements body (TypeFilter. CtReturn))))
+
+          :else false))))))
+
+(defn- nullable-boxed-collection-node
+  [ctx ^CtTypeReference reference]
+  (let [[target _rule]
+        (mapped-type-base ctx reference (occurrence! ctx reference :type))
+        element (boxed-primitive-collection-element reference)]
+    (csharp/generic-name
+     (raw target)
+     [(sequence-node [(type-node ctx element) (raw "?")])])))
+
 (defn- declaration-type-node [ctx ^CtElement element ^CtTypeReference reference]
-  (let [base (or (when (or (instance? CtParameter element)
-                           (instance? CtMethod element))
+  (let [base (or (when (nullable-boxed-collection-declaration?
+                        element reference)
+                   (nullable-boxed-collection-node ctx reference))
+                 (when (or (instance? CtParameter element)
+                           (instance? CtMethod element)
+                           (and (instance? CtLocalVariable element)
+                                (instance?
+                                 CtInvocation
+                                 (.getDefaultExpression
+                                  ^CtLocalVariable element))))
                    (covariant-list-node ctx element reference))
                  (type-node ctx reference))]
     (if (and (not (.isPrimitive reference))
@@ -1038,6 +1203,7 @@
     "executable:java.util.List#listIterator()"
     "executable:java.util.List#listIterator(int)"
     "executable:java.util.List#containsAll(java.util.Collection)"
+    "executable:java.util.Collection#containsAll(java.util.Collection)"
     "executable:java.util.Collection#size()"
     "executable:java.util.ListIterator#set(java.lang.Object)"
     "executable:java.util.ListIterator#next()"
@@ -2098,6 +2264,20 @@
                   (type-node ctx (second arguments))
                   (raw ">(") inner (raw ")")])
 
+                (and (= "java.util.Comparator" qualified-name)
+                     (empty? arguments))
+                (sequence-node
+                 [(raw "global::DripSharp.Runtime.JavaCompat.EraseComparer(")
+                  inner (raw ")")])
+
+                (and (not (.isPrimitive cast))
+                     (instance?
+                      CtTypeParameterReference
+                      (.getType expression)))
+                (sequence-node
+                 [(raw "global::DripSharp.Runtime.JavaCompat.CastReference<")
+                  (type-node ctx cast) (raw ">(") inner (raw ")")])
+
                 :else
                 (sequence-node [(raw "(") (type-node ctx cast)
                                 (raw ")(") inner
@@ -2115,6 +2295,40 @@
                (maybe-unbox-node ctx assignment node)
                node)]
     (cond
+      (nullable-boxed-collection-declaration?
+       assigned assigned-reference)
+      (let [element
+            (boxed-primitive-collection-element assigned-reference)]
+        (sequence-node
+         [(raw "global::DripSharp.Runtime.JavaCompat.CastList<")
+          (type-node ctx element) (raw "?>(") node (raw ")")]))
+
+      (and (instance? CtMethod assigned)
+           (covariant-list-node ctx assigned assigned-reference)
+           (= "java.util.List" assignment-type)
+           (= 1 (count (.getActualTypeArguments (.getType assignment))))
+           (not=
+            (some->
+             (first (.getActualTypeArguments (.getType assignment)))
+             .getQualifiedName)
+            (some->
+             (first (.getActualTypeArguments assigned-reference))
+             ^CtWildcardReference
+             .getBoundingType
+             .getQualifiedName)))
+      (let [bound
+            (.getBoundingType
+             ^CtWildcardReference
+             (first (.getActualTypeArguments assigned-reference)))]
+        (sequence-node
+         [(raw "global::DripSharp.Runtime.JavaCompat.ToReadOnlyList<")
+          (type-node ctx bound) (raw ">(") node (raw ")")]))
+
+      (unbounded-wildcard-map-reference? assigned-reference)
+      (sequence-node
+       [(raw "global::DripSharp.Runtime.JavaCompat.CastDictionary<object, object>(")
+        node (raw ")")])
+
       (and (= "byte" assigned-type)
            (not= "byte" assignment-type))
       (sequence-node [(raw "unchecked((sbyte)(") node (raw "))")])
@@ -2172,6 +2386,13 @@
                   "executable:java.util.TreeMap#get(java.lang.Object)"}
                 (:key occurrence))
                (boxed-primitive-reference? (.getType expression)))
+          (and (= "executable:java.util.List#get(int)"
+                  (:key occurrence))
+               (boxed-primitive-reference? (.getType expression))
+               (nullable-boxed-collection-expression?
+                (.getTarget ^CtInvocation expression) []))
+          (and (boxed-primitive-reference? (.getType expression))
+               (nullable-runtime-boxed-primitive-method? occurrence))
           (and (instance? CtMethod declaration) (not (.isShadow ^CtMethod declaration)) (nullable-boxed-declaration? ctx declaration (.getType ^CtMethod declaration)))))
 
     (instance? CtVariableRead expression)
@@ -2204,6 +2425,26 @@
         argument-name (some-> argument .getType .getQualifiedName)
         value-node (maybe-unbox-node ctx argument node)]
     (cond
+      (unbounded-wildcard-collection-reference? expected)
+      (compat-call "CastObjects" [node])
+
+      (unbounded-wildcard-map-reference? expected)
+      (let [key-reference (first (.getActualTypeArguments expected))]
+        (sequence-node
+         [(raw "global::DripSharp.Runtime.JavaCompat.CastDictionary<")
+          (type-node ctx key-reference) (raw ", object>(") node (raw ")")]))
+
+      (and (= "java.util.Collection" expected-name)
+           (= "java.util.List" argument-name)
+           (covariant-list-node ctx argument (.getType argument)))
+      (let [bound
+            (.getBoundingType
+             ^CtWildcardReference
+             (first (.getActualTypeArguments (.getType argument))))]
+        (sequence-node
+         [(raw "global::DripSharp.Runtime.JavaCompat.ToListValues<")
+          (type-node ctx bound) (raw ">(") node (raw ")")]))
+
       (and (= "byte" expected-name)
            (not= "byte" argument-name))
       (sequence-node [(raw "unchecked((sbyte)(") value-node (raw "))")])
@@ -2306,6 +2547,13 @@
                  (some-> expression .getType .getQualifiedName))
     (sequence-node [(raw "(int)(") node (raw ")")])
     node))
+
+(defn- type-parameter-expression? [^CtExpression expression]
+  (or (instance? CtTypeParameterReference (.getType expression))
+      (and (instance? CtInvocation expression)
+           (instance?
+            CtTypeParameterReference
+            (some-> expression .getExecutable .getDeclaration .getType)))))
 
 (defn- binary-operator [^CtBinaryOperator expression]
   (case (str (.getKind expression))
@@ -3318,7 +3566,7 @@
                 (compat-call "CollectionIsEmpty" [target-node])
 
                 "executable:java.util.Collection#size()"
-                (sequence-node [target-node (raw ".Count")])
+                (compat-call "CollectionCount" [target-node])
 
                 ("executable:java.util.Collection#removeAll(java.util.Collection)"
                  "executable:java.util.AbstractCollection#removeAll(java.util.Collection)"
@@ -4691,10 +4939,10 @@
                 (compat-call "CollectionContains" (into [target-node] arguments))
 
                 "executable:java.util.List#size()"
-                (sequence-node [target-node (raw ".Count")])
+                (compat-call "CollectionCount" [target-node])
 
                 "executable:java.util.ArrayList#size()"
-                (sequence-node [target-node (raw ".Count")])
+                (compat-call "CollectionCount" [target-node])
 
                 "executable:java.util.ArrayList#remove(int)"
                 (compat-call "ListRemove" (into [target-node] arguments))
@@ -4708,7 +4956,8 @@
                 "executable:java.util.List#listIterator(int)"
                 (compat-call "ListIterator" (into [target-node] arguments))
 
-                "executable:java.util.List#containsAll(java.util.Collection)"
+                ("executable:java.util.List#containsAll(java.util.Collection)"
+                 "executable:java.util.Collection#containsAll(java.util.Collection)")
                 (compat-call "ContainsAll" (into [target-node] arguments))
 
                 "executable:java.util.ListIterator#set(java.lang.Object)"
@@ -4753,7 +5002,7 @@
                 ("executable:java.util.Collection#toArray()"
                  "executable:java.util.ArrayList#toArray()"
                  "executable:java.util.List#toArray()")
-                (compat-call "ToArray" [target-node])
+                (compat-call "ToObjectArray" [target-node])
 
                 ("executable:java.util.Collection#toArray(java.lang.Object[])"
                  "executable:java.util.ArrayList#toArray(java.lang.Object[])"
@@ -4790,7 +5039,17 @@
 
                 "executable:java.util.Optional#orElse(java.lang.Object)"
                 (sequence-node [target-node (raw ".OrElse(")
-                                (sequence-node arguments ", ") (raw ")")])
+                                (if (and (= 1 (count (.getArguments element)))
+                                         (instance?
+                                          CtLiteral
+                                          (first (.getArguments element)))
+                                         (nil?
+                                          (.getValue
+                                           ^CtLiteral
+                                           (first (.getArguments element)))))
+                                  (raw "default!")
+                                  (sequence-node arguments ", "))
+                                (raw ")")])
 
                 "executable:java.util.Optional#orElseGet(java.util.function.Supplier)"
                 (sequence-node [target-node (raw ".OrElseGet(")
@@ -5561,12 +5820,10 @@
                      right-value)
              generic-null-comparison?
              (and (contains? #{"EQ" "NE"} kind)
-                  (or (and (instance? CtTypeParameterReference
-                                      (.getType left-expression))
+                  (or (and (type-parameter-expression? left-expression)
                            (instance? CtLiteral right-expression)
                            (nil? (.getValue ^CtLiteral right-expression)))
-                      (and (instance? CtTypeParameterReference
-                                      (.getType right-expression))
+                      (and (type-parameter-expression? right-expression)
                            (instance? CtLiteral left-expression)
                            (nil? (.getValue ^CtLiteral left-expression)))))
              node
@@ -6691,7 +6948,13 @@
 
 (defn- implicit-constructor-visibility
   [^CtType owner ^CtConstructor constructor]
-  (member-visibility owner constructor (emitted-type-visibility owner)))
+  (member-visibility
+   owner constructor
+   (cond
+     (.hasModifier owner ModifierKind/PUBLIC) "public"
+     (.hasModifier owner ModifierKind/PROTECTED) "protected internal"
+     (.hasModifier owner ModifierKind/PRIVATE) "private"
+     :else "internal")))
 
 (defn- type-formals-node [^CtType type]
   (let [parameters (vec (.getFormalCtTypeParameters type))]
@@ -7896,16 +8159,18 @@
 (defn- project-functional-adapter-node
   [ctx ^CtInterface interface ^CtMethod method]
   (let [adapter-name (functional-adapter-name interface)
+        visibility (emitted-type-visibility interface)
         delegate-type (functional-delegate-type-node ctx method)
         parameters (vec (.getParameters method))
         parameter-nodes (mapv #(parameter-node ctx %) parameters)
         arguments (mapv #(raw (identifier (.getSimpleName ^CtParameter %))) parameters)
         void? (= "void" (.getQualifiedName (.getType method)))]
     (sequence-node
-     [(raw (str "public sealed class " adapter-name))
+     [(raw (str visibility " sealed class " adapter-name))
       (type-formals-node interface)
       (raw " : ") (owner-type-node ctx interface) (raw " {\nprivate readonly ")
-      delegate-type (raw " implementation;\n\npublic ") (raw adapter-name)
+      delegate-type (raw (str " implementation;\n\n" visibility " "))
+      (raw adapter-name)
       (raw "(") delegate-type (raw " implementation) {\nthis.implementation = implementation;\n}\n\npublic ")
       (declaration-type-node ctx method (.getType method))
       (raw (str " " (method-name ctx interface method) "("))
@@ -8724,7 +8989,8 @@
   (loop [current type]
     (or (nil? current)
         (and (or (accessible? current)
-                 (public-derived-type? current))
+                 (public-derived-type? current)
+                 (public-signature-type? current))
              (recur (.getDeclaringType ^CtType current))))))
 
 (defn- surface-row
@@ -8769,6 +9035,35 @@
      :shape shape
      :row (surface-row type shape systematic-adaptation)}))
 
+(defn- runtime-interface-surface-entries [^CtClass type]
+  (mapcat
+   (fn [^CtTypeReference reference]
+     (let [interface-name (.getQualifiedName reference)
+           methods
+           (case interface-name
+             "java.awt.Paint"
+             [["createContext" "CreateContext" 5]
+              ["getTransparency" "GetTransparency" 0]]
+
+             "java.awt.PaintContext"
+             [["getRaster" "GetRaster" 4]]
+
+             [])]
+       (keep
+        (fn [[source-name destination-name parameter-count]]
+          (when (empty? (.getMethodsByName type source-name))
+            (synthetic-surface-entry
+             type destination-name parameter-count
+             {:kind :java-runtime-abstract-interface-contract
+              :identity
+              (str "java-runtime-abstract-interface-contract:"
+                   interface-name "#" source-name "/" parameter-count)})))
+        methods)))
+   (filter
+    #(contains? runtime-abstract-interface-types
+                (.getQualifiedName ^CtTypeReference %))
+    (.getSuperInterfaces type))))
+
 (defn- live-surface [resolved-model]
   (->> (java/project-roots resolved-model)
        (mapcat (fn [^CtType root]
@@ -8781,22 +9076,47 @@
                    (let [promoted-base?
                          (and (not (accessible? type))
                               (public-derived-type? type))
+                         promoted-signature?
+                         (and (not (accessible? type))
+                              (not promoted-base?)
+                              (public-signature-type? type))
                          type-adaptation
-                         (when promoted-base?
+                         (cond
+                           promoted-base?
                            {:kind :java-public-base-type-promotion
-                            :identity "java-public-base-type-promotion"})
+                            :identity "java-public-base-type-promotion"}
+
+                           promoted-signature?
+                           {:kind :java-public-signature-type-promotion
+                            :identity "java-public-signature-type-promotion"})
                          type-shape
                          (assoc (live-shape type)
                                 :visibility
-                                (if promoted-base?
+                                (if (or promoted-base?
+                                        promoted-signature?)
                                   "public"
                                   (declared-visibility type)))
                          declarations
-                         (filter
-                          #(and (accessible? %)
-                                (or (instance? CtConstructor %)
-                                    (instance? CtMethod %)
-                                    (instance? CtField %)))
+                         (keep
+                          (fn [^CtModifiable declaration]
+                            (when (or (instance? CtConstructor declaration)
+                                      (instance? CtMethod declaration)
+                                      (instance? CtField declaration))
+                              (let [adaptation
+                                    (when (and
+                                           (instance? CtMethod declaration)
+                                           (not (accessible? declaration)))
+                                      (cond
+                                        (public-override-family?
+                                         type declaration)
+                                        :package-public-override-family-widening
+
+                                        (protected-override-family?
+                                         type declaration)
+                                        :package-protected-override-family-widening))]
+                                (when (or (accessible? declaration) adaptation)
+                                  {:declaration declaration
+                                   :systematic-adaptation adaptation}))))
                           (.getTypeMembers type))]
                      (concat
                       [{:declaration type
@@ -8805,14 +9125,24 @@
                         :shape type-shape
                         :row (surface-row type type-shape type-adaptation)}]
                       (map
-                       (fn [^CtModifiable declaration]
+                       (fn [{:keys [^CtModifiable declaration
+                                    systematic-adaptation]}]
                          (let [shape
-                               (assoc (live-shape declaration)
-                                      :visibility
-                                      (declared-visibility declaration))]
+                               (assoc
+                                (live-shape declaration)
+                                :visibility
+                                (if systematic-adaptation
+                                  (canonical-visibility
+                                   (first
+                                    (method-words
+                                     type ^CtMethod declaration)))
+                                  (declared-visibility declaration)))]
                            {:declaration declaration
+                            :systematic-adaptation systematic-adaptation
                             :shape shape
-                            :row (surface-row declaration shape)}))
+                            :row
+                            (surface-row declaration shape
+                                         systematic-adaptation)}))
                        declarations)
                       (when (instance? CtEnum type)
                         (concat
@@ -8843,6 +9173,9 @@
                            #(contains? functional-interface-types
                                        (.getQualifiedName ^CtTypeReference %))
                            (.getSuperInterfaces type)))
+                         (when (.hasModifier ^CtModifiable type
+                                             ModifierKind/ABSTRACT)
+                           (runtime-interface-surface-entries type))
                          (when (.hasModifier ^CtModifiable type
                                              ModifierKind/ABSTRACT)
                            (keep
@@ -8942,10 +9275,18 @@
    "A supported Java functional base receives a CLR implicit delegate conversion."
    :java-abstract-interface-contract
    "A Java abstract class receives CLR abstract declarations for unimplemented interface members."
+   :java-runtime-abstract-interface-contract
+   "A Java abstract class receives CLR abstract declarations for mapped runtime-interface members."
    :java-public-base-type-promotion
    "A package-visible Java base class is public in CLR metadata when required by a public subclass."
+   :java-public-signature-type-promotion
+   "A package-visible Java type is public in CLR metadata when required by an accessible signature."
    :protected-override-family-widening
    "A protected Java override-family member is widened to public when a public override requires one CLR visibility."
+   :package-public-override-family-widening
+   "A package-visible Java override-family root is widened to public when a public override requires one CLR visibility."
+   :package-protected-override-family-widening
+   "A package-visible Java override-family root is widened to protected-internal when a protected override requires one CLR visibility."
    :protected-package-visibility
    "Java protected package access is represented as CLR protected-internal for the reusable linked-map hook."})
 
@@ -8995,6 +9336,19 @@
             :source-visibility source-visibility
             :destination-visibility destination-visibility
             :source-declaration (get-in evidence [:row :identity])})))
+
+(defn- compatibility-source-files [emission]
+  (->> (:artifacts emission)
+       (keep
+        (fn [{:keys [strategy source]}]
+          (let [file (:file source)]
+            (when (and strategy
+                       (string? file)
+                       (str/ends-with? file ".cs"))
+              file))))
+       distinct
+       sort
+       vec))
 
 (defn- validate-generated! [surface emission]
   (validate-emission-coverage! emission)
@@ -9076,7 +9430,7 @@
                  adaptation
                  (assoc :systematic-adaptation adaptation)))))
          (:selection-evidence surface))]
-    (cond-> {:schema-version 1 :strategy :complete-accessible-java-library :surface-derivation (:derivation surface) :compatibility-namespace (or (get-in emission [:configuration :compatibility-namespace]) "DripSharp.Runtime") :required-rows (count rows) :rows rows :systematic-adaptations (into (sorted-map) (keep (fn [adaptation] (when adaptation [adaptation (get systematic-adaptations adaptation)]))) (map :systematic-adaptation rows))} (:compiled-contract-file surface) (assoc :compiled-contract-file (str (:compiled-contract-file surface))))))
+    (cond-> {:schema-version 1 :strategy :complete-accessible-java-library :surface-derivation (:derivation surface) :compatibility-namespace (or (get-in emission [:configuration :compatibility-namespace]) "DripSharp.Runtime") :compatibility-sources (compatibility-source-files emission) :required-rows (count rows) :rows rows :systematic-adaptations (into (sorted-map) (keep (fn [adaptation] (when adaptation [adaptation (get systematic-adaptations adaptation)]))) (map :systematic-adaptation rows))} (:compiled-contract-file surface) (assoc :compiled-contract-file (str (:compiled-contract-file surface))))))
 
 (defn- verify-compiled! [workspace generation build-configuration]
   (let [emissions (concat (:dependency-emissions generation)
