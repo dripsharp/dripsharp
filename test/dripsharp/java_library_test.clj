@@ -14,6 +14,7 @@
            [java.nio.file.attribute FileAttribute]
            [java.util IdentityHashMap]
            [javax.tools ToolProvider]
+           [spoon Launcher]
            [spoon.reflect.declaration CtClass]
            [spoon.reflect.reference CtTypeReference]))
 
@@ -151,6 +152,29 @@
     (thunk)
     nil
     (catch clojure.lang.ExceptionInfo error error)))
+
+(deftest literal-node-preserves-java-literal-semantics
+  (let [factory (.getFactory (Launcher.))
+        emit-literal (ns-resolve 'dripsharp.java-library 'literal-node)
+        render (fn [value]
+                 (->> value
+                      (.createLiteral (.Code factory))
+                      emit-literal
+                      :text))]
+    (doseq [[label value expected]
+            [[:byte (byte 7) "unchecked((sbyte)7)"]
+             [:nil nil "default!"]
+             [:string "line\n\"quoted\"" "\"line\\n\\\"quoted\\\"\""]
+             [:character \newline "'\\n'"]
+             [:boolean-true true "true"]
+             [:boolean-false false "false"]
+             [:integer (int 42) "42"]
+             [:long (long 42) "42L"]
+             [:float (float 1.25) "1.25F"]
+             [:double (double 1.25) "1.25D"]
+             [:fallback (short 12) "12"]]]
+      (testing (name label)
+        (is (= expected (render value)))))))
 
 (deftest neutral-declaration-shells-preserve-generics-and-resolved-inheritance
   (let [fixture

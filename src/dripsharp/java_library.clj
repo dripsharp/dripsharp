@@ -688,22 +688,22 @@
     (raw
      (if byte-literal?
        (str "unchecked((sbyte)" value ")")
-       (cond)
-       (nil? value) "default!"
-       (string? value) (escape-string value)
-       (instance? Character value)
-       (str "'" (case value
-                  \' "\\'"
-                  \\ "\\\\"
-                  \newline "\\n"
-                  \return "\\r"
-                  \tab "\\t"
-                  (str value)) "'")
-       (instance? Boolean value) (if value "true" "false")
-       (instance? Long value) (str value "L")
-       (instance? Float value) (str value "F")
-       (instance? Double value) (str value "D")
-       :else (str value)))))
+       (cond
+         (nil? value) "default!"
+         (string? value) (escape-string value)
+         (instance? Character value)
+         (str "'" (case value
+                    \' "\\'"
+                    \\ "\\\\"
+                    \newline "\\n"
+                    \return "\\r"
+                    \tab "\\t"
+                    (str value)) "'")
+         (instance? Boolean value) (if value "true" "false")
+         (instance? Long value) (str value "L")
+         (instance? Float value) (str value "F")
+         (instance? Double value) (str value "D")
+         :else (str value))))))
 
 (declare method-name)
 
