@@ -851,10 +851,10 @@ sealed class JavaSoftReference<T> : JavaReference<T> where T : class
 {
     private WeakReference<T>? reference;
 
-    public JavaSoftReference(T value)
+    public JavaSoftReference(T? value)
     {
-        ArgumentNullException.ThrowIfNull(value);
-        reference = new WeakReference<T>(value);
+        if (value is not null)
+            reference = new WeakReference<T>(value);
     }
 
     public override T? Get()
@@ -875,10 +875,10 @@ sealed class JavaWeakReference<T> : JavaReference<T> where T : class
 {
     private WeakReference<T>? reference;
 
-    public JavaWeakReference(T value)
+    public JavaWeakReference(T? value)
     {
-        ArgumentNullException.ThrowIfNull(value);
-        reference = new WeakReference<T>(value);
+        if (value is not null)
+            reference = new WeakReference<T>(value);
     }
 
     public override T? Get()
