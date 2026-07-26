@@ -9,9 +9,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
-using System.Linq;
 using System.Text;
 
 namespace DripSharp.Runtime;
@@ -24,9 +21,8 @@ internal sealed class JavaBidi
     internal const int DirectionDefaultRightToLeft = -1;
 
     private readonly int baseLevel;
+    private readonly bool mixed;
     private readonly Run[] runs;
-    private static readonly Lazy<HashSet<int>> MirroredCodePoints = new(LoadMirroredCodePoints);
-
     internal JavaBidi(string paragraph, int direction)
     {
         ArgumentNullException.ThrowIfNull(paragraph);
@@ -42,28 +38,75 @@ internal sealed class JavaBidi
         {
             baseLevel = direction is DirectionRightToLeft
                 or DirectionDefaultRightToLeft ? 1 : 0;
+            mixed = false;
             runs = [];
             return;
         }
 
-        var data = new BidiData();
-        data.Append(paragraph);
-        data.ParagraphEmbeddingLevel = ResolveRequestedLevel(data, direction);
-
-        var algorithm = new BidiAlgorithm();
-        algorithm.Process(data);
-        baseLevel = algorithm.ResolvedParagraphEmbeddingLevel;
-
+        baseLevel = 0;
         var charLevels = new sbyte[paragraph.Length];
-        var codePointIndex = 0;
-        var charIndex = 0;
-        foreach (var rune in paragraph.EnumerateRunes())
+        var directionState = new DirectionState();
+        var paragraphStart = 0;
+        var firstParagraph = true;
+        while (paragraphStart < paragraph.Length)
         {
-            var level = algorithm.ResolvedLevels[codePointIndex++];
-            for (var offset = 0; offset < rune.Utf16SequenceLength; offset++)
+            var paragraphLimit = FindParagraphLimit(paragraph, paragraphStart);
+            var data = new BidiData();
+            data.Append(paragraph.AsSpan(
+                paragraphStart, paragraphLimit - paragraphStart));
+            data.ParagraphEmbeddingLevel = ResolveRequestedLevel(data, direction);
+            var paragraphLevel = data.ParagraphEmbeddingLevel;
+            if (firstParagraph)
             {
-                charLevels[charIndex++] = level;
+                baseLevel = paragraphLevel;
+                directionState.AddLevel(baseLevel);
             }
+
+            var algorithm = new BidiAlgorithm();
+            algorithm.Process(data);
+            var codePointLevels = algorithm.ResolvedLevels.Span.ToArray();
+            var followingLevel = paragraphLevel;
+            for (var index = codePointLevels.Length - 1;
+                    index >= 0;
+                    index--)
+            {
+                if (IsRemovedByRuleX9(data.Classes[index]))
+                {
+                    // java.text.Bidi assigns X9 formatting codes to the
+                    // following logical run during its L1 adjustment.
+                    codePointLevels[index] = followingLevel;
+                }
+                else
+                {
+                    followingLevel = codePointLevels[index];
+                }
+            }
+            CollectResolvedDirection(
+                ref directionState,
+                data.Classes,
+                codePointLevels,
+                paragraphLevel);
+
+            var codePointIndex = 0;
+            var charIndex = paragraphStart;
+            while (charIndex < paragraphLimit)
+            {
+                GetCodePointAt(paragraph, charIndex, out var charCount);
+                var level = codePointLevels[codePointIndex++];
+                for (var offset = 0; offset < charCount; offset++)
+                {
+                    charLevels[charIndex + offset] = level;
+                }
+                charIndex += charCount;
+            }
+
+            firstParagraph = false;
+            paragraphStart = paragraphLimit;
+        }
+        mixed = directionState.Resolve() == ResolvedDirection.Mixed;
+        if (!mixed)
+        {
+            Array.Fill(charLevels, checked((sbyte)baseLevel));
         }
 
         var collected = new List<Run>();
@@ -84,20 +127,7 @@ internal sealed class JavaBidi
 
     internal bool IsMixed()
     {
-        var hasLeftToRight = false;
-        var hasRightToLeft = false;
-        foreach (var run in runs)
-        {
-            if ((run.Level & 1) == 0)
-            {
-                hasLeftToRight = true;
-            }
-            else
-            {
-                hasRightToLeft = true;
-            }
-        }
-        return hasLeftToRight && hasRightToLeft;
+        return mixed;
     }
 
     internal int GetBaseLevel() => baseLevel;
@@ -158,8 +188,7 @@ internal sealed class JavaBidi
     }
 
     internal static bool IsMirrored(int codepoint) =>
-        MirroredCodePoints.Value.Contains(codepoint)
-        || BidiUnicodeData.GetBiDiPairedBracket((uint)codepoint) != 0;
+        JavaBidiMirroringData.IsMirrored(codepoint);
 
     private Run GetRun(int run) =>
         (uint)run < (uint)runs.Length
@@ -176,65 +205,295 @@ internal sealed class JavaBidi
         {
             return 1;
         }
-        if (direction == DirectionDefaultLeftToRight)
-        {
-            return 2;
-        }
-
+        var isolateDepth = 0;
         foreach (var bidiClass in data.Classes)
         {
-            if (bidiClass == BidiClass.LeftToRight)
+            if (bidiClass is BidiClass.LeftToRightIsolate
+                or BidiClass.RightToLeftIsolate
+                or BidiClass.FirstStrongIsolate)
             {
-                return 2;
+                isolateDepth++;
+                continue;
             }
-            if (bidiClass is BidiClass.RightToLeft or BidiClass.ArabicLetter)
+            if (bidiClass == BidiClass.PopDirectionalIsolate)
             {
-                return 2;
+                if (isolateDepth > 0)
+                {
+                    isolateDepth--;
+                }
+                continue;
             }
-        }
-        return 1;
-    }
-
-    private static HashSet<int> LoadMirroredCodePoints()
-    {
-        var result = new HashSet<int>();
-        var assembly = typeof(JavaBidi).Assembly;
-        var resourceName = assembly.GetManifestResourceNames()
-            .SingleOrDefault(name => name.EndsWith(
-                "BidiMirroring.txt", StringComparison.Ordinal));
-        if (resourceName is null)
-        {
-            return result;
-        }
-
-        using var stream = assembly.GetManifestResourceStream(resourceName);
-        if (stream is null)
-        {
-            return result;
-        }
-        using var reader = new StreamReader(stream, Encoding.ASCII, true);
-        while (reader.ReadLine() is { } line)
-        {
-            var comment = line.IndexOf('#');
-            if (comment >= 0)
-            {
-                line = line[..comment];
-            }
-            var separator = line.IndexOf(';');
-            if (separator < 0)
+            if (isolateDepth != 0)
             {
                 continue;
             }
-            if (int.TryParse(line.AsSpan(0, separator).Trim(),
-                    NumberStyles.AllowHexSpecifier,
-                    CultureInfo.InvariantCulture,
-                    out var codepoint))
+            if (bidiClass == BidiClass.LeftToRight)
             {
-                result.Add(codepoint);
+                return 0;
+            }
+            if (bidiClass is BidiClass.RightToLeft or BidiClass.ArabicLetter)
+            {
+                return 1;
             }
         }
-        return result;
+        return direction == DirectionDefaultRightToLeft ? (sbyte)1 : (sbyte)0;
     }
 
+    private static void CollectResolvedDirection(
+        ref DirectionState state,
+        ArraySlice<BidiClass> classes,
+        sbyte[] levels,
+        sbyte paragraphLevel)
+    {
+        var statusStack = new Stack<OverrideStatus>();
+        statusStack.Push(new OverrideStatus(
+            BidiClass.OtherNeutral, false));
+        var validIsolateCount = 0;
+
+        for (var index = 0; index < classes.Length; index++)
+        {
+            var bidiClass = classes[index];
+            if (bidiClass == BidiClass.FirstStrongIsolate)
+            {
+                bidiClass = ResolveFirstStrongIsolate(classes, index);
+            }
+
+            switch (bidiClass)
+            {
+                case BidiClass.LeftToRightEmbedding:
+                case BidiClass.RightToLeftEmbedding:
+                    statusStack.Push(new OverrideStatus(
+                        BidiClass.OtherNeutral, false));
+                    state.AddClass(BidiClass.BoundaryNeutral);
+                    break;
+                case BidiClass.LeftToRightOverride:
+                    statusStack.Push(new OverrideStatus(
+                        BidiClass.LeftToRight, false));
+                    state.AddClass(BidiClass.BoundaryNeutral);
+                    break;
+                case BidiClass.RightToLeftOverride:
+                    statusStack.Push(new OverrideStatus(
+                        BidiClass.RightToLeft, false));
+                    state.AddClass(BidiClass.BoundaryNeutral);
+                    break;
+                case BidiClass.PopDirectionalFormat:
+                    if (statusStack.Count > 1
+                        && !statusStack.Peek().Isolate)
+                    {
+                        statusStack.Pop();
+                    }
+                    state.AddClass(BidiClass.BoundaryNeutral);
+                    break;
+                case BidiClass.LeftToRightIsolate:
+                case BidiClass.RightToLeftIsolate:
+                    state.AddClass(bidiClass);
+                    if (levels[index] != paragraphLevel)
+                    {
+                        state.AddLevel(levels[index]);
+                    }
+                    statusStack.Push(new OverrideStatus(
+                        BidiClass.OtherNeutral, true));
+                    validIsolateCount++;
+                    break;
+                case BidiClass.PopDirectionalIsolate:
+                    if (validIsolateCount > 0)
+                    {
+                        while (statusStack.Count > 1
+                            && !statusStack.Peek().Isolate)
+                        {
+                            statusStack.Pop();
+                        }
+                        if (statusStack.Count > 1)
+                        {
+                            statusStack.Pop();
+                        }
+                        validIsolateCount--;
+                    }
+                    state.AddClass(bidiClass);
+                    if (levels[index] != paragraphLevel)
+                    {
+                        state.AddLevel(levels[index]);
+                    }
+                    break;
+                case BidiClass.BoundaryNeutral:
+                    state.AddClass(bidiClass);
+                    break;
+                default:
+                    var overrideClass = statusStack.Peek().OverrideClass;
+                    state.AddClass(
+                        overrideClass == BidiClass.OtherNeutral
+                            ? bidiClass
+                            : overrideClass);
+                    if (levels[index] != paragraphLevel)
+                    {
+                        state.AddLevel(levels[index]);
+                    }
+                    break;
+            }
+        }
+    }
+
+    private static BidiClass ResolveFirstStrongIsolate(
+        ArraySlice<BidiClass> classes, int start)
+    {
+        var isolateDepth = 0;
+        for (var index = start + 1; index < classes.Length; index++)
+        {
+            var bidiClass = classes[index];
+            if (bidiClass is BidiClass.LeftToRightIsolate
+                or BidiClass.RightToLeftIsolate
+                or BidiClass.FirstStrongIsolate)
+            {
+                isolateDepth++;
+                continue;
+            }
+            if (bidiClass == BidiClass.PopDirectionalIsolate)
+            {
+                if (isolateDepth == 0)
+                {
+                    break;
+                }
+                isolateDepth--;
+                continue;
+            }
+            if (isolateDepth != 0)
+            {
+                continue;
+            }
+            if (bidiClass == BidiClass.LeftToRight)
+            {
+                return BidiClass.LeftToRightIsolate;
+            }
+            if (bidiClass is BidiClass.RightToLeft or BidiClass.ArabicLetter)
+            {
+                return BidiClass.RightToLeftIsolate;
+            }
+        }
+        return BidiClass.LeftToRightIsolate;
+    }
+
+    private static int FindParagraphLimit(string text, int start)
+    {
+        var index = start;
+        while (index < text.Length)
+        {
+            var codePoint = GetCodePointAt(text, index, out var charCount);
+            index += charCount;
+            if (BidiUnicodeData.GetBiDiClass(codePoint)
+                == BidiClass.ParagraphSeparator)
+            {
+                if (codePoint == '\r'
+                    && index < text.Length
+                    && text[index] == '\n')
+                {
+                    index++;
+                }
+                break;
+            }
+        }
+        return index;
+    }
+
+    private static uint GetCodePointAt(
+        ReadOnlySpan<char> text, int index, out int charCount)
+    {
+        var high = text[index];
+        if (char.IsHighSurrogate(high)
+            && index + 1 < text.Length
+            && char.IsLowSurrogate(text[index + 1]))
+        {
+            charCount = 2;
+            return checked((uint)char.ConvertToUtf32(high, text[index + 1]));
+        }
+        charCount = 1;
+        return high;
+    }
+
+    private static bool IsRemovedByRuleX9(BidiClass bidiClass) =>
+        bidiClass is BidiClass.LeftToRightEmbedding
+            or BidiClass.RightToLeftEmbedding
+            or BidiClass.LeftToRightOverride
+            or BidiClass.RightToLeftOverride
+            or BidiClass.PopDirectionalFormat
+            or BidiClass.BoundaryNeutral;
+
+    private enum ResolvedDirection
+    {
+        LeftToRight,
+        RightToLeft,
+        Mixed
+    }
+
+    private struct DirectionState
+    {
+        private bool hasLeftToRight;
+        private bool hasRightToLeft;
+        private bool hasArabicNumber;
+        private bool hasPossibleNeutral;
+
+        internal void AddLevel(int level)
+        {
+            if ((level & 1) == 0)
+            {
+                hasLeftToRight = true;
+            }
+            else
+            {
+                hasRightToLeft = true;
+            }
+        }
+
+        internal void AddClass(BidiClass bidiClass)
+        {
+            switch (bidiClass)
+            {
+                case BidiClass.LeftToRight:
+                case BidiClass.EuropeanNumber:
+                case BidiClass.LeftToRightIsolate:
+                    hasLeftToRight = true;
+                    break;
+                case BidiClass.ArabicNumber:
+                    hasLeftToRight = true;
+                    hasArabicNumber = true;
+                    break;
+                case BidiClass.RightToLeft:
+                case BidiClass.ArabicLetter:
+                case BidiClass.RightToLeftIsolate:
+                    hasRightToLeft = true;
+                    break;
+            }
+
+            if (bidiClass is BidiClass.OtherNeutral
+                or BidiClass.CommonSeparator
+                or BidiClass.EuropeanSeparator
+                or BidiClass.EuropeanTerminator
+                or BidiClass.ParagraphSeparator
+                or BidiClass.SegmentSeparator
+                or BidiClass.WhiteSpace
+                or BidiClass.BoundaryNeutral
+                or BidiClass.LeftToRightIsolate
+                or BidiClass.RightToLeftIsolate
+                or BidiClass.FirstStrongIsolate
+                or BidiClass.PopDirectionalIsolate)
+            {
+                hasPossibleNeutral = true;
+            }
+        }
+
+        internal readonly ResolvedDirection Resolve()
+        {
+            if (!hasRightToLeft
+                && !(hasArabicNumber && hasPossibleNeutral))
+            {
+                return ResolvedDirection.LeftToRight;
+            }
+            return !hasLeftToRight
+                ? ResolvedDirection.RightToLeft
+                : ResolvedDirection.Mixed;
+        }
+    }
+
+    private readonly record struct OverrideStatus(
+        BidiClass OverrideClass, bool Isolate);
     private readonly record struct Run(int Start, int Limit, int Level);
 }

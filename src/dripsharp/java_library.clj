@@ -8729,6 +8729,9 @@
      ["runtime/DripSharp.JavaBidi.MappedArraySlice.cs"
       "DripSharp/Runtime/JavaBidi/MappedArraySlice.cs"
       :reviewable-java-compatibility-source]
+     ["runtime/DripSharp.JavaBidi.MirroringData.cs"
+      "DripSharp/Runtime/JavaBidi/MirroringData.cs"
+      :generated-java-compatibility-data]
      ["runtime/DripSharp.JavaBidi.PairedBracketType.cs"
       "DripSharp/Runtime/JavaBidi/BidiPairedBracketType.cs"
       :reviewable-java-compatibility-source]

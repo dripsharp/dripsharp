@@ -87,10 +87,25 @@ namespace DripSharp.Runtime
                 (1U << (int)BidiClass.FirstStrongIsolate) |
                 (1U << (int)BidiClass.PopDirectionalIsolate);
 
-            foreach (var rune in text.EnumerateRunes())
+            for (var charIndex = 0; charIndex < text.Length;)
             {
+                var high = text[charIndex];
+                uint codepoint;
+                if (char.IsHighSurrogate(high)
+                    && charIndex + 1 < text.Length
+                    && char.IsLowSurrogate(text[charIndex + 1]))
+                {
+                    codepoint = checked((uint)char.ConvertToUtf32(
+                        high, text[charIndex + 1]));
+                    charIndex += 2;
+                }
+                else
+                {
+                    codepoint = high;
+                    charIndex++;
+                }
+
                 // Look up BiDiClass
-                var codepoint = (uint)rune.Value;
                 var dir = BidiUnicodeData.GetBiDiClass(codepoint);
 
                 _classes[i] = dir;
