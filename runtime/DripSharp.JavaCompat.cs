@@ -6222,9 +6222,23 @@ internal static class JavaCompat
             XmlResolver = null,
             CloseInput = true
         };
-    internal static System.Xml.XmlReaderSettings XmlReaderSettingsClone(
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        System.Xml.XmlReaderSettings,
+        System.Runtime.CompilerServices.StrongBox<bool>> XmlReaderBehaviors = new();
+    private static System.Runtime.CompilerServices.StrongBox<bool>
+        GetXmlReaderBehavior(
         System.Xml.XmlReaderSettings settings) =>
-        settings.Clone();
+        XmlReaderBehaviors.GetValue(
+            settings,
+            _ => new System.Runtime.CompilerServices.StrongBox<bool>(true));
+    internal static System.Xml.XmlReaderSettings XmlReaderSettingsClone(
+        System.Xml.XmlReaderSettings settings)
+    {
+        var clone = settings.Clone();
+        GetXmlReaderBehavior(clone).Value =
+            GetXmlReaderBehavior(settings).Value;
+        return clone;
+    }
     internal static void XmlReaderSetFeature(
         System.Xml.XmlReaderSettings settings,
         string feature,
@@ -6267,13 +6281,8 @@ internal static class JavaCompat
     }
     internal static void XmlReaderSetNamespaceAware(
         System.Xml.XmlReaderSettings settings,
-        bool enabled)
-    {
-        _ = settings;
-        if (!enabled)
-            throw new System.Xml.XmlException(
-                "System.Xml readers are always namespace-aware.");
-    }
+        bool enabled) =>
+        GetXmlReaderBehavior(settings).Value = enabled;
     internal static void XmlSetErrorHandler(
         System.Xml.XmlReaderSettings settings,
         object? errorHandler)
@@ -6285,7 +6294,10 @@ internal static class JavaCompat
         System.Xml.XmlReaderSettings settings,
         Stream input)
     {
-        using var reader = System.Xml.XmlReader.Create(input, settings);
+        using var reader =
+            GetXmlReaderBehavior(settings).Value
+                ? System.Xml.XmlReader.Create(input, settings)
+                : CreateNamespaceUnawareXmlReader(settings, input);
         var document = new System.Xml.XmlDocument { PreserveWhitespace = true };
         document.Load(reader);
         if (document.FirstChild is System.Xml.XmlDeclaration declaration)
@@ -6293,6 +6305,18 @@ internal static class JavaCompat
         NormalizeJavaDomWhitespace(document, document);
         return document;
     }
+    private static System.Xml.XmlReader CreateNamespaceUnawareXmlReader(
+        System.Xml.XmlReaderSettings settings,
+        Stream input) =>
+        new System.Xml.XmlTextReader(input)
+        {
+            Namespaces = false,
+            DtdProcessing = settings.DtdProcessing,
+            XmlResolver = null,
+            WhitespaceHandling = settings.IgnoreWhitespace
+                ? System.Xml.WhitespaceHandling.None
+                : System.Xml.WhitespaceHandling.All
+        };
     private static void NormalizeJavaDomWhitespace(
         System.Xml.XmlDocument document,
         System.Xml.XmlNode parent)

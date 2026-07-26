@@ -16,6 +16,8 @@
              :as pdfcube-pdfbox-font-text-differential]
             [dripsharp.pdfcube.pdfbox-graphics-differential
              :as pdfcube-pdfbox-graphics-differential]
+            [dripsharp.pdfcube.pdfbox-interaction-differential
+             :as pdfcube-pdfbox-interaction-differential]
             [dripsharp.pdfcube.pdfbox-low-level-differential
              :as pdfcube-pdfbox-low-level-differential]
             [dripsharp.pdfcube.xmpbox-metadata-differential
@@ -39,6 +41,7 @@
                            ["pdfcube-pdfbox-document-lifecycle-differential"]
                            ["pdfcube-pdfbox-font-text-differential"]
                            ["pdfcube-pdfbox-graphics-differential"]
+                           ["pdfcube-pdfbox-interaction-differential"]
                            ["pdfcube-pdfbox-low-level-differential"]
                            ["pdfcube-xmpbox-metadata-differential"]
                            ["language-snippet-contract"] ["language-snippet-package"]
@@ -46,7 +49,7 @@
                          (vec args))
               (and (= 2 (count args))
                    (contains? #{"generate" "verify" "pack" "package"} (first args))))
-    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|pdfcube-io-differential|pdfcube-fontbox-differential|pdfcube-pdfbox-bidi-differential|pdfcube-pdfbox-document-lifecycle-differential|pdfcube-pdfbox-font-text-differential|pdfcube-pdfbox-graphics-differential|pdfcube-pdfbox-low-level-differential|pdfcube-xmpbox-metadata-differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus" 2)
+    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|pdfcube-io-differential|pdfcube-fontbox-differential|pdfcube-pdfbox-bidi-differential|pdfcube-pdfbox-document-lifecycle-differential|pdfcube-pdfbox-font-text-differential|pdfcube-pdfbox-graphics-differential|pdfcube-pdfbox-interaction-differential|pdfcube-pdfbox-low-level-differential|pdfcube-xmpbox-metadata-differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus" 2)
     (try
       (case (first args)
         "generate" (harness/generate! {:profile (or (second args) "pkl-parser")})
@@ -66,6 +69,8 @@
         (pdfcube-pdfbox-font-text-differential/verify!)
         "pdfcube-pdfbox-graphics-differential"
         (pdfcube-pdfbox-graphics-differential/verify!)
+        "pdfcube-pdfbox-interaction-differential"
+        (pdfcube-pdfbox-interaction-differential/verify!)
         "pdfcube-pdfbox-low-level-differential"
         (pdfcube-pdfbox-low-level-differential/verify!)
         "pdfcube-xmpbox-metadata-differential"
