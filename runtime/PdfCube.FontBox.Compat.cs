@@ -4493,16 +4493,42 @@ public class PdfCubeGraphics2D : IDisposable
             return;
         }
 
-        using var path = PdfCubeFontCompat.CreatePath(shape);
         if (paint is JavaColor)
         {
-            RenderLayer(
-                (layer, drawingPaint) => layer.DrawPath(path, drawingPaint),
-                stroked: !fill,
-                imagePaint: false);
+            if (shape is SKRect rectangle)
+            {
+                RenderLayer(
+                    (layer, drawingPaint) =>
+                        layer.DrawRect(rectangle, drawingPaint),
+                    stroked: !fill,
+                    imagePaint: false);
+            }
+            else if (shape is SKRectI integerRectangle)
+            {
+                var convertedRectangle = new SKRect(
+                    integerRectangle.Left,
+                    integerRectangle.Top,
+                    integerRectangle.Right,
+                    integerRectangle.Bottom);
+                RenderLayer(
+                    (layer, drawingPaint) =>
+                        layer.DrawRect(convertedRectangle, drawingPaint),
+                    stroked: !fill,
+                    imagePaint: false);
+            }
+            else
+            {
+                using var path = PdfCubeFontCompat.CreatePath(shape);
+                RenderLayer(
+                    (layer, drawingPaint) =>
+                        layer.DrawPath(path, drawingPaint),
+                    stroked: !fill,
+                    imagePaint: false);
+            }
         }
         else
         {
+            using var path = PdfCubeFontCompat.CreatePath(shape);
             RenderPaintLayer(path, stroked: !fill);
         }
     }

@@ -76,6 +76,7 @@ clojure -J-Xmx8g -M:run package pkl-core-value-model
 clojure -M:run differential
 clojure -J-Xmx28g -M:run pdfcube-io-differential
 clojure -J-Xmx28g -M:run pdfcube-fontbox-differential
+clojure -J-Xmx28g -M:run pdfcube-pdfbox-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-low-level-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-document-lifecycle-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-font-text-differential
@@ -233,6 +234,18 @@ local-only feed, and runs a package-reference-only consumer. It then compares
 memory-limit, lifecycle, and failure observations with a live oracle compiled
 from the pinned PDFBox 3.0.8 sources. The supported-host workflow applies that
 canonical CPU trace on Windows, Linux, and macOS on x64 and ARM64.
+
+`pdfcube-pdfbox-differential` performs one dependency-closed, twice-clean
+deterministic pack of `PdfCube.PdfBox`, `PdfCube.FontBox`, and `PdfCube.IO`,
+then reuses the exact fresh package-reference-only consumer across
+representative create, load, parse, save, incremental-update, manipulation,
+extraction, rendering, form, security, signing, and print-layout workflows.
+It requires the complete compiled public contracts, zero generated public
+stubs, exact resources and legal payloads, exact runtime dependency closure,
+normalized agreement with the pinned PDFBox 3.0.8 Java oracles, and a
+deliberately detected mismatch. Its supported-host workflow restores, builds,
+and smokes the retained package feed on Windows, Linux, and macOS on x64 and
+ARM64.
 
 `language-snippet-contract` validates the pinned, source-controlled manifest
 for all 940 upstream `LanguageSnippetTests` cases, then executes the upstream
