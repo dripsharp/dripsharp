@@ -80,6 +80,7 @@ clojure -J-Xmx28g -M:run pdfcube-pdfbox-low-level-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-document-lifecycle-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-font-text-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-graphics-differential
+clojure -J-Xmx28g -M:run pdfcube-pdfbox-rendering-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-image-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-interchange-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-interaction-differential

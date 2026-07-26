@@ -2167,11 +2167,12 @@ public sealed class JavaRaster
         {
             return new SKColor(component, component, component);
         }
+        var alpha = NumberOfBands == 3 ? byte.MaxValue : color.Alpha;
         return band switch
         {
-            0 => new SKColor(component, color.Green, color.Blue, color.Alpha),
-            1 => new SKColor(color.Red, component, color.Blue, color.Alpha),
-            2 => new SKColor(color.Red, color.Green, component, color.Alpha),
+            0 => new SKColor(component, color.Green, color.Blue, alpha),
+            1 => new SKColor(color.Red, component, color.Blue, alpha),
+            2 => new SKColor(color.Red, color.Green, component, alpha),
             3 => new SKColor(color.Red, color.Green, color.Blue, component),
             _ => throw new IndexOutOfRangeException()
         };
@@ -2192,13 +2193,14 @@ public sealed class PdfCubeAffineTransformOp
     public const int TYPE_BILINEAR = 2;
     public const int TYPE_BICUBIC = 3;
 
+    private readonly SKMatrix transform;
     private readonly int interpolationType;
 
     public PdfCubeAffineTransformOp(SKMatrix transform, int interpolationType)
     {
-        _ = transform;
         if (interpolationType is not TYPE_BILINEAR and not TYPE_BICUBIC)
             throw new ArgumentException("Unsupported image interpolation type.", nameof(interpolationType));
+        this.transform = transform;
         this.interpolationType = interpolationType;
     }
 
@@ -2207,6 +2209,8 @@ public sealed class PdfCubeAffineTransformOp
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
         using var canvas = new SKCanvas(destination);
+        canvas.Clear(SKColors.Transparent);
+        canvas.SetMatrix(transform);
         using var paint = new SKPaint();
         var sampling =
             interpolationType == TYPE_BICUBIC
@@ -2214,7 +2218,8 @@ public sealed class PdfCubeAffineTransformOp
                 : new SKSamplingOptions(SKFilterMode.Linear);
         canvas.DrawBitmap(
             source,
-            new SKRect(0, 0, destination.Width, destination.Height),
+            0,
+            0,
             sampling,
             paint);
         return destination;
@@ -2719,7 +2724,44 @@ public sealed class JavaBasicStroke : JavaStroke
     public float MiterLimit { get; }
     public float[]? DashArray { get; }
     public float DashPhase { get; }
-    public object CreateStrokedShape(object shape) => shape;
+    public object CreateStrokedShape(object shape)
+    {
+        using var path = PdfCubeFontCompat.CreatePath(shape);
+        using var paint = CreateSkiaPaint();
+        return paint.GetFillPath(path) ?? new SKPath();
+    }
+
+    internal SKPaint CreateSkiaPaint()
+    {
+        var paint = new SKPaint
+        {
+            IsStroke = true,
+            StrokeWidth = Width,
+            StrokeCap = EndCap switch
+            {
+                CAP_BUTT => SKStrokeCap.Butt,
+                CAP_ROUND => SKStrokeCap.Round,
+                _ => SKStrokeCap.Square
+            },
+            StrokeJoin = LineJoin switch
+            {
+                JOIN_ROUND => SKStrokeJoin.Round,
+                JOIN_BEVEL => SKStrokeJoin.Bevel,
+                _ => SKStrokeJoin.Miter
+            },
+            StrokeMiter = MiterLimit
+        };
+        if (DashArray is { Length: > 0 })
+        {
+            var intervals = DashArray.Length % 2 == 0
+                ? (float[])DashArray.Clone()
+                : DashArray.Concat(DashArray).ToArray();
+            using var pathEffect =
+                SKPathEffect.CreateDash(intervals, DashPhase);
+            paint.PathEffect = pathEffect;
+        }
+        return paint;
+    }
 }
 
 public interface JavaComposite
@@ -2742,6 +2784,8 @@ public sealed class JavaAlphaComposite : JavaComposite
     private readonly float alpha;
 
     private JavaAlphaComposite(float alpha) => this.alpha = alpha;
+
+    internal float Alpha => alpha;
 
     public static JavaAlphaComposite GetInstance(int rule, float alpha)
     {
@@ -3775,6 +3819,23 @@ public sealed class JavaFontRenderContext
 
 public sealed class JavaGlyphVector
 {
+    public JavaGlyphVector(ushort[] glyphs, SKPoint[] positions, JavaFont font)
+    {
+        ArgumentNullException.ThrowIfNull(glyphs);
+        ArgumentNullException.ThrowIfNull(positions);
+        ArgumentNullException.ThrowIfNull(font);
+        if (glyphs.Length != positions.Length)
+            throw new ArgumentException(
+                "Each glyph must have a corresponding position.",
+                nameof(positions));
+        Glyphs = (ushort[])glyphs.Clone();
+        Positions = (SKPoint[])positions.Clone();
+        Font = font;
+    }
+
+    internal ushort[] Glyphs { get; }
+    internal SKPoint[] Positions { get; }
+    internal JavaFont Font { get; }
 }
 
 public interface JavaBufferedImageOperation
@@ -3786,6 +3847,7 @@ public class PdfCubeGraphics2D : IDisposable
     private readonly SKBitmap? bitmap;
     private readonly SKCanvas? canvas;
     private readonly bool ownsCanvas;
+    private readonly SKRectI initialDeviceClip;
     private int restoreCount;
     private bool disposed;
     private SKSamplingOptions samplingOptions = SKSamplingOptions.Default;
@@ -3799,11 +3861,12 @@ public class PdfCubeGraphics2D : IDisposable
     private JavaFont font = new();
     private PdfCubeRenderingHints renderingHints = new(null);
     private SKMatrix transform = SKMatrix.CreateIdentity();
-    private object? clip;
+    private SKPath? clipPath;
 
     protected PdfCubeGraphics2D()
     {
         paint = color;
+        initialDeviceClip = SKRectI.Empty;
     }
 
     public PdfCubeGraphics2D(SKBitmap bitmap)
@@ -3837,6 +3900,7 @@ public class PdfCubeGraphics2D : IDisposable
         this.bitmap = bitmap;
         this.canvas = canvas;
         this.ownsCanvas = ownsCanvas;
+        initialDeviceClip = canvas.DeviceClipBounds;
         restoreCount = canvas.Save();
         transform = canvas.TotalMatrix;
         paint = color;
@@ -3859,7 +3923,7 @@ public class PdfCubeGraphics2D : IDisposable
         copy.font = font;
         copy.renderingHints = new PdfCubeRenderingHints(renderingHints);
         copy.transform = transform;
-        copy.clip = clip;
+        copy.clipPath = clipPath is null ? null : new SKPath(clipPath);
         return copy;
     }
 
@@ -3876,7 +3940,11 @@ public class PdfCubeGraphics2D : IDisposable
             samplingOptions =
                 ReferenceEquals(value, PdfCubeRenderingHints.VALUE_INTERPOLATION_BICUBIC)
                     ? new SKSamplingOptions(SKCubicResampler.Mitchell)
-                    : new SKSamplingOptions(SKFilterMode.Linear);
+                    : ReferenceEquals(
+                        value,
+                        PdfCubeRenderingHints.VALUE_INTERPOLATION_BILINEAR)
+                        ? new SKSamplingOptions(SKFilterMode.Linear)
+                        : SKSamplingOptions.Default;
         }
         else if (ReferenceEquals(key, PdfCubeRenderingHints.KEY_RENDERING) &&
                  ReferenceEquals(value, PdfCubeRenderingHints.VALUE_RENDER_QUALITY) &&
@@ -3897,6 +3965,7 @@ public class PdfCubeGraphics2D : IDisposable
     {
         ArgumentNullException.ThrowIfNull(hints);
         renderingHints.Clear();
+        samplingOptions = SKSamplingOptions.Default;
         AddRenderingHints(hints);
     }
 
@@ -3920,13 +3989,17 @@ public class PdfCubeGraphics2D : IDisposable
     {
         ArgumentNullException.ThrowIfNull(image);
         _ = observer;
-        using var imagePaint = new SKPaint();
-        RequireCanvas().DrawBitmap(
-            image,
-            new SKRect(sourceX1, sourceY1, sourceX2, sourceY2),
-            new SKRect(destinationX1, destinationY1, destinationX2, destinationY2),
-            samplingOptions,
-            imagePaint);
+        RenderImageLayer(
+            (layer, imagePaint) => layer.DrawBitmap(
+                image,
+                new SKRect(sourceX1, sourceY1, sourceX2, sourceY2),
+                new SKRect(
+                    destinationX1,
+                    destinationY1,
+                    destinationX2,
+                    destinationY2),
+                samplingOptions,
+                imagePaint));
         return true;
     }
 
@@ -4023,8 +4096,26 @@ public class PdfCubeGraphics2D : IDisposable
 
     public virtual bool DrawImage(SKBitmap image, SKMatrix imageTransform, object? observer)
     {
-        _ = imageTransform;
-        return DrawImage(image, 0, 0, observer);
+        ArgumentNullException.ThrowIfNull(image);
+        _ = observer;
+        if (PdfCubeFontCompat.IsDefaultMatrix(imageTransform))
+        {
+            imageTransform = SKMatrix.Identity;
+        }
+        RenderImageLayer(
+            (layer, imagePaint) =>
+            {
+                var restore = layer.Save();
+                layer.Concat(imageTransform);
+                layer.DrawBitmap(
+                    image,
+                    0,
+                    0,
+                    samplingOptions,
+                    imagePaint);
+                layer.RestoreToCount(restore);
+            });
+        return true;
     }
 
     public virtual void DrawRenderableImage(SKBitmap image, SKMatrix imageTransform) =>
@@ -4076,62 +4167,35 @@ public class PdfCubeGraphics2D : IDisposable
 
     public virtual void ClipRect(int x, int y, int width, int height)
     {
-        var rectangle = new SKRect(x, y, x + width, y + height);
-        clip = new SKRectI(x, y, x + width, y + height);
-        RequireCanvas().ClipRect(rectangle);
+        using var rectangle = PdfCubeFontCompat.CreatePath(
+            new SKRectI(x, y, x + width, y + height));
+        IntersectClip(rectangle);
     }
 
     public virtual void SetClip(int x, int y, int width, int height) =>
-        ClipRect(x, y, width, height);
+        SetClip(new SKRectI(x, y, x + width, y + height));
 
     public virtual void SetClip(object? clip)
     {
         ResetCanvasState();
-        this.clip = clip;
-        if (clip is not null)
-            Clip(clip);
+        clipPath?.Dispose();
+        clipPath = clip is null ? null : PdfCubeFontCompat.CreatePath(clip);
+        ApplyUserClip(RequireCanvas());
     }
 
-    public virtual object? GetClip() => clip;
+    public virtual object? GetClip() =>
+        clipPath is null ? null : new SKPath(clipPath);
 
     public virtual SKRectI GetClipBounds() =>
-        clip switch
-        {
-            SKRectI rectangle => rectangle,
-            SKRect rectangle => new SKRectI(
-                (int)Math.Floor(rectangle.Left),
-                (int)Math.Floor(rectangle.Top),
-                (int)Math.Ceiling(rectangle.Right),
-                (int)Math.Ceiling(rectangle.Bottom)),
-            SKPath path => PdfCubeFontCompat.PathBounds(path),
-            JavaArea area => PdfCubeFontCompat.PathBounds(area.Path),
-            _ => CanvasClipBounds()
-        };
+        clipPath is null
+            ? CanvasClipBounds()
+            : PdfCubeFontCompat.PathBounds(clipPath);
 
     public virtual void Clip(object shape)
     {
-        switch (shape)
-        {
-            case SKRect rectangle:
-                RequireCanvas().ClipRect(rectangle);
-                break;
-            case SKRectI rectangle:
-                RequireCanvas().ClipRect(new SKRect(
-                    rectangle.Left,
-                    rectangle.Top,
-                    rectangle.Right,
-                    rectangle.Bottom));
-                break;
-            case SKPath path:
-                RequireCanvas().ClipPath(path);
-                break;
-            case JavaArea area:
-                RequireCanvas().ClipPath(area.Path);
-                break;
-            default:
-                throw new NotSupportedException(
-                    $"Unsupported graphics clip shape '{shape.GetType().FullName}'.");
-        }
+        ArgumentNullException.ThrowIfNull(shape);
+        using var path = PdfCubeFontCompat.CreatePath(shape);
+        IntersectClip(path);
     }
 
     public virtual void CopyArea(
@@ -4144,9 +4208,11 @@ public class PdfCubeGraphics2D : IDisposable
     {
         if (bitmap is null)
             throw new InvalidOperationException("This graphics instance has no bitmap.");
+        using var snapshot = bitmap.Copy() ??
+            throw new InvalidOperationException("Unable to copy the graphics bitmap.");
         using var imagePaint = new SKPaint();
         RequireCanvas().DrawBitmap(
-            bitmap,
+            snapshot,
             new SKRect(x, y, x + width, y + height),
             new SKRect(
                 x + destinationX,
@@ -4158,34 +4224,24 @@ public class PdfCubeGraphics2D : IDisposable
     }
 
     public virtual void DrawRect(int x, int y, int width, int height)
-    {
-        using var drawingPaint = CreateDrawingPaint(stroked: true);
-        RequireCanvas().DrawRect(new SKRect(x, y, x + width, y + height), drawingPaint);
-    }
+        => DrawShape(new SKRect(x, y, x + width, y + height), fill: false);
 
     public virtual void FillRect(int x, int y, int width, int height)
-    {
-        using var drawingPaint = CreateDrawingPaint(stroked: false);
-        RequireCanvas().DrawRect(new SKRect(x, y, x + width, y + height), drawingPaint);
-    }
+        => DrawShape(new SKRect(x, y, x + width, y + height), fill: true);
 
     public virtual void DrawLine(int x1, int y1, int x2, int y2)
     {
-        using var drawingPaint = CreateDrawingPaint(stroked: true);
-        RequireCanvas().DrawLine(x1, y1, x2, y2, drawingPaint);
+        using var path = new SKPath();
+        path.MoveTo(x1, y1);
+        path.LineTo(x2, y2);
+        DrawShape(path, fill: false);
     }
 
     public virtual void DrawOval(int x, int y, int width, int height)
-    {
-        using var drawingPaint = CreateDrawingPaint(stroked: true);
-        RequireCanvas().DrawOval(new SKRect(x, y, x + width, y + height), drawingPaint);
-    }
+        => DrawShape(new JavaEllipse(x, y, width, height), fill: false);
 
     public virtual void FillOval(int x, int y, int width, int height)
-    {
-        using var drawingPaint = CreateDrawingPaint(stroked: false);
-        RequireCanvas().DrawOval(new SKRect(x, y, x + width, y + height), drawingPaint);
-    }
+        => DrawShape(new JavaEllipse(x, y, width, height), fill: true);
 
     public virtual void DrawArc(
         int x,
@@ -4195,13 +4251,12 @@ public class PdfCubeGraphics2D : IDisposable
         int startAngle,
         int arcAngle)
     {
-        using var drawingPaint = CreateDrawingPaint(stroked: true);
-        RequireCanvas().DrawArc(
+        using var path = new SKPath();
+        path.AddArc(
             new SKRect(x, y, x + width, y + height),
             startAngle,
-            arcAngle,
-            false,
-            drawingPaint);
+            arcAngle);
+        DrawShape(path, fill: false);
     }
 
     public virtual void FillArc(
@@ -4212,13 +4267,15 @@ public class PdfCubeGraphics2D : IDisposable
         int startAngle,
         int arcAngle)
     {
-        using var drawingPaint = CreateDrawingPaint(stroked: false);
-        RequireCanvas().DrawArc(
+        using var path = new SKPath();
+        path.MoveTo(x + width / 2f, y + height / 2f);
+        path.ArcTo(
             new SKRect(x, y, x + width, y + height),
             startAngle,
             arcAngle,
-            true,
-            drawingPaint);
+            false);
+        path.Close();
+        DrawShape(path, fill: true);
     }
 
     public virtual void DrawRoundRect(
@@ -4229,12 +4286,12 @@ public class PdfCubeGraphics2D : IDisposable
         int arcWidth,
         int arcHeight)
     {
-        using var drawingPaint = CreateDrawingPaint(stroked: true);
-        RequireCanvas().DrawRoundRect(
+        using var path = new SKPath();
+        path.AddRoundRect(
             new SKRect(x, y, x + width, y + height),
             arcWidth / 2f,
-            arcHeight / 2f,
-            drawingPaint);
+            arcHeight / 2f);
+        DrawShape(path, fill: false);
     }
 
     public virtual void FillRoundRect(
@@ -4245,12 +4302,12 @@ public class PdfCubeGraphics2D : IDisposable
         int arcWidth,
         int arcHeight)
     {
-        using var drawingPaint = CreateDrawingPaint(stroked: false);
-        RequireCanvas().DrawRoundRect(
+        using var path = new SKPath();
+        path.AddRoundRect(
             new SKRect(x, y, x + width, y + height),
             arcWidth / 2f,
-            arcHeight / 2f,
-            drawingPaint);
+            arcHeight / 2f);
+        DrawShape(path, fill: true);
     }
 
     public virtual void DrawPolygon(int[] xPoints, int[] yPoints, int pointCount) =>
@@ -4267,8 +4324,19 @@ public class PdfCubeGraphics2D : IDisposable
     public virtual void DrawGlyphVector(JavaGlyphVector glyphs, float x, float y)
     {
         ArgumentNullException.ThrowIfNull(glyphs);
-        _ = x;
-        _ = y;
+        using var skiaFont = new SKFont { Size = glyphs.Font.Size };
+        using var path = new SKPath();
+        for (var index = 0; index < glyphs.Glyphs.Length; index++)
+        {
+            using var glyphPath = skiaFont.GetGlyphPath(glyphs.Glyphs[index]);
+            if (glyphPath is null)
+                continue;
+            path.AddPath(
+                glyphPath,
+                x + glyphs.Positions[index].X,
+                y + glyphs.Positions[index].Y);
+        }
+        DrawShape(path, fill: true);
     }
 
     public virtual void DrawString(string text, int x, int y) =>
@@ -4277,9 +4345,9 @@ public class PdfCubeGraphics2D : IDisposable
     public virtual void DrawString(string text, float x, float y)
     {
         ArgumentNullException.ThrowIfNull(text);
-        using var textPaint = CreateDrawingPaint(stroked: false);
         using var skiaFont = new SKFont { Size = font.Size };
-        RequireCanvas().DrawText(text, x, y, skiaFont, textPaint);
+        using var textPath = skiaFont.GetTextPath(text, new SKPoint(x, y));
+        DrawShape(textPath, fill: true);
     }
 
     public virtual void DrawString(
@@ -4299,19 +4367,11 @@ public class PdfCubeGraphics2D : IDisposable
 
     public virtual bool Hit(SKRectI rectangle, object shape, bool onStroke)
     {
-        _ = onStroke;
-        var bounds = shape switch
-        {
-            SKRect candidate => candidate,
-            SKRectI candidate => new SKRect(
-                candidate.Left,
-                candidate.Top,
-                candidate.Right,
-                candidate.Bottom),
-            SKPath candidate => candidate.Bounds,
-            _ => throw new NotSupportedException(
-                $"Unsupported graphics hit-test shape '{shape.GetType().FullName}'.")
-        };
+        ArgumentNullException.ThrowIfNull(shape);
+        var hitShape = onStroke ? stroke.CreateStrokedShape(shape) : shape;
+        using var path = PdfCubeFontCompat.CreatePath(hitShape);
+        path.Transform(transform);
+        var bounds = path.Bounds;
         return bounds.IntersectsWith(new SKRect(
             rectangle.Left,
             rectangle.Top,
@@ -4375,6 +4435,8 @@ public class PdfCubeGraphics2D : IDisposable
         if (disposed)
             return;
         disposed = true;
+        clipPath?.Dispose();
+        clipPath = null;
         if (canvas is null)
             return;
         canvas.RestoreToCount(restoreCount);
@@ -4390,9 +4452,11 @@ public class PdfCubeGraphics2D : IDisposable
         JavaColor backgroundColor)
     {
         var previous = color;
+        var previousPaint = paint;
         SetColor(backgroundColor);
         FillRect(x, y, width, height);
-        SetColor(previous);
+        color = previous;
+        paint = previousPaint;
     }
 
     private void DrawCoordinates(
@@ -4416,60 +4480,256 @@ public class PdfCubeGraphics2D : IDisposable
             path.LineTo(xPoints[index], yPoints[index]);
         if (close)
             path.Close();
-        using var drawingPaint = CreateDrawingPaint(stroked: !fill);
-        RequireCanvas().DrawPath(path, drawingPaint);
+        DrawShape(path, fill);
     }
 
     private void DrawShape(object shape, bool fill)
     {
         ArgumentNullException.ThrowIfNull(shape);
-        using var drawingPaint = CreateDrawingPaint(stroked: !fill);
-        switch (shape)
+        if (!fill && stroke is not JavaBasicStroke)
         {
-            case SKPath path:
-                RequireCanvas().DrawPath(path, drawingPaint);
-                break;
-            case SKRect rectangle:
-                RequireCanvas().DrawRect(rectangle, drawingPaint);
-                break;
-            case SKRectI rectangle:
-                RequireCanvas().DrawRect(
-                    new SKRect(
-                        rectangle.Left,
-                        rectangle.Top,
-                        rectangle.Right,
-                        rectangle.Bottom),
-                    drawingPaint);
-                break;
-            default:
-                throw new NotSupportedException(
-                    $"Unsupported graphics shape '{shape.GetType().FullName}'.");
+            var strokedShape = stroke.CreateStrokedShape(shape);
+            DrawShape(strokedShape, fill: true);
+            return;
+        }
+
+        using var path = PdfCubeFontCompat.CreatePath(shape);
+        if (paint is JavaColor)
+        {
+            RenderLayer(
+                (layer, drawingPaint) => layer.DrawPath(path, drawingPaint),
+                stroked: !fill,
+                imagePaint: false);
+        }
+        else
+        {
+            RenderPaintLayer(path, stroked: !fill);
         }
     }
 
     private SKPaint CreateDrawingPaint(bool stroked)
     {
         var basicStroke = stroke as JavaBasicStroke ?? new JavaBasicStroke(1f);
-        return new SKPaint
+        var result = basicStroke.CreateSkiaPaint();
+        result.Color = paint is JavaColor paintColor ? paintColor : color;
+        result.IsStroke = stroked;
+        result.IsAntialias = IsAntialiasEnabled();
+        return result;
+    }
+
+    private SKPaint CreateImagePaint()
+    {
+        var result = new SKPaint
         {
-            Color = paint is JavaColor paintColor ? paintColor : color,
-            IsStroke = stroked,
-            StrokeWidth = basicStroke.Width,
-            StrokeCap = basicStroke.EndCap switch
-            {
-                JavaBasicStroke.CAP_BUTT => SKStrokeCap.Butt,
-                JavaBasicStroke.CAP_ROUND => SKStrokeCap.Round,
-                _ => SKStrokeCap.Square
-            },
-            StrokeJoin = basicStroke.LineJoin switch
-            {
-                JavaBasicStroke.JOIN_ROUND => SKStrokeJoin.Round,
-                JavaBasicStroke.JOIN_BEVEL => SKStrokeJoin.Bevel,
-                _ => SKStrokeJoin.Miter
-            },
-            StrokeMiter = basicStroke.MiterLimit,
-            IsAntialias = true
+            Color = SKColors.White,
+            IsAntialias = IsAntialiasEnabled()
         };
+        return result;
+    }
+
+    private void RenderImageLayer(Action<SKCanvas, SKPaint> draw) =>
+        RenderLayer(draw, stroked: false, imagePaint: true);
+
+    private void RenderLayer(
+        Action<SKCanvas, SKPaint> draw,
+        bool stroked,
+        bool imagePaint)
+    {
+        ArgumentNullException.ThrowIfNull(draw);
+        ThrowIfDisposed();
+        if (composite is JavaAlphaComposite)
+        {
+            using var directPaint = imagePaint
+                ? CreateImagePaint()
+                : CreateDrawingPaint(stroked);
+            ApplyFallbackComposite(directPaint);
+            draw(RequireCanvas(), directPaint);
+            return;
+        }
+        if (bitmap is null)
+        {
+            throw new InvalidOperationException(
+                "Custom Java composites require a bitmap-backed CPU canvas.");
+        }
+
+        using var source = PdfCubeFontCompat.CreateBitmap(
+            bitmap.Width,
+            bitmap.Height,
+            PdfCubeFontCompat.TYPE_INT_ARGB);
+        source.Erase(SKColors.Transparent);
+        using (var layer = new SKCanvas(source))
+        {
+            ConfigureLayerCanvas(layer);
+            using var sourcePaint = imagePaint
+                ? CreateImagePaint()
+                : CreateDrawingPaint(stroked);
+            draw(layer, sourcePaint);
+        }
+        CompositeLayer(source);
+    }
+
+    private void RenderPaintLayer(SKPath shape, bool stroked)
+    {
+        if (bitmap is null)
+        {
+            throw new InvalidOperationException(
+                "Non-solid Java paints require a bitmap-backed CPU canvas.");
+        }
+
+        using var source = PdfCubeFontCompat.CreateBitmap(
+            bitmap.Width,
+            bitmap.Height,
+            PdfCubeFontCompat.TYPE_INT_ARGB);
+        source.Erase(SKColors.Transparent);
+        var deviceBounds = new SKRectI(0, 0, bitmap.Width, bitmap.Height);
+        using (var context = paint.CreateContext(
+                   PdfCubeFontCompat.GetColorModel(bitmap),
+                   deviceBounds,
+                   shape.Bounds,
+                   transform,
+                   renderingHints))
+        {
+            var raster = context.GetRaster(
+                deviceBounds.Left,
+                deviceBounds.Top,
+                deviceBounds.Width,
+                deviceBounds.Height);
+            using var paintBitmap = PdfCubeFontCompat.CreateImage(
+                context.GetColorModel(),
+                raster,
+                isRasterPremultiplied: false,
+                null);
+            using var sourceCanvas = new SKCanvas(source);
+            using var replacePaint = new SKPaint { BlendMode = SKBlendMode.Src };
+            sourceCanvas.DrawBitmap(paintBitmap, 0, 0, replacePaint);
+        }
+
+        using var mask = PdfCubeFontCompat.CreateBitmap(
+            bitmap.Width,
+            bitmap.Height,
+            PdfCubeFontCompat.TYPE_INT_ARGB);
+        mask.Erase(SKColors.Transparent);
+        using (var maskCanvas = new SKCanvas(mask))
+        {
+            ConfigureLayerCanvas(maskCanvas);
+            using var maskPaint = CreateDrawingPaint(stroked);
+            maskPaint.Color = SKColors.White;
+            maskCanvas.DrawPath(shape, maskPaint);
+        }
+        using (var sourceCanvas = new SKCanvas(source))
+        using (var maskPaint = new SKPaint { BlendMode = SKBlendMode.DstIn })
+        {
+            sourceCanvas.DrawBitmap(mask, 0, 0, maskPaint);
+        }
+        if (composite is JavaAlphaComposite)
+            DrawAlphaLayer(source);
+        else
+            CompositeLayer(source);
+    }
+
+    private void DrawAlphaLayer(SKBitmap source)
+    {
+        var activeCanvas = RequireCanvas();
+        var restore = activeCanvas.Save();
+        activeCanvas.ResetMatrix();
+        using var drawingPaint = CreateImagePaint();
+        ApplyFallbackComposite(drawingPaint);
+        activeCanvas.DrawBitmap(source, 0, 0, drawingPaint);
+        activeCanvas.RestoreToCount(restore);
+    }
+
+    private void CompositeLayer(SKBitmap source)
+    {
+        var destination = bitmap ??
+            throw new InvalidOperationException(
+                "Composite rendering requires a bitmap-backed canvas.");
+        var sourceColorModel = PdfCubeFontCompat.GetColorModel(source);
+        var destinationColorModel = PdfCubeFontCompat.GetColorModel(destination);
+        var sourceRaster = PdfCubeFontCompat.GetRaster(source);
+        var destinationRaster = PdfCubeFontCompat.GetImageData(destination);
+        using var output = PdfCubeFontCompat.CreateBitmap(
+            destination.Width,
+            destination.Height,
+            PdfCubeFontCompat.GetImageType(destination));
+        var outputRaster = PdfCubeFontCompat.GetRaster(output);
+        using (var context = composite.CreateContext(
+                   sourceColorModel,
+                   destinationColorModel,
+                   renderingHints))
+        {
+            context.Compose(sourceRaster, destinationRaster, outputRaster);
+        }
+        if (!output.CopyTo(destination))
+        {
+            throw new InvalidOperationException(
+                "Unable to copy the composite output to the destination bitmap.");
+        }
+    }
+
+    private void ConfigureLayerCanvas(SKCanvas layer)
+    {
+        layer.ResetMatrix();
+        layer.ClipRect(new SKRect(
+            initialDeviceClip.Left,
+            initialDeviceClip.Top,
+            initialDeviceClip.Right,
+            initialDeviceClip.Bottom));
+        layer.SetMatrix(transform);
+        ApplyUserClip(layer);
+    }
+
+    private void ApplyUserClip(SKCanvas target)
+    {
+        if (clipPath is not null)
+        {
+            target.ClipPath(
+                clipPath,
+                SKClipOperation.Intersect,
+                IsAntialiasEnabled());
+        }
+    }
+
+    private void IntersectClip(SKPath addition)
+    {
+        if (clipPath is null)
+        {
+            clipPath = new SKPath(addition);
+        }
+        else
+        {
+            using var intersection = new SKPath();
+            if (!clipPath.Op(addition, SKPathOp.Intersect, intersection))
+                throw new InvalidOperationException("Unable to intersect graphics clips.");
+            clipPath.Dispose();
+            clipPath = new SKPath(intersection);
+        }
+        RequireCanvas().ClipPath(
+            addition,
+            SKClipOperation.Intersect,
+            IsAntialiasEnabled());
+    }
+
+    private bool IsAntialiasEnabled() =>
+        !ReferenceEquals(
+            renderingHints.GetValueOrDefault(
+                PdfCubeRenderingHints.KEY_ANTIALIASING),
+            PdfCubeRenderingHints.VALUE_ANTIALIAS_OFF);
+
+    private void ApplyFallbackComposite(SKPaint drawingPaint)
+    {
+        if (composite is JavaAlphaComposite alphaComposite)
+        {
+            drawingPaint.Color = drawingPaint.Color.WithAlpha(
+                checked((byte)Math.Round(
+                    drawingPaint.Color.Alpha * alphaComposite.Alpha,
+                    MidpointRounding.AwayFromZero)));
+            return;
+        }
+        if (bitmap is null)
+        {
+            throw new InvalidOperationException(
+                "Custom Java composites require a bitmap-backed CPU canvas.");
+        }
     }
 
     private SKCanvas RequireCanvas() =>
@@ -4596,7 +4856,8 @@ public sealed class JavaPathIterator
     {
         ArgumentNullException.ThrowIfNull(path);
         Path = new SKPath(path);
-        if (transform is SKMatrix matrix)
+        if (transform is SKMatrix matrix &&
+            !PdfCubeFontCompat.IsDefaultMatrix(matrix))
         {
             Path.Transform(matrix);
         }
@@ -4915,6 +5176,10 @@ internal static class PdfCubeFontCompat
             ? SKAlphaType.Unpremul
             : SKAlphaType.Opaque;
         var bitmap = new SKBitmap(new SKImageInfo(width, height, colorType, alphaType));
+        bitmap.Erase(
+            alphaType == SKAlphaType.Opaque
+                ? SKColors.Black
+                : SKColors.Transparent);
         RegisterImageType(bitmap, type);
         return bitmap;
     }
@@ -5574,6 +5839,17 @@ internal static class PdfCubeFontCompat
         matrix.Persp0 == 0 &&
         matrix.Persp1 == 0 &&
         matrix.Persp2 == 1;
+
+    internal static bool IsDefaultMatrix(SKMatrix matrix) =>
+        matrix.ScaleX == 0 &&
+        matrix.SkewX == 0 &&
+        matrix.TransX == 0 &&
+        matrix.SkewY == 0 &&
+        matrix.ScaleY == 0 &&
+        matrix.TransY == 0 &&
+        matrix.Persp0 == 0 &&
+        matrix.Persp1 == 0 &&
+        matrix.Persp2 == 0;
 
     internal static int GetTransformType(SKMatrix matrix)
     {
