@@ -2549,6 +2549,20 @@
     (sequence-node [(raw "(int)(") node (raw ")")])
     node))
 
+(defn- promoted-division-operand-node
+  [^CtExpression expression node]
+  (let [effective-type
+        (or (some-> expression .getTypeCasts last .getQualifiedName)
+            (some-> expression .getType .getQualifiedName))]
+    (case effective-type
+    ("double" "java.lang.Double")
+    (sequence-node [(raw "(double)(") node (raw ")")])
+
+    ("float" "java.lang.Float")
+    (sequence-node [(raw "(float)(") node (raw ")")])
+
+    node)))
+
 (defn- type-parameter-expression? [^CtExpression expression]
   (or (instance? CtTypeParameterReference (.getType expression))
       (and (instance? CtInvocation expression)
@@ -5814,14 +5828,25 @@
              right-value (if unbox-operands?
                            (maybe-unbox-node @ctx-holder right-expression right-node)
                            right-node)
+             division? (= "DIV" kind)
              numeric-comparison?
              (contains? #{"EQ" "NE" "LT" "LE" "GT" "GE"} kind)
-             left (if numeric-comparison?
+             left (cond
+                    division?
+                    (promoted-division-operand-node left-expression left-value)
+
+                    numeric-comparison?
                     (promoted-comparison-operand-node left-expression left-value)
-                    left-value)
-             right (if numeric-comparison?
+
+                    :else left-value)
+             right (cond
+                     division?
+                     (promoted-division-operand-node right-expression right-value)
+
+                     numeric-comparison?
                      (promoted-comparison-operand-node right-expression right-value)
-                     right-value)
+
+                     :else right-value)
              generic-null-comparison?
              (and (contains? #{"EQ" "NE"} kind)
                   (or (and (type-parameter-expression? left-expression)

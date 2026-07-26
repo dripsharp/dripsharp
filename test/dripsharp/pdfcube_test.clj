@@ -462,6 +462,39 @@
                                 "--nologo" "--configuration" "Release"
                                 "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest mapped-floating-rectangle-width-preserves-java-division
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-pdfbox")
+        fixture
+        (model!
+         "org/apache/pdfbox/pdmodel/graphics/image/ImageRegionFixture.java"
+         (str "package org.apache.pdfbox.pdmodel.graphics.image; "
+              "import java.awt.Rectangle; "
+              "public final class ImageRegionFixture { "
+              "public static int sampledWidth(Rectangle region, int amount) { "
+              "return (int) Math.ceil(region.getWidth() / amount); "
+              "} "
+              "public static float explicitlyNarrowed(double width) { "
+              "return (float) width / 2; "
+              "} }"))
+        emission (emit! fixture destination)
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               (str "src/PdfCube/PdfBox/Pdmodel/Graphics/Image/"
+                    "ImageRegionFixture.cs"))))]
+    (is (str/includes?
+         source
+         (str "global::System.Math.Ceiling((double)("
+              "((double)(region.Width) / amount)))")))
+    (is (not (str/includes?
+              source
+              "((region.Width / amount))")))
+    (is (str/includes?
+         source
+         "return ((float)((float)(width)) / 2);"))))
+
 (deftest pdfcube-public-field-case-collisions-preserve-both-source-identifiers
   (let [{destination :destination}
         (read-profile-and-destination "pdfcube-io")
