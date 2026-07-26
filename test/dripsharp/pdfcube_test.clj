@@ -48,6 +48,78 @@
             {:start (inc second-start) :end (+ 2 (count text))}]
            (mapv :destination (:mappings transformed))))))
 
+(deftest preflight-raw-font-generics-receive-erased-contracts
+  (let [transform
+        (get-in (pdfcube/rule-bundle)
+                [:rules :project-policy :transform-rendered])
+        configuration {:package {:id "PdfCube.Preflight"}}
+        container
+        "global::PdfCube.Preflight.Font.Container.FontContainer"
+        font-like "global::PdfCube.PdfBox.Pdmodel.Font.PDFontLike"
+        container-text
+        (str "// org/apache/pdfbox/preflight/font/container/FontContainer.java\n"
+             "public abstract class FontContainer<T> where T : " font-like " {\n"
+             "private " container "<object> value;\n}")
+        validator-text
+        (str "// org/apache/pdfbox/preflight/font/FontValidator.java\n"
+             "public abstract class FontValidator<T> where T : "
+             container "<" font-like "> {\n"
+             "private global::PdfCube.Preflight.Font.FontValidator<"
+             container "<global::PdfCube.PdfBox.Pdmodel.Font.PDCIDFont>> value;\n}")
+        container-result
+        (transform configuration
+                   {:text container-text
+                    :mappings [{:destination
+                                {:start 0 :end (count container-text)}}]})
+        validator-result
+        (transform configuration
+                   {:text validator-text
+                    :mappings [{:destination
+                                {:start 0 :end (count validator-text)}}]})]
+    (is (not (str/includes? (:text container-result)
+                            "public interface IFontContainer")))
+    (is (str/includes?
+         (:text container-result)
+         "public abstract class FontContainer<T> : IFontContainer"))
+    (is (str/includes?
+         (:text container-result)
+         "private global::PdfCube.Preflight.Font.Container.IFontContainer value;"))
+    (is (not (str/includes? (:text validator-result)
+                            "public interface IFontValidator")))
+    (is (str/includes?
+         (:text validator-result)
+         (str "public abstract class FontValidator<T> : IFontValidator where T : "
+              "global::PdfCube.Preflight.Font.Container.IFontContainer")))
+    (is (str/includes?
+         (:text validator-result)
+         "private global::PdfCube.Preflight.Font.IFontValidator value;"))))
+
+(deftest preflight-type3-widths-preserve-nullable-boxed-floats
+  (let [transform
+        (get-in (pdfcube/rule-bundle)
+                [:rules :project-policy :transform-rendered])
+        configuration {:package {:id "PdfCube.Preflight"}}
+        text
+        (str "// org/apache/pdfbox/preflight/font/Type3FontValidator.java\n"
+             "global::System.Collections.Generic.IList<float> widths = value;\n"
+             "float width = global::DripSharp.Runtime.JavaCompat.ListGet(widths, i);\n"
+             "return global::System.Array.Empty<float>();")
+        result
+        (transform configuration
+                   {:text text
+                    :mappings [{:destination
+                                {:start 0 :end (count text)}}]})]
+    (is (str/includes?
+         (:text result)
+         "global::System.Collections.Generic.IList<float?> widths"))
+    (is (str/includes?
+         (:text result)
+         (str "float width = global::DripSharp.Runtime.JavaCompat.Unbox("
+              "global::DripSharp.Runtime.JavaCompat.ListGet(widths, i));")))
+    (is (str/includes?
+         (:text result)
+         "return global::System.Array.Empty<float?>();"))))
+
 (deftest pdfbox-security-handler-erasure-preserves-specialized-handlers
   (let [transform
         (get-in (pdfcube/rule-bundle)
@@ -314,9 +386,21 @@
     (is (= #{:java-bidi}
            (:bridge-capabilities
             (:destination (read-profile-and-destination "pdfcube-pdfbox")))))
-    (is (= #{"PdfCube.PdfBox"}
+    (is (= "PdfCube.XMP.Runtime"
+           (:compatibility-namespace
+            (:destination (read-profile-and-destination "pdfcube-xmpbox")))))
+    (is (= #{}
+           (:bridge-capabilities
+            (:destination (read-profile-and-destination "pdfcube-preflight")))))
+    (is (= #{:preflight-font-erasure}
+           (:internal-capabilities
+            (:destination (read-profile-and-destination "pdfcube-preflight")))))
+    (is (= #{"PdfCube.PdfBox" "PdfCube.Preflight"}
            (:friend-assemblies
             (:destination (read-profile-and-destination "pdfcube-io")))))
+    (is (= #{"PdfCube.Preflight"}
+           (:friend-assemblies
+            (:destination (read-profile-and-destination "pdfcube-pdfbox")))))
     (doseq [{:keys [profile destination]} prepared]
       (is (= :maven (:build-tool profile)))
       (is (= "net10.0" (get-in destination [:project :target-framework])))

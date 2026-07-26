@@ -562,7 +562,10 @@
                       "public void copy() { "
                       "List<? extends String> local = field; field = local; } "
                       "public void copyFromCall() { "
-                      "List<? extends String> local = values(); } }")})
+                      "List<? extends String> local = values(); } "
+                      "public List<String> concreteValues() { return null; } "
+                      "public void copyUnbounded() { "
+                      "List<?> local = concreteValues(); } }")})
         emission (emit! fixture 1)
         source
         (slurp (str (paths/resolve-path (:project-root emission)
@@ -583,6 +586,10 @@
          source
          (str "global::System.Collections.Generic.IReadOnlyList<string> local = "
               "this.values();")))
+    (is (str/includes?
+         source
+         (str "global::System.Collections.Generic.IEnumerable<object> local = "
+              "this.concreteValues();")))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
                                :command ["dotnet" "build" (:project-file emission)
@@ -1125,6 +1132,32 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest neutral-system-exit-preserves-process-termination-call
+  (let [fixture
+        (model! {"example/Exit.java"
+                 (str "package example; public final class Exit { "
+                      "public static void terminate(int status) { System.exit(status); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Exit.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Exit.cs")))]
+    (is (str/includes?
+         first-source
+         "global::System.Environment.Exit(status);"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest do-while-statements-lower-structurally
   (let [fixture
         (model! {"example/Loop.java"
@@ -1240,6 +1273,35 @@
     (is (str/includes?
          first-source
          "throw new global::System.InvalidOperationException();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-map-merge-and-integer-sum-preserve-java-semantics
+  (let [fixture
+        (model! {"example/Counts.java"
+                 (str "package example; import java.util.Map; "
+                      "public final class Counts { "
+                      "public static int increment(Map<String, Integer> values, String key) { "
+                      "return values.merge(key, 1, Integer::sum); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Counts.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Counts.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.MapMerge("
+              "values, key, 1, global::DripSharp.Runtime.JavaCompat.SumInt);")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -1405,9 +1467,12 @@
                       "return left.equals(right); } "
                       "public static boolean calendarEquals(Calendar left, Calendar right) { "
                       "return left.equals(right); } "
+                      "public static int calendarCompare(Calendar left, Calendar right) { "
+                      "return left.compareTo(right); } "
                       "public static Calendar calendarClear(Calendar value) { "
                       "value.clear(); return value; } "
                       "public static String objectText(Object value) { return value.toString(); } "
+                      "public static String integerText(Integer value) { return value.toString(); } "
                       "static String optionalText(Optional<Object> value) { "
                       "return value.map(Object::toString).orElse(\"\"); } "
                       "public static String render(String name) { "
@@ -1416,6 +1481,9 @@
                       "return builder.toString(); } "
                       "public static String slice(String value, int start, int end) { "
                       "return new StringBuilder().append(value, start, end).toString(); } "
+                      "public static String builderSlice(String value, int end) { "
+                      "StringBuilder builder = new StringBuilder(value); "
+                      "return builder.substring(0, end); } "
                       "public static String reverse(String value) { "
                       "return new StringBuilder(value).reverse().toString(); } }")})
         capabilities #{:java-compat :java-regex-unicode}
@@ -1435,6 +1503,12 @@
                      first-source))))
     (is (str/includes?
          first-source
+         "return left.CompareTo(right);"))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.StringValueOf(value);"))
+    (is (str/includes?
+         first-source
          (str "value = global::DripSharp.Runtime.JavaCompat.CalendarClear(value);\n"
               "return value;")))
     (is (str/includes?
@@ -1443,6 +1517,12 @@
               "new global::System.Text.StringBuilder(\"prefix\");\n"
               "builder.Append(name).Append(\": \");\n"
               "return builder.ToString();")))
+    (is (str/includes?
+         first-source
+         (str "global::System.Text.StringBuilder builder = "
+              "new global::System.Text.StringBuilder(value);\n"
+              "return global::DripSharp.Runtime.JavaCompat.StringSubstring("
+              "builder.ToString(), 0, end);")))
     (is (str/includes?
          first-source
          (str "public static int hash("
@@ -2304,7 +2384,8 @@
               "output.Flush();\n"
               "global::System.Collections.Generic.Dictionary<string, string> values = "
               "new global::System.Collections.Generic.Dictionary<string, string>(4);\n"
-              "global::System.IO.MemoryStream buffer = new global::System.IO.MemoryStream(16);\n"
+              (str "global::DripSharp.Runtime.JavaByteArrayOutputStream buffer = "
+                   "new global::DripSharp.Runtime.JavaByteArrayOutputStream(16);\n")
               "global::DripSharp.Runtime.JavaCompat.MemoryStreamWriteTo(buffer, output);\n"
               "executor.Submit(() => {\n"
               "called.CompareAndSet(false, true);\n});\n"
@@ -2325,6 +2406,153 @@
               "if ((cause == default!)) {\n"
               "return new global::System.Exception(message);\n}\n"
               "return new global::System.Exception(message, cause);")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-empty-exception-constructor-is-resolved
+  (let [fixture
+        (model! {"example/Failure.java"
+                 (str "package example; public final class Failure { "
+                      "public static Exception create() { return new Exception(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Failure.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Failure.cs")))]
+    (is (str/includes?
+         first-source
+         "return new global::System.Exception();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-print-writer-preserves-writer-ownership-and-stack-output
+  (let [fixture
+        (model! {"example/StackText.java"
+                 (str "package example; import java.io.PrintWriter; "
+                      "import java.io.StringWriter; "
+                      "public final class StackText { "
+                      "public static String render(Exception error) { "
+                      "StringWriter text = new StringWriter(); "
+                      "PrintWriter writer = new PrintWriter(text); "
+                      "error.printStackTrace(writer); writer.close(); "
+                      "return text.toString(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/StackText.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/StackText.cs")))]
+    (is (str/includes?
+         first-source
+         "global::System.IO.TextWriter writer = text;"))
+    (is (str/includes?
+         first-source
+         "global::DripSharp.Runtime.JavaCompat.PrintStackTrace(error, writer);"))
+    (is (str/includes? first-source "writer.Dispose();"))
+    (is (str/includes? first-source "return text.ToString();"))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-preflight-standard-library-operations-are-resolved
+  (let [fixture
+        (model! {"example/Standard.java"
+                 (str "package example; "
+                      "import java.io.File; import java.io.FileReader; "
+                      "import java.io.PrintStream; import java.util.Arrays; "
+                      "import java.util.Stack; import java.util.Vector; "
+                      "import javax.xml.transform.stream.StreamResult; "
+                      "public final class Standard { "
+                      "public static FileReader reader(File file) throws Exception { "
+                      "return new FileReader(file); } "
+                      "public static StreamResult result(File file) { "
+                      "return new StreamResult(file); } "
+                      "public static void print(PrintStream stream, String value) { "
+                      "stream.print(value); stream.println(); } "
+                      "public static boolean isFile(File file) { return file.isFile(); } "
+                      "public static String text(Long value) { return value.toString(); } "
+                      "public static void clear(Vector<Object> values) { values.clear(); } "
+                      "public static boolean assignable(Class<?> expected, Class<?> actual) { "
+                      "return expected.isAssignableFrom(actual); } "
+                      "public static boolean chars(char[] left, char[] right) { "
+                      "return Arrays.equals(left, right); } "
+                      "@SuppressWarnings({\"rawtypes\", \"unchecked\"}) "
+                      "public static Object rawStack(Object value) { "
+                      "Stack values = new Stack(); values.push(value); return values.pop(); } "
+                      "public static Throwable cause(Throwable target, Throwable cause) { "
+                      "target.initCause(cause); return target.getCause(); } "
+                      "public static Standard create() throws Exception { "
+                      "return Standard.class.getDeclaredConstructor().newInstance(); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
+        first-source
+        (slurp (str (paths/resolve-path (:project-root first)
+                                        "src/Example/Java/Library/Standard.cs")))
+        second-source
+        (slurp (str (paths/resolve-path (:project-root second)
+                                        "src/Example/Java/Library/Standard.cs")))]
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.OpenFileReader(file);"))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.OpenFileOutput(file);"))
+    (is (str/includes?
+         first-source
+         (str "stream.Write(value);\n"
+              "stream.WriteLine();")))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.FileIsFile(file);"))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.StringValueOf(value);"))
+    (is (str/includes? first-source "values.Clear();"))
+    (is (str/includes?
+         first-source
+         "return expected.IsAssignableFrom(actual);"))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.ArrayEquals(left, right);"))
+    (is (str/includes?
+         first-source
+         (str "global::DripSharp.Runtime.JavaStack<object> values = "
+              "new global::DripSharp.Runtime.JavaStack<object>();")))
+    (is (str/includes?
+         first-source
+         (str "global::DripSharp.Runtime.JavaCompat.InitCause(target, cause);\n"
+              "return global::DripSharp.Runtime.JavaCompat.GetCause(target)!;")))
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.ConstructorInvoke<"
+              "global::Example.Java.Library.Standard>("
+              "global::DripSharp.Runtime.JavaCompat.ClassGetDeclaredConstructor("
+              "typeof(global::Example.Java.Library.Standard)));")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -2620,10 +2848,13 @@
                       "public void copyMissing(Map<String, String> source, "
                       "Map<String, String> target) { "
                       "source.forEach(target::putIfAbsent); } "
+                      "public void copyOrdered(List<String> values) { "
+                      "values.stream().forEachOrdered(this::accept); } "
                       "public static List<String> strings(List<Object> values) { "
                       "return values.stream().filter(String.class::isInstance)"
                       ".map(String.class::cast).collect(toList()); } "
-                      "private References with(String key, String value) { return this; } }")})
+                      "private References with(String key, String value) { return this; } "
+                      "private void accept(String value) { } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -2649,6 +2880,9 @@
               "(value0, value1) => { "
               "global::DripSharp.Runtime.JavaCompat.MapPutIfAbsent("
               "target, value0, value1); });")))
+    (is (str/includes?
+         first-source
+         "global::DripSharp.Runtime.JavaCompat.ForEach(values, this.accept);"))
     (is (str/includes?
          first-source
          (str "global::DripSharp.Runtime.JavaCompat.StreamFilter(values, "
@@ -2813,8 +3047,9 @@
                       "try { throw failure; } catch (RuntimeException caught) { "
                       "if (caught.getCause() instanceof IOException) { "
                       "throw (IOException) caught.getCause(); } throw caught; } } }")})
-        first (emit! fixture 1)
-        second (emit! fixture 3)
+        capabilities #{:java-compat :java-regex-unicode}
+        first (emit! fixture 1 capabilities)
+        second (emit! fixture 3 capabilities)
         first-source
         (slurp (str (paths/resolve-path (:project-root first)
                                         "src/Example/Java/Library/Failures.cs")))
@@ -2824,8 +3059,10 @@
     (is (str/includes?
          first-source
          (str "try {\nthrow failure;\n} catch (global::System.Exception caught) {\n"
-              "if ((caught.InnerException! is global::System.IO.IOException)) {\n"
-              "throw (global::System.IO.IOException)(caught.InnerException!);\n}\n"
+              (str "if ((global::DripSharp.Runtime.JavaCompat.GetCause(caught)! is "
+                   "global::System.IO.IOException)) {\n")
+              (str "throw (global::System.IO.IOException)("
+                   "global::DripSharp.Runtime.JavaCompat.GetCause(caught)!);\n}\n")
               "throw caught;\n}")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))

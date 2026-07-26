@@ -63,6 +63,7 @@
    :projection :microsoft-package}]
  :internal-capabilities #{:xml}
  :destination-capabilities #{:java-compat :java-regex-unicode}
+ :compatibility-namespace "PdfCube.XMP.Runtime"
  :legal-files
  [{:kind :license
    :source "research/pdfbox/LICENSE.txt"

@@ -1174,6 +1174,8 @@ sealed class JavaStack<T> : IEnumerable<T>
         return values.GetRange(fromIndex, toIndex - fromIndex);
     }
 
+    public void Clear() => values.Clear();
+
     public IEnumerator<T> GetEnumerator() => values.GetEnumerator();
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
@@ -5839,6 +5841,7 @@ internal static class JavaCompat
     }
     internal static int CompareLong(long left, long right) => left.CompareTo(right);
     internal static int CompareInt(int left, int right) => left.CompareTo(right);
+    internal static int SumInt(int left, int right) => unchecked(left + right);
     internal static int CompareFloat(float left, float right) => left.CompareTo(right);
     internal static int CompareDouble(double left, double right)
     {
@@ -6433,6 +6436,22 @@ internal static class JavaCompat
     {
         settings.CloseOutput = false;
         using var writer = System.Xml.XmlWriter.Create(result, settings);
+        WriteXmlTransform(settings, source, writer);
+    }
+    internal static void XmlTransform(
+        System.Xml.XmlWriterSettings settings,
+        System.Xml.XmlNode source,
+        TextWriter result)
+    {
+        settings.CloseOutput = false;
+        using var writer = System.Xml.XmlWriter.Create(result, settings);
+        WriteXmlTransform(settings, source, writer);
+    }
+    private static void WriteXmlTransform(
+        System.Xml.XmlWriterSettings settings,
+        System.Xml.XmlNode source,
+        System.Xml.XmlWriter writer)
+    {
         var namespaces = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["xml"] = "http://www.w3.org/XML/1998/namespace",
@@ -6872,6 +6891,12 @@ internal static class JavaCompat
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+    }
+
+    internal static TextReader OpenFileReader(FileInfo file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return new StreamReader(file.FullName);
     }
 
     internal static Stream OpenFileOutput(FileInfo file)
@@ -7346,8 +7371,34 @@ internal static class JavaCompat
         var colon = original.IndexOf(':');
         return colon >= 0 && (colon + 1 == original.Length || original[colon + 1] != '/');
     }
-    internal static Exception InitCause(Exception exception, Exception cause) =>
-        new Exception(exception.Message, cause);
+    private sealed class JavaCause
+    {
+        internal JavaCause(Exception? value) => Value = value;
+        internal Exception? Value { get; }
+    }
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Exception, JavaCause>
+        JavaCauses = new();
+    private static readonly object JavaCausesLock = new();
+    internal static Exception InitCause(Exception exception, Exception? cause)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        if (ReferenceEquals(exception, cause))
+            throw new ArgumentException("Self-causation is not permitted.", nameof(cause));
+        lock (JavaCausesLock)
+        {
+            if (exception.InnerException is not null || JavaCauses.TryGetValue(exception, out _))
+                throw new InvalidOperationException("Cause has already been initialized.");
+            JavaCauses.Add(exception, new JavaCause(cause));
+        }
+        return exception;
+    }
+    internal static Exception? GetCause(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return JavaCauses.TryGetValue(exception, out var cause)
+            ? cause.Value
+            : exception.InnerException;
+    }
     internal static int IdentityHashCode(object value) =>
         System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value);
 
@@ -7503,6 +7554,27 @@ internal static class JavaCompat
         if (value is null) return default!;
         map[key] = value;
         return value;
+    }
+    internal static V MapMerge<K, V>(
+        IDictionary<K, V> map,
+        K key,
+        V value,
+        Func<V, V, V> remappingFunction) where K : notnull
+    {
+        if (value is null) throw new NullReferenceException();
+        if (!map.TryGetValue(key, out var previous) || previous is null)
+        {
+            map[key] = value;
+            return value;
+        }
+        var merged = remappingFunction(previous, value);
+        if (merged is null)
+        {
+            map.Remove(key);
+            return default!;
+        }
+        map[key] = merged;
+        return merged;
     }
     internal static V MapGetOrDefault<K, V>(IDictionary<K, V> map, K key, V fallback) where K : notnull =>
         map is JavaLinkedHashMap<K, V> linked
@@ -9974,6 +10046,7 @@ internal static class JavaCompat
     }
     internal static bool FileExists(FileInfo file) =>
         File.Exists(file.FullName) || Directory.Exists(file.FullName);
+    internal static bool FileIsFile(FileInfo file) => File.Exists(file.FullName);
     internal static bool FileIsDirectory(FileInfo file) => Directory.Exists(file.FullName);
     internal static bool SetFileReadable(FileInfo _, bool __, bool ___) => true;
     internal static bool SetFileWritable(FileInfo _, bool __, bool ___) => true;

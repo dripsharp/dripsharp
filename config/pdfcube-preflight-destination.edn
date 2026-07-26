@@ -69,8 +69,9 @@
   {:id "SkiaSharp"
    :version "4.150.1"
    :projection :skia-sharp}]
- :internal-capabilities #{:icc :managed-raster :skia-graphics}
+ :internal-capabilities #{:preflight-font-erasure}
  :destination-capabilities #{:java-compat :java-regex-unicode}
+ :bridge-capabilities #{}
  :legal-files
  [{:kind :license
    :source "research/pdfbox/LICENSE.txt"

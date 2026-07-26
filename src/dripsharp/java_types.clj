@@ -147,6 +147,8 @@
                                 :dotnet.type/filter-input-stream]
    "java.io.FileInputStream" ["global::System.IO.Stream"
                               :dotnet.type/file-input-stream]
+   "java.io.FileReader" ["global::System.IO.TextReader"
+                         :dotnet.type/file-reader]
    "java.io.FileOutputStream" ["global::System.IO.Stream"
                                :dotnet.type/file-output-stream]
    "java.io.BufferedInputStream" ["global::System.IO.BufferedStream"
@@ -163,6 +165,7 @@
    "java.io.PipedOutputStream" ["global::DripSharp.Runtime.JavaPipedOutputStream"
                                 :dotnet.type/piped-output-stream]
    "java.io.PrintStream" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
+   "java.io.PrintWriter" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
    "java.io.PushbackInputStream" ["global::DripSharp.Runtime.JavaPushbackInputStream"
                                   :dotnet.type/pushback-input-stream]
    "java.io.SequenceInputStream" ["global::System.IO.Stream"

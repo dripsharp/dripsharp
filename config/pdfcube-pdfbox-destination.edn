@@ -57,6 +57,7 @@
  :project-references
  ["../pdfcube-io/PdfCube.IO.csproj"
   "../pdfcube-fontbox/PdfCube.FontBox.csproj"]
+ :friend-assemblies #{"PdfCube.Preflight"}
  :external-dependencies
  {"commons-logging:commons-logging:jar:1.4.0"
   {:source-scope :compile-runtime

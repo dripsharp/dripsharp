@@ -44,6 +44,7 @@
    ["JavaWeakReference" "JavaWeakReference<>"]
    ["JavaBase64" "JavaBase64"]
    ["JavaBase64Decoder" "JavaBase64Decoder"]
+   ["JavaByteArrayOutputStream" "JavaByteArrayOutputStream"]
    ["JavaCodingErrorAction" "JavaCodingErrorAction"]
    ["JavaDateTimeFormatter" "JavaDateTimeFormatter"]
    ["JavaParsePosition" "JavaParsePosition"]

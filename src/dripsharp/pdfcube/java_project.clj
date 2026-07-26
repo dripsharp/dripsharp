@@ -1729,6 +1729,9 @@
    "executable:org.apache.pdfbox.io.RandomAccessReadView#close()"
    (direct-instance-adaptation "Dispose")})
 
+(def ^:private translated-project-boxed-covariant-executables
+  #{"executable:org.apache.xmpbox.type.BooleanType#getValue()"})
+
 (def ^:private graphics-invocation-adaptations
   {"executable:java.awt.Graphics#clearRect(int,int,int,int)"
    (direct-instance-adaptation "ClearRect")
@@ -2843,7 +2846,7 @@
      :project-file "PdfCube.IO.PackageConsumer.csproj"
      :source-path "validation/pdfcube-io/PdfCube.IO.FocusedConsumer.cs"
      :success-message "PdfCube.IO focused behavior passed."}
-    :friend-assemblies #{"PdfCube.PdfBox"}
+    :friend-assemblies #{"PdfCube.PdfBox" "PdfCube.Preflight"}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package]
     :internal-capabilities #{:java-io :java-nio}
@@ -2894,7 +2897,8 @@
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package]
     :internal-capabilities #{:xml}
-    :destination-capabilities #{:java-compat :java-regex-unicode}}
+    :destination-capabilities #{:java-compat :java-regex-unicode}
+    :compatibility-namespace "PdfCube.XMP.Runtime"}
 
    :pdfbox
    {:profile "pdfcube-pdfbox"
@@ -2914,6 +2918,7 @@
     :project-references
     ["../pdfcube-io/PdfCube.IO.csproj"
      "../pdfcube-fontbox/PdfCube.FontBox.csproj"]
+    :friend-assemblies #{"PdfCube.Preflight"}
     :package-consumer
     {:strategy :compile-only
      :project-file "PdfCube.PdfBox.PackageConsumer.csproj"
@@ -2955,8 +2960,9 @@
      "../pdfcube-xmpbox/PdfCube.XmpBox.csproj"]
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package]
-    :internal-capabilities #{:icc :managed-raster :skia-graphics}
-    :destination-capabilities #{:java-compat :java-regex-unicode}}))
+    :internal-capabilities #{:preflight-font-erasure}
+    :destination-capabilities #{:java-compat :java-regex-unicode}
+    :bridge-capabilities #{}}))
 
 (defn product-family
   "Returns the deterministic five-package PdfCube configuration contract."
@@ -3325,6 +3331,82 @@
        (str "global::PdfCube.PdfBox.Util.DateConverter."
             "parseTZoffset(text, ref retCal, where)")]])))
 
+(def ^:private preflight-font-container
+  "global::PdfCube.Preflight.Font.Container.FontContainer")
+
+(def ^:private preflight-font-container-contract
+  "global::PdfCube.Preflight.Font.Container.IFontContainer")
+
+(def ^:private preflight-font-validator
+  "global::PdfCube.Preflight.Font.FontValidator")
+
+(def ^:private preflight-font-validator-contract
+  "global::PdfCube.Preflight.Font.IFontValidator")
+
+(defn- preserve-preflight-raw-generic-contracts
+  [configuration {:keys [text] :as rendered}]
+  (if-not (= "PdfCube.Preflight" (get-in configuration [:package :id]))
+    rendered
+    (let [font-like "global::PdfCube.PdfBox.Pdmodel.Font.PDFontLike"
+          erased-container
+          (reduce
+           (fn [current source]
+             (replace-rendered current source preflight-font-container-contract))
+           rendered
+           [(str preflight-font-container "<object>")
+            (str preflight-font-container "<" font-like ">")])
+          erased-validator
+          (reduce
+           (fn [current font-type]
+             (replace-rendered
+              current
+              (str preflight-font-validator "<" preflight-font-container
+                   "<global::PdfCube.PdfBox.Pdmodel.Font." font-type ">>")
+              preflight-font-validator-contract))
+           erased-container
+           ["PDCIDFont" "PDCIDFontType0" "PDCIDFontType2" "PDFont"])
+          with-container-contract
+          (if (str/includes?
+               text
+               "org/apache/pdfbox/preflight/font/container/FontContainer.java")
+            (replace-rendered
+             erased-validator
+             (str "public abstract class FontContainer<T> where T : "
+                  font-like " {")
+             (str "public abstract class FontContainer<T> : IFontContainer where T : "
+                  font-like " {"))
+            erased-validator)
+          with-validator-contract
+          (if (str/includes?
+               text
+               "org/apache/pdfbox/preflight/font/FontValidator.java")
+            (replace-rendered
+             with-container-contract
+             (str "public abstract class FontValidator<T> where T : "
+                  preflight-font-container-contract " {")
+             (str
+              "public abstract class FontValidator<T> : IFontValidator where T : "
+              preflight-font-container-contract " {\n"
+              preflight-font-container-contract
+              " IFontValidator.GetFontContainer() => GetFontContainer();"))
+            with-container-contract)]
+      (if (str/includes?
+           text
+           "org/apache/pdfbox/preflight/font/Type3FontValidator.java")
+        (reduce
+         (fn [current [source destination]]
+           (replace-rendered current source destination))
+         with-validator-contract
+         [["global::System.Collections.Generic.IList<float>"
+           "global::System.Collections.Generic.IList<float?>"]
+          [(str "float width = global::DripSharp.Runtime.JavaCompat."
+                "ListGet(widths, i);")
+           (str "float width = global::DripSharp.Runtime.JavaCompat.Unbox("
+                "global::DripSharp.Runtime.JavaCompat.ListGet(widths, i));")]
+          ["global::System.Array.Empty<float>()"
+           "global::System.Array.Empty<float?>()"]])
+        with-validator-contract))))
+
 (defn- transform-rendered [configuration {:keys [text mappings] :as rendered}]
   (let [destination (compatibility-namespace configuration)
         rendered
@@ -3336,7 +3418,8 @@
            (str "global::" destination)))]
     (->> rendered
          (erase-security-handler-carrier configuration)
-         (preserve-calendar-value-semantics configuration))))
+         (preserve-calendar-value-semantics configuration)
+         (preserve-preflight-raw-generic-contracts configuration))))
 
 (defn- compatibility-asset [configuration asset]
   (if (= base-compatibility-namespace
@@ -3432,7 +3515,16 @@
       :destination "DripSharp/Runtime/PdfBoxSecurityHandler.cs"
       :strategy :pdfcube.pdfbox/security-handler-erasure
       :missing-kind :missing-pdfcube-pdfbox-compatibility-source
-      :missing-message "PdfCube PDFBox compatibility source is missing"})))
+      :missing-message "PdfCube PDFBox compatibility source is missing"})
+
+    (contains? (:internal-capabilities configuration)
+               :preflight-font-erasure)
+    (conj
+     {:source "runtime/PdfCube.Preflight.Compat.cs"
+      :destination "DripSharp/Runtime/PdfCubePreflightCompat.cs"
+      :strategy :pdfcube.preflight/font-erasure
+      :missing-kind :missing-pdfcube-preflight-compatibility-source
+      :missing-message "PdfCube Preflight compatibility source is missing"})))
 
 (defn rule-bundle
   "Returns the PdfCube rule bundle composed over reusable Java-library rules."
@@ -3470,7 +3562,9 @@
                      :destination-field-adaptations
                      commons-field-adaptations
                      :destination-invocation-adaptations
-                     invocation-adaptations)))))
+                     invocation-adaptations
+                     :destination-boxed-covariant-executables
+                     translated-project-boxed-covariant-executables)))))
         (assoc-in [:rules :destination-bridges :assets]
                   (fn [context]
                     (let [configuration (:configuration context)
