@@ -1,0 +1,183 @@
+{:schema-version 1
+ :oracle {:product "Apache PDFBox Preflight"
+          :version "3.0.8"
+          :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+          :repository "https://github.com/apache/pdfbox.git"}
+ :redistribution
+ {:license "Apache-2.0"
+  :constraint "Redistribution is permitted with the Apache-2.0 license and PDFBox NOTICE retained."
+  :license-path "research/pdfbox/LICENSE.txt"
+  :license-sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"
+  :notice-path "research/pdfbox/NOTICE.txt"
+  :notice-sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}
+ :supported-formats [:pdf-a1a :pdf-a1b]
+ :required-outcomes [:valid :invalid :malformed]
+ :required-processes
+ ["catalog-process"
+  "file-specification-process"
+  "trailer-process"
+  "xref-process"
+  "acro-form-process"
+  "bookmark-process"
+  "pages-tree-process"
+  "metadata-process"
+  "stream-process"
+  "page-process"
+  "extgstate-process"
+  "shading-pattern-process"
+  "graphic-process"
+  "tiling-pattern-process"
+  "resources-process"
+  "font-process"
+  "actions-process"
+  "annotations-process"
+  "destination-process"]
+ :sources
+ {"pdfa-annotations"
+  {:path "research/pdfbox/preflight/src/test/resources/pdfa-with-annotations-square.pdf"
+   :sha256 "640168ad8f5ec872ec082992664fd92a7df1c2e53e12af45f134c8be951ed342"
+   :origin "Apache PDFBox Preflight upstream test fixture"
+   :upstream-test "research/pdfbox/preflight/src/test/java/org/apache/pdfbox/preflight/action/pdfa1b/AbstractTestAction.java"}
+  "pdfbox-3741"
+  {:path "research/pdfbox/preflight/src/test/resources/PDFBOX-3741.pdf"
+   :sha256 "48a2915ef85ee693a7a45ddded71fc03b6a18c48f6933fb964ac4f2662344bc0"
+   :origin "Apache PDFBox Preflight PDFBOX-3741 regression fixture"
+   :upstream-test "research/pdfbox/preflight/src/test/java/org/apache/pdfbox/preflight/TestPDFBox3741.java"}
+  "metadata-trailing-nul"
+  {:path "research/pdfbox/preflight/src/test/resources/org/apache/pdfbox/preflight/metadata/PDFAMetaDataValidationTestTrailingNul.pdf"
+   :sha256 "739721b04aa90540067fa1d512747777a022ec4f3b380418efa23434604e8164"
+   :origin "Apache PDFBox Preflight metadata regression fixture"
+   :upstream-test "research/pdfbox/preflight/src/test/java/org/apache/pdfbox/preflight/metadata/TestMetadataFiles.java"}
+  "metadata-trailing-spaces"
+  {:path "research/pdfbox/preflight/src/test/resources/org/apache/pdfbox/preflight/metadata/PDFAMetaDataValidationTestTrailingSpaces.pdf"
+   :sha256 "02ef656cdee54def2b05b60c0bf5721a01a6e9a6955eb2aa81b3c563b408581d"
+   :origin "Apache PDFBox Preflight metadata regression fixture"
+   :upstream-test "research/pdfbox/preflight/src/test/java/org/apache/pdfbox/preflight/metadata/TestMetadataFiles.java"}
+  "metadata-trailing-control"
+  {:path "research/pdfbox/preflight/src/test/resources/org/apache/pdfbox/preflight/metadata/PDFAMetaDataValidationTestTrailingControlChar.pdf"
+   :sha256 "ad3ad0235077f8aeb2fe1254060e8a4c3541bafe13114c1264ecc3f7c9fbf307"
+   :origin "Apache PDFBox Preflight metadata regression fixture"
+   :upstream-test "research/pdfbox/preflight/src/test/java/org/apache/pdfbox/preflight/metadata/TestMetadataFiles.java"}
+  "metadata-middle-nul"
+  {:path "research/pdfbox/preflight/src/test/resources/org/apache/pdfbox/preflight/metadata/PDFAMetaDataValidationTestMiddleNul.pdf"
+   :sha256 "81ba60ab7fe4af1a68f0c951696f124d5ea935c041413252e2ce72837f1be65f"
+   :origin "Apache PDFBox Preflight metadata regression fixture"
+   :upstream-test "research/pdfbox/preflight/src/test/java/org/apache/pdfbox/preflight/metadata/TestMetadataFiles.java"}
+  "metadata-middle-control"
+  {:path "research/pdfbox/preflight/src/test/resources/org/apache/pdfbox/preflight/metadata/PDFAMetaDataValidationTestMiddleControlChar.pdf"
+   :sha256 "2aa439ed713f39c440b6ceaa6bacafb96f526f2df46e78e636c4ffc4b7956fb5"
+   :origin "Apache PDFBox Preflight metadata regression fixture"
+   :upstream-test "research/pdfbox/preflight/src/test/java/org/apache/pdfbox/preflight/metadata/TestMetadataFiles.java"}
+  "password-sample-128"
+  {:path "research/pdfbox/pdfbox/src/test/resources/org/apache/pdfbox/encryption/PasswordSample-128bit.pdf"
+   :sha256 "1919480aba35617d69a1f9e1dce30bbe6864b3906d5c136fd7a8837826f9f750"
+   :origin "Apache PDFBox symmetric-encryption upstream test fixture"
+   :upstream-test "research/pdfbox/pdfbox/src/test/java/org/apache/pdfbox/encryption/TestSymmetricKeyEncryption.java"}}
+ :cases
+ [{:id "pdfa-a1b-valid"
+   :source "pdfa-annotations"
+   :staged-file "pdfa-annotations.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "640168ad8f5ec872ec082992664fd92a7df1c2e53e12af45f134c8be951ed342"
+   :format :pdf-a1b
+   :expected-outcome :valid
+   :processes
+   ["catalog-process"
+    "file-specification-process"
+    "trailer-process"
+    "xref-process"
+    "acro-form-process"
+    "bookmark-process"
+    "pages-tree-process"
+    "metadata-process"
+    "stream-process"
+    "page-process"
+    "extgstate-process"
+    "shading-pattern-process"
+    "graphic-process"
+    "tiling-pattern-process"
+    "resources-process"
+    "font-process"
+    "actions-process"
+    "annotations-process"
+    "destination-process"]}
+  {:id "pdfa-a1a-valid"
+   :source "pdfa-annotations"
+   :staged-file "pdfa-annotations.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "640168ad8f5ec872ec082992664fd92a7df1c2e53e12af45f134c8be951ed342"
+   :format :pdf-a1a
+   :expected-outcome :valid
+   :processes ["logical-structure" "metadata-process" "page-process"]}
+  {:id "pdfbox-3741-invalid-color"
+   :source "pdfbox-3741"
+   :staged-file "pdfbox-3741.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "48a2915ef85ee693a7a45ddded71fc03b6a18c48f6933fb964ac4f2662344bc0"
+   :format :pdf-a1b
+   :expected-outcome :invalid
+   :processes ["stream-process" "page-process" "resources-process" "font-process"]}
+  {:id "metadata-trailing-nul-valid"
+   :source "metadata-trailing-nul"
+   :staged-file "metadata-trailing-nul.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "739721b04aa90540067fa1d512747777a022ec4f3b380418efa23434604e8164"
+   :format :pdf-a1b
+   :expected-outcome :valid
+   :processes ["catalog-process" "metadata-process"]}
+  {:id "metadata-trailing-spaces-invalid"
+   :source "metadata-trailing-spaces"
+   :staged-file "metadata-trailing-spaces.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "02ef656cdee54def2b05b60c0bf5721a01a6e9a6955eb2aa81b3c563b408581d"
+   :format :pdf-a1b
+   :expected-outcome :invalid
+   :processes ["catalog-process" "metadata-process"]}
+  {:id "metadata-trailing-control-invalid"
+   :source "metadata-trailing-control"
+   :staged-file "metadata-trailing-control.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "ad3ad0235077f8aeb2fe1254060e8a4c3541bafe13114c1264ecc3f7c9fbf307"
+   :format :pdf-a1b
+   :expected-outcome :invalid
+   :processes ["catalog-process" "metadata-process"]}
+  {:id "metadata-middle-nul-invalid"
+   :source "metadata-middle-nul"
+   :staged-file "metadata-middle-nul.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "81ba60ab7fe4af1a68f0c951696f124d5ea935c041413252e2ce72837f1be65f"
+   :format :pdf-a1b
+   :expected-outcome :invalid
+   :processes ["catalog-process" "metadata-process"]}
+  {:id "metadata-middle-control-invalid"
+   :source "metadata-middle-control"
+   :staged-file "metadata-middle-control.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "2aa439ed713f39c440b6ceaa6bacafb96f526f2df46e78e636c4ffc4b7956fb5"
+   :format :pdf-a1b
+   :expected-outcome :invalid
+   :processes ["catalog-process" "metadata-process"]}
+  {:id "encrypted-password-required"
+   :source "password-sample-128"
+   :staged-file "password-sample-128.pdf"
+   :transform {:kind :copy}
+   :payload-sha256 "1919480aba35617d69a1f9e1dce30bbe6864b3906d5c136fd7a8837826f9f750"
+   :format :pdf-a1b
+   :expected-outcome :invalid
+   :processes ["file-structure"]}
+  {:id "malformed-truncated-half"
+   :source "pdfa-annotations"
+   :staged-file "malformed-truncated-half.pdf"
+   :transform {:kind :truncate-half}
+   :payload-sha256 "0480164e439a3b218d9ca329bb22ad6aabc7f96f680593288272c668698ae7d2"
+   :format :pdf-a1b
+   :expected-outcome :malformed
+   :processes ["file-structure" "xref-process" "trailer-process"]}
+  {:id "malformed-header-prefix"
+   :source "pdfa-annotations"
+   :staged-file "malformed-header-prefix.pdf"
+   :transform {:kind :prefix :bytes 64}
+   :payload-sha256 "27ca14d4e8fd6cecb1bb46dec3e9571aeb901024b267f4e095dffec8b987d98e"
+   :format :pdf-a1b
+   :expected-outcome :malformed
+   :processes ["file-structure"]}]}

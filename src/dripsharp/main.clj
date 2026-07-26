@@ -36,6 +36,8 @@
              :as pdfcube-pdfbox-security-differential]
             [dripsharp.pdfcube.preflight-differential
              :as pdfcube-preflight-differential]
+            [dripsharp.pdfcube.preflight-corpus
+             :as pdfcube-preflight-corpus]
             [dripsharp.pdfcube.xmpbox-metadata-differential
              :as pdfcube-xmpbox-metadata-differential]
             [dripsharp.pkl-core-corpus-runner :as pkl-core-corpus-runner]
@@ -66,6 +68,7 @@
                            ["pdfcube-pdfbox-printing-differential"]
                            ["pdfcube-pdfbox-rendering-differential"]
                            ["pdfcube-pdfbox-security-differential"]
+                           ["pdfcube-preflight-corpus"]
                            ["pdfcube-preflight-differential"]
                            ["pdfcube-xmpbox-metadata-differential"]
                            ["language-snippet-contract"] ["language-snippet-package"]
@@ -73,7 +76,7 @@
                          (vec args))
               (and (= 2 (count args))
                    (contains? #{"generate" "verify" "pack" "package"} (first args))))
-    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|pdfcube-io-differential|pdfcube-fontbox-differential|pdfcube-pdfbox-differential|pdfcube-pdfbox-bidi-differential|pdfcube-pdfbox-document-lifecycle-differential|pdfcube-pdfbox-font-text-differential|pdfcube-pdfbox-graphics-differential|pdfcube-pdfbox-image-differential|pdfcube-pdfbox-interchange-differential|pdfcube-pdfbox-interaction-differential|pdfcube-pdfbox-low-level-differential|pdfcube-pdfbox-manipulation-differential|pdfcube-pdfbox-printing-differential|pdfcube-pdfbox-rendering-differential|pdfcube-pdfbox-security-differential|pdfcube-preflight-differential|pdfcube-xmpbox-metadata-differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus" 2)
+    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|pdfcube-io-differential|pdfcube-fontbox-differential|pdfcube-pdfbox-differential|pdfcube-pdfbox-bidi-differential|pdfcube-pdfbox-document-lifecycle-differential|pdfcube-pdfbox-font-text-differential|pdfcube-pdfbox-graphics-differential|pdfcube-pdfbox-image-differential|pdfcube-pdfbox-interchange-differential|pdfcube-pdfbox-interaction-differential|pdfcube-pdfbox-low-level-differential|pdfcube-pdfbox-manipulation-differential|pdfcube-pdfbox-printing-differential|pdfcube-pdfbox-rendering-differential|pdfcube-pdfbox-security-differential|pdfcube-preflight-corpus|pdfcube-preflight-differential|pdfcube-xmpbox-metadata-differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus" 2)
     (try
       (case (first args)
         "generate" (harness/generate! {:profile (or (second args) "pkl-parser")})
@@ -110,6 +113,8 @@
         (pdfcube-pdfbox-rendering-differential/verify!)
         "pdfcube-pdfbox-security-differential"
         (pdfcube-pdfbox-security-differential/verify!)
+        "pdfcube-preflight-corpus"
+        (pdfcube-preflight-corpus/verify!)
         "pdfcube-preflight-differential"
         (pdfcube-preflight-differential/verify!)
         "pdfcube-xmpbox-metadata-differential"
