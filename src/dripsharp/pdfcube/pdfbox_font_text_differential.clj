@@ -17,12 +17,16 @@
 
 (def required-trace-families
   #{"article-handling" "cff" "cid" "cross-reopen" "damaged-font"
-    "displacement" "duplicate-suppression" "embedded" "encoding"
-    "extraction-api" "fallback" "font-dictionary" "glyph-mapping"
-    "line-separation" "missing-glyph" "positioned-text"
-    "representative-pdf" "sorting" "standard-font" "substituted"
-    "text-matrix" "text-position" "text-position-comparator" "to-unicode"
-    "true-type" "type-0" "type-1" "type-3" "vertical-writing"
+    "complex-text-arabic" "complex-text-cluster" "complex-text-combining"
+    "complex-text-direction" "complex-text-glyph-position"
+    "complex-text-indic" "complex-text-ligature"
+    "content-stream-integrity" "displacement" "duplicate-suppression"
+    "embedded" "encoding" "extraction-api" "fallback" "font-dictionary"
+    "glyph-mapping" "harfbuzz-boundary" "line-separation"
+    "missing-glyph" "positioned-text" "representative-pdf" "sorting"
+    "standard-font" "substituted" "text-matrix" "text-position"
+    "text-position-comparator" "to-unicode" "true-type" "type-0"
+    "type-1" "type-3" "unicode-text-shaping" "vertical-writing"
     "width-advance" "word-separation"})
 
 (defn- fail! [message data]

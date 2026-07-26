@@ -6,6 +6,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using DripSharp.Runtime;
+using PdfCube.FontBox.Ttf.Gsub;
 using PdfCube.PdfBox;
 using PdfCube.PdfBox.Cos;
 using PdfCube.PdfBox.Pdfwriter.Compress;
@@ -46,6 +47,7 @@ internal static class Program
                 return 0;
 
             ObserveDirectModels();
+            ObserveComplexText();
             ObserveExtraction(ownPdf, "synthetic");
             ObserveFixture(
                 Path.Combine(
@@ -328,6 +330,314 @@ internal static class Program
 
         ObserveTextPositions(standard);
     }
+
+    private static void ObserveComplexText()
+    {
+        var fontboxResources = Path.Combine(
+            pdfboxRoot, "fontbox", "src", "test", "resources");
+        ObserveGsubCase(
+            "bengali-conjunct",
+            Path.Combine(fontboxResources, "ttf", "Lohit-Bengali.ttf"),
+            "ক্ষীরের",
+            true,
+            false);
+        ObserveGsubCase(
+            "devanagari-combining",
+            Path.Combine(fontboxResources, "ttf", "Lohit-Devanagari.ttf"),
+            "य़ज़क़",
+            true,
+            true);
+        ObserveGsubCase(
+            "gujarati-conjunct",
+            Path.Combine(fontboxResources, "ttf", "Lohit-Gujarati.ttf"),
+            "ક્ષજ્ઞત્તશ્ર",
+            true,
+            false);
+        ObserveGsubCase(
+            "latin-ligature",
+            Path.Combine(fontboxResources, "ttf", "JosefinSans-Italic.ttf"),
+            "office",
+            false,
+            false);
+
+        ObservePositionedComplexFixture(
+            Path.Combine(
+                testResources, "input", "PDFBOX-4531-bidi-ligature-1.pdf"),
+            "arabic-hebrew-ligatures",
+            true);
+        ObservePositionedComplexFixture(
+            Path.Combine(
+                testResources,
+                "input",
+                "PDFBOX-5747-unicode-surrogate-with-diacritic-reduced.pdf"),
+            "surrogate-combining-mark",
+            false);
+
+        var pdfCubeAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(assembly =>
+                assembly.GetName().Name?.StartsWith(
+                    "PdfCube.", StringComparison.Ordinal) == true)
+            .ToList();
+        var harfBuzzAssemblyReferences = pdfCubeAssemblies
+            .SelectMany(assembly => assembly.GetReferencedAssemblies())
+            .Count(name =>
+                name.Name?.Contains(
+                    "HarfBuzz", StringComparison.OrdinalIgnoreCase) == true);
+        var harfBuzzPublicReferences = pdfCubeAssemblies
+            .SelectMany(assembly => assembly.GetExportedTypes())
+            .SelectMany(type =>
+                new[] { type.FullName ?? type.Name }
+                    .Concat(type.GetMembers().Select(member => member.ToString() ?? "")))
+            .Count(value =>
+                value.Contains("HarfBuzz", StringComparison.OrdinalIgnoreCase));
+        Observe(
+            "harfbuzz-boundary",
+            "public-package-closure",
+            harfBuzzAssemblyReferences,
+            harfBuzzPublicReferences);
+    }
+
+    private static void ObserveGsubCase(
+        string id,
+        string fontPath,
+        string value,
+        bool indic,
+        bool combining)
+    {
+        if (!File.Exists(fontPath))
+            throw new IOException(
+                "Complex-text font fixture is missing: " + fontPath);
+
+        using var document = new PDDocument();
+        using var input = File.OpenRead(fontPath);
+        var font = PDType0Font.Load(document, input, false);
+        var cmap = font.GetCmapLookup();
+        var originalGlyphs = value.EnumerateRunes()
+            .Select(rune => cmap.GetGlyphId(rune.Value))
+            .ToList();
+        var worker = new GsubWorkerFactory()
+            .GetGsubWorker(cmap, font.GetGsubData());
+        var shapedGlyphs = worker.ApplyTransforms(originalGlyphs);
+        var shapedBytes = EncodeGlyphs(font, shapedGlyphs);
+        var directBytes = font.Encode(value);
+
+        var page = new PDPage(new PDRectangle(420, 120));
+        document.AddPage(page);
+        using (var content = new PDPageContentStream(
+                   document,
+                   page,
+                   PDPageContentStream.AppendMode.Overwrite,
+                   false,
+                   false))
+        {
+            Show(content, font, 18, 20, 60, value);
+        }
+        byte[] contentBytes;
+        using (var content = page.GetContents())
+        using (var output = new MemoryStream())
+        {
+            content.CopyTo(output);
+            contentBytes = output.ToArray();
+        }
+
+        var glyphPositions = string.Join(
+            ";", shapedGlyphs.Select(glyph => GlyphPosition(font, glyph)));
+        if (indic)
+        {
+            Observe(
+                "complex-text-indic",
+                id,
+                CodePoints(value),
+                Integers(originalGlyphs),
+                Integers(shapedGlyphs),
+                originalGlyphs.Count,
+                shapedGlyphs.Count);
+        }
+        if (combining)
+        {
+            Observe(
+                "complex-text-combining",
+                id,
+                CodePoints(value),
+                Integers(originalGlyphs),
+                Integers(shapedGlyphs));
+        }
+        if (id.Contains("ligature", StringComparison.Ordinal))
+        {
+            Observe(
+                "complex-text-ligature",
+                id,
+                CodePoints(value),
+                Integers(originalGlyphs),
+                Integers(shapedGlyphs));
+        }
+        var codePointCount = value.EnumerateRunes().Count();
+        Observe(
+            "complex-text-cluster",
+            id,
+            codePointCount,
+            shapedGlyphs.Count,
+            shapedGlyphs.Count < codePointCount);
+        Observe(
+            "complex-text-glyph-position",
+            id,
+            glyphPositions);
+        Observe(
+            "unicode-text-shaping",
+            id,
+            Hex(directBytes),
+            Hex(shapedBytes),
+            Hex(contentBytes),
+            !directBytes.SequenceEqual(shapedBytes),
+            ContainsBytes(contentBytes, PdfStringBytes(shapedBytes)));
+    }
+
+    private static void ObservePositionedComplexFixture(
+        string path,
+        string id,
+        bool arabic)
+    {
+        using var document = Loader.LoadPDF(new FileInfo(path));
+        var before = ContentBytes(document);
+        var collector = new PositionCollector();
+        var unsorted = collector.GetText(document);
+        var after = ContentBytes(document);
+        var sorted = Extract(document, true, true, true);
+        var clusters = collector.ClusterCount();
+        var positions = collector.DetailedSummary();
+
+        Observe(
+            "content-stream-integrity",
+            id,
+            Sha256(before),
+            before.SequenceEqual(after),
+            before.Length);
+        Observe(
+            "complex-text-glyph-position",
+            id,
+            collector.Positions.Count,
+            positions);
+        Observe(
+            "complex-text-cluster",
+            id,
+            clusters,
+            positions);
+        if (arabic)
+        {
+            Observe(
+                "complex-text-arabic",
+                id,
+                unsorted,
+                clusters,
+                positions);
+            Observe(
+                "complex-text-ligature",
+                id,
+                clusters,
+                positions);
+            Observe(
+                "complex-text-direction",
+                id,
+                unsorted,
+                sorted,
+                positions);
+        }
+        else
+        {
+            Observe(
+                "complex-text-combining",
+                id,
+                unsorted,
+                clusters,
+                positions);
+        }
+    }
+
+    private static sbyte[] EncodeGlyphs(PDType0Font font, IList<int> glyphs)
+    {
+        var result = new List<sbyte>();
+        foreach (var glyph in glyphs)
+            result.AddRange(font.EncodeGlyphId(glyph));
+        return result.ToArray();
+    }
+
+    private static string GlyphPosition(PDType0Font font, int glyph)
+    {
+        var encoded = font.EncodeGlyphId(glyph);
+        var code = font.ReadCode(new MemoryStream(
+            encoded.Select(item => unchecked((byte)item)).ToArray()));
+        var displacement = font.GetDisplacement(code);
+        return glyph + "@" + Number(displacement.GetX())
+            + "," + Number(displacement.GetY());
+    }
+
+    private static byte[] ContentBytes(PDDocument document)
+    {
+        using var output = new MemoryStream();
+        foreach (var page in document.GetPages())
+        {
+            using var input = page.GetContents();
+            input.CopyTo(output);
+            output.WriteByte(0xff);
+        }
+        return output.ToArray();
+    }
+
+    private static bool ContainsBytes(byte[] haystack, byte[] needle)
+    {
+        for (var start = 0; start <= haystack.Length - needle.Length; start++)
+        {
+            var matched = true;
+            for (var offset = 0; offset < needle.Length; offset++)
+            {
+                if (haystack[start + offset] == needle[offset])
+                    continue;
+                matched = false;
+                break;
+            }
+            if (matched)
+                return true;
+        }
+        return false;
+    }
+
+    private static byte[] PdfStringBytes(sbyte[] value)
+    {
+        if (value.Any(item =>
+                item < 0 || item == (sbyte)'\r' || item == (sbyte)'\n'))
+            return System.Text.Encoding.ASCII.GetBytes(
+                "<" + Hex(value).ToUpperInvariant() + ">");
+
+        using var output = new MemoryStream();
+        output.WriteByte((byte)'(');
+        foreach (var item in value)
+        {
+            var current = unchecked((byte)item);
+            if (current is (byte)'(' or (byte)')' or (byte)'\\')
+                output.WriteByte((byte)'\\');
+            output.WriteByte(current);
+        }
+        output.WriteByte((byte)')');
+        return output.ToArray();
+    }
+
+    private static string CodePoints(string value) =>
+        string.Join(
+            ",",
+            value.EnumerateRunes().Select(
+                rune => rune.Value.ToString("X4", CultureInfo.InvariantCulture)));
+
+    private static string Integers(IEnumerable<int> values) =>
+        string.Join(",", values);
+
+    private static string Hex(IEnumerable<sbyte> value) =>
+        string.Concat(value.Select(
+            item => unchecked((byte)item).ToString(
+                "x2", CultureInfo.InvariantCulture)));
+
+    private static string Hex(IEnumerable<byte> value) =>
+        string.Concat(value.Select(
+            item => item.ToString("x2", CultureInfo.InvariantCulture)));
 
     private static PDFont DamagedTrueType(PDDocument document)
     {
@@ -662,9 +972,10 @@ internal static class Program
     }
 
     private static string Sha256(string value) =>
-        Convert.ToHexString(
-                SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)))
-            .ToLowerInvariant();
+        Sha256(System.Text.Encoding.UTF8.GetBytes(value));
+
+    private static string Sha256(byte[] value) =>
+        Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
 
     private static string MatrixValue(Matrix matrix) =>
         string.Join(
@@ -718,6 +1029,22 @@ internal static class Program
                 Positions.Take(12).Select(
                     position => position.GetUnicode()
                         + "@" + Number(position.GetXDirAdj())
+                        + "," + Number(position.GetYDirAdj())
+                        + "," + Number(position.GetWidthDirAdj())));
+
+        internal int ClusterCount() =>
+            Positions.Count(position =>
+                position.GetUnicode().EnumerateRunes().Count()
+                    > position.GetCharacterCodes().Length);
+
+        internal string DetailedSummary() =>
+            string.Join(
+                ";",
+                Positions.Select(
+                    position => position.GetUnicode()
+                        + "[" + string.Join(",", position.GetCharacterCodes()) + "]"
+                        + "@" + Number(position.GetDir())
+                        + "," + Number(position.GetXDirAdj())
                         + "," + Number(position.GetYDirAdj())
                         + "," + Number(position.GetWidthDirAdj())));
     }

@@ -125,6 +125,48 @@ on x64 and ARM64 are approved deployment artifacts. Their versions and host
 coverage must be kept compatible with the selected stable SkiaSharp release and
 verified during package-consumption testing.
 
+#### PDFBox 3.0.8 Evaluation
+
+HarfBuzz is not selected for the PDFBox `3.0.8` baseline. This is a
+baseline-specific dependency decision, not a product exclusion.
+
+The production call-site audit found one Unicode-to-complex-glyph producer
+boundary: `PDAbstractContentStream.showTextInternal(String)`, reached directly
+by `showText`, positioned-text arrays, form and annotation appearance
+generation, plain-text formatters, and line-annotation appearance generation.
+For `PDType0Font`, synchronized PDFBox already routes that boundary through
+FontBox `GsubWorker` implementations and then writes the resulting glyph IDs.
+The mechanically translated `GsubWorker` path is therefore the compatibility
+implementation for this baseline.
+
+`SkiaSharp.HarfBuzz` would be a suitable high-level integration for a concrete
+Unicode `drawString` caller, but the selected production code has no such
+caller. Direct `HarfBuzzSharp` could expose lower-level clusters and positions
+at the content-stream producer boundary, but replacing `GsubWorker` there would
+change the glyph sequences and positioning beyond synchronized PDFBox behavior.
+Neither package improves fidelity at a concrete `3.0.8` call site.
+
+`GroupGraphics.drawString` and `drawGlyphVector` are forwarding overrides on the
+transparency-group graphics wrapper; no selected production caller supplies
+Unicode text to them. PDF content processing instead enters
+`PDFStreamEngine.showText(byte[])` with encoded character codes and explicit
+text matrices or `TJ` adjustments. Rendering and extraction must preserve those
+codes and positions rather than applying another shaping pass.
+
+The pinned Java/package font-text differential verifies FontBox substitution
+and advances for Bengali, Devanagari, Gujarati, combining marks, and Latin
+ligatures. It also verifies Arabic/Hebrew ligature and combining-mark clusters,
+direction/order, and glyph positions from upstream PDFs, and asserts that
+extraction leaves their content-stream bytes unchanged. The package closure is
+checked for zero HarfBuzz assembly dependencies and zero public HarfBuzz
+signatures.
+
+Re-audit this decision whenever the stable PDFBox baseline advances or a
+selected production call site begins with Unicode text and delegates complex
+layout to Java2D. If HarfBuzz is selected then, bidirectional analysis must
+still precede shaping, the shaping boundary must remain internal, and the
+supported-host native-asset requirements above apply.
+
 ## Resolved Java Platform Mappings
 
 | Java capability | Destination capability | Scope |

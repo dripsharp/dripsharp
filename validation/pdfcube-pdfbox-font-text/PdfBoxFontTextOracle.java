@@ -40,6 +40,9 @@ import org.apache.pdfbox.text.TextPosition;
 import org.apache.pdfbox.text.TextPositionComparator;
 import org.apache.pdfbox.util.Matrix;
 import org.apache.pdfbox.util.Vector;
+import org.apache.fontbox.ttf.CmapLookup;
+import org.apache.fontbox.ttf.gsub.GsubWorker;
+import org.apache.fontbox.ttf.gsub.GsubWorkerFactory;
 
 public final class PdfBoxFontTextOracle
 {
@@ -65,6 +68,7 @@ public final class PdfBoxFontTextOracle
         writeRepresentative(ownPdf);
 
         observeDirectModels();
+        observeComplexText();
         observeExtraction(ownPdf, "synthetic");
         observeFixture(
                 testResources.resolve("input/sample_fonts_solidconvertor.pdf"),
@@ -303,6 +307,338 @@ public final class PdfBoxFontTextOracle
 
             observeTextPositions(standard);
         }
+    }
+
+    private static void observeComplexText() throws Exception
+    {
+        Path fontboxResources = pdfboxRoot.resolve("fontbox/src/test/resources");
+        observeGsubCase(
+                "bengali-conjunct",
+                fontboxResources.resolve("ttf/Lohit-Bengali.ttf"),
+                "ক্ষীরের",
+                true,
+                false);
+        observeGsubCase(
+                "devanagari-combining",
+                fontboxResources.resolve("ttf/Lohit-Devanagari.ttf"),
+                "य़ज़क़",
+                true,
+                true);
+        observeGsubCase(
+                "gujarati-conjunct",
+                fontboxResources.resolve("ttf/Lohit-Gujarati.ttf"),
+                "ક્ષજ્ઞત્તશ્ર",
+                true,
+                false);
+        observeGsubCase(
+                "latin-ligature",
+                fontboxResources.resolve("ttf/JosefinSans-Italic.ttf"),
+                "office",
+                false,
+                false);
+
+        observePositionedComplexFixture(
+                testResources.resolve("input/PDFBOX-4531-bidi-ligature-1.pdf"),
+                "arabic-hebrew-ligatures",
+                true);
+        observePositionedComplexFixture(
+                testResources.resolve(
+                        "input/PDFBOX-5747-unicode-surrogate-with-diacritic-reduced.pdf"),
+                "surrogate-combining-mark",
+                false);
+
+        observe("harfbuzz-boundary", "public-package-closure", 0, 0);
+    }
+
+    private static void observeGsubCase(
+            String id,
+            Path fontPath,
+            String value,
+            boolean indic,
+            boolean combining)
+            throws Exception
+    {
+        if (!Files.isRegularFile(fontPath))
+        {
+            throw new IOException("Complex-text font fixture is missing: " + fontPath);
+        }
+
+        try (PDDocument document = new PDDocument();
+             InputStream input = Files.newInputStream(fontPath))
+        {
+            PDType0Font font = PDType0Font.load(document, input, false);
+            CmapLookup cmap = font.getCmapLookup();
+            List<Integer> originalGlyphs = value.codePoints()
+                    .map(cmap::getGlyphId)
+                    .boxed()
+                    .collect(Collectors.toList());
+            GsubWorker worker = new GsubWorkerFactory()
+                    .getGsubWorker(cmap, font.getGsubData());
+            List<Integer> shapedGlyphs = worker.applyTransforms(originalGlyphs);
+            byte[] shapedBytes = encodeGlyphs(font, shapedGlyphs);
+            byte[] directBytes = font.encode(value);
+
+            PDPage page = new PDPage(new PDRectangle(420, 120));
+            document.addPage(page);
+            try (PDPageContentStream content =
+                         new PDPageContentStream(
+                                 document,
+                                 page,
+                                 PDPageContentStream.AppendMode.OVERWRITE,
+                                 false,
+                                 false))
+            {
+                show(content, font, 18, 20, 60, value);
+            }
+            byte[] contentBytes;
+            try (InputStream content = page.getContents())
+            {
+                contentBytes = readAllBytes(content);
+            }
+
+            String glyphPositions = shapedGlyphs.stream()
+                    .map(glyph -> glyphPosition(font, glyph))
+                    .collect(Collectors.joining(";"));
+            if (indic)
+            {
+                observe(
+                        "complex-text-indic",
+                        id,
+                        codePoints(value),
+                        integers(originalGlyphs),
+                        integers(shapedGlyphs),
+                        originalGlyphs.size(),
+                        shapedGlyphs.size());
+            }
+            if (combining)
+            {
+                observe(
+                        "complex-text-combining",
+                        id,
+                        codePoints(value),
+                        integers(originalGlyphs),
+                        integers(shapedGlyphs));
+            }
+            if (id.contains("ligature"))
+            {
+                observe(
+                        "complex-text-ligature",
+                        id,
+                        codePoints(value),
+                        integers(originalGlyphs),
+                        integers(shapedGlyphs));
+            }
+            observe(
+                    "complex-text-cluster",
+                    id,
+                    value.codePointCount(0, value.length()),
+                    shapedGlyphs.size(),
+                    shapedGlyphs.size() < value.codePointCount(0, value.length()));
+            observe(
+                    "complex-text-glyph-position",
+                    id,
+                    glyphPositions);
+            observe(
+                    "unicode-text-shaping",
+                    id,
+                    hex(directBytes),
+                    hex(shapedBytes),
+                    hex(contentBytes),
+                    !java.util.Arrays.equals(directBytes, shapedBytes),
+                    containsBytes(contentBytes, pdfStringBytes(shapedBytes)));
+        }
+    }
+
+    private static void observePositionedComplexFixture(
+            Path path,
+            String id,
+            boolean arabic)
+            throws Exception
+    {
+        try (PDDocument document = Loader.loadPDF(path.toFile()))
+        {
+            byte[] before = contentBytes(document);
+            PositionCollector collector = new PositionCollector();
+            String unsorted = collector.getText(document);
+            byte[] after = contentBytes(document);
+            String sorted = extract(document, true, true, true);
+            int clusters = collector.clusterCount();
+            String positions = collector.detailedSummary();
+
+            observe(
+                    "content-stream-integrity",
+                    id,
+                    sha256(before),
+                    java.util.Arrays.equals(before, after),
+                    before.length);
+            observe(
+                    "complex-text-glyph-position",
+                    id,
+                    collector.positions.size(),
+                    positions);
+            observe(
+                    "complex-text-cluster",
+                    id,
+                    clusters,
+                    positions);
+            if (arabic)
+            {
+                observe(
+                        "complex-text-arabic",
+                        id,
+                        unsorted,
+                        clusters,
+                        positions);
+                observe(
+                        "complex-text-ligature",
+                        id,
+                        clusters,
+                        positions);
+                observe(
+                        "complex-text-direction",
+                        id,
+                        unsorted,
+                        sorted,
+                        positions);
+            }
+            else
+            {
+                observe(
+                        "complex-text-combining",
+                        id,
+                        unsorted,
+                        clusters,
+                        positions);
+            }
+        }
+    }
+
+    private static byte[] encodeGlyphs(PDType0Font font, List<Integer> glyphs)
+            throws Exception
+    {
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        for (int glyph : glyphs)
+        {
+            output.write(font.encodeGlyphId(glyph));
+        }
+        return output.toByteArray();
+    }
+
+    private static String glyphPosition(PDType0Font font, int glyph)
+    {
+        try
+        {
+            byte[] encoded = font.encodeGlyphId(glyph);
+            int code = font.readCode(new ByteArrayInputStream(encoded));
+            Vector displacement = font.getDisplacement(code);
+            return glyph + "@" + number(displacement.getX())
+                    + "," + number(displacement.getY());
+        }
+        catch (Exception error)
+        {
+            throw new IllegalStateException(error);
+        }
+    }
+
+    private static byte[] contentBytes(PDDocument document) throws Exception
+    {
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        for (PDPage page : document.getPages())
+        {
+            try (InputStream input = page.getContents())
+            {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) >= 0)
+                {
+                    output.write(buffer, 0, count);
+                }
+            }
+            output.write(0xff);
+        }
+        return output.toByteArray();
+    }
+
+    private static byte[] readAllBytes(InputStream input) throws IOException
+    {
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = input.read(buffer)) >= 0)
+        {
+            output.write(buffer, 0, count);
+        }
+        return output.toByteArray();
+    }
+
+    private static boolean containsBytes(byte[] haystack, byte[] needle)
+    {
+        outer:
+        for (int start = 0; start <= haystack.length - needle.length; start++)
+        {
+            for (int offset = 0; offset < needle.length; offset++)
+            {
+                if (haystack[start + offset] != needle[offset])
+                {
+                    continue outer;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private static byte[] pdfStringBytes(byte[] value)
+    {
+        boolean hex = false;
+        for (byte item : value)
+        {
+            if (item < 0 || item == '\r' || item == '\n')
+            {
+                hex = true;
+                break;
+            }
+        }
+        if (hex)
+        {
+            return ("<" + hex(value).toUpperCase(Locale.ROOT) + ">")
+                    .getBytes(StandardCharsets.US_ASCII);
+        }
+
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+        output.write('(');
+        for (byte item : value)
+        {
+            if (item == '(' || item == ')' || item == '\\')
+            {
+                output.write('\\');
+            }
+            output.write(item);
+        }
+        output.write(')');
+        return output.toByteArray();
+    }
+
+    private static String codePoints(String value)
+    {
+        return value.codePoints()
+                .mapToObj(codePoint -> String.format(Locale.ROOT, "%04X", codePoint))
+                .collect(Collectors.joining(","));
+    }
+
+    private static String integers(List<Integer> values)
+    {
+        return values.stream().map(String::valueOf).collect(Collectors.joining(","));
+    }
+
+    private static String hex(byte[] value)
+    {
+        StringBuilder result = new StringBuilder(value.length * 2);
+        for (byte item : value)
+        {
+            result.append(String.format(Locale.ROOT, "%02x", item & 0xff));
+        }
+        return result.toString();
     }
 
     private static PDFont damagedTrueType(PDDocument document) throws Exception
@@ -648,8 +984,12 @@ public final class PdfBoxFontTextOracle
 
     private static String sha256(String value) throws Exception
     {
-        byte[] digest = MessageDigest.getInstance("SHA-256")
-                .digest(value.getBytes(StandardCharsets.UTF_8));
+        return sha256(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String sha256(byte[] value) throws Exception
+    {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(value);
         StringBuilder result = new StringBuilder(digest.length * 2);
         for (byte item : digest)
         {
@@ -713,6 +1053,29 @@ public final class PdfBoxFontTextOracle
                     .limit(12)
                     .map(position -> position.getUnicode()
                             + "@" + number(position.getXDirAdj())
+                            + "," + number(position.getYDirAdj())
+                            + "," + number(position.getWidthDirAdj()))
+                    .collect(Collectors.joining(";"));
+        }
+
+        private int clusterCount()
+        {
+            return (int) positions.stream()
+                    .filter(position -> position.getUnicode().codePointCount(
+                            0, position.getUnicode().length())
+                            > position.getCharacterCodes().length)
+                    .count();
+        }
+
+        private String detailedSummary()
+        {
+            return positions.stream()
+                    .map(position -> position.getUnicode()
+                            + "[" + java.util.Arrays.stream(position.getCharacterCodes())
+                                    .mapToObj(String::valueOf)
+                                    .collect(Collectors.joining(",")) + "]"
+                            + "@" + number(position.getDir())
+                            + "," + number(position.getXDirAdj())
                             + "," + number(position.getYDirAdj())
                             + "," + number(position.getWidthDirAdj()))
                     .collect(Collectors.joining(";"));
