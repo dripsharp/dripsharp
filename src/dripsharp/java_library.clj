@@ -2559,6 +2559,13 @@
       (and expected
            (instance? CtLiteral argument)
            (nil? (.getValue ^CtLiteral argument))
+           (boxed-primitive-reference? expected))
+      (sequence-node
+       [(raw "(") (type-node ctx expected) (raw "?)default!")])
+
+      (and expected
+           (instance? CtLiteral argument)
+           (nil? (.getValue ^CtLiteral argument))
            (not (.isPrimitive expected)))
       (sequence-node
        [(raw "(") (type-node ctx expected) (raw ")default!")])

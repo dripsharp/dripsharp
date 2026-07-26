@@ -15,11 +15,20 @@
 (def pinned-revision
   "9286e47d89d6877005c9d2d0f2fd38793a62519a")
 
-(def required-trace-families
+(def required-execution-families
   #{"configuration" "context" "document" "error" "error-code" "exception"
     "format" "lifecycle" "parser-encrypted" "parser-invalid"
     "parser-malformed" "parser-truncated" "parser-unsupported" "parser-valid"
     "path" "process" "result" "xml"})
+
+(def required-validation-families
+  #{"action" "annotation" "catalog" "color" "content-stream"
+    "cross-reference" "embedded-file" "file-structure" "font" "form"
+    "graphics-state" "icc" "image-xobject" "logical-structure" "metadata"
+    "output-intent" "page" "rule-selection" "trailer" "transparency" "xmp"})
+
+(def required-trace-families
+  (set/union required-execution-families required-validation-families))
 
 (defn- fail! [message data]
   (throw

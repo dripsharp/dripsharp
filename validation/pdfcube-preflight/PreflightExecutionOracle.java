@@ -1,5 +1,6 @@
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -10,10 +11,24 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
 import javax.xml.parsers.DocumentBuilderFactory;
+import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.cos.COSDocument;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSBoolean;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSFloat;
+import org.apache.pdfbox.cos.COSInteger;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSStream;
+import org.apache.pdfbox.cos.COSString;
 import org.apache.pdfbox.io.RandomAccessReadBufferedFile;
+import org.apache.pdfbox.pdfwriter.compress.CompressParameters;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.encryption.AccessPermission;
 import org.apache.pdfbox.pdmodel.encryption.StandardProtectionPolicy;
 import org.apache.pdfbox.preflight.Format;
@@ -62,6 +77,7 @@ public final class PreflightExecutionOracle
         observeDocumentAndProcesses(upstreamFixtures);
         observeContextAndLifetime(upstreamFixtures, fixtureDirectory);
         observeXml(upstreamFixtures);
+        observeValidationProcesses(upstreamFixtures, fixtureDirectory);
 
         Files.write(output, OBSERVATIONS, StandardCharsets.UTF_8);
     }
@@ -96,6 +112,203 @@ public final class PreflightExecutionOracle
         Files.write(
                 fixtureDirectory.resolve("unsupported.bin"),
                 "not a PDF".getBytes(StandardCharsets.UTF_8));
+
+        writeValidationFixtures(upstreamFixtures, fixtureDirectory);
+    }
+
+    private static void writeValidationFixtures(
+            Path upstreamFixtures, Path fixtureDirectory) throws Exception
+    {
+        Path valid = upstreamFixtures.resolve("pdfa-with-annotations-square.pdf");
+
+        mutatePdf(valid, fixtureDirectory.resolve("catalog-invalid.pdf"), document -> {
+            COSDictionary catalog = document.getDocumentCatalog().getCOSObject();
+            catalog.setString(COSName.LANG, "not a valid RFC 1766 language!");
+            catalog.setItem(COSName.getPDFName("OCProperties"), new COSDictionary());
+        });
+
+        String trailerPdf = new String(
+                Files.readAllBytes(valid),
+                StandardCharsets.ISO_8859_1);
+        String withoutId = trailerPdf.replaceFirst(
+                "/ID\\s*\\[\\s*<[^>]*>\\s*<[^>]*>\\s*\\]",
+                "");
+        if (withoutId.equals(trailerPdf))
+        {
+            throw new IllegalStateException("Unable to remove the validation fixture trailer ID");
+        }
+        Files.write(
+                fixtureDirectory.resolve("trailer-missing-id.pdf"),
+                withoutId.getBytes(StandardCharsets.ISO_8859_1));
+
+        try (PDDocument document = Loader.loadPDF(valid.toFile()))
+        {
+            document.save(
+                    fixtureDirectory.resolve("xref-stream.pdf").toFile(),
+                    CompressParameters.DEFAULT_COMPRESSION);
+        }
+
+        mutatePdf(valid, fixtureDirectory.resolve("page-transparency.pdf"), document -> {
+            COSDictionary group = new COSDictionary();
+            group.setItem(COSName.TYPE, COSName.GROUP);
+            group.setItem(COSName.S, COSName.TRANSPARENCY);
+            firstPage(document).getCOSObject().setItem(COSName.GROUP, group);
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("content-stream.pdf"), document -> {
+            replacePageContent(document, "/Bogus ri\n");
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("graphics-state.pdf"), document -> {
+            COSDictionary state = new COSDictionary();
+            state.setItem(COSName.SMASK, COSName.getPDFName("Luminosity"));
+            state.setItem(COSName.CA, new COSFloat(0.5f));
+            state.setItem(COSName.getPDFName("ca"), new COSFloat(0.5f));
+            state.setItem(COSName.BM, COSName.getPDFName("Multiply"));
+            state.setItem(COSName.TR, COSName.getPDFName("Identity"));
+            state.setItem(COSName.TR2, COSName.getPDFName("Identity"));
+            COSDictionary states = new COSDictionary();
+            states.setItem(COSName.getPDFName("GSbad"), state);
+            resources(firstPage(document))
+                    .getCOSObject()
+                    .setItem(COSName.EXT_G_STATE, states);
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("font-unembedded.pdf"), document -> {
+            PDResources resources = resources(firstPage(document));
+            resources.put(
+                    COSName.getPDFName("Fbad"),
+                    new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            replacePageContent(document, "BT /Fbad 12 Tf (A) Tj ET\n");
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("image-xobject.pdf"), document -> {
+            COSStream image = document.getDocument().createCOSStream();
+            image.setItem(COSName.TYPE, COSName.XOBJECT);
+            image.setItem(COSName.SUBTYPE, COSName.IMAGE);
+            image.setItem(COSName.WIDTH, COSInteger.ONE);
+            image.setItem(COSName.HEIGHT, COSInteger.ONE);
+            image.setItem(COSName.BITS_PER_COMPONENT, COSInteger.get(16));
+            image.setItem(COSName.COLORSPACE, COSName.DEVICERGB);
+            image.setItem(COSName.INTERPOLATE, COSBoolean.TRUE);
+            image.setItem(COSName.INTENT, COSName.getPDFName("Bogus"));
+            image.setItem(COSName.SMASK, COSName.getPDFName("Luminosity"));
+            try (OutputStream output = image.createRawOutputStream())
+            {
+                output.write(new byte[] { 0, 0, 0, 0, 0, 0 });
+            }
+            COSDictionary xobjects = new COSDictionary();
+            xobjects.setItem(COSName.getPDFName("ImBad"), image);
+            resources(firstPage(document))
+                    .getCOSObject()
+                    .setItem(COSName.XOBJECT, xobjects);
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("annotation-invalid.pdf"), document -> {
+            COSDictionary annotation = new COSDictionary();
+            annotation.setItem(COSName.TYPE, COSName.ANNOT);
+            annotation.setItem(COSName.SUBTYPE, COSName.getPDFName("Movie"));
+            annotation.setItem(COSName.RECT, rectangle(10, 10, 30, 30));
+            annotation.setInt(COSName.F, 0);
+            COSArray annotations =
+                    firstPage(document).getCOSObject().getCOSArray(COSName.ANNOTS);
+            if (annotations == null)
+            {
+                annotations = new COSArray();
+                firstPage(document).getCOSObject().setItem(COSName.ANNOTS, annotations);
+            }
+            annotations.add(annotation);
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("action-forbidden.pdf"), document -> {
+            COSDictionary action = new COSDictionary();
+            action.setItem(COSName.TYPE, COSName.getPDFName("Action"));
+            action.setItem(COSName.S, COSName.getPDFName("Launch"));
+            document.getDocumentCatalog().getCOSObject().setItem(COSName.OPEN_ACTION, action);
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("form-invalid.pdf"), document -> {
+            COSDictionary form = new COSDictionary();
+            form.setBoolean(COSName.NEED_APPEARANCES, true);
+            form.setItem(COSName.FIELDS, new COSArray());
+            document.getDocumentCatalog().getCOSObject().setItem(COSName.ACRO_FORM, form);
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("output-intent-invalid-icc.pdf"), document -> {
+            COSArray outputIntents = document.getDocumentCatalog()
+                    .getCOSObject()
+                    .getCOSArray(COSName.OUTPUT_INTENTS);
+            COSDictionary outputIntent = (COSDictionary) outputIntents.getObject(0);
+            COSStream profile =
+                    (COSStream) outputIntent.getDictionaryObject(COSName.DEST_OUTPUT_PROFILE);
+            profile.removeItem(COSName.FILTER);
+            try (OutputStream output = profile.createRawOutputStream())
+            {
+                output.write("not an ICC profile".getBytes(StandardCharsets.US_ASCII));
+            }
+        });
+
+        mutatePdf(valid, fixtureDirectory.resolve("embedded-file.pdf"), document -> {
+            COSDictionary embedded = new COSDictionary();
+            embedded.setItem(COSName.TYPE, COSName.getPDFName("EmbeddedFile"));
+            COSDictionary embeddedFiles = new COSDictionary();
+            embeddedFiles.setItem(COSName.F, embedded);
+            COSDictionary fileSpec = new COSDictionary();
+            fileSpec.setItem(COSName.TYPE, COSName.FILESPEC);
+            fileSpec.setString(COSName.F, "payload.bin");
+            fileSpec.setItem(COSName.EF, embeddedFiles);
+            COSDictionary nameTree = new COSDictionary();
+            COSArray names = new COSArray();
+            names.add(new COSString("payload.bin"));
+            names.add(fileSpec);
+            nameTree.setItem(COSName.NAMES, names);
+            COSDictionary catalogNames = new COSDictionary();
+            catalogNames.setItem(COSName.EMBEDDED_FILES, nameTree);
+            document.getDocumentCatalog().getCOSObject().setItem(COSName.NAMES, catalogNames);
+        });
+    }
+
+    private static void mutatePdf(
+            Path source, Path destination, DocumentMutation mutation) throws Exception
+    {
+        try (PDDocument document = Loader.loadPDF(source.toFile()))
+        {
+            mutation.apply(document);
+            document.save(destination.toFile(), CompressParameters.NO_COMPRESSION);
+        }
+    }
+
+    private static PDPage firstPage(PDDocument document)
+    {
+        return document.getPage(0);
+    }
+
+    private static PDResources resources(PDPage page)
+    {
+        PDResources resources = page.getResources();
+        if (resources == null)
+        {
+            resources = new PDResources();
+            page.setResources(resources);
+        }
+        return resources;
+    }
+
+    private static void replacePageContent(PDDocument document, String content)
+            throws IOException
+    {
+        COSStream stream = document.getDocument().createCOSStream();
+        try (OutputStream output = stream.createRawOutputStream())
+        {
+            output.write(content.getBytes(StandardCharsets.US_ASCII));
+        }
+        firstPage(document).getCOSObject().setItem(COSName.CONTENTS, stream);
+    }
+
+    private static COSArray rectangle(float lowerX, float lowerY, float upperX, float upperY)
+    {
+        return new PDRectangle(lowerX, lowerY, upperX - lowerX, upperY - lowerY)
+                .getCOSArray();
     }
 
     private static void observeFormatAndConstants()
@@ -538,6 +751,164 @@ public final class PreflightExecutionOracle
         invalidSource.close();
     }
 
+    private static void observeValidationProcesses(
+            Path upstreamFixtures, Path generatedFixtures) throws Exception
+    {
+        Path valid = upstreamFixtures.resolve("pdfa-with-annotations-square.pdf");
+        observeValidation(
+                "rule-selection", "pdf-a1b", valid, Format.PDF_A1B, true);
+        observeValidation(
+                "rule-selection", "pdf-a1a", valid, Format.PDF_A1A, true);
+        observeValidation(
+                "catalog",
+                "language-and-optional-content",
+                generatedFixtures.resolve("catalog-invalid.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "file-structure",
+                "bad-startxref",
+                generatedFixtures.resolve("malformed.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "cross-reference",
+                "xref-stream",
+                generatedFixtures.resolve("xref-stream.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "trailer",
+                "missing-id",
+                generatedFixtures.resolve("trailer-missing-id.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "page",
+                "transparency-group",
+                generatedFixtures.resolve("page-transparency.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "content-stream",
+                "invalid-rendering-intent",
+                generatedFixtures.resolve("content-stream.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "graphics-state",
+                "transparency-and-transfer",
+                generatedFixtures.resolve("graphics-state.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "color",
+                "device-gray-without-profile",
+                upstreamFixtures.resolve("PDFBOX-3741.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "font",
+                "unembedded-standard-font",
+                generatedFixtures.resolve("font-unembedded.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "transparency",
+                "page-group",
+                generatedFixtures.resolve("page-transparency.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "image-xobject",
+                "invalid-image-dictionary",
+                generatedFixtures.resolve("image-xobject.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "annotation",
+                "forbidden-subtype",
+                generatedFixtures.resolve("annotation-invalid.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "action",
+                "forbidden-launch",
+                generatedFixtures.resolve("action-forbidden.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "form",
+                "need-appearances",
+                generatedFixtures.resolve("form-invalid.pdf"),
+                Format.PDF_A1B,
+                true);
+
+        Path metadata = upstreamFixtures.resolve(
+                "org/apache/pdfbox/preflight/metadata");
+        observeValidation(
+                "metadata",
+                "trailing-nul-valid",
+                metadata.resolve("PDFAMetaDataValidationTestTrailingNul.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "metadata",
+                "trailing-spaces-invalid",
+                metadata.resolve("PDFAMetaDataValidationTestTrailingSpaces.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "xmp",
+                "middle-control-character",
+                metadata.resolve("PDFAMetaDataValidationTestMiddleControlChar.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "xmp",
+                "middle-nul",
+                metadata.resolve("PDFAMetaDataValidationTestMiddleNul.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "xmp",
+                "trailing-control-character",
+                metadata.resolve("PDFAMetaDataValidationTestTrailingControlChar.pdf"),
+                Format.PDF_A1B,
+                true);
+
+        observeValidation(
+                "output-intent",
+                "invalid-icc-profile",
+                generatedFixtures.resolve("output-intent-invalid-icc.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "icc",
+                "valid-srgb-profile",
+                valid,
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "icc",
+                "invalid-profile",
+                generatedFixtures.resolve("output-intent-invalid-icc.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "embedded-file",
+                "catalog-name-tree-and-file-specification",
+                generatedFixtures.resolve("embedded-file.pdf"),
+                Format.PDF_A1B,
+                true);
+        observeValidation(
+                "logical-structure",
+                "upstream-pdf-a1a-selection",
+                valid,
+                Format.PDF_A1A,
+                true);
+    }
+
     private static void observeXml(Path upstreamFixtures) throws Exception
     {
         XmlResultParser parser = new XmlResultParser();
@@ -589,6 +960,40 @@ public final class PreflightExecutionOracle
             throws Exception
     {
         ValidationResult result = PreflightParser.validate(path.toFile());
+        observeValidationResult(family, id, result, includeDetails);
+    }
+
+    private static void observeValidation(
+            String family,
+            String id,
+            Path path,
+            Format format,
+            boolean includeDetails) throws Exception
+    {
+        ValidationResult result;
+        try (RandomAccessReadBufferedFile source =
+                     new RandomAccessReadBufferedFile(path.toFile()))
+        {
+            PreflightParser parser = new PreflightParser(source);
+            try (PreflightDocument document =
+                         (PreflightDocument) parser.parse(format))
+            {
+                result = document.validate();
+            }
+            catch (SyntaxValidationException syntax)
+            {
+                result = syntax.getResult();
+            }
+        }
+        observeValidationResult(family, id, result, includeDetails);
+    }
+
+    private static void observeValidationResult(
+            String family,
+            String id,
+            ValidationResult result,
+            boolean includeDetails)
+    {
         List<ValidationError> errors = result.getErrorsList();
         observe(
                 family,
@@ -658,6 +1063,12 @@ public final class PreflightExecutionOracle
         char[] values = new char[count];
         Arrays.fill(values, value);
         return new String(values);
+    }
+
+    @FunctionalInterface
+    private interface DocumentMutation
+    {
+        void apply(PDDocument document) throws Exception;
     }
 
     @FunctionalInterface

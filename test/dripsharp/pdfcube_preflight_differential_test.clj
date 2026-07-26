@@ -41,7 +41,9 @@
       (is (some #{"parser-valid"} (:missing (ex-data error))))))
   (testing "duplicate and malformed observations are rejected"
     (doseq [contents
-            [(str (complete-trace) "configuration\tcase-0\tvalue\n")
+            [(str (complete-trace)
+                  (first (sort preflight-differential/required-trace-families))
+                  "\tcase-0\tvalue\n")
              "configuration\tmissing-value\n"]]
       (let [error
             (try

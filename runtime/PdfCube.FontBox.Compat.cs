@@ -5595,7 +5595,14 @@ internal static class PdfCubeFontCompat
     internal static JavaIccProfile GetIccProfile(sbyte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
-        return new JavaIccProfile(data);
+        try
+        {
+            return new JavaIccProfile(data);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new ArgumentException("Invalid ICC Profile Data", exception);
+        }
     }
 
     private static sbyte[] ToSignedBytes(byte[] bytes)

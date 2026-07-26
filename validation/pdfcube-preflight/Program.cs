@@ -45,6 +45,7 @@ internal static class Program
         ObserveDocumentAndProcesses(upstreamFixtures);
         ObserveContextAndLifetime(upstreamFixtures, fixtureDirectory);
         ObserveXml(upstreamFixtures);
+        ObserveValidationProcesses(upstreamFixtures, fixtureDirectory);
 
         File.WriteAllLines(output, Observations, new UTF8Encoding(false));
         return 0;
@@ -498,6 +499,170 @@ internal static class Program
             invalid.SelectSingleNode("exceptionThrown") is null);
     }
 
+    private static void ObserveValidationProcesses(
+        string upstreamFixtures,
+        string generatedFixtures)
+    {
+        var valid = Path.Combine(upstreamFixtures, "pdfa-with-annotations-square.pdf");
+        ObserveValidation(
+            "rule-selection", "pdf-a1b", valid, Format.PdfA1b, includeDetails: true);
+        ObserveValidation(
+            "rule-selection", "pdf-a1a", valid, Format.PdfA1a, includeDetails: true);
+        ObserveValidation(
+            "catalog",
+            "language-and-optional-content",
+            Path.Combine(generatedFixtures, "catalog-invalid.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "file-structure",
+            "bad-startxref",
+            Path.Combine(generatedFixtures, "malformed.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "cross-reference",
+            "xref-stream",
+            Path.Combine(generatedFixtures, "xref-stream.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "trailer",
+            "missing-id",
+            Path.Combine(generatedFixtures, "trailer-missing-id.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "page",
+            "transparency-group",
+            Path.Combine(generatedFixtures, "page-transparency.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "content-stream",
+            "invalid-rendering-intent",
+            Path.Combine(generatedFixtures, "content-stream.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "graphics-state",
+            "transparency-and-transfer",
+            Path.Combine(generatedFixtures, "graphics-state.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "color",
+            "device-gray-without-profile",
+            Path.Combine(upstreamFixtures, "PDFBOX-3741.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "font",
+            "unembedded-standard-font",
+            Path.Combine(generatedFixtures, "font-unembedded.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "transparency",
+            "page-group",
+            Path.Combine(generatedFixtures, "page-transparency.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "image-xobject",
+            "invalid-image-dictionary",
+            Path.Combine(generatedFixtures, "image-xobject.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "annotation",
+            "forbidden-subtype",
+            Path.Combine(generatedFixtures, "annotation-invalid.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "action",
+            "forbidden-launch",
+            Path.Combine(generatedFixtures, "action-forbidden.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "form",
+            "need-appearances",
+            Path.Combine(generatedFixtures, "form-invalid.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+
+        var metadata = Path.Combine(
+            upstreamFixtures,
+            "org",
+            "apache",
+            "pdfbox",
+            "preflight",
+            "metadata");
+        ObserveValidation(
+            "metadata",
+            "trailing-nul-valid",
+            Path.Combine(metadata, "PDFAMetaDataValidationTestTrailingNul.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "metadata",
+            "trailing-spaces-invalid",
+            Path.Combine(metadata, "PDFAMetaDataValidationTestTrailingSpaces.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "xmp",
+            "middle-control-character",
+            Path.Combine(metadata, "PDFAMetaDataValidationTestMiddleControlChar.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "xmp",
+            "middle-nul",
+            Path.Combine(metadata, "PDFAMetaDataValidationTestMiddleNul.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "xmp",
+            "trailing-control-character",
+            Path.Combine(metadata, "PDFAMetaDataValidationTestTrailingControlChar.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+
+        ObserveValidation(
+            "output-intent",
+            "invalid-icc-profile",
+            Path.Combine(generatedFixtures, "output-intent-invalid-icc.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "icc",
+            "valid-srgb-profile",
+            valid,
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "icc",
+            "invalid-profile",
+            Path.Combine(generatedFixtures, "output-intent-invalid-icc.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "embedded-file",
+            "catalog-name-tree-and-file-specification",
+            Path.Combine(generatedFixtures, "embedded-file.pdf"),
+            Format.PdfA1b,
+            includeDetails: true);
+        ObserveValidation(
+            "logical-structure",
+            "upstream-pdf-a1a-selection",
+            valid,
+            Format.PdfA1a,
+            includeDetails: true);
+    }
+
     private static long ParseDuration(XmlElement element) =>
         long.Parse(
             element.SelectSingleNode("executionTimeMS")?.InnerText
@@ -511,6 +676,39 @@ internal static class Program
         bool includeDetails)
     {
         var result = PreflightParser.Validate(new FileInfo(path));
+        ObserveValidationResult(family, id, result, includeDetails);
+    }
+
+    private static void ObserveValidation(
+        string family,
+        string id,
+        string path,
+        Format format,
+        bool includeDetails)
+    {
+        ValidationResult result;
+        using (var source = new RandomAccessReadBufferedFile(new FileInfo(path)))
+        {
+            var parser = new PreflightParser(source);
+            try
+            {
+                using var document = (PreflightDocument)parser.Parse(format);
+                result = document.Validate();
+            }
+            catch (SyntaxValidationException syntax)
+            {
+                result = syntax.GetResult();
+            }
+        }
+        ObserveValidationResult(family, id, result, includeDetails);
+    }
+
+    private static void ObserveValidationResult(
+        string family,
+        string id,
+        ValidationResult result,
+        bool includeDetails)
+    {
         var errors = result.GetErrorsList();
         Observe(
             family,

@@ -798,6 +798,8 @@
                       "public Integer maybe(boolean present) { "
                       "return present ? 7 : null; } "
                       "public int required() { return maybe(true); } "
+                      "public void reset(Integer value) {} "
+                      "public void clear() { reset(null); } "
                       "public void add(List<Integer> values) { "
                       "values.add(maybe(true)); "
                       "values.add(Integer.valueOf(\"7\")); } "
@@ -809,6 +811,7 @@
                                         "src/Example/Java/Library/Boxed.cs")))]
     (is (str/includes? source "private bool? __field_state = default!;"))
     (is (str/includes? source "public int? maybe(bool present)"))
+    (is (str/includes? source "this.reset((int?)default!);"))
     (is (str/includes?
          source
          (str "return global::DripSharp.Runtime.JavaCompat.Unbox("
