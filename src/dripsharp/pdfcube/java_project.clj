@@ -1354,6 +1354,14 @@
    (fn [target arguments]
      (call-node target "GetColorSpaceType" arguments))
 
+   "executable:java.awt.color.ICC_Profile#getMajorVersion()"
+   (fn [target arguments]
+     (call-node target "GetMajorVersion" arguments))
+
+   "executable:java.awt.color.ICC_Profile#getMinorVersion()"
+   (fn [target arguments]
+     (call-node target "GetMinorVersion" arguments))
+
    "executable:java.awt.color.ICC_Profile#getNumComponents()"
    (fn [target _arguments]
      (sequence-node [target (raw ".NumberOfComponents")]))
@@ -2713,6 +2721,26 @@
     :sha256
     "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}])
 
+(def ^:private pdfbox-codec-legal-files
+  [{:kind :notice
+    :source "vendor/pdfcube/jbig2/LICENSE"
+    :destination "Legal/THIRD-PARTY-JBIG2-LICENSE.txt"
+    :package-path "THIRD-PARTY/JBIG2-LICENSE.txt"
+    :sha256
+    "4b2076ee892bdcf3bcc6f09e68146d2d0b3a4d2c0c66a00383b6e768be128e68"}
+   {:kind :notice
+    :source "vendor/pdfcube/jpx/LICENSE"
+    :destination "Legal/THIRD-PARTY-COREJ2K-LICENSE.txt"
+    :package-path "THIRD-PARTY/COREJ2K-LICENSE.txt"
+    :sha256
+    "2b718cb2d9c117bc0744a9f421083e8b282765e920b71d547a683d257e8cea77"}
+   {:kind :notice
+    :source "vendor/pdfcube/jpx/COPYRIGHT-JJ2000-5.1"
+    :destination "Legal/COPYRIGHT-JJ2000-5.1.txt"
+    :package-path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
+    :sha256
+    "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}])
+
 (def ^:private products
   (array-map
    :io
@@ -2758,7 +2786,7 @@
      :success-message "PdfCube.FontBox focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package skia-linux-package]
-    :internal-capabilities #{:font-discovery :skia-geometry}
+    :internal-capabilities #{:font-discovery :icc :skia-geometry}
     :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
     :compatibility-namespace "PdfCube.FB.Runtime"}
 
@@ -2813,6 +2841,7 @@
     :external-dependencies
     (assoc bouncy-dependencies commons-coordinate commons-dependency)
     :runtime-packages [logging-package skia-package]
+    :legal-files (into legal-files pdfbox-codec-legal-files)
     :internal-capabilities
     #{:calendar-value-semantics :icc :jbig2 :jpx :managed-raster :printing
       :security-handler-erasure :skia-graphics :unicode-bidi}
@@ -3009,7 +3038,7 @@
               :destination-capabilities (:destination-capabilities product)
               :bridge-capabilities (:bridge-capabilities product)
               :compatibility-namespace (:compatibility-namespace product)
-              :legal-files legal-files
+              :legal-files (or (:legal-files product) legal-files)
               :resource-policy {:strategy :embedded-resource-preserve-path})]
         (exact! "PdfCube destination differs from its approved product contract"
                 field expected actual)))
@@ -3253,6 +3282,55 @@
       :strategy :pdfcube.fontbox/skia-geometry
       :missing-kind :missing-pdfcube-fontbox-compatibility-source
       :missing-message "PdfCube FontBox compatibility source is missing"})
+
+    (and
+     (contains? (:internal-capabilities configuration) :skia-geometry)
+     (not (or (contains? (:internal-capabilities configuration) :jbig2)
+              (contains? (:internal-capabilities configuration) :jpx))))
+    (conj
+     {:source "runtime/PdfCube.ImageCodecs.Unsupported.cs"
+      :destination "DripSharp/Runtime/PdfCubeImageCodecs.cs"
+      :strategy :pdfcube.fontbox/no-image-codecs
+      :missing-kind :missing-pdfcube-fontbox-no-image-codecs-source
+      :missing-message "PdfCube FontBox no-codec adapter source is missing"})
+
+    (contains? (:internal-capabilities configuration) :icc)
+    (conj
+     {:source "runtime/PdfCube.Icc.cs"
+      :destination "DripSharp/Runtime/PdfCubeIcc.cs"
+      :strategy :pdfcube.pdfbox/icc
+      :missing-kind :missing-pdfcube-icc-source
+      :missing-message "PdfCube ICC source is missing"})
+
+    (or (contains? (:internal-capabilities configuration) :jbig2)
+        (contains? (:internal-capabilities configuration) :jpx))
+    (conj
+     {:source "runtime/PdfCube.ImageCodecs.cs"
+      :destination "DripSharp/Runtime/PdfCubeImageCodecs.cs"
+      :strategy :pdfcube.pdfbox/image-codec-adapters
+      :missing-kind :missing-pdfcube-image-codec-adapter
+      :missing-message "PdfCube image codec adapter source is missing"})
+
+    (contains? (:internal-capabilities configuration) :jbig2)
+    (conj
+     {:source-tree "vendor/pdfcube/jbig2"
+      :destination-tree "DripSharp/Runtime/Codecs/Jbig2"
+      :include-pattern "\\.cs$"
+      :text-prefix "#nullable disable\n#pragma warning disable\n"
+      :strategy :pdfcube.pdfbox/jbig2-source
+      :missing-kind :missing-pdfcube-jbig2-source
+      :missing-message "Pinned PdfCube JBIG2 source is missing"})
+
+    (contains? (:internal-capabilities configuration) :jpx)
+    (conj
+     {:source-tree "vendor/pdfcube/jpx"
+      :destination-tree "DripSharp/Runtime/Codecs/Jpx"
+      :include-pattern "\\.cs$"
+      :text-charset-fallback "ISO-8859-1"
+      :text-prefix "#nullable disable\n#pragma warning disable\n"
+      :strategy :pdfcube.pdfbox/jpx-source
+      :missing-kind :missing-pdfcube-jpx-source
+      :missing-message "Pinned PdfCube JPEG 2000 source is missing"})
 
     (contains? (:internal-capabilities configuration)
                :security-handler-erasure)

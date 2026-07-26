@@ -115,6 +115,21 @@
    :source "research/pdfbox/NOTICE.txt"
    :destination "Legal/NOTICE.txt"
    :package-path "NOTICE.txt"
-   :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+   :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}
+  {:kind :notice
+   :source "vendor/pdfcube/jbig2/LICENSE"
+   :destination "Legal/THIRD-PARTY-JBIG2-LICENSE.txt"
+   :package-path "THIRD-PARTY/JBIG2-LICENSE.txt"
+   :sha256 "4b2076ee892bdcf3bcc6f09e68146d2d0b3a4d2c0c66a00383b6e768be128e68"}
+  {:kind :notice
+   :source "vendor/pdfcube/jpx/LICENSE"
+   :destination "Legal/THIRD-PARTY-COREJ2K-LICENSE.txt"
+   :package-path "THIRD-PARTY/COREJ2K-LICENSE.txt"
+   :sha256 "2b718cb2d9c117bc0744a9f421083e8b282765e920b71d547a683d257e8cea77"}
+  {:kind :notice
+   :source "vendor/pdfcube/jpx/COPYRIGHT-JJ2000-5.1"
+   :destination "Legal/COPYRIGHT-JJ2000-5.1.txt"
+   :package-path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
+   :sha256 "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}]
  :public-surface
  {:strategy dripsharp.pdfcube.java-project/public-surface-strategy}}

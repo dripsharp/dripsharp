@@ -67,7 +67,7 @@
   {:id "SkiaSharp.NativeAssets.Linux"
    :version "4.150.1"
    :projection :skia-sharp-native-assets}]
- :internal-capabilities #{:font-discovery :skia-geometry}
+ :internal-capabilities #{:font-discovery :icc :skia-geometry}
  :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
  :compatibility-namespace "PdfCube.FB.Runtime"
  :legal-files

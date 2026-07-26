@@ -43,10 +43,13 @@ internal static class PdfCubeImageIO
         string formatName)
     {
         ArgumentNullException.ThrowIfNull(formatName);
-        return JavaCompat.Iterator(
+        var supported =
             formatName.Equals("JPEG", StringComparison.OrdinalIgnoreCase) ||
-            formatName.Equals("JPG", StringComparison.OrdinalIgnoreCase)
-                ? new[] { new JavaImageReader("JPEG") }
+            formatName.Equals("JPG", StringComparison.OrdinalIgnoreCase) ||
+            PdfCubeImageCodecs.Supports(formatName);
+        return JavaCompat.Iterator(
+            supported
+                ? new[] { new JavaImageReader(formatName) }
                 : Array.Empty<JavaImageReader>());
     }
 
@@ -986,13 +989,18 @@ public sealed class JavaImageReader : IDisposable
 
     public bool CanReadRaster => true;
 
-    public void SetInput(object source) => SetInput(source, false, false);
+    public void SetInput(object? source) => SetInput(source, false, false);
 
     public void SetInput(
-        object source,
+        object? source,
         bool seekForwardOnly,
         bool ignoreMetadata)
     {
+        if (source is null)
+        {
+            input = null;
+            return;
+        }
         input = source as JavaImageInputStream ??
             throw new ArgumentException(
                 "ImageReader input must be an ImageInputStream.",
@@ -1026,13 +1034,20 @@ public sealed class JavaImageReader : IDisposable
 
     public JavaRaster ReadRaster(
         int imageIndex,
-        JavaImageReadParam? parameters) =>
-        new(Read(imageIndex, parameters));
+        JavaImageReadParam? parameters)
+    {
+        using var image = Read(imageIndex, parameters);
+        return PdfCubeFontCompat.GetImageData(image);
+    }
 
     public JavaImageMetadata GetImageMetadata(int imageIndex)
     {
         RequireImageIndex(imageIndex);
-        return new JavaImageMetadata(RequireInput().Bytes);
+        if (formatName.Equals("JPEG", StringComparison.OrdinalIgnoreCase))
+            return new JavaImageMetadata(RequireInput().Bytes);
+        using var bitmap = Decode();
+        return new JavaImageMetadata(
+            PdfCubeFontCompat.GetColorModel(bitmap).NumberOfComponents);
     }
 
     public void Dispose()
@@ -1042,6 +1057,8 @@ public sealed class JavaImageReader : IDisposable
 
     private SKBitmap Decode()
     {
+        if (PdfCubeImageCodecs.Supports(formatName))
+            return PdfCubeImageCodecs.Decode(formatName, RequireInput().Bytes);
         using var stream = new MemoryStream(
             RequireInput().Bytes,
             writable: false);
@@ -1102,6 +1119,34 @@ public sealed class JavaImageReader : IDisposable
             source.Dispose();
             throw new ArgumentException(
                 "The source region and subsampling produce an empty image.");
+        }
+
+        if (PdfCubeFontCompat.HasManagedImageData(source))
+        {
+            var colorModel = PdfCubeFontCompat.GetColorModel(source);
+            var sourceRaster = PdfCubeFontCompat.GetRaster(source);
+            var destinationRaster =
+                colorModel.CreateCompatibleWritableRaster(outputWidth, outputHeight);
+            for (var y = 0; y < outputHeight; y++)
+            {
+                for (var x = 0; x < outputWidth; x++)
+                {
+                    destinationRaster.SetPixel(
+                        x,
+                        y,
+                        sourceRaster.GetPixel(
+                            firstX + x * parameters.SubsamplingX,
+                            firstY + y * parameters.SubsamplingY,
+                            (int[]?)null));
+                }
+            }
+            var managedDestination = PdfCubeFontCompat.CreateImage(
+                colorModel,
+                destinationRaster,
+                isRasterPremultiplied: false,
+                null);
+            source.Dispose();
+            return managedDestination;
         }
 
         var destination = new SKBitmap(
@@ -1379,7 +1424,7 @@ public sealed class JavaRaster
     private readonly int pixelStride;
     private readonly int scanlineStride;
     private readonly int[] bandOffsets;
-    private readonly bool packedBinary;
+    private readonly int packedPixelBits;
 
     internal JavaRaster(SKBitmap bitmap)
     {
@@ -1438,18 +1483,33 @@ public sealed class JavaRaster
         };
     }
 
-    private JavaRaster(int width, int height, sbyte[] packedBinaryData)
+    private JavaRaster(
+        int width,
+        int height,
+        int packedPixelBits,
+        sbyte[] packedData)
     {
+        if (packedPixelBits is not 1 and not 2 and not 4)
+            throw new ArgumentOutOfRangeException(nameof(packedPixelBits));
         this.width = width;
         this.height = height;
         numberOfBands = 1;
         transferType = PdfCubeFontCompat.DATA_BUFFER_TYPE_BYTE;
         pixelStride = 0;
-        scanlineStride = checked((width + 7) / 8);
+        scanlineStride = checked((width * packedPixelBits + 7) / 8);
         bandOffsets = [0];
-        storage = packedBinaryData;
-        packedBinary = true;
+        if (packedData.Length < checked(scanlineStride * height))
+            throw new ArgumentException("Packed raster storage is truncated.", nameof(packedData));
+        storage = packedData;
+        this.packedPixelBits = packedPixelBits;
     }
+
+    internal static JavaRaster Packed(int width, int height, int pixelBits) =>
+        new(
+            width,
+            height,
+            pixelBits,
+            new sbyte[checked((width * pixelBits + 7) / 8 * height)]);
 
     internal static JavaRaster BinarySnapshot(SKBitmap bitmap)
     {
@@ -1466,7 +1526,7 @@ public sealed class JavaRaster
                     (sbyte)(unchecked((byte)data[index]) | 1 << (7 - x % 8)));
             }
         }
-        return new JavaRaster(bitmap.Width, bitmap.Height, data);
+        return new JavaRaster(bitmap.Width, bitmap.Height, 1, data);
     }
 
     internal JavaRaster(
@@ -1510,20 +1570,44 @@ public sealed class JavaRaster
     public int MinY => 0;
     public int NumberOfBands => numberOfBands;
     public int TransferType => transferType;
+    internal int PackedPixelBits => packedPixelBits;
     internal int StorageSize => storage?.Length ?? checked(width * height);
 
     public JavaRaster CreateCompatibleWritableRaster() =>
-        packedBinary
-            ? new JavaRaster(
-                Width,
-                Height,
-                new sbyte[checked(((Width + 7) / 8) * Height)])
+        packedPixelBits != 0
+            ? Packed(Width, Height, packedPixelBits)
             : new(
                 TransferType,
                 Width,
                 Height,
                 NumberOfBands,
                 bandOffsets);
+
+    internal JavaRaster DeepCopy()
+    {
+        if (packedPixelBits != 0)
+        {
+            return new JavaRaster(
+                Width,
+                Height,
+                packedPixelBits,
+                (sbyte[])storage!.Clone());
+        }
+        var copy = new JavaRaster(
+            TransferType,
+            Width,
+            Height,
+            NumberOfBands,
+            bandOffsets);
+        for (var y = 0; y < Height; y++)
+        {
+            for (var x = 0; x < Width; x++)
+            {
+                copy.SetPixel(x, y, GetPixel(x, y, (int[]?)null));
+            }
+        }
+        return copy;
+    }
 
     public JavaDataBuffer GetDataBuffer() =>
         TransferType switch
@@ -1809,10 +1893,13 @@ public sealed class JavaRaster
     private int GetComponent(int x, int y, int band)
     {
         if ((uint)band >= (uint)NumberOfBands) throw new IndexOutOfRangeException();
-        if (packedBinary)
+        if (packedPixelBits != 0)
         {
-            var index = y * scanlineStride + x / 8;
-            return (unchecked((byte)((sbyte[])storage!)[index]) >> (7 - x % 8)) & 1;
+            var bitOffset = x * packedPixelBits;
+            var index = y * scanlineStride + bitOffset / 8;
+            var shift = 8 - packedPixelBits - bitOffset % 8;
+            var mask = (1 << packedPixelBits) - 1;
+            return unchecked((byte)((sbyte[])storage!)[index]) >> shift & mask;
         }
         return storage is not null
             ? GetStorageElement(StorageIndex(x, y, band))
@@ -1822,14 +1909,17 @@ public sealed class JavaRaster
     private void SetComponent(int x, int y, int band, int value)
     {
         if ((uint)band >= (uint)NumberOfBands) throw new IndexOutOfRangeException();
-        if (packedBinary)
+        if (packedPixelBits != 0)
         {
             var bytes = (sbyte[])storage!;
-            var index = y * scanlineStride + x / 8;
-            var mask = 1 << (7 - x % 8);
+            var bitOffset = x * packedPixelBits;
+            var index = y * scanlineStride + bitOffset / 8;
+            var shift = 8 - packedPixelBits - bitOffset % 8;
+            var componentMask = (1 << packedPixelBits) - 1;
+            var mask = componentMask << shift;
             var current = unchecked((byte)bytes[index]);
-            bytes[index] = unchecked((sbyte)(
-                value == 0 ? current & ~mask : current | mask));
+            bytes[index] = unchecked(
+                (sbyte)(current & ~mask | (value & componentMask) << shift));
             return;
         }
         if (storage is not null)
@@ -1980,23 +2070,47 @@ public sealed class JavaColorConvertOp
             throw new ArgumentException(
                 "Source and destination image dimensions must match.");
         }
+        var sourceColorModel = PdfCubeFontCompat.GetColorModel(source);
+        var destinationColorModel = PdfCubeFontCompat.GetColorModel(destination);
+        var sourceRaster = PdfCubeFontCompat.GetRaster(source);
+        var destinationRaster = PdfCubeFontCompat.GetRaster(destination);
+        object? sourcePixel = null;
+        object? destinationPixel = null;
+        float[]? sourceComponents = null;
+        var destinationComponents =
+            new float[destinationColorModel.NumberOfComponents];
         for (var y = 0; y < source.Height; y++)
         {
             for (var x = 0; x < source.Width; x++)
             {
-                var color = source.GetPixel(x, y);
-                destination.SetPixel(
-                    x,
-                    y,
-                    new SKColor(
-                        color.Red,
-                        color.Green,
-                        color.Blue,
-                        destination.AlphaType == SKAlphaType.Opaque
-                            ? byte.MaxValue
-                            : color.Alpha));
+                sourcePixel =
+                    sourceRaster.GetDataElements(x, y, 1, 1, sourcePixel);
+                sourceComponents = sourceColorModel.GetNormalizedComponents(
+                    sourcePixel,
+                    sourceComponents,
+                    0);
+                var rgb = sourceColorModel.ColorSpace.ToRgb(sourceComponents);
+                var converted = destinationColorModel.ColorSpace.FromRgb(rgb);
+                Array.Copy(
+                    converted,
+                    destinationComponents,
+                    destinationColorModel.NumberOfColorComponents);
+                if (destinationColorModel.HasAlpha)
+                {
+                    destinationComponents[
+                        destinationColorModel.NumberOfColorComponents] =
+                        sourceColorModel.HasAlpha
+                            ? sourceComponents[sourceColorModel.NumberOfColorComponents]
+                            : 1f;
+                }
+                destinationPixel = destinationColorModel.GetDataElements(
+                    destinationComponents,
+                    0,
+                    destinationPixel);
+                destinationRaster.SetDataElements(x, y, destinationPixel);
             }
         }
+        PdfCubeFontCompat.SetImageData(destination, destinationRaster);
         return destination;
     }
 }
@@ -2071,6 +2185,9 @@ public sealed class JavaLookupOp
 
 public class JavaSampleModel
 {
+    internal JavaSampleModel()
+    {
+    }
 }
 
 public sealed class JavaMultiPixelPackedSampleModel : JavaSampleModel
@@ -2309,7 +2426,13 @@ public sealed class PdfCubeRenderingHints : Dictionary<object, object>
 
 public sealed class JavaIccProfile
 {
+    public const int CLASS_INPUT = 0;
     public const int CLASS_DISPLAY = 1;
+    public const int CLASS_OUTPUT = 2;
+    public const int CLASS_DEVICELINK = 3;
+    public const int CLASS_COLORSPACECONVERSION = 4;
+    public const int CLASS_ABSTRACT = 5;
+    public const int CLASS_NAMEDCOLOR = 6;
     public const int icSigDisplayClass = 1835955314;
     public const int icPerceptual = 0;
     public const int icSigHead = 1751474532;
@@ -2317,105 +2440,37 @@ public sealed class JavaIccProfile
     public const int icHdrModel = 52;
     public const int icHdrRenderingIntent = 64;
 
-    private readonly sbyte[] data;
+    private readonly PdfCubeIccProfileData profile;
 
     internal JavaIccProfile(sbyte[] data)
     {
-        ArgumentNullException.ThrowIfNull(data);
-        this.data = (sbyte[])data.Clone();
+        profile = new PdfCubeIccProfileData(data);
     }
 
-    public sbyte[] GetData() => (sbyte[])data.Clone();
+    public sbyte[] GetData() => profile.GetData();
 
-    public sbyte[] GetData(int tag)
+    public sbyte[] GetData(int tag) =>
+        tag == icSigHead ? profile.GetHeader() : profile.GetTag(tag);
+
+    public int GetProfileClass() => profile.DeviceClassSignature switch
     {
-        if (tag != icSigHead)
-            throw new ArgumentException(
-                $"Unsupported ICC profile tag `{tag}`.",
-                nameof(tag));
-        if (data.Length < 128)
-            throw new ArgumentException("ICC profile header is truncated.");
-        return data[..128];
-    }
+        0x73636e72 => CLASS_INPUT, // scnr
+        0x6d6e7472 => CLASS_DISPLAY, // mntr
+        0x70727472 => CLASS_OUTPUT, // prtr
+        0x6c696e6b => CLASS_DEVICELINK, // link
+        0x73706163 => CLASS_COLORSPACECONVERSION, // spac
+        0x61627374 => CLASS_ABSTRACT, // abst
+        0x6e6d636c => CLASS_NAMEDCOLOR, // nmcl
+        _ => throw new ArgumentException("ICC profile has an unknown device class.")
+    };
 
-    public int GetProfileClass()
-    {
-        if (data.Length < icHdrDeviceClass + sizeof(int))
-            throw new ArgumentException("ICC profile header is truncated.");
-        var signature =
-            unchecked((byte)data[icHdrDeviceClass]) << 24 |
-            unchecked((byte)data[icHdrDeviceClass + 1]) << 16 |
-            unchecked((byte)data[icHdrDeviceClass + 2]) << 8 |
-            unchecked((byte)data[icHdrDeviceClass + 3]);
-        return signature == icSigDisplayClass ? CLASS_DISPLAY : 0;
-    }
+    public int GetColorSpaceType() => profile.ColorSpaceType;
 
-    public int GetColorSpaceType()
-    {
-        if (data.Length < 20)
-            throw new ArgumentException("ICC profile header is truncated.");
-        var signature = string.Create(
-            4,
-            data,
-            static (characters, bytes) =>
-            {
-                for (var index = 0; index < characters.Length; index++)
-                    characters[index] =
-                        (char)unchecked((byte)bytes[index + 16]);
-            });
-        return signature switch
-        {
-            "XYZ " => 0,
-            "Lab " => 1,
-            "Luv " => 2,
-            "YCbr" => 3,
-            "Yxy " => 4,
-            "RGB " => JavaColorSpace.TYPE_RGB,
-            "GRAY" => JavaColorSpace.TYPE_GRAY,
-            "HSV " => 7,
-            "HLS " => 8,
-            "CMYK" => JavaColorSpace.TYPE_CMYK,
-            "CMY " => 11,
-            _ when signature.EndsWith("CLR", StringComparison.Ordinal) &&
-                   Uri.IsHexDigit(signature[0]) =>
-                Convert.ToInt32(signature[0].ToString(), 16) + 10,
-            _ => throw new ArgumentException(
-                $"Unsupported ICC profile color-space signature `{signature}`.")
-        };
-    }
-
-    public int NumberOfComponents
-    {
-        get
-        {
-            if (data.Length < 20) throw new InvalidOperationException("ICC profile header is truncated.");
-            var signature = string.Create(
-                4,
-                data,
-                static (characters, bytes) =>
-                {
-                    for (var index = 0; index < characters.Length; index++)
-                        characters[index] = (char)unchecked((byte)bytes[index + 16]);
-                });
-            if (signature.Length == 4 &&
-                signature[1] == 'C' &&
-                signature[2] == 'L' &&
-                signature[3] == 'R' &&
-                Uri.IsHexDigit(signature[0]))
-            {
-                return Convert.ToInt32(signature[0].ToString(), 16);
-            }
-            return signature switch
-            {
-                "GRAY" => 1,
-                "CMYK" => 4,
-                "RGB " or "XYZ " or "Lab " or "Luv " or "YCbr" or "Yxy " or
-                    "HSV " or "HLS " or "CMY " => 3,
-                _ => throw new InvalidOperationException(
-                    $"Unsupported ICC profile color-space signature '{signature}'.")
-            };
-        }
-    }
+    public int NumberOfComponents => profile.NumberOfComponents;
+    public int GetMajorVersion() => profile.MajorVersion;
+    public int GetMinorVersion() => profile.MinorVersion;
+    internal float[] ToRgb(float[] components) => profile.ToRgb(components);
+    internal float[] FromRgb(float[] rgb) => profile.FromRgb(rgb);
 }
 
 public static class PdfCubeTransparency
@@ -2633,6 +2688,7 @@ public class JavaColorModel
     private readonly bool? explicitAlpha;
     private readonly int explicitDataType;
     private readonly int? explicitPixelSize;
+    private readonly int[]? explicitComponentBits;
 
     internal JavaColorModel(int imageType)
     {
@@ -2648,12 +2704,33 @@ public class JavaColorModel
         JavaColorSpace colorSpace,
         bool hasAlpha,
         int dataType)
+        : this(colorSpace, hasAlpha, dataType, null)
+    {
+    }
+
+    internal JavaColorModel(
+        JavaColorSpace colorSpace,
+        bool hasAlpha,
+        int dataType,
+        int[]? componentBits)
     {
         imageType = PdfCubeFontCompat.TYPE_CUSTOM;
         explicitColorSpace = colorSpace ??
             throw new ArgumentNullException(nameof(colorSpace));
         explicitAlpha = hasAlpha;
         explicitDataType = dataType;
+        if (componentBits is not null)
+        {
+            if (componentBits.Length !=
+                    colorSpace.NumberOfComponents + (hasAlpha ? 1 : 0) ||
+                componentBits.Any(bits => bits is < 1 or > 31))
+            {
+                throw new ArgumentException(
+                    "Component bit depths must describe every color and alpha component.",
+                    nameof(componentBits));
+            }
+            explicitComponentBits = (int[])componentBits.Clone();
+        }
         ColorSpace = colorSpace;
     }
 
@@ -2699,6 +2776,8 @@ public class JavaColorModel
     {
         PdfCubeFontCompat.TYPE_CUSTOM when explicitPixelSize.HasValue =>
             explicitPixelSize.Value,
+        PdfCubeFontCompat.TYPE_CUSTOM when explicitComponentBits is not null =>
+            explicitComponentBits.Sum(),
         PdfCubeFontCompat.TYPE_CUSTOM =>
             NumberOfComponents * (explicitDataType ==
                 PdfCubeFontCompat.DATA_BUFFER_TYPE_USHORT ? 16 : 8),
@@ -2722,6 +2801,8 @@ public class JavaColorModel
     {
         if (Palette is not null)
         {
+            if (explicitPixelSize is 1 or 2 or 4)
+                return JavaRaster.Packed(width, height, explicitPixelSize.Value);
             return new JavaRaster(
                 PdfCubeFontCompat.DATA_BUFFER_TYPE_BYTE,
                 width,
@@ -2749,6 +2830,28 @@ public class JavaColorModel
         if (components.Length < offset + NumberOfComponents)
             throw new IndexOutOfRangeException();
 
+        if (Palette is not null)
+        {
+            var paletteIndex = pixel switch
+            {
+                sbyte[] bytes when bytes.Length > 0 => unchecked((byte)bytes[0]),
+                short[] words when words.Length > 0 => unchecked((ushort)words[0]),
+                int[] values when values.Length > 0 => values[0],
+                _ => throw new ArgumentException(
+                    "Indexed pixel storage does not contain an index.",
+                    nameof(pixel))
+            };
+            if ((uint)paletteIndex >= (uint)Palette.Length)
+                throw new ArgumentException(
+                    $"Palette index {paletteIndex} is outside the color map.",
+                    nameof(pixel));
+            var color = Palette[paletteIndex];
+            components[offset] = color.Red / 255f;
+            components[offset + 1] = color.Green / 255f;
+            components[offset + 2] = color.Blue / 255f;
+            return components;
+        }
+
         if (pixel is int[] packed && packed.Length == 1 &&
             imageType is PdfCubeFontCompat.TYPE_INT_RGB or
                 PdfCubeFontCompat.TYPE_INT_ARGB or
@@ -2775,14 +2878,19 @@ public class JavaColorModel
 
         for (var component = 0; component < NumberOfComponents; component++)
         {
+            var maximum = explicitComponentBits is null
+                ? explicitDataType == PdfCubeFontCompat.DATA_BUFFER_TYPE_USHORT
+                    ? 65535d
+                    : 255d
+                : Math.Pow(2d, explicitComponentBits[component]) - 1d;
             components[offset + component] = pixel switch
             {
                 sbyte[] bytes when component < bytes.Length =>
-                    unchecked((byte)bytes[component]) / 255f,
+                    (float)(unchecked((byte)bytes[component]) / maximum),
                 short[] words when component < words.Length =>
-                    unchecked((ushort)words[component]) / 65535f,
+                    (float)(unchecked((ushort)words[component]) / maximum),
                 int[] values when component < values.Length =>
-                    Math.Clamp(values[component] / 255f, 0f, 1f),
+                    (float)Math.Clamp(values[component] / maximum, 0d, 1d),
                 _ => throw new ArgumentException(
                     "Pixel storage does not match the color model.",
                     nameof(pixel))
@@ -2798,6 +2906,33 @@ public class JavaColorModel
             throw new IndexOutOfRangeException();
         static int ByteValue(float value) =>
             (int)MathF.Round(Math.Clamp(value, 0f, 1f) * 255f);
+
+        if (Palette is not null)
+        {
+            var red = ByteValue(components[offset]);
+            var green = ByteValue(components[offset + 1]);
+            var blue = ByteValue(components[offset + 2]);
+            var closestIndex = 0;
+            var closestDistance = long.MaxValue;
+            for (var index = 0; index < Palette.Length; index++)
+            {
+                var candidate = Palette[index];
+                var redDistance = red - candidate.Red;
+                var greenDistance = green - candidate.Green;
+                var blueDistance = blue - candidate.Blue;
+                var distance =
+                    (long)redDistance * redDistance +
+                    (long)greenDistance * greenDistance +
+                    (long)blueDistance * blueDistance;
+                if (distance >= closestDistance) continue;
+                closestDistance = distance;
+                closestIndex = index;
+            }
+            var indexed = pixel as sbyte[] ?? new sbyte[1];
+            if (indexed.Length == 0) throw new IndexOutOfRangeException();
+            indexed[0] = unchecked((sbyte)closestIndex);
+            return indexed;
+        }
 
         if (imageType is PdfCubeFontCompat.TYPE_INT_RGB or
             PdfCubeFontCompat.TYPE_INT_ARGB or
@@ -2825,15 +2960,47 @@ public class JavaColorModel
             var words = pixel as short[] ?? new short[NumberOfComponents];
             if (words.Length < NumberOfComponents) throw new IndexOutOfRangeException();
             for (var component = 0; component < NumberOfComponents; component++)
+            {
+                var maximum = explicitComponentBits is null
+                    ? 65535d
+                    : Math.Pow(2d, explicitComponentBits[component]) - 1d;
                 words[component] = unchecked((short)(ushort)MathF.Round(
-                    Math.Clamp(components[offset + component], 0f, 1f) * 65535f));
+                    (float)(Math.Clamp(
+                        components[offset + component],
+                        0f,
+                        1f) * maximum)));
+            }
             return words;
+        }
+
+        if (explicitDataType == PdfCubeFontCompat.DATA_BUFFER_TYPE_INT)
+        {
+            var values = pixel as int[] ?? new int[NumberOfComponents];
+            if (values.Length < NumberOfComponents) throw new IndexOutOfRangeException();
+            for (var component = 0; component < NumberOfComponents; component++)
+            {
+                var maximum = explicitComponentBits is null
+                    ? 255d
+                    : Math.Pow(2d, explicitComponentBits[component]) - 1d;
+                values[component] = checked((int)Math.Round(
+                    Math.Clamp(
+                        components[offset + component],
+                        0f,
+                        1f) * maximum));
+            }
+            return values;
         }
 
         var bytes = pixel as sbyte[] ?? new sbyte[NumberOfComponents];
         if (bytes.Length < NumberOfComponents) throw new IndexOutOfRangeException();
         for (var component = 0; component < NumberOfComponents; component++)
-            bytes[component] = unchecked((sbyte)ByteValue(components[offset + component]));
+        {
+            var maximum = explicitComponentBits is null
+                ? 255f
+                : (float)(Math.Pow(2d, explicitComponentBits[component]) - 1d);
+            bytes[component] = unchecked((sbyte)(int)MathF.Round(
+                Math.Clamp(components[offset + component], 0f, 1f) * maximum));
+        }
         return bytes;
     }
 
@@ -2869,22 +3036,41 @@ public class JavaColorSpace
     public const int TYPE_GRAY = 6;
     public const int TYPE_CMYK = 9;
 
-    internal JavaColorSpace(int kind) => Kind = kind;
+    private readonly int type;
+    private readonly int numberOfComponents;
+
+    internal JavaColorSpace(int kind)
+        : this(
+            kind,
+            kind switch
+            {
+                CS_sRGB => TYPE_RGB,
+                CS_GRAY => TYPE_GRAY,
+                CS_CIEXYZ => 0,
+                TYPE_CMYK => TYPE_CMYK,
+                _ => throw new InvalidOperationException("Unknown color space.")
+            },
+            kind switch
+            {
+                CS_GRAY => 1,
+                TYPE_CMYK => 4,
+                _ => 3
+            })
+    {
+    }
+
+    protected internal JavaColorSpace(int kind, int type, int numberOfComponents)
+    {
+        if (numberOfComponents is < 1 or > 15)
+            throw new ArgumentOutOfRangeException(nameof(numberOfComponents));
+        Kind = kind;
+        this.type = type;
+        this.numberOfComponents = numberOfComponents;
+    }
+
     internal int Kind { get; }
-    public int Type => Kind switch
-    {
-        CS_sRGB => TYPE_RGB,
-        CS_GRAY => TYPE_GRAY,
-        CS_CIEXYZ => 0,
-        TYPE_CMYK => TYPE_CMYK,
-        _ => throw new InvalidOperationException("Unknown color space.")
-    };
-    public int NumberOfComponents => Type switch
-    {
-        TYPE_GRAY => 1,
-        TYPE_CMYK => 4,
-        _ => 3
-    };
+    public int Type => type;
+    public int NumberOfComponents => numberOfComponents;
     public bool IsSrgb => Kind == CS_sRGB;
 
     public virtual float[] ToRgb(float[] components)
@@ -2910,8 +3096,8 @@ public class JavaColorSpace
             _ => new[]
             {
                 Clamp(components[0]),
-                Clamp(components[1]),
-                Clamp(components[2])
+                Clamp(components.Length > 1 ? components[1] : components[0]),
+                Clamp(components.Length > 2 ? components[2] : components[0])
             }
         };
     }
@@ -2926,7 +3112,14 @@ public class JavaColorSpace
         var blue = Math.Clamp(rgb[2], 0f, 1f);
         if (Type == TYPE_GRAY)
             return new[] { red * 0.2126f + green * 0.7152f + blue * 0.0722f };
-        if (Type != TYPE_CMYK) return new[] { red, green, blue };
+        if (Type != TYPE_CMYK)
+        {
+            var components = new float[NumberOfComponents];
+            if (components.Length > 0) components[0] = red;
+            if (components.Length > 1) components[1] = green;
+            if (components.Length > 2) components[2] = blue;
+            return components;
+        }
         var black = 1f - Math.Max(red, Math.Max(green, blue));
         if (black >= 1f) return new[] { 0f, 0f, 0f, 1f };
         var scale = 1f - black;
@@ -2994,57 +3187,27 @@ public class JavaColorSpace
 public sealed class JavaIccColorSpace : JavaColorSpace
 {
     internal JavaIccColorSpace(int kind, JavaIccProfile profile)
-        : base(kind) => Profile = profile;
+        : base(
+            kind,
+            (profile ?? throw new ArgumentNullException(nameof(profile)))
+                .GetColorSpaceType(),
+            profile.NumberOfComponents) => Profile = profile;
 
     public JavaIccColorSpace(JavaIccProfile profile)
-        : base((profile ?? throw new ArgumentNullException(nameof(profile)))
-            .NumberOfComponents switch
-            {
-                1 => CS_GRAY,
-                3 => CS_sRGB,
-                4 => TYPE_CMYK,
-                _ => throw new ArgumentException(
-                    "Only Gray, RGB, and CMYK ICC profiles are supported.",
-                    nameof(profile))
-            })
+        : base(
+            0,
+            (profile ?? throw new ArgumentNullException(nameof(profile)))
+                .GetColorSpaceType(),
+            profile.NumberOfComponents)
     {
         Profile = profile;
     }
 
     public JavaIccProfile Profile { get; }
 
-    public override float[] ToRgb(float[] components)
-    {
-        ArgumentNullException.ThrowIfNull(components);
-        if (components.Length < NumberOfComponents)
-            throw new ArgumentException(
-                "The component array is shorter than the ICC color space.",
-                nameof(components));
-        static float Clamp(float value) => Math.Clamp(value, 0f, 1f);
-        return NumberOfComponents switch
-        {
-            1 => new[]
-            {
-                Clamp(components[0]),
-                Clamp(components[0]),
-                Clamp(components[0])
-            },
-            3 => new[]
-            {
-                Clamp(components[0]),
-                Clamp(components[1]),
-                Clamp(components[2])
-            },
-            4 => new[]
-            {
-                1f - Math.Min(1f, Clamp(components[0]) + Clamp(components[3])),
-                1f - Math.Min(1f, Clamp(components[1]) + Clamp(components[3])),
-                1f - Math.Min(1f, Clamp(components[2]) + Clamp(components[3]))
-            },
-            _ => throw new InvalidOperationException(
-                "Unsupported ICC component count.")
-        };
-    }
+    public override float[] ToRgb(float[] components) => Profile.ToRgb(components);
+
+    public override float[] FromRgb(float[] rgb) => Profile.FromRgb(rgb);
 
     public override float GetMinValue(int component)
     {
@@ -4305,8 +4468,22 @@ internal static class PdfCubeFontCompat
 
     private sealed class ImageMetadata
     {
-        internal ImageMetadata(int type) => Type = type;
+        internal ImageMetadata(
+            int type,
+            JavaColorModel? colorModel = null,
+            JavaRaster? raster = null,
+            JavaSampleModel? sampleModel = null)
+        {
+            Type = type;
+            ColorModel = colorModel;
+            Raster = raster;
+            SampleModel = sampleModel;
+        }
+
         internal int Type { get; }
+        internal JavaColorModel? ColorModel { get; }
+        internal JavaRaster? Raster { get; }
+        internal JavaSampleModel? SampleModel { get; }
     }
 
     private static readonly ConditionalWeakTable<SKBitmap, ImageMetadata> ImageMetadataByBitmap = new();
@@ -4405,11 +4582,31 @@ internal static class PdfCubeFontCompat
             : InferImageType(bitmap);
     }
 
-    internal static JavaRaster GetRaster(SKBitmap bitmap) => new(bitmap);
+    internal static JavaRaster GetRaster(SKBitmap bitmap)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        return ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+               metadata.Raster is not null
+            ? metadata.Raster
+            : new JavaRaster(bitmap);
+    }
+
+    internal static bool HasManagedImageData(SKBitmap bitmap)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        return ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+               metadata.Raster is not null &&
+               metadata.ColorModel is not null;
+    }
 
     internal static JavaRaster GetImageData(SKBitmap bitmap)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.Raster is not null)
+        {
+            return metadata.Raster.DeepCopy();
+        }
         return GetImageType(bitmap) == TYPE_BYTE_BINARY
             ? JavaRaster.BinarySnapshot(bitmap)
             : new JavaRaster(
@@ -4422,13 +4619,27 @@ internal static class PdfCubeFontCompat
             ? PdfCubeTransparency.OPAQUE
             : PdfCubeTransparency.TRANSLUCENT;
 
-    internal static JavaColorModel GetColorModel(SKBitmap bitmap) =>
-        new(GetImageType(bitmap));
+    internal static JavaColorModel GetColorModel(SKBitmap bitmap)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        return ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+               metadata.ColorModel is not null
+            ? metadata.ColorModel
+            : new JavaColorModel(GetImageType(bitmap));
+    }
 
-    internal static JavaSampleModel GetSampleModel(SKBitmap bitmap) =>
-        GetImageType(bitmap) == TYPE_BYTE_BINARY
+    internal static JavaSampleModel GetSampleModel(SKBitmap bitmap)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.SampleModel is not null)
+        {
+            return metadata.SampleModel;
+        }
+        return GetImageType(bitmap) == TYPE_BYTE_BINARY
             ? new JavaMultiPixelPackedSampleModel(1)
             : new JavaSampleModel();
+    }
 
     internal static JavaRaster GetAlphaRaster(SKBitmap bitmap)
     {
@@ -4459,33 +4670,54 @@ internal static class PdfCubeFontCompat
             throw new ArgumentException(
                 "Raster dimensions must match the destination image.",
                 nameof(raster));
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.Raster is not null &&
+            metadata.ColorModel is not null)
+        {
+            var retainedRaster = metadata.Raster;
+            if (!ReferenceEquals(retainedRaster, raster))
+            {
+                if (retainedRaster.NumberOfBands != raster.NumberOfBands)
+                    throw new ArgumentException(
+                        "Raster band count must match the destination image.",
+                        nameof(raster));
+                for (var y = 0; y < bitmap.Height; y++)
+                {
+                    for (var x = 0; x < bitmap.Width; x++)
+                    {
+                        retainedRaster.SetPixel(
+                            x,
+                            y,
+                            raster.GetPixel(x, y, (int[]?)null));
+                    }
+                }
+            }
+            RenderRaster(bitmap, metadata.ColorModel, retainedRaster);
+            return;
+        }
+        var colorModel = new JavaColorModel(GetImageType(bitmap));
+        RenderRaster(bitmap, colorModel, raster);
+    }
+
+    private static void RenderRaster(
+        SKBitmap bitmap,
+        JavaColorModel colorModel,
+        JavaRaster raster)
+    {
+        object? pixel = null;
         for (var y = 0; y < bitmap.Height; y++)
         {
             for (var x = 0; x < bitmap.Width; x++)
             {
-                var pixel = raster.GetPixel(x, y, (int[]?)null);
-                var color = pixel.Length switch
-                {
-                    1 => new SKColor(
-                        unchecked((byte)pixel[0]),
-                        unchecked((byte)pixel[0]),
-                        unchecked((byte)pixel[0])),
-                    2 => new SKColor(
-                        unchecked((byte)pixel[0]),
-                        unchecked((byte)pixel[0]),
-                        unchecked((byte)pixel[0]),
-                        unchecked((byte)pixel[1])),
-                    3 => new SKColor(
-                        unchecked((byte)pixel[0]),
-                        unchecked((byte)pixel[1]),
-                        unchecked((byte)pixel[2])),
-                    _ => new SKColor(
-                        unchecked((byte)pixel[0]),
-                        unchecked((byte)pixel[1]),
-                        unchecked((byte)pixel[2]),
-                        unchecked((byte)pixel[3]))
-                };
-                bitmap.SetPixel(x, y, color);
+                pixel = raster.GetDataElements(x, y, 1, 1, pixel);
+                bitmap.SetPixel(
+                    x,
+                    y,
+                    new SKColor(
+                        unchecked((byte)colorModel.GetRed(pixel)),
+                        unchecked((byte)colorModel.GetGreen(pixel)),
+                        unchecked((byte)colorModel.GetBlue(pixel)),
+                        unchecked((byte)colorModel.GetAlpha(pixel))));
             }
         }
     }
@@ -4498,6 +4730,13 @@ internal static class PdfCubeFontCompat
     {
         ArgumentNullException.ThrowIfNull(colorModel);
         ArgumentNullException.ThrowIfNull(raster);
+        var expectedBands = colorModel.Palette is null
+            ? colorModel.NumberOfComponents
+            : 1;
+        if (raster.NumberOfBands != expectedBands)
+            throw new ArgumentException(
+                "Raster band count does not match the color model.",
+                nameof(raster));
         var bitmap = new SKBitmap(
             new SKImageInfo(
                 raster.Width,
@@ -4508,31 +4747,32 @@ internal static class PdfCubeFontCompat
                         ? SKAlphaType.Premul
                         : SKAlphaType.Unpremul
                     : SKAlphaType.Opaque));
-        if (colorModel.Palette is { } palette)
-        {
-            for (var y = 0; y < raster.Height; y++)
-            {
-                for (var x = 0; x < raster.Width; x++)
-                {
-                    var index = raster.GetPixel(x, y, (int[]?)null)[0];
-                    if ((uint)index >= (uint)palette.Length)
-                    {
-                        throw new ArgumentException(
-                            $"Palette index {index} is outside the color map.");
-                    }
-                    bitmap.SetPixel(x, y, palette[index]);
-                }
-            }
-        }
-        else
-        {
-            SetImageData(bitmap, raster);
-        }
+        var sampleModel = raster.PackedPixelBits == 0
+            ? new JavaSampleModel()
+            : new JavaMultiPixelPackedSampleModel(raster.PackedPixelBits);
+        ImageMetadataByBitmap.Add(
+            bitmap,
+            new ImageMetadata(TYPE_CUSTOM, colorModel, raster, sampleModel));
+        RenderRaster(bitmap, colorModel, raster);
         return bitmap;
     }
 
-    internal static int GetRgb(SKBitmap bitmap, int x, int y) =>
-        ToArgb(bitmap.GetPixel(x, y));
+    internal static int GetRgb(SKBitmap bitmap, int x, int y)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.Raster is not null &&
+            metadata.ColorModel is not null)
+        {
+            var pixel = metadata.Raster.GetDataElements(x, y, null);
+            return unchecked(
+                (int)((uint)metadata.ColorModel.GetAlpha(pixel) << 24 |
+                      (uint)metadata.ColorModel.GetRed(pixel) << 16 |
+                      (uint)metadata.ColorModel.GetGreen(pixel) << 8 |
+                      (uint)metadata.ColorModel.GetBlue(pixel)));
+        }
+        return ToArgb(bitmap.GetPixel(x, y));
+    }
 
     internal static int[] GetRgb(
         SKBitmap bitmap,
@@ -4551,14 +4791,44 @@ internal static class PdfCubeFontCompat
             for (var column = 0; column < width; column++)
             {
                 values[offset + row * scansize + column] =
-                    ToArgb(bitmap.GetPixel(x + column, y + row));
+                    GetRgb(bitmap, x + column, y + row);
             }
         }
         return values;
     }
 
-    internal static void SetRgb(SKBitmap bitmap, int x, int y, int argb) =>
+    internal static void SetRgb(SKBitmap bitmap, int x, int y, int argb)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+        if (ImageMetadataByBitmap.TryGetValue(bitmap, out var metadata) &&
+            metadata.Raster is not null &&
+            metadata.ColorModel is not null)
+        {
+            var rgb = new[]
+            {
+                unchecked((byte)(argb >> 16)) / 255f,
+                unchecked((byte)(argb >> 8)) / 255f,
+                unchecked((byte)argb) / 255f
+            };
+            var converted = metadata.ColorModel.ColorSpace.FromRgb(rgb);
+            var components = new float[metadata.ColorModel.NumberOfComponents];
+            Array.Copy(
+                converted,
+                components,
+                metadata.ColorModel.NumberOfColorComponents);
+            if (metadata.ColorModel.HasAlpha)
+            {
+                components[metadata.ColorModel.NumberOfColorComponents] =
+                    unchecked((byte)(argb >> 24)) / 255f;
+            }
+            var pixel =
+                metadata.ColorModel.GetDataElements(components, 0, null);
+            metadata.Raster.SetDataElements(x, y, pixel);
+            RenderRaster(bitmap, metadata.ColorModel, metadata.Raster);
+            return;
+        }
         bitmap.SetPixel(x, y, FromArgb(argb));
+    }
 
     private static int ToArgb(SKColor color) =>
         unchecked((int)((uint)color.Alpha << 24 |
@@ -4689,10 +4959,6 @@ internal static class PdfCubeFontCompat
     internal static JavaIccProfile GetIccProfile(sbyte[] data)
     {
         ArgumentNullException.ThrowIfNull(data);
-        var bytes = new byte[data.Length];
-        for (var index = 0; index < data.Length; index++) bytes[index] = unchecked((byte)data[index]);
-        using var colorSpace = SKColorSpace.CreateIcc(bytes)
-            ?? throw new ArgumentException("Invalid ICC profile data.");
         return new JavaIccProfile(data);
     }
 

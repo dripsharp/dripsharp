@@ -228,3 +228,20 @@ under Apache-2.0, MIT, BSD, or ISC terms. Such source is built into PdfCube
 rather than referenced as another package dependency; its pinned upstream
 identity, license, copyright, and required notices must be preserved. Source
 under other license terms requires explicit approval.
+
+### Pinned Internal Image Codec Source
+
+PdfCube builds the following codec source directly into `PdfCube.PdfBox`; it
+does not reference either codec as a package dependency:
+
+| Capability | Pinned source identity | License and notices |
+| --- | --- | --- |
+| JBIG2 | `nicholsab/JBig2Decoder.NETStandard` tag `1.5.2`, commit `29a79f7f138bbcd01c077cef3120e555b8fda3d3` | The preserved `LICENSE` records the original IDRsolutions BSD-3-Clause terms and the C# port's MIT terms and copyrights. |
+| JPEG 2000/JPX | `cinderblocks/CoreJ2K` tag `v2.3.3`, commit `4405df86bcd3c41bca9e0c12f3094209834bbba7` | BSD-3-Clause `LICENSE` plus the required preserved `COPYRIGHT-JJ2000-5.1` notice. |
+
+The exact source snapshots live under `vendor/pdfcube/jbig2` and
+`vendor/pdfcube/jpx`. Generation copies their C# source into the internal codec
+area of `PdfCube.PdfBox`, adds only compiler-warning and nullable wrappers, and
+packs the license and copyright files under `THIRD-PARTY/`. Advancing either
+pin requires re-running the image differential corpus and updating the recorded
+identity and legal-file digests.

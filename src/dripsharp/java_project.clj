@@ -15,7 +15,8 @@
             [dripsharp.paths :as paths]
             [dripsharp.project-input :as project-input]
             [dripsharp.spoon :as spoon])
-  (:import [java.nio.file Files Path StandardCopyOption]
+  (:import [java.nio.charset Charset MalformedInputException]
+           [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
            [spoon.reflect.declaration CtElement CtEnum CtType]
            [spoon.reflect.visitor.filter TypeFilter]))
@@ -624,6 +625,54 @@
 (defn- context-results [rule-bundle ctx]
   ((rule rule-bundle :structural-declarations :context-results) ctx))
 
+(defn- absolute-asset-source
+  [root source]
+  (paths/absolute
+   (let [path (paths/path source)]
+     (if (.isAbsolute path) path (paths/resolve-path root path)))))
+
+(defn- expand-asset-tree
+  [root {:keys [source-tree destination-tree include-pattern
+                missing-kind missing-message]
+         :as asset}]
+  (if-not source-tree
+    [asset]
+    (let [source-root (absolute-asset-source root source-tree)
+          pattern (re-pattern (or include-pattern ".*"))]
+      (when-not (paths/directory? source-root)
+        (throw
+         (ex-info (or missing-message "Configured destination asset tree is missing")
+                  {:kind (or missing-kind :missing-destination-asset-tree)
+                   :source (portable root source-root)
+                   :destination destination-tree})))
+      (with-open [files (Files/walk
+                         source-root
+                         (make-array java.nio.file.FileVisitOption 0))]
+        (->> (.toArray files)
+             (map #(cast Path %))
+             (filter paths/regular-file?)
+             (filter #(re-find pattern (str (.getFileName ^Path %))))
+             (sort-by str)
+             (mapv
+              (fn [source]
+                (let [relative (str (.relativize source-root source))]
+                  (-> asset
+                      (dissoc :source-tree :destination-tree :include-pattern)
+                      (assoc :source source
+                             :destination
+                             (str (str/replace destination-tree #"[\\/]+$" "")
+                                  "/"
+                                  (str/replace relative "\\" "/"))))))))))))
+
+(defn- read-asset-text
+  [source fallback-charset]
+  (try
+    (Files/readString source)
+    (catch MalformedInputException error
+      (if fallback-charset
+        (Files/readString source (Charset/forName fallback-charset))
+        (throw error)))))
+
 (defn- copy-assets!
   [rule-bundle root project-root source-root configuration]
   (let [asset-context {:workspace-root root
@@ -636,10 +685,9 @@
                          (assets asset-context))]
     (mapv
      (fn [{:keys [source destination strategy missing-kind missing-message
+                  text-charset-fallback text-prefix text-suffix
                   text-replacements]}]
-       (let [source (paths/absolute
-                     (let [path (paths/path source)]
-                       (if (.isAbsolute path) path (paths/resolve-path root path))))
+       (let [source (absolute-asset-source root source)
              relative (relative-path! destination "destination asset")
              destination (paths/resolve-path source-root relative)]
          (when-not (paths/regular-file? source)
@@ -650,8 +698,8 @@
                             :bundle (:id rule-bundle)})))
          (Files/createDirectories (.getParent destination)
                                   (make-array java.nio.file.attribute.FileAttribute 0))
-         (if (seq text-replacements)
-           (let [text (Files/readString source)
+         (if (or (seq text-replacements) text-prefix text-suffix)
+           (let [text (read-asset-text source text-charset-fallback)
                  transformed
                  (reduce-kv
                   (fn [value from to]
@@ -664,8 +712,17 @@
                                  :from from :to to})))
                     (str/replace value from to))
                   text
-                  text-replacements)]
-             (write-text! destination transformed))
+                  (or text-replacements {}))]
+             (when-not (and (or (nil? text-prefix) (string? text-prefix))
+                            (or (nil? text-suffix) (string? text-suffix)))
+               (throw
+                (ex-info "Destination asset text wrapper is invalid"
+                         {:kind :invalid-destination-asset-wrapper
+                          :source (portable root source)})))
+             (write-text! destination
+                          (str (or text-prefix "")
+                               transformed
+                               (or text-suffix ""))))
            (Files/copy source destination
                        (into-array java.nio.file.CopyOption
                                    [StandardCopyOption/REPLACE_EXISTING])))
@@ -673,7 +730,9 @@
           :source {:file (portable root source) :line 1 :column 1}
           :mappings []
           :strategy strategy}))
-     (concat bridge-assets product-assets))))
+     (mapcat
+      #(expand-asset-tree root %)
+      (concat bridge-assets product-assets)))))
 
 (defn emit-project!
   "Emits one deterministic project through an explicit destination rule bundle.
