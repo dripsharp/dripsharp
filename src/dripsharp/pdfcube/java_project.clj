@@ -154,8 +154,12 @@
    "org.bouncycastle.util.Arrays"
    ["global::System.Array" :pdfcube.type/array-utilities]
    "org.bouncycastle.jce.provider.BouncyCastleProvider"
-   ["global::DripSharp.Runtime.JavaSecurityProvider"
-    :pdfcube.type/security-provider]
+   ["object" :pdfcube.type/security-provider]
+   "java.security.KeyStore"
+   ["global::System.Security.Cryptography.X509Certificates.X509Certificate2Collection"
+    :pdfcube.type/x509-certificate-collection]
+   "java.security.Provider"
+   ["object" :pdfcube.type/security-provider]
    "java.awt.geom.AffineTransform"
    ["global::SkiaSharp.SKMatrix" :pdfcube.type/skia-matrix]
    "java.awt.Color"
@@ -514,6 +518,38 @@
    "executable:java.security.cert.Certificate#getPublicKey()"
    (fn [target _arguments]
      (crypto-call "GetPublicKey" [target]))
+
+   "executable:java.security.KeyStore#getDefaultType()"
+   (fn [_target _arguments]
+     (crypto-call "GetDefaultKeyStoreType" []))
+
+   "executable:java.security.KeyStore#getInstance(java.lang.String)"
+   (fn [_target arguments]
+     (crypto-call "CreateKeyStore" arguments))
+
+   "executable:java.security.KeyStore#load(java.io.InputStream,char[])"
+   (fn [target arguments]
+     (crypto-call "LoadKeyStore" (into [target] arguments)))
+
+   "executable:java.security.KeyStore#size()"
+   (fn [target _arguments]
+     (crypto-call "KeyStoreSize" [target]))
+
+   "executable:java.security.KeyStore#aliases()"
+   (fn [target _arguments]
+     (crypto-call "KeyStoreAliases" [target]))
+
+   "executable:java.security.KeyStore#containsAlias(java.lang.String)"
+   (fn [target arguments]
+     (crypto-call "KeyStoreContainsAlias" (into [target] arguments)))
+
+   "executable:java.security.KeyStore#getCertificate(java.lang.String)"
+   (fn [target arguments]
+     (crypto-call "KeyStoreGetCertificate" (into [target] arguments)))
+
+   "executable:java.security.KeyStore#getKey(java.lang.String,char[])"
+   (fn [target arguments]
+     (crypto-call "KeyStoreGetKey" (into [target] arguments)))
 
    "executable:java.text.DateFormat#setTimeZone(java.util.TimeZone)"
    (fn [target arguments]
@@ -2065,7 +2101,7 @@
 
    "executable:org.bouncycastle.jce.provider.BouncyCastleProvider#<init>()"
    (fn [_arguments]
-     (raw "new global::DripSharp.Runtime.JavaSecurityProvider()"))
+     (raw "new object()"))
 
    "executable:org.bouncycastle.asn1.ASN1InputStream#<init>(byte[])"
    (fn [arguments]
@@ -2664,9 +2700,11 @@
    {:source-scope :compile-runtime
     :artifact-sha256
     "c87f16ed9e5ec61bc94151e9f3646ac44e50cd448121ce84367fa4b7ec7ec1bb"
-    :runtime-package false
+    :runtime-package true
     :destination
-    {:kind :bcl
+    {:kind :microsoft-package
+     :id "System.Security.Cryptography.Pkcs"
+     :version "10.0.0"
      :capabilities
      ["System.Security.Cryptography.Pkcs"
       "System.Formats.Asn1"
@@ -2694,6 +2732,11 @@
 
 (def ^:private logging-package
   {:id "Microsoft.Extensions.Logging.Abstractions"
+   :version "10.0.0"
+   :projection :microsoft-package})
+
+(def ^:private pkcs-package
+  {:id "System.Security.Cryptography.Pkcs"
    :version "10.0.0"
    :projection :microsoft-package})
 
@@ -2840,7 +2883,7 @@
      :success-message "PdfCube.PdfBox package boundary passed."}
     :external-dependencies
     (assoc bouncy-dependencies commons-coordinate commons-dependency)
-    :runtime-packages [logging-package skia-package]
+    :runtime-packages [logging-package pkcs-package skia-package]
     :legal-files (into legal-files pdfbox-codec-legal-files)
     :internal-capabilities
     #{:calendar-value-semantics :icc :jbig2 :jpx :managed-raster :printing
@@ -2933,6 +2976,7 @@
     (doseq [{:keys [id version projection] :as dependency} runtime-packages]
       (when-not
        (or (= logging-package dependency)
+           (= pkcs-package dependency)
            (= skia-package dependency)
            (= skia-linux-package dependency))
         (fail! "PdfCube destination requested an unapproved runtime package"
@@ -2940,7 +2984,10 @@
                 :dependency dependency}))
       (when-not (case projection
                   :microsoft-package
-                  (and (= "Microsoft.Extensions.Logging.Abstractions" id)
+                  (and (contains?
+                        #{"Microsoft.Extensions.Logging.Abstractions"
+                          "System.Security.Cryptography.Pkcs"}
+                        id)
                        (= "10.0.0" version))
                   :skia-sharp
                   (and (= "SkiaSharp" id) (= "4.150.1" version))
@@ -3119,9 +3166,15 @@
         source-directory (get-in configuration [:output :source-directory])
         license (some #(when (= :license (:kind %)) %) (:legal-files configuration))
         properties
-        (str "    <PackageLicenseFile>"
-             (xml-escape (:package-path license))
-             "</PackageLicenseFile>\n")
+        (str
+         (when
+          (contains? (:internal-capabilities configuration)
+                     :security-handler-erasure)
+           (str "    <DefineConstants>$(DefineConstants);"
+                "DRIPSHARP_PDFBOX_CRYPTO</DefineConstants>\n"))
+         "    <PackageLicenseFile>"
+         (xml-escape (:package-path license))
+         "</PackageLicenseFile>\n")
         items
         (str
          (apply str

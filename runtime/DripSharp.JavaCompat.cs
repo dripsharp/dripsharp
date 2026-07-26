@@ -488,7 +488,7 @@ sealed class JavaAlgorithmParameterGenerator
 
     public static JavaAlgorithmParameterGenerator GetInstance(
         string algorithm,
-        JavaSecurityProvider _)
+        object _)
     {
         if (!string.Equals(
                 algorithm, "1.2.840.113549.3.2", StringComparison.Ordinal) &&
@@ -538,7 +538,7 @@ sealed class JavaKeyGenerator
 
     public static JavaKeyGenerator GetInstance(
         string algorithm,
-        JavaSecurityProvider _) =>
+        object _) =>
         new(ValidateAlgorithm(algorithm));
 
     public void Init(int bits)
@@ -625,10 +625,12 @@ sealed class JavaCipher : IDisposable
     public const int DECRYPT_MODE = 2;
 
     private readonly string transformation;
+    private readonly List<byte> pending = new();
     private SymmetricAlgorithm? algorithm;
     private ICryptoTransform? transform;
     private RSA? rsa;
     private int asymmetricMode;
+    private bool holdBackFinalBlock;
 
     private JavaCipher(string transformation)
     {
@@ -636,17 +638,53 @@ sealed class JavaCipher : IDisposable
         this.transformation = transformation;
     }
 
-    public static JavaCipher GetInstance(string transformation) => new(transformation);
+    public static JavaCipher GetInstance(string transformation) =>
+        new(ValidateTransformation(transformation));
 
     public static JavaCipher GetInstance(
         string transformation,
-        JavaSecurityProvider _) =>
-        new(transformation);
+        object _) =>
+        new(ValidateTransformation(transformation));
 
     public static int GetMaxAllowedKeyLength(string algorithm)
     {
         ArgumentException.ThrowIfNullOrEmpty(algorithm);
         return int.MaxValue;
+    }
+
+    private static string ValidateTransformation(string transformation)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(transformation);
+        if (string.Equals(
+                transformation,
+                "1.2.840.113549.3.2",
+                StringComparison.Ordinal) ||
+            string.Equals(
+                transformation,
+                "1.2.840.113549.1.1.1",
+                StringComparison.Ordinal) ||
+            string.Equals(transformation, "RC2", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(transformation, "RSA", StringComparison.OrdinalIgnoreCase))
+            return transformation;
+
+        var parts = transformation.Split('/');
+        if (parts.Length == 1)
+            throw new JavaNoSuchAlgorithmException(
+                $"Unsupported cipher algorithm `{transformation}`.");
+        if (parts.Length != 3 ||
+            (!string.Equals(parts[0], "AES", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(parts[0], "RSA", StringComparison.OrdinalIgnoreCase)))
+            throw new JavaNoSuchAlgorithmException(
+                $"Unsupported cipher transformation `{transformation}`.");
+        if (!string.Equals(parts[1], "CBC", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(parts[1], "ECB", StringComparison.OrdinalIgnoreCase))
+            throw new JavaNoSuchAlgorithmException(
+                $"Unsupported cipher mode `{parts[1]}`.");
+        if (!string.Equals(parts[2], "NoPadding", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(parts[2], "PKCS5Padding", StringComparison.OrdinalIgnoreCase))
+            throw new JavaNoSuchPaddingException(
+                $"Unsupported cipher padding `{parts[2]}`.");
+        return transformation;
     }
 
     public void Init(int mode, object key) => Init(mode, key, (JavaIvParameterSpec?)null);
@@ -712,6 +750,8 @@ sealed class JavaCipher : IDisposable
         }
 
         algorithm = symmetric;
+        holdBackFinalBlock =
+            mode == DECRYPT_MODE && symmetric.Padding != PaddingMode.None;
         transform = mode switch
         {
             ENCRYPT_MODE => symmetric.CreateEncryptor(),
@@ -724,9 +764,21 @@ sealed class JavaCipher : IDisposable
     {
         ArgumentNullException.ThrowIfNull(input);
         var current = RequireTransform();
+        if (offset < 0 || length < 0 || offset > input.Length - length)
+            throw new ArgumentOutOfRangeException(nameof(offset));
         var source = JavaCompat.ToUnsignedBytes(input);
-        var destination = new byte[length + current.OutputBlockSize];
-        var written = current.TransformBlock(source, offset, length, destination, 0);
+        pending.AddRange(source.AsSpan(offset, length).ToArray());
+        var completeBlocks = pending.Count / current.InputBlockSize;
+        if (holdBackFinalBlock && completeBlocks > 0)
+            completeBlocks--;
+        var processLength = completeBlocks * current.InputBlockSize;
+        if (processLength == 0)
+            return null;
+        source = pending.GetRange(0, processLength).ToArray();
+        pending.RemoveRange(0, processLength);
+        var destination = new byte[processLength + current.OutputBlockSize];
+        var written = current.TransformBlock(
+            source, 0, source.Length, destination, 0);
         return written == 0
             ? null
             : JavaCompat.ToSignedBytes(destination.AsSpan(0, written).ToArray());
@@ -752,8 +804,11 @@ sealed class JavaCipher : IDisposable
             asymmetricMode = 0;
             return JavaCompat.ToSignedBytes(asymmetricResult);
         }
+        pending.AddRange(JavaCompat.ToUnsignedBytes(input));
+        var finalInput = pending.ToArray();
+        pending.Clear();
         var finalResult = RequireTransform().TransformFinalBlock(
-            JavaCompat.ToUnsignedBytes(input), 0, input.Length);
+            finalInput, 0, finalInput.Length);
         DisposeTransform();
         return JavaCompat.ToSignedBytes(finalResult);
     }
@@ -776,6 +831,8 @@ sealed class JavaCipher : IDisposable
         transform = null;
         algorithm?.Dispose();
         algorithm = null;
+        pending.Clear();
+        holdBackFinalBlock = false;
         rsa = null;
         asymmetricMode = 0;
     }

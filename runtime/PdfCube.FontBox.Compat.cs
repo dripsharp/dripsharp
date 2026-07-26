@@ -11,6 +11,9 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+#if DRIPSHARP_PDFBOX_CRYPTO
+using System.Security.Cryptography.Pkcs;
+#endif
 using System.Security.Cryptography.X509Certificates;
 using System.Xml;
 using SkiaSharp;
@@ -65,7 +68,7 @@ internal static class PdfCubeImageIO
     }
 }
 
-public sealed class JavaX509CertificateHolder
+internal sealed class JavaX509CertificateHolder
 {
     private readonly X509Certificate2 certificate;
 
@@ -81,8 +84,100 @@ public sealed class JavaX509CertificateHolder
     internal X509Certificate2 Certificate => certificate;
 }
 
-public static class PdfCubeCrypto
+internal static class PdfCubeCrypto
 {
+    public static string GetDefaultKeyStoreType() => "PKCS12";
+
+    public static X509Certificate2Collection CreateKeyStore(string type)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(type);
+        if (!string.Equals(type, "PKCS12", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(type, "PKCS#12", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(type, "PFX", StringComparison.OrdinalIgnoreCase))
+            throw new CryptographicException($"Unsupported KeyStore type: {type}");
+        return new X509Certificate2Collection();
+    }
+
+    public static void LoadKeyStore(
+        X509Certificate2Collection certificates,
+        Stream input,
+        char[]? password)
+    {
+        ArgumentNullException.ThrowIfNull(certificates);
+        ArgumentNullException.ThrowIfNull(input);
+        using var contents = new MemoryStream();
+        input.CopyTo(contents);
+        certificates.Clear();
+        var encoded = contents.ToArray();
+        var textPassword = password is null ? null : new string(password);
+        try
+        {
+            certificates.AddRange(
+                X509CertificateLoader.LoadPkcs12Collection(
+                    encoded,
+                    textPassword,
+                    X509KeyStorageFlags.EphemeralKeySet |
+                    X509KeyStorageFlags.Exportable,
+                    Pkcs12LoaderLimits.Defaults));
+        }
+        catch (PlatformNotSupportedException)
+        {
+            certificates.AddRange(
+                X509CertificateLoader.LoadPkcs12Collection(
+                    encoded,
+                    textPassword,
+                    X509KeyStorageFlags.Exportable,
+                    Pkcs12LoaderLimits.Defaults));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(encoded);
+        }
+    }
+
+    public static int KeyStoreSize(X509Certificate2Collection certificates) =>
+        certificates?.Count ??
+        throw new ArgumentNullException(nameof(certificates));
+
+    public static JavaIterator<string> KeyStoreAliases(
+        X509Certificate2Collection certificates)
+    {
+        ArgumentNullException.ThrowIfNull(certificates);
+        return JavaCompat.Iterator(
+            Enumerable.Range(0, certificates.Count)
+                .Select(index => KeyStoreAlias(index, certificates[index])));
+    }
+
+    public static bool KeyStoreContainsAlias(
+        X509Certificate2Collection certificates,
+        string? alias) =>
+        FindKeyStoreCertificate(certificates, alias) is not null;
+
+    public static X509Certificate2? KeyStoreGetCertificate(
+        X509Certificate2Collection certificates,
+        string? alias) =>
+        FindKeyStoreCertificate(certificates, alias);
+
+    public static object? KeyStoreGetKey(
+        X509Certificate2Collection certificates,
+        string? alias,
+        char[]? _)
+    {
+        var certificate = FindKeyStoreCertificate(certificates, alias);
+        if (certificate is null)
+            return null;
+        try
+        {
+            return (object?)certificate.GetRSAPrivateKey() ??
+                (object?)certificate.GetECDsaPrivateKey() ??
+                (object?)certificate.GetDSAPrivateKey();
+        }
+        catch (CryptographicException error)
+        {
+            throw new JavaUnrecoverableKeyException(error.Message, error);
+        }
+    }
+
     public static sbyte[] GetEncoded(X509Certificate2 certificate)
     {
         ArgumentNullException.ThrowIfNull(certificate);
@@ -117,14 +212,37 @@ public static class PdfCubeCrypto
             isUnsigned: true,
             isBigEndian: true);
     }
+
+    private static X509Certificate2? FindKeyStoreCertificate(
+        X509Certificate2Collection certificates,
+        string? alias)
+    {
+        ArgumentNullException.ThrowIfNull(certificates);
+        for (var index = 0; index < certificates.Count; index++)
+        {
+            if (string.Equals(
+                    KeyStoreAlias(index, certificates[index]),
+                    alias,
+                    StringComparison.Ordinal))
+                return certificates[index];
+        }
+        return null;
+    }
+
+    private static string KeyStoreAlias(
+        int index,
+        X509Certificate2 certificate) =>
+        string.IsNullOrWhiteSpace(certificate.FriendlyName)
+            ? index.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : certificate.FriendlyName;
 }
 
-public static class JavaAsn1Encoding
+internal static class JavaAsn1Encoding
 {
     public const string DER = "DER";
 }
 
-public class JavaAsn1Primitive
+internal class JavaAsn1Primitive
 {
     private readonly byte[]? encoded;
 
@@ -154,7 +272,7 @@ public class JavaAsn1Primitive
     }
 }
 
-public sealed class JavaAsn1InputStream : IDisposable
+internal sealed class JavaAsn1InputStream : IDisposable
 {
     private readonly byte[] encoded;
 
@@ -171,7 +289,7 @@ public sealed class JavaAsn1InputStream : IDisposable
     }
 }
 
-public sealed class JavaAsn1ObjectIdentifier : JavaAsn1Primitive
+internal sealed class JavaAsn1ObjectIdentifier : JavaAsn1Primitive
 {
     public JavaAsn1ObjectIdentifier(string id)
     {
@@ -183,7 +301,7 @@ public sealed class JavaAsn1ObjectIdentifier : JavaAsn1Primitive
     public string GetId() => Id;
 }
 
-public sealed class JavaDerOctetString : JavaAsn1Primitive
+internal sealed class JavaDerOctetString : JavaAsn1Primitive
 {
     public JavaDerOctetString(sbyte[] contents)
     {
@@ -201,7 +319,7 @@ public sealed class JavaDerOctetString : JavaAsn1Primitive
     }
 }
 
-public class JavaAsn1Set : JavaAsn1Primitive
+internal class JavaAsn1Set : JavaAsn1Primitive
 {
     internal JavaAsn1Set(IReadOnlyList<JavaAsn1Primitive> values)
     {
@@ -211,7 +329,7 @@ public class JavaAsn1Set : JavaAsn1Primitive
     internal IReadOnlyList<JavaAsn1Primitive> Values { get; }
 }
 
-public sealed class JavaDerSet : JavaAsn1Set
+internal sealed class JavaDerSet : JavaAsn1Set
 {
     public JavaDerSet(JavaAsn1Primitive value)
         : base(new[] { value })
@@ -219,7 +337,7 @@ public sealed class JavaDerSet : JavaAsn1Set
     }
 }
 
-public sealed class JavaAlgorithmIdentifier : JavaAsn1Primitive
+internal sealed class JavaAlgorithmIdentifier : JavaAsn1Primitive
 {
     public JavaAlgorithmIdentifier(
         JavaAsn1ObjectIdentifier algorithm,
@@ -258,7 +376,7 @@ public sealed class JavaAlgorithmIdentifier : JavaAsn1Primitive
     }
 }
 
-public sealed class JavaSubjectPublicKeyInfo
+internal sealed class JavaSubjectPublicKeyInfo
 {
     internal JavaSubjectPublicKeyInfo(JavaAlgorithmIdentifier algorithm)
     {
@@ -269,7 +387,7 @@ public sealed class JavaSubjectPublicKeyInfo
     public JavaAlgorithmIdentifier GetAlgorithm() => Algorithm;
 }
 
-public sealed class JavaTbsCertificate
+internal sealed class JavaTbsCertificate
 {
     private JavaTbsCertificate(
         string issuer,
@@ -328,7 +446,7 @@ public sealed class JavaTbsCertificate
     }
 }
 
-public static class JavaPkcsObjectIdentifiers
+internal static class JavaPkcsObjectIdentifiers
 {
     public static readonly JavaAsn1ObjectIdentifier RC2_CBC =
         new("1.2.840.113549.3.2");
@@ -338,7 +456,7 @@ public static class JavaPkcsObjectIdentifiers
         new("1.2.840.113549.1.7.3");
 }
 
-public sealed class JavaIssuerAndSerialNumber : JavaAsn1Primitive
+internal sealed class JavaIssuerAndSerialNumber : JavaAsn1Primitive
 {
     public JavaIssuerAndSerialNumber(string issuer, BigInteger serialNumber)
     {
@@ -359,7 +477,7 @@ public sealed class JavaIssuerAndSerialNumber : JavaAsn1Primitive
     }
 }
 
-public sealed class JavaRecipientIdentifier : JavaAsn1Primitive
+internal sealed class JavaRecipientIdentifier : JavaAsn1Primitive
 {
     public JavaRecipientIdentifier(JavaIssuerAndSerialNumber issuerAndSerial)
     {
@@ -370,7 +488,7 @@ public sealed class JavaRecipientIdentifier : JavaAsn1Primitive
     internal JavaIssuerAndSerialNumber IssuerAndSerial { get; }
 }
 
-public sealed class JavaKeyTransRecipientInfo : JavaAsn1Primitive
+internal sealed class JavaKeyTransRecipientInfo : JavaAsn1Primitive
 {
     public JavaKeyTransRecipientInfo(
         JavaRecipientIdentifier recipientIdentifier,
@@ -400,7 +518,7 @@ public sealed class JavaKeyTransRecipientInfo : JavaAsn1Primitive
     }
 }
 
-public sealed class JavaRecipientInfo : JavaAsn1Primitive
+internal sealed class JavaRecipientInfo : JavaAsn1Primitive
 {
     public JavaRecipientInfo(JavaKeyTransRecipientInfo info)
     {
@@ -410,7 +528,7 @@ public sealed class JavaRecipientInfo : JavaAsn1Primitive
     internal JavaKeyTransRecipientInfo Info { get; }
 }
 
-public sealed class JavaEncryptedContentInfo : JavaAsn1Primitive
+internal sealed class JavaEncryptedContentInfo : JavaAsn1Primitive
 {
     public JavaEncryptedContentInfo(
         JavaAsn1ObjectIdentifier contentType,
@@ -441,7 +559,7 @@ public sealed class JavaEncryptedContentInfo : JavaAsn1Primitive
     }
 }
 
-public sealed class JavaEnvelopedData : JavaAsn1Primitive
+internal sealed class JavaEnvelopedData : JavaAsn1Primitive
 {
     public JavaEnvelopedData(
         object? _,
@@ -476,7 +594,7 @@ public sealed class JavaEnvelopedData : JavaAsn1Primitive
     }
 }
 
-public sealed class JavaCmsContentInfo : JavaAsn1Primitive
+internal sealed class JavaCmsContentInfo : JavaAsn1Primitive
 {
     public JavaCmsContentInfo(
         JavaAsn1ObjectIdentifier contentType,
@@ -509,7 +627,7 @@ public sealed class JavaCmsContentInfo : JavaAsn1Primitive
     }
 }
 
-public class JavaRecipientId
+internal class JavaRecipientId
 {
     internal JavaRecipientId(string issuer, BigInteger serialNumber)
     {
@@ -529,7 +647,7 @@ public class JavaRecipientId
             StringComparison.OrdinalIgnoreCase);
 }
 
-public sealed class JavaKeyTransRecipientId : JavaRecipientId
+internal sealed class JavaKeyTransRecipientId : JavaRecipientId
 {
     internal JavaKeyTransRecipientId(string issuer, BigInteger serialNumber)
         : base(issuer, serialNumber)
@@ -540,7 +658,7 @@ public sealed class JavaKeyTransRecipientId : JavaRecipientId
     public string GetIssuer() => Issuer;
 }
 
-public sealed class JavaJceKeyTransEnvelopedRecipient
+internal sealed class JavaJceKeyTransEnvelopedRecipient
 {
     public JavaJceKeyTransEnvelopedRecipient(AsymmetricAlgorithm privateKey)
     {
@@ -551,23 +669,26 @@ public sealed class JavaJceKeyTransEnvelopedRecipient
     internal AsymmetricAlgorithm PrivateKey { get; }
 }
 
-public sealed class JavaRecipientInformation
+internal sealed class JavaRecipientInformation
 {
     private readonly JavaKeyTransRecipientId recipientId;
     private readonly byte[] encryptedKey;
     private readonly byte[] encryptedContent;
     private readonly byte[] iv;
+    private readonly string contentAlgorithm;
 
     internal JavaRecipientInformation(
         JavaKeyTransRecipientId recipientId,
         byte[] encryptedKey,
         byte[] encryptedContent,
-        byte[] iv)
+        byte[] iv,
+        string contentAlgorithm)
     {
         this.recipientId = recipientId;
         this.encryptedKey = encryptedKey;
         this.encryptedContent = encryptedContent;
         this.iv = iv;
+        this.contentAlgorithm = contentAlgorithm;
     }
 
     public JavaRecipientId GetRid() => recipientId;
@@ -578,19 +699,27 @@ public sealed class JavaRecipientInformation
             throw new CryptographicException(
                 "CMS key-transport decryption requires an RSA private key.");
         var contentKey = rsa.Decrypt(encryptedKey, RSAEncryptionPadding.Pkcs1);
-        using var rc2 = RC2.Create();
-        rc2.Key = contentKey;
-        rc2.IV = iv;
-        rc2.Mode = CipherMode.CBC;
-        rc2.Padding = PaddingMode.PKCS7;
-        using var decryptor = rc2.CreateDecryptor();
+        using SymmetricAlgorithm algorithm = contentAlgorithm switch
+        {
+            "1.2.840.113549.3.2" => RC2.Create(),
+            "2.16.840.1.101.3.4.1.2" or
+            "2.16.840.1.101.3.4.1.22" or
+            "2.16.840.1.101.3.4.1.42" => Aes.Create(),
+            _ => throw new CryptographicException(
+                $"CMS content cipher `{contentAlgorithm}` is unsupported.")
+        };
+        algorithm.Key = contentKey;
+        algorithm.IV = iv;
+        algorithm.Mode = CipherMode.CBC;
+        algorithm.Padding = PaddingMode.PKCS7;
+        using var decryptor = algorithm.CreateDecryptor();
         return JavaCompat.ToSignedBytes(
             decryptor.TransformFinalBlock(
                 encryptedContent, 0, encryptedContent.Length));
     }
 }
 
-public sealed class JavaRecipientInformationStore
+internal sealed class JavaRecipientInformationStore
 {
     private readonly IReadOnlyCollection<JavaRecipientInformation> recipients;
 
@@ -604,15 +733,23 @@ public sealed class JavaRecipientInformationStore
         recipients.ToList();
 }
 
-public sealed class JavaCmsEnvelopedData
+internal sealed class JavaCmsEnvelopedData
 {
     private readonly JavaRecipientInformationStore recipientInfos;
 
     public JavaCmsEnvelopedData(sbyte[] encoded)
     {
         ArgumentNullException.ThrowIfNull(encoded);
+        var unsigned = JavaCompat.ToUnsignedBytes(encoded);
+#if DRIPSHARP_PDFBOX_CRYPTO
+        var cms = new EnvelopedCms();
+        cms.Decode(unsigned);
+        if (cms.RecipientInfos.Count == 0)
+            throw new CryptographicException(
+                "CMS EnvelopedData contains no recipients.");
+#endif
         recipientInfos = new JavaRecipientInformationStore(
-            Parse(JavaCompat.ToUnsignedBytes(encoded)));
+            Parse(unsigned));
     }
 
     public JavaRecipientInformationStore GetRecipientInfos() => recipientInfos;
@@ -657,19 +794,44 @@ public sealed class JavaCmsEnvelopedData
                 $"CMS encrypted content type `{encryptedContentType}` is unsupported.");
         var contentAlgorithm = encryptedInfo.ReadSequence();
         var algorithm = contentAlgorithm.ReadObjectIdentifier();
-        if (!string.Equals(
+        var supported =
+            string.Equals(
+                algorithm,
+                JavaPkcsObjectIdentifiers.RC2_CBC.Id,
+                StringComparison.Ordinal) ||
+            string.Equals(
+                algorithm,
+                "2.16.840.1.101.3.4.1.2",
+                StringComparison.Ordinal) ||
+            string.Equals(
+                algorithm,
+                "2.16.840.1.101.3.4.1.22",
+                StringComparison.Ordinal) ||
+            string.Equals(
+                algorithm,
+                "2.16.840.1.101.3.4.1.42",
+                StringComparison.Ordinal);
+        if (!supported)
+            throw new CryptographicException(
+                $"CMS content cipher `{algorithm}` is unsupported.");
+        byte[] iv;
+        if (string.Equals(
                 algorithm,
                 JavaPkcsObjectIdentifiers.RC2_CBC.Id,
                 StringComparison.Ordinal))
-            throw new CryptographicException(
-                $"CMS content cipher `{algorithm}` is unsupported.");
-        var parameters = contentAlgorithm.ReadSequence();
-        if (parameters.HasData &&
-            parameters.PeekTag().HasSameClassAndValue(Asn1Tag.Integer))
         {
-            parameters.ReadInteger();
+            var parameters = contentAlgorithm.ReadSequence();
+            if (parameters.HasData &&
+                parameters.PeekTag().HasSameClassAndValue(Asn1Tag.Integer))
+            {
+                parameters.ReadInteger();
+            }
+            iv = parameters.ReadOctetString();
         }
-        var iv = parameters.ReadOctetString();
+        else
+        {
+            iv = contentAlgorithm.ReadOctetString();
+        }
         var encryptedContent = encryptedInfo.ReadOctetString(
             new Asn1Tag(TagClass.ContextSpecific, 0));
 
@@ -677,10 +839,11 @@ public sealed class JavaCmsEnvelopedData
             .Select(recipient => new JavaRecipientInformation(
                 new JavaKeyTransRecipientId(
                     recipient.Issuer,
-                    recipient.SerialNumber),
+                recipient.SerialNumber),
                 recipient.EncryptedKey,
                 encryptedContent,
-                iv))
+                iv,
+                algorithm))
             .ToArray();
     }
 
