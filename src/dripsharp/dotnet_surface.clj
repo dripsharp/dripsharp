@@ -4,7 +4,7 @@
             [clojure.string :as str]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [java.nio.charset MalformedInputException StandardCharsets]
            [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]))
@@ -19,6 +19,7 @@
 
 (def ^:private reflected-magic "DRIPSHARP_DOTNET_ACCESSIBLE_SURFACE_V1")
 (def ^:private contract-magic "DRIPSHARP_DOTNET_ACCESSIBLE_CONTRACT_V1")
+(def ^:private default-compatibility-namespace "DripSharp.Runtime")
 
 (def ^:private translation-rules
   #{"java-declaration"
@@ -255,35 +256,74 @@
   (let [simple (last (str/split owner #"[$.]"))]
     (str/replace simple #"`\d+$" "")))
 
-(defn- compatibility-provenance [workspace owner sources]
-  (let [name (compatibility-type-name owner)
-        pattern
-        (re-pattern
-         (str "^(?:(?:public|internal|protected|private|sealed|abstract|static|"
-              "readonly|partial)\\s+)*(?:class|interface|struct|enum|record)\\s+"
-              (java.util.regex.Pattern/quote name)
-              "(?:<|[\\s:{;]|$)"))
-        matches
-        (mapcat
-         (fn [source]
-           (let [file (paths/resolve-path workspace source)]
-             (when-not (paths/regular-file? file)
-               (fail! "Registered compatibility source is missing"
-                      {:kind :missing-java-compatibility-provenance-source
-                       :source source :owner owner}))
-             (keep-indexed
-              (fn [index line]
-                (when (re-find pattern (str/trim line))
-                  {:source source :line (inc index)}))
-              (str/split-lines (Files/readString file StandardCharsets/UTF_8)))))
-         sources)]
-    (when-not (= 1 (count matches))
-      (fail! "Externally visible compatibility type lacks one exact source declaration"
-             {:kind :unowned-java-compatibility-surface
-              :owner owner :type name :sources (vec sources)
-              :matches (vec matches)}))
-    (let [{:keys [source line]} (first matches)]
-      (str (str/replace source "\\" "/") ":" line))))
+(defn- read-compatibility-source [file]
+  (try
+    (Files/readString file StandardCharsets/UTF_8)
+    (catch MalformedInputException _
+      (Files/readString file StandardCharsets/ISO_8859_1))))
+
+(def ^:private csharp-namespace-pattern
+  #"(?m)^\s*namespace\s+([A-Za-z_][A-Za-z0-9_.]*)\s*[;{]")
+
+(defn- mask-csharp-comments [text]
+  (-> text
+      (str/replace
+       #"(?s)/\*.*?\*/"
+       #(str/replace % #"[^\r\n]" " "))
+      (str/replace #"(?m)//.*$" "")))
+
+(defn- compatibility-provenance
+  ([workspace owner sources]
+   (compatibility-provenance workspace owner sources true [owner]))
+  ([workspace owner sources required? source-owners]
+   (let [name (compatibility-type-name owner)
+         pattern
+         (re-pattern
+          (str "^(?:(?:public|internal|protected|private|sealed|abstract|static|"
+               "readonly|partial)\\s+)*(?:class|interface|struct|enum|record)\\s+"
+               (java.util.regex.Pattern/quote name)
+               "(?:<|[\\s:{;]|$)"))
+         raw-matches
+         (mapcat
+          (fn [source]
+            (let [file (paths/resolve-path workspace source)]
+              (when-not (paths/regular-file? file)
+                (fail! "Registered compatibility source is missing"
+                       {:kind :missing-java-compatibility-provenance-source
+                        :source source :owner owner}))
+              (let [text (mask-csharp-comments
+                          (read-compatibility-source file))
+                    namespaces
+                    (set (map second
+                              (re-seq csharp-namespace-pattern text)))]
+                (when (or (empty? namespaces)
+                          (some
+                           (fn [namespace]
+                             (some #(str/starts-with?
+                                     % (str namespace "."))
+                                   source-owners))
+                           namespaces))
+                  (keep-indexed
+                   (fn [index line]
+                     (when (re-find pattern (str/trim line))
+                       {:source source
+                        :line (inc index)
+                        :partial? (boolean (re-find #"\bpartial\b" line))}))
+                   (str/split-lines text))))))
+          sources)
+         matches
+         (if (and (< 1 (count raw-matches))
+                  (every? :partial? raw-matches))
+           [(first (sort-by (juxt :source :line) raw-matches))]
+           raw-matches)]
+     (when (or (< 1 (count matches))
+               (and required? (empty? matches)))
+       (fail! "Externally visible compatibility type lacks one exact source declaration"
+              {:kind :unowned-java-compatibility-surface
+               :owner owner :type name :sources (vec sources)
+               :matches (vec raw-matches)}))
+     (when-let [{:keys [source line]} (first matches)]
+       (str (str/replace source "\\" "/") ":" line)))))
 
 (defn- compatibility-rule [row]
   (cond
@@ -362,8 +402,24 @@
   [workspace reflected-rows public-metadata]
   (let [metadata-rows (:rows public-metadata)
         compatibility-namespace
-        (or (:compatibility-namespace public-metadata) "DripSharp.Runtime")
+        (or (:compatibility-namespace public-metadata)
+            default-compatibility-namespace)
         compatibility-sources (:compatibility-sources public-metadata)
+        compatibility-source-owners
+        (fn [owner]
+          (cond-> [owner]
+            (and (not= compatibility-namespace
+                       default-compatibility-namespace)
+                 (str/starts-with?
+                  owner (str compatibility-namespace ".")))
+            (conj
+             (str default-compatibility-namespace
+                  (subs owner (count compatibility-namespace))))))
+        registered-compatibility-provenance
+        (memoize
+         #(compatibility-provenance
+           workspace % compatibility-sources false
+           (compatibility-source-owners %)))
         metadata-by-shape (group-by generated-shape metadata-rows)
         reflected-by-shape (group-by reflected-shape reflected-rows)
         type-metadata
@@ -408,16 +464,21 @@
                (or
                 (closeable-disposable-row workspace row type-metadata)
                 (functional-adapter-row workspace row metadata-rows)
-                (when (str/starts-with?
-                       (:owner row)
-                       (str compatibility-namespace "."))
-                  (assoc row
-                         :source-provenance
-                         (compatibility-provenance
-                          workspace (:owner row) compatibility-sources)
-                         :source-declaration
-                         (str "clr|" (str/join "|" (surface-identity row)))
-                         :translation-rule (compatibility-rule row)))
+                (let [owner (:owner row)
+                      provenance
+                      (registered-compatibility-provenance owner)]
+                  (when (or provenance
+                            (str/starts-with?
+                             owner (str compatibility-namespace ".")))
+                    (assoc row
+                           :source-provenance
+                           (or provenance
+                               (compatibility-provenance
+                                workspace owner compatibility-sources true
+                                (compatibility-source-owners owner)))
+                           :source-declaration
+                           (str "clr|" (str/join "|" (surface-identity row)))
+                           :translation-rule (compatibility-rule row))))
                 (fail! "Compiled surface row has no selected Java or compatibility owner"
                        {:kind :unowned-compiled-surface-row :row row})))
              rows)))))

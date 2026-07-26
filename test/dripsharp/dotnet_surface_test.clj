@@ -164,3 +164,55 @@
                         workspace actual metadata))]
           (is (= :compiled-java-declaration-shape-mismatch
                  (:kind (ex-data error)))))))))
+
+(deftest registered-compatibility-source-can-retain-its-vendored-namespace
+  (let [workspace (paths/workspace-root)
+        sources
+        ["vendor/pdfcube/jpx/Color/ColorSpace.cs"
+         "runtime/PdfCube.FontBox.Compat.cs"
+         "vendor/pdfcube/jpx/Configuration/EncoderComponents.cs"
+         "vendor/pdfcube/jpx/J2kImage.FastPath.cs"
+         "vendor/pdfcube/jpx/J2kImage.cs"
+         "vendor/pdfcube/jpx/j2k/wavelet/WaveletFilter.cs"]
+        rows
+        [(row {:owner "CoreJ2K.j2k.wavelet.WaveletFilter"
+               :kind "type"
+               :name "WaveletFilter"
+               :parameter-count "0"
+               :signature "interface WaveletFilter"
+               :nullability "type=oblivious"})
+         (row {:owner "CoreJ2K.j2k.wavelet.WaveletFilter"
+               :kind "method"
+               :name "GetFilterType"
+               :parameter-count "0"
+               :signature "System.Int32 GetFilterType()"
+               :nullability "return=non-null"})
+         (row {:owner "CoreJ2K.J2kImage"
+               :kind "type"
+               :name "J2kImage"
+               :parameter-count "0"
+               :signature "class J2kImage"
+               :nullability "type=oblivious"})
+         (row {:owner "CoreJ2K.Color.ColorSpace$MethodEnum"
+               :kind "type"
+               :name "MethodEnum"
+               :parameter-count "0"
+               :signature "enum MethodEnum"
+               :nullability "type=oblivious"})
+         (row {:owner "PdfCube.FB.Runtime.JavaImageInputStream"
+               :kind "type"
+               :name "JavaImageInputStream"
+               :parameter-count "0"
+               :signature "class JavaImageInputStream"
+               :nullability "type=oblivious"})]
+        result
+        (surface/verify-generated-rows!
+         workspace rows
+         {:required-rows 0
+          :rows []
+          :compatibility-namespace "PdfCube.FB.Runtime"
+          :compatibility-sources sources})]
+    (is (= 5 (:rows result)))
+    (is (= {"java-compatibility-type" 4
+            "java-compatibility-member" 1}
+           (:translation-rules result)))))

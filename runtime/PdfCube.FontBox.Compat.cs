@@ -3587,6 +3587,7 @@ public class PdfCubeGraphics2D : IDisposable
         copy.renderingHints = new PdfCubeRenderingHints(renderingHints);
         copy.transform = transform;
         copy.clip = clip;
+        copy.canvas?.SetMatrix(copy.transform);
         return copy;
     }
 
@@ -3793,7 +3794,11 @@ public class PdfCubeGraphics2D : IDisposable
 
     public virtual void ClearRect(int x, int y, int width, int height)
     {
-        using var clearPaint = new SKPaint { BlendMode = SKBlendMode.Clear };
+        using var clearPaint = new SKPaint
+        {
+            Color = background,
+            BlendMode = SKBlendMode.Src
+        };
         RequireCanvas().DrawRect(new SKRect(x, y, x + width, y + height), clearPaint);
     }
 
@@ -3817,9 +3822,18 @@ public class PdfCubeGraphics2D : IDisposable
         clip ?? new SKRectI(0, 0, bitmap?.Width ?? 0, bitmap?.Height ?? 0);
 
     public virtual SKRectI GetClipBounds() =>
-        clip is SKRectI rectangle
-            ? rectangle
-            : new SKRectI(0, 0, bitmap?.Width ?? 0, bitmap?.Height ?? 0);
+        clip switch
+        {
+            SKRectI rectangle => rectangle,
+            SKRect rectangle => new SKRectI(
+                (int)Math.Floor(rectangle.Left),
+                (int)Math.Floor(rectangle.Top),
+                (int)Math.Ceiling(rectangle.Right),
+                (int)Math.Ceiling(rectangle.Bottom)),
+            SKPath path => PdfCubeFontCompat.PathBounds(path),
+            JavaArea area => PdfCubeFontCompat.PathBounds(area.Path),
+            _ => new SKRectI(0, 0, bitmap?.Width ?? 0, bitmap?.Height ?? 0)
+        };
 
     public virtual void Clip(object shape)
     {
@@ -3837,6 +3851,9 @@ public class PdfCubeGraphics2D : IDisposable
                 break;
             case SKPath path:
                 RequireCanvas().ClipPath(path);
+                break;
+            case JavaArea area:
+                RequireCanvas().ClipPath(area.Path);
                 break;
             default:
                 throw new NotSupportedException(
@@ -4031,25 +4048,47 @@ public class PdfCubeGraphics2D : IDisposable
 
     public virtual void Translate(int x, int y) => Translate((double)x, y);
 
-    public virtual void Translate(double x, double y) =>
+    public virtual void Translate(double x, double y)
+    {
         PdfCubeFontCompat.TranslateInPlace(ref transform, x, y);
+        canvas?.SetMatrix(transform);
+    }
 
-    public virtual void Rotate(double theta) =>
+    public virtual void Rotate(double theta)
+    {
         PdfCubeFontCompat.RotateInPlace(ref transform, theta);
+        canvas?.SetMatrix(transform);
+    }
 
-    public virtual void Rotate(double theta, double x, double y) =>
+    public virtual void Rotate(double theta, double x, double y)
+    {
         PdfCubeFontCompat.RotateInPlace(ref transform, theta, x, y);
+        canvas?.SetMatrix(transform);
+    }
 
-    public virtual void Scale(double x, double y) =>
+    public virtual void Scale(double x, double y)
+    {
         PdfCubeFontCompat.ScaleInPlace(ref transform, x, y);
+        canvas?.SetMatrix(transform);
+    }
 
-    public virtual void Shear(double x, double y) =>
+    public virtual void Shear(double x, double y)
+    {
         PdfCubeFontCompat.ShearInPlace(ref transform, x, y);
+        canvas?.SetMatrix(transform);
+    }
 
-    public virtual void Transform(SKMatrix transform) =>
+    public virtual void Transform(SKMatrix transform)
+    {
         PdfCubeFontCompat.ConcatenateInPlace(ref this.transform, transform);
+        canvas?.SetMatrix(this.transform);
+    }
 
-    public virtual void SetTransform(SKMatrix transform) => this.transform = transform;
+    public virtual void SetTransform(SKMatrix transform)
+    {
+        this.transform = transform;
+        canvas?.SetMatrix(this.transform);
+    }
     public virtual SKMatrix GetTransform() => transform;
     public virtual void SetPaintMode()
     {
@@ -4130,7 +4169,7 @@ public class PdfCubeGraphics2D : IDisposable
         var basicStroke = stroke as JavaBasicStroke ?? new JavaBasicStroke(1f);
         return new SKPaint
         {
-            Color = stroke is JavaBasicStroke ? color : new JavaColor(SKColors.Transparent),
+            Color = paint is JavaColor paintColor ? paintColor : color,
             IsStroke = stroked,
             StrokeWidth = basicStroke.Width,
             StrokeCap = basicStroke.EndCap switch
@@ -4153,6 +4192,7 @@ public class PdfCubeGraphics2D : IDisposable
     private SKCanvas RequireCanvas() =>
         canvas ?? throw new InvalidOperationException(
             "This graphics instance delegates all drawing.");
+
 }
 
 public class JavaPoint2D
