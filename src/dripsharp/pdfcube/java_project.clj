@@ -174,6 +174,8 @@
    ["global::DripSharp.Runtime.PdfCubeGraphics2D" :pdfcube.type/graphics]
    "java.awt.print.Printable"
    ["global::DripSharp.Runtime.JavaPrintable" :pdfcube.type/printable]
+   "java.awt.print.Pageable"
+   ["global::DripSharp.Runtime.JavaPageable" :pdfcube.type/pageable]
    "java.awt.print.Book"
    ["global::DripSharp.Runtime.JavaBook" :pdfcube.type/print-book]
    "java.awt.print.PageFormat"
@@ -1892,6 +1894,22 @@
    (direct-instance-adaptation "GetPageFormat")
    "executable:java.awt.print.Book#getPrintable(int)"
    (direct-instance-adaptation "GetPrintable")
+   "executable:java.awt.print.Book#setPage(int,java.awt.print.Printable,java.awt.print.PageFormat)"
+   (direct-instance-adaptation "SetPage")
+   "executable:java.awt.print.Book#append(java.awt.print.Printable,java.awt.print.PageFormat)"
+   (direct-instance-adaptation "Append")
+   "executable:java.awt.print.Book#append(java.awt.print.Printable,java.awt.print.PageFormat,int)"
+   (direct-instance-adaptation "Append")
+   "executable:java.awt.print.Pageable#getNumberOfPages()"
+   (direct-instance-adaptation "GetNumberOfPages")
+   "executable:java.awt.print.Pageable#getPageFormat(int)"
+   (direct-instance-adaptation "GetPageFormat")
+   "executable:java.awt.print.Pageable#getPrintable(int)"
+   (direct-instance-adaptation "GetPrintable")
+   "executable:java.awt.print.PageFormat#getWidth()"
+   (direct-instance-adaptation "GetWidth")
+   "executable:java.awt.print.PageFormat#getHeight()"
+   (direct-instance-adaptation "GetHeight")
    "executable:java.awt.print.PageFormat#getImageableWidth()"
    (direct-instance-adaptation "GetImageableWidth")
    "executable:java.awt.print.PageFormat#getImageableHeight()"
@@ -1900,6 +1918,12 @@
    (direct-instance-adaptation "GetImageableX")
    "executable:java.awt.print.PageFormat#getImageableY()"
    (direct-instance-adaptation "GetImageableY")
+   "executable:java.awt.print.PageFormat#getPaper()"
+   (direct-instance-adaptation "GetPaper")
+   "executable:java.awt.print.PageFormat#getOrientation()"
+   (direct-instance-adaptation "GetOrientation")
+   "executable:java.awt.print.PageFormat#getMatrix()"
+   (direct-instance-adaptation "GetMatrix")
    "executable:java.awt.print.PageFormat#setPaper(java.awt.print.Paper)"
    (direct-instance-adaptation "SetPaper")
    "executable:java.awt.print.PageFormat#setOrientation(int)"
@@ -1908,6 +1932,18 @@
    (direct-instance-adaptation "SetSize")
    "executable:java.awt.print.Paper#setImageableArea(double,double,double,double)"
    (direct-instance-adaptation "SetImageableArea")
+   "executable:java.awt.print.Paper#getWidth()"
+   (direct-instance-adaptation "GetWidth")
+   "executable:java.awt.print.Paper#getHeight()"
+   (direct-instance-adaptation "GetHeight")
+   "executable:java.awt.print.Paper#getImageableX()"
+   (direct-instance-adaptation "GetImageableX")
+   "executable:java.awt.print.Paper#getImageableY()"
+   (direct-instance-adaptation "GetImageableY")
+   "executable:java.awt.print.Paper#getImageableWidth()"
+   (direct-instance-adaptation "GetImageableWidth")
+   "executable:java.awt.print.Paper#getImageableHeight()"
+   (direct-instance-adaptation "GetImageableHeight")
 
    "executable:java.awt.AlphaComposite#getInstance(int,float)"
    (fn [_target arguments]
@@ -2361,6 +2397,10 @@
    "field:java.awt.print.Printable#NO_SUCH_PAGE"
    (fn [_target]
      (raw "global::DripSharp.Runtime.JavaPrintable.NO_SUCH_PAGE"))
+
+   "field:java.awt.print.Pageable#UNKNOWN_NUMBER_OF_PAGES"
+   (fn [_target]
+     (raw "global::DripSharp.Runtime.JavaPageable.UNKNOWN_NUMBER_OF_PAGES"))
 
    "field:java.awt.print.PageFormat#LANDSCAPE"
    (fn [_target]

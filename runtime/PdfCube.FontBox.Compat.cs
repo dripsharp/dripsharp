@@ -3439,7 +3439,16 @@ public interface JavaPrintable
     int Print(PdfCubeGraphics2D graphics, JavaPageFormat pageFormat, int pageIndex);
 }
 
-public sealed class JavaPaper
+public interface JavaPageable
+{
+    public const int UNKNOWN_NUMBER_OF_PAGES = -1;
+
+    int GetNumberOfPages();
+    JavaPageFormat GetPageFormat(int pageIndex);
+    JavaPrintable GetPrintable(int pageIndex);
+}
+
+public class JavaPaper : ICloneable
 {
     private double width = 612;
     private double height = 792;
@@ -3455,26 +3464,28 @@ public sealed class JavaPaper
     public double ImageableWidth => imageableWidth;
     public double ImageableHeight => imageableHeight;
 
+    public double GetWidth() => width;
+    public double GetHeight() => height;
+    public double GetImageableX() => imageableX;
+    public double GetImageableY() => imageableY;
+    public double GetImageableWidth() => imageableWidth;
+    public double GetImageableHeight() => imageableHeight;
+
     public void SetSize(double width, double height)
     {
-        if (!double.IsFinite(width) || !double.IsFinite(height) ||
-            width <= 0 || height <= 0)
-            throw new ArgumentException("Paper dimensions must be finite and positive.");
         this.width = width;
         this.height = height;
     }
 
     public void SetImageableArea(double x, double y, double width, double height)
     {
-        if (!double.IsFinite(x) || !double.IsFinite(y) ||
-            !double.IsFinite(width) || !double.IsFinite(height) ||
-            width < 0 || height < 0)
-            throw new ArgumentException("The imageable paper area is invalid.");
         imageableX = x;
         imageableY = y;
         imageableWidth = width;
         imageableHeight = height;
     }
+
+    public object Clone() => Copy();
 
     internal JavaPaper Copy()
     {
@@ -3486,7 +3497,7 @@ public sealed class JavaPaper
     }
 }
 
-public sealed class JavaPageFormat
+public class JavaPageFormat : ICloneable
 {
     public const int LANDSCAPE = 0;
     public const int PORTRAIT = 1;
@@ -3497,7 +3508,8 @@ public sealed class JavaPageFormat
 
     public void SetPaper(JavaPaper paper)
     {
-        ArgumentNullException.ThrowIfNull(paper);
+        if (paper is null)
+            throw new NullReferenceException();
         this.paper = paper.Copy();
     }
 
@@ -3507,6 +3519,9 @@ public sealed class JavaPageFormat
             throw new ArgumentException("Unknown page orientation.", nameof(orientation));
         this.orientation = orientation;
     }
+
+    public JavaPaper GetPaper() => paper.Copy();
+    public int GetOrientation() => orientation;
 
     public double GetWidth() =>
         orientation == PORTRAIT ? paper.Width : paper.Height;
@@ -3537,11 +3552,35 @@ public sealed class JavaPageFormat
                 paper.Width - paper.ImageableX - paper.ImageableWidth,
             _ => paper.ImageableY
         };
+
+    public double[] GetMatrix() =>
+        orientation switch
+        {
+            LANDSCAPE =>
+                [0d, -1d, 1d, 0d, 0d, paper.Height],
+            PORTRAIT =>
+                [1d, 0d, 0d, 1d, 0d, 0d],
+            REVERSE_LANDSCAPE =>
+                [0d, 1d, -1d, 0d, paper.Width, 0d],
+            _ => throw new ArgumentException()
+        };
+
+    public object Clone()
+    {
+        var copy = new JavaPageFormat();
+        copy.paper = paper.Copy();
+        copy.orientation = orientation;
+        return copy;
+    }
 }
 
-public class JavaBook
+public class JavaBook : JavaPageable
 {
-    private readonly List<(JavaPrintable Printable, JavaPageFormat Format)> pages = new();
+    private sealed record BookPage(
+        JavaPrintable Printable,
+        JavaPageFormat Format);
+
+    private readonly List<BookPage> pages = new();
 
     public virtual int GetNumberOfPages() => pages.Count;
 
@@ -3551,12 +3590,48 @@ public class JavaBook
     public virtual JavaPrintable GetPrintable(int pageIndex) =>
         pages[pageIndex].Printable;
 
+    public void SetPage(
+        int pageIndex,
+        JavaPrintable printable,
+        JavaPageFormat pageFormat)
+    {
+        if (printable is null)
+            throw new NullReferenceException("painter is null");
+        if (pageFormat is null)
+            throw new NullReferenceException("page is null");
+        pages[pageIndex] = new BookPage(printable, pageFormat);
+    }
+
     public void Append(JavaPrintable printable, JavaPageFormat pageFormat)
     {
-        ArgumentNullException.ThrowIfNull(printable);
-        ArgumentNullException.ThrowIfNull(pageFormat);
-        pages.Add((printable, pageFormat));
+        pages.Add(NewPage(printable, pageFormat));
     }
+
+    public void Append(
+        JavaPrintable printable,
+        JavaPageFormat pageFormat,
+        int pageCount)
+    {
+        var page = NewPage(printable, pageFormat);
+        var originalCount = pages.Count;
+        var newCount = unchecked(originalCount + pageCount);
+        if (newCount < 0)
+            throw new IndexOutOfRangeException();
+        if (newCount < originalCount)
+        {
+            pages.RemoveRange(newCount, originalCount - newCount);
+            return;
+        }
+        for (var index = originalCount; index < newCount; index++)
+            pages.Add(page);
+    }
+
+    private static BookPage NewPage(
+        JavaPrintable printable,
+        JavaPageFormat pageFormat) =>
+        printable is null || pageFormat is null
+            ? throw new NullReferenceException()
+            : new BookPage(printable, pageFormat);
 }
 
 public class JavaAttributedCharacterAttribute
@@ -3710,6 +3785,9 @@ public class PdfCubeGraphics2D : IDisposable
 {
     private readonly SKBitmap? bitmap;
     private readonly SKCanvas? canvas;
+    private readonly bool ownsCanvas;
+    private int restoreCount;
+    private bool disposed;
     private SKSamplingOptions samplingOptions = SKSamplingOptions.Default;
     private JavaColor color = new(SKColors.Black);
     private JavaColor background = new(SKColors.Transparent);
@@ -3728,18 +3806,50 @@ public class PdfCubeGraphics2D : IDisposable
         paint = color;
     }
 
-    internal PdfCubeGraphics2D(SKBitmap bitmap)
+    public PdfCubeGraphics2D(SKBitmap bitmap)
+        : this(
+            new SKCanvas(
+                bitmap ?? throw new ArgumentNullException(nameof(bitmap))),
+            bitmap,
+            ownsCanvas: true)
     {
-        this.bitmap = bitmap ?? throw new ArgumentNullException(nameof(bitmap));
-        canvas = new SKCanvas(bitmap);
+    }
+
+    public PdfCubeGraphics2D(SKCanvas canvas)
+        : this(
+            canvas ?? throw new ArgumentNullException(nameof(canvas)),
+            null,
+            ownsCanvas: false)
+    {
+    }
+
+    public PdfCubeGraphics2D(SKSurface surface)
+        : this(
+            (surface ?? throw new ArgumentNullException(nameof(surface))).Canvas)
+    {
+    }
+
+    private PdfCubeGraphics2D(
+        SKCanvas canvas,
+        SKBitmap? bitmap,
+        bool ownsCanvas)
+    {
+        this.bitmap = bitmap;
+        this.canvas = canvas;
+        this.ownsCanvas = ownsCanvas;
+        restoreCount = canvas.Save();
+        transform = canvas.TotalMatrix;
         paint = color;
     }
 
     public virtual PdfCubeGraphics2D Create()
     {
+        ThrowIfDisposed();
         var copy = bitmap is null
-            ? new PdfCubeGraphics2D()
-            : new PdfCubeGraphics2D(bitmap);
+            ? canvas is null
+                ? new PdfCubeGraphics2D()
+                : new PdfCubeGraphics2D(canvas, null, ownsCanvas: false)
+            : new PdfCubeGraphics2D(canvas!, bitmap, ownsCanvas: false);
         copy.samplingOptions = samplingOptions;
         copy.color = color;
         copy.background = background;
@@ -3750,7 +3860,6 @@ public class PdfCubeGraphics2D : IDisposable
         copy.renderingHints = new PdfCubeRenderingHints(renderingHints);
         copy.transform = transform;
         copy.clip = clip;
-        copy.canvas?.SetMatrix(copy.transform);
         return copy;
     }
 
@@ -3975,14 +4084,15 @@ public class PdfCubeGraphics2D : IDisposable
     public virtual void SetClip(int x, int y, int width, int height) =>
         ClipRect(x, y, width, height);
 
-    public virtual void SetClip(object clip)
+    public virtual void SetClip(object? clip)
     {
-        this.clip = clip ?? throw new ArgumentNullException(nameof(clip));
-        Clip(clip);
+        ResetCanvasState();
+        this.clip = clip;
+        if (clip is not null)
+            Clip(clip);
     }
 
-    public virtual object GetClip() =>
-        clip ?? new SKRectI(0, 0, bitmap?.Width ?? 0, bitmap?.Height ?? 0);
+    public virtual object? GetClip() => clip;
 
     public virtual SKRectI GetClipBounds() =>
         clip switch
@@ -3995,7 +4105,7 @@ public class PdfCubeGraphics2D : IDisposable
                 (int)Math.Ceiling(rectangle.Bottom)),
             SKPath path => PdfCubeFontCompat.PathBounds(path),
             JavaArea area => PdfCubeFontCompat.PathBounds(area.Path),
-            _ => new SKRectI(0, 0, bitmap?.Width ?? 0, bitmap?.Height ?? 0)
+            _ => CanvasClipBounds()
         };
 
     public virtual void Clip(object shape)
@@ -4260,7 +4370,17 @@ public class PdfCubeGraphics2D : IDisposable
         throw new NotSupportedException("XOR paint mode is not supported by Skia.");
     public virtual void SetXorMode(JavaColor color) => SetXORMode(color);
 
-    public virtual void Dispose() => canvas?.Dispose();
+    public virtual void Dispose()
+    {
+        if (disposed)
+            return;
+        disposed = true;
+        if (canvas is null)
+            return;
+        canvas.RestoreToCount(restoreCount);
+        if (ownsCanvas)
+            canvas.Dispose();
+    }
 
     private void FillImageBackground(
         int x,
@@ -4353,8 +4473,30 @@ public class PdfCubeGraphics2D : IDisposable
     }
 
     private SKCanvas RequireCanvas() =>
-        canvas ?? throw new InvalidOperationException(
-            "This graphics instance delegates all drawing.");
+        !disposed
+            ? canvas ?? throw new InvalidOperationException(
+                "This graphics instance delegates all drawing.")
+            : throw new ObjectDisposedException(nameof(PdfCubeGraphics2D));
+
+    private void ResetCanvasState()
+    {
+        var activeCanvas = RequireCanvas();
+        activeCanvas.RestoreToCount(restoreCount);
+        restoreCount = activeCanvas.Save();
+        activeCanvas.SetMatrix(transform);
+    }
+
+    private SKRectI CanvasClipBounds()
+    {
+        var activeCanvas = RequireCanvas();
+        return activeCanvas.DeviceClipBounds;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (disposed)
+            throw new ObjectDisposedException(nameof(PdfCubeGraphics2D));
+    }
 
 }
 
