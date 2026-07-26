@@ -82,6 +82,7 @@ clojure -J-Xmx28g -M:run pdfcube-pdfbox-font-text-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-graphics-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-interchange-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-interaction-differential
+clojure -J-Xmx28g -M:run pdfcube-pdfbox-manipulation-differential
 clojure -J-Xmx28g -M:run pdfcube-xmpbox-metadata-differential
 clojure -M:run language-snippet-contract
 clojure -J-Xmx8g -M:run language-snippet-package
