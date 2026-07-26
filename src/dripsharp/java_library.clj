@@ -2107,6 +2107,7 @@
                  (contains?
                   #{"executable:java.lang.Object#<init>()"
                     "executable:java.lang.Enum#<init>(java.lang.String,int)"
+                    "executable:java.lang.Throwable#<init>()"
                     "executable:java.io.InputStream#<init>()"
                     "executable:java.io.OutputStream#<init>()"
                     "executable:java.io.IOException#<init>()"
@@ -5527,6 +5528,10 @@
                            (:key occurrence))]
                (adaptation arguments)
                (case (:key occurrence)
+                 ("executable:java.lang.Throwable#<init>()"
+                  "executable:java.lang.Exception#<init>()")
+                 (raw "global::DripSharp.Runtime.JavaCompat.NewThrowable()")
+
                  "executable:java.lang.RuntimeException#<init>(java.lang.Throwable)"
                  (sequence-node [(raw "new global::System.Exception(null, ")
                                  (first arguments) (raw ")")])

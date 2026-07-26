@@ -6634,6 +6634,13 @@ internal static class JavaCompat
         attribute.Value = value;
         element.Attributes.SetNamedItem(attribute);
     }
+    internal static Exception NewThrowable()
+    {
+        var throwable = new Exception();
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.SetCurrentStackTrace(throwable);
+        return throwable;
+    }
+
     internal static System.Diagnostics.StackFrame[] GetStackTrace(Exception exception) =>
         new System.Diagnostics.StackTrace(exception, true).GetFrames();
     internal static void SetStackTrace(Exception exception, object? stackTrace)
@@ -7379,6 +7386,16 @@ internal static class JavaCompat
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Exception, JavaCause>
         JavaCauses = new();
     private static readonly object JavaCausesLock = new();
+    private static readonly System.Reflection.FieldInfo? ExceptionInnerExceptionField =
+        typeof(Exception).GetField(
+            "_innerException",
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic)
+        ?? typeof(Exception).GetField(
+            "m_innerException",
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic);
+
     internal static Exception InitCause(Exception exception, Exception? cause)
     {
         ArgumentNullException.ThrowIfNull(exception);
@@ -7389,6 +7406,8 @@ internal static class JavaCompat
             if (exception.InnerException is not null || JavaCauses.TryGetValue(exception, out _))
                 throw new InvalidOperationException("Cause has already been initialized.");
             JavaCauses.Add(exception, new JavaCause(cause));
+            if (cause is not null)
+                ExceptionInnerExceptionField?.SetValue(exception, cause);
         }
         return exception;
     }

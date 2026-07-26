@@ -2431,7 +2431,7 @@
                                         "src/Example/Java/Library/Failure.cs")))]
     (is (str/includes?
          first-source
-         "return new global::System.Exception();"))
+         "return global::DripSharp.Runtime.JavaCompat.NewThrowable();"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -2440,6 +2440,56 @@
                                :command ["dotnet" "build" (:project-file first)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-created-throwable-and-initialized-cause-preserve-observable-state
+  (let [fixture
+        (model! {"example/ThrowableState.java"
+                 (str "package example; public final class ThrowableState { "
+                      "public static Throwable create() { return new Throwable(); } "
+                      "public static Throwable initialize(Throwable target, Throwable cause) { "
+                      "target.initCause(cause); return target; } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        project-root (:project-root emission)
+        generated-project
+        (paths/resolve-path project-root (:project-file emission))
+        source
+        (slurp (str (paths/resolve-path
+                     project-root
+                     "src/Example/Java/Library/ThrowableState.cs")))
+        consumer-root (temp-directory)
+        _ (write-sources!
+           consumer-root
+           {"Consumer.csproj"
+            (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+                 "<PropertyGroup><OutputType>Exe</OutputType>"
+                 "<TargetFramework>net10.0</TargetFramework>"
+                 "<ImplicitUsings>disable</ImplicitUsings>"
+                 "<Nullable>enable</Nullable>"
+                 "<TreatWarningsAsErrors>true</TreatWarningsAsErrors>"
+                 "</PropertyGroup><ItemGroup><ProjectReference Include=\""
+                 generated-project
+                 "\" /></ItemGroup></Project>")
+            "Program.cs"
+            (str "var created = global::Example.Java.Library.ThrowableState.create();\n"
+                 "if (global::System.String.IsNullOrEmpty(created.StackTrace)) return 1;\n"
+                 "var cause = new global::System.Exception(\"cause\");\n"
+                 "var target = new global::System.Exception(\"target\");\n"
+                 "var initialized = global::Example.Java.Library.ThrowableState"
+                 ".initialize(target, cause);\n"
+                 "return global::System.Object.ReferenceEquals("
+                 "initialized.InnerException, cause) ? 0 : 2;\n")})
+        result
+        (process/run! {:directory consumer-root
+                       :command ["dotnet" "run" "--project" "Consumer.csproj"
+                                 "--configuration" "Release"
+                                 "--verbosity:quiet"]})]
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.NewThrowable();"))
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.InitCause(target, cause);"))
+    (is (zero? (:exit result)))))
 
 (deftest neutral-print-writer-preserves-writer-ownership-and-stack-output
   (let [fixture
