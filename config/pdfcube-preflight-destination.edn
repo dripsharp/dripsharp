@@ -17,7 +17,9 @@
            :version "3.0.8-dripsharp.0"
            :title "PdfCube Preflight"
            :description "Apache Preflight PDF/A validation APIs for .NET, mechanically translated by DripSharp."
-           :authors "Apache PDFBox contributors,Vibeformer translation"
+           :authors "Vibeformer"
+           :copyright "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt."
+           :symbols :snupkg
            :tags "pdf pdfbox pdfa validation preflight dotnet pdfcube"
            :project-url "https://pdfbox.apache.org/"
            :repository-url "https://github.com/apache/pdfbox.git"

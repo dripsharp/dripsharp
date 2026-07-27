@@ -75,6 +75,7 @@ clojure -M:run package
 clojure -J-Xmx8g -M:run package pkl-core-value-model
 clojure -M:run differential
 clojure -J-Xmx28g -M:run pdfcube-family-build
+clojure -J-Xmx28g -M:run pdfcube-family-package
 clojure -J-Xmx28g -M:run pdfcube-io-differential
 clojure -J-Xmx28g -M:run pdfcube-fontbox-differential
 clojure -J-Xmx28g -M:run pdfcube-pdfbox-differential

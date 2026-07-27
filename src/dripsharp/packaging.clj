@@ -1,6 +1,7 @@
 (ns dripsharp.packaging
   "Local NuGet packaging and isolated independent-consumer verification."
-  (:require [clojure.string :as str]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [dripsharp.compiler :as compiler]
             [dripsharp.harness :as harness]
             [dripsharp.java-project :as java-project]
@@ -59,17 +60,26 @@
                                (sort-by #(.getNameCount ^Path %) >))]
         (Files/deleteIfExists entry)))))
 
-(defn- package-artifact! [^Path feed package-id version]
-  (let [packages (filter #(and (str/ends-with? (str %) ".nupkg")
-                               (not (str/ends-with? (str %) ".snupkg")))
+(defn- artifact!
+  [^Path feed package-id version extension]
+  (let [packages (filter #(str/ends-with?
+                           (str/lower-case (str %))
+                           (str "." extension))
                          (regular-files feed))
-        expected (str/lower-case (str package-id "." version ".nupkg"))
+        expected (str/lower-case (str package-id "." version "." extension))
         matches (filter #(= expected (str/lower-case (str (.getFileName ^Path %))))
                         packages)]
     (when-not (= 1 (count matches))
       (fail! "NuGet feed does not contain exactly one artifact for the configured identity"
-             {:feed (str feed) :expected expected :artifacts (mapv str packages)}))
+             {:feed (str feed) :expected expected :extension extension
+              :artifacts (mapv str packages)}))
     (first matches)))
+
+(defn- package-artifact! [^Path feed package-id version]
+  (artifact! feed package-id version "nupkg"))
+
+(defn- symbol-artifact! [^Path feed package-id version]
+  (artifact! feed package-id version "snupkg"))
 
 (defn- zip-text [^ZipFile archive entry-name]
   (when-let [entry (.getEntry archive entry-name)]
@@ -313,13 +323,16 @@
     (require-exact-children! root ["metadata"] "package")
     (let [metadata (exactly-one-child! root "metadata" "package")
           configured-elements
-          [["id" (:id package)]
-           ["version" (:version package)]
-           ["title" (:title package)]
-           ["description" (:description package)]
-           ["authors" (:authors package)]
-           ["tags" (:tags package)]
-           ["projectUrl" (:project-url package)]]]
+          (cond->
+           [["id" (:id package)]
+            ["version" (:version package)]
+            ["title" (:title package)]
+            ["description" (:description package)]
+            ["authors" (:authors package)]
+            ["tags" (:tags package)]
+            ["projectUrl" (:project-url package)]]
+            (:copyright package)
+            (conj ["copyright" (:copyright package)]))]
       (require-exact-attributes! metadata {} "package/metadata")
       (doseq [[name expected] configured-elements]
         (let [element (exactly-one-child! metadata name "package/metadata")
@@ -337,7 +350,7 @@
                ["repository" "dependencies"])
        "package/metadata")
       (when-let [expected-license (or (:license-expression package)
-                                     (:license-file package))]
+                                      (:license-file package))]
         (let [license (exactly-one-child! metadata "license" "package/metadata")
               license-url (exactly-one-child! metadata "licenseUrl" "package/metadata")
               file-license? (boolean (:license-file package))
@@ -414,44 +427,47 @@
 (defn- package-extension [path]
   (some-> (re-find #"\.([^.\/]+)$" path) second str/lower-case))
 
-(defn- inspect-content-types! [xml package-files]
-  (let [document (parse-xml! xml :content-types)
-        root (.getDocumentElement document)
-        defaults (child-elements root "Default")
-        expected
-        (into {"rels" "application/vnd.openxmlformats-package.relationships+xml"
-               "psmdcp" "application/vnd.openxmlformats-package.core-properties+xml"
-               "dll" "application/octet"
-               "nuspec" "application/octet"}
-              (for [{:keys [path]} package-files
-                    :let [extension (package-extension path)]
-                    :when extension]
-                [extension "application/octet"]))]
-    (when-not (and (= "Types" (element-name root))
-                   (= content-types-namespace (.getNamespaceURI root)))
-      (fail! "NuGet content-types metadata has the wrong root"
-             {:expected [content-types-namespace "Types"]
-              :actual [(.getNamespaceURI root) (element-name root)]}))
-    (require-exact-attributes! root {"xmlns" content-types-namespace}
-                               "[Content_Types].xml/Types")
-    (require-exact-children! root (repeat (count expected) "Default")
-                             "[Content_Types].xml/Types")
-    (let [actual
-          (into {}
-                (for [^Element default defaults
-                      :let [attributes (element-attributes default)]]
-                  (do
-                    (require-exact-children! default []
-                                             "[Content_Types].xml/Types/Default")
-                    (when-not (= #{"Extension" "ContentType"}
-                                 (set (keys attributes)))
-                      (fail! "NuGet content-type declaration has unexpected attributes"
-                             {:expected #{"Extension" "ContentType"}
-                              :actual attributes}))
-                    [(get attributes "Extension") (get attributes "ContentType")])))]
-      (when-not (and (= (count expected) (count actual)) (= expected actual))
-        (fail! "NuGet content-type declarations differ from the exact package payload"
-               {:expected expected :actual actual})))))
+(defn- inspect-content-types!
+  ([xml package-files]
+   (inspect-content-types! xml "dll" package-files))
+  ([xml payload-extension package-files]
+   (let [document (parse-xml! xml :content-types)
+         root (.getDocumentElement document)
+         defaults (child-elements root "Default")
+         expected
+         (into {"rels" "application/vnd.openxmlformats-package.relationships+xml"
+                "psmdcp" "application/vnd.openxmlformats-package.core-properties+xml"
+                payload-extension "application/octet"
+                "nuspec" "application/octet"}
+               (for [{:keys [path]} package-files
+                     :let [extension (package-extension path)]
+                     :when extension]
+                 [extension "application/octet"]))]
+     (when-not (and (= "Types" (element-name root))
+                    (= content-types-namespace (.getNamespaceURI root)))
+       (fail! "NuGet content-types metadata has the wrong root"
+              {:expected [content-types-namespace "Types"]
+               :actual [(.getNamespaceURI root) (element-name root)]}))
+     (require-exact-attributes! root {"xmlns" content-types-namespace}
+                                "[Content_Types].xml/Types")
+     (require-exact-children! root (repeat (count expected) "Default")
+                              "[Content_Types].xml/Types")
+     (let [actual
+           (into {}
+                 (for [^Element default defaults
+                       :let [attributes (element-attributes default)]]
+                   (do
+                     (require-exact-children! default []
+                                              "[Content_Types].xml/Types/Default")
+                     (when-not (= #{"Extension" "ContentType"}
+                                  (set (keys attributes)))
+                       (fail! "NuGet content-type declaration has unexpected attributes"
+                              {:expected #{"Extension" "ContentType"}
+                               :actual attributes}))
+                     [(get attributes "Extension") (get attributes "ContentType")])))]
+       (when-not (and (= (count expected) (count actual)) (= expected actual))
+         (fail! "NuGet content-type declarations differ from the exact package payload"
+                {:expected expected :actual actual}))))))
 
 (defn- inspect-relationships! [xml nuspec-name]
   (let [document (parse-xml! xml :relationships)
@@ -538,30 +554,187 @@
           (fail! "NuGet core-properties package-writer identity is blank"
                  {:actual (.getTextContent element)}))))))
 
-(defn- inspect-opc-envelope! [archive nuspec-name package package-files]
-  (inspect-content-types! (zip-text archive "[Content_Types].xml") package-files)
-  (inspect-relationships! (zip-text archive "_rels/.rels") nuspec-name)
-  (inspect-core-properties! (zip-text archive canonical-core-properties) package))
+(defn- inspect-opc-envelope!
+  ([archive nuspec-name package package-files]
+   (inspect-opc-envelope! archive nuspec-name package "dll" package-files))
+  ([archive nuspec-name package payload-extension package-files]
+   (inspect-content-types! (zip-text archive "[Content_Types].xml")
+                           payload-extension package-files)
+   (inspect-relationships! (zip-text archive "_rels/.rels") nuspec-name)
+   (inspect-core-properties! (zip-text archive canonical-core-properties) package)))
 
 (defn- sha256-bytes [bytes]
   (let [digest (MessageDigest/getInstance "SHA-256")]
     (.update digest bytes)
     (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
 
+(defn- inspect-symbol-nuspec!
+  [nuspec package target-framework expected-dependencies]
+  (let [document (parse-xml! nuspec :symbol-nuspec)
+        root (.getDocumentElement document)
+        expected-namespace (if (seq expected-dependencies)
+                             dependency-nuspec-namespace
+                             base-nuspec-namespace)]
+    (when-not (and (= "package" (element-name root))
+                   (= expected-namespace (.getNamespaceURI root)))
+      (fail! "NuGet symbol package uses the wrong nuspec root or namespace"
+             {:expected [expected-namespace "package"]
+              :actual [(.getNamespaceURI root) (element-name root)]}))
+    (require-exact-attributes! root {"xmlns" expected-namespace} "package")
+    (require-exact-children! root ["metadata"] "package")
+    (let [metadata (exactly-one-child! root "metadata" "package")
+          configured-elements
+          (cond->
+           [["id" (:id package)]
+            ["version" (:version package)]
+            ["title" (:title package)]
+            ["projectUrl" (:project-url package)]
+            ["description" (:description package)]
+            ["tags" (:tags package)]]
+            (:copyright package)
+            (conj ["copyright" (:copyright package)]))]
+      (require-exact-attributes! metadata {} "package/metadata")
+      (doseq [[name expected] configured-elements]
+        (let [element (exactly-one-child! metadata name "package/metadata")]
+          (require-exact-attributes! element {} (str "package/metadata/" name))
+          (require-exact-children! element [] (str "package/metadata/" name))
+          (when-not (= expected (.getTextContent element))
+            (fail! "NuGet symbol metadata differs from the configured package"
+                   {:element name :expected expected
+                    :actual (.getTextContent element)}))))
+      (require-exact-children!
+       metadata
+       (concat (map first configured-elements)
+               ["packageTypes" "repository" "dependencies"])
+       "package/metadata")
+      (let [package-types
+            (exactly-one-child! metadata "packageTypes" "package/metadata")
+            package-type
+            (exactly-one-child! package-types "packageType"
+                                "package/metadata/packageTypes")]
+        (require-exact-attributes! package-types {}
+                                   "package/metadata/packageTypes")
+        (require-exact-children! package-types ["packageType"]
+                                 "package/metadata/packageTypes")
+        (require-exact-children! package-type []
+                                 "package/metadata/packageTypes/packageType")
+        (require-exact-attributes!
+         package-type {"name" "SymbolsPackage"}
+         "package/metadata/packageTypes/packageType"))
+      (let [repository
+            (exactly-one-child! metadata "repository" "package/metadata")
+            expected {"type" (:repository-type package)
+                      "url" (:repository-url package)
+                      "commit" (:repository-commit package)}]
+        (require-exact-children! repository [] "package/metadata/repository")
+        (require-exact-attributes! repository expected
+                                   "package/metadata/repository"))
+      (let [container
+            (exactly-one-child! metadata "dependencies" "package/metadata")
+            group (exactly-one-child! container "group"
+                                      "package/metadata/dependencies")
+            dependencies
+            (mapv
+             (fn [^Element dependency]
+               (require-exact-children!
+                dependency [] "package/metadata/dependencies/group/dependency")
+               (require-exact-attributes!
+                dependency
+                {"id" (.getAttribute dependency "id")
+                 "version" (.getAttribute dependency "version")
+                 "exclude" "Build,Analyzers"}
+                "package/metadata/dependencies/group/dependency")
+               {:id (.getAttribute dependency "id")
+                :version (.getAttribute dependency "version")})
+             (child-elements group "dependency"))
+            expected-dependencies
+            (mapv #(select-keys % [:id :version]) expected-dependencies)]
+        (require-exact-attributes! container {}
+                                   "package/metadata/dependencies")
+        (require-exact-children! container ["group"]
+                                 "package/metadata/dependencies")
+        (require-exact-attributes! group {"targetFramework" target-framework}
+                                   "package/metadata/dependencies/group")
+        (require-exact-children!
+         group (repeat (count expected-dependencies) "dependency")
+         "package/metadata/dependencies/group")
+        (when-not (= target-framework (.getAttribute ^Element group
+                                                     "targetFramework"))
+          (fail! "NuGet symbol dependency group targets the wrong framework"
+                 {:expected target-framework
+                  :actual (.getAttribute ^Element group "targetFramework")}))
+        (when-not (= expected-dependencies dependencies)
+          (fail! "NuGet symbol dependencies differ from the release package"
+                 {:expected expected-dependencies :actual dependencies}))
+        dependencies))))
+
+(defn inspect-symbol-package!
+  "Requires one exact portable PDB symbol payload whose bytes match the clean
+  build output, plus the exact package identity and dependency metadata."
+  [artifact package target-framework assembly-name expected-dependencies
+   verified-pdb]
+  (when-not (paths/regular-file? verified-pdb)
+    (fail! "Verified clean-build portable PDB is missing"
+           {:artifact (str artifact) :verified-pdb (str verified-pdb)}))
+  (with-open [archive (ZipFile. (str artifact))]
+    (let [entries (->> (enumeration-seq (.entries archive))
+                       (map #(.getName %))
+                       sort
+                       vec)
+          _ (validate-entry-layout! entries :inspected-symbol-package)
+          nuspec-name (str (:id package) ".nuspec")
+          pdb-entry (str "lib/" target-framework "/" assembly-name ".pdb")
+          expected-entries (sort ["[Content_Types].xml"
+                                  "_rels/.rels"
+                                  nuspec-name
+                                  pdb-entry
+                                  canonical-core-properties])
+          nuspec (zip-text archive nuspec-name)]
+      (when-not (= (vec expected-entries) entries)
+        (fail! "NuGet symbol package layout differs from the exact release payload"
+               {:expected (vec expected-entries) :actual entries}))
+      (when-not nuspec
+        (fail! "NuGet symbol package does not contain its nuspec metadata"
+               {:required nuspec-name :entries entries}))
+      (let [dependencies
+            (inspect-symbol-nuspec!
+             nuspec package target-framework expected-dependencies)
+            entry (.getEntry archive pdb-entry)
+            bytes (when entry
+                    (with-open [input (.getInputStream archive entry)]
+                      (.readAllBytes input)))
+            expected-hash (sha256 verified-pdb)
+            actual-hash (some-> bytes sha256-bytes)]
+        (when-not (= expected-hash actual-hash)
+          (fail! "Packaged portable PDB does not match the verified clean build"
+                 {:pdb-entry pdb-entry :verified-pdb (str verified-pdb)
+                  :expected expected-hash :actual actual-hash}))
+        (when-not (and bytes
+                       (<= 4 (alength ^bytes bytes))
+                       (= "BSJB" (String. ^bytes bytes 0 4
+                                          StandardCharsets/US_ASCII)))
+          (fail! "NuGet symbol package does not contain a portable PDB"
+                 {:pdb-entry pdb-entry :magic
+                  (when bytes
+                    (hex (take (min 4 (alength ^bytes bytes)) bytes)))}))
+        (inspect-opc-envelope!
+         archive nuspec-name
+         package
+         "pdb" [])
+        {:entries entries :pdb-entry pdb-entry :pdb-sha256 actual-hash
+         :nuspec nuspec :dependencies dependencies}))))
+
 (defn inspect-package!
   "Checks the package payload and metadata without extracting generated sources."
   ([artifact package target-framework assembly-name]
    (inspect-package! artifact package target-framework assembly-name [] []))
-  ([artifact {:keys [id version title description authors tags project-url
-                     repository-url repository-type repository-commit
-                     license-expression] :as package}
-    target-framework assembly-name
+  ([artifact package target-framework assembly-name
     expected-dependencies]
    (inspect-package! artifact package target-framework assembly-name
                      expected-dependencies []))
   ([artifact {:keys [id version title description authors tags project-url
                      repository-url repository-type repository-commit
-                     license-expression] :as package}
+                     license-expression copyright]}
     target-framework assembly-name
     expected-dependencies expected-package-files]
    (with-open [archive (ZipFile. (str artifact))]
@@ -596,7 +769,8 @@
                              :project-url project-url :repository-url repository-url
                              :repository-type repository-type
                              :repository-commit repository-commit
-                             :license-expression license-expression}
+                             :license-expression license-expression
+                             :copyright copyright}
                             :license-file
                             (some #(when (= :license (:kind %)) (:path %))
                                   expected-package-files))
@@ -632,7 +806,7 @@
           :dependencies dependencies
           :package-files expected-package-files})))))
 
-(defn- consumer-project [package-id version target-framework]
+(defn- consumer-project [package-identities target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
        "  <PropertyGroup>\n"
        "    <OutputType>Exe</OutputType>\n"
@@ -641,8 +815,11 @@
        "    <ImplicitUsings>disable</ImplicitUsings>\n"
        "  </PropertyGroup>\n"
        "  <ItemGroup>\n"
-       "    <PackageReference Include=\"" (xml-escape package-id)
-       "\" Version=\"" (xml-escape version) "\" />\n"
+       (apply
+        str
+        (for [{:keys [id version]} (sort-by :id package-identities)]
+          (str "    <PackageReference Include=\"" (xml-escape id)
+               "\" Version=\"" (xml-escape version) "\" />\n")))
        "  </ItemGroup>\n"
        "</Project>\n"))
 
@@ -676,15 +853,20 @@
   (let [project (Files/readString project-file)
         package-references (re-seq #"<PackageReference\s+Include=\"([^\"]+)\"\s+Version=\"([^\"]+)\"\s*/>"
                                    project)
-        expected-reference [(:id primary-identity) (:version primary-identity)]
+        primary-identities (if (map? primary-identity)
+                             [primary-identity]
+                             (vec primary-identity))
+        expected-references
+        (mapv (juxt :id :version) (sort-by :id primary-identities))
         forbidden-project (->> [#"<ProjectReference\b" #"<Compile\b"
                                 #"<Reference\b" #"(?i)target/generated"
                                 #"(?i)\.\./.*\.csproj"]
                                (filter #(re-find % project))
                                (mapv str))]
-    (when-not (= [expected-reference] (mapv #(vec (rest %)) package-references))
-      (fail! "Independent consumer does not reference exactly the primary package"
-             {:project-file (str project-file) :expected expected-reference
+    (when-not (= expected-references
+                 (mapv #(vec (rest %)) package-references))
+      (fail! "Independent consumer does not reference exactly its selected packages"
+             {:project-file (str project-file) :expected expected-references
               :actual (mapv #(vec (rest %)) package-references)}))
     (when (seq forbidden-project)
       (fail! "Independent consumer contains a source, assembly, or project-reference escape hatch"
@@ -731,7 +913,9 @@
         (fail! "Isolated package cache contains packages outside the packed dependency closure"
                {:expected expected-cache-roots :actual actual-cache-roots
                 :packages (str packages)}))
-      {:package-reference expected-reference
+      {:package-reference (when (= 1 (count expected-references))
+                            (first expected-references))
+       :package-references expected-references
        :packages (mapv #(select-keys % [:id :version :sha256]) identities)
        :assets-file (str assets-file)})))
 
@@ -860,6 +1044,9 @@
                (or (:dependency-profiles generation)
                    (get-in generation
                            [:generation-profile :dependency-profiles])
+                   (mapv :profile dependency-emissions))
+               :transitive-dependency-profiles
+               (or (:transitive-dependency-profiles generation)
                    (mapv :profile dependency-emissions)))
         emissions (conj (vec dependency-emissions) main-emission)
         by-profile
@@ -891,6 +1078,18 @@
                             :dependency-profile dependency-profile
                             :available (vec (sort (keys by-profile)))})))
               dependency-profiles)
+             assembly-dependency-emissions
+             (->> (or (:transitive-dependency-profiles emission)
+                      dependency-profiles)
+                  (map
+                   (fn [dependency-profile]
+                     (or (get by-profile dependency-profile)
+                         (fail! "Package plan is missing a transitive assembly dependency"
+                                {:profile profile
+                                 :dependency-profile dependency-profile
+                                 :available (vec (sort (keys by-profile)))}))))
+                  (sort-by #(get-in % [:destination :project :assembly-name]))
+                  vec)
              project-references (:project-references destination)
              dependency-emissions
              (if (= (count dependency-emissions)
@@ -936,7 +1135,7 @@
               :version (get-in dependency-destination [:package :version])
               :target-framework
               (get-in dependency-destination [:project :target-framework])})
-           dependency-emissions)
+           assembly-dependency-emissions)
           :primary? (= profile primary-profile)}))
      emissions)))
 
@@ -1102,20 +1301,49 @@
                           (paths/resolve-path (:project-root emission) "bin"
                                               build-configuration target-framework
                                               (str assembly-name ".dll"))
+                          verified-pdb
+                          (paths/resolve-path (:project-root emission) "bin"
+                                              build-configuration target-framework
+                                              (str assembly-name ".pdb"))
+                          symbols? (= :snupkg (:symbols package))
                           raw-first (package-artifact! first-output id version)
                           raw-second (package-artifact! second-output id version)
+                          raw-first-symbol
+                          (when symbols?
+                            (symbol-artifact! first-output id version))
+                          raw-second-symbol
+                          (when symbols?
+                            (symbol-artifact! second-output id version))
                           filename (str (.getFileName ^Path raw-first))
+                          symbol-filename
+                          (some-> raw-first-symbol .getFileName str)
                           first-artifact
                           (canonicalize-package!
                            raw-first (paths/resolve-path first-canonical filename))
                           second-artifact
                           (canonicalize-package!
                            raw-second (paths/resolve-path second-canonical filename))
+                          first-symbol
+                          (when symbols?
+                            (canonicalize-package!
+                             raw-first-symbol
+                             (paths/resolve-path first-canonical symbol-filename)))
+                          second-symbol
+                          (when symbols?
+                            (canonicalize-package!
+                             raw-second-symbol
+                             (paths/resolve-path second-canonical symbol-filename)))
                           first-hash (sha256 first-artifact)
-                          second-hash (sha256 second-artifact)]
+                          second-hash (sha256 second-artifact)
+                          first-symbol-hash (some-> first-symbol sha256)
+                          second-symbol-hash (some-> second-symbol sha256)]
                       (when-not (= first-hash second-hash)
                         (fail! "Independent clean builds did not produce byte-identical NuGet packages"
                                {:profile profile :first first-hash :second second-hash}))
+                      (when-not (= first-symbol-hash second-symbol-hash)
+                        (fail! "Independent clean builds did not produce byte-identical NuGet symbol packages"
+                               {:profile profile :first first-symbol-hash
+                                :second second-symbol-hash}))
                       (let [artifact
                             (paths/resolve-path
                              feed (str (.getFileName ^Path first-artifact)))
@@ -1124,6 +1352,16 @@
                                (into-array
                                 StandardCopyOption
                                 [StandardCopyOption/REPLACE_EXISTING]))
+                            symbol-artifact
+                            (when symbols?
+                              (let [destination
+                                    (paths/resolve-path feed symbol-filename)]
+                                (Files/copy
+                                 first-symbol destination
+                                 (into-array
+                                  StandardCopyOption
+                                  [StandardCopyOption/REPLACE_EXISTING]))
+                                destination))
                             inspection
                             (inspect-package!
                              artifact
@@ -1139,12 +1377,28 @@
                              (:assembly-entry inspection) assembly-name
                              verified-assembly package-assembly-names
                              (or expected-assembly-dependencies [])
-                             expected-resources)]
+                             expected-resources)
+                            symbol-inspection
+                            (when symbols?
+                              (inspect-symbol-package!
+                               symbol-artifact
+                               (assoc package
+                                      :repository-commit repository-commit)
+                               target-framework assembly-name
+                               expected-dependencies verified-pdb))]
                         {:profile profile :primary? primary? :artifact artifact
+                         :destination destination
                          :identity {:id id :version version :sha256 first-hash
                                     :file (str (.getFileName ^Path artifact))}
+                         :symbol-artifact symbol-artifact
+                         :symbol
+                         (when symbols?
+                           {:id id :version version :sha256 first-symbol-hash
+                            :file symbol-filename
+                            :pdb-sha256 (:pdb-sha256 symbol-inspection)})
                          :mechanical-source-headers mechanical-source-headers
                          :inspection inspection :resource-proof resource-proof
+                         :symbol-inspection symbol-inspection
                          :public-surface (:public-surface resource-proof)
                          :resources expected-resources})))
                   specs)
@@ -1156,6 +1410,7 @@
                   :clean-builds 2
                   :repository-commit repository-commit
                   :packages (mapv :identity packages)
+                  :symbols (mapv :symbol (filter :symbol packages))
                   :external-packages external-packages
                   :mechanical-source-headers
                   (into (sorted-map)
@@ -1179,6 +1434,166 @@
        (finally
          (delete-tree! first-output))))))
 
+(defn- available-identities
+  [package-proof]
+  (into (mapv :identity (:packages package-proof))
+        (:external-packages package-proof)))
+
+(defn- exact-identities!
+  [available expected]
+  (let [by-identity
+        (into {}
+              (map (fn [{:keys [id version] :as identity}]
+                     [[(str/lower-case id) version] identity]))
+              available)
+        expected
+        (sort-by (juxt #(str/lower-case (:id %)) :version) expected)
+        selected
+        (mapv
+         (fn [{:keys [id version]}]
+           (or (get by-identity [(str/lower-case id) version])
+               (fail! "Isolated consumer contract selects an artifact outside the fresh feed"
+                      {:identity [id version]
+                       :available
+                       (mapv #(select-keys % [:id :version]) available)})))
+         expected)]
+    (when-not (= (count expected) (count (set (map (juxt :id :version)
+                                                   expected))))
+      (fail! "Isolated consumer contract contains duplicate package identities"
+             {:expected expected}))
+    selected))
+
+(defn- consumer-fixture-source
+  [root consumer-profile]
+  (when (= :source-file (:strategy consumer-profile))
+    (if-let [source-path (:source-path consumer-profile)]
+      (paths/resolve-path root source-path)
+      (paths/resolve-path root "validation" "package-consumer"
+                          (:fixture-file consumer-profile)))))
+
+(defn verify-packed-consumer!
+  "Restores and executes one fresh package-reference-only consumer against an
+  already packed local feed. `selected-packages` are direct PackageReferences;
+  `expected-packages` is the exact dependency-closed restore result."
+  [{:keys [workspace-root package-proof consumer-name consumer-profile
+           selected-packages expected-packages target-framework run-command!]
+    :or {run-command! process/run!}}]
+  (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+        _ (when-not (and (string? consumer-name)
+                         (re-matches #"[A-Za-z0-9_.-]+" consumer-name))
+            (fail! "Independent consumer name is invalid"
+                   {:consumer-name consumer-name}))
+        available (available-identities package-proof)
+        selected (exact-identities! available selected-packages)
+        identities (exact-identities! available expected-packages)
+        expected-set (set (map (juxt :id :version) identities))
+        selected-set (set (map (juxt :id :version) selected))
+        _ (when-not (set/subset? selected-set expected-set)
+            (fail! "Independent consumer direct references are outside its exact closure"
+                   {:selected selected-set :expected expected-set}))
+        target-framework
+        (or target-framework
+            (some-> (:packages package-proof) first :destination
+                    (get-in [:project :target-framework]))
+            (fail! "Independent consumer target framework is missing"
+                   {:consumer-name consumer-name}))
+        consumer-target-framework
+        (installed-runtime-target! run-command! root target-framework)
+        proof-root (:proof-root package-proof)
+        feed (:feed package-proof)
+        consumer
+        (harness/clean-directory!
+         (paths/resolve-path proof-root "consumers" consumer-name))
+        cache (doto (paths/resolve-path consumer "cache")
+                (Files/createDirectories
+                 (make-array java.nio.file.attribute.FileAttribute 0)))
+        packages (doto (paths/resolve-path cache "packages")
+                   (Files/createDirectories
+                    (make-array java.nio.file.attribute.FileAttribute 0)))
+        http-cache (paths/resolve-path cache "http")
+        plugins-cache (paths/resolve-path cache "plugins")
+        scratch (paths/resolve-path cache "scratch")
+        cli-home (paths/resolve-path cache "dotnet-home")
+        _ (doseq [directory [http-cache plugins-cache scratch cli-home]]
+            (Files/createDirectories
+             directory (make-array java.nio.file.attribute.FileAttribute 0)))
+        environment
+        {"NUGET_PACKAGES" (str packages)
+         "NUGET_HTTP_CACHE_PATH" (str http-cache)
+         "NUGET_PLUGINS_CACHE_PATH" (str plugins-cache)
+         "NUGET_SCRATCH" (str scratch)
+         "DOTNET_CLI_HOME" (str cli-home)
+         "DOTNET_SKIP_FIRST_TIME_EXPERIENCE" "1"
+         "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
+         "DOTNET_NOLOGO" "1"}
+        consumer-project-file
+        (paths/resolve-path consumer (:project-file consumer-profile))
+        nuget-config-file (paths/resolve-path consumer "NuGet.Config")
+        consumer-source (paths/resolve-path consumer "Program.cs")
+        fixture-source (consumer-fixture-source root consumer-profile)]
+    (when-not (contains? #{:source-file :compile-only}
+                         (:strategy consumer-profile))
+      (fail! "Independent consumer strategy is unsupported"
+             {:consumer-name consumer-name
+              :strategy (:strategy consumer-profile)}))
+    (when (and fixture-source (not (paths/regular-file? fixture-source)))
+      (fail! "Independent package-consumer source is missing"
+             {:path (str fixture-source)}))
+    (write-text! consumer-project-file
+                 (consumer-project selected consumer-target-framework))
+    (write-text! nuget-config-file
+                 (nuget-config feed (map :id identities)))
+    (if fixture-source
+      (Files/copy fixture-source consumer-source
+                  (into-array StandardCopyOption
+                              [StandardCopyOption/REPLACE_EXISTING]))
+      (write-text!
+       consumer-source
+       (compile-only-consumer (:success-message consumer-profile)
+                              (:compile-types consumer-profile))))
+    (run-command!
+     {:command ["dotnet" "restore" (str consumer-project-file)
+                "--configfile" (str nuget-config-file)
+                "--packages" (str packages)
+                "--no-cache" "--force" "--force-evaluate"
+                "-p:RestoreNoCache=true"
+                "-p:RestoreIgnoreFailedSources=false"
+                "-p:RestoreFallbackFolders="]
+      :directory consumer
+      :environment environment})
+    (let [dependency-proof
+          (inspect-consumer-dependencies!
+           consumer-project-file
+           (paths/resolve-path consumer "obj" "project.assets.json")
+           packages selected identities)]
+      (run-command!
+       {:command ["dotnet" "build" (str consumer-project-file)
+                  "--nologo" "--verbosity:minimal" "--no-restore"
+                  "--no-incremental" "-warnaserror"]
+        :directory consumer
+        :environment environment})
+      (let [run-result
+            (run-command!
+             {:command ["dotnet" "run"
+                        "--project" (str consumer-project-file)
+                        "--no-build" "--no-restore"]
+              :directory consumer
+              :environment environment})]
+        (when-not (str/includes? (:output run-result)
+                                 (:success-message consumer-profile))
+          (fail! "Independent package consumer did not report successful behavior checks"
+                 {:consumer-name consumer-name :output (:output run-result)}))
+        {:consumer-name consumer-name
+         :selected-packages
+         (mapv #(select-keys % [:id :version :sha256]) selected)
+         :dependency-proof dependency-proof
+         :consumer-root consumer
+         :packages-root packages
+         :environment-roots
+         {:packages packages :http-cache http-cache :plugins-cache plugins-cache
+          :scratch scratch :dotnet-home cli-home}
+         :run run-result}))))
+
 (defn verify-package-consumption!
   "Runs clean generation/compilation, packs it, and proves isolated consumption."
   ([] (verify-package-consumption! {}))
@@ -1198,77 +1613,32 @@
                                      {:profile profile}))
          {:keys [id version]} (:package configuration)
          target-framework (get-in configuration [:project :target-framework])
-         consumer-target-framework
-         (installed-runtime-target! run-command! root target-framework)
-         proof-root (:proof-root package-proof)
-         feed (:feed package-proof)
-         consumer (doto (paths/resolve-path proof-root "consumer")
-                    (Files/createDirectories
-                     (make-array java.nio.file.attribute.FileAttribute 0)))
-         packages (doto (paths/resolve-path proof-root "packages")
-                    (Files/createDirectories
-                     (make-array java.nio.file.attribute.FileAttribute 0)))
-         consumer-project-file (paths/resolve-path consumer
-                                                   (:project-file consumer-profile))
-         nuget-config-file (paths/resolve-path consumer "NuGet.Config")
-         consumer-source (paths/resolve-path consumer "Program.cs")
-         fixture-source (when (= :source-file (:strategy consumer-profile))
-                          (if-let [source-path (:source-path consumer-profile)]
-                            (paths/resolve-path root source-path)
-                            (paths/resolve-path root "validation"
-                                                "package-consumer"
-                                                (:fixture-file consumer-profile))))
-         identities (into (mapv :identity (:packages package-proof))
-                          (:external-packages package-proof))]
-     (when (and fixture-source (not (paths/regular-file? fixture-source)))
-       (fail! "Independent package-consumer source is missing"
-              {:path (str fixture-source)}))
-     (let [artifact (:artifact package-proof)
-           inspection (:inspection package-proof)]
-       (write-text! consumer-project-file
-                    (consumer-project id version consumer-target-framework))
-       (write-text! nuget-config-file (nuget-config feed (map :id identities)))
-       (if fixture-source
-         (Files/copy fixture-source consumer-source
-                     (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-         (write-text! consumer-source
-                      (compile-only-consumer (:success-message consumer-profile)
-                                             (:compile-types consumer-profile))))
-       (run-command! {:command ["dotnet" "restore" (str consumer-project-file)
-                                "--configfile" (str nuget-config-file)
-                                "--packages" (str packages)
-                                "--no-cache" "--force" "--force-evaluate"]
-                      :directory consumer})
-       (let [dependency-proof
-             (inspect-consumer-dependencies!
-              consumer-project-file (paths/resolve-path consumer "obj" "project.assets.json")
-              packages (:identity package-proof) identities)]
-         (run-command! {:command ["dotnet" "build" (str consumer-project-file)
-                                  "--nologo" "--verbosity:minimal" "--no-restore"
-                                  "--no-incremental" "-warnaserror"]
-                        :directory consumer})
-         (let [run-result
-               (run-command! {:command ["dotnet" "run"
-                                        "--project" (str consumer-project-file)
-                                        "--no-build" "--no-restore"]
-                              :directory consumer})
-               identity {:id id :version version :sha256 (sha256 artifact)
-                         :file (str (.getFileName ^Path artifact))}]
-           (when-not (str/includes? (:output run-result)
-                                    (:success-message consumer-profile))
-             (fail! "Independent package consumer did not report successful behavior checks"
-                    {:output (:output run-result)}))
-           (println "Independent NuGet consumption passed:" (pr-str identity))
-           {:verification verification
-            :artifact artifact
-            :identity identity
-            :inspection inspection
-            :packages (:packages package-proof)
-            :external-packages (:external-packages package-proof)
-            :feed feed
-            :packing-summary (:summary package-proof)
-            :dependency-proof dependency-proof
-            :proof-root proof-root
-            :packages-root packages
-            :consumer-root consumer
-            :run run-result}))))))
+         identities (available-identities package-proof)
+         consumer-proof
+         (verify-packed-consumer!
+          {:workspace-root root
+           :package-proof package-proof
+           :consumer-name "primary"
+           :consumer-profile consumer-profile
+           :selected-packages [{:id id :version version}]
+           :expected-packages
+           (mapv #(select-keys % [:id :version]) identities)
+           :target-framework target-framework
+           :run-command! run-command!})
+         artifact (:artifact package-proof)
+         identity {:id id :version version :sha256 (sha256 artifact)
+                   :file (str (.getFileName ^Path artifact))}]
+     (println "Independent NuGet consumption passed:" (pr-str identity))
+     {:verification verification
+      :artifact artifact
+      :identity identity
+      :inspection (:inspection package-proof)
+      :packages (:packages package-proof)
+      :external-packages (:external-packages package-proof)
+      :feed (:feed package-proof)
+      :packing-summary (:summary package-proof)
+      :dependency-proof (:dependency-proof consumer-proof)
+      :proof-root (:proof-root package-proof)
+      :packages-root (:packages-root consumer-proof)
+      :consumer-root (:consumer-root consumer-proof)
+      :run (:run consumer-proof)})))

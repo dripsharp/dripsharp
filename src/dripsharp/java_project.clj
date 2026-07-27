@@ -114,6 +114,14 @@
     (when-not (and (string? license) (not (str/blank? license)))
       (destination-error "Destination license expression must be non-blank"
                          {:license-expression license})))
+  (when-let [copyright (get-in configuration [:package :copyright])]
+    (when-not (and (string? copyright) (not (str/blank? copyright)))
+      (destination-error "Destination package copyright must be non-blank"
+                         {:copyright copyright})))
+  (when-let [symbols (get-in configuration [:package :symbols])]
+    (when-not (= :snupkg symbols)
+      (destination-error "Destination package symbol format is unsupported"
+                         {:symbols symbols})))
   (doseq [key [:project-directory :source-directory :resource-directory
                :project-file :source-map-file :diagnostics-file :manifest-file
                :public-metadata-file :annotation-decisions-file]]
@@ -313,6 +321,8 @@
          "    <Title>" (xml-escape (:title package)) "</Title>\n"
          "    <Description>" (xml-escape (:description package)) "</Description>\n"
          "    <Authors>" (xml-escape (:authors package)) "</Authors>\n"
+         (when-let [copyright (:copyright package)]
+           (str "    <Copyright>" (xml-escape copyright) "</Copyright>\n"))
          "    <PackageTags>" (xml-escape (:tags package)) "</PackageTags>\n"
          "    <PackageProjectUrl>" (xml-escape (:project-url package)) "</PackageProjectUrl>\n"
          "    <RepositoryUrl>" (xml-escape (:repository-url package)) "</RepositoryUrl>\n"

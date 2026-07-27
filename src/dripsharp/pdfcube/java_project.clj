@@ -2793,6 +2793,12 @@
    :version "4.150.1"
    :projection :skia-sharp-native-assets})
 
+(def ^:private package-authors
+  "Vibeformer")
+
+(def ^:private package-copyright
+  "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt.")
+
 (def ^:private legal-files
   [{:kind :license
     :source "research/pdfbox/LICENSE.txt"
@@ -3089,6 +3095,12 @@
              [[:package :version] (get-in configuration [:package :version])]
              [[:package :repository-commit]
               (get-in configuration [:package :repository-commit])]
+             [[:package :authors]
+              (get-in configuration [:package :authors])]
+             [[:package :copyright]
+              (get-in configuration [:package :copyright])]
+             [[:package :symbols]
+              (get-in configuration [:package :symbols])]
              [:mechanical-source (:mechanical-source configuration)]
              [:source-project-id (:source-project-id configuration)]
              [:namespaces (:namespaces configuration)]
@@ -3120,6 +3132,9 @@
               [:package :id] package-id
               [:package :version] "3.0.8-dripsharp.0"
               [:package :repository-commit] source-revision
+              [:package :authors] package-authors
+              [:package :copyright] package-copyright
+              [:package :symbols] :snupkg
               :mechanical-source mechanical-source
               :source-project-id (:source-project-id product)
               :namespaces {}
@@ -3226,7 +3241,10 @@
                 "DRIPSHARP_PDFBOX_CRYPTO</DefineConstants>\n"))
          "    <PackageLicenseFile>"
          (xml-escape (:package-path license))
-         "</PackageLicenseFile>\n")
+         "</PackageLicenseFile>\n"
+         "    <DebugType>portable</DebugType>\n"
+         "    <IncludeSymbols>true</IncludeSymbols>\n"
+         "    <SymbolPackageFormat>snupkg</SymbolPackageFormat>\n")
         items
         (str
          (apply str

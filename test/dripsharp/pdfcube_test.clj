@@ -406,6 +406,11 @@
       (is (= "net10.0" (get-in destination [:project :target-framework])))
       (is (= "disable" (get-in destination [:project :nullable])))
       (is (true? (get-in destination [:project :warnings-as-errors])))
+      (is (= "Vibeformer" (get-in destination [:package :authors])))
+      (is (= :snupkg (get-in destination [:package :symbols])))
+      (is (= (str "Portions Copyright The Apache Software Foundation and "
+                  "other upstream contributors; see NOTICE.txt.")
+             (get-in destination [:package :copyright])))
       (is (= {:public-identifiers :csharp
               :methods :methods :fields :fields :overloads :overloads}
              (:name-policy destination)))
@@ -504,6 +509,16 @@
                        "<PackageReference Include=\"Microsoft.Extensions.Logging.Abstractions\" Version=\"10.0.0\" />"))
     (is (str/includes? project-text
                        "<PackageLicenseFile>LICENSE.txt</PackageLicenseFile>"))
+    (is (str/includes? project-text
+                       "<IncludeSymbols>true</IncludeSymbols>"))
+    (is (str/includes? project-text
+                       "<SymbolPackageFormat>snupkg</SymbolPackageFormat>"))
+    (is (str/includes? project-text
+                       "<DebugType>portable</DebugType>"))
+    (is (str/includes?
+         project-text
+         (str "<Copyright>Portions Copyright The Apache Software Foundation "
+              "and other upstream contributors; see NOTICE.txt.</Copyright>")))
     (is (str/includes? project-text
                        "Pack=\"true\" PackagePath=\"NOTICE.txt\""))
     (is (not (str/includes? project-text "BouncyCastle")))))

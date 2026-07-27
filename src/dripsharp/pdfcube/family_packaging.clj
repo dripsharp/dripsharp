@@ -1,0 +1,547 @@
+(ns dripsharp.pdfcube.family-packaging
+  "Deterministic NuGet, legal, native-asset, symbol, and fresh isolated
+  consumption gate for the complete five-package PdfCube family."
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
+            [dripsharp.packaging :as packaging]
+            [dripsharp.paths :as paths]
+            [dripsharp.process :as process])
+  (:import [java.nio ByteBuffer ByteOrder]
+           [java.nio.file Files OpenOption Path]
+           [java.security MessageDigest]
+           [java.util.zip ZipFile]))
+
+(def ^:private source-revision
+  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+
+(def ^:private package-version
+  "3.0.8-dripsharp.0")
+
+(def ^:private assembly-version
+  "3.0.8.0")
+
+(def ^:private target-framework
+  "net10.0")
+
+(def ^:private package-authors
+  "Vibeformer")
+
+(def ^:private package-copyright
+  "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt.")
+
+(def ^:private common-legal-files
+  [{:kind :license
+    :path "LICENSE.txt"
+    :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
+   {:kind :notice
+    :path "NOTICE.txt"
+    :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}])
+
+(def ^:private codec-legal-files
+  [{:kind :notice
+    :path "THIRD-PARTY/JBIG2-LICENSE.txt"
+    :sha256 "4b2076ee892bdcf3bcc6f09e68146d2d0b3a4d2c0c66a00383b6e768be128e68"}
+   {:kind :notice
+    :path "THIRD-PARTY/COREJ2K-LICENSE.txt"
+    :sha256 "2b718cb2d9c117bc0744a9f421083e8b282765e920b71d547a683d257e8cea77"}
+   {:kind :notice
+    :path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
+    :sha256 "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}])
+
+(def ^:private package-contract
+  {"PdfCube.IO"
+   {:profile "pdfcube-io"
+    :primary? false
+    :assembly-dependencies []
+    :dependencies
+    [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]
+    :resources 0
+    :package-files common-legal-files}
+
+   "PdfCube.FontBox"
+   {:profile "pdfcube-fontbox"
+    :primary? false
+    :assembly-dependencies ["PdfCube.IO"]
+    :dependencies
+    [{:id "PdfCube.IO" :version package-version}
+     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+     {:id "SkiaSharp" :version "4.150.1"}
+     {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
+    :resources 93
+    :package-files common-legal-files}
+
+   "PdfCube.XmpBox"
+   {:profile "pdfcube-xmpbox"
+    :primary? false
+    :assembly-dependencies []
+    :dependencies
+    [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]
+    :resources 0
+    :package-files common-legal-files}
+
+   "PdfCube.PdfBox"
+   {:profile "pdfcube-pdfbox"
+    :primary? false
+    :assembly-dependencies ["PdfCube.FontBox" "PdfCube.IO"]
+    :dependencies
+    [{:id "PdfCube.FontBox" :version package-version}
+     {:id "PdfCube.IO" :version package-version}
+     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+     {:id "SkiaSharp" :version "4.150.1"}
+     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}]
+    :resources 22
+    :package-files (into common-legal-files codec-legal-files)}
+
+   "PdfCube.Preflight"
+   {:profile "pdfcube-preflight"
+    :primary? true
+    :assembly-dependencies
+    ["PdfCube.FontBox" "PdfCube.IO" "PdfCube.PdfBox" "PdfCube.XmpBox"]
+    :dependencies
+    [{:id "PdfCube.PdfBox" :version package-version}
+     {:id "PdfCube.XmpBox" :version package-version}
+     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+     {:id "SkiaSharp" :version "4.150.1"}]
+    :resources 0
+    :package-files common-legal-files}})
+
+(def ^:private external-package-contract
+  #{{:id "Microsoft.Extensions.DependencyInjection.Abstractions"
+     :version "10.0.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "SkiaSharp" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.macOS" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.Win32" :version "4.150.1"}
+    {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}})
+
+(def ^:private restored-closures
+  {"PdfCube.IO"
+   #{"PdfCube.IO"
+     "Microsoft.Extensions.DependencyInjection.Abstractions"
+     "Microsoft.Extensions.Logging.Abstractions"}
+
+   "PdfCube.FontBox"
+   #{"PdfCube.IO" "PdfCube.FontBox"
+     "Microsoft.Extensions.DependencyInjection.Abstractions"
+     "Microsoft.Extensions.Logging.Abstractions"
+     "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
+     "SkiaSharp.NativeAssets.macOS" "SkiaSharp.NativeAssets.Win32"}
+
+   "PdfCube.XmpBox"
+   #{"PdfCube.XmpBox"
+     "Microsoft.Extensions.DependencyInjection.Abstractions"
+     "Microsoft.Extensions.Logging.Abstractions"}
+
+   "PdfCube.PdfBox"
+   #{"PdfCube.IO" "PdfCube.FontBox" "PdfCube.PdfBox"
+     "Microsoft.Extensions.DependencyInjection.Abstractions"
+     "Microsoft.Extensions.Logging.Abstractions"
+     "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
+     "SkiaSharp.NativeAssets.macOS" "SkiaSharp.NativeAssets.Win32"
+     "System.Security.Cryptography.Pkcs"}
+
+   "PdfCube.Preflight"
+   #{"PdfCube.IO" "PdfCube.FontBox" "PdfCube.XmpBox"
+     "PdfCube.PdfBox" "PdfCube.Preflight"
+     "Microsoft.Extensions.DependencyInjection.Abstractions"
+     "Microsoft.Extensions.Logging.Abstractions"
+     "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
+     "SkiaSharp.NativeAssets.macOS" "SkiaSharp.NativeAssets.Win32"
+     "System.Security.Cryptography.Pkcs"}})
+
+(def ^:private aggregate-consumer
+  {:strategy :compile-only
+   :project-file "PdfCube.Family.PackageConsumer.csproj"
+   :compile-types
+   ["PdfCube.IO.RandomAccessRead"
+    "PdfCube.FontBox.Util.BoundingBox"
+    "PdfCube.XmpBox.XMPMetadata"
+    "PdfCube.PdfBox.Pdmodel.PDDocument"
+    "PdfCube.Preflight.PreflightConstants"]
+   :success-message "Complete PdfCube package family restored together."})
+
+(def ^:private native-assets
+  {"SkiaSharp.NativeAssets.Linux"
+   #{"runtimes/linux-x64/native/libSkiaSharp.so"
+     "runtimes/linux-arm64/native/libSkiaSharp.so"}
+   "SkiaSharp.NativeAssets.Win32"
+   #{"runtimes/win-x64/native/libSkiaSharp.dll"
+     "runtimes/win-arm64/native/libSkiaSharp.dll"}
+   "SkiaSharp.NativeAssets.macOS"
+   #{"runtimes/osx/native/libSkiaSharp.dylib"}})
+
+(defn- fail!
+  [message data]
+  (throw
+   (ex-info message
+            (assoc data :kind :pdfcube-family-packaging-failed))))
+
+(defn- sha256-file
+  [^Path file]
+  (let [digest (MessageDigest/getInstance "SHA-256")]
+    (with-open [input (Files/newInputStream
+                       file (make-array OpenOption 0))]
+      (let [buffer (byte-array 16384)]
+        (loop [read (.read input buffer)]
+          (when-not (neg? read)
+            (when (pos? read)
+              (.update digest buffer 0 read))
+            (recur (.read input buffer))))))
+    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+
+(defn- regular-files
+  [^Path directory]
+  (if-not (paths/directory? directory)
+    []
+    (with-open [entries (Files/list directory)]
+      (->> (.toArray entries)
+           (map #(cast Path %))
+           (filter paths/regular-file?)
+           (sort-by str)
+           vec))))
+
+(defn- zip-entry-names
+  [artifact]
+  (with-open [archive (ZipFile. (str artifact))]
+    (->> (enumeration-seq (.entries archive))
+         (remove #(.isDirectory ^java.util.zip.ZipEntry %))
+         (map #(.getName ^java.util.zip.ZipEntry %))
+         set)))
+
+(defn- zip-entry-bytes
+  [artifact entry-name]
+  (with-open [archive (ZipFile. (str artifact))]
+    (when-let [entry (.getEntry archive entry-name)]
+      (with-open [input (.getInputStream archive entry)]
+        (.readAllBytes input)))))
+
+(defn- macos-architectures
+  [bytes]
+  (when (< (alength ^bytes bytes) 8)
+    (fail! "SkiaSharp macOS native asset is truncated"
+           {:bytes (alength ^bytes bytes)}))
+  (let [buffer (doto (ByteBuffer/wrap bytes)
+                 (.order ByteOrder/BIG_ENDIAN))
+        magic (Integer/toUnsignedLong (.getInt buffer))
+        count (Integer/toUnsignedLong (.getInt buffer))]
+    (when-not (= 0xcafebabe magic)
+      (fail! "SkiaSharp macOS native asset is not a universal Mach-O binary"
+             {:expected "cafebabe" :actual (format "%08x" magic)}))
+    (when (or (zero? count) (> count 32)
+              (< (.remaining buffer) (* count 20)))
+      (fail! "SkiaSharp macOS universal binary has an invalid architecture table"
+             {:architectures count :remaining (.remaining buffer)}))
+    (into
+     #{}
+     (for [_ (range count)]
+       (let [cpu (Integer/toUnsignedLong (.getInt buffer))]
+         (.position buffer (+ (.position buffer) 16))
+         cpu)))))
+
+(defn inspect-native-assets!
+  "Requires the official SkiaSharp host packages and the x64/ARM64 payloads
+  needed by PdfCube's Windows, Linux, and macOS platform contract."
+  [feed external-packages]
+  (let [by-id (into {} (map (juxt :id identity)) external-packages)]
+    (into
+     (sorted-map)
+     (for [[id required] native-assets
+           :let [package (get by-id id)
+                 _ (when-not (= "4.150.1" (:version package))
+                     (fail! "Required SkiaSharp native-assets package is missing or wrong"
+                            {:id id :expected "4.150.1"
+                             :actual (some-> package :version)}))
+                 artifact (paths/resolve-path feed (:file package))
+                 entries (zip-entry-names artifact)
+                 missing (set/difference required entries)
+                 _ (when (seq missing)
+                     (fail! "SkiaSharp native-assets package is missing a supported host payload"
+                            {:id id :missing (vec (sort missing))}))
+                 architectures
+                 (when (= id "SkiaSharp.NativeAssets.macOS")
+                   (macos-architectures
+                    (zip-entry-bytes
+                     artifact "runtimes/osx/native/libSkiaSharp.dylib")))
+                 _ (when (and architectures
+                              (not (set/subset?
+                                    #{0x01000007 0x0100000c}
+                                    architectures)))
+                     (fail! "SkiaSharp macOS native asset lacks x64 or ARM64"
+                            {:expected ["x64" "arm64"]
+                             :actual (vec (sort architectures))}))]]
+       [id {:required-entries (vec (sort required))
+            :architectures
+            (when architectures
+              ["x64" "arm64"])}]))))
+
+(defn- exact-feed-artifacts!
+  [package-proof]
+  (let [feed (:feed package-proof)
+        packages (:packages package-proof)
+        external (:external-packages package-proof)
+        identities
+        (concat
+         (map :identity packages)
+         (keep :symbol packages)
+         external)
+        expected-files (set (map :file identities))
+        actual-files
+        (set (map #(str (.getFileName ^Path %)) (regular-files feed)))]
+    (when-not (= expected-files actual-files)
+      (fail! "Fresh PdfCube local feed contains missing, leaked, or stale artifacts"
+             {:expected (vec (sort expected-files))
+              :actual (vec (sort actual-files))
+              :missing (vec (sort (set/difference expected-files actual-files)))
+              :stale (vec (sort (set/difference actual-files expected-files)))}))
+    (doseq [{:keys [file sha256]} identities]
+      (let [artifact (paths/resolve-path feed file)
+            actual (when (paths/regular-file? artifact)
+                     (sha256-file artifact))]
+        (when-not (= sha256 actual)
+          (fail! "Fresh PdfCube feed artifact differs from its inspected identity"
+                 {:file file :expected sha256 :actual actual}))))
+    {:artifacts (count identities)
+     :files (vec (sort expected-files))}))
+
+(defn- exact-package-contract
+  [package]
+  (let [id (get-in package [:identity :id])
+        expected (get package-contract id)
+        destination (:destination package)
+        symbol (:symbol package)
+        symbol-inspection (:symbol-inspection package)
+        actual
+        {:profile (:profile package)
+         :primary? (boolean (:primary? package))
+         :version (get-in package [:identity :version])
+         :target-framework (get-in destination [:project :target-framework])
+         :assembly
+         (get-in package [:resource-proof :assembly-identity])
+         :dependencies (get-in package [:inspection :dependencies])
+         :resources (count (:resources package))
+         :package-files (get-in package [:inspection :package-files])
+         :metadata
+         (select-keys (:package destination)
+                      [:id :version :authors :copyright :symbols
+                       :repository-url :repository-type :repository-commit])
+         :symbol
+         {:id (:id symbol)
+          :version (:version symbol)
+          :pdb-entry (:pdb-entry symbol-inspection)
+          :pdb-sha256 (:pdb-sha256 symbol-inspection)
+          :dependencies (:dependencies symbol-inspection)}}]
+    (when-not expected
+      (fail! "Packed an unapproved PdfCube package"
+             {:id id :approved (vec (sort (keys package-contract)))}))
+    (doseq [[subject value]
+            [[:package-sha256 (get-in package [:identity :sha256])]
+             [:symbol-sha256 (:sha256 symbol)]
+             [:pdb-sha256 (:pdb-sha256 symbol-inspection)]]]
+      (when-not (re-matches #"[0-9a-f]{64}" (or value ""))
+        (fail! "PdfCube package proof contains an invalid artifact fingerprint"
+               {:id id :subject subject :actual value})))
+    (let [expected
+          {:profile (:profile expected)
+           :primary? (:primary? expected)
+           :version package-version
+           :target-framework target-framework
+           :assembly
+           {:name id
+            :version assembly-version
+            :dependency-assemblies (:assembly-dependencies expected)}
+           :dependencies (:dependencies expected)
+           :resources (:resources expected)
+           :package-files (:package-files expected)
+           :metadata
+           {:id id
+            :version package-version
+            :authors package-authors
+            :copyright package-copyright
+            :symbols :snupkg
+            :repository-url "https://github.com/apache/pdfbox.git"
+            :repository-type "git"
+            :repository-commit source-revision}
+           :symbol
+           {:id id
+            :version package-version
+            :pdb-entry (str "lib/" target-framework "/" id ".pdb")
+            :pdb-sha256 (get-in actual [:symbol :pdb-sha256])
+            :dependencies (:dependencies expected)}}]
+      (when-not (= expected actual)
+        (fail! "Packed PdfCube artifact violates its exact package contract"
+               {:id id :expected expected :actual actual}))
+      actual)))
+
+(defn validate-package-family!
+  "Requires exactly five deterministic inspected packages and symbol packages,
+  their exact direct dependencies and legal/resource payloads, the approved
+  external closure, host-native assets, and a fresh feed with no stale output."
+  [package-proof]
+  (let [packages (:packages package-proof)
+        package-ids (mapv #(get-in % [:identity :id]) packages)
+        duplicates (->> package-ids frequencies
+                        (filter #(< 1 (val %))) (map key) sort vec)
+        _ (when (seq duplicates)
+            (fail! "PdfCube family package proof contains duplicate identities"
+                   {:duplicates duplicates}))
+        actual-ids (set package-ids)
+        expected-ids (set (keys package-contract))
+        _ (when-not (= expected-ids actual-ids)
+            (fail! "PdfCube family package proof does not contain exactly five packages"
+                   {:expected (vec (sort expected-ids))
+                    :actual (vec (sort actual-ids))}))
+        _ (when-not (= 2 (get-in package-proof [:summary :clean-builds]))
+            (fail! "PdfCube package family was not packed from two clean builds"
+                   {:expected 2
+                    :actual (get-in package-proof [:summary :clean-builds])}))
+        _ (when-not (= source-revision
+                       (get-in package-proof [:summary :repository-commit]))
+            (fail! "PdfCube packages do not identify the synchronized source revision"
+                   {:expected source-revision
+                    :actual (get-in package-proof
+                                    [:summary :repository-commit])}))
+        external
+        (set (map #(select-keys % [:id :version])
+                  (:external-packages package-proof)))
+        _ (when-not (= external-package-contract external)
+            (fail! "PdfCube package family restored an unapproved external dependency closure"
+                   {:expected (vec (sort-by :id external-package-contract))
+                    :actual (vec (sort-by :id external))}))
+        validated (mapv exact-package-contract packages)
+        feed (exact-feed-artifacts! package-proof)
+        native (inspect-native-assets!
+                (:feed package-proof) (:external-packages package-proof))]
+    {:clean-builds 2
+     :packages (into (sorted-map)
+                     (map (juxt #(get-in % [:metadata :id]) identity))
+                     validated)
+     :external-packages (vec (sort-by :id external))
+     :feed feed
+     :native-assets native}))
+
+(defn- identity-contract
+  [ids]
+  (mapv
+   (fn [id]
+     {:id id
+      :version
+      (if (str/starts-with? id "PdfCube.")
+        package-version
+        (:version
+         (first (filter #(= id (:id %)) external-package-contract))))})
+   (sort ids)))
+
+(defn- validate-consumers!
+  [consumer-proofs]
+  (let [names (mapv :consumer-name consumer-proofs)
+        expected-names
+        (conj (set (keys package-contract)) "complete-family")
+        actual-names (set names)
+        roots (mapv #(str (:packages-root %)) consumer-proofs)]
+    (when-not (= expected-names actual-names)
+      (fail! "PdfCube family consumption did not run every required fresh consumer"
+             {:expected (vec (sort expected-names))
+              :actual (vec (sort actual-names))}))
+    (when-not (= (count roots) (count (set roots)))
+      (fail! "PdfCube package consumers reused an isolated package cache"
+             {:package-caches roots}))
+    (doseq [proof consumer-proofs
+            :let [name (:consumer-name proof)
+                  complete? (= "complete-family" name)
+                  direct
+                  (set (map first
+                            (get-in proof
+                                    [:dependency-proof :package-references])))
+                  expected-direct (if complete?
+                                    (set (keys package-contract))
+                                    #{name})
+                  restored
+                  (set (map :id
+                            (get-in proof
+                                    [:dependency-proof :packages])))
+                  expected-restored
+                  (if complete?
+                    (get restored-closures "PdfCube.Preflight")
+                    (get restored-closures name))]]
+      (when-not (= expected-direct direct)
+        (fail! "Fresh PdfCube consumer has the wrong direct package references"
+               {:consumer name :expected expected-direct :actual direct}))
+      (when-not (= expected-restored restored)
+        (fail! "Fresh PdfCube consumer restored the wrong package closure"
+               {:consumer name :expected expected-restored :actual restored})))
+    {:consumers (count consumer-proofs)
+     :package-caches roots
+     :restored
+     (into (sorted-map)
+           (map (fn [proof]
+                  [(:consumer-name proof)
+                   (mapv #(select-keys % [:id :version])
+                         (get-in proof [:dependency-proof :packages]))]))
+           consumer-proofs)}))
+
+(defn verify!
+  "Packs the five PdfCube projects twice, validates their exact artifact family,
+  then runs five separate and one all-family fresh local-feed consumers."
+  ([]
+   (verify! {}))
+  ([{:keys [workspace-root pack-fn consumer-fn run-command!]
+     :or {pack-fn packaging/pack-verified-profile!
+          consumer-fn packaging/verify-packed-consumer!
+          run-command! process/run!}}]
+   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
+         package-proof
+         (pack-fn {:workspace-root root
+                   :profile "pdfcube-preflight"
+                   :run-command! run-command!})
+         package-evidence (validate-package-family! package-proof)
+         by-id
+         (into {}
+               (map (juxt #(get-in % [:identity :id]) identity))
+               (:packages package-proof))
+         product-consumers
+         (mapv
+          (fn [id]
+            (let [package (get by-id id)]
+              (consumer-fn
+               {:workspace-root root
+                :package-proof package-proof
+                :consumer-name id
+                :consumer-profile
+                (get-in package [:destination :package-consumer])
+                :selected-packages
+                [{:id id :version package-version}]
+                :expected-packages
+                (identity-contract (get restored-closures id))
+                :target-framework target-framework
+                :run-command! run-command!})))
+          (sort (keys package-contract)))
+         family-consumer
+         (consumer-fn
+          {:workspace-root root
+           :package-proof package-proof
+           :consumer-name "complete-family"
+           :consumer-profile aggregate-consumer
+           :selected-packages
+           (identity-contract (set (keys package-contract)))
+           :expected-packages
+           (identity-contract (get restored-closures "PdfCube.Preflight"))
+           :target-framework target-framework
+           :run-command! run-command!})
+         consumption
+         (validate-consumers! (conj product-consumers family-consumer))
+         summary
+         {:source {:version "3.0.8" :revision source-revision}
+          :clean-builds 2
+          :packages (count (:packages package-evidence))
+          :symbol-packages (count (:packages package-evidence))
+          :external-packages (count (:external-packages package-evidence))
+          :native-hosts 6
+          :consumers (:consumers consumption)
+          :feed-artifacts (get-in package-evidence [:feed :artifacts])}]
+     (println "Deterministic isolated PdfCube package-family proof passed:"
+              (pr-str summary))
+     {:summary summary
+      :package-proof package-proof
+      :packages package-evidence
+      :consumption consumption})))

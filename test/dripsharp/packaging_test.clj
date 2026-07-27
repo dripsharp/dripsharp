@@ -327,7 +327,13 @@
             "xmpbox" []
             "preflight" ["Package.pdfbox" "Package.xmpbox"]}
            dependency-ids))
-    (is (= dependency-ids assembly-dependencies))
+    (is (= {"io" []
+            "fontbox" ["Package.io"]
+            "pdfbox" ["Package.fontbox" "Package.io"]
+            "xmpbox" []
+            "preflight" ["Package.fontbox" "Package.io"
+                         "Package.pdfbox" "Package.xmpbox"]}
+           assembly-dependencies))
     (is (= [false false false false true]
            (mapv :primary? specs)))))
 
@@ -657,7 +663,32 @@
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (is (= :package-consumption-failed (:kind (ex-data error))))
       (is (= "https://licenses.nuget.org/Apache-2.0"
-             (:expected (ex-data error)))))))
+             (:expected (ex-data error))))))
+  (testing "copyright metadata is exact when configured"
+    (let [copyright "Portions Copyright upstream contributors."
+          copyrighted (assoc package :copyright copyright)
+          with-copyright
+          (str/replace (nuspec)
+                       (str "<authors>" (:authors package) "</authors>")
+                       (str "<authors>" (:authors package) "</authors>"
+                            "<copyright>" copyright "</copyright>"))
+          artifact
+          (package-archive! {"Pkl.Parser.nuspec" with-copyright
+                             "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          inspection
+          (packaging/inspect-package!
+           artifact copyrighted "net8.0" "Pkl.Parser")
+          error
+          (try
+            (packaging/inspect-package!
+             artifact (assoc copyrighted :copyright "wrong")
+             "net8.0" "Pkl.Parser")
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= [] (:dependencies inspection)))
+      (is (= :package-consumption-failed (:kind (ex-data error))))
+      (is (= "wrong" (:expected (ex-data error))))
+      (is (= copyright (:actual (ex-data error)))))))
 
 (deftest package-inspection-rejects-unexpected-metadata-and-attributes
   (doseq [[label altered]
