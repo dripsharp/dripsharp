@@ -151,15 +151,12 @@
      "System.Security.Cryptography.Pkcs"}})
 
 (def ^:private aggregate-consumer
-  {:strategy :compile-only
+  {:strategy :source-file
    :project-file "PdfCube.Family.PackageConsumer.csproj"
-   :compile-types
-   ["PdfCube.IO.RandomAccessRead"
-    "PdfCube.FontBox.Util.BoundingBox"
-    "PdfCube.XmpBox.XMPMetadata"
-    "PdfCube.PdfBox.Pdmodel.PDDocument"
-    "PdfCube.Preflight.PreflightConstants"]
-   :success-message "Complete PdfCube package family restored together."})
+   :source-path
+   "validation/pdfcube-family/PdfCube.Family.FocusedConsumer.cs"
+   :success-message
+   "Complete PdfCube package family runtime workflow passed."})
 
 (def ^:private native-assets
   {"SkiaSharp.NativeAssets.Linux"
@@ -544,4 +541,5 @@
      {:summary summary
       :package-proof package-proof
       :packages package-evidence
-      :consumption consumption})))
+      :consumption consumption
+      :consumer-proofs (conj product-consumers family-consumer)})))

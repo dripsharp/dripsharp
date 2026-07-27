@@ -255,3 +255,11 @@
           error (caught #(#'family-packaging/validate-consumers! reused))]
       (is (= :pdfcube-family-packaging-failed (:kind (ex-data error))))
       (is (= 6 (count (:package-caches (ex-data error))))))))
+
+(deftest all-family-consumer-executes-public-runtime-workflows
+  (let [consumer @#'family-packaging/aggregate-consumer]
+    (is (= :source-file (:strategy consumer)))
+    (is (= "validation/pdfcube-family/PdfCube.Family.FocusedConsumer.cs"
+           (:source-path consumer)))
+    (is (= "Complete PdfCube package family runtime workflow passed."
+           (:success-message consumer)))))
