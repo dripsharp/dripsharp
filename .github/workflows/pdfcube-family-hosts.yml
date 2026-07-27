@@ -1,0 +1,219 @@
+name: Complete PdfCube family supported hosts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-proof:
+    runs-on: [self-hosted, linux, x64, dripsharp-proof]
+    timeout-minutes: 120
+    env:
+      DRIPSHARP_WORKERS: 22
+      JAVA_TOOL_OPTIONS: -Xmx28g
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the pinned PDFBox source
+        run: git submodule update --init --depth 1 research/pdfbox
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify proof-runner resources
+        shell: bash
+        run: |
+          available_kib=$(awk '/MemTotal/ { print $2 }' /proc/meminfo)
+          available_cpu=$(getconf _NPROCESSORS_ONLN)
+          if (( available_kib < 33554432 || available_cpu < 22 )); then
+            echo "Complete PdfCube package proof requires at least 32 GiB RAM and 22 CPUs."
+            exit 1
+          fi
+
+      - name: Cleanly pack and prove the complete family
+        run: clojure -J-Xmx28g -M:run pdfcube-family-workflows
+
+      - name: Stage host fixtures and canonical observations
+        shell: bash
+        run: |
+          fixtures="target/pdfcube-family-host-fixtures"
+          canonical="target/pdfcube-family-host-canonical"
+          mkdir -p \
+            "$fixtures/fontbox-resources" \
+            "$fixtures/fontbox-fonts" \
+            "$fixtures/xmpbox-resources" \
+            "$fixtures/security/pdfbox/src/test/resources/org/apache/pdfbox/encryption" \
+            "$fixtures/security/examples/src/test/resources/org/apache/pdfbox/examples/signature" \
+            "$canonical"
+          cp -R research/pdfbox/fontbox/src/test/resources/. \
+            "$fixtures/fontbox-resources/"
+          cp -R research/pdfbox/fontbox/target/fonts/. \
+            "$fixtures/fontbox-fonts/"
+          cp -R research/pdfbox/xmpbox/src/test/resources/. \
+            "$fixtures/xmpbox-resources/"
+          cp -R \
+            research/pdfbox/pdfbox/src/test/resources/org/apache/pdfbox/encryption/. \
+            "$fixtures/security/pdfbox/src/test/resources/org/apache/pdfbox/encryption/"
+          cp -R \
+            research/pdfbox/examples/src/test/resources/org/apache/pdfbox/examples/signature/. \
+            "$fixtures/security/examples/src/test/resources/org/apache/pdfbox/examples/signature/"
+          cp validation/pdfcube-io/CanonicalTrace.tsv "$canonical/io.tsv"
+          cp validation/pdfcube-fontbox/canonical-trace.tsv \
+            "$canonical/fontbox.tsv"
+          cp \
+            validation-output/pdfcube-xmpbox-metadata-differential/upstream-java.tsv \
+            "$canonical/xmpbox.tsv"
+          cp \
+            validation-output/pdfcube-pdfbox-differential/host/upstream-printing.tsv \
+            "$canonical/printing.tsv"
+
+      - name: Upload the complete local package feed
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcube-family-local-feed
+          path: target/package-proof/feed/*.nupkg
+          if-no-files-found: error
+
+      - name: Upload supported-host fixtures
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcube-family-host-fixtures
+          path: target/pdfcube-family-host-fixtures
+          if-no-files-found: error
+
+      - name: Upload canonical CPU observations
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcube-family-host-canonical
+          path: target/pdfcube-family-host-canonical
+          if-no-files-found: error
+
+      - name: Upload the complete family proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcube-family-package-proof
+          path: validation-output/pdfcube-family-workflows
+          if-no-files-found: error
+
+  host-smoke:
+    needs: package-proof
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            architecture: x64
+            runner: windows-2025
+          - os: windows
+            architecture: arm64
+            runner: windows-11-arm
+          - os: linux
+            architecture: x64
+            runner: ubuntu-24.04
+          - os: linux
+            architecture: arm64
+            runner: ubuntu-24.04-arm
+          - os: macos
+            architecture: x64
+            runner: macos-15-intel
+          - os: macos
+            architecture: arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pdfcube-family-local-feed
+          path: target/pdfcube-family-host-feed
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pdfcube-family-host-fixtures
+          path: target/pdfcube-family-host-fixtures
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pdfcube-family-host-canonical
+          path: target/pdfcube-family-host-canonical
+
+      - name: Restore, build, and smoke the complete package family
+        shell: pwsh
+        run: |
+          .github/scripts/pdfcube-family-host-smoke.ps1 `
+            -OperatingSystem "${{ matrix.os }}" `
+            -Architecture "${{ matrix.architecture }}" `
+            -FixtureRoot "target/pdfcube-family-host-fixtures" `
+            -CanonicalRoot "target/pdfcube-family-host-canonical" `
+            -PackagesRoot "target/pdfcube-family-host-packages" `
+            -Evidence `
+              "target/pdfcube-family-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
+
+      - name: Upload host evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcube-family-host-${{ matrix.os }}-${{ matrix.architecture }}
+          path: |
+            target/pdfcube-family-${{ matrix.os }}-${{ matrix.architecture }}.tsv
+            target/pdfcube-family-${{ matrix.os }}-${{ matrix.architecture }}/dotnet-info.txt
+          if-no-files-found: error
+
+  matrix-evidence:
+    if: always()
+    needs:
+      - package-proof
+      - host-smoke
+    runs-on: [self-hosted, linux, x64, dripsharp-proof]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+
+      - name: Download every available host record
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pdfcube-family-host-*
+          path: target/pdfcube-family-host-evidence
+          merge-multiple: true
+
+      - name: Require the exact six-host matrix
+        run: >-
+          clojure -M:run pdfcube-family-host-matrix
+          target/pdfcube-family-host-evidence
+          validation-output/pdfcube-family-host-matrix
+
+      - name: Upload the fail-closed matrix report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfcube-family-host-matrix
+          path: validation-output/pdfcube-family-host-matrix
+          if-no-files-found: error
