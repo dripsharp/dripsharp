@@ -242,6 +242,72 @@
   [prefix profile-name]
   (str prefix (str/replace profile-name #"[^A-Za-z0-9_.-]" "_") ".tsv"))
 
+(defn- maven-discovery-group-key
+  [profile source-project]
+  [(str (:path source-project))
+   (or (:maven-pom-file profile) "pom.xml")
+   (:revision source-project)])
+
+(defn- discover-project-inputs!
+  [{:keys [root target graph source-projects discover-reactor-fn]}]
+  (let [entries
+        (mapv
+         (fn [profile-name]
+           {:profile-name profile-name
+            :profile (get-in graph [:prepared profile-name :profile])
+            :source-project (get source-projects profile-name)})
+         (:topological-order graph))
+        maven-groups
+        (->> entries
+             (filter #(= :maven (get-in % [:profile :build-tool])))
+             (group-by #(maven-discovery-group-key
+                         (:profile %) (:source-project %)))
+             (sort-by (comp pr-str key))
+             vec)
+        maven-results
+        (mapv
+         (fn [index [_ group]]
+           (let [{:keys [profile source-project]} (first group)
+                 profile-names (mapv :profile-name group)
+                 project-ids (mapv #(get-in % [:profile :maven-project-id])
+                                   group)
+                 selected-projects
+                 (->> group
+                      (mapcat #(get-in % [:profile :maven-selected-projects]))
+                      distinct
+                      vec)
+                 manifest
+                 (paths/resolve-path
+                  target (str "maven-reactor-inputs-" index ".tsv"))
+                 reactor
+                 (discover-reactor-fn
+                  (cond-> {:workspace-root root
+                           :project-root (:path source-project)
+                           :selected-projects selected-projects
+                           :manifest manifest}
+                    (:maven-pom-file profile)
+                    (assoc :pom-file (:maven-pom-file profile))))
+                 inputs
+                 (into {}
+                       (map (fn [profile-name project-id]
+                              [profile-name
+                               (maven/project-by-id! reactor project-id)])
+                            profile-names project-ids))]
+             {:inputs inputs
+              :invocation
+              {:build-tool :maven
+               :profiles profile-names
+               :project-ids project-ids
+               :selected-projects selected-projects
+               :manifest (portable-path root manifest)}}))
+         (range)
+         maven-groups)
+        results maven-results]
+    {:inputs (apply merge (map :inputs results))
+     :evidence
+     {:schema-version 1
+      :invocations (mapv :invocation results)}}))
+
 (def ^:private expansion-rank {:shell 0 :body 1 :public-api 2})
 
 (defn merge-seeds
@@ -590,25 +656,27 @@
       (assoc emission :public-metadata-file file :public-metadata metadata))))
 
 (defn- generate-prepared-profile!
-  [{:keys [root target graph profile-name source-project dependency-emissions
-           discover-main-fn validate-project-input-fn build-resolved-model-fn
-           build-resolved-closure-fn emit-project-fn primary?]}]
+  [{:keys [root target graph profile-name source-project project-input
+           dependency-emissions discover-main-fn validate-project-input-fn
+           build-resolved-model-fn build-resolved-closure-fn emit-project-fn
+           primary?]}]
   (let [{generation-profile :profile
          destination :destination
          rule-bundle :rule-bundle
          selection :public-surface-strategy}
         (get-in graph [:prepared profile-name])
-        manifest
-        (paths/resolve-path
-         target
-         (if primary?
-           "gradle-main-inputs.tsv"
-           (manifest-name "gradle-main-inputs-" profile-name)))
         input-model
         (validate-project-input-fn
-         (discover-main-fn
-          (merge {:workspace-root root :manifest manifest}
-                 (project-options generation-profile))))
+         (or project-input
+             (let [manifest
+                   (paths/resolve-path
+                    target
+                    (if primary?
+                      "gradle-main-inputs.tsv"
+                      (manifest-name "gradle-main-inputs-" profile-name)))]
+               (discover-main-fn
+                (merge {:workspace-root root :manifest manifest}
+                       (project-options generation-profile))))))
         _ (when-let [validate!
                      (get-in rule-bundle
                              [:orchestration :validate-project-input!])]
@@ -655,13 +723,15 @@
 
 (defn- emission-record
   [{:keys [profile dependency-profiles transitive-dependency-profiles
-           source-project public-api-boundary public-surface-strategy
-           destination emission]}]
+           source-project project-input java-model public-api-boundary
+           public-surface-strategy destination emission]}]
   (assoc emission
          :profile profile
          :dependency-profiles dependency-profiles
          :transitive-dependency-profiles transitive-dependency-profiles
          :source-project source-project
+         :project-input project-input
+         :model-totals (:totals java-model)
          :public-api-boundary public-api-boundary
          :public-surface-strategy public-surface-strategy
          :destination destination))
@@ -670,12 +740,13 @@
   "Preflights an explicit product/destination plan, then cleans disposable
   output, obtains neutral project inputs from the selected discovery backend,
   and emits them."
-  [{:keys [workspace-root profile generate-dependencies? verify-checkout-fn discover-main-fn
-           validate-project-input-fn
+  [{:keys [workspace-root profile generate-dependencies? verify-checkout-fn
+           discover-main-fn discover-reactor-fn validate-project-input-fn
            build-resolved-model-fn build-resolved-closure-fn
            read-profile-fn read-destination-fn emit-project-fn]
     :or {verify-checkout-fn project/verify-checkout!
          discover-main-fn discover-project!
+         discover-reactor-fn maven/discover-reactor!
          validate-project-input-fn project-input/validate!
          build-resolved-model-fn spoon/build-resolved-model!
          build-resolved-closure-fn spoon/build-resolved-closure!
@@ -701,6 +772,14 @@
               verify-checkout-fn)]))
          (:preparation-order graph))
         target (clean-directory! (paths/resolve-path root "target"))
+        discovery
+        (discover-project-inputs!
+         {:root root
+          :target target
+          :graph graph
+          :source-projects source-projects
+          :discover-reactor-fn discover-reactor-fn})
+        project-inputs (:inputs discovery)
         generated (atom {})
         _ (doseq [level (:levels graph)]
             (let [results
@@ -719,6 +798,7 @@
                          :graph graph
                          :profile-name profile-name
                          :source-project (get source-projects profile-name)
+                         :project-input (get project-inputs profile-name)
                          :dependency-emissions dependency-emissions
                          :discover-main-fn discover-main-fn
                          :validate-project-input-fn validate-project-input-fn
@@ -738,7 +818,8 @@
         input-model (:project-input main)
         config
         (assoc (:configuration main)
-               :project-graph (project-graph-data graph))
+               :project-graph (project-graph-data graph)
+               :project-discovery (:evidence discovery))
         java-model (:java-model main)
         surface (:public-api-boundary main)
         emission (:emission main)
@@ -761,9 +842,11 @@
     (println "Disposable configuration:" (portable-path root config-file))
     (assoc config
            :java-model java-model
+           :resolved-project-input input-model
            :public-api-boundary surface
            :public-surface-strategy (:public-surface-strategy main)
            :project-graph (:project-graph config)
+           :project-discovery (:project-discovery config)
            :dependency-profiles (:dependency-profiles main)
            :dependency-emissions dependency-emissions
            :emission emission)))

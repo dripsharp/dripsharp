@@ -1,7 +1,9 @@
 (ns dripsharp.harness-test
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [dripsharp.harness :as harness]
+            [dripsharp.java-project :as java-project]
             [dripsharp.paths :as paths]
             [dripsharp.project-input :as project-input]
             [dripsharp.spoon :as spoon])
@@ -146,11 +148,14 @@
                    (assoc discovery :project-id gradle-project))
                  :read-destination-fn
                  (fn [_ config-file]
-                   (assoc (fake-destination
-                           :pkl 'dripsharp.pkl.java-project/rule-bundle
-                           'dripsharp.harness-test/pkl-test-surface-strategy
-                           config-file)
-                          :fixture true :config-file config-file))
+                   (assoc
+                    (java-project/read-configuration
+                     (paths/workspace-root) config-file)
+                    :public-surface
+                    {:strategy
+                     'dripsharp.harness-test/pkl-test-surface-strategy}
+                    :fixture true
+                    :config-file config-file))
                  :build-resolved-model-fn
                  (fn [_ _]
                    (spoon/map->ResolvedJavaModel
@@ -270,12 +275,15 @@
                                             (:gradle-project options)))
                  :read-destination-fn (fn [_ file]
                                         (swap! captured assoc :destination-file file)
-                                        (assoc (fake-destination
-                                                :pkl
-                                                'dripsharp.pkl.java-project/rule-bundle
-                                                'dripsharp.harness-test/pkl-test-surface-strategy
-                                                file)
-                                               :fixture true))
+                                        (-> (java-project/read-configuration
+                                             (paths/workspace-root) file)
+                                            (assoc
+                                             :public-surface
+                                             {:strategy
+                                              'dripsharp.harness-test/pkl-test-surface-strategy}
+                                             :fixture true)
+                                            (assoc-in [:package :id]
+                                                      "Pkl.Core.Fixture")))
                  :build-resolved-closure-fn
                  (fn [_ _ seeds]
                    (swap! captured assoc :seeds seeds)
@@ -507,6 +515,20 @@
    :destination-config (str profile ".edn")
    :dependency-profiles dependencies})
 
+(defn- maven-dag-profile
+  [profile dependencies]
+  {:schema-version 1
+   :profile profile
+   :product-family :java-library
+   :project-root "research/pdfbox"
+   :revision "0123456789012345678901234567890123456789"
+   :build-tool :maven
+   :maven-project-id (str "org.example:" profile ":1.0.0")
+   :maven-selected-projects [(str ":" profile)]
+   :destination-bundle 'dripsharp.java-library/rule-bundle
+   :destination-config (str profile ".edn")
+   :dependency-profiles dependencies})
+
 (defn- dag-destination
   [profile]
   {:schema-version 1
@@ -617,6 +639,83 @@
     (is (= ["Package.pdfbox" "Package.xmpbox"]
            (get-in @emissions ["preflight" :configuration
                                :package-dependencies])))))
+
+(deftest shared-maven-reactor-is-discovered-once-for-the-complete-project-dag
+  (let [root (temp-directory)
+        discovery (fixture-discovery root)
+        dependencies
+        {"io" []
+         "fontbox" ["io"]
+         "xmpbox" []
+         "pdfbox" ["io" "fontbox"]
+         "preflight" ["pdfbox" "xmpbox"]}
+        expected-order ["io" "fontbox" "pdfbox" "xmpbox" "preflight"]
+        reactor-invocations (atom [])
+        models (atom [])
+        emissions (atom [])
+        result
+        (harness/generate!
+         {:workspace-root root
+          :profile "preflight"
+          :worker-count 3
+          :read-profile-fn
+          (fn [_ profile]
+            (maven-dag-profile profile (get dependencies profile)))
+          :read-destination-fn
+          (fn [_ file]
+            (dag-destination (subs file 0 (- (count file) 4))))
+          :verify-checkout-fn
+          (fn [{:keys [project-root revision]}]
+            {:path project-root :revision revision})
+          :discover-main-fn
+          (fn [_]
+            (throw (ex-info "per-project discovery must not run" {})))
+          :discover-reactor-fn
+          (fn [options]
+            (swap! reactor-invocations conj options)
+            (mapv #(assoc discovery
+                          :project-id (str "org.example:" % ":1.0.0"))
+                  expected-order))
+          :build-resolved-model-fn
+          (fn [_ input]
+            (swap! models conj (:project-id input))
+            (empty-model))
+          :emit-project-fn
+          (fn [{:keys [target project-input configuration]}]
+            (let [profile (second (str/split (:project-id project-input) #":"))
+                  project-root
+                  (paths/resolve-path
+                   target (get-in configuration [:output :project-directory]))
+                  emission
+                  {:project-root project-root
+                   :project-file
+                   (paths/resolve-path
+                    project-root
+                    (get-in configuration [:output :project-file]))
+                   :summary {:compilation-units 2}}]
+              (swap! emissions conj profile)
+              emission))})]
+    (is (= 1 (count @reactor-invocations)))
+    (is (= (mapv #(str ":" %) expected-order)
+           (:selected-projects (first @reactor-invocations))))
+    (is (= "research/pdfbox"
+           (str (.relativize root
+                             (:project-root (first @reactor-invocations))))))
+    (is (= expected-order
+           (get-in result [:project-graph :topological-order])))
+    (is (= 1 (count (get-in result [:project-discovery :invocations]))))
+    (is (= {:build-tool :maven
+            :profiles expected-order
+            :project-ids
+            (mapv #(str "org.example:" % ":1.0.0") expected-order)
+            :selected-projects (mapv #(str ":" %) expected-order)
+            :manifest "target/maven-reactor-inputs-0.tsv"}
+           (first (get-in result [:project-discovery :invocations]))))
+    (is (= (zipmap (map #(str "org.example:" % ":1.0.0") expected-order)
+                   (repeat 1))
+           (frequencies @models)))
+    (is (= (zipmap expected-order (repeat 1))
+           (frequencies @emissions)))))
 
 (deftest project-dependency-cycle-fails-before-checkout-or-output-cleanup
   (let [root (temp-directory)

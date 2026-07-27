@@ -2557,6 +2557,7 @@
           (raw "(") node (raw ")")]))
 
       (and expected
+           (not force-value?)
            (instance? CtLiteral argument)
            (nil? (.getValue ^CtLiteral argument))
            (boxed-primitive-reference? expected))
@@ -2564,6 +2565,7 @@
        [(raw "(") (type-node ctx expected) (raw "?)default!")])
 
       (and expected
+           (not force-value?)
            (instance? CtLiteral argument)
            (nil? (.getValue ^CtLiteral argument))
            (not (.isPrimitive expected)))
@@ -2628,13 +2630,13 @@
         (or (some-> expression .getTypeCasts last .getQualifiedName)
             (some-> expression .getType .getQualifiedName))]
     (case effective-type
-    ("double" "java.lang.Double")
-    (sequence-node [(raw "(double)(") node (raw ")")])
+      ("double" "java.lang.Double")
+      (sequence-node [(raw "(double)(") node (raw ")")])
 
-    ("float" "java.lang.Float")
-    (sequence-node [(raw "(float)(") node (raw ")")])
+      ("float" "java.lang.Float")
+      (sequence-node [(raw "(float)(") node (raw ")")])
 
-    node)))
+      node)))
 
 (defn- type-parameter-expression? [^CtExpression expression]
   (or (instance? CtTypeParameterReference (.getType expression))

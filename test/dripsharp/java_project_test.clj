@@ -36,9 +36,11 @@
 
 (deftest destination-package-metadata-must-be-non-blank
   (let [configuration (pkl-project/read-configuration (paths/workspace-root))
+        validate!
+        (get-in (pkl-project/rule-bundle)
+                [:rules :project-policy :validate-configuration!])
         error (try
-                (pkl-project/validate-configuration!
-                 (assoc-in configuration [:package :title] " \t"))
+                (validate! (assoc-in configuration [:package :title] " \t"))
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :invalid-destination-configuration (:kind (ex-data error))))
