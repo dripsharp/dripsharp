@@ -3229,7 +3229,9 @@
       (str/replace "'" "&apos;")))
 
 (defn- project-text [configuration resource-artifacts]
-  (let [base-text (project-emission/project-text configuration resource-artifacts)
+  (let [base-text (project-emission/project-text
+                   (dissoc configuration :legal-files)
+                   resource-artifacts)
         source-directory (get-in configuration [:output :source-directory])
         license (some #(when (= :license (:kind %)) %) (:legal-files configuration))
         properties

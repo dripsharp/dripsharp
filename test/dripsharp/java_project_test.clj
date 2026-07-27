@@ -58,6 +58,16 @@
                            (set (keys (:rules shared))))))
     (is (identical? (get-in shared [:rules :resource-policy :resource-mapping])
                     (get-in pkl [:rules :resource-policy :resource-mapping])))
+    (is (identical? (get-in shared [:rules :project-policy :project-text])
+                    (get-in pkl [:rules :project-policy :project-text])))
+    (is (identical? (get-in shared [:rules :namespace-policy
+                                    :destination-namespace])
+                    (get-in pkl [:rules :namespace-policy
+                                 :destination-namespace])))
+    (is (identical? (get-in shared [:rules :namespace-policy
+                                    :destination-file-name])
+                    (get-in pkl [:rules :namespace-policy
+                                 :destination-file-name])))
     (is (= :pkl (:id pkl)))
     (is (= :pkl (:product-family pkl)))
     (is (not (identical?

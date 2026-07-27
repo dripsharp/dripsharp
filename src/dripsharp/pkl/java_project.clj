@@ -3310,45 +3310,6 @@
         (validate-legal-inputs! workspace-root configuration)
         configuration))))
 
-(defn- xml-escape [value]
-  (-> (str value)
-      (str/replace "&" "&amp;")
-      (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;")
-      (str/replace "\"" "&quot;")
-      (str/replace "'" "&apos;")))
-
-(defn- project-text [configuration resource-artifacts]
-  (let [base-text (project-emission/project-text configuration resource-artifacts)]
-    (if-not (core-destination? configuration)
-      base-text
-      (let [license
-            (some #(when (= :license (:kind %)) %)
-                  (:legal-files configuration))
-            properties
-            (str "    <PackageLicenseFile>"
-                 (xml-escape (:package-path license))
-                 "</PackageLicenseFile>\n")
-            items
-            (apply
-             str
-             (for [{:keys [destination package-path]}
-                   (sort-by :package-path (:legal-files configuration))]
-               (str "    <None Include=\""
-                    (xml-escape
-                     (str (get-in configuration [:output :source-directory])
-                          "/" destination))
-                    "\" Pack=\"true\" PackagePath=\""
-                    (xml-escape package-path)
-                    "\" />\n")))]
-        (-> base-text
-            (str/replace
-             "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
-             (str properties
-                  "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"))
-            (str/replace "  </ItemGroup>\n</Project>\n"
-                         (str items "  </ItemGroup>\n</Project>\n")))))))
-
 (defn- legal-assets [{:keys [workspace-root configuration]}]
   (if-not (core-destination? configuration)
     []
@@ -3413,15 +3374,9 @@
                   {:type-node type-node
                    :create-body-context java-body/context
                    :annotation-decisions annotation-decisions})
-        (assoc-in
-         [:rules :namespace-policy]
-         {:destination-namespace destination-namespace
-          :destination-file-name
-          (fn [_ type]
-            (str (identifier (.getSimpleName ^CtType type)) ".cs"))})
         (assoc-in [:rules :project-policy]
-                  {:validate-configuration! validate-configuration!
-                   :project-text project-text})
+                  (assoc project-emission/common-project-policy
+                         :validate-configuration! validate-configuration!))
         (assoc-in [:rules :destination-bridges :assets] bridge-assets)
         (assoc-in [:rules :product-runtime-assets :assets]
                   product-runtime-assets))))

@@ -148,6 +148,9 @@
     (or (mapped-namespace ctx package :namespaces :namespace-prefixes)
         (unsupported! "Java library has no destination namespace mapping" type))))
 
+(defn- destination-file-name [_ ^CtType type]
+  (str (identifier (.getSimpleName type)) ".cs"))
+
 (declare type-node body-context functional-expression-node
          functional-interface-method)
 
@@ -9014,8 +9017,7 @@
      :annotation-decisions annotation-decisions}
     :namespace-policy
     {:destination-namespace destination-namespace
-     :destination-file-name
-     (fn [_ ^CtType type] (str (identifier (.getSimpleName type)) ".cs"))}
+     :destination-file-name destination-file-name}
     :project-policy project-emission/common-project-policy
     :resource-policy project-emission/common-resource-policy
     :destination-bridges {:assets bridge-assets}}})

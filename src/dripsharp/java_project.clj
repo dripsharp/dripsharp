@@ -118,6 +118,32 @@
     (when-not (and (string? copyright) (not (str/blank? copyright)))
       (destination-error "Destination package copyright must be non-blank"
                          {:copyright copyright})))
+  (let [legal-files (:legal-files configuration)]
+    (when-not
+     (or
+      (nil? legal-files)
+      (and
+       (vector? legal-files)
+       (every?
+        (fn [{:keys [kind destination package-path]}]
+          (and (contains? #{:license :notice} kind)
+               (string? destination)
+               (relative-path! destination "legal file destination")
+               (string? package-path)
+               (relative-path! package-path "legal file package path")))
+        legal-files)
+       (= (count legal-files)
+          (count (distinct (map :package-path legal-files))))
+       (<= (count (filter #(= :license (:kind %)) legal-files)) 1)))
+      (destination-error "Invalid destination legal-file packaging contract"
+                         {:legal-files legal-files}))
+    (when (and (seq legal-files)
+               (get-in configuration [:package :license-expression]))
+      (destination-error
+       "Destination license expression and packed license file are mutually exclusive"
+       {:license-expression
+        (get-in configuration [:package :license-expression])
+        :legal-files legal-files})))
   (when-let [symbols (get-in configuration [:package :symbols])]
     (when-not (= :snupkg symbols)
       (destination-error "Destination package symbol format is unsupported"
@@ -296,7 +322,9 @@
   [configuration resource-artifacts]
   (let [project (:project configuration)
         package (:package configuration)
-        output (:output configuration)]
+        output (:output configuration)
+        legal-files (:legal-files configuration)
+        license-file (some #(when (= :license (:kind %)) %) legal-files)]
     (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
          "  <PropertyGroup>\n"
          "    <TargetFramework>" (xml-escape (:target-framework project)) "</TargetFramework>\n"
@@ -333,6 +361,10 @@
          (when-let [license (:license-expression package)]
            (str "    <PackageLicenseExpression>" (xml-escape license)
                 "</PackageLicenseExpression>\n"))
+         (when license-file
+           (str "    <PackageLicenseFile>"
+                (xml-escape (:package-path license-file))
+                "</PackageLicenseFile>\n"))
          "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
          "    <IsPackable>true</IsPackable>\n"
          "  </PropertyGroup>\n"
@@ -352,6 +384,15 @@
                   (str "    <EmbeddedResource Include=\""
                        (xml-escape destination)
                        "\" LogicalName=\"" (xml-escape logical-name) "\" />\n")))
+         (apply str
+                (for [{:keys [destination package-path]}
+                      (sort-by :package-path legal-files)]
+                  (str "    <None Include=\""
+                       (xml-escape (str (:source-directory output)
+                                        "/" destination))
+                       "\" Pack=\"true\" PackagePath=\""
+                       (xml-escape package-path)
+                       "\" />\n")))
          "  </ItemGroup>\n"
          "</Project>\n")))
 
