@@ -1,9 +1,11 @@
 (ns dripsharp.java-project-test
   (:require [clojure.edn :as edn]
+            [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.complete-parser-fixture :as fixture]
             [dripsharp.concurrency :as concurrency]
+            [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
             [dripsharp.paths :as paths]
             [dripsharp.pkl.java-project :as pkl-project])
@@ -46,6 +48,21 @@
     (is (= :invalid-destination-configuration (:kind (ex-data error))))
     (is (= :package (:section (ex-data error))))
     (is (= :title (:setting (ex-data error))))))
+
+(deftest pkl-bundle-composes-over-the-shared-java-library-contract
+  (let [shared (java-library/rule-bundle)
+        pkl (pkl-project/rule-bundle)]
+    (is (= (:schema-version shared) (:schema-version pkl)))
+    (is (= #{:product-runtime-assets}
+           (set/difference (set (keys (:rules pkl)))
+                           (set (keys (:rules shared))))))
+    (is (identical? (get-in shared [:rules :resource-policy :resource-mapping])
+                    (get-in pkl [:rules :resource-policy :resource-mapping])))
+    (is (= :pkl (:id pkl)))
+    (is (= :pkl (:product-family pkl)))
+    (is (not (identical?
+              (get-in shared [:rules :structural-declarations :emit-root-node])
+              (get-in pkl [:rules :structural-declarations :emit-root-node]))))))
 
 (deftest complete-parser-declarations-and-project-are-zero-skip-and-stable
   (let [first-emission (emit! (temp-directory) 1)

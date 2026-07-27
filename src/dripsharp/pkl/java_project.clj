@@ -8,6 +8,7 @@
   occurrence identity."
   (:require [clojure.string :as str]
             [dripsharp.csharp :as csharp]
+            [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
             [dripsharp.paths :as paths]
             [dripsharp.pkl.java-body :as java-body]
@@ -3387,37 +3388,43 @@
    (legal-assets context)))
 
 (defn rule-bundle
-  "Returns the Pkl-owned declaration, mapping, visibility, bridge, and runtime
-  rules composed with the product-neutral project and resource policies."
+  "Returns the Pkl destination policy composed over the shared Java-library
+  bundle contract. The explicit declaration, type, and body overlays preserve
+  the current Pkl product while those legacy rules migrate incrementally."
   []
-  {:schema-version 1
-   :id :pkl
-   :product-family :pkl
-   :orchestration {:validate-profile! validate-profile!}
-   :rules
-   {:structural-declarations
-    {:create-template emission-template
-     :create-context root-emission-context
-     :emit-root-node type-node-declaration
-     :translate-member
-     (fn [ctx owner member]
-       (let [member-ctx (type-body-context (assoc ctx :current-type owner) owner)]
-         (member-node member-ctx owner member)))
-     :merge-context! merge-emission-context!
-     :context-results context-results}
-    :resolved-mappings
-    {:type-node type-node
-     :create-body-context java-body/context
-     :annotation-decisions annotation-decisions}
-    :namespace-policy
-    {:destination-namespace destination-namespace
-     :destination-file-name
-     (fn [_ type] (str (identifier (.getSimpleName ^CtType type)) ".cs"))}
-    :project-policy {:validate-configuration! validate-configuration!
-                     :project-text project-text}
-    :resource-policy project-emission/common-resource-policy
-    :destination-bridges {:assets bridge-assets}
-    :product-runtime-assets {:assets product-runtime-assets}}})
+  (let [base (java-library/rule-bundle)]
+    (-> base
+        (assoc :id :pkl
+               :product-family :pkl
+               :orchestration {:validate-profile! validate-profile!})
+        (assoc-in
+         [:rules :structural-declarations]
+         {:create-template emission-template
+          :create-context root-emission-context
+          :emit-root-node type-node-declaration
+          :translate-member
+          (fn [ctx owner member]
+            (let [member-ctx (type-body-context
+                              (assoc ctx :current-type owner) owner)]
+              (member-node member-ctx owner member)))
+          :merge-context! merge-emission-context!
+          :context-results context-results})
+        (assoc-in [:rules :resolved-mappings]
+                  {:type-node type-node
+                   :create-body-context java-body/context
+                   :annotation-decisions annotation-decisions})
+        (assoc-in
+         [:rules :namespace-policy]
+         {:destination-namespace destination-namespace
+          :destination-file-name
+          (fn [_ type]
+            (str (identifier (.getSimpleName ^CtType type)) ".cs"))})
+        (assoc-in [:rules :project-policy]
+                  {:validate-configuration! validate-configuration!
+                   :project-text project-text})
+        (assoc-in [:rules :destination-bridges :assets] bridge-assets)
+        (assoc-in [:rules :product-runtime-assets :assets]
+                  product-runtime-assets))))
 
 (defn emit-project!
   "Compatibility entry point for the Pkl destination. All project orchestration
