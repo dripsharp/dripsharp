@@ -1,10 +1,11 @@
 (ns dripsharp.pdfcube.family-build
-  "Clean, deterministic generation and compilation gate for the five-project
-  PdfCube family."
+  "Clean, deterministic generation, compilation, and complete accessible
+  public-surface gate for the five-project PdfCube family."
   (:require [clojure.edn :as edn]
             [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.compiler :as compiler]
+            [dripsharp.dotnet-surface :as dotnet-surface]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.java-project :as pdfcube])
   (:import [java.nio.charset StandardCharsets]
@@ -20,6 +21,28 @@
 (def ^:private zero-coverage-counters
   [:fallback :missing-mappings :unsupported-elements :missing-occurrences
    :blocked])
+
+(def ^:private source-implementations
+  #{:abstract-contract :declaration :public-stub :systematic-adaptation
+    :translated-body})
+
+(def ^:private source-member-kinds
+  #{"constructor" "field" "method" "type"})
+
+(def ^:private compiled-member-kinds
+  #{"constructor" "event" "field" "method" "property" "type"})
+
+(def ^:private java-translation-rules
+  #{"java-declaration" "java-implicit-constructor" "java-synthetic-member"})
+
+(def ^:private compiled-translation-rules
+  (into java-translation-rules
+        #{"clr-special-accessor"
+          "java-closeable-disposable"
+          "java-compatibility-member"
+          "java-compatibility-type"
+          "java-functional-adapter-member"
+          "java-functional-adapter-type"}))
 
 (defn- fail!
   [message data]
@@ -164,7 +187,7 @@
             [profile :coverage :partition] covered (+ semantic structural))))
 
 (defn- validate-public-rows!
-  [profile metadata]
+  [profile assembly metadata]
   (let [rows (:rows metadata)
         identities (mapv #(get-in % [:row :identity]) rows)
         public-stubs
@@ -173,7 +196,23 @@
         (remove #(contains? #{:one-to-one
                               :documented-systematic-adaptation}
                             (:source-mapping %))
-                rows)]
+                rows)
+        invalid-implementations
+        (remove #(contains? source-implementations
+                            (get-in % [:generated :implementation]))
+                rows)
+        adaptations (set (keep :systematic-adaptation rows))
+        adaptation-docs (:systematic-adaptations metadata)]
+    (exact! "PdfCube public surface must use the complete reusable strategy"
+            [profile :public-surface-strategy]
+            :complete-accessible-java-library (:strategy metadata))
+    (exact! "PdfCube public surface must derive from the resolved Spoon model"
+            [profile :surface-derivation]
+            :resolved-spoon-model (:surface-derivation metadata))
+    (when (contains? metadata :compiled-contract-file)
+      (fail! "PdfCube public surface must not use a retained API inventory"
+             {:profile profile
+              :compiled-contract-file (:compiled-contract-file metadata)}))
     (exact! "PdfCube accessible declaration accounting is incomplete"
             [profile :accessible-declarations]
             (:required-rows metadata) (count rows))
@@ -185,10 +224,80 @@
              {:profile profile
               :declarations
               (mapv #(get-in % [:row :identity]) invalid-mappings)}))
+    (when (seq invalid-implementations)
+      (fail! "PdfCube accessible declarations have unsupported implementation states"
+             {:profile profile
+              :implementations
+              (mapv #(get-in % [:generated :implementation])
+                    invalid-implementations)}))
     (exact! "PdfCube generated public implementation stubs"
             [profile :public-stubs] 0 (count public-stubs))
+    (exact! "PdfCube systematic adaptations are not documented exactly"
+            [profile :systematic-adaptations]
+            adaptations (set (keys adaptation-docs)))
+    (doseq [[adaptation explanation] adaptation-docs]
+      (when-not (and (keyword? adaptation)
+                     (string? explanation)
+                     (not (str/blank? explanation)))
+        (fail! "PdfCube systematic adaptation documentation is invalid"
+               {:profile profile :adaptation adaptation
+                :explanation explanation})))
+    (doseq [row rows]
+      (let [identity (get-in row [:row :identity])
+            mapping (:source-mapping row)
+            adaptation (:systematic-adaptation row)
+            generated (:generated row)
+            destination (:destination generated)
+            source-location (get-in generated [:source :location])
+            namespace (:namespace destination)
+            owner (:owner destination)]
+        (when-not (and (string? identity) (not (str/blank? identity)))
+          (fail! "PdfCube accessible declaration lacks a stable Spoon identity"
+                 {:profile profile :row row}))
+        (when-not (and (= assembly (:assembly destination))
+                       (contains? source-member-kinds (:kind destination))
+                       (string? (:name destination))
+                       (re-matches #"\d+" (:parameter-count destination))
+                       (contains? #{"protected" "protected-internal" "public"}
+                                  (:visibility destination))
+                       (string? namespace) (not (str/blank? namespace))
+                       (string? owner)
+                       (str/starts-with? owner (str namespace ".")))
+          (fail! "PdfCube generated declaration has an invalid assembly, namespace, owner, kind, overload, or visibility boundary"
+                 {:profile profile :source-declaration identity
+                  :destination destination}))
+        (when-not (and (string? (:file source-location))
+                       (not (str/blank? (:file source-location)))
+                       (pos-int? (:line source-location)))
+          (fail! "PdfCube generated declaration lacks exact Spoon source provenance"
+                 {:profile profile :source-declaration identity
+                  :source-location source-location}))
+        (case mapping
+          :one-to-one
+          (when adaptation
+            (fail! "One-to-one PdfCube source mapping carries an adaptation"
+                   {:profile profile :source-declaration identity
+                    :adaptation adaptation}))
+
+          :documented-systematic-adaptation
+          (when-not (and (keyword? adaptation)
+                         (contains? adaptation-docs adaptation))
+            (fail! "PdfCube systematic source mapping lacks documented adaptation evidence"
+                   {:profile profile :source-declaration identity
+                    :adaptation adaptation}))
+
+          nil)))
     {:accessible-declarations (count rows)
      :public-stubs (count public-stubs)
+     :source-mappings (into (sorted-map)
+                            (frequencies (map :source-mapping rows)))
+     :systematic-adaptations (into (sorted-map)
+                                   (frequencies
+                                    (keep :systematic-adaptation rows)))
+     :source-kinds
+     (into (sorted-map)
+           (frequencies (map #(get-in % [:generated :destination :kind])
+                             rows)))
      :identities identities}))
 
 (defn- validate-project!
@@ -207,7 +316,9 @@
                         (:production-resources input))
         manifest-sources (mapv :source (:sources manifest))
         manifest-resources (mapv :source (:resources manifest))
-        public (validate-public-rows! profile (:public-metadata emission))]
+        assembly (get-in destination [:project :assembly-name])
+        public (validate-public-rows! profile assembly
+                                      (:public-metadata emission))]
     (exact! "PdfCube project input came from the wrong Maven reactor project"
             [profile :source-project-id]
             (get-in contract [:source-projects profile])
@@ -224,6 +335,9 @@
     (exact! "PdfCube package identity differs from the family contract"
             [profile :package-id] (get-in contract [:packages profile])
             (get-in destination [:package :id]))
+    (exact! "PdfCube assembly identity differs from its package boundary"
+            [profile :assembly-name] (get-in contract [:packages profile])
+            assembly)
     (doseq [[subject values]
             [[:ordinary-sources ordinary]
              [:generated-sources generated]
@@ -262,6 +376,146 @@
       :resource-paths resources
       :declaration-identities (:identities public)})))
 
+(defn- valid-compiled-visibility?
+  [visibility]
+  (or (contains? #{"protected" "protected-internal" "public"} visibility)
+      (boolean
+       (re-matches
+        #"(?:get|set|add|remove|raise)=(?:protected|protected-internal|public)(?:;(?:get|set|add|remove|raise)=(?:protected|protected-internal|public))*"
+        visibility))))
+
+(defn- validate-compiled-audit!
+  [root build-configuration emission project audit]
+  (let [profile (:profile emission)
+        assembly (:package-id project)
+        framework (get-in emission [:destination :project :target-framework])
+        expected-file
+        (paths/resolve-path (:project-root emission) "bin" build-configuration
+                            framework (str assembly ".dll"))
+        rows (:rows audit)
+        types (:types audit)
+        members (:members audit)
+        contract-members (:contract-members audit)
+        kind-counts (:kind-counts audit)
+        visibility-counts (:visibility-counts audit)
+        translation-rules (:translation-rules audit)
+        java-rows (reduce + 0 (map #(get translation-rules % 0)
+                                   java-translation-rules))]
+    (exact! "PdfCube compiled surface audit has the wrong assembly"
+            [profile :compiled :assembly] assembly (:assembly audit))
+    (exact! "PdfCube compiled surface audit points at the wrong assembly file"
+            [profile :compiled :file] (str (paths/absolute expected-file))
+            (str (paths/absolute (:file audit))))
+    (when-not (paths/regular-file? expected-file)
+      (fail! "PdfCube compiled surface assembly is missing"
+             {:profile profile :file (str expected-file)}))
+    (exact! "PdfCube compiled surface did not inspect every metadata dimension"
+            [profile :compiled :metadata-columns]
+            dotnet-surface/surface-columns (:metadata-columns audit))
+    (doseq [[field value]
+            [[:rows rows]
+             [:types types]
+             [:members members]
+             [:contract-members contract-members]
+             [:metadata-complete-rows (:metadata-complete-rows audit)]
+             [:owners (:owners audit)]
+             [:inheritance-rows (:inheritance-rows audit)]
+             [:generic-rows (:generic-rows audit)]
+             [:overload-families (:overload-families audit)]]]
+      (when-not (and (integer? value) (not (neg? value)))
+        (fail! "PdfCube compiled surface audit has an invalid count"
+               {:profile profile :field field :actual value})))
+    (when-not (and (pos? rows) (pos? types) (pos? members)
+                   (pos? contract-members) (pos? (:owners audit)))
+      (fail! "PdfCube compiled surface audit is empty"
+             {:profile profile
+              :counts (select-keys audit
+                                   [:rows :types :members :contract-members
+                                    :owners])}))
+    (exact! "PdfCube compiled surface type/member accounting is inconsistent"
+            [profile :compiled :row-partition] rows (+ types members))
+    (exact! "PdfCube compiled surface contains incomplete metadata rows"
+            [profile :compiled :metadata-complete-rows]
+            rows (:metadata-complete-rows audit))
+    (exact! "PdfCube compiled surface does not reconcile every Spoon declaration"
+            [profile :compiled :contract-members]
+            (:accessible-declarations project) contract-members)
+    (when (< rows contract-members)
+      (fail! "PdfCube compiled surface has fewer CLR rows than Spoon declarations"
+             {:profile profile :compiled-rows rows
+              :contract-members contract-members}))
+    (when-not (and (map? kind-counts)
+                   (= rows (reduce + 0 (vals kind-counts)))
+                   (every? compiled-member-kinds (keys kind-counts)))
+      (fail! "PdfCube compiled surface contains invalid or unaccounted member kinds"
+             {:profile profile :rows rows :kind-counts kind-counts}))
+    (when-not (and (map? visibility-counts)
+                   (= rows (reduce + 0 (vals visibility-counts)))
+                   (every? valid-compiled-visibility?
+                           (keys visibility-counts)))
+      (fail! "PdfCube compiled surface contains invalid or unaccounted visibility"
+             {:profile profile :rows rows
+              :visibility-counts visibility-counts}))
+    (exact! "PdfCube compiled surface crossed its assembly/package boundary"
+            [profile :compiled :assembly-row-counts]
+            (sorted-map assembly rows) (:assembly-row-counts audit))
+    (when-not (and (map? translation-rules)
+                   (= rows (reduce + 0 (vals translation-rules)))
+                   (every? compiled-translation-rules
+                           (keys translation-rules)))
+      (fail! "PdfCube compiled surface contains an unsupported adaptation rule"
+             {:profile profile :rows rows
+              :translation-rules translation-rules}))
+    (exact! "PdfCube compiled surface did not map every Spoon declaration once"
+            [profile :compiled :java-translation-rows]
+            contract-members java-rows)
+    (when-not (re-matches #"[0-9a-f]{64}" (:surface-sha256 audit))
+      (fail! "PdfCube compiled surface fingerprint is invalid"
+             {:profile profile :surface-sha256 (:surface-sha256 audit)}))
+    (assoc (select-keys audit
+                        [:assembly :rows :types :members :contract-members
+                         :metadata-columns :metadata-complete-rows :kind-counts
+                         :visibility-counts :assembly-row-counts :owners
+                         :inheritance-rows :generic-rows :overload-families
+                         :surface-sha256 :translation-rules])
+           :profile profile
+           :file (portable-path root expected-file))))
+
+(defn- validate-compiled-surface!
+  [root build emissions projects]
+  (let [surface (:public-surface build)
+        audits (:assemblies surface)
+        build-configuration (:build-configuration build)]
+    (exact! "PdfCube clean build used the wrong public-surface strategy"
+            :compiled-public-surface-strategy
+            :complete-accessible-java-library (:strategy surface))
+    (when-not (and (string? build-configuration)
+                   (not (str/blank? build-configuration)))
+      (fail! "PdfCube clean build lacks its build configuration"
+             {:build-configuration build-configuration}))
+    (exact! "PdfCube clean build did not audit exactly five assemblies"
+            :compiled-surface-assembly-count
+            (count emissions) (count audits))
+    (let [validated
+          (mapv #(validate-compiled-audit!
+                  root build-configuration %1 %2 %3)
+                emissions projects audits)
+          totals
+          {:rows (reduce + (map :rows validated))
+           :types (reduce + (map :types validated))
+           :members (reduce + (map :members validated))
+           :contract-members (reduce + (map :contract-members validated))
+           :inheritance-rows (reduce + (map :inheritance-rows validated))
+           :generic-rows (reduce + (map :generic-rows validated))
+           :overload-families (reduce + (map :overload-families validated))}]
+      (doseq [dimension [:inheritance-rows :generic-rows :overload-families]]
+        (when-not (pos? (get totals dimension))
+          (fail! "PdfCube family compiled surface did not exercise a required metadata dimension"
+                 {:dimension dimension :totals totals})))
+      {:strategy (:strategy surface)
+       :assemblies validated
+       :totals totals})))
+
 (defn validate-build!
   "Validates one clean PdfCube compiler result and returns bounded family
   accounting evidence."
@@ -272,13 +526,18 @@
         graph (validate-graph! generation contract)
         order (:topological-order graph)
         discovery (validate-discovery! generation contract order)
+        emissions (ordered-emissions generation)
         projects
         (mapv #(validate-project! root % contract)
-              (ordered-emissions generation))
+              emissions)
         all-sources (mapcat :source-paths projects)
         all-resources (mapcat :resource-paths projects)
         all-declarations (mapcat :declaration-identities projects)
-        assemblies (get-in build [:public-surface :assemblies])
+        source-kinds (apply merge-with + (map :source-kinds projects))
+        source-mappings (apply merge-with + (map :source-mappings projects))
+        compiled-surface
+        (validate-compiled-surface! root build emissions projects)
+        assemblies (:assemblies compiled-surface)
         assembly-names (set (map :assembly assemblies))
         expected-assemblies (set (vals (:packages contract)))]
     (doseq [[subject values]
@@ -290,6 +549,16 @@
                {:subject subject :duplicates (vec duplicates)})))
     (exact! "PdfCube clean build did not compile exactly five assemblies"
             :compiled-assemblies expected-assemblies assembly-names)
+    (when-not (and (= source-member-kinds (set (keys source-kinds)))
+                   (every? pos? (vals source-kinds)))
+      (fail! "PdfCube family source surface did not prove every declaration kind"
+             {:source-kinds source-kinds
+              :required source-member-kinds}))
+    (when-not (and (pos? (get source-mappings :one-to-one 0))
+                   (pos? (get source-mappings
+                              :documented-systematic-adaptation 0)))
+      (fail! "PdfCube family source surface did not prove both exact and adapted mappings"
+             {:source-mappings source-mappings}))
     (exact! "PdfCube clean build retained compiler diagnostics"
             :compiler-diagnostics [] (:diagnostics build))
     {:profiles order
@@ -299,6 +568,7 @@
                     :declaration-identities)
            projects)
      :compiled-assemblies (mapv :assembly assemblies)
+     :public-surface compiled-surface
      :totals
      {:ordinary-sources (reduce + (map :ordinary-sources projects))
       :generated-sources (reduce + (map :generated-sources projects))
@@ -307,6 +577,9 @@
       :declarations (reduce + (map :declarations projects))
       :accessible-declarations
       (reduce + (map :accessible-declarations projects))
+      :compiled-surface-rows (get-in compiled-surface [:totals :rows])
+      :compiled-types (get-in compiled-surface [:totals :types])
+      :compiled-members (get-in compiled-surface [:totals :members])
       :public-stubs (reduce + (map :public-stubs projects))}}))
 
 (defn- sha256-file
@@ -398,7 +671,9 @@
            " production sources, "
            (get-in second-evidence [:totals :resources]) " resources, "
            (get-in second-evidence [:totals :accessible-declarations])
-           " accessible declarations, 0 public stubs, "
+           " accessible declarations, "
+           (get-in second-evidence [:totals :compiled-surface-rows])
+           " compiled metadata rows, 0 public stubs, "
            (:files deterministic) " deterministic generated files."))
      (assoc second-evidence
             :clean-generations 2

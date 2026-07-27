@@ -71,6 +71,12 @@
             :duplicate-compiled-reflection-rows]
            [:signature (assoc-in expected [1 :signature] "System.Int32 Echo(System.Int32 value)")
             :compiled-dotnet-surface-drift]
+           [:inheritance
+            (assoc-in expected [0 :signature]
+                      "class Api : Correct.Library.BaseApi")
+            :compiled-dotnet-surface-drift]
+           [:kind (assoc-in expected [1 :kind] "field")
+            :compiled-dotnet-surface-drift]
            [:visibility (assoc-in expected [1 :visibility] "protected")
             :compiled-dotnet-surface-drift]
            [:metadata-flags (assoc-in expected [1 :metadata-flags] "0x16")
@@ -151,6 +157,8 @@
           (vec (remove #(= "2" (:parameter-count %)) rows))]
          [:visibility
           (assoc-in rows [2 :visibility] "protected")]
+         [:kind
+          (assoc-in rows [2 :kind] "field")]
          [:project
           (assoc-in rows [2 :assembly] "Wrong.Library")]
          [:package

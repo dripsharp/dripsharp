@@ -96,13 +96,49 @@
                               :summary (summary)})
                             "\n"))
         _ manifest-file
-        identity (str "type:org.example." module ".Fixture")
+        owner (str package-id ".Fixture")
+        source-location {:file (str source) :line 1 :column 1}
+        destinations
+        [{:kind "type" :name "Fixture" :parameter-count "0"
+          :implementation :declaration :source-mapping :one-to-one}
+         {:kind "constructor" :name ".ctor" :parameter-count "0"
+          :implementation :systematic-adaptation
+          :source-mapping :documented-systematic-adaptation
+          :systematic-adaptation :java-implicit-default-constructor}
+         {:kind "field" :name "Value" :parameter-count "0"
+          :implementation :declaration :source-mapping :one-to-one}
+         {:kind "method" :name "GetValue" :parameter-count "0"
+          :implementation :translated-body :source-mapping :one-to-one}]
         public-metadata
-        {:required-rows 1
+        {:schema-version 1
+         :strategy :complete-accessible-java-library
+         :surface-derivation :resolved-spoon-model
+         :systematic-adaptations
+         {:java-implicit-default-constructor
+          "A Java implicit default constructor is represented by the CLR default constructor."}
+         :required-rows (count destinations)
          :rows
-         [{:source-mapping :one-to-one
-           :generated {:implementation :translated-body}
-           :row {:identity identity}}]}]
+         (mapv
+          (fn [{:keys [kind name parameter-count implementation
+                       source-mapping systematic-adaptation]}]
+            (cond->
+             {:source-mapping source-mapping
+              :generated
+              {:implementation implementation
+               :source {:location source-location}
+               :destination
+               {:assembly package-id
+                :namespace package-id
+                :owner owner
+                :kind kind
+                :name name
+                :parameter-count parameter-count
+                :visibility "public"}}
+              :row
+              {:identity (str kind ":org.example." module ".Fixture#" name)}}
+              systematic-adaptation
+              (assoc :systematic-adaptation systematic-adaptation)))
+          destinations)}]
     {:profile profile
      :dependency-profiles dependencies
      :source-project {:path (paths/resolve-path root "research/pdfbox")
@@ -114,7 +150,8 @@
       :production-resources []}
      :model-totals (model-totals)
      :destination
-     {:project {:target-framework "net10.0"
+     {:project {:assembly-name package-id
+                :target-framework "net10.0"
                 :warnings-as-errors true}
       :package {:id package-id}
       :output {:manifest-file "generation-manifest.edn"}}
@@ -123,6 +160,39 @@
      (paths/resolve-path project-root (str package-id ".csproj"))
      :summary (summary)
      :public-metadata public-metadata}))
+
+(defn- compiled-audit
+  [emission]
+  (let [assembly (get-in emission [:destination :package :id])
+        file (write-file!
+              (:project-root emission)
+              (str "bin/Release/net10.0/" assembly ".dll")
+              "compiled fixture")]
+    {:assembly assembly
+     :file (str file)
+     :rows 8
+     :types 2
+     :members 6
+     :contract-members 4
+     :metadata-columns
+     ["assembly" "owner" "kind" "name" "parameter-count" "visibility"
+      "metadata-flags" "signature" "generic-constraints" "nullability"]
+     :metadata-complete-rows 8
+     :kind-counts
+     (sorted-map "constructor" 1 "field" 1 "method" 4 "type" 2)
+     :visibility-counts (sorted-map "public" 8)
+     :assembly-row-counts (sorted-map assembly 8)
+     :owners 2
+     :inheritance-rows 1
+     :generic-rows 1
+     :overload-families 1
+     :surface-sha256 (apply str (repeat 64 "a"))
+     :translation-rules
+     (sorted-map
+      "java-compatibility-member" 3
+      "java-compatibility-type" 1
+      "java-declaration" 3
+      "java-implicit-constructor" 1)}))
 
 (defn- graph
   []
@@ -162,12 +232,11 @@
       :destination (:destination primary)
       :public-api-boundary {}
       :public-surface-strategy {}}
+     :build-configuration "Release"
      :diagnostics []
      :public-surface
-     {:assemblies
-      (mapv (fn [profile]
-              {:assembly (get-in products [profile :package-id])})
-            order)}}))
+     {:strategy :complete-accessible-java-library
+      :assemblies (mapv compiled-audit emissions)}}))
 
 (defn- caught
   [thunk]
@@ -187,7 +256,10 @@
             :resources 0
             :compilation-units 5
             :declarations 10
-            :accessible-declarations 5
+            :accessible-declarations 20
+            :compiled-surface-rows 40
+            :compiled-types 10
+            :compiled-members 30
             :public-stubs 0}
            (:totals evidence)))
     (is (= (mapv #(get-in products [% :package-id]) order)
@@ -236,6 +308,89 @@
             (caught #(family-build/validate-build! root build))]
         (is (= :pdfcube-family-build-failed (:kind (ex-data error))))
         (is (= :manifest-sources (:subject (ex-data error))))))))
+
+(deftest family-public-surface-gate-rejects-source-and-compiled-defects
+  (let [root (Files/createTempDirectory
+              "pdfcube-family-surface-gap-"
+              (make-array FileAttribute 0))
+        build (clean-build root)
+        validate
+        (fn [candidate]
+          (caught #(family-build/validate-build! root candidate)))]
+    (testing "a retained API inventory cannot replace live Spoon derivation"
+      (let [error
+            (validate
+             (-> build
+                 (assoc-in
+                  [:generation :dependency-emissions 0
+                   :public-metadata :surface-derivation]
+                  :retained-contract)
+                 (assoc-in
+                  [:generation :dependency-emissions 0
+                   :public-metadata :compiled-contract-file]
+                  "PublicSurface.tsv")))]
+        (is (= :pdfcube-family-build-failed (:kind (ex-data error))))
+        (is (= ["pdfcube-io" :surface-derivation]
+               (:field (ex-data error))))))
+    (testing "duplicate source declarations fail closed"
+      (let [row
+            (get-in build
+                    [:generation :dependency-emissions 0
+                     :public-metadata :rows 0])
+            error
+            (validate
+             (-> build
+                 (update-in
+                  [:generation :dependency-emissions 0
+                   :public-metadata :required-rows]
+                  inc)
+                 (update-in
+                  [:generation :dependency-emissions 0
+                   :public-metadata :rows]
+                  conj row)))]
+        (is (= :pdfcube-family-build-failed (:kind (ex-data error))))
+        (is (= "pdfcube-io" (:profile (ex-data error))))
+        (is (seq (:duplicates (ex-data error))))))
+    (doseq [[label path value]
+            [[:kind-change
+              [:generation :dependency-emissions 0 :public-metadata :rows 0
+               :generated :destination :kind]
+              "property"]
+             [:assembly-boundary
+              [:generation :dependency-emissions 0 :public-metadata :rows 0
+               :generated :destination :assembly]
+              "Wrong.Package"]
+             [:owner-placement
+              [:generation :dependency-emissions 0 :public-metadata :rows 0
+               :generated :destination :owner]
+              "Wrong.Namespace.Fixture"]
+             [:unsupported-implementation
+              [:generation :dependency-emissions 0 :public-metadata :rows 0
+               :generated :implementation]
+              :unknown]
+             [:unsupported-construct
+              [:generation :dependency-emissions 0 :summary
+               :executable-coverage :unsupported-elements]
+              1]
+             [:emission-collision
+              [:generation :dependency-emissions 0 :summary :collisions]
+              1]
+             [:compiled-missing-member
+              [:public-surface :assemblies 0 :contract-members]
+              3]
+             [:compiled-metadata-dimension
+              [:public-surface :assemblies 0 :metadata-columns]
+              ["assembly" "owner"]]
+             [:compiled-package-boundary
+              [:public-surface :assemblies 0 :assembly-row-counts]
+              (sorted-map "Wrong.Package" 8)]
+             [:compiled-fingerprint
+              [:public-surface :assemblies 0 :surface-sha256]
+              "not-a-sha256"]]]
+      (testing (name label)
+        (let [error (validate (assoc-in build path value))]
+          (is (= :pdfcube-family-build-failed
+                 (:kind (ex-data error)))))))))
 
 (deftest generated-snapshot-comparison-detects-every-file-change
   (let [first {"a.cs" "one" "b.cs" "two"}

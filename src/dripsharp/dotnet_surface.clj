@@ -136,6 +136,51 @@
                         (.getBytes text StandardCharsets/UTF_8))]
     (apply str (map #(format "%02x" (bit-and 0xff (int %))) digest))))
 
+(defn- compiled-surface-evidence
+  [rows contract-members]
+  (let [overload-families
+        (->> rows
+             (remove #(= "type" (:kind %)))
+             (group-by (juxt :assembly :owner :kind :name))
+             vals
+             (filter
+              (fn [members]
+                (< 1 (count (distinct (map :signature members))))))
+             count)]
+    {:rows (count rows)
+     :types (count (filter #(= "type" (:kind %)) rows))
+     :members (count (remove #(= "type" (:kind %)) rows))
+     :contract-members contract-members
+     :metadata-columns surface-columns
+     :metadata-complete-rows
+     (count
+      (filter
+       (fn [row]
+         (every?
+          (fn [column]
+            (let [value (get row (keyword column))]
+              (and (string? value) (not (str/blank? value)))))
+          surface-columns))
+       rows))
+     :kind-counts (into (sorted-map) (frequencies (map :kind rows)))
+     :visibility-counts
+     (into (sorted-map) (frequencies (map :visibility rows)))
+     :assembly-row-counts
+     (into (sorted-map) (frequencies (map :assembly rows)))
+     :owners (count (distinct (map :owner rows)))
+     :inheritance-rows
+     (count
+      (filter #(and (= "type" (:kind %))
+                    (str/includes? (:signature %) " : "))
+              rows))
+     :generic-rows
+     (count
+      (filter #(or (not= "-" (:generic-constraints %))
+                   (str/includes? (:signature %) "<"))
+              rows))
+     :overload-families overload-families
+     :surface-sha256 (surface-fingerprint rows)}))
+
 (defn- nuget-global-packages! [workspace]
   (let [output
         (:output
@@ -553,12 +598,10 @@
                 :compiled-java-rows (count java-rows)
                 :selected-identities selected-identities
                 :compiled-identities compiled-identities}))
-      {:rows (:matched comparison)
-       :types (count (filter #(= "type" (:kind %)) expected))
-       :members (count (remove #(= "type" (:kind %)) expected))
-       :contract-members (count selected-rows)
-       :surface-sha256 (surface-fingerprint expected)
-       :translation-rules (frequencies (map :translation-rule expected))})))
+      (assoc (compiled-surface-evidence expected (count selected-rows))
+             :translation-rules
+             (into (sorted-map)
+                   (frequencies (map :translation-rule expected)))))))
 
 (defn verify-generated-rows!
   "Verifies reflected rows directly against generated source mappings. This
@@ -585,12 +628,10 @@
               :compiled-java-rows (count java-rows)
               :selected-identities selected-identities
               :compiled-identities compiled-identities}))
-    {:rows (count actual-rows)
-     :types (count (filter #(= "type" (:kind %)) actual-rows))
-     :members (count (remove #(= "type" (:kind %)) actual-rows))
-     :contract-members (count selected-rows)
-     :surface-sha256 (surface-fingerprint actual-rows)
-     :translation-rules (frequencies (map :translation-rule annotated))}))
+    (assoc (compiled-surface-evidence actual-rows (count selected-rows))
+           :translation-rules
+           (into (sorted-map)
+                 (frequencies (map :translation-rule annotated))))))
 
 (defn verify!
   "Reflects and exactly verifies one assembly against its retained contract."
