@@ -52,3 +52,48 @@
               (catch clojure.lang.ExceptionInfo caught caught))]
         (is (= :pdfcube-preflight-differential-failed
                (:kind (ex-data error))))))))
+
+(deftest package-comparator-detects-a-deliberate-mismatch
+  (let [oracle
+        (trace-file "failure\tinvalid-input\tIOException\n")
+        perturbed (trace-file "")
+        comparison
+        (preflight-differential/prove-mismatch-detection!
+         oracle perturbed)]
+    (is (:mismatch comparison))
+    (is (= 2 (get-in comparison [:mismatch :line])))))
+
+(deftest package-contract-pins-preflight-and-its-restored-closure
+  (is (= "PdfCube.Preflight"
+         (:package-id preflight-differential/expected-package-contract)))
+  (is (= ["PdfCube.FontBox" "PdfCube.IO"
+          "PdfCube.PdfBox" "PdfCube.XmpBox"]
+         (get-in preflight-differential/expected-package-contract
+                 [:assembly :dependency-assemblies])))
+  (is (= [{:id "PdfCube.PdfBox" :version "3.0.8-dripsharp.0"}
+          {:id "PdfCube.XmpBox" :version "3.0.8-dripsharp.0"}
+          {:id "Microsoft.Extensions.Logging.Abstractions"
+           :version "10.0.0"}
+          {:id "SkiaSharp" :version "4.150.1"}]
+         (:dependencies
+          preflight-differential/expected-package-contract)))
+  (is (= {:strategy :complete-accessible-java-library
+          :required-rows 946
+          :compiled-contract-members 946
+          :public-stubs 0}
+         (:public-contract
+          preflight-differential/expected-package-contract)))
+  (is (= 12
+         (count preflight-differential/expected-restored-closure))))
+
+(deftest supported-host-matrix-is-exact
+  (is (= #{["windows" "x64"] ["windows" "arm64"]
+           ["linux" "x64"] ["linux" "arm64"]
+           ["macos" "x64"] ["macos" "arm64"]}
+         (set
+          (map (juxt :os :architecture)
+               preflight-differential/supported-hosts))))
+  (is (= #{"windows-2025" "windows-11-arm"
+           "ubuntu-24.04" "ubuntu-24.04-arm"
+           "macos-15-intel" "macos-15"}
+         (set (map :runner preflight-differential/supported-hosts)))))

@@ -247,6 +247,19 @@ deliberately detected mismatch. Its supported-host workflow restores, builds,
 and smokes the retained package feed on Windows, Linux, and macOS on x64 and
 ARM64.
 
+`pdfcube-preflight-differential` performs one dependency-closed, twice-clean
+deterministic pack of `PdfCube.Preflight`, `PdfCube.PdfBox`,
+`PdfCube.XmpBox`, `PdfCube.FontBox`, and `PdfCube.IO`. A separate
+package-reference-only consumer exercises parser, context, configuration,
+validation, result, error, and lifecycle APIs from a fresh local feed and
+isolated cache. The gate requires exact package identity, dependencies,
+resources, legal payload, complete compiled public surface, and zero public
+stubs; compares normalized execution and representative PDF/A corpus
+observations with the pinned PDFBox 3.0.8 Java implementation; and proves
+deliberate mismatch, timeout, crash, leak, missing-row, and nondeterminism
+detection. Its supported-host workflow restores, builds, and smokes the same
+package feed on Windows, Linux, and macOS on x64 and ARM64.
+
 `language-snippet-contract` validates the pinned, source-controlled manifest
 for all 940 upstream `LanguageSnippetTests` cases, then executes the upstream
 JVM engine twice on its supported Java 21 toolchain. It compares the engine's

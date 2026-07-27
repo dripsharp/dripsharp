@@ -32,6 +32,12 @@
           :manifest-file "generation-manifest.edn"
           :public-metadata-file "public-metadata.edn"
           :annotation-decisions-file "annotation-decisions.edn"}
+ :package-consumer
+ {:strategy :source-file
+  :project-file "PdfCube.Preflight.PackageConsumer.csproj"
+  :source-path
+  "validation/pdfcube-preflight/PdfCube.Preflight.FocusedConsumer.cs"
+  :success-message "PdfCube.Preflight focused behavior passed."}
  :name-policy {:public-identifiers :csharp
                :methods :methods
                :fields :fields

@@ -668,7 +668,7 @@
                    :directory root
                    :timeout-ms default-process-timeout-ms
                    :environment {"DRIPSHARP_WORKERS" "22"}})
-    {:java java :classpath run-classpath}))
+    {:java java :classpath run-classpath :classes classes}))
 
 (defn- run-oracle!
   [run-command! ^Path root oracle execution-manifest corpus output]
@@ -835,7 +835,9 @@
       assembly-name expected-dependency-assemblies)
      expected-resources)))
 
-(defn- pack-preflight!
+(defn pack-verified-profile!
+  "Runs the shared deterministic package gate with Preflight's complete
+  translated assembly-reference closure."
   [options]
   (packaging/pack-verified-profile!
    (assoc options
@@ -965,6 +967,7 @@
          :source-isolation source-isolation
          :dependency-proof dependency-proof
          :packages-root packages
+         :cache-roots [packages dotnet-home http-cache temp-root]
          :first-output first-output
          :second-output second-output
          :first-assemblies
@@ -981,7 +984,7 @@
   ([{:keys [workspace-root manifest run-command! pack-fn
             case-timeout-ms process-timeout-ms]
      :or {run-command! process/run!
-          pack-fn pack-preflight!
+          pack-fn pack-verified-profile!
           case-timeout-ms default-case-timeout-ms
           process-timeout-ms default-process-timeout-ms}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
@@ -1060,6 +1063,9 @@
            (prove-fail-closed-controls!
             validated upstream-first
             (paths/resolve-path proof-root "controls"))
+           _ (doseq [cache (conj (:cache-roots package-run)
+                                 (:classes oracle))]
+               (harness/clean-directory! cache))
            summary
            {:source (:oracle validated)
             :coverage (:coverage validated)
@@ -1073,6 +1079,7 @@
             :package (:identity package-proof)
             :restored-packages
             (get-in package-run [:dependency-proof :packages])
+            :temporary-caches-cleaned true
             :controls controls
             :redistribution (:redistribution validated)}]
        (write-text!

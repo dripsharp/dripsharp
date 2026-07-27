@@ -1,19 +1,79 @@
 (ns dripsharp.pdfcube.preflight-differential
-  "Pinned PDFBox 3.0.8 versus generated PdfCube.Preflight execution-model proof."
+  "Pinned PDFBox 3.0.8 versus package-only PdfCube.Preflight proof."
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [dripsharp.compiler :as compiler]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
+            [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
+            [dripsharp.pdfcube.preflight-corpus :as preflight-corpus]
             [dripsharp.process :as process])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files Path]
+           [java.nio.file Files OpenOption Path StandardCopyOption
+            StandardOpenOption]
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
   "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+
+(def supported-hosts
+  [{:os "windows" :architecture "x64" :runner "windows-2025"}
+   {:os "windows" :architecture "arm64" :runner "windows-11-arm"}
+   {:os "linux" :architecture "x64" :runner "ubuntu-24.04"}
+   {:os "linux" :architecture "arm64" :runner "ubuntu-24.04-arm"}
+   {:os "macos" :architecture "x64" :runner "macos-15-intel"}
+   {:os "macos" :architecture "arm64" :runner "macos-15"}])
+
+(def expected-restored-closure
+  #{{:id "PdfCube.IO" :version "3.0.8-dripsharp.0"}
+    {:id "PdfCube.FontBox" :version "3.0.8-dripsharp.0"}
+    {:id "PdfCube.XmpBox" :version "3.0.8-dripsharp.0"}
+    {:id "PdfCube.PdfBox" :version "3.0.8-dripsharp.0"}
+    {:id "PdfCube.Preflight" :version "3.0.8-dripsharp.0"}
+    {:id "Microsoft.Extensions.DependencyInjection.Abstractions"
+     :version "10.0.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "SkiaSharp" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.macOS" :version "4.150.1"}
+    {:id "SkiaSharp.NativeAssets.Win32" :version "4.150.1"}
+    {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}})
+
+(def expected-package-contract
+  {:project-id "org.apache.pdfbox:preflight:3.0.8"
+   :revision pinned-revision
+   :production-sources 116
+   :generated-production-sources 0
+   :clean-builds 2
+   :package-id "PdfCube.Preflight"
+   :version "3.0.8-dripsharp.0"
+   :target-framework "net10.0"
+   :assembly
+   {:name "PdfCube.Preflight"
+    :version "3.0.8.0"
+    :dependency-assemblies
+    ["PdfCube.FontBox" "PdfCube.IO" "PdfCube.PdfBox" "PdfCube.XmpBox"]}
+   :dependencies
+   [{:id "PdfCube.PdfBox" :version "3.0.8-dripsharp.0"}
+    {:id "PdfCube.XmpBox" :version "3.0.8-dripsharp.0"}
+    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
+    {:id "SkiaSharp" :version "4.150.1"}]
+   :resource-count 0
+   :package-files
+   [{:kind :license
+     :path "LICENSE.txt"
+     :sha256
+     "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
+    {:kind :notice
+     :path "NOTICE.txt"
+     :sha256
+     "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+   :public-contract
+   {:strategy :complete-accessible-java-library
+    :required-rows 946
+    :compiled-contract-members 946
+    :public-stubs 0}})
 
 (def required-execution-families
   #{"configuration" "context" "document" "error" "error-code" "exception"
@@ -35,6 +95,107 @@
    (ex-info
     message
     (assoc data :kind :pdfcube-preflight-differential-failed))))
+
+(defn- verify-package-consumption!
+  [options]
+  (packaging/verify-package-consumption!
+   (assoc options
+          :pack-fn preflight-corpus/pack-verified-profile!)))
+
+(defn- current-host []
+  (let [os-name (str/lower-case (System/getProperty "os.name" ""))
+        architecture (str/lower-case (System/getProperty "os.arch" ""))
+        os (cond
+             (str/includes? os-name "win") "windows"
+             (str/includes? os-name "mac") "macos"
+             (str/includes? os-name "linux") "linux"
+             :else os-name)
+        architecture (case architecture
+                       "amd64" "x64"
+                       "x86_64" "x64"
+                       "aarch64" "arm64"
+                       "arm64" "arm64"
+                       architecture)]
+    {:os os :architecture architecture}))
+
+(defn validate-package-contract!
+  "Requires the exact primary package identity, translated/runtime dependency
+  graph, target framework, legal payload, resources, complete compiled
+  Preflight contract, zero public stubs, and isolated restore closure."
+  [package-proof]
+  (let [generation (get-in package-proof [:verification :generation])
+        project-input (:project-input generation)
+        destination (:destination generation)
+        identity (:identity package-proof)
+        inspection (:inspection package-proof)
+        primary (first (filter :primary? (:packages package-proof)))
+        compiled-surface
+        (get-in package-proof [:verification :public-surface])
+        public-metadata (get-in generation [:emission :public-metadata])
+        preflight-surface
+        (first
+         (filter #(= "PdfCube.Preflight" (:assembly %))
+                 (:assemblies compiled-surface)))
+        public-stubs
+        (count
+         (filter #(= :public-stub
+                     (get-in % [:generated :implementation]))
+                 (:rows public-metadata)))
+        restored
+        (->> (get-in package-proof [:dependency-proof :packages])
+             (map #(select-keys % [:id :version]))
+             set)
+        expected
+        (assoc expected-package-contract
+               :restored-closure expected-restored-closure)
+        actual
+        {:project-id (:project-id project-input)
+         :revision (get-in generation [:source-project :revision])
+         :production-sources (count (:production-sources project-input))
+         :generated-production-sources
+         (count (:generated-production-sources project-input))
+         :clean-builds (get-in package-proof [:packing-summary :clean-builds])
+         :package-id (:id identity)
+         :version (:version identity)
+         :target-framework (get-in destination [:project :target-framework])
+         :assembly (get-in primary [:resource-proof :assembly-identity])
+         :dependencies (:dependencies inspection)
+         :resource-count (count (:resources primary))
+         :package-files (:package-files inspection)
+         :public-contract
+         {:strategy (:strategy compiled-surface)
+          :required-rows (:required-rows public-metadata)
+          :compiled-contract-members (:contract-members preflight-surface)
+          :public-stubs public-stubs}
+         :restored-closure restored}]
+    (when-not (= expected actual)
+      (fail! "Packed PdfCube.Preflight violates its exact target contract"
+             {:expected expected :actual actual}))
+    actual))
+
+(defn prove-mismatch-detection!
+  "Copies an oracle trace, deliberately changes it, and requires the shared
+  comparator to report the mismatch."
+  [oracle perturbed]
+  (let [oracle (paths/path oracle)
+        perturbed (paths/path perturbed)]
+    (when-not (paths/regular-file? oracle)
+      (fail! "Preflight mismatch control is missing its oracle trace"
+             {:oracle (str oracle)}))
+    (Files/createDirectories (.getParent perturbed)
+                             (make-array FileAttribute 0))
+    (Files/copy oracle perturbed
+                (into-array StandardCopyOption
+                            [StandardCopyOption/REPLACE_EXISTING]))
+    (Files/writeString
+     perturbed
+     "failure\tdeliberate-package-mismatch\tchanged\n"
+     (into-array OpenOption [StandardOpenOption/APPEND]))
+    (let [comparison (differential/compare-results oracle perturbed)]
+      (when-not (:mismatch comparison)
+        (fail! "Preflight comparator missed a deliberate package mismatch"
+               {:oracle (str oracle) :perturbed (str perturbed)}))
+      comparison)))
 
 (defn- configured-path [^Path root value]
   (let [path (paths/path value)]
@@ -90,7 +251,7 @@
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail!
-       "Generated PdfCube.Preflight execution behavior differs from pinned PDFBox 3.0.8"
+       "Packed PdfCube.Preflight execution behavior differs from pinned PDFBox 3.0.8"
        {:expected (str expected)
         :actual (str actual)
         :comparison comparison
@@ -160,39 +321,47 @@
                    :directory root
                    :timeout-ms 300000})))
 
-(defn- run-dotnet-probe!
-  [run-command! ^Path root ^Path output ^Path fixtures]
-  (let [project
-        (paths/resolve-path
-         root "validation" "pdfcube-preflight"
-         "PdfCube.Preflight.ExecutionProbe.csproj")]
+(defn- run-package-probe!
+  [run-command! ^Path root package-proof ^Path output ^Path fixtures]
+  (let [generation (get-in package-proof [:verification :generation])
+        consumer-profile (get-in generation [:destination :package-consumer])
+        consumer-root (:consumer-root package-proof)
+        project
+        (paths/resolve-path consumer-root (:project-file consumer-profile))
+        source (paths/resolve-path consumer-root "Program.cs")
+        probe
+        (paths/resolve-path root "validation" "pdfcube-preflight" "Program.cs")]
+    (Files/copy probe source
+                (into-array StandardCopyOption
+                            [StandardCopyOption/REPLACE_EXISTING]))
     (run-command! {:command ["dotnet" "build" (str project)
-                             "--nologo" "--configuration" "Release"
-                             "--verbosity:minimal" "--no-incremental"
-                             "-p:RestoreIgnoreFailedSources=true"
-                             "-warnaserror"]
-                   :directory root
+                             "--nologo" "--verbosity:minimal"
+                             "--no-restore" "--no-incremental" "-warnaserror"]
+                   :directory consumer-root
                    :timeout-ms 300000})
     (run-command! {:command ["dotnet" "run" "--project" (str project)
-                             "--configuration" "Release"
                              "--no-build" "--no-restore" "--"
                              (str output) (str fixtures) (str root)]
-                   :directory root
+                   :directory consumer-root
                    :timeout-ms 300000})))
 
 (defn verify!
-  "Runs clean Preflight generation/build/surface verification and normalized
-  pinned Java versus generated .NET execution-model comparison."
+  "Runs deterministic dependency-closed packing, an isolated focused consumer,
+  complete surface and zero-stub gates, pinned Java/package execution-model
+  comparison, and the representative PDF/A corpus proof."
   ([] (verify! {}))
-  ([{:keys [workspace-root verify-fn run-command!]
-     :or {verify-fn compiler/verify-clean-build!
+  ([{:keys [workspace-root package-fn corpus-fn run-command!]
+     :or {package-fn verify-package-consumption!
+          corpus-fn preflight-corpus/verify!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         verification
-         (verify-fn {:workspace-root root
-                     :profile "pdfcube-preflight"
-                     :run-command! run-command!})
-         generation (:generation verification)
+         package-proof
+         (package-fn {:workspace-root root
+                      :profile "pdfcube-preflight"
+                      :run-command! run-command!})
+         package-contract (validate-package-contract! package-proof)
+         verification (:verification package-proof)
+         generation (get-in package-proof [:verification :generation])
          proof-root
          (harness/clean-directory!
           (paths/resolve-path
@@ -202,15 +371,32 @@
          (doto (paths/resolve-path proof-root "fixtures")
            (Files/createDirectories (make-array FileAttribute 0)))
          java-trace (paths/resolve-path proof-root "upstream-java.tsv")
-         dotnet-trace (paths/resolve-path proof-root "generated-dotnet.tsv")]
+         dotnet-trace (paths/resolve-path proof-root "package-dotnet.tsv")]
      (compile-and-run-oracle!
       run-command! root generation proof-root java-trace fixtures)
-     (run-dotnet-probe! run-command! root dotnet-trace fixtures)
+     (run-package-probe!
+      run-command! root package-proof dotnet-trace fixtures)
      (let [comparison (assert-match! java-trace dotnet-trace)
            trace (trace-summary java-trace)
+           perturbation
+           (prove-mismatch-detection!
+            java-trace
+            (paths/resolve-path proof-root "deliberate-mismatch.tsv"))
+           _ (harness/clean-directory! (:packages-root package-proof))
+           corpus-proof
+           (corpus-fn
+            {:workspace-root root
+             :run-command! run-command!
+             :pack-fn (fn [_] package-proof)})
            summary
            {:profile "pdfcube-preflight"
             :source {:version "3.0.8" :revision pinned-revision}
+            :package
+            (merge
+             (select-keys (:identity package-proof)
+                          [:id :version :sha256])
+             {:contract package-contract})
+            :consumer (:dependency-proof package-proof)
             :generation
             (select-keys
              (:summary (:emission generation))
@@ -219,10 +405,23 @@
             :public-surface (:public-surface verification)
             :trace trace
             :comparison comparison
+            :deliberate-mismatch
+            {:line (get-in perturbation [:mismatch :line])
+             :expected (get-in perturbation [:mismatch :expected])
+             :actual (get-in perturbation [:mismatch :actual])}
+            :corpus (:summary corpus-proof)
+            :host (current-host)
+            :supported-hosts supported-hosts
             :proof-root proof-root}]
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/generated PdfCube.Preflight execution differential passed:"
-        (pr-str (select-keys summary [:source :generation :trace])))
+        "Pinned Java/package PdfCube.Preflight differential passed:"
+        (pr-str
+         {:source (:source summary)
+          :package (select-keys (:package summary) [:id :version :sha256])
+          :trace (:trace summary)
+          :corpus (select-keys (:corpus summary)
+                               [:cases :matched :mismatched])
+          :host (:host summary)}))
        summary))))

@@ -2958,6 +2958,12 @@
     :project-references
     ["../pdfcube-pdfbox/PdfCube.PdfBox.csproj"
      "../pdfcube-xmpbox/PdfCube.XmpBox.csproj"]
+    :package-consumer
+    {:strategy :source-file
+     :project-file "PdfCube.Preflight.PackageConsumer.csproj"
+     :source-path
+     "validation/pdfcube-preflight/PdfCube.Preflight.FocusedConsumer.cs"
+     :success-message "PdfCube.Preflight focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package]
     :internal-capabilities #{:preflight-font-erasure}
