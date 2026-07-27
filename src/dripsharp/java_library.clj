@@ -71,14 +71,21 @@
     "this" "throw" "true" "try" "typeof" "uint" "ulong" "unchecked"
     "unsafe" "ushort" "using" "virtual" "void" "volatile" "while"})
 
-(defn- identifier [value]
+(defn identifier
+  "Returns a deterministic C# identifier for a Java source name."
+  [value]
   (let [clean (str/replace (str value) #"[^A-Za-z0-9_]" "_")
         clean (if (re-matches #"[0-9].*" clean) (str "_" clean) clean)]
     (if (contains? csharp-keywords clean) (str "@" clean) clean)))
 
-(defn- pascal [value]
-  (let [value (identifier value)]
-    (str (str/upper-case (subs value 0 1)) (subs value 1))))
+(defn pascal
+  "Returns the shared Pascal-cased C# identifier while preserving keyword
+  escaping."
+  [value]
+  (let [value (identifier value)
+        prefix (when (str/starts-with? value "@") "@")
+        body (if prefix (subs value 1) value)]
+    (str prefix (str/upper-case (subs body 0 1)) (subs body 1))))
 
 (defn- csharp-public-name [value]
   (let [escaped (identifier value)
@@ -286,8 +293,6 @@
           (unsupported! "Java library resolved type has no neutral mapping"
                         reference)))))
 
-(declare type-node)
-
 (def ^:private raw-generic-type-nodes
   {"java.util.Collection" "global::System.Collections.ICollection"
    "java.util.Comparator" "global::System.Collections.IComparer"
@@ -339,66 +344,78 @@
          declarations)))
       (raw (project-type-base ctx declaration)))))
 
-(defn- type-node [ctx ^CtTypeReference reference]
-  (let [occurrence (occurrence! ctx reference :type)
-        node
-        (cond
-          (instance? CtArrayTypeReference reference)
-          (sequence-node [(type-node ctx (.getComponentType
-                                          ^CtArrayTypeReference reference))
-                          (raw "[]")])
+(defn- neutral-type-shape
+  [ctx ^CtTypeReference reference occurrence recur-node]
+  (cond
+    (instance? CtArrayTypeReference reference)
+    [(sequence-node [(recur-node (.getComponentType
+                                  ^CtArrayTypeReference reference))
+                     (raw "[]")])
+     :dotnet.type/array]
 
-          (instance? CtWildcardReference reference)
-          (if-let [bound (.getBoundingType ^CtWildcardReference reference)]
-            (type-node ctx bound)
-            (raw "object"))
+    (instance? CtWildcardReference reference)
+    [(if-let [bound (.getBoundingType ^CtWildcardReference reference)]
+       (recur-node bound)
+       (raw "object"))
+     :dotnet.type/wildcard-bound]
 
-          :else
-          (let [[target _rule] (mapped-type-base ctx reference occurrence)
-                declaration (when (= :project (:origin occurrence))
-                              (or (:declaration occurrence)
-                                  (.getTypeDeclaration reference)))
-                actual-arguments (vec (.getActualTypeArguments reference))
-                arguments
-                (cond
-                  (contains?
-                   #{"java.lang.Class" "java.lang.reflect.Constructor"}
-                   (.getQualifiedName reference))
-                  []
+    :else
+    (let [[target rule] (mapped-type-base ctx reference occurrence)
+          declaration (when (= :project (:origin occurrence))
+                        (or (:declaration occurrence)
+                            (.getTypeDeclaration reference)))
+          actual-arguments (vec (.getActualTypeArguments reference))
+          arguments
+          (cond
+            (contains?
+             #{"java.lang.Class" "java.lang.reflect.Constructor"}
+             (.getQualifiedName reference))
+            []
 
-                  (= "java.util.function.BinaryOperator"
-                     (.getQualifiedName reference))
-                  (let [argument (first actual-arguments)]
-                    (when argument
-                      [(type-node ctx argument)
-                       (type-node ctx argument)
-                       (type-node ctx argument)]))
+            (= "java.util.function.BinaryOperator"
+               (.getQualifiedName reference))
+            (let [argument (first actual-arguments)]
+              (when argument
+                [(recur-node argument)
+                 (recur-node argument)
+                 (recur-node argument)]))
 
-                  (and (empty? actual-arguments)
-                       (instance? CtType declaration)
-                       (seq (.getFormalCtTypeParameters ^CtType declaration)))
-                  (mapv #(raw-project-type-argument-node ctx %)
-                        (.getFormalCtTypeParameters ^CtType declaration))
+            (and (empty? actual-arguments)
+                 (instance? CtType declaration)
+                 (seq (.getFormalCtTypeParameters ^CtType declaration)))
+            (mapv #(raw-project-type-argument-node ctx %)
+                  (.getFormalCtTypeParameters ^CtType declaration))
 
-                  :else
-                  (mapv #(type-node ctx %) actual-arguments))]
-            (if-let [raw-target
-                     (when (empty? actual-arguments)
-                       (get raw-generic-type-nodes
-                            (.getQualifiedName reference)))]
-              (raw raw-target)
-              (if (and (= :project (:origin occurrence))
-                       (instance? CtType declaration))
-                (project-reference-node ctx reference declaration)
-                (if (seq arguments)
-                  (csharp/generic-name (raw target) arguments)
-                  (raw target))))))
-        [_target rule] (if (or (instance? CtArrayTypeReference reference)
-                               (instance? CtWildcardReference reference))
-                         [nil (if (instance? CtArrayTypeReference reference)
-                                :dotnet.type/array
-                                :dotnet.type/wildcard-bound)]
-                         (mapped-type-base ctx reference occurrence))]
+            :else
+            (mapv recur-node actual-arguments))]
+      [(if-let [raw-target
+                (when (empty? actual-arguments)
+                  (get raw-generic-type-nodes
+                       (.getQualifiedName reference)))]
+         (raw raw-target)
+         (if (and (= :project (:origin occurrence))
+                  (instance? CtType declaration))
+           (project-reference-node ctx reference declaration)
+           (if (seq arguments)
+             (csharp/generic-name (raw target) arguments)
+             (raw target))))
+       rule])))
+
+(defn type-node
+  "Emits one resolved type through the shared occurrence, recursion, and
+  source-evidence contract. Destinations may supply a
+  `:resolved-type-policy` in the context with an `:emit-shape` hook and an
+  optional `:decorate-node` hook; those hooks own only destination-specific
+  type shape and decoration."
+  [ctx ^CtTypeReference reference]
+  (let [policy (:resolved-type-policy ctx)
+        occurrence (occurrence! ctx reference :type)
+        recur-node #(type-node ctx %)
+        emit-shape (or (:emit-shape policy) neutral-type-shape)
+        [node rule] (emit-shape ctx reference occurrence recur-node)
+        node (if-let [decorate-node (:decorate-node policy)]
+               (decorate-node ctx reference node)
+               node)]
     (csharp/with-source
       node
       (source-ref reference rule
@@ -8995,6 +9012,26 @@
                     :actual (sort hashes)}))))))
   project-input)
 
+(defn emit-declaration-root-node
+  "Dispatches a root declaration through the shared structural contract.
+  Product bundles may place an `:emit-root-node` hook under
+  `:structural-declaration-policy` in their emission context."
+  [ctx ^CtType type]
+  (if-let [emit-root-node
+           (get-in ctx [:structural-declaration-policy :emit-root-node])]
+    (emit-root-node ctx type)
+    (emit-root ctx type)))
+
+(defn translate-declaration-member
+  "Dispatches a member declaration through the shared structural contract.
+  Product bundles may place a `:translate-member` hook under
+  `:structural-declaration-policy` in their emission context."
+  [ctx ^CtType owner member]
+  (if-let [translate-member
+           (get-in ctx [:structural-declaration-policy :translate-member])]
+    (translate-member ctx owner member)
+    (member-node ctx owner member)))
+
 (defn rule-bundle
   "Returns the ordinary Java-library destination bundle."
   []
@@ -9006,9 +9043,8 @@
    {:structural-declarations
     {:create-template (fn [_ _] {})
      :create-context context
-     :emit-root-node emit-root
-     :translate-member
-     member-node
+     :emit-root-node emit-declaration-root-node
+     :translate-member translate-declaration-member
      :merge-context! merge-context!
      :context-results context-results}
     :resolved-mappings

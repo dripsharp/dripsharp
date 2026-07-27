@@ -52,6 +52,8 @@
 (deftest pkl-bundle-composes-over-the-shared-java-library-contract
   (let [shared (java-library/rule-bundle)
         pkl (pkl-project/rule-bundle)]
+    (is (= "@class" (java-library/identifier "class")))
+    (is (= "@Class" (java-library/pascal "class")))
     (is (= (:schema-version shared) (:schema-version pkl)))
     (is (= #{:product-runtime-assets}
            (set/difference (set (keys (:rules pkl)))
@@ -68,11 +70,20 @@
                                     :destination-file-name])
                     (get-in pkl [:rules :namespace-policy
                                  :destination-file-name])))
+    (is (identical? (get-in shared [:rules :resolved-mappings :type-node])
+                    (get-in pkl [:rules :resolved-mappings :type-node])))
+    (is (fn? (get-in pkl [:rules :resolved-mappings
+                          :type-policy :emit-shape])))
+    (is (fn? (get-in pkl [:rules :resolved-mappings
+                          :type-policy :decorate-node])))
     (is (= :pkl (:id pkl)))
     (is (= :pkl (:product-family pkl)))
-    (is (not (identical?
-              (get-in shared [:rules :structural-declarations :emit-root-node])
-              (get-in pkl [:rules :structural-declarations :emit-root-node]))))))
+    (is (identical?
+         (get-in shared [:rules :structural-declarations :emit-root-node])
+         (get-in pkl [:rules :structural-declarations :emit-root-node])))
+    (is (identical?
+         (get-in shared [:rules :structural-declarations :translate-member])
+         (get-in pkl [:rules :structural-declarations :translate-member])))))
 
 (deftest complete-parser-declarations-and-project-are-zero-skip-and-stable
   (let [first-emission (emit! (temp-directory) 1)

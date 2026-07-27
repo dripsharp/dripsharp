@@ -63,17 +63,9 @@
        "software to C#/.NET, produced by DripSharp. It is not developed, "
        "endorsed, or supported by Apple Inc. or the Pkl project.\n"))
 
-(def ^:private csharp-keywords
-  #{"abstract" "as" "base" "bool" "break" "byte" "case" "catch" "char"
-    "checked" "class" "const" "continue" "decimal" "default" "delegate"
-    "do" "double" "else" "enum" "event" "explicit" "extern" "false"
-    "finally" "fixed" "float" "for" "foreach" "goto" "if" "implicit"
-    "in" "int" "interface" "internal" "is" "lock" "long" "namespace"
-    "new" "null" "object" "operator" "out" "override" "params" "private"
-    "protected" "public" "readonly" "ref" "return" "sbyte" "sealed"
-    "short" "sizeof" "stackalloc" "static" "string" "struct" "switch"
-    "this" "throw" "true" "try" "typeof" "uint" "ulong" "unchecked"
-    "unsafe" "ushort" "using" "virtual" "void" "volatile" "while"})
+(def ^:private identifier java-library/identifier)
+
+(def ^:private pascal java-library/pascal)
 
 (defn validate-configuration!
   [configuration]
@@ -108,18 +100,6 @@
 
 (defn- modifier? [^CtModifiable element modifier]
   (.hasModifier element modifier))
-
-(defn- identifier [name]
-  (let [clean (-> (str name)
-                  (str/replace #"[^A-Za-z0-9_]" "_")
-                  (#(if (re-matches #"[0-9].*" %) (str "_" %) %)))]
-    (if (contains? csharp-keywords clean) (str "@" clean) clean)))
-
-(defn- pascal [name]
-  (let [name (identifier name)
-        prefix (if (str/starts-with? name "@") "@" "")
-        body (if (str/starts-with? name "@") (subs name 1) name)]
-    (str prefix (str/upper-case (subs body 0 1)) (subs body 1))))
 
 (defn- record-component-name
   [^CtType owner-type component]
@@ -894,113 +874,119 @@
                         {:kind :unsupported-declaration-type
                          :occurrence (dissoc occurrence :reference :declaration)})))))
 
-(defn- type-node [ctx ^CtTypeReference reference]
-  (let [occurrence (occurrence! ctx reference :type)
-        [node rule]
-        (cond
+(defn- pkl-type-shape
+  [ctx ^CtTypeReference reference occurrence recur-node]
+  (cond
           ;; Public Pkl APIs expose immutable collection views. Mutable Java
           ;; collection contracts remain available only inside translated
           ;; implementation bodies and adapters.
-          (and (exported-product-signature-reference? ctx reference)
-               (contains? read-only-collection-type-bases
-                          (.getQualifiedName reference)))
-          [(generic-node (get read-only-collection-type-bases
-                              (.getQualifiedName reference))
-                         (let [arguments (.getActualTypeArguments reference)]
-                           (if (seq arguments)
-                             (mapv #(type-node ctx %) arguments)
-                             [(raw "object")])))
-           :pkl-core.type/read-only-product-collection]
+    (and (exported-product-signature-reference? ctx reference)
+         (contains? read-only-collection-type-bases
+                    (.getQualifiedName reference)))
+    [(generic-node (get read-only-collection-type-bases
+                        (.getQualifiedName reference))
+                   (let [arguments (.getActualTypeArguments reference)]
+                     (if (seq arguments)
+                       (mapv recur-node arguments)
+                       [(raw "object")])))
+     :pkl-core.type/read-only-product-collection]
 
           ;; Java byte is signed, so internal arithmetic continues to use
           ;; sbyte. At exported value/data boundaries, however, byte[] is the
           ;; idiomatic CLR representation. Keep this adaptation declaration-
           ;; scoped so generic Java translation semantics are unchanged.
-          (or (idiomatic-byte-array-reference? reference)
-              (and (primitive-byte-array? reference)
-                   (exported-product-signature-reference? ctx reference)))
-          [(raw "byte[]") :pkl-core.type/idiomatic-byte-array]
+    (or (idiomatic-byte-array-reference? reference)
+        (and (primitive-byte-array? reference)
+             (exported-product-signature-reference? ctx reference)))
+    [(raw "byte[]") :pkl-core.type/idiomatic-byte-array]
 
           ;; List<?> was historically widened to IEnumerable<object> to model
           ;; Java wildcard covariance. That makes a Set<object> satisfy the
           ;; list branch in ValueVisitor/ValueConverter dispatch. Preserve the
           ;; distinct upstream List/Set/Map cases at these public boundaries.
-          (idiomatic-list-dispatch-reference? reference)
-          [(raw "global::System.Collections.Generic.IList<object>")
-           :pkl-core.type/idiomatic-list-dispatch]
+    (idiomatic-list-dispatch-reference? reference)
+    [(raw "global::System.Collections.Generic.IList<object>")
+     :pkl-core.type/idiomatic-list-dispatch]
 
           ;; Comparable<?> is commonly used as an erased local carrier (for
           ;; example, JSON parser member names may be String or Identifier).
           ;; Keep declaration bases generic, but erase value-site occurrences
           ;; to object so CLR generic invariance does not introduce casts that
           ;; do not exist on the JVM.
-          (and (= "java.lang.Comparable" (.getQualifiedName reference))
-               (not (:base-clause? ctx)))
-          [(raw "object") :dotnet.type/comparable-erased-value]
+    (and (= "java.lang.Comparable" (.getQualifiedName reference))
+         (not (:base-clause? ctx)))
+    [(raw "object") :dotnet.type/comparable-erased-value]
 
-          (= "org.pkl.core.stdlib.VmObjectFactory$Property" (.getQualifiedName reference))
-          [(generic-node "global::System.Func"
-                         (mapv #(type-node ctx %) (.getActualTypeArguments reference)))
-           :pkl-core.type/property-function]
+    (= "org.pkl.core.stdlib.VmObjectFactory$Property" (.getQualifiedName reference))
+    [(generic-node "global::System.Func"
+                   (mapv recur-node (.getActualTypeArguments reference)))
+     :pkl-core.type/property-function]
 
-          (= "org.pkl.core.StackFrameTransformer" (.getQualifiedName reference))
-          [(raw "global::Pkl.Core.StackFrameTransformer")
-           :pkl-core.type/stack-frame-transformer]
+    (= "org.pkl.core.StackFrameTransformer" (.getQualifiedName reference))
+    [(raw "global::Pkl.Core.StackFrameTransformer")
+     :pkl-core.type/stack-frame-transformer]
 
-          (and (= "org.pkl.core.runtime.VmCollection$Builder" (.getQualifiedName reference))
-               (some #(instance? CtWildcardReference %)
-                     (.getActualTypeArguments reference)))
-          [(generic-node "global::Pkl.Core.Runtime.VmCollection.Builder"
-                         [(raw "global::Pkl.Core.Runtime.VmCollection")])
-           :pkl-core.type/vm-collection-builder-bound]
+    (and (= "org.pkl.core.runtime.VmCollection$Builder" (.getQualifiedName reference))
+         (some #(instance? CtWildcardReference %)
+               (.getActualTypeArguments reference)))
+    [(generic-node "global::Pkl.Core.Runtime.VmCollection.Builder"
+                   [(raw "global::Pkl.Core.Runtime.VmCollection")])
+     :pkl-core.type/vm-collection-builder-bound]
 
-          (instance? CtArrayTypeReference reference)
-          [(sequence-node [(type-node ctx (.getComponentType ^CtArrayTypeReference reference))
-                           (raw "[]")])
-           :dotnet.type/array]
+    (instance? CtArrayTypeReference reference)
+    [(sequence-node [(recur-node (.getComponentType ^CtArrayTypeReference reference))
+                     (raw "[]")])
+     :dotnet.type/array]
 
-          (instance? CtWildcardReference reference)
-          [(if-let [bound (.getBoundingType ^CtWildcardReference reference)]
-             (type-node ctx bound)
-             (raw "object"))
-           :dotnet.type/wildcard-bound]
+    (instance? CtWildcardReference reference)
+    [(if-let [bound (.getBoundingType ^CtWildcardReference reference)]
+       (recur-node bound)
+       (raw "object"))
+     :dotnet.type/wildcard-bound]
 
-          (instance? CtIntersectionTypeReference reference)
-          [(type-node ctx (first (.getBounds ^CtIntersectionTypeReference reference)))
-           :dotnet.type/intersection-primary]
+    (instance? CtIntersectionTypeReference reference)
+    [(recur-node (first (.getBounds ^CtIntersectionTypeReference reference)))
+     :dotnet.type/intersection-primary]
 
-          :else
-          (let [[base mapping-rule] (mapped-type-base ctx reference occurrence)
+    :else
+    (let [[base mapping-rule] (mapped-type-base ctx reference occurrence)
                 ;; System.Type is non-generic even though java.lang.Class<T>
                 ;; carries a type argument.  Its resolved T remains visited by
                 ;; the recursive translator, but is erased at this mapping.
-                arguments (cond
-                            (= "java.lang.Class" (.getQualifiedName reference))
-                            []
+          arguments (cond
+                      (= "java.lang.Class" (.getQualifiedName reference))
+                      []
 
-                            (and (= :project (:origin occurrence))
-                                 (empty? (.getActualTypeArguments reference)))
-                            (repeat (formal-type-arity (:declaration occurrence))
-                                    (raw "object"))
+                      (and (= :project (:origin occurrence))
+                           (empty? (.getActualTypeArguments reference)))
+                      (repeat (formal-type-arity (:declaration occurrence))
+                              (raw "object"))
 
-                            (and (contains? raw-close-derived-type-rules mapping-rule)
-                                 (empty? (.getActualTypeArguments reference)))
-                            (repeat (formal-type-arity (.getTypeDeclaration reference))
-                                    (raw "object"))
+                      (and (contains? raw-close-derived-type-rules mapping-rule)
+                           (empty? (.getActualTypeArguments reference)))
+                      (repeat (formal-type-arity (.getTypeDeclaration reference))
+                              (raw "object"))
 
-                            :else
-                            (mapv #(type-node ctx %) (.getActualTypeArguments reference)))]
-            [(generic-node base arguments) mapping-rule]))
-        nullable? (and (nullable-annotation? reference)
-                       (not (.isPrimitive reference))
-                       (not= "void" (.getQualifiedName reference)))
-        node (if nullable? (sequence-node [node (raw "?")]) node)]
-    (with-source node reference rule
-      {:mapping {:registry :types
-                 :identity rule
-                 :resolved-key (:key occurrence)
-                 :origin (:origin occurrence)
-                 :resolution (:resolution occurrence)}})))
+                      :else
+                      (mapv recur-node (.getActualTypeArguments reference)))]
+      [(generic-node base arguments) mapping-rule])))
+
+(defn- decorate-pkl-type-node
+  [_ctx ^CtTypeReference reference node]
+  (if (and (nullable-annotation? reference)
+           (not (.isPrimitive reference))
+           (not= "void" (.getQualifiedName reference)))
+    (sequence-node [node (raw "?")])
+    node))
+
+(def ^:private resolved-type-policy
+  {:emit-shape pkl-type-shape
+   :decorate-node decorate-pkl-type-node})
+
+(defn- type-node [ctx ^CtTypeReference reference]
+  (java-library/type-node
+   (assoc ctx :resolved-type-policy resolved-type-policy)
+   reference))
 
 (defn- declaration-id [^CtElement element kind]
   (let [{:keys [file line column]} (spoon/source-location element)]
@@ -3072,7 +3058,13 @@
 
 (defn- emission-template
   [resolved-model resolved-mappings]
-  (let [destination-type-node (:type-node resolved-mappings)
+  (let [shared-type-node (:type-node resolved-mappings)
+        resolved-type-policy (:type-policy resolved-mappings)
+        destination-type-node
+        (fn [ctx reference]
+          (shared-type-node
+           (assoc ctx :resolved-type-policy resolved-type-policy)
+           reference))
         ctx-holder (atom nil)
         top-definitions-cache (IdentityHashMap.)
         base-services {:identifier identifier
@@ -3161,7 +3153,14 @@
     {:ctx-holder ctx-holder
      :top-definitions-cache top-definitions-cache
      :services services
-     :body-context body-context}))
+     :body-context body-context
+     :structural-declaration-policy
+     {:emit-root-node type-node-declaration
+      :translate-member
+      (fn [ctx owner member]
+        (let [member-ctx (type-body-context
+                          (assoc ctx :current-type owner) owner)]
+          (member-node member-ctx owner member)))}}))
 
 (defn- root-emission-context
   [{:keys [template configuration resolved-model occurrence-index
@@ -3181,6 +3180,8 @@
                      :blocker-counter (atom blocker-start)
                      :body-translations (atom [])
                      :body-context (:body-context template)
+                     :structural-declaration-policy
+                     (:structural-declaration-policy template)
                      :services (:services template)}
               emit-members (assoc :emit-members emit-members))]
     (reset! (:ctx-holder template) ctx)
@@ -3350,30 +3351,27 @@
 
 (defn rule-bundle
   "Returns the Pkl destination policy composed over the shared Java-library
-  bundle contract. The explicit declaration, type, and body overlays preserve
-  the current Pkl product while those legacy rules migrate incrementally."
+  bundle contract. Pkl-specific declaration and type-shape policies plus the
+  body overlay preserve the current product while body translation migrates
+  separately."
   []
   (let [base (java-library/rule-bundle)]
     (-> base
         (assoc :id :pkl
                :product-family :pkl
                :orchestration {:validate-profile! validate-profile!})
-        (assoc-in
+        (update-in
          [:rules :structural-declarations]
-         {:create-template emission-template
-          :create-context root-emission-context
-          :emit-root-node type-node-declaration
-          :translate-member
-          (fn [ctx owner member]
-            (let [member-ctx (type-body-context
-                              (assoc ctx :current-type owner) owner)]
-              (member-node member-ctx owner member)))
-          :merge-context! merge-emission-context!
-          :context-results context-results})
-        (assoc-in [:rules :resolved-mappings]
-                  {:type-node type-node
+         assoc
+         :create-template emission-template
+         :create-context root-emission-context
+         :merge-context! merge-emission-context!
+         :context-results context-results)
+        (update-in [:rules :resolved-mappings]
+                   assoc
+                   :type-policy resolved-type-policy
                    :create-body-context java-body/context
-                   :annotation-decisions annotation-decisions})
+                   :annotation-decisions annotation-decisions)
         (assoc-in [:rules :project-policy]
                   (assoc project-emission/common-project-policy
                          :validate-configuration! validate-configuration!))
