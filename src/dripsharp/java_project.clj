@@ -11,6 +11,7 @@
             [clojure.string :as str]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.csharp :as csharp]
+            [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
             [dripsharp.project-input :as project-input]
@@ -27,7 +28,9 @@
   {:structural-declarations
    #{:create-template :create-context :emit-root-node :translate-member
      :merge-context! :context-results}
-   :resolved-mappings #{:type-node :create-body-context :annotation-decisions}
+   :resolved-mappings
+   #{:type-node :create-body-context :annotation-decisions
+     :declarative-mapping-registries :declarative-mapping-required?}
    :namespace-policy #{:destination-namespace :destination-file-name}
    :project-policy #{:validate-configuration! :project-text}
    :resource-policy #{:resource-mapping}
@@ -865,6 +868,27 @@
         rule-bundle (resolve-rule-bundle! options)
         validate! (rule rule-bundle :project-policy :validate-configuration!)
         configuration (validate! configuration)
+        initial-mapping-context
+        {:resolved-model resolved-model
+         :configuration configuration
+         :rule-bundle (:id rule-bundle)}
+        mapping-registries
+        ((rule rule-bundle :resolved-mappings
+               :declarative-mapping-registries)
+         initial-mapping-context)
+        mapping-context
+        (assoc initial-mapping-context :registries mapping-registries)
+        mapping-report
+        (assoc
+         (mapping-registry/resolved-occurrence-report
+          (:occurrences resolved-model)
+          mapping-registries
+          (fn [occurrence]
+            ((rule rule-bundle :resolved-mappings
+                   :declarative-mapping-required?)
+             mapping-context occurrence)))
+         :target (:id rule-bundle))
+        _ (mapping-registry/require-complete-occurrence-report! mapping-report)
         root (paths/absolute workspace-root)
         project-root (paths/resolve-path target (get-in configuration [:output :project-directory]))
         source-root (paths/resolve-path project-root (get-in configuration [:output :source-directory]))
@@ -1168,6 +1192,7 @@
                               :rule-bundle (:id rule-bundle)
                               :mechanical-source-headers
                               mechanical-source-header-proof
+                              :mapping-report mapping-report
                               :sources accounts
                               :resources resource-artifacts
                               :artifacts (mapv #(dissoc % :mappings) artifacts)
@@ -1177,6 +1202,7 @@
        :manifest-file manifest-file
        :configuration configuration
        :rule-bundle (:id rule-bundle)
+       :mapping-report mapping-report
        :summary summary
        :emission-profile @emission-profile
        :diagnostics (:diagnostics ctx)

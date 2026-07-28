@@ -1045,6 +1045,46 @@
   {:emit-shape pkl-type-shape
    :decorate-node decorate-pkl-type-node})
 
+(defn- pkl-owned-mapping?
+  [occurrence]
+  (let [key (:key occurrence)]
+    (case (:kind occurrence)
+      :type
+      (and (str/starts-with? key "type:")
+           (contains? external-type-mappings
+                      (subs key (count "type:"))))
+
+      :executable
+      (java-body/adapted-invocation-key? key)
+
+      :constructor
+      (java-body/adapted-constructor-key? key)
+
+      :field
+      (or
+       (contains? java-body/field-adaptations key)
+       (str/starts-with?
+        key
+        "field:java.time.temporal.ChronoUnit#")
+       (contains?
+        #{"field:java.lang.ProcessBuilder$Redirect#INHERIT"
+          "field:java.util.concurrent.TimeUnit#DAYS"
+          "field:java.util.concurrent.TimeUnit#MICROSECONDS"
+          "field:java.util.concurrent.TimeUnit#HOURS"
+          "field:java.util.concurrent.TimeUnit#MILLISECONDS"
+          "field:java.util.concurrent.TimeUnit#NANOSECONDS"
+          "field:java.util.concurrent.TimeUnit#SECONDS"
+          "field:java.util.concurrent.TimeUnit#MINUTES"}
+        key))
+
+      false)))
+
+(defn- declarative-mapping-required?
+  [_mapping-context occurrence]
+  (boolean
+   (and (java-library/jdk-mapping-candidate? occurrence)
+        (not (pkl-owned-mapping? occurrence)))))
+
 (defn- type-node [ctx ^CtTypeReference reference]
   (java-library/type-node
    (assoc ctx :resolved-type-policy resolved-type-policy)
@@ -3724,7 +3764,9 @@
         (update-in [:rules :resolved-mappings]
                    assoc
                    :type-policy resolved-type-policy
-                   :annotation-decisions annotation-decisions)
+                   :annotation-decisions annotation-decisions
+                   :declarative-mapping-required?
+                   declarative-mapping-required?)
         (assoc-in [:rules :project-policy]
                   (assoc project-emission/common-project-policy
                          :validate-configuration! validate-configuration!))

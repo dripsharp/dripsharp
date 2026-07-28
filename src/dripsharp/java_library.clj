@@ -2362,7 +2362,13 @@
 (defn-
   executable-mapping-handlers
   [ctx-holder]
-  {:java-library.mapping.executable/handler-0493
+  {:java-library.mapping/supplemental-collection-factory
+   (fn
+     [{:keys [element occurrence target-node arguments]}]
+     {:node
+      (supplemental-neutral-invocation-node
+       @ctx-holder element (:key occurrence) target-node arguments)})
+   :java-library.mapping.executable/handler-0493
    (fn
      [{:keys [target-node arguments]}]
      {:node (compat-call "StringBuilderAppendInvariant" (into [target-node] arguments))}),
@@ -4933,6 +4939,54 @@
     declarative-shared-handlers
     (executable-mapping-handlers ctx-holder)
     (constructor-mapping-handlers ctx-holder))))
+
+(def ^:private reporting-shared-mapping-registry
+  (delay (shared-mapping-registry (atom nil))))
+
+(defn declarative-mapping-registries
+  "Returns the validated shared registries used for selected-target batch
+  mapping analysis. The member registry handlers are never invoked by the
+  report join; they are compiled here so the same entry and handler contracts
+  fail closed before translation."
+  [_mapping-context]
+  {:java-types java-types/registry
+   :java-members @reporting-shared-mapping-registry})
+
+(defn jdk-mapping-candidate?
+  "Returns true for resolved JDK identities whose ownership a selected product
+  must classify as either declarative or target-specific."
+  [occurrence]
+  (let [reference (:reference occurrence)
+        role (when reference
+               (str/lower-case (str (.getRoleInParent ^CtElement reference))))
+        within-annotation?
+        (loop [element reference]
+          (when (and element
+                     (.isParentInitialized ^CtElement element))
+            (let [parent (.getParent ^CtElement element)]
+              (or (instance? CtAnnotation parent)
+                  (recur parent)))))]
+    (boolean
+     (and (= :jdk (:origin occurrence))
+          (contains? #{:type :executable :constructor :field}
+                     (:kind occurrence))
+          (re-matches #"^(?:type|executable|field):javax?\..+"
+                      (:key occurrence))
+          (not= :class-literal (:resolution occurrence))
+          (not (and (= :type (:kind occurrence))
+                    (= "thrown" role)))
+          (not (and (= :field (:kind occurrence))
+                    within-annotation?))))))
+
+(defn declarative-mapping-required?
+  "Returns true for occurrences owned by an ordinary shared declarative
+  registry. Product bundles widen this to all JDK candidates after excluding
+  their explicit target-specific adaptations."
+  [{:keys [registries]} occurrence]
+  (boolean
+   (and (jdk-mapping-candidate? occurrence)
+        (some #(mapping-registry/registry-entry % (:key occurrence))
+              (vals registries)))))
 
 (defn- body-rules [ctx-holder]
   (let [shared-mappings (shared-mapping-registry ctx-holder)]
@@ -8721,7 +8775,9 @@
     :resolved-mappings
     {:type-node type-node
      :create-body-context create-body-context
-     :annotation-decisions annotation-decisions}
+     :annotation-decisions annotation-decisions
+     :declarative-mapping-registries declarative-mapping-registries
+     :declarative-mapping-required? declarative-mapping-required?}
     :namespace-policy
     {:destination-namespace destination-namespace
      :destination-file-name destination-file-name}

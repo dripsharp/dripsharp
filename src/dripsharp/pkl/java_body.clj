@@ -426,11 +426,22 @@
       "executable:java.lang.Appendable#append(java.lang.CharSequence)"
       "executable:java.lang.Appendable#append(java.lang.CharSequence,int,int)"
       "executable:java.lang.Appendable#append(char)"
+      "executable:java.io.File#toPath()"
+      "executable:java.net.URL#openConnection()"
+      "executable:java.security.MessageDigest#getInstance(java.lang.String)"
+      "executable:java.security.MessageDigest#digest()"
+      "executable:java.security.MessageDigest#digest(byte[])"
+      "executable:java.security.MessageDigest#update(byte)"
+      "executable:java.security.MessageDigest#update(byte[])"
+      "executable:java.security.MessageDigest#update(byte[],int,int)"
       "executable:java.nio.file.spi.FileSystemProvider#installedProviders()"
       "executable:java.nio.file.spi.FileSystemProvider#getScheme()"
       "executable:java.nio.file.FileSystem#getRootDirectories()"
       "executable:java.net.ProxySelector#getDefault()"
       "executable:java.net.ProxySelector#select(java.net.URI)"
+      "executable:java.util.zip.ZipInputStream#readAllBytes()"
+      "executable:javax.net.ssl.SSLContext#getDefault()"
+      "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)"
       "executable:java.time.Duration#of(long,java.time.temporal.TemporalUnit)"
       "executable:java.util.concurrent.Executors#newSingleThreadScheduledExecutor(java.util.concurrent.ThreadFactory)"
       "executable:java.util.concurrent.ScheduledExecutorService#schedule(java.lang.Runnable,long,java.util.concurrent.TimeUnit)"
@@ -554,6 +565,21 @@
      (raw
       "global::Pkl.Core.Runtime.VmValueConverter<object>.TOP_LEVEL_VALUE"))})
 
+(defn adapted-constructor-key?
+  "True only for resolved constructors owned by the Pkl destination adapter."
+  [key]
+  (contains?
+   #{"executable:java.io.File#<init>(java.lang.String)"
+     "executable:java.io.UncheckedIOException#<init>(java.io.IOException)"
+     "executable:java.net.InetSocketAddress#<init>(java.lang.String,int)"
+     "executable:java.net.Proxy#<init>(java.net.Proxy$Type,java.net.SocketAddress)"
+     "executable:java.net.ProxySelector#<init>()"
+     "executable:java.net.ConnectException#<init>(java.lang.String)"
+     "executable:javax.net.ssl.SSLException#<init>(java.lang.String)"
+     "executable:javax.net.ssl.SSLHandshakeException#<init>(java.lang.String)"
+     "executable:org.pkl.core.util.json.JsonParser#<init>(org.pkl.core.util.json.JsonHandler)"}
+   key))
+
 (defn constructor-adapter
   "Adapts constructors whose Pkl runtime representation differs from the
   resolved Java dependency type."
@@ -575,27 +601,27 @@
    (when
     (= "executable:org.pkl.core.util.json.JsonParser#<init>(org.pkl.core.util.json.JsonHandler)"
        (:key occurrence))
-    (let [handler-reference
-          (some-> element .getArguments first .getType)
-          handler-declaration
-          (some-> ^CtTypeReference handler-reference .getTypeDeclaration)
-          handler-base
-          (when (instance? CtClass handler-declaration)
-            (.getSuperclass ^CtClass handler-declaration))
+     (let [handler-reference
+           (some-> element .getArguments first .getType)
+           handler-declaration
+           (some-> ^CtTypeReference handler-reference .getTypeDeclaration)
+           handler-base
+           (when (instance? CtClass handler-declaration)
+             (.getSuperclass ^CtClass handler-declaration))
+           handler-arguments
+           (vec (or (some-> ^CtTypeReference handler-base
+                            .getActualTypeArguments
+                            seq)
+                    (some-> ^CtTypeReference handler-reference
+                            .getActualTypeArguments)))]
+       (sequence-node
+        [(raw "new global::Pkl.Core.Util.Json.JsonParser(")
+         (generic-call
+          destination-context
+          (raw "global::Pkl.Core.Util.Json.JsonHandlerBridge.Erase")
           handler-arguments
-          (vec (or (some-> ^CtTypeReference handler-base
-                           .getActualTypeArguments
-                           seq)
-                   (some-> ^CtTypeReference handler-reference
-                           .getActualTypeArguments)))]
-      (sequence-node
-       [(raw "new global::Pkl.Core.Util.Json.JsonParser(")
-        (generic-call
-         destination-context
-         (raw "global::Pkl.Core.Util.Json.JsonHandlerBridge.Erase")
-         handler-arguments
-         arguments)
-        (raw ")")])))
+          arguments)
+         (raw ")")])))
    (let [services (:services destination-context)
          declaration (:declaration occurrence)
          record (some-> element .getType .getTypeDeclaration)
@@ -927,7 +953,7 @@
 
       (str/starts-with?
        key
-      "executable:org.organicdesign.fp.indent.IndentUtils#indentSpace(")
+       "executable:org.organicdesign.fp.indent.IndentUtils#indentSpace(")
       (invoke (member target-node "IndentSpace") arguments)
 
       (str/starts-with?
@@ -1258,7 +1284,7 @@
                   (second (.getArguments element)))
        (= "parseAuthors"
           (some-> ^spoon.reflect.code.CtExecutableReferenceExpression
-                  (second (.getArguments element))
+           (second (.getArguments element))
                   .getExecutable
                   .getSimpleName)))
       (invoke
@@ -1320,7 +1346,7 @@
        (= 1 argc))
       (let [component (.getComponentType (.getType element))
             element-type (first (.getActualTypeArguments component))]
-      (generic-call
+        (generic-call
          destination-context
          (raw
           "global::Pkl.Core.Util.Paguro.RrbTree<object>.GenericNodeArray")
@@ -1443,11 +1469,11 @@
                     (str/ends-with? source-file "PklConverter.java"))
               nil
               (or
-                  (when-let [current-return
-                             (:current-product-return-reference services)]
-                    (current-return))
-                  (enclosing-method-return-type element)
-                  (.getType element)))
+               (when-let [current-return
+                          (:current-product-return-reference services)]
+                 (current-return))
+               (enclosing-method-return-type element)
+               (.getType element)))
             result-node
             (if (and
                  (str/starts-with?
@@ -1457,8 +1483,8 @@
                  (= "org.pkl.core.ast.builder.AstBuilder" owner-name))
               (raw "object")
               (if result-reference
-              (java-library/type-node destination-context result-reference)
-              (raw "object")))]
+                (java-library/type-node destination-context result-reference)
+                (raw "object")))]
         (invoke
          (csharp/generic-name
           (raw (str (:text (csharp/render target-node)) ".Accept"))
@@ -1476,7 +1502,7 @@
       (invoke (member target-node "Convert") arguments)
 
       (and (= "doVisitCollection"
-               (.getSimpleName (.getExecutable element)))
+              (.getSimpleName (.getExecutable element)))
            (str/includes?
             (or (some-> element enclosing-type .getQualifiedName) "")
             "JsonRenderer")
@@ -1496,7 +1522,7 @@
         (compat-call "ObjectMap" [(argument 1)])])
 
       (and (= "moduleOutputValueTypeMismatch"
-               (.getSimpleName (.getExecutable element)))
+              (.getSimpleName (.getExecutable element)))
            (= 4 argc))
       (invoke
        (member target-node "ModuleOutputValueTypeMismatch")
@@ -1648,18 +1674,18 @@
             (raw ")")]))]
     (-> node
         (csharp/with-source
-         {:identity (spoon/frontend-identity invocation)
-          :location (spoon/source-location invocation)
-          :rule :java.constructor/initializer})
+          {:identity (spoon/frontend-identity invocation)
+           :location (spoon/source-location invocation)
+           :rule :java.constructor/initializer})
         (csharp/with-source
-         {:identity
-          (spoon/frontend-identity (.getExecutable invocation))
-          :location
-          (spoon/source-location (.getExecutable invocation))
-          :rule :resolved.constructor/project
-          :mapping
-          {:registry :constructors
-           :identity :resolved.constructor/project
-           :resolved-key (:key occurrence)
-           :origin (:origin occurrence)
-           :resolution (:resolution occurrence)}}))))
+          {:identity
+           (spoon/frontend-identity (.getExecutable invocation))
+           :location
+           (spoon/source-location (.getExecutable invocation))
+           :rule :resolved.constructor/project
+           :mapping
+           {:registry :constructors
+            :identity :resolved.constructor/project
+            :resolved-key (:key occurrence)
+            :origin (:origin occurrence)
+            :resolution (:resolution occurrence)}}))))

@@ -557,9 +557,19 @@
      "executable:java.util.Arrays#binarySearch(java.lang.Object[],java.lang.Object,java.util.Comparator)"]]
    [:java-library.mapping.executable/handler-0178
     ["executable:java.util.Arrays#copyOf(byte[],int)"
-     "executable:java.util.Arrays#copyOf(float[],int)"]]
+     "executable:java.util.Arrays#copyOf(float[],int)"
+     "executable:java.util.Arrays#copyOf(int[],int)"
+     "executable:java.util.Arrays#copyOf(java.lang.Object[],int)"]]
    [:java-library.mapping.executable/handler-0179
-    ["executable:java.util.Arrays#copyOfRange(byte[],int,int)"]]
+    ["executable:java.util.Arrays#copyOfRange(byte[],int,int)"
+     "executable:java.util.Arrays#copyOfRange(java.lang.Object[],int,int)"]]
+   [:java-library.mapping/supplemental-collection-factory
+    ["executable:java.util.Map#of()"
+     "executable:java.util.Map#of(java.lang.Object,java.lang.Object)"
+     "executable:java.util.Map#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)"
+     "executable:java.util.Set#of(java.lang.Object)"
+     "executable:java.util.Set#of(java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object,java.lang.Object)"
+     "executable:java.util.Set#of(java.lang.Object[])"]]
    [:java-library.mapping.executable/handler-0180
     ["executable:java.util.Arrays#deepToString(java.lang.Object[])"]]
    [:java-library.mapping.executable/handler-0181
@@ -2190,6 +2200,8 @@
    "field:java.lang.Boolean#FALSE" "false"
    "field:java.lang.Boolean#TRUE" "true"
    "field:java.lang.Byte#SIZE" "8"
+   "field:java.lang.Byte#MAX_VALUE" "sbyte.MaxValue"
+   "field:java.lang.Byte#MIN_VALUE" "sbyte.MinValue"
    "field:java.lang.Character#CONNECTOR_PUNCTUATION" "23"
    "field:java.lang.Character#CURRENCY_SYMBOL" "26"
    "field:java.lang.Character#DASH_PUNCTUATION" "20"
@@ -2229,6 +2241,7 @@
    "field:java.lang.Float#NEGATIVE_INFINITY" "float.NegativeInfinity"
    "field:java.lang.Float#POSITIVE_INFINITY" "float.PositiveInfinity"
    "field:java.lang.Integer#MIN_VALUE" "int.MinValue"
+   "field:java.lang.Integer#MAX_VALUE" "int.MaxValue"
    "field:java.lang.Integer#SIZE" "32"
    "field:java.lang.Long#MAX_VALUE" "long.MaxValue"
    "field:java.lang.Long#MIN_VALUE" "long.MinValue"
@@ -2240,6 +2253,7 @@
    "field:java.lang.Short#SIZE" "16"
    "field:java.lang.StrictMath#E" "global::System.Math.E"
    "field:java.lang.StrictMath#PI" "global::System.Math.PI"
+   "field:java.lang.System#err" "global::DripSharp.Runtime.JavaCompat.err"
    "field:java.math.RoundingMode#CEILING"
    "global::DripSharp.Runtime.JavaRoundingMode.Ceiling"
    "field:java.math.RoundingMode#DOWN"
@@ -2264,6 +2278,8 @@
    "global::DripSharp.Runtime.JavaStandardCharsets.UTF16BE"
    "field:java.nio.charset.StandardCharsets#UTF_16LE"
    "global::DripSharp.Runtime.JavaStandardCharsets.UTF16LE"
+   "field:java.nio.charset.StandardCharsets#UTF_8"
+   "global::DripSharp.Runtime.JavaStandardCharsets.UTF8"
    "field:java.nio.file.LinkOption#NOFOLLOW_LINKS" "new object()"
    "field:java.nio.file.attribute.PosixFilePermission#GROUP_EXECUTE"
    "global::System.IO.UnixFileMode.GroupExecute"
@@ -2313,6 +2329,8 @@
    "field:java.util.Calendar#ZONE_OFFSET" "15"
    "field:java.util.Locale#ENGLISH"
    "global::System.Globalization.CultureInfo.GetCultureInfo(\"en\")"
+   "field:java.util.Locale#ROOT"
+   "global::System.Globalization.CultureInfo.InvariantCulture"
    "field:java.util.Locale#US"
    "global::System.Globalization.CultureInfo.GetCultureInfo(\"en-US\")"
    "field:java.util.regex.Pattern#CANON_EQ" "128"
@@ -2353,9 +2371,25 @@
 
 (def neutral-field-destinations
   {"field:java.net.http.HttpClient$Version#HTTP_2" "HTTP_2"
+   "field:java.nio.channels.FileChannel$MapMode#READ_ONLY" "READ_ONLY"
+   "field:java.nio.file.StandardOpenOption#READ" "READ"
    "field:java.nio.file.StandardCopyOption#ATOMIC_MOVE" "ATOMIC_MOVE"
    "field:java.nio.file.StandardCopyOption#COPY_ATTRIBUTES" "COPY_ATTRIBUTES"
    "field:java.nio.file.StandardCopyOption#REPLACE_EXISTING" "REPLACE_EXISTING"
+   "field:java.nio.file.attribute.AclEntryPermission#APPEND_DATA" "APPEND_DATA"
+   "field:java.nio.file.attribute.AclEntryPermission#DELETE" "DELETE"
+   "field:java.nio.file.attribute.AclEntryPermission#DELETE_CHILD" "DELETE_CHILD"
+   "field:java.nio.file.attribute.AclEntryPermission#EXECUTE" "EXECUTE"
+   "field:java.nio.file.attribute.AclEntryPermission#READ_ACL" "READ_ACL"
+   "field:java.nio.file.attribute.AclEntryPermission#READ_ATTRIBUTES" "READ_ATTRIBUTES"
+   "field:java.nio.file.attribute.AclEntryPermission#READ_DATA" "READ_DATA"
+   "field:java.nio.file.attribute.AclEntryPermission#READ_NAMED_ATTRS" "READ_NAMED_ATTRS"
+   "field:java.nio.file.attribute.AclEntryPermission#SYNCHRONIZE" "SYNCHRONIZE"
+   "field:java.nio.file.attribute.AclEntryPermission#WRITE_ACL" "WRITE_ACL"
+   "field:java.nio.file.attribute.AclEntryPermission#WRITE_ATTRIBUTES" "WRITE_ATTRIBUTES"
+   "field:java.nio.file.attribute.AclEntryPermission#WRITE_DATA" "WRITE_DATA"
+   "field:java.nio.file.attribute.AclEntryPermission#WRITE_NAMED_ATTRS" "WRITE_NAMED_ATTRS"
+   "field:java.nio.file.attribute.AclEntryType#ALLOW" "ALLOW"
    "field:javax.crypto.Cipher#DECRYPT_MODE" "DECRYPT_MODE"
    "field:javax.crypto.Cipher#ENCRYPT_MODE" "ENCRYPT_MODE"})
 

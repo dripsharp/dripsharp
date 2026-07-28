@@ -276,6 +276,112 @@
                 {:key "executable:example.Values#filter(java.lang.Object)"
                  :destination "Filter"})]))))))
 
+(deftest resolved-occurrence-reports-are-complete-ranked-and-evidenced
+  (let [type-registry
+        (registry/compile-registry
+         [(base-entry
+           {:id :test.type/string
+            :key "type:java.lang.String"
+            :destination "string"
+            :caveats #{:string-contract}
+            :evidence #{:differential/string}})])
+        member-registry
+        (registry/compile-registry
+         [(base-entry
+           {:id :test.member/list-size
+            :key "executable:java.util.List#size()"
+            :strategy :property-access
+            :destination "Count"})])
+        occurrences
+        (concat
+         (repeat 3 {:kind :type
+                    :key "type:java.lang.String"
+                    :origin :jdk})
+         (repeat 2 {:kind :executable
+                    :key "executable:java.util.List#size()"
+                    :origin :jdk})
+         (repeat 4 {:kind :executable
+                    :key "executable:example.Missing#run()"
+                    :origin :jdk})
+         [{:kind :field
+           :key "field:example.Missing#VALUE"
+           :origin :jdk}
+          {:kind :type
+           :key "type:example.ProjectType"
+           :origin :project}])
+        report
+        (registry/resolved-occurrence-report
+         occurrences
+         {:types type-registry :members member-registry}
+         #(= :jdk (:origin %)))
+        failure
+        (caught #(registry/require-complete-occurrence-report! report))]
+    (is (= {:total-occurrences 11
+            :mapping-required-occurrences 10
+            :mapped-occurrences 5
+            :unmapped-occurrences 5
+            :used-mappings 2
+            :unmapped-symbols 2}
+           (:summary report)))
+    (is (= [4 1] (mapv :occurrences (:unmapped-symbols report))))
+    (is (= ["executable:example.Missing#run()"
+            "field:example.Missing#VALUE"]
+           (mapv :resolved-key (:unmapped-symbols report))))
+    (is (= [3 2] (mapv :occurrences (:used-mappings report))))
+    (is (= {:registry :types
+            :identity ":test.type/string"
+            :resolved-key "type:java.lang.String"
+            :kind :type
+            :strategy :rename
+            :caveats [:string-contract]
+            :introduced-by :test-target
+            :evidence [:differential/string]
+            :occurrences 3}
+           (first (:used-mappings report))))
+    (is (= :java-translation-coverage-failed (:kind (ex-data failure))))
+    (is (= :unmapped-resolved-symbols (:reason (ex-data failure))))
+    (is (= (:unmapped-symbols report)
+           (:unmapped-symbols (ex-data failure))))))
+
+(deftest resolved-occurrence-report-registry-selection-fails-closed
+  (let [first-registry
+        (registry/compile-registry
+         [(base-entry {:id :test.mapping/first})])
+        duplicate-key-registry
+        (registry/compile-registry
+         [(base-entry {:id :test.mapping/second})])
+        duplicate-id-registry
+        (registry/compile-registry
+         [(base-entry
+           {:id :test.mapping/first
+            :key "executable:example.Values#filter(java.lang.Object)"
+            :destination "Filter"})])
+        report-error
+        (fn [registries]
+          (caught
+           #(registry/resolved-occurrence-report
+             []
+             registries
+             (constantly false))))]
+    (is (= :contradictory-mapping-registry-ownership
+           (:kind
+            (ex-data
+             (report-error {:first first-registry
+                            :second duplicate-key-registry})))))
+    (is (= :contradictory-mapping-registry-identities
+           (:kind
+            (ex-data
+             (report-error {:first first-registry
+                            :second duplicate-id-registry})))))
+    (is (= :invalid-mapping-report-predicate-result
+           (:kind
+            (ex-data
+             (caught
+              #(registry/resolved-occurrence-report
+                [{:kind :type :key "type:example.Value" :origin :jdk}]
+                {}
+                (constantly :yes)))))))))
+
 (deftest interpretation-failures-do-not-guess-output
   (let [compiled (registry/compile-registry
                   entries {:custom-handlers handlers})

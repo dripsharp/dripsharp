@@ -5,7 +5,8 @@
   This namespace owns only PdfCube's approved product identities, namespace and
   public-name policy, source-to-destination dependency projections, legal
   inputs, resource policy, and deterministic project metadata."
-  (:require [dripsharp.csharp :as csharp]
+  (:require [clojure.string :as str]
+            [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
             [dripsharp.paths :as paths]
@@ -3633,6 +3634,37 @@
                   {:validate-configuration! validate-configuration!
                    :project-text project-text
                    :transform-node transform-node})
+        (assoc-in
+         [:rules :resolved-mappings :declarative-mapping-required?]
+         (fn [{:keys [configuration]} occurrence]
+           (let [key (:key occurrence)
+                 target-owned?
+                 (case (:kind occurrence)
+                   :type
+                   (and (str/starts-with? key "type:")
+                        (contains? commons-type-mappings
+                                   (subs key (count "type:"))))
+
+                   :executable
+                   (or (contains? commons-invocation-adaptations key)
+                       (contains? translated-project-invocation-adaptations key)
+                       (contains? graphics-invocation-adaptations key)
+                       (and
+                        (contains? (:internal-capabilities configuration)
+                                   :font-discovery)
+                        (contains? font-discovery-invocation-adaptations key)))
+
+                   :constructor
+                   (contains? commons-constructor-adaptations key)
+
+                   :field
+                   (contains? commons-field-adaptations key)
+
+                   false)]
+             (boolean
+              (and
+               (java-library/jdk-mapping-candidate? occurrence)
+               (not target-owned?))))))
         (assoc-in
          [:rules :structural-declarations :create-context]
          (fn [options]

@@ -654,6 +654,11 @@
                (:project-root emission)
                (str "src/PdfCube/PdfBox/Pdmodel/Graphics/Image/"
                     "ImageRegionFixture.cs"))))]
+    (is (= :pdfcube (get-in emission [:mapping-report :target])))
+    (is (empty? (get-in emission [:mapping-report :unmapped-symbols])))
+    (is (some
+         #(= "executable:java.lang.Math#ceil(double)" (:resolved-key %))
+         (get-in emission [:mapping-report :used-mappings])))
     (is (str/includes?
          source
          (str "global::System.Math.Ceiling((double)("

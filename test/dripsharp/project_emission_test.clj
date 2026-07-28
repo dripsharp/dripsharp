@@ -144,7 +144,9 @@
                         :source-identity (spoon/declaration-key reference)
                         :source-location (spoon/source-location reference)})))
      :create-body-context (fn [_ _] nil)
-     :annotation-decisions (constantly [])}
+     :annotation-decisions (constantly [])
+     :declarative-mapping-registries (constantly {})
+     :declarative-mapping-required? (fn [_ _] false)}
     :namespace-policy
     {:destination-namespace
      (fn [ctx ^CtType type]
@@ -194,6 +196,19 @@
         source (paths/resolve-path (:project-root first)
                                    "src/Example/Library/Greeting.cs")]
     (is (= :minimal-java-library (:rule-bundle first) (:rule-bundle second)))
+    (is (= {:schema-version 1
+            :summary
+            {:total-occurrences 3
+             :mapping-required-occurrences 0
+             :mapped-occurrences 0
+             :unmapped-occurrences 0
+             :used-mappings 0
+             :unmapped-symbols 0}
+            :used-mappings []
+            :unmapped-symbols []
+            :target :minimal-java-library}
+           (:mapping-report first)
+           (:mapping-report second)))
     (is (= {:compilation-units 1
             :generated-files 1
             :resources 0
@@ -250,6 +265,43 @@
                  #(project-emission/verify-mechanical-source-headers! first))]
       (is (= :mechanical-source-header-mismatch
              (:kind (ex-data error)))))))
+
+(deftest batch-mapping-preflight-fails-before-translation
+  (let [fixture (minimal-model)
+        missing-key "type:java.example.Missing"
+        model (update (:model fixture) :occurrences
+                      conj
+                      {:kind :type
+                       :key missing-key
+                       :origin :jdk
+                       :resolution :runtime-class})
+        translated? (atom false)
+        bundle
+        (-> (minimal-rule-bundle)
+            (assoc-in
+             [:rules :structural-declarations :create-template]
+             (fn [& _]
+               (reset! translated? true)
+               {}))
+            (assoc-in
+             [:rules :resolved-mappings :declarative-mapping-required?]
+             (fn [_ occurrence]
+               (= missing-key (:key occurrence)))))
+        target (temp-directory)
+        error
+        (caught
+         #(emit! (assoc fixture :model model) target 1 bundle))]
+    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
+    (is (= :unmapped-resolved-symbols (:reason (ex-data error))))
+    (is (= missing-key
+           (get-in (ex-data error) [:diagnostic :resolved :key])))
+    (is (= [{:resolved-key missing-key
+             :kinds [:type]
+             :origins [:jdk]
+             :occurrences 1}]
+           (:unmapped-symbols (ex-data error))))
+    (is (false? @translated?))
+    (is (empty? (seq (.listFiles (.toFile target)))))))
 
 (deftest mechanical-header-contract-is-fail-closed-and-excludes-copied-assets
   (let [missing
@@ -362,6 +414,10 @@
     (is (= #{:structural-declarations :resolved-mappings :namespace-policy
              :project-policy :resource-policy :destination-bridges}
            (set (keys (:required-components contract)))))
+    (is (= #{:type-node :create-body-context :annotation-decisions
+             :declarative-mapping-registries
+             :declarative-mapping-required?}
+           (get-in contract [:required-components :resolved-mappings])))
     (is (= {:labeled-control-flow #{:exception-type}}
            (:required-runtime-capabilities contract)))
     (is (= {:product-runtime-assets #{:assets}

@@ -404,6 +404,158 @@
            {:kind :invalid-compiled-mapping-registry}))
   (get (:entries registry) resolved-key))
 
+(defn registry-entries
+  "Returns the validated entries in stable resolved-key order."
+  [registry]
+  (when-not (compiled-registry? registry)
+    (fail! "Expected a compiled declarative mapping registry"
+           {:kind :invalid-compiled-mapping-registry}))
+  (vec (vals (:entries registry))))
+
+(defn- report-entry
+  [registry entry occurrence-count]
+  {:registry registry
+   :identity (str (:id entry))
+   :resolved-key (:key entry)
+   :kind (:kind entry)
+   :strategy (:strategy entry)
+   :caveats (vec (sort-by pr-str (:caveats entry)))
+   :introduced-by (:introduced-by entry)
+   :evidence (vec (sort-by pr-str (:evidence entry)))
+   :occurrences occurrence-count})
+
+(defn- validate-registry-set!
+  [registries]
+  (when-not (map? registries)
+    (fail! "Declarative mapping report registries must be a map"
+           {:kind :invalid-mapping-report-registries
+            :registries registries}))
+  (doseq [[registry compiled] registries]
+    (when-not (and (keyword? registry) (compiled-registry? compiled))
+      (fail! "Declarative mapping report registry is invalid"
+             {:kind :invalid-mapping-report-registry
+              :registry registry})))
+  (let [owned
+        (mapcat
+         (fn [[registry compiled]]
+           (map #(assoc % ::registry registry)
+                (registry-entries compiled)))
+         (sort-by (comp pr-str key) registries))
+        duplicate-keys (duplicate-groups owned :key)
+        duplicate-identities (duplicate-groups owned :id)]
+    (when (seq duplicate-keys)
+      (fail! "Selected declarative registries contradict resolved-key ownership"
+             {:kind :contradictory-mapping-registry-ownership
+              :duplicates
+              (mapv
+               (fn [[key entries]]
+                 {:resolved-key key
+                  :registries (mapv ::registry entries)
+                  :identities (mapv :id entries)})
+               duplicate-keys)}))
+    (when (seq duplicate-identities)
+      (fail! "Selected declarative registries contradict mapping identities"
+             {:kind :contradictory-mapping-registry-identities
+              :duplicates
+              (mapv
+               (fn [[identity entries]]
+                 {:identity identity
+                  :registries (mapv ::registry entries)
+                  :resolved-keys (mapv :key entries)})
+               duplicate-identities)}))
+    (into {}
+          (map (fn [entry]
+                 [(:key entry)
+                  {:registry (::registry entry)
+                   :entry (dissoc entry ::registry)}]))
+          owned)))
+
+(defn resolved-occurrence-report
+  "Joins a complete resolved-occurrence sequence against the selected
+  declarative registries.
+
+  `mapping-required?` identifies occurrences whose selected target contract
+  requires declarative ownership. The result is deterministic: used mappings
+  and unmapped symbols are ranked by descending occurrence count with exact
+  resolved identity as the stable tie-breaker."
+  [occurrences registries mapping-required?]
+  (when-not (and (sequential? occurrences) (not (string? occurrences)))
+    (fail! "Resolved mapping report occurrences must be sequential"
+           {:kind :invalid-mapping-report-occurrences}))
+  (when-not (ifn? mapping-required?)
+    (fail! "Resolved mapping report requires a mapping ownership predicate"
+           {:kind :invalid-mapping-report-predicate}))
+  (let [owners (validate-registry-set! registries)
+        required
+        (mapv
+         (fn [occurrence]
+           (when-not (map? occurrence)
+             (fail! "Resolved mapping report occurrence must be a map"
+                    {:kind :invalid-mapping-report-occurrence
+                     :occurrence occurrence}))
+           (let [required? (mapping-required? occurrence)]
+             (when-not (instance? Boolean required?)
+               (fail! "Mapping ownership predicate must return a boolean"
+                      {:kind :invalid-mapping-report-predicate-result
+                       :resolved-key (:key occurrence)
+                       :result required?}))
+             (assoc occurrence ::mapping-required? required?)))
+         occurrences)
+        required (filterv ::mapping-required? required)
+        mapped (filterv #(contains? owners (:key %)) required)
+        unmapped (remove #(contains? owners (:key %)) required)
+        used-mappings
+        (->> mapped
+             (group-by :key)
+             (map
+              (fn [[resolved-key owned-occurrences]]
+                (let [{:keys [registry entry]} (get owners resolved-key)]
+                  (report-entry registry entry (count owned-occurrences)))))
+             (sort-by (juxt (comp - :occurrences) :resolved-key))
+             vec)
+        unmapped-symbols
+        (->> unmapped
+             (group-by :key)
+             (map
+              (fn [[resolved-key missing-occurrences]]
+                {:resolved-key resolved-key
+                 :kinds (vec (sort-by pr-str
+                                      (set (map :kind missing-occurrences))))
+                 :origins (vec (sort-by pr-str
+                                        (set (map :origin missing-occurrences))))
+                 :occurrences (count missing-occurrences)}))
+             (sort-by (juxt (comp - :occurrences) :resolved-key))
+             vec)]
+    {:schema-version 1
+     :summary
+     {:total-occurrences (count occurrences)
+      :mapping-required-occurrences (count required)
+      :mapped-occurrences (count mapped)
+      :unmapped-occurrences (count unmapped)
+      :used-mappings (count used-mappings)
+      :unmapped-symbols (count unmapped-symbols)}
+     :used-mappings used-mappings
+     :unmapped-symbols unmapped-symbols}))
+
+(defn require-complete-occurrence-report!
+  "Fails closed with the complete frequency-ranked backlog when any required
+  resolved identity lacks declarative ownership."
+  [report]
+  (when (seq (:unmapped-symbols report))
+    (let [{:keys [resolved-key kinds origins]}
+          (first (:unmapped-symbols report))]
+      (fail! "Selected target has unmapped resolved symbols"
+             {:kind :java-translation-coverage-failed
+              :reason :unmapped-resolved-symbols
+              :diagnostic
+              {:resolved
+               {:key resolved-key
+                :kind (first kinds)
+                :origin (first origins)}}
+              :mapping-report report
+              :unmapped-symbols (:unmapped-symbols report)})))
+  report)
+
 (defn- node!
   [node role]
   (try

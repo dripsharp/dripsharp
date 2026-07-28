@@ -137,7 +137,21 @@
       (is (= 50 (count (:sources manifest))))
       (is (every? #(contains? #{:generated-csharp :package-nullability-metadata}
                               (:strategy %))
-                  (:sources manifest))))
+                  (:sources manifest)))
+      (let [mapping-report (:mapping-report first-emission)]
+        (is (= mapping-report (:mapping-report manifest)))
+        (is (= :pkl (:target mapping-report)))
+        (is (empty? (:unmapped-symbols mapping-report)))
+        (is (pos? (get-in mapping-report
+                          [:summary :mapping-required-occurrences])))
+        (is (pos? (get-in mapping-report [:summary :used-mappings])))
+        (is (every?
+             #(= #{:registry :identity :resolved-key :kind :strategy
+                   :caveats :introduced-by :evidence :occurrences}
+                 (set (keys %)))
+             (:used-mappings mapping-report)))
+        (is (every? seq (map :evidence (:used-mappings mapping-report))))
+        (is (apply >= (map :occurrences (:used-mappings mapping-report))))))
 
     (testing "all executable roots pass accepted recursive coverage"
       (is (= 984 (:executable-roots summary)))

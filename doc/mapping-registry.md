@@ -100,3 +100,22 @@ blocking exception; it never falls back to simple names, source text, or guessed
 C# output. Every successful fragment carries the mapping identity, resolved
 key, strategy, caveats, introducing target, and evidence references for later
 generation reporting.
+
+## Batch Generation Evidence
+
+Before translating a selected target, project emission joins its complete
+resolved-occurrence index against the compiled declarative registries. Each
+target explicitly classifies JDK occurrences as shared declarative mappings or
+target-specific adaptations. Registry ownership contradictions reject the
+batch.
+
+The generation manifest records a versioned `:mapping-report`. Its
+`:used-mappings` rows contain the registry name, stable mapping identity,
+resolved key, kind, strategy, caveats, introducing target, evidence references,
+and occurrence count. Rows are ranked by descending occurrence count and then
+by resolved key.
+
+Missing required identities are collected into `:unmapped-symbols`, with their
+resolved key, observed kinds and origins, and frequency. That backlog uses the
+same deterministic ranking and blocks translation before any destination files
+are emitted. It never degrades to a simple-name or source-text guess.
