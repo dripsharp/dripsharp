@@ -845,16 +845,32 @@
                  (str "package example; public final class BoxedCasts { "
                       "public static Boolean optional(Object value) { "
                       "return (Boolean) value; } "
+                      "public static Boolean optionalLocal(Object value) { "
+                      "Boolean local = null; local = (Boolean) value; "
+                      "return local; } "
                       "public static boolean required(Object value) { "
-                      "return (Boolean) value; } }")})
+                      "return (Boolean) value; } "
+                      "public static boolean requiredLocal(Object value) { "
+                      "Boolean local = (Boolean) value; return local; } }")})
         emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        parallel (emit! fixture 3 #{:java-compat :java-regex-unicode})
         source
         (slurp (str (paths/resolve-path (:project-root emitted)
+                                        "src/Example/Java/Library/BoxedCasts.cs")))
+        parallel-source
+        (slurp (str (paths/resolve-path (:project-root parallel)
                                         "src/Example/Java/Library/BoxedCasts.cs")))]
     (is (str/includes? source "return (bool?)(value);"))
+    (is (str/includes? source "bool? local = default!;"))
+    (is (str/includes? source "local = (bool?)(value);"))
     (is (str/includes?
          source
          "return global::DripSharp.Runtime.JavaCompat.Unbox((bool?)(value));"))
+    (is (str/includes?
+         source
+         (str "bool local = global::DripSharp.Runtime.JavaCompat.Unbox("
+              "(bool?)(value));")))
+    (is (= source parallel-source))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emitted)
                                :command ["dotnet" "build" (:project-file emitted)

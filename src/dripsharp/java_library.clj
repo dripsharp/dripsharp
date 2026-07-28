@@ -2303,15 +2303,27 @@
     node))
 
 (defn- assignment-value-node [ctx ^CtElement assigned ^CtExpression assignment node]
-  (let [assigned-reference (some-> assigned .getType)
+  (let [assigned-declaration
+        (if (instance? CtVariableAccess assigned)
+          (or (some-> ^CtVariableAccess assigned .getVariable .getDeclaration)
+              assigned)
+          assigned)
+        assigned-reference (some-> assigned .getType)
         assigned-type (some-> assigned-reference .getQualifiedName)
         assignment-type (some-> assignment .getType .getQualifiedName)
         node
-        (if (and assigned-reference (.isPrimitive assigned-reference))
+        (cond
+          (and assigned-reference (.isPrimitive assigned-reference))
           (if (boxed-primitive-reference? (.getType assignment))
             (unbox-object-as-node ctx assigned-reference node)
             (maybe-unbox-node ctx assignment node))
-          node)]
+
+          (and (boxed-primitive-reference? assigned-reference)
+               (not (nullable-boxed-declaration?
+                     ctx assigned-declaration assigned-reference)))
+          (maybe-unbox-node ctx assignment node)
+
+          :else node)]
     (destination-value-node
      ctx :assignment assignment assigned-reference assigned
      (cond (nullable-boxed-collection-declaration? assigned assigned-reference) (let [element (boxed-primitive-collection-element assigned-reference)] (sequence-node [(raw "global::DripSharp.Runtime.JavaCompat.CastList<") (type-node ctx element) (raw "?>(") node (raw ")")])) (and (instance? CtMethod assigned) (covariant-list-node ctx assigned assigned-reference) (= "java.util.List" assignment-type) (= 1 (count (.getActualTypeArguments (.getType assignment)))) (not= (some-> (first (.getActualTypeArguments (.getType assignment))) .getQualifiedName) (some-> (first (.getActualTypeArguments assigned-reference)) .getBoundingType .getQualifiedName))) (let [bound (.getBoundingType (first (.getActualTypeArguments assigned-reference)))] (sequence-node [(raw "global::DripSharp.Runtime.JavaCompat.ToReadOnlyList<") (type-node ctx bound) (raw ">(") node (raw ")")])) (unbounded-wildcard-map-reference? assigned-reference) (sequence-node [(raw "global::DripSharp.Runtime.JavaCompat.CastDictionary<object, object>(") node (raw ")")]) (and (= "byte" assigned-type) (not= "byte" assignment-type)) (sequence-node [(raw "unchecked((sbyte)(") node (raw "))")]) (and (= "char" assigned-type) (not= "char" assignment-type)) (sequence-node [(raw "unchecked((char)(") node (raw "))")]) :else node))))
