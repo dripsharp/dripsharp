@@ -71,14 +71,21 @@
 
     (testing "the recursively resolved project declaration and source sets are exact"
       (is (= {:seeds 182 :declarations 17305 :source-inputs 657
-              :public-api-declarations 7796 :shadow-symbols 0
-              :unresolved-symbols 0 :ambiguous-symbols 0
-              :fallback-symbols 0 :guessed-symbols 0}
+              :public-api-declarations 7796}
              (select-keys (:totals first)
                           [:seeds :declarations :source-inputs
-                           :public-api-declarations :shadow-symbols
-                           :unresolved-symbols :ambiguous-symbols
-                           :fallback-symbols :guessed-symbols])))
+                           :public-api-declarations])))
+      (is (not-any?
+           #(contains? (:totals first) %)
+           [:shadow-symbols :unresolved-symbols :ambiguous-symbols
+            :fallback-symbols :guessed-symbols]))
+      (is (= (count (:occurrences first))
+             (reduce
+              +
+              (map (:totals first)
+                   [:project-occurrences :jdk-occurrences
+                    :dependency-occurrences :intrinsic-occurrences
+                    :type-parameter-occurrences]))))
       (is (= "db3964fd60f39b34b354c3b7de7f539a52d24262f95b794360c0c5d6b09c1699"
              (sha-256 declaration-keys)))
       (is (= "d7e0f8f71a71a88392d290867b50459f4737307ed1c6de2882bc6241a6332cf0"

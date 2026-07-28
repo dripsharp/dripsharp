@@ -48,13 +48,6 @@
     (Files/writeString file content (make-array OpenOption 0))
     file))
 
-(defn- model-totals
-  []
-  {:shadow-symbols 0
-   :unresolved-symbols 0
-   :ambiguous-symbols 0
-   :fallback-symbols 0})
-
 (defn- summary
   []
   {:compilation-units 1
@@ -148,7 +141,6 @@
       :production-sources [source]
       :generated-production-sources []
       :production-resources []}
-     :model-totals (model-totals)
      :destination
      {:project {:assembly-name package-id
                 :target-framework "net10.0"
@@ -228,7 +220,7 @@
       :dependency-emissions dependencies
       :emission primary
       :resolved-project-input (:project-input primary)
-      :java-model {:totals (:model-totals primary)}
+      :java-model {:totals {}}
       :destination (:destination primary)
       :public-api-boundary {}
       :public-surface-strategy {}}
@@ -269,17 +261,17 @@
   (let [root (Files/createTempDirectory
               "pdfcube-family-gap-" (make-array FileAttribute 0))
         build (clean-build root)]
-    (testing "resolved frontend failures are blocking"
+    (testing "observed translation coverage failures are blocking"
       (let [error
             (caught
              #(family-build/validate-build!
                root
                (assoc-in build
                          [:generation :dependency-emissions 0
-                          :model-totals :unresolved-symbols]
+                          :summary :executable-coverage :missing-mappings]
                          1)))]
         (is (= :pdfcube-family-build-failed (:kind (ex-data error))))
-        (is (= ["pdfcube-io" :model :unresolved-symbols]
+        (is (= ["pdfcube-io" :coverage :missing-mappings]
                (:field (ex-data error))))))
     (testing "public implementation stubs are blocking"
       (let [error

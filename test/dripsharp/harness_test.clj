@@ -167,10 +167,11 @@
                               :field-references 0
                               :annotations 0
                               :symbols 0
-                              :shadow-symbols 0
-                              :unresolved-symbols 0
-                              :ambiguous-symbols 0
-                              :fallback-symbols 0}}))
+                              :project-occurrences 0
+                              :jdk-occurrences 0
+                              :dependency-occurrences 0
+                              :intrinsic-occurrences 0
+                              :type-parameter-occurrences 0}}))
                  :emit-project-fn
                  (fn [{:keys [target]}]
                    {:project-file (paths/resolve-path target "fixture.csproj")
@@ -291,9 +292,10 @@
                     {:totals {:declarations 1 :source-inputs 1
                               :type-references 0 :executable-references 0
                               :constructor-references 0 :field-references 0
-                              :annotations 0 :symbols 0 :shadow-symbols 0
-                              :unresolved-symbols 0 :ambiguous-symbols 0
-                              :fallback-symbols 0}}))
+                              :annotations 0 :symbols 0
+                              :project-occurrences 0 :jdk-occurrences 0
+                              :dependency-occurrences 0 :intrinsic-occurrences 0
+                              :type-parameter-occurrences 0}}))
                  :emit-project-fn
                  (fn [{:keys [resolved-model target]}]
                    (swap! captured assoc :resolved-model resolved-model)
@@ -429,9 +431,10 @@
                     {:totals {:compilation-units 2 :project-types 0
                               :type-references 0 :executable-references 0
                               :constructor-references 0 :field-references 0
-                              :annotations 0 :symbols 0 :shadow-symbols 0
-                              :unresolved-symbols 0 :ambiguous-symbols 0
-                              :fallback-symbols 0}}))
+                              :annotations 0 :symbols 0
+                              :project-occurrences 0 :jdk-occurrences 0
+                              :dependency-occurrences 0 :intrinsic-occurrences 0
+                              :type-parameter-occurrences 0}}))
                  :emit-project-fn
                  (fn [{:keys [target]}]
                    {:project-file (paths/resolve-path target "acme.csproj")
@@ -492,8 +495,9 @@
              {:totals {:compilation-units 2 :project-types 0 :type-references 0
                        :executable-references 0 :constructor-references 0
                        :field-references 0 :annotations 0 :symbols 0
-                       :shadow-symbols 0 :unresolved-symbols 0
-                       :ambiguous-symbols 0 :fallback-symbols 0}}))
+                       :project-occurrences 0 :jdk-occurrences 0
+                       :dependency-occurrences 0 :intrinsic-occurrences 0
+                       :type-parameter-occurrences 0}}))
           :emit-project-fn
           (fn [{:keys [target configuration]}]
             {:project-file (paths/resolve-path target (str (:file configuration) ".csproj"))
@@ -548,8 +552,9 @@
    {:totals {:compilation-units 2 :project-types 0 :type-references 0
              :executable-references 0 :constructor-references 0
              :field-references 0 :annotations 0 :symbols 0
-             :shadow-symbols 0 :unresolved-symbols 0
-             :ambiguous-symbols 0 :fallback-symbols 0}}))
+             :project-occurrences 0 :jdk-occurrences 0
+             :dependency-occurrences 0 :intrinsic-occurrences 0
+             :type-parameter-occurrences 0}}))
 
 (deftest transitive-project-dag-generates-each-project-once-in-topological-order
   (let [root (temp-directory)

@@ -22,6 +22,12 @@
    "branchFromFinally"
    "switchInteraction"])
 
+(def ^:private control-flow-exception-type
+  "global::Fixture.Runtime.LabeledControlFlowSignal")
+
+(def ^:private runtime-capabilities
+  {:labeled-control-flow {:exception-type control-flow-exception-type}})
+
 (defn- fixture-path
   [filename]
   (paths/resolve-path (paths/workspace-root)
@@ -62,6 +68,7 @@
          {:configuration
           {:namespaces {"fixture" "LabeledControl"}
            :destination-capabilities #{:java-compat}}
+          :runtime-capabilities runtime-capabilities
           :resolved-model resolved-model
           :occurrence-index
           (java/resolved-occurrence-index resolved-model)})
@@ -94,8 +101,8 @@
 
 (defn- library-source
   [translations]
-  (str "namespace DripSharp.Runtime\n{\n"
-       "  internal sealed class JavaLabeledControlFlowException(int branchId) "
+  (str "namespace Fixture.Runtime\n{\n"
+       "  internal sealed class LabeledControlFlowSignal(int branchId) "
        ": global::System.Exception\n  {\n"
        "    internal int BranchId { get; } = branchId;\n"
        "  }\n}\n\n"
@@ -219,6 +226,12 @@
     (is (str/includes? generated "goto __java_continue_0;"))
     (is (str/includes? generated "goto __java_break_0;"))
     (is (str/includes? generated "goto __java_break_1;"))
+    (is (str/includes? generated
+                       (str "throw new " control-flow-exception-type "(")))
+    (is (str/includes? generated
+                       (str "catch (" control-flow-exception-type)))
+    (is (not (str/includes? generated
+                            "DripSharp.Runtime.JavaLabeledControlFlowException")))
     (is (not (str/includes? generated "__break_same")))
     (is (= :labeled-control-differential-mismatch
            (:kind
@@ -227,6 +240,15 @@
                (equivalent! java-output (str package-output "-perturbed"))
                nil
                (catch clojure.lang.ExceptionInfo error error))))))))
+
+(deftest generic-kernel-does-not-name-a-destination-runtime-type
+  (let [source
+        (slurp
+         (str (paths/resolve-path
+               (paths/workspace-root)
+               "src" "dripsharp" "java_translate.clj")))]
+    (is (not (str/includes? source "DripSharp.Runtime")))
+    (is (not (str/includes? source "JavaLabeledControlFlowException")))))
 
 (deftest javac-and-spoon-correlate-invalid-nested-label-shadowing
   (let [source (fixture-path "InvalidNestedLabel.java")

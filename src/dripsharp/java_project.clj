@@ -33,6 +33,9 @@
    :resource-policy #{:resource-mapping}
    :destination-bridges #{:assets}})
 
+(def ^:private required-runtime-capabilities
+  {:labeled-control-flow #{:exception-type}})
+
 (def translator-version
   "The source-controlled version recorded in every mechanical C# header."
   "0.1.0")
@@ -44,6 +47,7 @@
   []
   {:schema-version 1
    :required-components required-rule-components
+   :required-runtime-capabilities required-runtime-capabilities
    :optional-components {:product-runtime-assets #{:assets}
                          :orchestration #{:validate-profile!
                                           :validate-project-input!}}})
@@ -493,6 +497,24 @@
           (capability-error! resolved-model "Destination rule capability is missing"
                              {:bundle (:id rule-bundle)
                               :component component :capability hook})))))
+  (let [runtime-capabilities
+        (try
+          (java/runtime-capabilities (:runtime-capabilities rule-bundle))
+          (catch clojure.lang.ExceptionInfo error
+            (capability-error!
+             resolved-model
+             "Destination runtime capability contract is invalid"
+             {:bundle (:id rule-bundle)
+              :component :runtime-capabilities
+              :validation (ex-data error)})))]
+    (doseq [[capability _settings] required-runtime-capabilities]
+      (when-not (contains? runtime-capabilities capability)
+        (capability-error!
+         resolved-model
+         "Destination runtime capability is missing"
+         {:bundle (:id rule-bundle)
+          :component :runtime-capabilities
+          :capability capability}))))
   (when-let [runtime-rules (get-in rule-bundle [:rules :product-runtime-assets])]
     (when-not (and (map? runtime-rules) (fn? (:assets runtime-rules)))
       (capability-error! resolved-model "Product runtime asset capability is invalid"
@@ -891,7 +913,10 @@
         (proxy [ThreadLocal] []
           (initialValue []
             (create-template resolved-model
-                             (get-in rule-bundle [:rules :resolved-mappings]))))
+                             (assoc
+                              (get-in rule-bundle [:rules :resolved-mappings])
+                              :runtime-capabilities
+                              (:runtime-capabilities rule-bundle)))))
         emission-profile (atom {:root-count (count scheduled-roots)
                                 :average-root-weight average-root-weight
                                 :largest-root
@@ -911,6 +936,7 @@
            :selected-declarations selected-declarations
            :public-api-type-keys public-api-type-keys
            :public-api-declaration-keys public-api-declaration-keys
+           :runtime-capabilities (:runtime-capabilities rule-bundle)
            :blocker-start blocker-start
            :emit-members emit-members})
         context-additions

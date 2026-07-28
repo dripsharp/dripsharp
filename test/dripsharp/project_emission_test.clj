@@ -88,6 +88,9 @@
   {:schema-version 1
    :id :minimal-java-library
    :product-family :java-library
+   :runtime-capabilities
+   {:labeled-control-flow
+    {:exception-type "global::Example.Runtime.LabeledControlFlowSignal"}}
    :rules
    {:structural-declarations
     {:create-template (fn [_ _] {})
@@ -302,6 +305,17 @@
                                   [:rules :resolved-mappings]
                                   dissoc :annotation-decisions)
         missing (caught #(emit! fixture (temp-directory) 1 missing-bundle))
+        missing-runtime
+        (caught
+         #(emit! fixture (temp-directory) 1
+                 (dissoc (minimal-rule-bundle) :runtime-capabilities)))
+        invalid-runtime
+        (caught
+         #(emit! fixture (temp-directory) 1
+                 (assoc-in
+                  (minimal-rule-bundle)
+                  [:runtime-capabilities :labeled-control-flow :exception-type]
+                  "Example.Runtime.UnqualifiedSignal")))
         unsupported-configuration
         (assoc (configuration)
                :destination-bundle 'missing.destination/rule-bundle)
@@ -323,6 +337,18 @@
       (is (identical? root-type (:source-element (ex-data missing))))
       (is (= "type:example.Greeting" (:source-identity (ex-data missing))))
       (is (pos? (get-in (ex-data missing) [:source-location :line]))))
+    (testing "runtime type identities are a validated bundle capability"
+      (is (= :missing-destination-capability
+             (:kind (ex-data missing-runtime))))
+      (is (= :runtime-capabilities
+             (:component (ex-data missing-runtime))))
+      (is (= :labeled-control-flow
+             (:capability (ex-data missing-runtime))))
+      (is (= :missing-destination-capability
+             (:kind (ex-data invalid-runtime))))
+      (is (= :invalid-translation-runtime-capability
+             (get-in (ex-data invalid-runtime)
+                     [:validation :kind]))))
     (testing "unsupported bundle selection fails closed at the same live root"
       (is (= :unsupported-destination-rule-bundle
              (:kind (ex-data unsupported))))
@@ -336,6 +362,8 @@
     (is (= #{:structural-declarations :resolved-mappings :namespace-policy
              :project-policy :resource-policy :destination-bridges}
            (set (keys (:required-components contract)))))
+    (is (= {:labeled-control-flow #{:exception-type}}
+           (:required-runtime-capabilities contract)))
     (is (= {:product-runtime-assets #{:assets}
             :orchestration #{:validate-profile! :validate-project-input!}}
            (:optional-components contract)))

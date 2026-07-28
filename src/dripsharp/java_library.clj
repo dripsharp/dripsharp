@@ -174,7 +174,8 @@
                    :body-translations (atom []))
         ctx (assoc ctx :body-context (create-body-context
                                       (:resolved-model options)
-                                      ctx-holder))]
+                                      ctx-holder
+                                      (:runtime-capabilities options)))]
     (reset! ctx-holder ctx)
     ctx))
 
@@ -5070,9 +5071,9 @@
                        " is not global::System.TypeInitializationException")))
                (when labeled-flow-exception?
                  (raw
-                  (str parameter-name
-                       " is not global::DripSharp.Runtime."
-                       "JavaLabeledControlFlowException")))])]
+                  (str parameter-name " is not "
+                       (java/runtime-type-identity
+                        context :labeled-control-flow))))])]
          {:node
           (sequence-node
            [(raw "catch (")
@@ -5229,11 +5230,15 @@
   `ctx-holder` contains the destination emission context so target bundles can
   supply explicit type-shape and resolved-symbol adaptations without replacing
   ordinary Java structural or standard-library rules."
-  [resolved-model ctx-holder]
-  (java/context resolved-model
-    {:mode :accepted
-     :rules (body-rules ctx-holder)
-     :mappings (semantic-mappings resolved-model ctx-holder)}))
+  ([resolved-model ctx-holder]
+   (create-body-context resolved-model ctx-holder
+                        (:runtime-capabilities @ctx-holder)))
+  ([resolved-model ctx-holder runtime-capabilities]
+   (java/context resolved-model
+     {:mode :accepted
+      :rules (body-rules ctx-holder)
+      :mappings (semantic-mappings resolved-model ctx-holder)
+      :runtime-capabilities runtime-capabilities})))
 
 (defn translate-body
   "Translates and gates one executable body or initializer with a shared Java
@@ -6632,7 +6637,9 @@
   (let [ctx-holder (atom nil)
         derived (merge ctx additions)
         derived (assoc derived :body-context
-                       (create-body-context (:resolved-model ctx) ctx-holder))]
+                       (create-body-context
+                        (:resolved-model ctx) ctx-holder
+                        (:runtime-capabilities ctx)))]
     (reset! ctx-holder derived)
     derived))
 
@@ -7452,6 +7459,10 @@
   {:schema-version 1
    :id :java-library
    :product-family :java-library
+   :runtime-capabilities
+   {:labeled-control-flow
+    {:exception-type
+     "global::DripSharp.Runtime.JavaLabeledControlFlowException"}}
    :orchestration {:validate-project-input! validate-project-input!}
    :rules
    {:structural-declarations

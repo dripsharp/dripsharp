@@ -20,6 +20,56 @@
 (def ^:private mapping-categories
   #{:types :executables :constructors :fields :annotations})
 
+(def ^:private runtime-capability-keys
+  #{:labeled-control-flow})
+
+(def ^:private global-csharp-type-pattern
+  #"global::@?[A-Za-z_][A-Za-z0-9_]*(?:[.]@?[A-Za-z_][A-Za-z0-9_]*)*")
+
+(defn runtime-capabilities
+  "Validates destination runtime identities used by the recursive kernel.
+  Capabilities are optional until a corresponding Java construct is observed;
+  destination bundles that provide those constructs enforce their required
+  capability set before translation begins."
+  [capabilities]
+  (let [capabilities (or capabilities {})]
+    (when-not (map? capabilities)
+      (throw (ex-info "Java translation runtime capabilities must be a map"
+                      {:kind :invalid-translation-runtime-capabilities
+                       :runtime-capabilities capabilities})))
+    (when-let [unexpected (seq (remove runtime-capability-keys
+                                       (keys capabilities)))]
+      (throw (ex-info "Unknown Java translation runtime capability"
+                      {:kind :unknown-translation-runtime-capability
+                       :capabilities (vec (sort unexpected))})))
+    (when-let [labeled-control-flow (:labeled-control-flow capabilities)]
+      (when-not (and (map? labeled-control-flow)
+                     (= #{:exception-type} (set (keys labeled-control-flow)))
+                     (string? (:exception-type labeled-control-flow))
+                     (re-matches global-csharp-type-pattern
+                                 (:exception-type labeled-control-flow)))
+        (throw (ex-info "Invalid labeled-control-flow runtime capability"
+                        {:kind :invalid-translation-runtime-capability
+                         :capability :labeled-control-flow
+                         :contract labeled-control-flow}))))
+    capabilities))
+
+(defn runtime-type-identity
+  "Returns one validated destination runtime type identity, failing closed when
+  a translated construct requires a capability the destination did not supply."
+  [translation-context capability]
+  (let [path (case capability
+               :labeled-control-flow
+               [:runtime-capabilities :labeled-control-flow :exception-type]
+
+               (throw (ex-info "Unknown Java translation runtime type"
+                               {:kind :unknown-translation-runtime-type
+                                :capability capability})))]
+    (or (get-in translation-context path)
+        (throw (ex-info "Destination did not supply a required runtime type"
+                        {:kind :missing-translation-runtime-capability
+                         :capability capability})))))
+
 (defn structural-rules
   "Validates an ordered structural rule vector.  A rule is
   {:id keyword :class Spoon-interface :emit fn}.  More-specific interfaces must
@@ -92,7 +142,8 @@
 (defn context
   "Creates a reusable translation context for a resolved Spoon model."
   [resolved-model {:keys [rules mappings mode diagnostic-fallback]
-                   :or {rules [] mappings {} mode :accepted}}]
+                   :or {rules [] mappings {} mode :accepted}
+                   :as options}]
   (when-not (#{:accepted :diagnostic} mode)
     (throw (ex-info "Java translation mode must be :accepted or :diagnostic"
                     {:kind :invalid-translation-mode :mode mode})))
@@ -104,6 +155,7 @@
    :rules (structural-rules rules)
    :mappings (mapping-registries mappings)
    :mode mode
+   :runtime-capabilities (runtime-capabilities (:runtime-capabilities options))
    :diagnostic-fallback diagnostic-fallback})
 
 (defn- labeled-statement?
@@ -288,7 +340,9 @@
                             (get-in translation-context [:control-flow :branch-ids])
                             branch)]
         (csharp/raw
-         (str "throw new global::DripSharp.Runtime.JavaLabeledControlFlowException("
+         (str "throw new "
+              (runtime-type-identity translation-context :labeled-control-flow)
+              "("
               branch-id ");")))
       (csharp/raw
        (str "goto " (labeled-target-name translation-context target kind) ";")))))
@@ -339,8 +393,9 @@
                  [(csharp/raw "try {\n")
                   node
                   (csharp/raw
-                   (str "\n} catch (global::DripSharp.Runtime."
-                        "JavaLabeledControlFlowException"
+                   (str "\n} catch ("
+                        (runtime-type-identity
+                         translation-context :labeled-control-flow)
                         (when (seq dispatches) (str " " exception-name))
                         ") {\n"))
                   (csharp/sequence-node dispatches "\n")

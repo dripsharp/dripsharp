@@ -11,9 +11,6 @@
             [dripsharp.util :as util])
   (:import [java.nio.file FileVisitOption Files Path]))
 
-(def ^:private zero-model-counters
-  [:shadow-symbols :unresolved-symbols :ambiguous-symbols :fallback-symbols])
-
 (def ^:private zero-emission-counters
   [:skipped-source-units :missing-source-mappings :hard-failures :collisions])
 
@@ -88,7 +85,6 @@
                :profile primary
                :source-project (:source-project generation)
                :project-input (:resolved-project-input generation)
-               :model-totals (get-in generation [:java-model :totals])
                :destination (:destination generation)
                :public-api-boundary (:public-api-boundary generation)
                :public-surface-strategy (:public-surface-strategy generation))
@@ -161,10 +157,7 @@
     (edn/read-string (slurp (str file)))))
 
 (defn- validate-zero-counters!
-  [profile model-totals summary]
-  (doseq [counter zero-model-counters]
-    (exact! "PdfCube resolved model contains a nonzero failure counter"
-            [profile :model counter] 0 (get model-totals counter)))
+  [profile summary]
   (doseq [counter zero-emission-counters]
     (exact! "PdfCube emission contains a nonzero failure counter"
             [profile :emission counter] 0 (get summary counter)))
@@ -354,7 +347,7 @@
     (exact! "PdfCube production resource count differs from emission"
             [profile :resources]
             (count resources) (:resources summary))
-    (validate-zero-counters! profile (:model-totals emission) summary)
+    (validate-zero-counters! profile summary)
     (merge
      {:profile profile
       :package-id (get-in destination [:package :id])

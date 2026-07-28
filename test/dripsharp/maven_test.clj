@@ -150,8 +150,10 @@
     (testing "the neutral Maven output is accepted by Spoon"
       (let [resolved (spoon/build-resolved-model! (:project-root app) app)]
         (is (= 2 (get-in resolved [:totals :compilation-units])))
-        (is (zero? (get-in resolved [:totals :unresolved-symbols])))
-        (is (zero? (get-in resolved [:totals :ambiguous-symbols])))))))
+        (is (not-any?
+             #(contains? (:totals resolved) %)
+             [:shadow-symbols :unresolved-symbols :ambiguous-symbols
+              :fallback-symbols]))))))
 
 (deftest unresolved-maven-dependencies-have-actionable-diagnostics
   @synthetic-state
@@ -258,5 +260,7 @@
       (let [input (get selected "pdfbox-io")
             resolved (spoon/build-resolved-model! (:project-root input) input)]
         (is (= 18 (get-in resolved [:totals :compilation-units])))
-        (is (zero? (get-in resolved [:totals :unresolved-symbols])))
-        (is (zero? (get-in resolved [:totals :ambiguous-symbols])))))))
+        (is (not-any?
+             #(contains? (:totals resolved) %)
+             [:shadow-symbols :unresolved-symbols :ambiguous-symbols
+              :fallback-symbols]))))))

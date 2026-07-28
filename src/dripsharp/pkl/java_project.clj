@@ -2691,7 +2691,8 @@
           (assoc
            (java-library/create-body-context
             (:resolved-model ctx)
-            (:ctx-holder ctx))
+            (:ctx-holder ctx)
+            (:runtime-capabilities ctx))
            :services services
            :capture-bindings capture-bindings)]
       {:ctx (assoc ctx :body-context body-context
@@ -3399,6 +3400,7 @@
   [resolved-model resolved-mappings]
   (let [shared-type-node (:type-node resolved-mappings)
         resolved-type-policy (:type-policy resolved-mappings)
+        runtime-capabilities (:runtime-capabilities resolved-mappings)
         destination-type-node
         (fn [ctx reference]
           (shared-type-node
@@ -3503,12 +3505,13 @@
         body-context
         (assoc
          ((:create-body-context resolved-mappings)
-          resolved-model ctx-holder)
+          resolved-model ctx-holder runtime-capabilities)
          :services services)]
     {:ctx-holder ctx-holder
      :top-definitions-cache top-definitions-cache
      :services services
      :body-context body-context
+     :runtime-capabilities runtime-capabilities
      :resolved-type-policy resolved-type-policy
      :structural-declaration-policy
      {:emit-root-node type-node-declaration
@@ -3536,6 +3539,7 @@
                      :blocker-counter (atom blocker-start)
                      :body-translations (atom [])
                      :body-context (:body-context template)
+                     :runtime-capabilities (:runtime-capabilities template)
                      :resolved-type-policy (:resolved-type-policy template)
                      :destination-nonnull-boxed-by-default? true
                      :destination-resolved-name body-resolved-name

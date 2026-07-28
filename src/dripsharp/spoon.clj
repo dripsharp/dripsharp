@@ -893,6 +893,21 @@
                 :expand (if (instance? CtType declaration) :shell :body)}]
               (owner-type-items declaration))))))
 
+(defn- observed-occurrence-totals
+  [occurrences]
+  (let [kind-counts (frequencies (map :kind occurrences))
+        origin-counts (frequencies (map :origin occurrences))]
+    {:type-references (get kind-counts :type 0)
+     :executable-references (get kind-counts :executable 0)
+     :constructor-references (get kind-counts :constructor 0)
+     :field-references (get kind-counts :field 0)
+     :annotations (get kind-counts :annotation 0)
+     :project-occurrences (get origin-counts :project 0)
+     :jdk-occurrences (get origin-counts :jdk 0)
+     :dependency-occurrences (get origin-counts :dependency 0)
+     :intrinsic-occurrences (get origin-counts :intrinsic 0)
+     :type-parameter-occurrences (get origin-counts :type-parameter 0)}))
+
 (defn- member-items
   [^CtType declaration expansion members]
   (when (= :public-api expansion)
@@ -1067,28 +1082,13 @@
                                 (update result (:key occurrence) (fnil conj []) occurrence))
                               (sorted-map)
                               occurrences)
-              kind-counts (frequencies (map :kind occurrences))
-              origin-counts (frequencies (map :origin occurrences))
-              totals {:seeds (count seeds)
-                      :declarations (count declarations)
-                      :source-inputs (count source-inputs)
-                      :public-api-declarations (count public-api)
-                      :type-references (get kind-counts :type 0)
-                      :executable-references (get kind-counts :executable 0)
-                      :constructor-references (get kind-counts :constructor 0)
-                      :field-references (get kind-counts :field 0)
-                      :annotations (get kind-counts :annotation 0)
-                      :symbols (count symbols)
-                      :project-occurrences (get origin-counts :project 0)
-                      :jdk-occurrences (get origin-counts :jdk 0)
-                      :dependency-occurrences (get origin-counts :dependency 0)
-                      :intrinsic-occurrences (get origin-counts :intrinsic 0)
-                      :type-parameter-occurrences (get origin-counts :type-parameter 0)
-                      :shadow-symbols 0
-                      :unresolved-symbols 0
-                      :ambiguous-symbols 0
-                      :fallback-symbols 0
-                      :guessed-symbols 0}]
+              totals (merge
+                      {:seeds (count seeds)
+                       :declarations (count declarations)
+                       :source-inputs (count source-inputs)
+                       :public-api-declarations (count public-api)
+                       :symbols (count symbols)}
+                      (observed-occurrence-totals occurrences))]
           (->ResolvedJavaClosure frontend seeds declarations source-inputs
                                  public-api symbols occurrences totals))))))
 
@@ -1155,25 +1155,11 @@
                             (update index (:key occurrence) (fnil conj []) occurrence))
                           (sorted-map)
                           occurrences)
-          kind-counts (frequencies (map :kind occurrences))
-          origin-counts (frequencies (map :origin occurrences))
-          totals {:compilation-units (count compilation-units)
-                  :project-types (count project-types)
-                  :type-references (get kind-counts :type 0)
-                  :executable-references (get kind-counts :executable 0)
-                  :constructor-references (get kind-counts :constructor 0)
-                  :field-references (get kind-counts :field 0)
-                  :annotations (get kind-counts :annotation 0)
-                  :symbols (count symbols)
-                  :project-occurrences (get origin-counts :project 0)
-                  :jdk-occurrences (get origin-counts :jdk 0)
-                  :dependency-occurrences (get origin-counts :dependency 0)
-                  :intrinsic-occurrences (get origin-counts :intrinsic 0)
-                  :type-parameter-occurrences (get origin-counts :type-parameter 0)
-                  :shadow-symbols 0
-                  :unresolved-symbols 0
-                  :ambiguous-symbols 0
-                  :fallback-symbols 0}]
+          totals (merge
+                  {:compilation-units (count compilation-units)
+                   :project-types (count project-types)
+                   :symbols (count symbols)}
+                  (observed-occurrence-totals occurrences))]
     (->ResolvedJavaModel launcher model compilation-units project-types
                          symbols occurrences totals)))
 
@@ -1195,22 +1181,25 @@
   [resolved-model]
   (let [{:keys [compilation-units project-types type-references
                 executable-references constructor-references field-references
-                annotations symbols shadow-symbols unresolved-symbols
-                ambiguous-symbols fallback-symbols]}
+                annotations symbols project-occurrences jdk-occurrences
+                dependency-occurrences intrinsic-occurrences
+                type-parameter-occurrences]}
         (:totals resolved-model)]
     (if (instance? ResolvedJavaClosure resolved-model)
       (format (str "%d selected declarations in %d source inputs, %d type uses, "
                    "%d calls, %d constructors, %d fields, %d annotations, %d stable symbols; "
-                   "shadow=%d unresolved=%d ambiguous=%d fallback=%d")
+                   "origins: project=%d jdk=%d dependency=%d intrinsic=%d type-parameter=%d")
               (:declarations (:totals resolved-model))
               (:source-inputs (:totals resolved-model))
               type-references executable-references constructor-references
-              field-references annotations symbols shadow-symbols unresolved-symbols
-              ambiguous-symbols fallback-symbols)
+              field-references annotations symbols project-occurrences
+              jdk-occurrences dependency-occurrences intrinsic-occurrences
+              type-parameter-occurrences)
       (format (str "%d units, %d project types, %d type uses, %d calls, "
                  "%d constructors, %d fields, %d annotations, %d stable symbols; "
-                 "shadow=%d unresolved=%d ambiguous=%d fallback=%d")
+                 "origins: project=%d jdk=%d dependency=%d intrinsic=%d type-parameter=%d")
             compilation-units project-types type-references
             executable-references constructor-references field-references
-            annotations symbols shadow-symbols unresolved-symbols
-            ambiguous-symbols fallback-symbols))))
+            annotations symbols project-occurrences jdk-occurrences
+            dependency-occurrences intrinsic-occurrences
+            type-parameter-occurrences))))

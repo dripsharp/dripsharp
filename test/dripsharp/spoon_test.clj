@@ -10,6 +10,10 @@
            [java.nio.file.attribute FileAttribute]
            [spoon.reflect.declaration CtElement]))
 
+(def ^:private vestigial-model-counters
+  #{:shadow-symbols :unresolved-symbols :ambiguous-symbols :fallback-symbols
+    :guessed-symbols})
+
 (deftest complete-gradle-production-inputs-are-modeled
   (let [{:keys [discovery status-before status-after]
          first-model :first} (fixture/models)
@@ -81,17 +85,20 @@
             :constructor-references 855
             :field-references 2555
             :annotations 372
-            :symbols 1145
-            :shadow-symbols 0
-            :unresolved-symbols 0
-            :ambiguous-symbols 0
-            :fallback-symbols 0}
+            :symbols 1145}
            (select-keys (:totals first-model)
                         [:compilation-units :project-types :type-references
                          :executable-references :constructor-references
-                         :field-references :annotations :symbols
-                         :shadow-symbols :unresolved-symbols
-                         :ambiguous-symbols :fallback-symbols])))
+                         :field-references :annotations :symbols])))
+    (is (not-any? #(contains? (:totals first-model) %)
+                  vestigial-model-counters))
+    (is (= (count (:occurrences first-model))
+           (reduce
+            +
+            (map (:totals first-model)
+                 [:project-occurrences :jdk-occurrences
+                  :dependency-occurrences :intrinsic-occurrences
+                  :type-parameter-occurrences]))))
 
     (testing "project-local nested, generic, overload, constructor, and field identities"
       (let [type-roles (->> (:occurrences first-model)
@@ -133,6 +140,54 @@
         (is (instance? CtElement (:reference occurrence)))
         (is (instance? CtElement (:declaration occurrence)))
         (is (pos? (get-in occurrence [:location :line])))))))
+
+(deftest summary-lines-render-observed-occurrence-origins
+  (let [complete
+        (spoon/map->ResolvedJavaModel
+         {:totals
+          {:compilation-units 2
+           :project-types 3
+           :type-references 4
+           :executable-references 5
+           :constructor-references 6
+           :field-references 7
+           :annotations 8
+           :symbols 9
+           :project-occurrences 10
+           :jdk-occurrences 11
+           :dependency-occurrences 12
+           :intrinsic-occurrences 13
+           :type-parameter-occurrences 14}})
+        closure
+        (spoon/map->ResolvedJavaClosure
+         {:totals
+          {:declarations 2
+           :source-inputs 3
+           :type-references 4
+           :executable-references 5
+           :constructor-references 6
+           :field-references 7
+           :annotations 8
+           :symbols 9
+           :project-occurrences 10
+           :jdk-occurrences 11
+           :dependency-occurrences 12
+           :intrinsic-occurrences 13
+           :type-parameter-occurrences 14}})
+        complete-summary (spoon/summary-line complete)
+        closure-summary (spoon/summary-line closure)]
+    (is (= (str "2 units, 3 project types, 4 type uses, 5 calls, "
+                "6 constructors, 7 fields, 8 annotations, 9 stable symbols; "
+                "origins: project=10 jdk=11 dependency=12 intrinsic=13 "
+                "type-parameter=14")
+           complete-summary))
+    (is (= (str "2 selected declarations in 3 source inputs, 4 type uses, "
+                "5 calls, 6 constructors, 7 fields, 8 annotations, "
+                "9 stable symbols; origins: project=10 jdk=11 dependency=12 "
+                "intrinsic=13 type-parameter=14")
+           closure-summary))
+    (is (not-any? #(str/includes? complete-summary %)
+                  ["shadow=" "unresolved=" "ambiguous=" "fallback="]))))
 
 (deftest complete-parser-resolution-is-deterministic
   (let [{first-model :first second-model :second} (fixture/models)]

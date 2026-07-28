@@ -184,9 +184,17 @@
                                      "src" "main" "java" "org" "pkl" "core"
                                      "service" "ExecutorSpiImpl.java")))]
     (testing "the live frontend resolves every fixture symbol"
-      (is (= 0 (get-in resolved [:totals :shadow-symbols])))
-      (is (= 0 (get-in resolved [:totals :unresolved-symbols])))
-      (is (= 0 (get-in resolved [:totals :ambiguous-symbols]))))
+      (is (not-any?
+           #(contains? (:totals resolved) %)
+           [:shadow-symbols :unresolved-symbols :ambiguous-symbols
+            :fallback-symbols]))
+      (is (= (count (:occurrences resolved))
+             (reduce
+              +
+              (map (:totals resolved)
+                   [:project-occurrences :jdk-occurrences
+                    :dependency-occurrences :intrinsic-occurrences
+                    :type-parameter-occurrences])))))
     (testing "emission is complete and the package-only differential is exact"
       (is (= 0 (:hard-failures summary)))
       (is (= 0 (:missing-source-mappings summary)))
