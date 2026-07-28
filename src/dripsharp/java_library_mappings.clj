@@ -48,6 +48,18 @@
   (entry id key :custom-handler {:handler handler}
          caveats evidence))
 
+(defn- constant
+  [id key destination caveats]
+  (entry id key :template {:template [destination]}
+         caveats
+         (cond-> #{:test/shared-java-library}
+           (seq caveats) (conj :differential/shared-java-library))))
+
+(defn- field-id
+  [key]
+  (let [[owner member] (rest (re-matches #"^field:([^#]+)#(.+)$" key))]
+    (keyword (str "java.field." owner) member)))
+
 (def lang-entries
   [(compat-call
     :java.lang.boolean/string-value
@@ -235,6 +247,202 @@
     "executable:java.util.concurrent.atomic.AtomicInteger#incrementAndGet()"
     "IncrementAndGet")])
 
+(def field-constant-destinations
+  {"field:java.io.File#separator"
+   "global::System.IO.Path.DirectorySeparatorChar.ToString()"
+   "field:java.io.File#separatorChar"
+   "global::System.IO.Path.DirectorySeparatorChar"
+   "field:java.io.FilterInputStream#in" "@in"
+   "field:java.io.FilterOutputStream#out" "@out"
+   "field:java.lang.Boolean#FALSE" "false"
+   "field:java.lang.Boolean#TRUE" "true"
+   "field:java.lang.Byte#SIZE" "8"
+   "field:java.lang.Character#CONNECTOR_PUNCTUATION" "23"
+   "field:java.lang.Character#CURRENCY_SYMBOL" "26"
+   "field:java.lang.Character#DASH_PUNCTUATION" "20"
+   "field:java.lang.Character#DECIMAL_DIGIT_NUMBER" "9"
+   "field:java.lang.Character#END_PUNCTUATION" "22"
+   "field:java.lang.Character#FINAL_QUOTE_PUNCTUATION" "30"
+   "field:java.lang.Character#INITIAL_QUOTE_PUNCTUATION" "29"
+   "field:java.lang.Character#LETTER_NUMBER" "10"
+   "field:java.lang.Character#LINE_SEPARATOR" "13"
+   "field:java.lang.Character#LOWERCASE_LETTER" "2"
+   "field:java.lang.Character#MAX_CODE_POINT" "0x10ffff"
+   "field:java.lang.Character#MAX_VALUE" "char.MaxValue"
+   "field:java.lang.Character#MIN_CODE_POINT" "0"
+   "field:java.lang.Character#MIN_SURROGATE" "'\\uD800'"
+   "field:java.lang.Character#MIN_VALUE" "char.MinValue"
+   "field:java.lang.Character#MODIFIER_LETTER" "4"
+   "field:java.lang.Character#MODIFIER_SYMBOL" "27"
+   "field:java.lang.Character#NON_SPACING_MARK" "6"
+   "field:java.lang.Character#OTHER_LETTER" "5"
+   "field:java.lang.Character#OTHER_PUNCTUATION" "24"
+   "field:java.lang.Character#PARAGRAPH_SEPARATOR" "14"
+   "field:java.lang.Character#SPACE_SEPARATOR" "12"
+   "field:java.lang.Character#START_PUNCTUATION" "21"
+   "field:java.lang.Character#TITLECASE_LETTER" "3"
+   "field:java.lang.Character#UNASSIGNED" "0"
+   "field:java.lang.Character#UPPERCASE_LETTER" "1"
+   "field:java.lang.Double#MAX_EXPONENT" "1023"
+   "field:java.lang.Double#MAX_VALUE" "double.MaxValue"
+   "field:java.lang.Double#MIN_EXPONENT" "-1022"
+   "field:java.lang.Double#MIN_VALUE" "double.Epsilon"
+   "field:java.lang.Double#NEGATIVE_INFINITY" "double.NegativeInfinity"
+   "field:java.lang.Double#NaN" "double.NaN"
+   "field:java.lang.Double#POSITIVE_INFINITY" "double.PositiveInfinity"
+   "field:java.lang.Float#MAX_VALUE" "float.MaxValue"
+   "field:java.lang.Float#MIN_NORMAL" "1.17549435E-38f"
+   "field:java.lang.Float#MIN_VALUE" "float.Epsilon"
+   "field:java.lang.Float#NEGATIVE_INFINITY" "float.NegativeInfinity"
+   "field:java.lang.Float#POSITIVE_INFINITY" "float.PositiveInfinity"
+   "field:java.lang.Integer#MIN_VALUE" "int.MinValue"
+   "field:java.lang.Integer#SIZE" "32"
+   "field:java.lang.Long#MAX_VALUE" "long.MaxValue"
+   "field:java.lang.Long#MIN_VALUE" "long.MinValue"
+   "field:java.lang.Long#SIZE" "64"
+   "field:java.lang.Math#E" "global::System.Math.E"
+   "field:java.lang.Math#PI" "global::System.Math.PI"
+   "field:java.lang.Short#MAX_VALUE" "short.MaxValue"
+   "field:java.lang.Short#MIN_VALUE" "short.MinValue"
+   "field:java.lang.Short#SIZE" "16"
+   "field:java.lang.StrictMath#E" "global::System.Math.E"
+   "field:java.lang.StrictMath#PI" "global::System.Math.PI"
+   "field:java.math.RoundingMode#CEILING"
+   "global::DripSharp.Runtime.JavaRoundingMode.Ceiling"
+   "field:java.math.RoundingMode#DOWN"
+   "global::DripSharp.Runtime.JavaRoundingMode.Down"
+   "field:java.math.RoundingMode#FLOOR"
+   "global::DripSharp.Runtime.JavaRoundingMode.Floor"
+   "field:java.math.RoundingMode#HALF_DOWN"
+   "global::DripSharp.Runtime.JavaRoundingMode.HalfDown"
+   "field:java.math.RoundingMode#HALF_EVEN"
+   "global::DripSharp.Runtime.JavaRoundingMode.HalfEven"
+   "field:java.math.RoundingMode#HALF_UP"
+   "global::DripSharp.Runtime.JavaRoundingMode.HalfUp"
+   "field:java.math.RoundingMode#UNNECESSARY"
+   "global::DripSharp.Runtime.JavaRoundingMode.Unnecessary"
+   "field:java.math.RoundingMode#UP"
+   "global::DripSharp.Runtime.JavaRoundingMode.Up"
+   "field:java.nio.charset.CodingErrorAction#REPORT"
+   "global::DripSharp.Runtime.JavaCodingErrorAction.Report"
+   "field:java.nio.charset.StandardCharsets#UTF_16"
+   "global::DripSharp.Runtime.JavaStandardCharsets.UTF16"
+   "field:java.nio.charset.StandardCharsets#UTF_16BE"
+   "global::DripSharp.Runtime.JavaStandardCharsets.UTF16BE"
+   "field:java.nio.charset.StandardCharsets#UTF_16LE"
+   "global::DripSharp.Runtime.JavaStandardCharsets.UTF16LE"
+   "field:java.nio.file.LinkOption#NOFOLLOW_LINKS" "new object()"
+   "field:java.nio.file.attribute.PosixFilePermission#GROUP_EXECUTE"
+   "global::System.IO.UnixFileMode.GroupExecute"
+   "field:java.nio.file.attribute.PosixFilePermission#GROUP_READ"
+   "global::System.IO.UnixFileMode.GroupRead"
+   "field:java.nio.file.attribute.PosixFilePermission#GROUP_WRITE"
+   "global::System.IO.UnixFileMode.GroupWrite"
+   "field:java.nio.file.attribute.PosixFilePermission#OTHERS_EXECUTE"
+   "global::System.IO.UnixFileMode.OtherExecute"
+   "field:java.nio.file.attribute.PosixFilePermission#OTHERS_READ"
+   "global::System.IO.UnixFileMode.OtherRead"
+   "field:java.nio.file.attribute.PosixFilePermission#OTHERS_WRITE"
+   "global::System.IO.UnixFileMode.OtherWrite"
+   "field:java.nio.file.attribute.PosixFilePermission#OWNER_EXECUTE"
+   "global::System.IO.UnixFileMode.UserExecute"
+   "field:java.nio.file.attribute.PosixFilePermission#OWNER_READ"
+   "global::System.IO.UnixFileMode.UserRead"
+   "field:java.nio.file.attribute.PosixFilePermission#OWNER_WRITE"
+   "global::System.IO.UnixFileMode.UserWrite"
+   "field:java.text.Bidi#DIRECTION_DEFAULT_LEFT_TO_RIGHT"
+   "global::DripSharp.Runtime.JavaBidi.DirectionDefaultLeftToRight"
+   "field:java.text.Bidi#DIRECTION_DEFAULT_RIGHT_TO_LEFT"
+   "global::DripSharp.Runtime.JavaBidi.DirectionDefaultRightToLeft"
+   "field:java.text.Bidi#DIRECTION_LEFT_TO_RIGHT"
+   "global::DripSharp.Runtime.JavaBidi.DirectionLeftToRight"
+   "field:java.text.Bidi#DIRECTION_RIGHT_TO_LEFT"
+   "global::DripSharp.Runtime.JavaBidi.DirectionRightToLeft"
+   "field:java.text.Normalizer$Form#NFC"
+   "global::System.Text.NormalizationForm.FormC"
+   "field:java.text.Normalizer$Form#NFD"
+   "global::System.Text.NormalizationForm.FormD"
+   "field:java.text.Normalizer$Form#NFKC"
+   "global::System.Text.NormalizationForm.FormKC"
+   "field:java.text.Normalizer$Form#NFKD"
+   "global::System.Text.NormalizationForm.FormKD"
+   "field:java.time.Month#FEBRUARY" "2"
+   "field:java.time.format.DateTimeFormatter#ISO_LOCAL_DATE_TIME"
+   "global::DripSharp.Runtime.JavaDateTimeFormatter.IsoLocalDateTime"
+   "field:java.util.Calendar#DAY_OF_MONTH" "5"
+   "field:java.util.Calendar#DST_OFFSET" "16"
+   "field:java.util.Calendar#HOUR_OF_DAY" "11"
+   "field:java.util.Calendar#MILLISECOND" "14"
+   "field:java.util.Calendar#MINUTE" "12"
+   "field:java.util.Calendar#MONTH" "2"
+   "field:java.util.Calendar#SECOND" "13"
+   "field:java.util.Calendar#YEAR" "1"
+   "field:java.util.Calendar#ZONE_OFFSET" "15"
+   "field:java.util.Locale#ENGLISH"
+   "global::System.Globalization.CultureInfo.GetCultureInfo(\"en\")"
+   "field:java.util.Locale#US"
+   "global::System.Globalization.CultureInfo.GetCultureInfo(\"en-US\")"
+   "field:java.util.regex.Pattern#CANON_EQ" "128"
+   "field:java.util.regex.Pattern#CASE_INSENSITIVE" "2"
+   "field:java.util.regex.Pattern#COMMENTS" "4"
+   "field:java.util.regex.Pattern#DOTALL" "32"
+   "field:java.util.regex.Pattern#LITERAL" "16"
+   "field:java.util.regex.Pattern#MULTILINE" "8"
+   "field:java.util.regex.Pattern#UNICODE_CASE" "64"
+   "field:java.util.regex.Pattern#UNICODE_CHARACTER_CLASS" "256"
+   "field:java.util.regex.Pattern#UNIX_LINES" "1"
+   "field:java.util.zip.Deflater#BEST_COMPRESSION"
+   "global::DripSharp.Runtime.JavaDeflater.BEST_COMPRESSION"
+   "field:java.util.zip.Deflater#DEFAULT_COMPRESSION"
+   "global::DripSharp.Runtime.JavaDeflater.DEFAULT_COMPRESSION"
+   "field:javax.xml.XMLConstants#XMLNS_ATTRIBUTE" "\"xmlns\""
+   "field:javax.xml.XMLConstants#XMLNS_ATTRIBUTE_NS_URI"
+   "\"http://www.w3.org/2000/xmlns/\""
+   "field:javax.xml.XMLConstants#XML_NS_PREFIX" "\"xml\""
+   "field:javax.xml.XMLConstants#XML_NS_URI"
+   "\"http://www.w3.org/XML/1998/namespace\""
+   "field:javax.xml.transform.OutputKeys#ENCODING" "\"encoding\""
+   "field:javax.xml.transform.OutputKeys#INDENT" "\"indent\""
+   "field:javax.xml.transform.OutputKeys#OMIT_XML_DECLARATION"
+   "\"omit-xml-declaration\""
+   "field:javax.xml.xpath.XPathConstants#NODE"
+   "global::DripSharp.Runtime.JavaXPathConstants.NODE"
+   "field:javax.xml.xpath.XPathConstants#NODESET"
+   "global::DripSharp.Runtime.JavaXPathConstants.NODESET"
+   "field:org.w3c.dom.Node#COMMENT_NODE"
+   "global::System.Xml.XmlNodeType.Comment"
+   "field:org.w3c.dom.Node#TEXT_NODE"
+   "global::System.Xml.XmlNodeType.Text"})
+
+(def field-caveats
+  {"field:java.nio.file.LinkOption#NOFOLLOW_LINKS"
+   #{:opaque-option-token :usage-dependent-approximation}})
+
+(def neutral-field-destinations
+  {"field:java.net.http.HttpClient$Version#HTTP_2" "HTTP_2"
+   "field:java.nio.file.StandardCopyOption#ATOMIC_MOVE" "ATOMIC_MOVE"
+   "field:java.nio.file.StandardCopyOption#COPY_ATTRIBUTES" "COPY_ATTRIBUTES"
+   "field:java.nio.file.StandardCopyOption#REPLACE_EXISTING" "REPLACE_EXISTING"
+   "field:javax.crypto.Cipher#DECRYPT_MODE" "DECRYPT_MODE"
+   "field:javax.crypto.Cipher#ENCRYPT_MODE" "ENCRYPT_MODE"})
+
+(def field-entries
+  (vec
+   (concat
+    (for [[key destination] (sort-by key field-constant-destinations)]
+      (constant (field-id key) key destination (get field-caveats key #{})))
+    [(custom
+      :java.io.byte-array-output-stream/buffer
+      "field:java.io.ByteArrayOutputStream#buf"
+      :java-library.mapping/byte-array-output-stream-buffer
+      #{:signed-byte-array-projection}
+      #{:differential/shared-java-library :test/shared-java-library})]
+    (for [[key destination] (sort-by key neutral-field-destinations)]
+      (rename (field-id key) key destination)))))
+
+(def field-keys
+  (set (map :key field-entries)))
+
 (def entries
   "All migrated reusable Java-library member mappings, in stable package-area
   order so diffs remain reviewable."
@@ -242,7 +450,8 @@
                io-entries
                collection-entries
                stream-entries
-               concurrency-entries)))
+               concurrency-entries
+               field-entries)))
 
 (defn compile-registry
   "Compiles the shared entries with the Java-library bundle's explicit custom

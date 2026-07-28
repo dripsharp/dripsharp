@@ -9,6 +9,8 @@
   {:java-library.mapping/stream-collect
    (fn [{:keys [target]}] {:node target})
    :java-library.mapping/atomic-reference-get
+   (fn [{:keys [target]}] {:node target})
+   :java-library.mapping/byte-array-output-stream-buffer
    (fn [{:keys [target]}] {:node target})})
 
 (deftest context-free-type-table-is-a-validated-declarative-registry
@@ -67,13 +69,27 @@
         atomic-get
         (mapping-registry/registry-entry
          registry
-         "executable:java.util.concurrent.atomic.AtomicReference#get()")]
+         "executable:java.util.concurrent.atomic.AtomicReference#get()")
+        file-separator
+        (mapping-registry/registry-entry
+         registry
+         "field:java.io.File#separator")
+        output-buffer
+        (mapping-registry/registry-entry
+         registry
+         "field:java.io.ByteArrayOutputStream#buf")]
     (is (mapping-registry/compiled-registry? registry))
+    (is (= 171 (count library-mappings/entries)))
+    (is (= 129 (count library-mappings/field-entries)))
     (is (= :compat-call (:strategy list-size)))
     (is (= :custom-handler (:strategy stream-collect)))
     (is (= :java-library.mapping/stream-collect (:handler stream-collect)))
     (is (= :custom-handler (:strategy atomic-get)))
     (is (= :java-library.mapping/atomic-reference-get (:handler atomic-get)))
+    (is (= :template (:strategy file-separator)))
+    (is (= :custom-handler (:strategy output-buffer)))
+    (is (= :java-library.mapping/byte-array-output-stream-buffer
+           (:handler output-buffer)))
     (is (= "global::DripSharp.Runtime.JavaCompat.CollectionCount(values)"
            (-> (mapping-registry/interpret
                 registry
@@ -88,6 +104,22 @@
                 "executable:java.lang.Integer#compare(int,int)"
                 {:target (csharp/raw "int")
                  :arguments [(csharp/raw "left") (csharp/raw "right")]})
+               :node
+               csharp/render
+               :text)))
+    (is (= "global::System.IO.Path.DirectorySeparatorChar.ToString()"
+           (-> (mapping-registry/interpret
+                registry
+                "field:java.io.File#separator"
+                {})
+               :node
+               csharp/render
+               :text)))
+    (is (= "HTTP_2"
+           (-> (mapping-registry/interpret
+                registry
+                "field:java.net.http.HttpClient$Version#HTTP_2"
+                {})
                :node
                csharp/render
                :text)))))
