@@ -2653,6 +2653,18 @@
 (defn- string-expression? [^CtExpression expression]
   (= "java.lang.String" (some-> expression .getType .getQualifiedName)))
 
+(defn- wildcard-generic-conditional-result?
+  [^CtConditional expression]
+  (let [result-reference (.getType expression)
+        then-reference (some-> expression .getThenExpression .getType)
+        else-reference (some-> expression .getElseExpression .getType)]
+    (and result-reference
+         (not (.isPrimitive result-reference))
+         (some #(instance? CtWildcardReference %)
+               (.getActualTypeArguments result-reference))
+         (not= (some-> then-reference .getQualifiedName)
+               (some-> else-reference .getQualifiedName)))))
+
 (def ^:private java-small-integral-types
   #{"byte" "char" "short"})
 
@@ -4071,12 +4083,16 @@
      (fn [{:keys [^CtConditional element children]}]
        (let [primitive-result? (.isPrimitive (.getType element))
              result-reference (.getType element)
+             object-result? (wildcard-generic-conditional-result? element)
              branch-node
              (fn [^CtExpression expression]
                (let [node (child-node children expression)]
                  (cond
                    primitive-result?
                    (maybe-unbox-node @ctx-holder expression node)
+
+                   object-result?
+                   (sequence-node [(raw "(object)(") node (raw ")")])
 
                    (and result-reference
                         (not= (.getQualifiedName result-reference)

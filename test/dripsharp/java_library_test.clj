@@ -2082,6 +2082,45 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest heterogeneous-wildcard-generic-conditionals-use-an-object-result
+  (let [fixture
+        (model!
+         {"example/ConditionalText.java"
+          (str "package example; public final class ConditionalText { "
+               "public static final class Token implements Comparable<Token> { "
+               "public int compareTo(Token other) { return 0; } "
+               "public String toString() { return \"token\"; } } "
+               "public static String describe(boolean missing, Token token) { "
+               "return \"Type \" + (missing ? \"(null)\" : token); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        configuration
+        {:name-policy {:public-identifiers :csharp}
+         :project (assoc (:project (configuration capabilities))
+                         :nullable "disable")}
+        first (emit! fixture 1 capabilities configuration)
+        second (emit! fixture 3 capabilities configuration)
+        first-source
+        (slurp (str (paths/resolve-path
+                     (:project-root first)
+                     "src/Example/Java/Library/ConditionalText.cs")))
+        second-source
+        (slurp (str (paths/resolve-path
+                     (:project-root second)
+                     "src/Example/Java/Library/ConditionalText.cs")))]
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.Concat("
+              "\"Type \", (missing ? (object)(\"(null)\") : (object)(token)));")))
+    (is (not (str/includes? first-source "IComparable<object>")))
+    (is (= first-source second-source))
+    (is (zero? (get-in first [:summary :executable-coverage :blocked])))
+    (is (zero? (get-in second [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root first)
+                               :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neutral-string-encoding-and-output-stream-writes-preserve-java-bytes
   (let [fixture
         (model! {"example/Wire.java"
