@@ -60,6 +60,12 @@ then either:
 Simple method names are not sufficient mapping keys when overload or owner
 identity matters.
 
+Reusable type and member adaptations use the validated
+[declarative resolved-symbol mapping registry](mapping-registry.md). Registry
+entries retain strategy, semantic caveats, introducing target, and behavior
+evidence; duplicate, contradictory, malformed, unsupported, or unmapped
+identities fail closed.
+
 ## Coverage and Failure
 
 Accepted output requires every reachable construct and resolved reference to
