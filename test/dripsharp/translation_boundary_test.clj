@@ -404,6 +404,7 @@
 
 (deftest java-uri-component-mappings-retain-decoded-and-raw-api-pairs
   (let [body-rules (source "java_library")
+        mapping-rules (source "java_library_mappings")
         runtime (slurp "runtime/DripSharp.JavaCompat.cs")]
     (doseq [[java-method helper]
             [["getAuthority" "UriAuthority"]
@@ -419,7 +420,7 @@
              ["getRawSchemeSpecificPart" "UriRawSchemeSpecificPart"]
              ["getRawUserInfo" "UriRawUserInfo"]]]
       (is (str/includes?
-           body-rules (str "executable:java.net.URI#" java-method "()")))
+           mapping-rules (str "executable:java.net.URI#" java-method "()")))
       (is (str/includes? body-rules (str "\"" helper "\"")))
       (is (str/includes? runtime (str " " helper "(Uri uri)"))))
     (is (str/includes?
@@ -469,16 +470,17 @@
 
 (deftest java-map-entry-sets-retain-live-view-contracts
   (let [body-rules (source "java_library")
+        mapping-rules (source "java_library_mappings")
         project-rules (source "pkl/java_project")
         runtime (slurp "runtime/DripSharp.JavaCompat.cs")]
     (is (str/includes?
          project-rules
          "\"java.util.Map$Entry\" [\"global::DripSharp.Runtime.JavaMapEntry\""))
-    (is (and (str/includes? body-rules "entrySet()")
+    (is (and (str/includes? mapping-rules "entrySet()")
              (str/includes? body-rules "MapEntrySet")))
-    (is (and (str/includes? body-rules "Iterator#remove()")
+    (is (and (str/includes? mapping-rules "Iterator#remove()")
              (str/includes? body-rules "(raw \".Remove()\")")))
-    (is (str/includes? body-rules
+    (is (str/includes? mapping-rules
                        "java.util.Map$Entry#setValue(java.lang.Object)"))
     (is (str/includes? runtime
                        "internal sealed class JavaMapEntrySet<K, V>"))

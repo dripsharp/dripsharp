@@ -5,13 +5,18 @@
             [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.java-types :as java-types]))
 
+(defn- passthrough-handler
+  [{:keys [target]}]
+  {:node (or target (csharp/raw "mapped"))})
+
 (def ^:private custom-handlers
-  {:java-library.mapping/stream-collect
-   (fn [{:keys [target]}] {:node target})
-   :java-library.mapping/atomic-reference-get
-   (fn [{:keys [target]}] {:node target})
-   :java-library.mapping/byte-array-output-stream-buffer
-   (fn [{:keys [target]}] {:node target})})
+  (merge
+   (zipmap library-mappings/custom-handler-ids
+           (repeat passthrough-handler))
+   {:java-library.mapping/stream-collect passthrough-handler
+    :java-library.mapping/atomic-reference-get passthrough-handler
+    :java-library.mapping/byte-array-output-stream-buffer
+    passthrough-handler}))
 
 (deftest context-free-type-table-is-a-validated-declarative-registry
   (is (mapping-registry/compiled-registry? java-types/registry))
@@ -79,7 +84,9 @@
          registry
          "field:java.io.ByteArrayOutputStream#buf")]
     (is (mapping-registry/compiled-registry? registry))
-    (is (= 171 (count library-mappings/entries)))
+    (is (= 1621 (count library-mappings/entries)))
+    (is (= 1307 (count library-mappings/executable-keys)))
+    (is (= 185 (count library-mappings/constructor-keys)))
     (is (= 129 (count library-mappings/field-entries)))
     (is (= :compat-call (:strategy list-size)))
     (is (= :custom-handler (:strategy stream-collect)))
