@@ -172,6 +172,16 @@
         (str "public sealed class StandardSecurityHandler : "
              "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
              "<global::PdfCube.PdfBox.Pdmodel.Encryption.StandardProtectionPolicy> {}")
+        structured-carrier
+        (csharp/declaration
+         (csharp/sequence-node
+          [(csharp/raw "public ")
+           (csharp/generic-name
+            (csharp/raw
+             "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler")
+            [(csharp/raw
+              "global::PdfCube.PdfBox.Pdmodel.Encryption.ProtectionPolicy")])
+           (csharp/raw " Create() => default!")]))
         configuration {:internal-capabilities #{:security-handler-erasure}}]
     (is (= (str "public " erased " Create() => default!;")
            (:text
@@ -179,17 +189,28 @@
              configuration
              (csharp/raw
               (str "public " carrier " Create() => default!;"))))))
-    (is (= (str "public abstract class SecurityHandler<TPOLICY> : "
-                erased " where TPOLICY : ProtectionPolicy {}")
+    (is (= (str "public " erased " Create() => default!;")
+           (:text
+            (render-transformed configuration structured-carrier))))
+    (is (= (str "#nullable disable\n"
+                "public abstract class SecurityHandler<TPOLICY> : "
+                erased " where TPOLICY : ProtectionPolicy {\n"
+                "private int value = " carrier ".DEFAULT_KEY_LENGTH;\n}")
            (:text
             (render-transformed
              configuration
-             (structured-type
-              "org.apache.pdfbox.pdmodel.encryption.SecurityHandler"
-              [(csharp/raw "public abstract class SecurityHandler<TPOLICY>")
-               (csharp/raw " where TPOLICY : ProtectionPolicy")]
-              []
-              true)))))
+             (csharp/sequence-node
+              [(csharp/raw "#nullable disable\n")
+               (csharp/sequence-node
+                [(structured-type
+                  "org.apache.pdfbox.pdmodel.encryption.SecurityHandler"
+                  [(csharp/raw
+                    "public abstract class SecurityHandler<TPOLICY>")
+                   (csharp/raw " where TPOLICY : ProtectionPolicy")]
+                  [(csharp/raw
+                    (str "private int value = " carrier
+                         ".DEFAULT_KEY_LENGTH;"))]
+                  true)])])))))
     (is (= specialized
            (:text
             (render-transformed configuration (csharp/raw specialized)))))))

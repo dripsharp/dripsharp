@@ -593,7 +593,7 @@ internal static class Program
         var iterator = tree.Iterator();
         while (iterator.HasNext())
         {
-            var page = iterator.Next();
+            var page = iterator.Next()!;
             values.Add(
                 page.GetCOSObject().GetString(COSName.GetPDFName("Probe"))
                 ?? page.GetCOSObject().GetCOSName(COSName.Type)?.GetName()

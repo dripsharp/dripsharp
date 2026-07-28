@@ -3361,18 +3361,48 @@
 (def ^:private erased-security-handler
   "global::DripSharp.Runtime.PdfBoxSecurityHandler")
 
+(defn- replace-security-handler-carrier
+  [node]
+  (-> node
+      (csharp/transform
+       (fn [current]
+         (if (= security-handler-carrier
+                (:text (csharp/render current)))
+           (cond-> (csharp/raw erased-security-handler)
+             (seq (:sources current))
+             (assoc :sources (:sources current)))
+           current)))
+      (csharp/replace-raw-text
+       [[security-handler-carrier erased-security-handler]])))
+
+(defn- security-handler-declaration?
+  [node]
+  (let [found? (volatile! false)]
+    (csharp/transform
+     node
+     (fn [current]
+       (when
+        (declaration?
+         current :type "org.apache.pdfbox.pdmodel.encryption.SecurityHandler")
+         (vreset! found? true))
+       current))
+    @found?))
+
 (defn- erase-security-handler-carrier
   [configuration node]
   (if-not (contains? (:internal-capabilities configuration)
                      :security-handler-erasure)
     node
-    (-> node
-        (csharp/replace-raw-text
-         [[security-handler-carrier erased-security-handler]])
+    (let [security-handler? (security-handler-declaration? node)]
+      (cond-> node
+        (not security-handler?)
+        replace-security-handler-carrier
+
+        security-handler?
         (update-declaration
          :type
          "org.apache.pdfbox.pdmodel.encryption.SecurityHandler"
-         #(add-base-contract % erased-security-handler)))))
+         #(add-base-contract % erased-security-handler))))))
 
 (defn- preserve-calendar-value-semantics
   [configuration node]

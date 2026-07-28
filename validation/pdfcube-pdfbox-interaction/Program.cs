@@ -272,7 +272,7 @@ internal static class Program
             var iterator = form.GetFieldTree().Iterator();
             while (iterator.HasNext())
             {
-                var field = iterator.Next();
+                var field = iterator.Next()!;
                 fields.Add(
                     Render(field.GetFullyQualifiedName())
                     + ":"
@@ -482,7 +482,7 @@ internal static class Program
         var pages = document.GetPages().Iterator();
         while (pages.HasNext())
         {
-            foreach (var annotation in pages.Next().GetAnnotations())
+            foreach (var annotation in pages.Next()!.GetAnnotations())
             {
                 var subtype = Render(annotation.GetSubtype());
                 subtypes[subtype] = subtypes.GetValueOrDefault(subtype) + 1;
@@ -917,7 +917,7 @@ internal static class Program
         var fieldIterator = form.GetFieldTree().Iterator();
         while (fieldIterator.HasNext())
         {
-            formAppearances += fieldIterator.Next().GetWidgets().Count(
+            formAppearances += fieldIterator.Next()!.GetWidgets().Count(
                 widget => widget.GetNormalAppearanceStream() is not null);
         }
 
