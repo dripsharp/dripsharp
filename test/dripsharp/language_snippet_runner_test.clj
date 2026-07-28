@@ -187,9 +187,15 @@
   (let [root (temp-directory)
         project (write! (.resolve root "Runner.csproj")
                         "<Project><ItemGroup><PackageReference Include=\"Pkl.Core\" Version=\"1.0.0\" /></ItemGroup></Project>")
-        source (write! (.resolve root "Program.cs") "static class Program { }")
+        source (write! (.resolve root "Program.cs")
+                       "static class Program { const string TestClass = \"org.pkl.core.runtime.VmUtilsTest\"; }")
+        runtime-path (write! (.resolve root "RuntimePath.cs")
+                             "const string source = \"runtime/Pkl.Core.RuntimeBridge.cs\";")
         outside-root (temp-directory)
         outside (write! (.resolve outside-root "Program.cs") "static class Program { }")]
     (is (= [] (:forbidden (#'runner/verify-source-isolation! root project source))))
+    (is (= :language-snippet-source-isolation
+           (thrown-kind #(#'runner/verify-source-isolation!
+                          root project runtime-path))))
     (is (= :language-snippet-source-isolation
            (thrown-kind #(#'runner/verify-source-isolation! root project outside))))))

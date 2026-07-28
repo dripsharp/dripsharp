@@ -38,17 +38,33 @@
    "java.lang.Cloneable" ["global::DripSharp.Runtime.JavaCloneable"
                            :dotnet.type/cloneable]
    "java.io.Serializable" ["object" :dotnet.type/serializable]
+   "java.io.Console" ["object" :dotnet.type/console-marker]
    "java.lang.constant.Constable" ["object" :dotnet.type/constable]
    "java.lang.constant.ConstantDesc" ["object" :dotnet.type/constant-description]
    "java.lang.ClassLoader" ["object" :dotnet.type/class-loader]
+   "java.lang.Process" ["global::DripSharp.Runtime.JavaProcess"
+                         :dotnet.type/process]
+   "java.lang.ProcessBuilder" ["global::DripSharp.Runtime.JavaProcessBuilder"
+                                :dotnet.type/process-builder]
+   "java.lang.ProcessBuilder$Redirect" ["global::DripSharp.Runtime.JavaProcessRedirect"
+                                         :dotnet.type/process-redirect]
    "java.lang.Enum" ["object" :dotnet.type/enum-base]
+   "java.lang.Record" ["object" :dotnet.type/record-base]
    "java.lang.Throwable" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.Exception" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.RuntimeException" ["global::System.Exception" :dotnet.type/exception]
+   "java.lang.Error" ["global::System.Exception" :dotnet.type/exception]
+   "java.lang.ExceptionInInitializerError"
+   ["global::System.TypeInitializationException"
+    :dotnet.type/type-initialization-exception]
+   "java.lang.StackTraceElement" ["global::System.Diagnostics.StackFrame"
+                                   :dotnet.type/stack-frame]
    "java.lang.IllegalArgumentException" ["global::System.ArgumentException"
                                          :dotnet.type/argument-exception]
    "java.lang.IllegalStateException" ["global::System.InvalidOperationException"
                                       :dotnet.type/invalid-operation]
+   "java.lang.ArithmeticException" ["global::System.ArithmeticException"
+                                     :dotnet.type/arithmetic-exception]
    "java.lang.CloneNotSupportedException" ["global::System.NotSupportedException"
                                             :dotnet.type/not-supported]
    "java.lang.IllegalAccessException" ["global::System.MemberAccessException"
@@ -95,6 +111,7 @@
    "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder"
                                       :dotnet.type/string-builder-base]
    "java.lang.Math" ["global::System.Math" :dotnet.type/math]
+   "java.lang.StrictMath" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::DripSharp.Runtime.JavaCompat"
                        :dotnet.type/java-compat]
    "java.lang.Runtime" ["global::DripSharp.Runtime.JavaRuntime"
@@ -128,7 +145,11 @@
    "java.io.InputStream" ["global::System.IO.Stream" :dotnet.type/stream]
    "java.io.OutputStream" ["global::System.IO.Stream" :dotnet.type/stream]
    "java.io.Reader" ["global::System.IO.TextReader" :dotnet.type/text-reader]
+   "java.io.StringReader" ["global::System.IO.StringReader"
+                            :dotnet.type/string-reader]
    "java.io.Writer" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
+   "java.io.FileWriter" ["global::System.IO.StreamWriter"
+                          :dotnet.type/stream-writer]
    "java.io.InputStreamReader" ["global::System.IO.StreamReader"
                                 :dotnet.type/stream-reader]
    "java.io.OutputStreamWriter" ["global::System.IO.StreamWriter"
@@ -214,9 +235,13 @@
    "java.net.URL" ["global::System.Uri" :dotnet.type/uri]
    "java.net.URLDecoder" ["global::DripSharp.Runtime.JavaCompat"
                           :dotnet.type/java-compat]
+   "java.net.URLEncoder" ["global::DripSharp.Runtime.JavaCompat"
+                          :dotnet.type/java-compat]
    "java.net.URISyntaxException" ["global::System.UriFormatException"
                                   :dotnet.type/uri-format-exception]
    "java.net.InetAddress" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
+   "java.net.Inet4Address" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
+   "java.net.Inet6Address" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
    "java.net.InetSocketAddress" ["global::System.Net.IPEndPoint"
                                  :dotnet.type/ip-endpoint]
    "java.net.SocketAddress" ["global::System.Net.EndPoint" :dotnet.type/end-point]
@@ -263,12 +288,25 @@
                                :dotnet.type/file-system]
    "java.nio.file.FileSystems" ["global::DripSharp.Runtime.JavaFileSystems"
                                 :dotnet.type/file-systems]
+   "java.nio.file.FileStore" ["global::System.IO.DriveInfo"
+                              :dotnet.type/drive-info]
+   "java.nio.file.PathMatcher" ["global::System.Predicate<string>"
+                                :dotnet.type/path-matcher]
+   "java.nio.file.WatchService" ["global::DripSharp.Runtime.JavaWatchService"
+                                 :dotnet.type/watch-service]
+   "java.nio.file.attribute.UserPrincipalLookupService"
+   ["object" :dotnet.type/user-principal-lookup]
+   "java.nio.file.spi.FileSystemProvider"
+   ["global::DripSharp.Runtime.JavaFileSystemProvider"
+    :dotnet.type/file-system-provider]
    "java.nio.file.FileVisitOption" ["object" :dotnet.type/file-visit-option]
    "java.nio.file.LinkOption" ["object" :dotnet.type/link-option]
    "java.nio.file.StandardOpenOption" ["global::DripSharp.Runtime.JavaStandardOpenOption"
                                        :dotnet.type/standard-open-option]
    "java.nio.file.attribute.AclEntry" ["global::DripSharp.Runtime.JavaAclEntry"
                                        :dotnet.type/acl-entry]
+   "java.nio.file.attribute.BasicFileAttributes" ["global::System.IO.FileSystemInfo"
+                                                   :dotnet.type/file-info]
    "java.nio.file.attribute.AclEntry$Builder" ["global::DripSharp.Runtime.JavaAclEntryBuilder"
                                                :dotnet.type/acl-entry-builder]
    "java.nio.file.attribute.AclEntryPermission" ["global::DripSharp.Runtime.JavaAclEntryPermission"
@@ -307,6 +345,7 @@
                                               :dotnet.type/format-exception]
    "java.time.LocalDateTime" ["global::System.DateTime"
                               :dotnet.type/local-date-time]
+   "java.time.Month" ["int" :dotnet.type/month-number]
    "java.time.temporal.TemporalAccessor" ["global::System.DateTimeOffset"
                                           :dotnet.type/date-time-offset]
    "java.time.temporal.TemporalAmount" ["global::System.TimeSpan" :dotnet.type/time-span]
@@ -370,6 +409,15 @@
                           :dotnet.type/hashtable]
    "java.util.Iterator" ["global::DripSharp.Runtime.JavaIterator"
                          :dotnet.type/java-iterator]
+   "java.util.PrimitiveIterator"
+   ["global::System.Collections.IEnumerator"
+    :dotnet.type/primitive-iterator]
+   "java.util.PrimitiveIterator$OfInt"
+   ["global::DripSharp.Runtime.JavaIterator<int>"
+    :dotnet.type/java-int-iterator]
+   "java.util.PrimitiveIterator$OfLong"
+   ["global::DripSharp.Runtime.JavaIterator<long>"
+    :dotnet.type/java-long-iterator]
    "java.util.IdentityHashMap" ["global::DripSharp.Runtime.JavaIdentityHashMap"
                                 :dotnet.type/identity-map]
    "java.util.LinkedHashMap" ["global::DripSharp.Runtime.JavaLinkedHashMap"
@@ -444,6 +492,8 @@
                         :dotnet.type/base64]
    "java.util.Base64$Decoder" ["global::DripSharp.Runtime.JavaBase64Decoder"
                                 :dotnet.type/base64-decoder]
+   "java.util.Base64$Encoder" ["global::DripSharp.Runtime.JavaBase64Encoder"
+                                :dotnet.type/base64-encoder]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet"
                         :dotnet.type/sorted-set]
 
@@ -462,6 +512,8 @@
                                      :dotnet.type/java-compat]
    "java.util.concurrent.Future" ["global::DripSharp.Runtime.JavaFuture"
                                   :dotnet.type/future]
+   "java.util.concurrent.CompletableFuture" ["global::DripSharp.Runtime.JavaFuture"
+                                             :dotnet.type/completable-future]
    "java.util.concurrent.ThreadFactory" ["global::DripSharp.Runtime.JavaThreadFactory"
                                          :dotnet.type/thread-factory]
    "java.util.concurrent.TimeUnit" ["global::DripSharp.Runtime.JavaTimeUnit"
@@ -626,6 +678,9 @@
    "java.security.cert.CertificateEncodingException"
    ["global::System.Security.Cryptography.CryptographicException"
     :dotnet.type/cryptographic-exception]
+   "java.security.cert.CertificateFactory"
+   ["global::DripSharp.Runtime.JavaCertificateFactory"
+    :dotnet.type/certificate-factory]
    "java.security.cert.Certificate"
    ["global::System.Security.Cryptography.X509Certificates.X509Certificate2"
     :dotnet.type/certificate]

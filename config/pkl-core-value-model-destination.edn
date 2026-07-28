@@ -36,6 +36,7 @@
           :annotation-decisions-file "annotation-decisions.edn"}
  :namespaces {"org.pkl.core" "Pkl.Core"}
  :namespace-prefixes {"org.pkl.core" "Pkl.Core"}
+ :destination-capabilities #{:java-compat :java-regex-unicode}
  :public-surface {:strategy dripsharp.public-api-contract/strategy
                   :source-module "pkl-core"}
  :package-consumer {:strategy :source-file

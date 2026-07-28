@@ -195,7 +195,14 @@ namespace Pkl.Core.Http
     {
         static JdkHttpClient()
         {
-            closeMethod = new Action<Runtime.JavaHttpClient>(client => client.Dispose());
+            closeMethod = new global::DripSharp.Runtime.JavaMethodHandle(
+                arguments =>
+                {
+                    ((Runtime.JavaHttpClient)arguments[0]!).Dispose();
+                    return null;
+                },
+                new global::DripSharp.Runtime.JavaMethodType(
+                    typeof(void), typeof(Runtime.JavaHttpClient)));
         }
     }
 }

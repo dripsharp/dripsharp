@@ -149,7 +149,8 @@
         (is (not-any? #(str/includes? % "value => value.Of()") sources))
         (is (some #(str/includes? % "unchecked((sbyte)(") sources))
         (is (some #(str/includes? % "JavaCompat.OrganicPut") sources))
-        (is (some #(str/includes? % "((string[])JsonEscaper.REPLACEMENTS.Clone())")
+        (is (some #(str/includes? %
+                                  "JavaCompat.Clone(JsonEscaper.REPLACEMENTS)")
                   sources))
         (is (some #(str/includes? %
                                  "LoadModule(global::DripSharp.Runtime.JavaCompat.CreateUri(\"pkl:math\")")
@@ -193,6 +194,12 @@
               imports-parser (slurp (str (paths/resolve-path
                                            source-root "Ast" "Builder"
                                            "ImportsAndReadsParser.cs")))
+              reflect-nodes (slurp (str (paths/resolve-path
+                                          source-root "Stdlib" "Reflect"
+                                          "ReflectNodes.cs")))
+              parser-nodes (slurp (str (paths/resolve-path
+                                         source-root "Stdlib" "Json"
+                                         "ParserNodes.cs")))
               evaluator-settings (slurp (str (paths/resolve-path
                                                source-root "EvaluatorSettings"
                                                "PklEvaluatorSettings.cs")))
@@ -231,6 +238,8 @@
                                                            "Http" "HttpClient.cs")))
               package-uri (slurp (str (paths/resolve-path source-root
                                                            "Packages" "PackageUri.cs")))
+              pclass-info (slurp (str (paths/resolve-path source-root
+                                                           "PClassInfo.cs")))
               package-asset-uri (slurp (str (paths/resolve-path
                                               source-root "Packages"
                                               "PackageAssetUri.cs")))
@@ -249,8 +258,13 @@
                                                 source-root "PropertiesRenderer.cs")))
               module-keys (slurp (str (paths/resolve-path source-root
                                                            "Module" "ModuleKeys.cs")))
+              module-key (slurp (str (paths/resolve-path source-root
+                                                          "Module" "ModuleKey.cs")))
               module-cache (slurp (str (paths/resolve-path source-root
                                                             "Runtime" "ModuleCache.cs")))
+              vm-object-builder (slurp (str (paths/resolve-path
+                                              source-root "Runtime"
+                                              "VmObjectBuilder.cs")))
               selected-api [evaluator-builder module-source security-managers
                             evaluator-settings project-settings loading-runtime http-client
                             package-uri package-asset-uri checksums dependency
@@ -273,6 +287,19 @@
             (is (str/includes?
                  imports-parser
                  "global::Pkl.Core.Ast.Builder.ImportsAndReadsParser.Entry")))
+          (testing "selected enum constants retain their upstream ordinals"
+            (is (str/includes?
+                 message
+                 (str "[global::DripSharp.Runtime.JavaEnumOrdinalAttribute(6)]\n"
+                      "public static readonly Type READ_RESOURCE_REQUEST")))
+            (is (str/includes?
+                 message
+                 (str "[global::DripSharp.Runtime.JavaEnumOrdinalAttribute(14)]\n"
+                      "public static readonly Type INITIALIZE_MODULE_READER_REQUEST")))
+            (is (str/includes?
+                 message
+                 (str "[global::DripSharp.Runtime.JavaEnumOrdinalAttribute(18)]\n"
+                      "public static readonly Type CLOSE_EXTERNAL_PROCESS"))))
           (testing "the selected public API fails closed on implementation stubs"
             (is (not-any? #(re-find #"#error DRIPSHARP_|NotImplementedException|TODO" %)
                           selected-api))
@@ -281,23 +308,61 @@
                                "public PackageAssetUri Resolve(string path)"))
             (is (str/includes? dependency-metadata
                                "public static DependencyMetadata Parse(string input)"))
-            (is (str/includes? json "JsonHandlerBridge.Erase(handler"))
+            (is (str/includes? json "JsonHandlerBridge.Erase<"))
             (is (str/includes? pcf-renderer
                                "JavaCompat.StringValueOf(value)"))
             (is (str/includes? properties-renderer
                                "JavaCompat.StringValueOf(value)"))
+            (is (str/includes?
+                 reflect-nodes
+                 (str "declaredTypeFactory.Create("
+                      "global::Pkl.Core.Util.Pair<object, object>.Of<")))
+            (is (str/includes?
+                 reflect-nodes
+                 (str "functionTypeFactory2.Create("
+                      "global::Pkl.Core.Util.Pair<object, object>.Of<")))
+            (is (not (str/includes?
+                      reflect-nodes
+                      "declaredTypeFactory).Create(default!)")))
+            (is (str/includes?
+                 parser-nodes
+                 "catch (global::DripSharp.Runtime.JavaNumberFormatException"))
+            (is (str/includes?
+                 vm-object-builder
+                 "(long)(this.elementCount++)"))
             (is (str/includes? package-uri "JavaCompat.StringSplit(path"))
             (is (str/includes? module-keys "JavaCompat.CastDictionary<string"))
             (is (str/includes? module-keys
                                "Pkl.Core.Util.IoUtils.Resolve(this, baseUri, importUri)"))
-            (is (not (str/includes? module-keys
-                                    "((global::Pkl.Core.Runtime.ReaderBase)(object)this)")))
-            (is (str/includes? module-cache "JavaCompat.NewJavaDictionary<global::System.Uri"))
+            (is (str/includes?
+                 module-key
+                 "return this.ResolveUri(this.GetUri(), uri);"))
+            (is (not-any?
+                 #(str/includes?
+                   %
+                   "((global::Pkl.Core.Runtime.ReaderBase)")
+                 sources))
+            (is (str/includes?
+                 module-cache
+                 (str "global::DripSharp.Runtime.JavaCompat.NewJavaDictionary<"
+                      "global::System.Uri, object>()")))
+            (is (str/includes?
+                 json
+                 "JavaCompat.ExceptionMessage(e)"))
             ;; The one exact null body is the intentional upstream default for
             ;; custom managers that do not configure root-path resolution.
-            (is (= [["ResolveSecurePath" "null!"]]
+            (is (= [["ResolveSecurePath" "default!"]]
                    (mapv #(vec (rest %)) (re-seq exact-stub security-manager))))
             (is (not (str/includes? evaluator-settings "NoCache.Value")))
+            (is (str/includes?
+                 evaluator-settings
+                 "(bool?)(((global::Pkl.Core.Composite)pSettings).Get(\"noCache\"))"))
+            (is (not (str/includes?
+                      evaluator-settings
+                      "(bool)(((global::Pkl.Core.Composite)pSettings).Get(\"noCache\")!)")))
+            (is (str/includes?
+                 evaluator-settings
+                 "global::System.Object.ReferenceEquals(this, obj!)"))
             (is (not (str/includes? project-settings "NoCache.Value")))
             (is (str/includes? project-settings
                                "var cycles = Project.FindImportCycle(moduleSource)"))
@@ -307,6 +372,12 @@
                                "var onlyDirectSelfCycle = global::DripSharp.Runtime.JavaCompat.ListCount(cycles) == 1"))
             (is (str/includes? project-settings
                                "&& !onlyDirectSelfCycle"))
+            (is (str/includes?
+                 project-settings
+                 "return global::DripSharp.Runtime.JavaCompat.PathOfUri(it);"))
+            (is (not (str/includes?
+                      project-settings
+                      "ToReadOnly<global::System.Collections.Generic.IReadOnlyList<string>>(global::DripSharp.Runtime.JavaCompat.PathOfUri(it))")))
             (is (str/includes? dependency
                                "JavaCompat.ResolveLocalDependencyUri(projectBaseUri"))
             (is (str/includes? project-deps
@@ -315,6 +386,24 @@
                                "internal static class PklRuntimeBridge"))
             (is (str/includes? runtime-bridge
                                "CreateEconomicMap<K, V>"))
+            (is (str/includes?
+                 runtime-bridge
+                 "PClassInfo<object> PClassInfoAsObject<T>"))
+            (is (str/includes?
+                 runtime-bridge
+                 "RrbTree<TOuter>.MutRrbt<T>"))
+            (is (str/includes?
+                 runtime-bridge
+                 "foreach (var value in values) target.Append(value);"))
+            (is (not (str/includes?
+                      runtime-bridge
+                      "foreach (var value in values) target.Add(value);")))
+            (is (str/includes?
+                 pclass-info
+                 "PklRuntimeBridge.PClassInfoAsObject(global::DripSharp.Runtime.JavaCompat.MapGet"))
+            (is (not (str/includes?
+                      pclass-info
+                      "MapGet(PClassInfo<object>.pooledPklBaseClassInfos, className)).AsObject()")))
             (is (not (str/includes? java-compat "global::Pkl.Core")))
             (is (not (str/includes? java-compat "DRIPSHARP_PKL_CORE")))
             (is (str/includes? substrate
@@ -327,12 +416,18 @@
                                "if (child is RootNode) return;"))
             (is (str/includes? substrate
                                "vmException.GetSourceSection() is null"))
-            (is (str/includes? substrate
-                               "if (encoded.Length == 0)"))
+            (is (str/includes?
+                 substrate
+                 "value = value.PadRight((value.Length + 3) / 4 * 4, '=')"))
             (is (str/includes? substrate
                                "message.Content = body as System.Net.Http.HttpContent;"))
             (is (str/includes? substrate
                                "if (uri.IsFile) return System.IO.File.OpenRead(uri.LocalPath);"))
+            (is (str/includes?
+                 substrate
+                 "managers.OfType<global::DripSharp.Runtime.JavaTrustManager>()"))
+            (is (str/includes? substrate
+                               "trustAnchors.AddRange(manager.Certificates);"))
             (is (str/includes? java-compat
                                "internal static class JavaStandardCharsets"))
             (is (str/includes? dependency-metadata
@@ -351,7 +446,7 @@
             (is (str/includes? java-compat
                                "values.OrderBy(value => value, Comparer<T>.Create(JavaCompare))"))
             (is (str/includes? java-compat
-                               "internal static Comparison<T> NaturalOrder<T>() => JavaCompare;"))
+                               "internal static IComparer<T> NaturalOrder<T>() =>"))
             (is (str/includes? java-compat
                                "StringBuilder AppendValue(StringBuilder builder, object? value)"))
             (is (str/includes? java-compat
@@ -380,10 +475,13 @@
                                "internal static int StringCompareTo(string left, string right)"))
             (is (str/includes?
                  vm-exception-builder
-                 "JavaCompat.Sorted(result"))
+                 "JavaCompat.StreamSorted(result)"))
             (is (str/includes?
                  vm-exception-builder
-                 ".Sort(global::DripSharp.Runtime.JavaCompat.NaturalOrder<global::Pkl.Core.Runtime.Identifier>())"))
+                 (str "JavaCompat.SortList(result, "
+                      "global::DripSharp.Runtime.JavaCompat.ToComparison("
+                      "global::DripSharp.Runtime.JavaCompat.NaturalOrder"
+                      "<global::Pkl.Core.Runtime.Identifier>()))")))
             (is (str/includes? security-managers "JavaCompat.RealPath"))
             (is (str/includes? security-managers "JavaCompat.NormalizePath"))
             (is (str/includes? security-managers "JavaCompat.PathStartsWith"))

@@ -43,6 +43,7 @@
    ["JavaSoftReference" "JavaSoftReference<>"]
    ["JavaWeakReference" "JavaWeakReference<>"]
    ["JavaBase64" "JavaBase64"]
+   ["JavaBase64Encoder" "JavaBase64Encoder"]
    ["JavaBase64Decoder" "JavaBase64Decoder"]
    ["JavaByteArrayOutputStream" "JavaByteArrayOutputStream"]
    ["JavaCodingErrorAction" "JavaCodingErrorAction"]
@@ -68,6 +69,7 @@
    ["JavaDeflaterOutputStream" "JavaDeflaterOutputStream"]
    ["JavaFilterOutputStream" "JavaFilterOutputStream"]
    ["JavaKeyStore" "JavaKeyStore"]
+   ["JavaCertificateFactory" "JavaCertificateFactory"]
    ["JavaSslContext" "JavaSslContext"]
    ["JavaServerSocket" "JavaServerSocket"]
    ["IJavaOptional" "IJavaOptional"]
@@ -190,6 +192,31 @@
    "    if (JavaCompat.UriAuthority(projectBase) is not null ||\n"
    "        JavaCompat.UriRawPath(projectBase) != \"/tmp/\")\n"
    "      throw new global::System.Exception(\"file project URI contract failed\");\n"
+   "    var packageAsset = JavaCompat.CreateUri(\n"
+   "      \"package://localhost:0/badImportsWithinPackage@1.0.0#/invalidPath.pkl\");\n"
+   "    var packageBase = JavaCompat.NewUri(\n"
+   "      JavaCompat.UriScheme(packageAsset),\n"
+   "      JavaCompat.UriUserInfo(packageAsset),\n"
+   "      JavaCompat.UriHost(packageAsset),\n"
+   "      JavaCompat.UriPort(packageAsset),\n"
+   "      JavaCompat.UriPath(packageAsset),\n"
+   "      JavaCompat.UriQuery(packageAsset),\n"
+   "      null);\n"
+   "    var fragmentBase = JavaCompat.CreateUri(JavaCompat.UriFragment(packageAsset)!);\n"
+   "    var fragmentTarget = JavaCompat.ResolveUri(\n"
+   "      fragmentBase, JavaCompat.CreateUri(\"not/a/valid/path.pkl\"));\n"
+   "    var packageTarget = JavaCompat.ResolveUri(\n"
+   "      packageBase, \"#\" + JavaCompat.UriToString(fragmentTarget));\n"
+   "    if (JavaCompat.UriToString(packageTarget) !=\n"
+   "        \"package://localhost:0/badImportsWithinPackage@1.0.0#/not/a/valid/path.pkl\")\n"
+   "      throw new global::System.Exception(\n"
+   "        \"package fragment URI contract failed: \" + JavaCompat.UriToString(packageTarget));\n"
+   "    var uriMap = JavaCompat.NewJavaDictionary<global::System.Uri, string>();\n"
+   "    uriMap[packageAsset] = \"source\";\n"
+   "    uriMap[packageTarget] = \"target\";\n"
+   "    if (uriMap.Count != 2 || uriMap[packageAsset] != \"source\" ||\n"
+   "        uriMap[packageTarget] != \"target\")\n"
+   "      throw new global::System.Exception(\"Java URI map equality lost fragments\");\n"
    "    using var compressed = new global::System.IO.MemoryStream();\n"
    "    using (var compressor = new global::System.IO.Compression.ZLibStream(\n"
    "      compressed, global::System.IO.Compression.CompressionLevel.Optimal, true))\n"
@@ -201,6 +228,39 @@
    "    inflater.Flush();\n"
    "    if (global::System.Text.Encoding.UTF8.GetString(decoded.ToArray()) != \"deflate-body\")\n"
    "      throw new global::System.Exception(\"inflater flush contract failed\");\n"
+   "    var invalidBase64Rejected = false;\n"
+   "    try { JavaBase64.GetDecoder().Decode(\"~\"); }\n"
+   "    catch (global::System.ArgumentException error)\n"
+   "    { invalidBase64Rejected = error.Message == \"Illegal base64 character 7e\"; }\n"
+   "    if (!invalidBase64Rejected)\n"
+   "      throw new global::System.Exception(\"invalid Base64 lost Java diagnostics\");\n"
+   "    var invalidUtf8Rejected = false;\n"
+   "    try\n"
+   "    {\n"
+   "      new JavaCharsetDecoder(global::System.Text.Encoding.UTF8).Decode(\n"
+   "        JavaByteBuffer.wrap(new sbyte[] { unchecked((sbyte)0xc3), 0x28 }));\n"
+   "    }\n"
+   "    catch (global::System.Text.DecoderFallbackException)\n"
+   "    { invalidUtf8Rejected = true; }\n"
+   "    if (!invalidUtf8Rejected)\n"
+   "      throw new global::System.Exception(\"Java charset decoder replaced malformed input\");\n"
+   "    var fixedDecimal = new JavaDecimalFormat(\n"
+   "      \"0.0000000\", global::System.Globalization.CultureInfo.InvariantCulture.NumberFormat);\n"
+   "    if (fixedDecimal.Format(123456789.123456789d) != \"123456789.1234568\" ||\n"
+   "        fixedDecimal.Format(-0.0d) != \"-0.0000000\")\n"
+   "      throw new global::System.Exception(\"Java decimal formatting contract failed\");\n"
+   "    if (JavaStrictMath.Sin(2.34d) != 0.7184647930691261d ||\n"
+   "        JavaStrictMath.Cos(2.34d) != -0.695563326462902d ||\n"
+   "        JavaStrictMath.Log10(2.34d) != 0.36921585741014284d ||\n"
+   "        JavaStrictMath.Atan2(4.5d, -3.0d) != 2.1587989303424644d ||\n"
+   "        JavaStrictMath.Atan2(4.0d, 3.5d) != 0.851966327173272d ||\n"
+   "        JavaStrictMath.Pow(2.3d, -4.0d) != 0.03573457784956459d)\n"
+   "      throw new global::System.Exception(\"Java StrictMath contract failed\");\n"
+   "    var rendered = new global::System.Text.StringBuilder();\n"
+   "    JavaCompat.StringBuilderAppendInvariant(rendered, true);\n"
+   "    JavaCompat.StringBuilderAppendInvariant(rendered, 1.0d);\n"
+   "    if (rendered.ToString() != \"true1.0\")\n"
+   "      throw new global::System.Exception(\"StringBuilder append lost Java primitive rendering semantics\");\n"
    "    global::System.Console.Write(\"OK\");\n"
    "  }\n"
    "}\n"))
@@ -313,29 +373,37 @@
         project-emission (source "java_project")]
     (is (str/includes? body-rules "(ns dripsharp.pkl.java-body"))
     (is (str/includes? project-rules "(ns dripsharp.pkl.java-project"))
-    (is (str/includes? body-rules "[dripsharp.java-translate :as java]"))
+    (is (str/includes? body-rules
+                       "[dripsharp.java-library :as java-library]"))
+    (is (str/includes? project-rules
+                       "[dripsharp.java-library :as java-library]"))
     (is (str/includes? project-rules
                        "[dripsharp.java-project :as project-emission]"))
     (is (str/includes? project-emission
                        "[dripsharp.java-translate :as java]"))))
 
 (deftest pkl-runtime-identities-stay-in-the-destination-bridge
-  (let [body-rules (source "pkl/java_body")
+  (let [generic-rules (source "java_library")
+        body-rules (source "pkl/java_body")
         project-rules (source "pkl/java_project")
         bridge (slurp "runtime/Pkl.Core.RuntimeBridge.cs")]
     (is (str/includes? body-rules
-                       "Pkl.Core.Runtime.PklRuntimeBridge.IsRrbTreeLeaf"))
-    (is (str/includes? body-rules
-                       "result-generic-arguments-pkl-runtime-call services element \"MapOfEntriesLoose\""))
+                       "(pkl-runtime-call \"IsRrbTreeLeaf\""))
+    (is (str/includes? body-rules "MapOfEntriesLoose"))
+    (is (not (str/includes? generic-rules "Pkl.Core.Runtime.PklRuntimeBridge")))
     (is (str/includes? bridge "internal static bool IsRrbTreeLeaf(object? value)"))
     (is (str/includes? bridge "PClassInfoEquals<T>"))
+    (is (str/includes? bridge "PClassInfoAsObject<T>"))
     (is (str/includes? bridge "MapOfEntriesLoose<K, V>"))
+    (is (str/includes? bridge "RrbTree<TOuter>.MutRrbt<T>"))
+    (is (str/includes? bridge "target.Append(value)"))
+    (is (not (str/includes? bridge "target.Add(value)")))
     (is (str/includes? project-rules
                        "PklRuntimeBridge.PClassInfoEquals(this, obj)"))
     (is (str/includes? bridge "Pkl.Core.Util.Paguro"))))
 
 (deftest java-uri-component-mappings-retain-decoded-and-raw-api-pairs
-  (let [body-rules (source "pkl/java_body")
+  (let [body-rules (source "java_library")
         runtime (slurp "runtime/DripSharp.JavaCompat.cs")]
     (doseq [[java-method helper]
             [["getAuthority" "UriAuthority"]
@@ -351,9 +419,8 @@
              ["getRawSchemeSpecificPart" "UriRawSchemeSpecificPart"]
              ["getRawUserInfo" "UriRawUserInfo"]]]
       (is (str/includes?
-           body-rules
-           (str "executable:java.net.URI#" java-method "()\" (compat-call \""
-                helper "\" [target])")))
+           body-rules (str "executable:java.net.URI#" java-method "()")))
+      (is (str/includes? body-rules (str "\"" helper "\"")))
       (is (str/includes? runtime (str " " helper "(Uri uri)"))))
     (is (str/includes?
          runtime
@@ -401,17 +468,16 @@
     (is (str/includes? unicode-data "Regenerate with GenerateRegexUnicodeData.java"))))
 
 (deftest java-map-entry-sets-retain-live-view-contracts
-  (let [body-rules (source "pkl/java_body")
+  (let [body-rules (source "java_library")
         project-rules (source "pkl/java_project")
         runtime (slurp "runtime/DripSharp.JavaCompat.cs")]
     (is (str/includes?
          project-rules
          "\"java.util.Map$Entry\" [\"global::DripSharp.Runtime.JavaMapEntry\""))
-    (doseq [[java-method helper]
-            [["entrySet()" "MapEntrySet"]
-             ["Iterator#remove()" "IteratorRemove"]]]
-      (is (and (str/includes? body-rules java-method)
-               (str/includes? body-rules helper))))
+    (is (and (str/includes? body-rules "entrySet()")
+             (str/includes? body-rules "MapEntrySet")))
+    (is (and (str/includes? body-rules "Iterator#remove()")
+             (str/includes? body-rules "(raw \".Remove()\")")))
     (is (str/includes? body-rules
                        "java.util.Map$Entry#setValue(java.lang.Object)"))
     (is (str/includes? runtime

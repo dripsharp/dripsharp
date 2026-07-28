@@ -29,6 +29,22 @@ internal static class PklRuntimeBridge
         global::Pkl.Core.Pair<F, S> pair) =>
         new(pair.GetFirst(), pair.GetSecond());
 
+    internal static global::Pkl.Core.PClassInfo<object> PClassInfoAsObject<T>(
+        global::Pkl.Core.PClassInfo<T>? classInfo) =>
+        classInfo is null ? null! : classInfo.AsObject();
+
+    internal static global::Pkl.Core.Util.Paguro.RrbTree<TOuter>.MutRrbt<T>
+        MutableConcat<TOuter, T>(
+        global::Pkl.Core.Util.Paguro.RrbTree<TOuter>.MutRrbt<T> target,
+        global::System.Collections.Generic.IEnumerable<T>? values)
+    {
+        if (values is not null)
+        {
+            foreach (var value in values) target.Append(value);
+        }
+        return target;
+    }
+
     internal static GraalCollections.EconomicMap<K, V> CreateEconomicMap<K, V>()
         where K : notnull => new();
 

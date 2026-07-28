@@ -391,7 +391,7 @@
         project-text (Files/readString project StandardCharsets/UTF_8)
         source-text (Files/readString source StandardCharsets/UTF_8)
         forbidden (->> ["target/generated" "ProjectReference" "Compile Include"
-                        "HintPath" "#line" "runtime"]
+                        "HintPath" "#line" "runtime/" "runtime\\"]
                        (filter #(or (str/includes? project-text %)
                                     (str/includes? source-text %)))
                        vec)]

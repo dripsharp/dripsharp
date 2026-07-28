@@ -2283,7 +2283,7 @@ static class Program
                     "version ordering");
                 break;
             case "compare version with too large numeric pre-release identifier":
-                _ = Throws<FormatException>(() =>
+                _ = Throws<ArgumentException>(() =>
                     new Version(1, 2, 3, "999", null).CompareTo(
                         new Version(1, 2, 3, "9999999999999999999", null)));
                 break;

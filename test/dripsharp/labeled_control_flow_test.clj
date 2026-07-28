@@ -1,10 +1,9 @@
 (ns dripsharp.labeled-control-flow-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [dripsharp.csharp :as csharp]
+            [dripsharp.java-library :as java-library]
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
-            [dripsharp.pkl.java-body :as java-body]
             [dripsharp.process :as process]
             [dripsharp.spoon :as spoon])
   (:import [java.nio.file Files OpenOption Path]
@@ -46,40 +45,6 @@
    :external-dependencies []
    :classpath-artifacts []})
 
-(defn- identifier
-  [value]
-  (let [clean (-> (str value)
-                  (str/replace #"[^A-Za-z0-9_]" "_")
-                  (#(if (re-matches #"[0-9].*" %) (str "_" %) %)))]
-    (if (contains? #{"base" "break" "case" "continue" "default" "do"
-                     "else" "for" "goto" "if" "lock" "return" "switch"
-                     "try" "while"}
-                   clean)
-      (str "@" clean)
-      clean)))
-
-(defn- fixture-services
-  []
-  {:identifier identifier
-   :pascal #(let [name (identifier %)]
-              (str (str/upper-case (subs name 0 1)) (subs name 1)))
-   :method-name #(.getSimpleName ^CtMethod %)
-   :record-component-name (fn [_ component] (identifier (.getSimpleName component)))
-   :local-name (fn [element]
-                 (let [{:keys [line column]} (spoon/source-location element)]
-                   (str (identifier (.getSimpleName element))
-                        "__" (or line 0) "_" (or column 0))))
-   :type-node (fn [reference]
-                (csharp/raw
-                 (case (.getQualifiedName reference)
-                   "boolean" "bool"
-                   "int" "int"
-                   "int[]" "int[]"
-                   "java.lang.Exception" "global::System.Exception"
-                   "void" "void"
-                   (throw (ex-info "Unexpected labeled-control fixture type"
-                                   {:type (.getQualifiedName reference)})))))} )
-
 (defn- fixture-methods
   [resolved-model]
   (let [methods (.getElements (:model resolved-model) (TypeFilter. CtMethod))
@@ -92,9 +57,19 @@
 
 (defn- translate-fixture
   [resolved-model]
-  (let [context (java-body/context resolved-model (fixture-services))]
+  (let [ctx-holder
+        (atom
+         {:configuration
+          {:namespaces {"fixture" "LabeledControl"}
+           :destination-capabilities #{:java-compat}}
+          :resolved-model resolved-model
+          :occurrence-index
+          (java/resolved-occurrence-index resolved-model)})
+        context
+        (java-library/create-body-context resolved-model ctx-holder)]
     (mapv (fn [^CtMethod method]
-            (let [translation (java-body/translate context (.getBody method))]
+            (let [translation
+                  (java-library/translate-body context (.getBody method))]
               {:name (.getSimpleName method)
                :text (:text translation)
                :coverage (java/coverage-totals translation)}))

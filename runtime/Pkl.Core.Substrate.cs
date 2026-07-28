@@ -18,8 +18,9 @@ namespace Pkl.Core.Runtime
         public static implicit operator JavaAppendable(System.IO.TextWriter value) => new(value);
         public static implicit operator JavaAppendable(System.Text.StringBuilder value) => new(value);
         public JavaAppendable Append(char item) { if (value is System.IO.TextWriter writer) writer.Write(item); else ((System.Text.StringBuilder)value).Append(item); return this; }
-        public JavaAppendable Append(string? item) { if (value is System.IO.TextWriter writer) writer.Write(item); else ((System.Text.StringBuilder)value).Append(item); return this; }
-        public JavaAppendable Append(object? item) => Append(item?.ToString());
+        public JavaAppendable Append(string? item) { var rendered = item ?? "null"; if (value is System.IO.TextWriter writer) writer.Write(rendered); else ((System.Text.StringBuilder)value).Append(rendered); return this; }
+        public JavaAppendable Append(string? item, int start, int end) => Append((item ?? "null").Substring(start, end - start));
+        public JavaAppendable Append(object? item) => Append(global::DripSharp.Runtime.JavaCompat.StringValueOf(item));
     }
 
     internal delegate T JavaBinaryOperator<T>(T left, T right);
@@ -260,176 +261,6 @@ namespace Pkl.Core.Runtime
             public int GetHashCode(K value) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value);
         }
         public JavaIdentityDictionary() : base(new IdentityComparer()) { }
-    }
-    internal sealed class JavaDecimalFormat
-    {
-        private System.Globalization.NumberFormatInfo format;
-        private int minimumFractionDigits;
-        private int maximumFractionDigits = 3;
-        public JavaDecimalFormat() : this(string.Empty, System.Globalization.CultureInfo.InvariantCulture.NumberFormat) { }
-        public JavaDecimalFormat(string pattern, System.Globalization.NumberFormatInfo format)
-        {
-            _ = pattern;
-            this.format = (System.Globalization.NumberFormatInfo)format.Clone();
-        }
-        public string Format(object value)
-        {
-            if (value is double number)
-            {
-                if (double.IsNaN(number)) return format.NaNSymbol;
-                if (double.IsPositiveInfinity(number)) return format.PositiveInfinitySymbol;
-                if (double.IsNegativeInfinity(number))
-                    return format.NegativeSign + format.PositiveInfinitySymbol;
-                return FormatDouble(number);
-            }
-            if (value is long integer) return FormatInteger(integer);
-            if (value is int intValue) return FormatInteger(intValue);
-            if (value is short shortValue) return FormatInteger(shortValue);
-            if (value is sbyte sbyteValue) return FormatInteger(sbyteValue);
-            if (value is byte byteValue) return FormatInteger(byteValue);
-            return value.ToString() ?? string.Empty;
-        }
-
-        // DecimalFormat first obtains Java's shortest round-trippable decimal
-        // digits for a double, then applies fixed-point HALF_EVEN rounding. The
-        // exact binary value is consulted only when those shortest digits land
-        // on a decimal halfway boundary. Keeping both values is what makes
-        // 2.675 format as 2.67 while still rendering Double.MAX_VALUE with the
-        // finite significant digits exposed by Double.toString().
-        private string FormatDouble(double value)
-        {
-            var bits = unchecked((ulong)BitConverter.DoubleToInt64Bits(value));
-            var negative = (bits & (1UL << 63)) != 0;
-            var magnitude = value == 0.0 ? 0.0 : Math.Abs(value);
-            var shortest = magnitude.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
-            ParseDecimal(shortest, out var coefficient, out var decimalExponent);
-
-            var scaledExponent = decimalExponent + maximumFractionDigits;
-            System.Numerics.BigInteger rounded;
-            if (scaledExponent >= 0)
-            {
-                rounded = coefficient * PowerOfTen(scaledExponent);
-            }
-            else
-            {
-                var divisor = PowerOfTen(-scaledExponent);
-                rounded = System.Numerics.BigInteger.DivRem(coefficient, divisor,
-                                                            out var remainder);
-                var halfComparison = (remainder << 1).CompareTo(divisor);
-                var roundUp = halfComparison > 0;
-                if (halfComparison == 0)
-                {
-                    var exactComparison = CompareExactBinaryToDecimal(
-                        bits & 0x7fffffffffffffffUL, coefficient, decimalExponent);
-                    roundUp = exactComparison > 0 ||
-                              (exactComparison == 0 && !rounded.IsEven);
-                }
-                if (roundUp) rounded += System.Numerics.BigInteger.One;
-            }
-            return RenderFixed(rounded, negative);
-        }
-
-        private string FormatInteger(long value)
-        {
-            var integer = new System.Numerics.BigInteger(value);
-            var negative = integer.Sign < 0;
-            if (negative) integer = System.Numerics.BigInteger.Negate(integer);
-            return RenderFixed(integer * PowerOfTen(maximumFractionDigits), negative);
-        }
-
-        private string RenderFixed(System.Numerics.BigInteger scaledMagnitude, bool negative)
-        {
-            var digits = scaledMagnitude.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            string integer;
-            string fraction;
-            if (maximumFractionDigits == 0)
-            {
-                integer = digits;
-                fraction = string.Empty;
-            }
-            else if (digits.Length <= maximumFractionDigits)
-            {
-                integer = "0";
-                fraction = new string('0', maximumFractionDigits - digits.Length) + digits;
-            }
-            else
-            {
-                var split = digits.Length - maximumFractionDigits;
-                integer = digits.Substring(0, split);
-                fraction = digits.Substring(split);
-            }
-
-            while (fraction.Length > minimumFractionDigits && fraction.EndsWith("0", StringComparison.Ordinal))
-                fraction = fraction.Substring(0, fraction.Length - 1);
-            var result = fraction.Length == 0
-                ? integer
-                : integer + format.NumberDecimalSeparator + fraction;
-            return negative ? format.NegativeSign + result : result;
-        }
-
-        private static void ParseDecimal(string value,
-                                         out System.Numerics.BigInteger coefficient,
-                                         out int decimalExponent)
-        {
-            var exponentIndex = value.IndexOfAny(new[] { 'E', 'e' });
-            var exponent = exponentIndex < 0
-                ? 0
-                : int.Parse(value.Substring(exponentIndex + 1),
-                            System.Globalization.CultureInfo.InvariantCulture);
-            var significand = exponentIndex < 0 ? value : value.Substring(0, exponentIndex);
-            var decimalIndex = significand.IndexOf('.');
-            var fractionDigits = decimalIndex < 0 ? 0 : significand.Length - decimalIndex - 1;
-            var digits = decimalIndex < 0
-                ? significand
-                : significand.Remove(decimalIndex, 1);
-            coefficient = System.Numerics.BigInteger.Parse(
-                digits, System.Globalization.CultureInfo.InvariantCulture);
-            decimalExponent = exponent - fractionDigits;
-        }
-
-        private static int CompareExactBinaryToDecimal(
-            ulong magnitudeBits,
-            System.Numerics.BigInteger decimalCoefficient,
-            int decimalExponent)
-        {
-            if (magnitudeBits == 0) return decimalCoefficient.IsZero ? 0 : -1;
-            var exponentBits = (int)((magnitudeBits >> 52) & 0x7ffUL);
-            var fractionBits = magnitudeBits & 0x000fffffffffffffUL;
-            var significand = new System.Numerics.BigInteger(
-                exponentBits == 0 ? fractionBits : fractionBits | (1UL << 52));
-            var binaryExponent = exponentBits == 0 ? -1074 : exponentBits - 1023 - 52;
-
-            var binaryNumerator = binaryExponent >= 0 ? significand << binaryExponent : significand;
-            var binaryDenominator = binaryExponent < 0
-                ? System.Numerics.BigInteger.One << -binaryExponent
-                : System.Numerics.BigInteger.One;
-            var decimalNumerator = decimalExponent >= 0
-                ? decimalCoefficient * PowerOfTen(decimalExponent)
-                : decimalCoefficient;
-            var decimalDenominator = decimalExponent < 0
-                ? PowerOfTen(-decimalExponent)
-                : System.Numerics.BigInteger.One;
-            return (binaryNumerator * decimalDenominator)
-                .CompareTo(decimalNumerator * binaryDenominator);
-        }
-
-        private static System.Numerics.BigInteger PowerOfTen(int exponent) =>
-            System.Numerics.BigInteger.Pow(10, exponent);
-
-        public void SetGroupingUsed(bool value) { }
-        public void SetMinimumFractionDigits(int value)
-        {
-            minimumFractionDigits = Math.Max(0, value);
-            if (maximumFractionDigits < minimumFractionDigits)
-                maximumFractionDigits = minimumFractionDigits;
-        }
-        public void SetMaximumFractionDigits(int value)
-        {
-            maximumFractionDigits = Math.Max(0, value);
-            if (minimumFractionDigits > maximumFractionDigits)
-                minimumFractionDigits = maximumFractionDigits;
-        }
-        public void SetDecimalFormatSymbols(System.Globalization.NumberFormatInfo value) => format = (System.Globalization.NumberFormatInfo)value.Clone();
     }
     internal static class JavaBase64
     {
@@ -1020,39 +851,6 @@ namespace Pkl.Core.Runtime
         public void SetCertificateEntry(string alias, System.Security.Cryptography.X509Certificates.X509Certificate2 certificate) =>
             certificates.Add(certificate);
     }
-    internal sealed class JavaCertificateFactory
-    {
-        public static JavaCertificateFactory GetInstance(string type) => new();
-        public System.Security.Cryptography.X509Certificates.X509Certificate2 GenerateCertificate(System.IO.Stream stream)
-        {
-            var certificates = GenerateCertificates(stream);
-            if (certificates.Count == 0)
-                throw new System.Security.Cryptography.CryptographicException(
-                    "The certificate input did not contain an X.509 certificate.");
-            return certificates.First();
-        }
-        public ICollection<System.Security.Cryptography.X509Certificates.X509Certificate2> GenerateCertificates(System.IO.Stream stream)
-        {
-            using var bytes = new System.IO.MemoryStream();
-            stream.CopyTo(bytes);
-            var encoded = bytes.ToArray();
-            var result = new System.Security.Cryptography.X509Certificates.X509Certificate2Collection();
-            if (encoded.Length == 0)
-                return Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>();
-            var text = System.Text.Encoding.UTF8.GetString(encoded);
-            if (text.Contains("-----BEGIN CERTIFICATE-----", StringComparison.Ordinal))
-            {
-                result.ImportFromPem(text);
-            }
-            else
-            {
-#pragma warning disable SYSLIB0057 // net8-compatible certificate construction
-                result.Add(new System.Security.Cryptography.X509Certificates.X509Certificate2(encoded));
-#pragma warning restore SYSLIB0057
-            }
-            return result.Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>().ToList();
-        }
-    }
     internal sealed class JavaSslContext
     {
         private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> trustAnchors = new();
@@ -1064,6 +862,8 @@ namespace Pkl.Core.Runtime
             trustAnchors.Clear();
             if (trustManagers is not IEnumerable<object> managers) return;
             trustAnchors.AddRange(managers.OfType<System.Security.Cryptography.X509Certificates.X509Certificate2>());
+            foreach (var manager in managers.OfType<global::DripSharp.Runtime.JavaTrustManager>())
+                trustAnchors.AddRange(manager.Certificates);
         }
     }
     internal sealed class JavaTrustManagerFactory

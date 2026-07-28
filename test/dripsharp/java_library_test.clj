@@ -765,7 +765,10 @@
                       "return (List<byte[]>) value; } "
                       "@SuppressWarnings(\"unchecked\") "
                       "public static Map<String, byte[]> map(Object value) { "
-                      "return (Map<String, byte[]>) value; } }")})
+                      "return (Map<String, byte[]>) value; } "
+                      "@SuppressWarnings({\"rawtypes\", \"unchecked\"}) "
+                      "public static Map rawMap(Object value) { "
+                      "return (Map) value; } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -782,6 +785,10 @@
          first-source
          (str "return global::DripSharp.Runtime.JavaCompat."
               "CastDictionary<string, sbyte[]>(value);")))
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat."
+              "CastRawDictionary(value);")))
     (is (= first-source second-source))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
@@ -814,7 +821,7 @@
     (is (str/includes? source "this.reset((int?)default!);"))
     (is (str/includes?
          source
-         (str "return global::DripSharp.Runtime.JavaCompat.Unbox("
+         (str "return global::DripSharp.Runtime.JavaCompat.UnboxObject<int>("
               "this.maybe(true));")))
     (is (str/includes?
          source
@@ -826,6 +833,28 @@
               "global::DripSharp.Runtime.JavaCompat.ParseInt(\"7\", 10));")))
     (is (str/includes? source "public bool? state()"))
     (is (str/includes? source "public void state(bool? value)"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emitted)
+                               :command ["dotnet" "build" (:project-file emitted)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest explicit-boxed-casts-preserve-null-before-primitive-use
+  (let [fixture
+        (model! {"example/BoxedCasts.java"
+                 (str "package example; public final class BoxedCasts { "
+                      "public static Boolean optional(Object value) { "
+                      "return (Boolean) value; } "
+                      "public static boolean required(Object value) { "
+                      "return (Boolean) value; } }")})
+        emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emitted)
+                                        "src/Example/Java/Library/BoxedCasts.cs")))]
+    (is (str/includes? source "return (bool?)(value);"))
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.Unbox((bool?)(value));"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emitted)
                                :command ["dotnet" "build" (:project-file emitted)
@@ -927,6 +956,8 @@
                       "public float negativeWidth() { return -width; } "
                       "public boolean disabled() { return !enabled; } "
                       "public long complement() { return ~offset; } "
+                      "public Object boxedIndex() { int index = 0; "
+                      "return (long) index++; } "
                       "public void increment() { offset++; } }")})
         emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
         source
@@ -935,16 +966,17 @@
                      "src/Example/Java/Library/UnaryBoxed.cs")))]
     (is (str/includes?
          source
-         "return -global::DripSharp.Runtime.JavaCompat.Unbox(this.offset);"))
+         "return -(global::DripSharp.Runtime.JavaCompat.Unbox(this.offset));"))
     (is (str/includes?
          source
-         "return -global::DripSharp.Runtime.JavaCompat.Unbox(this.width);"))
+         "return -(global::DripSharp.Runtime.JavaCompat.Unbox(this.width));"))
     (is (str/includes?
          source
-         "return !global::DripSharp.Runtime.JavaCompat.Unbox(this.enabled);"))
+         "return !(global::DripSharp.Runtime.JavaCompat.Unbox(this.enabled));"))
     (is (str/includes?
          source
-         "return ~global::DripSharp.Runtime.JavaCompat.Unbox(this.offset);"))
+         "return ~(global::DripSharp.Runtime.JavaCompat.Unbox(this.offset));"))
+    (is (str/includes? source "return (long)(index++);"))
     (is (str/includes? source "this.offset++;"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emitted)
@@ -988,8 +1020,9 @@
     (is (str/includes?
          super-source
          "return global::DripSharp.Runtime.JavaCompat.ToSignedBytes(this);"))
-    (is (str/includes? numbers-source "return this.Next();"))
-    (is (not (str/includes? numbers-source "JavaCompat.Unbox(this.Next())")))
+    (is (str/includes?
+         numbers-source
+         "return global::DripSharp.Runtime.JavaCompat.UnboxObject<long>(this.Next());"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emitted)
                                :command ["dotnet" "build" (:project-file emitted)
@@ -1021,7 +1054,7 @@
     (is (str/includes? first-source
                        "internal const int negative = -3000;"))
     (is (str/includes? first-source
-                       "internal const int shifted = (1 << 14);"))
+                       "internal const int shifted = (1 << unchecked((int)(14)));"))
     (is (str/includes? first-source "internal Holder()"))
     (is (str/includes? first-source "internal string get()"))
     (is (= first-source second-source))
@@ -1039,7 +1072,17 @@
                       "public static int required(TreeMap<Integer, Integer> values) { "
                       "Integer value = values.get(1); return value == null ? 0 : value; } "
                       "public static boolean marker(byte[] header) { "
-                      "return header[0] == 128 || header[1] >= 1; } }")})
+                      "return header[0] == 128 || header[1] >= 1; } "
+                      "public static boolean negative(Long value) { "
+                      "return value < 0; } "
+                      "public static String render(Object value) { "
+                      "return value.toString(); } "
+                      "public String renderParent() { "
+                      "return super.toString(); } "
+                      "public static boolean isSet(Object value) { "
+                      "return value instanceof java.util.Set; } "
+                      "public static java.net.URI opaqueFile() { "
+                      "return java.net.URI.create(\"file:path\"); } }")})
         emitted (emit! fixture 1 #{:java-compat :java-regex-unicode})
         source
         (slurp (str (paths/resolve-path
@@ -1054,6 +1097,22 @@
          "return ((value == default!) ? 0 : global::DripSharp.Runtime.JavaCompat.Unbox(value));"))
     (is (str/includes? source "(int)(header[0]) == 128"))
     (is (str/includes? source "(int)(header[1]) >= 1"))
+    (is (str/includes?
+         source
+         "(global::DripSharp.Runtime.JavaCompat.Unbox(value) < 0)"))
+    (is (not (str/includes?
+              source
+              "global::DripSharp.Runtime.JavaCompat.UnboxObject<int>(value)")))
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.StringValueOf(value);"))
+    (is (str/includes? source "return base.ToString()!;"))
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.IsSet(value);"))
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.CreateUri(\"file:path\");"))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emitted)
                                :command ["dotnet" "build" (:project-file emitted)
@@ -1303,8 +1362,9 @@
                                         "src/Example/Java/Library/Counts.cs")))]
     (is (str/includes?
          first-source
-         (str "return global::DripSharp.Runtime.JavaCompat.MapMerge("
-              "values, key, 1, global::DripSharp.Runtime.JavaCompat.SumInt);")))
+         (str "return global::DripSharp.Runtime.JavaCompat.UnboxObject<int>("
+              "global::DripSharp.Runtime.JavaCompat.MapMerge("
+              "values, key, 1, global::DripSharp.Runtime.JavaCompat.SumInt));")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -1402,10 +1462,13 @@
     (is (str/includes?
          first-source
          (str "global::System.Collections.Generic.IDictionary<string, int> indexes = "
-              "new global::System.Collections.Generic.Dictionary<string, int>();\n"
-              "int value = global::DripSharp.Runtime.JavaCompat.ComputeIfAbsent("
-              "indexes, key, (k) => 0);\nconsumer(key, value);")))
-    (is (str/includes? first-source "return function(key, value);"))
+              "global::DripSharp.Runtime.JavaCompat.NewJavaDictionary<string, int>();\n"
+              "int value = global::DripSharp.Runtime.JavaCompat.UnboxObject<int>("
+              "global::DripSharp.Runtime.JavaCompat.ComputeIfAbsent("
+              "indexes, key, (k) => 0));\nconsumer(key, value);")))
+    (is (str/includes?
+         first-source
+         "return global::DripSharp.Runtime.JavaCompat.UnboxObject<int>(function(key, value));"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -1536,10 +1599,14 @@
          (str "public static int listHash("
               "global::System.Collections.Generic.IList<string> values) {\n"
               "return global::DripSharp.Runtime.JavaCompat.HashCode(values);")))
-    (is (str/includes? first-source "return value.ToString()!;"))
     (is (str/includes?
          first-source
-         "return value.Map((value0) => value0.ToString()!).OrElse(\"\");"))
+         "return global::DripSharp.Runtime.JavaCompat.StringValueOf(value);"))
+    (is (str/includes?
+         first-source
+         (str "return value.Map((value0) => "
+              "global::DripSharp.Runtime.JavaCompat.StringValueOf(value0))"
+              ".OrElse(\"\");")))
     (is (str/includes?
          first-source
          "return new global::System.Text.StringBuilder().Append(value, start, (end - start)).ToString();"))
@@ -1770,17 +1837,26 @@
                                    "--verbosity:quiet"]})]
       (is (zero? (:exit result))))))
 
-(deftest neighboring-load-factor-linked-set-construction-remains-fail-closed
+(deftest load-factor-linked-set-construction-is-shared
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.util.LinkedHashSet; "
                       "public final class Unsupported { "
                       "static LinkedHashSet<String> create(int capacity) { "
                       "return new LinkedHashSet<>(capacity, 0.75f); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.util.LinkedHashSet#<init>(int,float)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         "new global::System.Collections.Generic.HashSet<string>(capacity)"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest neutral-deque-collection-operations-and-add-reference-compose
   (let [fixture
@@ -2000,7 +2076,7 @@
                       "return new SequenceInputStream(new ByteArrayInputStream(first), "
                       "new ByteArrayInputStream(second)); } "
                       "public static void text(Writer writer, String value) "
-                      "throws IOException { writer.write(value); } "
+                      "throws IOException { writer.write(value); writer.flush(); } "
                       "public static String text(String value) throws IOException { "
                       "StringWriter writer = new StringWriter(); "
                       "writer.write(value); return writer.toString(); } "
@@ -2041,7 +2117,7 @@
          (str "return new global::DripSharp.Runtime.JavaSequenceInputStream("
               "global::DripSharp.Runtime.JavaCompat.NewMemoryStream(first), "
               "global::DripSharp.Runtime.JavaCompat.NewMemoryStream(second));")))
-    (is (str/includes? first-source "writer.Write(value);"))
+    (is (str/includes? first-source "writer.Write(value);\nwriter.Flush();"))
     (is (str/includes?
          first-source
          (str "global::System.IO.StringWriter writer = "
@@ -2368,7 +2444,11 @@
                       "static RuntimeException failure(String message, Throwable cause) { "
                       "cause.printStackTrace(); "
                       "if (cause == null) { return new RuntimeException(message); } "
-                      "return new RuntimeException(message, cause); } }")})
+                      "return new RuntimeException(message, cause); } "
+                      "static ExceptionInInitializerError initialization(Throwable cause) { "
+                      "return new ExceptionInInitializerError(cause); } "
+                      "static void copyStack(Throwable target, Throwable source) { "
+                      "target.setStackTrace(source.getStackTrace()); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
         second (emit! fixture 3 capabilities)
@@ -2386,14 +2466,14 @@
               "global::DripSharp.Runtime.JavaCompat.SocketStream(socket);\n"
               "output.Flush();\n"
               "global::System.Collections.Generic.Dictionary<string, string> values = "
-              "new global::System.Collections.Generic.Dictionary<string, string>(4);\n"
+              "global::DripSharp.Runtime.JavaCompat.NewJavaDictionary<string, string>(4);\n"
               (str "global::DripSharp.Runtime.JavaByteArrayOutputStream buffer = "
                    "new global::DripSharp.Runtime.JavaByteArrayOutputStream(16);\n")
               "global::DripSharp.Runtime.JavaCompat.MemoryStreamWriteTo(buffer, output);\n"
               "executor.Submit(() => {\n"
               "called.CompareAndSet(false, true);\n});\n"
               "if (called.Get()) {\nsocket.Close();\n}\n"
-              "if (!value.IsPresent()) {\noutput.Dispose();\n}\n"
+              "if (!(value.IsPresent())) {\noutput.Dispose();\n}\n"
               "return (((input != default!) && "
               "(values.Count == 0)) && "
               "(value.Get().Length > 0));")))
@@ -2409,6 +2489,14 @@
               "if ((cause == default!)) {\n"
               "return new global::System.Exception(message);\n}\n"
               "return new global::System.Exception(message, cause);")))
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat."
+              "NewTypeInitializationException(cause);")))
+    (is (str/includes?
+         first-source
+         (str "global::DripSharp.Runtime.JavaCompat.SetStackTrace(target, "
+              "global::DripSharp.Runtime.JavaCompat.GetStackTrace(source));")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -2718,8 +2806,8 @@
               "internal static bool open(int port) {\n"
               "global::DripSharp.Runtime.JavaServerSocket server = "
               "new global::DripSharp.Runtime.JavaServerSocket(port);\n"
-              "if (!server.IsClosed()) {\nserver.Close();\n}\n"
-              "return !server.IsClosed();")))
+              "if (!(server.IsClosed())) {\nserver.Close();\n}\n"
+              "return !(server.IsClosed());")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
@@ -2888,7 +2976,7 @@
 (deftest neutral-method-references-stream-map-and-set-collection-are-resolved
   (let [fixture
         (model! {"example/References.java"
-                 (str "package example; import java.util.List; "
+                 (str "package example; import java.util.ArrayList; import java.util.List; "
                       "import java.util.Map; import java.util.Set; "
                       "import static java.util.stream.Collectors.toList; "
                       "import static java.util.stream.Collectors.toSet; "
@@ -2906,6 +2994,9 @@
                       "public static List<String> strings(List<Object> values) { "
                       "return values.stream().filter(String.class::isInstance)"
                       ".map(String.class::cast).collect(toList()); } "
+                      "public static void copyToArray(List<String> values) { "
+                      "var result = new ArrayList<String>(); "
+                      "values.forEach(result::add); } "
                       "private References with(String key, String value) { return this; } "
                       "private void accept(String value) { } }")})
         capabilities #{:java-compat :java-regex-unicode}
@@ -2944,12 +3035,44 @@
          first-source
          (str "(value0) => global::DripSharp.Runtime.JavaCompat.ClassCast<string>("
               "typeof(string), value0)")))
+    (is (str/includes?
+         first-source
+         (str "global::DripSharp.Runtime.JavaCompat.ForEach(values, "
+              "(value0) => { result.Add(value0); });")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (get-in second [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest neutral-stream-to-map-collection-is-resolved
+  (let [fixture
+        (model! {"example/Maps.java"
+                 (str "package example; import java.util.Map; "
+                      "import java.util.stream.Collectors; "
+                      "public final class Maps { "
+                      "public static Map<String, Integer> copy("
+                      "Map<String, Integer> source) { "
+                      "return source.entrySet().stream().collect("
+                      "Collectors.toMap(Map.Entry::getKey, "
+                      "entry -> entry.getValue())); } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Maps.cs")))]
+    (is (str/includes?
+         source
+         (str "global::DripSharp.Runtime.JavaCompat.Collect("
+              "global::DripSharp.Runtime.JavaCompat.MapEntrySet(source), "
+              "global::DripSharp.Runtime.JavaCompat.ToMap<"
+              "global::DripSharp.Runtime.JavaMapEntry<string, int>, string, int>(")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
@@ -3230,7 +3353,7 @@
          (str "private class _1Index {\n"
               "internal int value = -1;\n\n"
               "internal int increment() {\n"
-              "return ++this.value;\n}\n}")))
+              "return ++(this.value);\n}\n}")))
     (is (= first-source second-source))
     (is (= 3 (get-in first [:summary :executable-roots])
            (get-in second [:summary :executable-roots])))
@@ -3579,17 +3702,26 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-read-n-bytes-remains-fail-closed
+(deftest read-n-bytes-uses-the-shared-java-runtime-contract
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.io.InputStream; "
                       "public final class Unsupported { static byte[] read("
                       "InputStream input) throws Exception { "
                       "return input.readNBytes(2); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.io.InputStream#readNBytes(int)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.ReadNBytes(input, 2)"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest dom-named-node-map-items-use-java-name-order
   (let [fixture
@@ -3638,8 +3770,11 @@
                                         "src/Example/Java/Library/Switches.cs")))]
     (is (str/includes?
          first-source
-         (str "case 0:\ncase 1:\nvalue++;\nbreak;\n"
-              "case 2:\ngoto __java_break_0;\n"
+         (str "when __case_1_134_0 == 0:\n"
+              "case var __case_1_142_0 when __case_1_142_0 == 1:\n"
+              "value++;\nbreak;\n"
+              "case var __case_1_166_0 when __case_1_166_0 == 2:\n"
+              "goto __java_break_0;\n"
               "default:\nreturn value;")))
     (is (str/includes? first-source "__java_break_0:;"))
     (is (= first-source second-source))
@@ -3678,16 +3813,53 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest switch-expressions-remain-fail-closed
+(deftest switch-expressions-lower-through-the-shared-body-rules
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; public final class Unsupported { "
                       "static int map(int value) { return switch (value) { "
                       "case 1 -> 2; default -> 3; }; } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (str/includes? (get-in (ex-data error) [:diagnostic :message])
-                       "CtSwitchExpressionImpl"))))
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         "((global::System.Func<int>)(() => { switch (value) {"))
+    (is (str/includes? source "return 2;"))
+    (is (str/includes? source "default:\nreturn 3;"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest arrow-switch-statements-preserve-each-arm-body
+  (let [fixture
+        (model! {"example/ArrowSwitch.java"
+                 (str "package example; public final class ArrowSwitch { "
+                      "static int classify(int value) { int result; "
+                      "switch (value) { "
+                      "case 0 -> result = 10; "
+                      "case 1 -> result = 20; "
+                      "default -> { result = 30; } "
+                      "} return result; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emission)
+                     "src/Example/Java/Library/ArrowSwitch.cs")))]
+    (is (str/includes? source "result = 10;\nbreak;"))
+    (is (str/includes? source "result = 20;\nbreak;"))
+    (is (not (str/includes? source "(result = 10);")))
+    (is (str/includes? source "default:\n{\nresult = 30;"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest neutral-format-radix-parse-and-java-trim-are-exact
   (let [fixture
@@ -3722,15 +3894,22 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-string-strip-remains-fail-closed
+(deftest string-strip-is-shared
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; public final class Unsupported { "
                       "static String strip(String value) { return value.strip(); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.lang.String#strip()"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes? source "return value.Trim();"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest char-array-slice-string-construction-is-exact
   (let [fixture
@@ -3956,6 +4135,12 @@
          "[global::DripSharp.Runtime.JavaEnumNameAttribute(\"ALPHA\")]"))
     (is (str/includes?
          first-source
+         "[global::DripSharp.Runtime.JavaEnumOrdinalAttribute(0)]"))
+    (is (str/includes?
+         first-source
+         "[global::DripSharp.Runtime.JavaEnumOrdinalAttribute(1)]"))
+    (is (str/includes?
+         first-source
          "public static readonly global::Example.Java.Library.Mode ALPHA = new global::Example.Java.Library.Mode(1);"))
     (is (str/includes?
          first-source
@@ -4028,7 +4213,13 @@
                       "public static String decimal(double value) { "
                       "DECIMAL.setMaximumFractionDigits(4); "
                       "DECIMAL.setGroupingUsed(false); "
-                      "return DECIMAL.format(value); } }")})
+                      "return DECIMAL.format(value); } "
+                      "public static String precise(double value, int digits) { "
+                      "NumberFormat format = NumberFormat.getNumberInstance(Locale.US); "
+                      "format.setMinimumFractionDigits(digits); "
+                      "format.setMaximumFractionDigits(digits); "
+                      "format.setGroupingUsed(false); "
+                      "return format.format(value); } }")})
         capabilities #{:java-compat :java-regex-unicode}
         emission (emit! fixture 1 capabilities)
         source
@@ -4075,8 +4266,12 @@
                    generated-project
                    "\" /></ItemGroup></Project>")
               "Program.cs"
-              (str "return global::Example.Java.Library.Formats"
-                   ".@decimal(1234.56789) == \"1234.5679\" ? 0 : 1;\n")})
+              (str "return global::Example.Java.Library.Formats.@fixed(42) == \"00042\" &&\n"
+                   "       global::Example.Java.Library.Formats.@decimal(1234.56789) == \"1234.5679\" &&\n"
+                   "       global::Example.Java.Library.Formats.precise(2.675, 2) == \"2.67\" &&\n"
+                   "       global::Example.Java.Library.Formats.precise(2.625, 2) == \"2.62\" &&\n"
+                   "       global::Example.Java.Library.Formats.precise(1.015, 2) == \"1.01\" &&\n"
+                   "       global::Example.Java.Library.Formats.precise(-0.0, 2) == \"-0.00\" ? 0 : 1;\n")})
           result
           (process/run! {:directory consumer-root
                          :command ["dotnet" "run" "--project" "Consumer.csproj"
@@ -4230,13 +4425,13 @@
                                         "src/Example/Java/Library/Copies.cs")))]
     (is (str/includes?
          source
-         "return global::DripSharp.Runtime.JavaCompat.CopyOf(value, 16);"))
+         "return global::DripSharp.Runtime.JavaCompat.CopyOf<sbyte>(value, 16);"))
     (is (str/includes?
          source
-         "return global::DripSharp.Runtime.JavaCompat.CopyOf(value, 4);"))
+         "return global::DripSharp.Runtime.JavaCompat.CopyOf<float>(value, 4);"))
     (is (str/includes?
          source
-         "return global::DripSharp.Runtime.JavaCompat.CopyOfRange(value, 2, 12);"))
+         "return global::DripSharp.Runtime.JavaCompat.CopyOfRange<sbyte>(value, 2, 12);"))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
                 (process/run! {:directory (:project-root emission)
@@ -4391,16 +4586,25 @@
     (is (= "executable:java.lang.Integer#toUnsignedString(int,int)"
            (get-in (ex-data error) [:diagnostic :resolved :key])))))
 
-(deftest neighboring-exact-math-operation-remains-fail-closed
+(deftest exact-math-increment-is-shared
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; public final class Unsupported { "
                       "static int increment(int value) { "
                       "return Math.incrementExact(value); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.lang.Math#incrementExact(int)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.IncrementExact(value);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest uri-equality-uses-the-reusable-java-uri-contract
   (let [fixture
@@ -4428,16 +4632,25 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-uri-comparison-remains-fail-closed
+(deftest uri-comparison-is-shared
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.net.URI; "
                       "public final class Unsupported { static int compare("
                       "URI left, URI right) { return left.compareTo(right); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.net.URI#compareTo(java.net.URI)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.CompareUri(left, right);"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest implicit-jdk-stream-base-constructors-are-omitted
   (let [fixture
@@ -4561,16 +4774,25 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-uri-syntax-input-remains-fail-closed
+(deftest uri-syntax-input-preserves-java-diagnostic
   (let [fixture
-        (model! {"example/Unsupported.java"
+        (model! {"example/UriFailure.java"
                  (str "package example; import java.net.URISyntaxException; "
-                      "public final class Unsupported { static String input("
+                      "public final class UriFailure { static String input("
                       "URISyntaxException failure) { return failure.getInput(); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.net.URISyntaxException#getInput()"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        capabilities #{:java-compat :java-regex-unicode}
+        emission (emit! fixture 1 capabilities)
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/UriFailure.cs")))]
+    (is (str/includes?
+         source
+         "return global::DripSharp.Runtime.JavaCompat.UriSyntaxInput(failure);"))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest resolved-pattern-matcher-full-match-is-reusable
   (let [fixture
@@ -4649,16 +4871,25 @@
          "global::DripSharp.Runtime.JavaCompat.RegexMatcher(pattern, value).Find();"))
     (is (zero? (get-in emission [:summary :executable-coverage :blocked])))))
 
-(deftest neighboring-pattern-flags-remain-fail-closed
+(deftest pattern-flags-compile-through-the-shared-regex-contract
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; import java.util.regex.Pattern; "
                       "public final class Unsupported { static Pattern compile(String value) { "
                       "return Pattern.compile(value, Pattern.LITERAL); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.util.regex.Pattern#compile(java.lang.String,int)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.CompileRegex(value,"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest optional-long-consumers-and-string-joining-are-exact
   (let [fixture
@@ -5310,15 +5541,25 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
-(deftest neighboring-string-last-index-from-offset-remains-fail-closed
+(deftest string-last-index-from-offset-is-shared
   (let [fixture
         (model! {"example/Unsupported.java"
                  (str "package example; public final class Unsupported { "
                       "static int search(String value) { return value.lastIndexOf('x', 2); } }")})
-        error (caught #(emit! fixture 1))]
-    (is (= :java-translation-coverage-failed (:kind (ex-data error))))
-    (is (= "executable:java.lang.String#lastIndexOf(int,int)"
-           (get-in (ex-data error) [:diagnostic :resolved :key])))))
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Unsupported.cs")))]
+    (is (str/includes?
+         source
+         (str "return global::DripSharp.Runtime.JavaCompat.StringLastIndexOf("
+              "value, (int)('x'), 2);")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
 
 (deftest bounded-string-split-uses-the-reusable-java-regex-contract
   (let [fixture
@@ -5561,6 +5802,86 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest throwable-message-dispatches-to-translated-java-overrides
+  (let [fixture
+        (model! {"example/Failures.java"
+                 (str "package example; public final class Failures { "
+                      "static class Detailed extends Exception { "
+                      "private final String detail; Detailed(String detail) { "
+                      "this.detail = detail; } @Override public String getMessage() { "
+                      "return detail; } } "
+                      "static String describe(Exception failure) { "
+                      "return failure.getMessage(); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Failures.cs")))]
+    (is (str/includes?
+         source
+         (str "return global::DripSharp.Runtime.JavaCompat."
+              "ExceptionMessage(failure);")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest strict-math-uses-the-shared-reproducible-runtime
+  (let [fixture
+        (model! {"example/StrictNumbers.java"
+                 (str "package example; public final class StrictNumbers { "
+                      "static double sin(double value) { return StrictMath.sin(value); } "
+                      "static double cos(double value) { return StrictMath.cos(value); } "
+                      "static double log10(double value) { return StrictMath.log10(value); } "
+                      "static double atan2(double y, double x) { "
+                      "return StrictMath.atan2(y, x); } "
+                      "static double pow(double value, double exponent) { "
+                      "return StrictMath.pow(value, exponent); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/StrictNumbers.cs")))]
+    (doseq [method ["Sin(value)"
+                    "Cos(value)"
+                    "Log10(value)"
+                    "Atan2(y, x)"
+                    "Pow(value, exponent)"]]
+      (is (str/includes?
+           source
+           (str "global::DripSharp.Runtime.JavaStrictMath." method))))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest collapsed-multi-catch-preserves-a-later-java-supertype-clause
+  (let [fixture
+        (model! {"example/Closeable.java"
+                 (str "package example; public final class Closeable { "
+                      "static void invoke() throws Throwable {} "
+                      "static void close() { try { invoke(); "
+                      "} catch (RuntimeException | Error failure) { "
+                      "throw failure; } catch (Throwable failure) { "
+                      "throw new AssertionError(failure); } } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Closeable.cs")))]
+    (is (str/includes?
+         source
+         (str "catch (global::System.Exception failure) when "
+              "(failure is global::System.Exception)")))
+    (is (str/includes?
+         source
+         "catch (global::System.Exception failure) {"))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest sequential-java-security-catches-preserve-distinct-exception-identities
   (let [fixture
         (model! {"example/Security.java"
@@ -5652,16 +5973,16 @@
                                         "src/Example/Java/Library/SwitchCases.cs")))]
     (is (str/includes?
          first-source
-         "case unchecked((char)(global::Example.Java.Library.SwitchCases.LF)):"))
+         "== unchecked((char)(global::Example.Java.Library.SwitchCases.LF)):"))
     (is (str/includes?
          first-source
-         "case unchecked((char)(-1)):"))
+         "== unchecked((char)(-1)):"))
     (is (str/includes?
          first-source
-         "case unchecked((sbyte)('(')):"))
+         "== unchecked((sbyte)('(')):"))
     (is (str/includes?
          first-source
-         "case unchecked((sbyte)('\\\\')):"))
+         "== unchecked((sbyte)('\\\\')):"))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit
@@ -5723,10 +6044,20 @@
   (let [fixture
         (model! {"example/Files.java"
                  (str "package example; import java.io.BufferedInputStream; import java.io.File; "
-                      "import java.io.InputStream; public final class Files { "
+                      "import java.io.FileWriter; import java.io.InputStream; "
+                      "import java.io.OutputStream; import java.io.Writer; "
+                      "import java.nio.charset.StandardCharsets; "
+                      "public final class Files { "
                       "static long length(File file) { return file.length(); } "
                       "static InputStream open(File file) throws Exception { "
                       "return new BufferedInputStream(java.nio.file.Files.newInputStream(file.toPath())); "
+                      "} static InputStream openNoFollow(File file) throws Exception { "
+                      "return java.nio.file.Files.newInputStream("
+                      "file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS); "
+                      "} static OutputStream create(File file) throws Exception { "
+                      "return java.nio.file.Files.newOutputStream(file.toPath()); "
+                      "} static Writer writer(File file) throws Exception { "
+                      "return new FileWriter(file, StandardCharsets.UTF_8); "
                       "} }")})
         capabilities #{:java-compat :java-regex-unicode}
         first (emit! fixture 1 capabilities)
@@ -5745,6 +6076,18 @@
          (str "new global::System.IO.BufferedStream("
               "global::DripSharp.Runtime.JavaCompat.OpenInputStream("
               "new global::DripSharp.Runtime.JavaPath(file.FullName)))")))
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.OpenInputStream("
+              "new global::DripSharp.Runtime.JavaPath(file.FullName), new object());")))
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.NewOutputStream("
+              "new global::DripSharp.Runtime.JavaPath(file.FullName));")))
+    (is (str/includes?
+         first-source
+         (str "return global::DripSharp.Runtime.JavaCompat.NewFileWriter("
+              "file, global::DripSharp.Runtime.JavaStandardCharsets.UTF8);")))
     (is (= first-source second-source))
     (is (zero? (get-in first [:summary :executable-coverage :blocked])))
     (is (zero? (:exit

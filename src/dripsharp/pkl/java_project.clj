@@ -10,6 +10,7 @@
             [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
+            [dripsharp.java-types :as java-types]
             [dripsharp.paths :as paths]
             [dripsharp.pkl.java-body :as java-body]
             [dripsharp.spoon :as spoon])
@@ -23,7 +24,8 @@
             CtFormalTypeDeclarer CtInterface CtMethod CtModifiable CtParameter CtRecord
             CtRecordComponent CtType CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtIntersectionTypeReference
-            CtTypeParameterReference CtTypeReference CtWildcardReference]
+            CtExecutableReference CtFieldReference CtTypeParameterReference
+            CtTypeReference CtWildcardReference]
            [spoon.reflect.visitor.filter TypeFilter]))
 
 (def ^:private default-config-file "config/pkl-parser.edn")
@@ -182,6 +184,8 @@
          (when (pos? arity)
            (str "<" (str/join ", " (repeat arity "object")) ">")))))
 
+(declare type-parameter-name)
+
 (defn- project-type-base
   "Emits the resolved project declaration path up to, but not including, the
   reference's own type arguments. Java static nested types do not capture a
@@ -192,6 +196,12 @@
   (let [declarations (declaring-types declaration)
         current (some-> (:current-type ctx) declaring-types)
         current-type (last current)
+        root (first declarations)
+        root-current?
+        (boolean (some #(same-type? root %) current))
+        live-root-parameters
+        (when root-current?
+          (.getFormalCtTypeParameters ^CtType root))
         ;; A nested base can have the same simple name as its derived nested
         ;; subtype (Message.Response and Message.Client.Response). A relative
         ;; `Response` reference binds to the subtype in C# and creates a cycle;
@@ -218,9 +228,16 @@
              (str/starts-with? (.getQualifiedName declaration)
                                "org.pkl.core.util.paguro.RrbTree$"))
       ;; Java's RRB helper types are static nested declarations and therefore
-      ;; do not capture RrbTree<E>.  C# nested types do capture their generic
-      ;; owner, so select one stable object-closed owner at every reference.
-      (str "global::" (destination-namespace ctx declaration) ".RrbTree<object>."
+      ;; do not capture RrbTree<E>. C# nested types do capture their generic
+      ;; owner. Within an emitted nested helper, its physical C# owner remains
+      ;; the live RrbTree<E>; references from root static methods or elsewhere
+      ;; use the stable object closure used at call sites.
+      (str "global::" (destination-namespace ctx declaration) ".RrbTree<"
+           (if (seq live-root-parameters)
+             (str/join ", "
+                       (map type-parameter-name live-root-parameters))
+             "object")
+           ">."
            (str/join "." (concat (map raw-generic-segment (rest (butlast declarations)))
                                  [(pascal (.getSimpleName ^CtType leaf))])))
       (str prefix
@@ -265,25 +282,14 @@
    "java.lang.Record" ["object" :dotnet.type/record-base]
    "java.lang.Float" ["float" :dotnet.type/single]
    "java.lang.Double" ["double" :dotnet.type/double]
-   "java.lang.NumberFormatException" ["global::System.FormatException" :dotnet.type/format-exception]
    "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.Appendable" ["global::Pkl.Core.Runtime.JavaAppendable" :pkl-core.type/appendable]
-   "java.lang.Math" ["global::System.Math" :dotnet.type/math]
-   "java.lang.StrictMath" ["global::System.Math" :dotnet.type/math]
    "java.lang.System" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.lang.Thread" ["global::Pkl.Core.Runtime.JavaThread" :pkl-core.type/thread]
-   "java.lang.Process" ["global::DripSharp.Runtime.JavaProcess" :dotnet.type/process]
-   "java.lang.ProcessBuilder" ["global::DripSharp.Runtime.JavaProcessBuilder" :dotnet.type/process-builder]
-   "java.lang.ProcessBuilder$Redirect" ["global::DripSharp.Runtime.JavaProcessRedirect" :dotnet.type/process-redirect]
-   "java.lang.invoke.MethodHandles" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
-   "java.lang.invoke.MethodHandles$Lookup" ["object" :dotnet.type/method-lookup-marker]
-   "java.lang.invoke.MethodHandle" ["global::System.Delegate" :dotnet.type/delegate]
-   "java.lang.invoke.MethodType" ["object" :dotnet.type/method-type-marker]
    "java.lang.invoke.VarHandle" ["object" :dotnet.type/var-handle-marker]
    "java.math.BigInteger" ["global::System.Numerics.BigInteger" :dotnet.type/big-integer]
    "java.math.BigDecimal" ["decimal" :dotnet.type/decimal]
-   "java.math.RoundingMode" ["global::Pkl.Core.Runtime.JavaRoundingMode" :pkl-core.type/rounding-mode]
    ;; java.lang.Void is a reference-type marker (not the Java `void`
    ;; primitive).  Mapping it to System.Object keeps it legal in generic
    ;; positions such as PClassInfo<Void>; primitive void is handled by the
@@ -300,12 +306,10 @@
    "java.lang.NullPointerException" ["global::System.NullReferenceException" :dotnet.type/null-reference]
    "java.lang.NegativeArraySizeException" ["global::System.ArgumentOutOfRangeException" :dotnet.type/argument-out-of-range]
    "java.lang.InterruptedException" ["global::System.Threading.ThreadInterruptedException" :dotnet.type/thread-interrupted]
-   "java.lang.AssertionError" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.Error" ["global::System.Exception" :dotnet.type/exception]
    "java.lang.StackOverflowError" ["global::System.StackOverflowException" :dotnet.type/stack-overflow]
    "java.lang.OutOfMemoryError" ["global::System.OutOfMemoryException" :dotnet.type/out-of-memory]
    "java.lang.NoClassDefFoundError" ["global::System.TypeLoadException" :dotnet.type/type-load-exception]
-   "java.lang.ArithmeticException" ["global::System.ArithmeticException" :dotnet.type/arithmetic-exception]
    "java.lang.ExceptionInInitializerError" ["global::System.TypeInitializationException" :dotnet.type/type-initialization-exception]
    "java.lang.UnsupportedOperationException" ["global::System.NotSupportedException" :dotnet.type/not-supported-exception]
    "java.lang.StackTraceElement" ["global::System.Diagnostics.StackFrame" :dotnet.type/stack-frame]
@@ -324,7 +328,6 @@
    "java.io.File" ["string" :dotnet.type/path]
    "java.io.Flushable" ["global::System.IDisposable" :dotnet.type/disposable]
    "java.io.UnsupportedEncodingException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
-   "java.io.Console" ["object" :dotnet.type/console-marker]
    "java.io.PrintStream" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
    "java.io.FileNotFoundException" ["global::System.IO.FileNotFoundException" :dotnet.type/file-not-found-exception]
    "java.io.UncheckedIOException" ["global::System.IO.IOException" :dotnet.type/io-exception]
@@ -342,9 +345,6 @@
    "java.net.URL" ["global::System.Uri" :dotnet.type/uri]
    "java.net.ConnectException" ["global::System.Net.Sockets.SocketException" :dotnet.type/socket-exception]
    "java.net.UnknownHostException" ["global::System.Net.Sockets.SocketException" :dotnet.type/socket-exception]
-   "java.net.Inet4Address" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
-   "java.net.Inet6Address" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
-   "java.net.InetAddress" ["global::System.Net.IPAddress" :dotnet.type/ip-address]
    "java.net.InetSocketAddress" ["global::System.Net.IPEndPoint" :dotnet.type/ip-endpoint]
    "java.net.SocketAddress" ["global::System.Net.EndPoint" :dotnet.type/endpoint]
    "java.net.Proxy" ["global::System.Net.WebProxy" :dotnet.type/web-proxy]
@@ -353,7 +353,6 @@
    "java.net.JarURLConnection" ["global::Pkl.Core.Runtime.JavaJarConnection" :pkl-core.type/jar-connection]
    "java.net.URLConnection" ["global::Pkl.Core.Runtime.JavaUrlConnection" :pkl-core.type/url-connection]
    "java.net.URISyntaxException" ["global::System.UriFormatException" :dotnet.type/uri-format-exception]
-   "java.net.URLEncoder" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.net.http.HttpClient" ["global::Pkl.Core.Runtime.JavaHttpClient" :pkl-core.type/http-client]
    "java.net.http.HttpClient$Builder" ["global::Pkl.Core.Runtime.JavaHttpClient.Builder" :pkl-core.type/http-client-builder]
    "java.net.http.HttpClient$Redirect" ["global::Pkl.Core.Runtime.JavaHttpRedirect" :pkl-core.type/http-redirect]
@@ -367,7 +366,6 @@
    "java.net.http.HttpResponse$BodyHandler" ["global::Pkl.Core.Runtime.JavaHttpBodyHandler" :pkl-core.type/http-body-handler]
    "java.net.http.HttpResponse$BodyHandlers" ["global::Pkl.Core.Runtime.JavaHttpBodyHandlers" :pkl-core.type/http-body-handlers]
    "java.net.http.HttpTimeoutException" ["global::System.Threading.Tasks.TaskCanceledException" :dotnet.type/http-timeout]
-   "java.nio.ByteBuffer" ["global::Pkl.Core.Runtime.JavaByteBuffer" :pkl-core.type/byte-buffer]
    "java.nio.CharBuffer" ["string" :dotnet.type/string]
    "java.nio.charset.Charset" ["global::System.Text.Encoding" :dotnet.type/encoding]
    "java.nio.charset.CharsetDecoder" ["global::Pkl.Core.Runtime.JavaCharsetDecoder" :pkl-core.type/charset-decoder]
@@ -385,7 +383,6 @@
    "java.security.cert.Certificate" ["global::System.Security.Cryptography.X509Certificates.X509Certificate2" :dotnet.type/x509-certificate]
    "java.security.cert.X509Certificate" ["global::System.Security.Cryptography.X509Certificates.X509Certificate2" :dotnet.type/x509-certificate]
    "java.security.cert.CertificateException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
-   "java.security.cert.CertificateFactory" ["global::Pkl.Core.Runtime.JavaCertificateFactory" :pkl-core.type/certificate-factory]
    "javax.net.ssl.SSLContext" ["global::Pkl.Core.Runtime.JavaSslContext" :pkl-core.type/ssl-context]
    "javax.net.ssl.SSLException" ["global::System.Net.Http.HttpRequestException" :dotnet.type/http-request-exception]
    "javax.net.ssl.SSLHandshakeException" ["global::System.Security.Authentication.AuthenticationException" :dotnet.type/authentication-exception]
@@ -414,7 +411,6 @@
    "java.nio.file.NotDirectoryException" ["global::System.IO.DirectoryNotFoundException" :dotnet.type/directory-not-found]
    "java.nio.file.FileSystemAlreadyExistsException" ["global::Pkl.Core.Runtime.JavaFileSystemAlreadyExistsException" :dotnet.type/file-system-already-exists]
    "java.nio.file.FileSystemNotFoundException" ["global::System.IO.IOException" :dotnet.type/io-exception]
-   "java.nio.file.attribute.BasicFileAttributes" ["global::System.IO.FileSystemInfo" :dotnet.type/file-info]
    "java.nio.file.attribute.PosixFilePermission" ["global::System.IO.UnixFileMode" :dotnet.type/unix-file-mode]
    "java.nio.file.attribute.UserPrincipalLookupService" ["object" :pkl-core.type/user-principal-lookup]
    "java.nio.file.spi.FileSystemProvider" ["global::Pkl.Core.Runtime.JavaFileSystemProvider" :pkl-core.type/file-system-provider]
@@ -447,18 +443,13 @@
    "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary" :dotnet.type/sorted-dictionary]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet" :dotnet.type/sorted-set]
    "java.util.Map$Entry" ["global::DripSharp.Runtime.JavaMapEntry" :dotnet.type/map-entry]
-   "java.util.Comparator" ["global::System.Comparison" :dotnet.type/comparison]
+   "java.util.Comparator" ["global::System.Comparison"
+                           :dotnet.type/comparison]
    "java.util.Deque" ["global::DripSharp.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.ArrayDeque" ["global::DripSharp.Runtime.JavaDeque" :dotnet.type/deque]
-   "java.util.Iterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
-   "java.util.ListIterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
-   "java.util.PrimitiveIterator" ["global::System.Collections.IEnumerator" :dotnet.type/enumerator]
-   "java.util.PrimitiveIterator$OfInt" ["global::System.Collections.Generic.IEnumerator<int>" :dotnet.type/int-enumerator]
-   "java.util.PrimitiveIterator$OfLong" ["global::System.Collections.Generic.IEnumerator<long>" :dotnet.type/long-enumerator]
    "java.util.ServiceLoader" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/service-loader]
    "java.util.Spliterator" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.Optional" ["global::Pkl.Core.Runtime.JavaOptional" :pkl-core.type/optional]
-   "java.util.OptionalInt" ["int?" :dotnet.type/nullable-int]
    "java.util.Random" ["global::DripSharp.Runtime.JavaRandom" :dotnet.type/random]
    "java.util.Properties" ["global::DripSharp.Runtime.JavaProperties" :dotnet.type/properties]
    "java.util.NoSuchElementException" ["global::System.InvalidOperationException" :dotnet.type/invalid-operation]
@@ -488,14 +479,11 @@
    "java.util.function.IntPredicate" ["global::System.Predicate<int>" :dotnet.type/int-predicate]
    "java.util.stream.Stream" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.stream.StreamSupport" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
-   "java.util.stream.IntStream" ["global::System.Collections.Generic.IEnumerable<int>" :dotnet.type/int-enumerable]
    "java.util.stream.LongStream" ["global::System.Collections.Generic.IEnumerable<long>" :dotnet.type/long-enumerable]
    "java.util.stream.Collector" ["global::DripSharp.Runtime.JavaCollector" :dotnet.type/collector]
    "java.util.stream.Collectors" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.text.Format" ["global::DripSharp.Runtime.JavaFormat" :dotnet.type/format]
    "java.text.MessageFormat" ["global::DripSharp.Runtime.JavaMessageFormat" :dotnet.type/message-format]
-   "java.text.DecimalFormat" ["global::Pkl.Core.Runtime.JavaDecimalFormat" :pkl-core.type/decimal-format]
-   "java.text.NumberFormat" ["global::Pkl.Core.Runtime.JavaDecimalFormat" :pkl-core.type/decimal-format]
    "java.text.DecimalFormatSymbols" ["global::System.Globalization.NumberFormatInfo" :dotnet.type/number-format]
    "java.util.zip.ZipEntry" ["global::Pkl.Core.Runtime.JavaZipEntry" :pkl-core.type/zip-entry]
    "java.util.zip.ZipInputStream" ["global::Pkl.Core.Runtime.JavaZipInputStream" :pkl-core.type/zip-input-stream]
@@ -506,7 +494,6 @@
    "java.util.regex.PatternSyntaxException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
    "java.util.concurrent.ConcurrentHashMap" ["global::System.Collections.Concurrent.ConcurrentDictionary" :dotnet.type/concurrent-dictionary]
    "java.util.concurrent.Future" ["global::DripSharp.Runtime.JavaFuture" :dotnet.type/future]
-   "java.util.concurrent.CompletableFuture" ["global::DripSharp.Runtime.JavaFuture" :dotnet.type/completable-future]
    "java.util.concurrent.ExecutionException" ["global::System.AggregateException" :dotnet.type/execution-exception]
    "java.util.concurrent.Executors" ["global::Pkl.Core.Runtime.JavaConcurrency" :pkl-core.type/concurrency]
    "java.util.concurrent.ExecutorService" ["global::Pkl.Core.Runtime.JavaScheduledExecutor" :pkl-core.type/executor]
@@ -539,7 +526,9 @@
    "org.organicdesign.fp.collections.UnmodSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
    "org.organicdesign.fp.collections.UnmodIterable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "org.organicdesign.fp.collections.UnmodSortedIterable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
-   "org.organicdesign.fp.collections.UnmodSortedIterator" ["global::System.Collections.Generic.IEnumerator" :dotnet.type/enumerator]
+   "org.organicdesign.fp.collections.UnmodSortedIterator"
+   ["global::DripSharp.Runtime.JavaIterator"
+    :pkl-core.type/organic-java-iterator]
    "org.organicdesign.fp.collections.Cowry" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
    "org.organicdesign.fp.function.Fn0" ["global::System.Func" :dotnet.type/func]
    "org.organicdesign.fp.function.Fn1" ["global::System.Func" :dotnet.type/func]
@@ -750,13 +739,21 @@
 (defn- exact-product-signature-collection-adaptation
   [ctx ^CtTypeReference reference]
   (when (or (exported-product-signature-reference? ctx reference)
-            (let [component (when (and (.isParentInitialized reference)
-                                       (instance? CtRecordComponent
-                                                  (.getParent reference)))
-                              (.getParent reference))]
-              (and component
-                   (exported-product-type?
-                    ctx (.getParent ^CtRecordComponent component)))))
+            (when (.isParentInitialized reference)
+              (let [parent (.getParent reference)]
+                (cond
+                  (instance? CtRecordComponent parent)
+                  (exported-product-type?
+                   ctx (.getParent ^CtRecordComponent parent))
+
+                  (and (instance? CtParameter parent)
+                       (.isParentInitialized ^CtParameter parent)
+                       (instance? CtConstructor
+                                  (.getParent ^CtParameter parent)))
+                  (exported-product-declaration?
+                   ctx (.getParent ^CtParameter parent))
+
+                  :else false))))
     (get read-only-collection-adaptations (.getQualifiedName reference))))
 
 (defn- product-signature-collection-adaptation
@@ -793,12 +790,19 @@
     :pkl-core.type/truffle-substrate
     :pkl-core.type/graal-collections-substrate
     :pkl-core.type/polyglot-substrate
-    :pkl-core.type/snakeyaml-substrate})
+    :pkl-core.type/snakeyaml-substrate
+    :pkl-core.type/tuple2
+    :pkl-core.type/tuple4})
 
 (defn- formal-type-arity [declaration]
   (if (instance? CtFormalTypeDeclarer declaration)
     (count (.getFormalCtTypeParameters ^CtFormalTypeDeclarer declaration))
     0))
+
+(def ^:private raw-pkl-type-arities
+  {"org.pkl.core.ValueConverter" 1
+   "org.pkl.core.stdlib.VmObjectFactory" 1
+   "org.pkl.core.runtime.VmValueConverter" 1})
 
 (defn- type-parameter-name [parameter]
   (let [name (if (instance? CtTypeParameterReference parameter)
@@ -814,9 +818,7 @@
         (and outer
              (some #(= name (.getSimpleName ^CtTypeParameter %))
                    (.getFormalCtTypeParameters ^CtType outer)))]
-    (identifier (if (and shadows-outer?
-                         (not (str/starts-with? (or (some-> outer .getQualifiedName) "")
-                                                "org.pkl.core.util.paguro.RrbTree")))
+    (identifier (if shadows-outer?
                   (str name "Nested")
                   name))))
 
@@ -852,7 +854,7 @@
                                 "java.util.HashMap" "global::System.Collections.Generic.Dictionary<object, object>"
                                 "java.util.LinkedHashMap" "global::System.Collections.Generic.Dictionary<object, object>"
                                 "java.util.Map$Entry" "global::DripSharp.Runtime.JavaMapEntry<object, object>"
-                                "java.util.Iterator" "global::System.Collections.Generic.IEnumerator<object>"
+                                "java.util.Iterator" "global::DripSharp.Runtime.JavaIterator<object>"
                                 "java.util.Comparator" "global::System.Comparison<object>"
                                 "java.util.Spliterator" "global::System.Collections.Generic.IEnumerable<object>"
                                 "java.util.ServiceLoader" "global::System.Collections.Generic.IEnumerable<object>"
@@ -870,6 +872,7 @@
            :dotnet.type/covariant-enumerable])
         (get external-type-mappings (.getQualifiedName reference))
         (derived-external-type-mapping (.getQualifiedName reference))
+        (java-types/mapping (.getQualifiedName reference))
         (throw (ex-info (str "No declaration type mapping for " (:key occurrence))
                         {:kind :unsupported-declaration-type
                          :occurrence (dissoc occurrence :reference :declaration)})))))
@@ -899,6 +902,62 @@
         (and (primitive-byte-array? reference)
              (exported-product-signature-reference? ctx reference)))
     [(raw "byte[]") :pkl-core.type/idiomatic-byte-array]
+
+          ;; Java's RrbTree helpers are static nested generic types. C# nested
+          ;; types capture their generic owner, so close the synthetic owner
+          ;; with the helper's element argument as well as applying that
+          ;; argument to the helper itself. This keeps Node<T>, MutRrbt<T>,
+          ;; and ImRrbt<T> independent of the lexical RrbTree<E> instance.
+    (and (= :project (:origin occurrence))
+         (str/starts-with? (.getQualifiedName reference)
+                           "org.pkl.core.util.paguro.RrbTree$")
+         (instance? CtType (:declaration occurrence))
+         (not
+          (and
+           (contains? #{"MutRrbt" "ImRrbt"}
+                      (.getSimpleName ^CtType (:declaration occurrence)))
+           (str/starts-with?
+            (or (some-> ^CtType (:current-type ctx) .getQualifiedName) "")
+            "org.pkl.core.util.paguro.RrbTree$"))))
+    (let [declaration ^CtType (:declaration occurrence)
+          actuals (vec (.getActualTypeArguments reference))
+          current-type ^CtType (:current-type ctx)
+          current-declarations
+          (when current-type (declaring-types current-type))
+          current-root ^CtType (first current-declarations)
+          current-leaf-parameter
+          (when (and current-type
+                     (str/starts-with?
+                      (.getQualifiedName current-type)
+                      "org.pkl.core.util.paguro.RrbTree"))
+            (first (.getFormalCtTypeParameters current-type)))
+          current-root-parameter
+          (when (and current-root
+                     (= "org.pkl.core.util.paguro.RrbTree"
+                        (.getQualifiedName current-root)))
+            (first (.getFormalCtTypeParameters current-root)))
+          current-parameter
+          (or current-leaf-parameter current-root-parameter)
+          arguments
+          (if (seq actuals)
+            (mapv recur-node actuals)
+            (repeat
+             (formal-type-arity declaration)
+             (if current-parameter
+               (raw (type-parameter-name current-parameter))
+               (raw "object"))))
+          owner-argument
+          (or (first arguments)
+              (when current-parameter
+                (raw (type-parameter-name current-parameter)))
+              (raw "object"))]
+      [(sequence-node
+        [(generic-node
+          (str "global::" (destination-namespace ctx declaration) ".RrbTree")
+          [owner-argument])
+         (raw ".")
+         (generic-node (pascal (.getSimpleName declaration)) arguments)])
+       :pkl-core.type/static-nested-rrb-helper])
 
           ;; List<?> was historically widened to IEnumerable<object> to model
           ;; Java wildcard covariance. That makes a Set<object> satisfy the
@@ -950,12 +1009,27 @@
 
     :else
     (let [[base mapping-rule] (mapped-type-base ctx reference occurrence)
+          raw-pkl-reference?
+          (and (str/starts-with? (.getQualifiedName reference)
+                                 "org.pkl.core.")
+               (empty? (.getActualTypeArguments reference)))
+          declaration-arity
+          (if raw-pkl-reference?
+            (max (get raw-pkl-type-arities
+                      (.getQualifiedName reference)
+                      0)
+                 (formal-type-arity (:declaration occurrence))
+                 (formal-type-arity (.getTypeDeclaration reference)))
+            0)
                 ;; System.Type is non-generic even though java.lang.Class<T>
                 ;; carries a type argument.  Its resolved T remains visited by
                 ;; the recursive translator, but is erased at this mapping.
           arguments (cond
                       (= "java.lang.Class" (.getQualifiedName reference))
                       []
+
+                      (and raw-pkl-reference? (pos? declaration-arity))
+                      (repeat declaration-arity (raw "object"))
 
                       (and (= :project (:origin occurrence))
                            (empty? (.getActualTypeArguments reference)))
@@ -1210,7 +1284,8 @@
   (:body-context ctx))
 
 (defn- translated-node [ctx ^CtElement element]
-  (let [translation (java-body/translate (current-body-context ctx) element)]
+  (let [translation (java-library/translate-body
+                     (current-body-context ctx) element)]
     (swap! (:body-translations ctx) conj translation)
     (:node translation)))
 
@@ -1342,6 +1417,9 @@
 (def ^:private http-proxy-selector-contract-key
   "executable:org.pkl.core.http.HttpClient$Builder#setProxySelector(java.net.ProxySelector)")
 
+(def ^:private pair-iterator-contract-key
+  "executable:org.pkl.core.Pair#iterator()")
+
 (defn- method-contract-keys [ctx ^CtMethod method]
   (set (keep #(when % (spoon/declaration-key %))
              (cons method (top-definitions ctx method)))))
@@ -1357,6 +1435,7 @@
       :read-only-path-elements
       (contains? keys http-send-contract-key) :http-send-compatibility
       (contains? keys http-proxy-selector-contract-key) :http-proxy-selector-compatibility
+      (contains? keys pair-iterator-contract-key) :nullable-object-enumerator
       (some #(product-signature-collection-adaptation ctx (.getType ^CtMethod %))
             definitions)
       (some #(product-signature-collection-adaptation ctx (.getType ^CtMethod %))
@@ -1658,7 +1737,9 @@
           (if body
             (sequence-node
              [(raw " ")
-              (translated-node (assoc ctx :signature-adaptation signature-adaptation)
+              (translated-node (assoc ctx
+                                      :signature-adaptation signature-adaptation
+                                      :product-return-reference return-reference)
                                body)])
             (raw ";"))])]
     (with-source declaration method (if body
@@ -1719,6 +1800,15 @@
                          (modifier? type ModifierKind/ABSTRACT))))
            (sort-by #(.getSignature ^CtMethod %))
            (mapv #(deferred-interface-method-node ctx type %))))))
+
+(defn- nullable-resource-body-node [node]
+  (let [text (:text (csharp/render node))
+        normalized
+        (str/replace
+         text
+         #"\(([^;\n]*?\.Read\([^;\n]*?\))\)\.OrElse\(default!\)"
+         "$1")]
+    (if (= text normalized) node (raw normalized))))
 
 (defn- method-node [ctx owner-type ^CtMethod method]
   (let [owner (executable-owner method)
@@ -1846,6 +1936,8 @@
                                     "global::Pkl.Core.Module.PathElement>"))
                           :idiomatic-byte-array
                           (raw "byte[]")
+                          :nullable-object-enumerator
+                          (raw "global::System.Collections.Generic.IEnumerator<object?>")
                           (:read-only-product-list :read-only-product-map
                                                    :read-only-product-set :read-only-product-collection)
                           (type-node ctx (.getType ^CtMethod
@@ -1866,8 +1958,16 @@
                            (assoc ctx
                                   :signature-adaptation signature-adaptation
                                   :product-return-reference
-                                  (.getType ^CtMethod (or product-contract method)))
+                                  (or (some-> ^CtMethod return-contract .getType)
+                                      substituted-return
+                                      (some-> ^CtMethod product-contract .getType)
+                                      (.getType method)))
                            body))
+        translated-body
+        (if (and translated-body
+                 (= :nullable-resource signature-adaptation))
+          (nullable-resource-body-node translated-body)
+          translated-body)
         ;; Java's anonymous Iterator implementation in Pair has no direct C#
         ;; anonymous-class equivalent.  Keep recursively translating its live
         ;; Spoon body for coverage, then map this exact resolved product method
@@ -2001,21 +2101,66 @@
              (spoon/declaration-key method))
           (sequence-node [(raw "{") (raw "\nreturn ((global::System.Collections.Generic.IEnumerable<object?>)new object?[] { this.first, this.second }).GetEnumerator();\n") (raw "}")])
 
+          (= "executable:org.pkl.core.runtime.Iterators#emptyTruffleIterator()"
+             (spoon/declaration-key method))
+          (raw "{\nreturn global::DripSharp.Runtime.JavaCompat.EmptyJavaIterator<T>();\n}")
+
+          (= "executable:org.pkl.core.runtime.CommandSpecParser$OptionBehavior#getMultiple()"
+             (spoon/declaration-key method))
+          (raw
+           "{\nglobal::DripSharp.Runtime.JavaCompat.Assert(() => !global::System.Object.Equals(this.multiple, default!));\nreturn global::DripSharp.Runtime.JavaCompat.Unbox(this.multiple);\n}")
+
           (= "executable:org.pkl.core.util.paguro.RrbTree#empty()"
              (spoon/declaration-key method))
-          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<T>(global::System.Array.Empty<T>(), 0, new global::Pkl.Core.Util.Paguro.RrbTree<object>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
+          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<T>.ImRrbt<T>(global::System.Array.Empty<T>(), 0, new global::Pkl.Core.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
 
           (= "executable:org.pkl.core.util.paguro.RrbTree#emptyMutable()"
              (spoon/declaration-key method))
-          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<object>.MutRrbt<T>(global::System.Array.Empty<T>(), 0, 0, new global::Pkl.Core.Util.Paguro.RrbTree<object>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
+          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<T>.MutRrbt<T>(global::System.Array.Empty<T>(), 0, 0, new global::Pkl.Core.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
 
           (= "executable:org.pkl.core.util.paguro.RrbTree#emptyLeaf()"
              (spoon/declaration-key method))
-          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<object>.Leaf<T>(global::System.Array.Empty<T>());\n}")
+          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>());\n}")
 
           (= "executable:org.pkl.core.util.paguro.RrbTree#genericNodeArray(int)"
              (spoon/declaration-key method))
-          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<object>.Node<T>[size];\n}")
+          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<T>.Node<T>[size];\n}")
+
+          (= "executable:org.pkl.core.util.paguro.RrbTree$MutRrbt#mt()"
+             (spoon/declaration-key method))
+          (let [element-name
+                (type-parameter-name
+                 (first (.getFormalCtTypeParameters owner-type)))
+                root-name
+                (type-parameter-name
+                 (first (.getFormalCtTypeParameters
+                         (.getDeclaringType owner-type))))]
+            (raw
+             (str "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<"
+                  root-name ">.MutRrbt<" element-name
+                  ">(global::System.Array.Empty<" element-name
+                  ">(), 0, 0, new global::Pkl.Core.Util.Paguro.RrbTree<"
+                  element-name ">.Leaf<" element-name
+                  ">(global::System.Array.Empty<" element-name
+                  ">()), 0);\n}")))
+
+          (= "executable:org.pkl.core.util.paguro.RrbTree$ImRrbt#mt()"
+             (spoon/declaration-key method))
+          (let [element-name
+                (type-parameter-name
+                 (first (.getFormalCtTypeParameters owner-type)))
+                root-name
+                (type-parameter-name
+                 (first (.getFormalCtTypeParameters
+                         (.getDeclaringType owner-type))))]
+            (raw
+             (str "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<"
+                  root-name ">.ImRrbt<" element-name
+                  ">(global::System.Array.Empty<" element-name
+                  ">(), 0, new global::Pkl.Core.Util.Paguro.RrbTree<"
+                  element-name ">.Leaf<" element-name
+                  ">(global::System.Array.Empty<" element-name
+                  ">()), 0);\n}")))
 
           (= "executable:org.pkl.core.stdlib.base.StringNodes#patternOf(java.lang.String)"
              (spoon/declaration-key method))
@@ -2114,7 +2259,7 @@
                                                    (.getParameters constructor))) ")")
         body-context (current-body-context ctx)
         explicit-invocation (when body
-                              (java-body/explicit-constructor-invocation
+                              (java-library/explicit-constructor-invocation
                                body-context body))
         initializer (when explicit-invocation
                       (java-body/constructor-initializer
@@ -2154,6 +2299,105 @@
     (pascal (.getSimpleName field))
     (identifier (.getSimpleName field))))
 
+(def ^:private body-substrate-rules
+  #{:dotnet.type/pkl-parser-package
+    :pkl-core.type/truffle-substrate
+    :pkl-core.type/graal-collections-substrate
+    :pkl-core.type/polyglot-substrate
+    :pkl-core.type/snakeyaml-substrate})
+
+(defn- body-substrate-reference? [reference]
+  (let [owner-name (some-> reference .getDeclaringType .getQualifiedName)
+        owner-mapping
+        (when owner-name
+          (or (get external-type-mappings owner-name)
+              (derived-external-type-mapping owner-name)))]
+    (contains? body-substrate-rules (second owner-mapping))))
+
+(defn- body-resolved-name
+  [ctx occurrence reference]
+  (let [declaration (:declaration occurrence)]
+    (cond
+      (contains? #{:record-component :record-component-accessor}
+                 (:resolution occurrence))
+      (if-let [component (when (instance? CtRecordComponent declaration)
+                           declaration)]
+        (record-component-name
+         (cast CtType (.getParent ^CtElement component))
+         component)
+        (if-let [owner (some-> ^CtExecutableReference reference
+                               .getDeclaringType
+                               .getTypeDeclaration)]
+          (record-component-name owner reference)
+          (pascal (.getSimpleName ^CtExecutableReference reference))))
+
+      (instance? CtMethod declaration)
+      (method-name ctx declaration)
+
+      (instance? CtField declaration)
+      (field-name declaration)
+
+      (and
+       (= :dependency (:origin occurrence))
+       (or
+        (str/starts-with?
+         (:key occurrence)
+         "field:org.organicdesign.fp.tuple.Tuple2#")
+        (str/starts-with?
+         (:key occurrence)
+         "field:org.organicdesign.fp.tuple.Tuple4#")))
+      (identifier (.getSimpleName ^CtElement reference))
+
+      (and
+       (= :jdk (:origin occurrence))
+       (str/starts-with?
+        (:key occurrence)
+        "field:java.time.temporal.ChronoUnit#"))
+      (identifier (.getSimpleName ^CtElement reference))
+
+      (and (= :dependency (:origin occurrence))
+           (body-substrate-reference? reference))
+      (pascal (.getSimpleName ^CtElement reference))
+
+      (and (= :executable (:kind occurrence))
+           (java-body/adapted-invocation-key? (:key occurrence)))
+      (identifier (.getSimpleName ^CtElement reference))
+
+      (= :enum-synthetic-method (:resolution occurrence))
+      (pascal (.getSimpleName ^CtElement reference))
+
+      (= :project (:origin occurrence))
+      (pascal (.getSimpleName ^CtElement reference))
+
+      :else nil)))
+
+(defn- body-resolved-constructor?
+  [_ occurrence reference]
+  (or
+   (= "executable:java.io.UncheckedIOException#<init>(java.io.IOException)"
+      (:key occurrence))
+   (contains?
+    #{"executable:java.net.InetSocketAddress#<init>(java.lang.String,int)"
+      "executable:java.net.Proxy#<init>(java.net.Proxy$Type,java.net.SocketAddress)"
+      "executable:java.net.ProxySelector#<init>()"
+      "executable:java.net.ConnectException#<init>(java.lang.String)"
+      "executable:javax.net.ssl.SSLHandshakeException#<init>(java.lang.String)"
+      "executable:javax.net.ssl.SSLException#<init>(java.lang.String)"}
+    (:key occurrence))
+   (and
+    (= :dependency (:origin occurrence))
+    (or
+     (body-substrate-reference? reference)
+     (str/starts-with?
+      (:key occurrence)
+      "executable:org.msgpack.")
+     (str/starts-with?
+      (:key occurrence)
+      "executable:org.organicdesign.fp.tuple.Tuple2#<init>(")
+     (str/starts-with?
+      (:key occurrence)
+      "executable:org.organicdesign.fp.tuple.Tuple4#<init>(")))))
+
 (defn- private-type-component? [^CtTypeReference reference]
   (when reference
     (or (some-> reference .getTypeDeclaration
@@ -2167,9 +2411,36 @@
 (defn- field-node [ctx ^CtType owner-type ^CtField field]
   (let [owner (.getQualifiedName owner-type)
         enum-value? (instance? CtEnumValue field)
+        enum-ordinal
+        (when enum-value?
+          (first
+           (keep-indexed
+            (fn [index ^CtEnumValue candidate]
+              (when (identical? candidate field) index))
+            (.getEnumValues ^CtEnum owner-type))))
         name (if enum-value? (identifier (.getSimpleName field)) (field-name field))
+        rrb-im-empty?
+        (and (= "org.pkl.core.util.paguro.RrbTree$ImRrbt" owner)
+             (= "EMPTY_IM_RRBT" (.getSimpleName field)))
+        rrb-leaf-empty?
+        (and (= "org.pkl.core.util.paguro.RrbTree" owner)
+             (= "EMPTY_LEAF" (.getSimpleName field)))
+        owner-parameter-name
+        (some-> owner-type .getFormalCtTypeParameters first
+                type-parameter-name)
+        root-parameter-name
+        (some-> (first (declaring-types owner-type))
+                .getFormalCtTypeParameters first
+                type-parameter-name)
         initializer (.getDefaultExpression field)
         initializer-node (when initializer (translated-node ctx initializer))
+        initializer-node
+        (if (and initializer-node
+                 (= "char" (some-> field .getType .getQualifiedName))
+                 (not= "char" (some-> initializer .getType .getQualifiedName)))
+          (sequence-node
+           [(raw "unchecked((char)(") initializer-node (raw "))")])
+          initializer-node)
         record-factory-field?
         (contains? #{"languageFactory" "runtimeFactory" "virtualMachineFactory"
                      "operatingSystemFactory" "processorFactory" "sourceCodeFactory"
@@ -2182,6 +2453,51 @@
                        (:text (csharp/render initializer-node))
                        ["Version" "Name" "Architecture" "Homepage" "VersionInfo" "CommitId"]))
           initializer-node)
+        initializer-node
+        (cond
+          rrb-im-empty?
+          (raw
+           (str "new global::Pkl.Core.Util.Paguro.RrbTree<"
+                root-parameter-name ">.ImRrbt<" owner-parameter-name
+                ">(global::System.Array.Empty<" owner-parameter-name
+                ">(), 0, new global::Pkl.Core.Util.Paguro.RrbTree<"
+                owner-parameter-name ">.Leaf<" owner-parameter-name
+                ">(global::System.Array.Empty<" owner-parameter-name
+                ">()), 0)"))
+
+          rrb-leaf-empty?
+          (raw
+           (str "new global::Pkl.Core.Util.Paguro.RrbTree<"
+                root-parameter-name ">.Leaf<" root-parameter-name
+                ">(global::System.Array.Empty<" root-parameter-name ">())"))
+
+          :else initializer-node)
+        initializer-node
+        (if (and initializer-node
+                 (= "java.util.Comparator"
+                    (some-> field .getType .getQualifiedName)))
+          (java-body/value-adapter
+           {:destination-context ctx
+            :kind :assignment
+            :source initializer
+            :target-reference (.getType field)
+            :target field
+            :node initializer-node})
+          initializer-node)
+        field-type-node
+        (cond
+          rrb-im-empty?
+          (raw
+           (str "global::Pkl.Core.Util.Paguro.RrbTree<"
+                root-parameter-name ">.ImRrbt<" owner-parameter-name ">"))
+
+          rrb-leaf-empty?
+          (raw
+           (str "global::Pkl.Core.Util.Paguro.RrbTree<"
+                root-parameter-name ">.Leaf<" root-parameter-name ">"))
+
+          :else
+          (type-node ctx (.getType field)))
         deferred-instance-initializer?
         (or (contains? #{["org.pkl.core.runtime.VmLanguage" "localContext"]
                          ["org.pkl.core.stdlib.base.AnyNodes$GetClass" "receiverClassNode"]
@@ -2209,7 +2525,17 @@
                (when (modifier? field ModifierKind/VOLATILE) "volatile")]
         declaration
         (sequence-node
-         [(raw (join-words words)) (type-node ctx (.getType field))
+         [(when enum-value?
+            (sequence-node
+             [(raw
+               (str "[global::DripSharp.Runtime.JavaEnumNameAttribute(\""
+                    (.getSimpleName field)
+                    "\")]\n"))
+              (raw
+               (str "[global::DripSharp.Runtime.JavaEnumOrdinalAttribute("
+                    enum-ordinal
+                    ")]\n"))]))
+          (raw (join-words words)) field-type-node
           (raw (str " " name))
           (when property? (raw " { get; }"))
           (if (and initializer
@@ -2381,9 +2707,21 @@
                    (raw "this.__outer")
                    (raw "this"))))]
     (let [services (assoc services :type-node #(type-node ctx %))
-          body-context (java-body/context (:resolved-model ctx) services)]
+          capture-bindings
+          (mapv (fn [declaration name]
+                  {:declaration declaration :name name})
+                capture-declarations
+                capture-names)
+          body-context
+          (assoc
+           (java-library/create-body-context
+            (:resolved-model ctx)
+            (:ctx-holder ctx))
+           :services services
+           :capture-bindings capture-bindings)]
       {:ctx (assoc ctx :body-context body-context
-                   :services services)
+                   :services services
+                   :capture-bindings capture-bindings)
        :capture-names capture-names})))
 
 (defn- named-inner-class? [^CtType type]
@@ -2547,11 +2885,7 @@
   (let [qualified (.getQualifiedName reference)]
     (cond
       (= "java.util.PrimitiveIterator$OfLong" qualified) :long
-      (contains? #{"java.util.Iterator" "java.util.ListIterator"
-                   "org.organicdesign.fp.collections.UnmodSortedIterator"}
-                 qualified)
-      (or (first (.getActualTypeArguments reference))
-          :object))))
+      :else nil)))
 
 (defn- iterator-element-reference [^CtType type]
   (some iterator-element-from-reference (.getSuperInterfaces type)))
@@ -2574,15 +2908,15 @@
                        :long (raw "long")
                        :object (raw "object")
                        (type-node ctx element))]
-    [(sequence-node
-      [(raw "private ") element-node (raw " __iteratorCurrent = default!;\n")
-       (raw "public ") element-node (raw " Current => this.__iteratorCurrent;\n")
-       (raw "object global::System.Collections.IEnumerator.Current => this.__iteratorCurrent!;\n")
-       (raw (if (= :long element)
-              "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.NextLong(); return true; }\n"
-              "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.Next(); return true; }\n"))
-       (raw "public void Reset() => throw new global::System.NotSupportedException();\n")
-       (raw "public void Dispose() { }")])]))
+    (if (= :long element)
+      [(raw "public long Next() => this.NextLong();")]
+      [(sequence-node
+        [(raw "private ") element-node (raw " __iteratorCurrent = default!;\n")
+         (raw "public ") element-node (raw " Current => this.__iteratorCurrent;\n")
+         (raw "object global::System.Collections.IEnumerator.Current => this.__iteratorCurrent!;\n")
+         (raw "public bool MoveNext() { if (!this.HasNext()) return false; this.__iteratorCurrent = this.Next(); return true; }\n")
+         (raw "public void Reset() => throw new global::System.NotSupportedException();\n")
+         (raw "public void Dispose() { }")])])))
 
 (defn- iterator-bridge-members-for-reference [ctx reference]
   (when-let [element (iterator-element-from-reference reference)]
@@ -2597,18 +2931,26 @@
     (let [element-node (case element
                          :object (raw "object")
                          (type-node ctx element))
-          owns-iterator? (some #(and (instance? CtMethod %)
-                                     (= "iterator" (.getSimpleName ^CtMethod %))
-                                     (empty? (.getParameters ^CtMethod %)))
-                               (.getTypeMembers type))]
+          iterator-method (some #(when (and (instance? CtMethod %)
+                                            (= "iterator" (.getSimpleName ^CtMethod %))
+                                            (empty? (.getParameters ^CtMethod %)))
+                                   %)
+                                (.getTypeMembers type))
+          direct-enumerator?
+          (= :nullable-object-enumerator
+             (when iterator-method
+               (method-signature-adaptation ctx iterator-method)))]
       [(sequence-node
         [(when (and (instance? CtClass type)
                     (modifier? type ModifierKind/ABSTRACT)
-                    (not owns-iterator?))
-           (sequence-node [(raw "public abstract global::System.Collections.Generic.IEnumerator<")
+                    (not iterator-method))
+           (sequence-node [(raw "public abstract global::DripSharp.Runtime.JavaIterator<")
                            element-node (raw "> Iterator();\n")]))
          (raw "public global::System.Collections.Generic.IEnumerator<")
-         element-node (raw "> GetEnumerator() => this.Iterator();\n")
+         element-node
+         (raw (if direct-enumerator?
+                "> GetEnumerator() => this.Iterator();\n"
+                "> GetEnumerator() => global::DripSharp.Runtime.JavaCompat.AsEnumerator(this.Iterator());\n"))
          (raw "global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();")])])))
 
 (defn- collection-iterable-bridge-members [ctx ^CtType type]
@@ -2618,7 +2960,8 @@
                          (type-node ctx element))]
       [(sequence-node
         [(raw "public global::System.Collections.Generic.IEnumerator<")
-         element-node (raw "> GetEnumerator() => this.Iterator();")])])))
+         element-node
+         (raw "> GetEnumerator() => global::DripSharp.Runtime.JavaCompat.AsEnumerator(this.Iterator());")])])))
 
 (defn- rrb-tree-list-bridge-members [^CtType type]
   (when (= "org.pkl.core.util.paguro.RrbTree" (.getQualifiedName type))
@@ -2644,7 +2987,7 @@
            "public int LastIndexOf(object item) { for (var i = this.Size() - 1; i >= 0; i--) if (global::System.Object.Equals(this.Get(i), item)) return i; return -1; }\n"
            "public E[] ToArray() => global::System.Linq.Enumerable.ToArray(this);\n"
            "public global::System.Collections.Generic.ISet<E> ToImSet() => new global::System.Collections.Generic.HashSet<E>(this);\n"
-           "public global::System.Collections.Generic.IEnumerator<E> GetEnumerator() => this.Iterator();\n"
+           "public global::System.Collections.Generic.IEnumerator<E> GetEnumerator() => global::DripSharp.Runtime.JavaCompat.AsEnumerator(this.Iterator());\n"
            "global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();"))]))
 
 (defn- inherits-interface? [^CtType type qualified-names]
@@ -2701,46 +3044,67 @@
       (when (= "org.pkl.core.util.paguro.RrbTree$Node" (.getQualifiedName type))
         [(raw "public string IndentedStr(int indent);")])
       (when (= "org.pkl.core.util.paguro.RrbTree$ImRrbt" (.getQualifiedName type))
-        [(raw (str
-               "public new global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<E> SubList(int fromIndex, int toIndex) { var result = global::Pkl.Core.Util.Paguro.RrbTree<object>.Empty<E>(); foreach (var value in global::System.Linq.Enumerable.Take(global::System.Linq.Enumerable.Skip(this, fromIndex), toIndex - fromIndex)) result = result.Append(value); return result; }\n"
-               "public global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<E> Reverse() { var result = global::Pkl.Core.Util.Paguro.RrbTree<object>.Empty<E>(); foreach (var value in global::System.Linq.Enumerable.Reverse(this)) result = result.Append(value); return result; }"))])
+        (let [element-name
+              (type-parameter-name
+               (first (.getFormalCtTypeParameters type)))]
+          [(raw
+            (str
+             "public new global::Pkl.Core.Util.Paguro.RrbTree<" element-name
+             ">.ImRrbt<" element-name
+             "> SubList(int fromIndex, int toIndex) { var result = global::Pkl.Core.Util.Paguro.RrbTree<"
+             element-name ">.Empty<" element-name
+             ">(); foreach (var value in global::System.Linq.Enumerable.Take(global::System.Linq.Enumerable.Skip(this, fromIndex), toIndex - fromIndex)) result = result.Append(value); return result; }\n"
+             "public global::Pkl.Core.Util.Paguro.RrbTree<" element-name
+             ">.ImRrbt<" element-name
+             "> Reverse() { var result = global::Pkl.Core.Util.Paguro.RrbTree<"
+             element-name ">.Empty<" element-name
+             ">(); foreach (var value in global::System.Linq.Enumerable.Reverse(this)) result = result.Append(value); return result; }"))]))
       (when (or (= "org.pkl.core.util.paguro.RrbTree$Relaxed" (.getQualifiedName type))
                 (= "org.pkl.core.util.paguro.RrbTree.Relaxed" (.getQualifiedName type))
                 (and (= "Relaxed" (.getSimpleName type))
                      (= "RrbTree" (some-> type .getDeclaringType .getSimpleName))))
-        [(raw "internal static int[] MakeSizeArray<TItem>(global::Pkl.Core.Util.Paguro.RrbTree<object>.Node<TItem>[] newNodes) { var result = new int[newNodes.Length]; var total = 0; for (var i = 0; i < newNodes.Length; i++) { total += newNodes[i].Size(); result[i] = total; } return result; }")])
+        [(raw "internal static int[] MakeSizeArray<TItem>(global::Pkl.Core.Util.Paguro.RrbTree<TItem>.Node<TItem>[] newNodes) { var result = new int[newNodes.Length]; var total = 0; for (var i = 0; i < newNodes.Length; i++) { total += newNodes[i].Size(); result[i] = total; } return result; }")])
       (iterator-bridge-members ctx type)
       (iterable-bridge-members ctx type)
       (collection-iterable-bridge-members ctx type)
       (rrb-tree-list-bridge-members type)))))
 
 (defn- member-node [ctx ^CtType owner member]
-  (cond
-    (instance? CtEnumValue member) (field-node ctx owner member)
-    (instance? CtField member) (field-node ctx owner member)
-    (instance? CtMethod member) (method-node ctx owner member)
-    (instance? CtConstructor member) (constructor-node ctx owner member)
-    (instance? CtType member) (type-node-declaration ctx member)
-    (instance? CtAnonymousExecutable member)
-    (if (modifier? member ModifierKind/STATIC)
-      (let [name (pascal (.getSimpleName owner))
-            signature ".cctor()"
-            declaration (sequence-node [(raw (str "static " name "() "))
-                                        (translated-node ctx (.getBody ^CtAnonymousExecutable member))])]
-        (attach-declaration ctx declaration member :initializer
-                            (.getQualifiedName owner) name signature
-                            :java.declaration/static-initializer))
-      (attach-declaration
-       ctx (raw "/* Java instance initializer is emitted in each non-delegating constructor. */")
-       member :initializer (.getQualifiedName owner) (pascal (.getSimpleName owner))
-       (str ".iinit@" (:line (spoon/source-location member)) ":"
-            (:column (spoon/source-location member)))
-       :java.declaration/instance-initializer))
-    :else
-    (throw (ex-info (str "Unsupported live Spoon type member " (.getName (class member)))
-                    {:kind :unsupported-declaration-member
-                     :owner (.getQualifiedName owner)
-                     :source (source-ref member :java.declaration/member)}))))
+  (let [member-ctx (assoc ctx :current-member member)]
+    (cond
+      (instance? CtEnumValue member) (field-node member-ctx owner member)
+      (instance? CtField member) (field-node member-ctx owner member)
+      (instance? CtMethod member) (method-node member-ctx owner member)
+      (instance? CtConstructor member) (constructor-node member-ctx owner member)
+      (instance? CtType member)
+      (type-node-declaration (dissoc member-ctx :current-member) member)
+      (instance? CtAnonymousExecutable member)
+      (if (modifier? member ModifierKind/STATIC)
+        (let [name (pascal (.getSimpleName owner))
+              signature ".cctor()"
+              declaration
+              (sequence-node
+               [(raw (str "static " name "() "))
+                (translated-node member-ctx
+                                 (.getBody ^CtAnonymousExecutable member))])]
+          (attach-declaration member-ctx declaration member :initializer
+                              (.getQualifiedName owner) name signature
+                              :java.declaration/static-initializer))
+        (attach-declaration
+         member-ctx
+         (raw "/* Java instance initializer is emitted in each non-delegating constructor. */")
+         member :initializer (.getQualifiedName owner)
+         (pascal (.getSimpleName owner))
+         (str ".iinit@" (:line (spoon/source-location member)) ":"
+              (:column (spoon/source-location member)))
+         :java.declaration/instance-initializer))
+      :else
+      (throw
+       (ex-info (str "Unsupported live Spoon type member "
+                     (.getName (class member)))
+                {:kind :unsupported-declaration-member
+                 :owner (.getQualifiedName owner)
+                 :source (source-ref member :java.declaration/member)})))))
 
 (defn- public-nested-subtype? [^CtType type]
   (when-let [owner (.getDeclaringType type)]
@@ -3069,6 +3433,7 @@
         top-definitions-cache (IdentityHashMap.)
         base-services {:identifier identifier
                        :pascal pascal
+                       :type-parameter-name type-parameter-name
                        :method-name (fn [method] (method-name @ctx-holder method))
                        :current-signature-adaptation
                        (fn [] (:signature-adaptation @ctx-holder))
@@ -3112,12 +3477,24 @@
                          (destination-type-node @ctx-holder reference))}
         base-services (assoc base-services :record-component-contract?
                              #(record-component-contract? @ctx-holder %))
-        base-services (assoc base-services :functional-interface-method?
-                             (fn [^CtMethod method]
-                               (identical? method
-                                           (some-> method .getDeclaringType
-                                                   (#(functional-interface-method
-                                                      @ctx-holder %))))))
+        base-services
+        (assoc
+         base-services
+         :functional-reference-delegate?
+         (fn [^CtTypeReference reference]
+           (contains?
+            #{"org.pkl.core.StackFrameTransformer"
+              "org.pkl.core.stdlib.VmObjectFactory$Property"}
+            (.getQualifiedName reference)))
+         :functional-interface-method?
+         (fn [^CtMethod method]
+           (when-let [^CtMethod functional
+                      (some-> method .getDeclaringType
+                              (#(functional-interface-method @ctx-holder %)))]
+             (and (= (.getSignature method) (.getSignature functional))
+                  (= (some-> method .getDeclaringType .getQualifiedName)
+                     (some-> functional .getDeclaringType
+                             .getQualifiedName))))))
         services
         (assoc base-services
                :anonymous-constructor-arguments
@@ -3148,12 +3525,16 @@
                                      (catch Exception _ false))) (raw "this")
                            (same-type? current-outer call-owner) (raw "this.__outer")
                            :else nil)))))))
-        body-context ((:create-body-context resolved-mappings)
-                      resolved-model services)]
+        body-context
+        (assoc
+         ((:create-body-context resolved-mappings)
+          resolved-model ctx-holder)
+         :services services)]
     {:ctx-holder ctx-holder
      :top-definitions-cache top-definitions-cache
      :services services
      :body-context body-context
+     :resolved-type-policy resolved-type-policy
      :structural-declaration-policy
      {:emit-root-node type-node-declaration
       :translate-member
@@ -3180,6 +3561,22 @@
                      :blocker-counter (atom blocker-start)
                      :body-translations (atom [])
                      :body-context (:body-context template)
+                     :resolved-type-policy (:resolved-type-policy template)
+                     :destination-nonnull-boxed-by-default? true
+                     :destination-resolved-name body-resolved-name
+                     :destination-resolved-constructor?
+                     body-resolved-constructor?
+                     :destination-constructor-adapter
+                     java-body/constructor-adapter
+                     :destination-field-adaptations
+                     java-body/field-adaptations
+                     :destination-invocation-adapter
+                     java-body/invocation-adapter
+                     :destination-method-reference?
+                     (fn [{:keys [reference]}]
+                       (body-substrate-reference? reference))
+                     :destination-value-adapter java-body/value-adapter
+                     :destination-binary-adapter java-body/binary-adapter
                      :structural-declaration-policy
                      (:structural-declaration-policy template)
                      :services (:services template)}
@@ -3207,19 +3604,6 @@
   {:declarations @(:declarations ctx)
    :diagnostics @(:diagnostics ctx)
    :body-translations @(:body-translations ctx)})
-
-(defn- bridge-assets
-  [_]
-  [{:source "runtime/DripSharp.JavaCompat.cs"
-    :destination "DripSharp/Runtime/JavaCompat.cs"
-    :strategy :reviewable-java-compatibility-source
-    :missing-kind :missing-java-compatibility-source
-    :missing-message "Java compatibility source is missing"}
-   {:source "runtime/DripSharp.JavaRegexUnicodeData.cs"
-    :destination "DripSharp/Runtime/JavaRegexUnicodeData.cs"
-    :strategy :generated-java-compatibility-data
-    :missing-kind :missing-java-compatibility-source
-    :missing-message "Java compatibility source is missing"}])
 
 (defn- fail! [message data]
   (throw (ex-info message data)))
@@ -3351,9 +3735,9 @@
 
 (defn rule-bundle
   "Returns the Pkl destination policy composed over the shared Java-library
-  bundle contract. Pkl-specific declaration and type-shape policies plus the
-  body overlay preserve the current product while body translation migrates
-  separately."
+  bundle contract. Pkl-specific declaration and type-shape policies preserve
+  the product while ordinary body translation and standard-library mappings
+  are inherited from the shared bundle."
   []
   (let [base (java-library/rule-bundle)]
     (-> base
@@ -3370,12 +3754,10 @@
         (update-in [:rules :resolved-mappings]
                    assoc
                    :type-policy resolved-type-policy
-                   :create-body-context java-body/context
                    :annotation-decisions annotation-decisions)
         (assoc-in [:rules :project-policy]
                   (assoc project-emission/common-project-policy
                          :validate-configuration! validate-configuration!))
-        (assoc-in [:rules :destination-bridges :assets] bridge-assets)
         (assoc-in [:rules :product-runtime-assets :assets]
                   product-runtime-assets))))
 
