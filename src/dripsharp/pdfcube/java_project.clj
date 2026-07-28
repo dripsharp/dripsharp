@@ -5,11 +5,11 @@
   This namespace owns only PdfCube's approved product identities, namespace and
   public-name policy, source-to-destination dependency projections, legal
   inputs, resource policy, and deterministic project metadata."
-  (:require [clojure.string :as str]
-            [dripsharp.csharp :as csharp]
+  (:require [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
             [dripsharp.paths :as paths]
+            [dripsharp.project-xml :as project-xml]
             [dripsharp.util :as util]))
 
 (def ^:private source-revision
@@ -1726,7 +1726,23 @@
    "executable:org.apache.pdfbox.io.RandomAccessRead#close()"
    (direct-instance-adaptation "Dispose")
    "executable:org.apache.pdfbox.io.RandomAccessReadView#close()"
-   (direct-instance-adaptation "Dispose")})
+   (direct-instance-adaptation "Dispose")
+
+   "executable:org.apache.pdfbox.util.DateConverter#adjustTimeZoneNicely(java.util.GregorianCalendar,java.util.TimeZone)"
+   (fn [target arguments]
+     (sequence-node
+      [(first arguments)
+       (raw " = ")
+       (call-node target "adjustTimeZoneNicely" arguments)]))
+
+   "executable:org.apache.pdfbox.util.DateConverter#parseTZoffset(java.lang.String,java.util.GregorianCalendar,java.text.ParsePosition)"
+   (fn [target arguments]
+     (call-node
+      target
+      "parseTZoffset"
+      [(first arguments)
+       (sequence-node [(raw "ref ") (second arguments)])
+       (nth arguments 2)]))})
 
 (def ^:private translated-project-boxed-covariant-executables
   #{"executable:org.apache.xmpbox.type.BooleanType#getValue()"})
@@ -3210,46 +3226,52 @@
             (:project-id project-input))
     project-input))
 
-(def ^:private xml-escape util/xml-escape)
-
 (defn- project-text [configuration resource-artifacts]
-  (let [base-text (project-emission/project-text
-                   (dissoc configuration :legal-files)
-                   resource-artifacts)
-        source-directory (get-in configuration [:output :source-directory])
+  (let [source-directory (get-in configuration [:output :source-directory])
         license (some #(when (= :license (:kind %)) %) (:legal-files configuration))
         properties
-        (str
-         (when
-          (contains? (:internal-capabilities configuration)
-                     :security-handler-erasure)
-           (str "    <DefineConstants>$(DefineConstants);"
-                "DRIPSHARP_PDFBOX_CRYPTO</DefineConstants>\n"))
-         "    <PackageLicenseFile>"
-         (xml-escape (:package-path license))
-         "</PackageLicenseFile>\n"
-         "    <DebugType>portable</DebugType>\n"
-         "    <IncludeSymbols>true</IncludeSymbols>\n"
-         "    <SymbolPackageFormat>snupkg</SymbolPackageFormat>\n")
+        (vec
+         (remove
+          nil?
+          [(when
+            (contains? (:internal-capabilities configuration)
+                       :security-handler-erasure)
+             (project-xml/element
+              "DefineConstants"
+              [(project-xml/text
+                "$(DefineConstants);DRIPSHARP_PDFBOX_CRYPTO")]))
+           (project-xml/element
+            "PackageLicenseFile"
+            [(project-xml/text (:package-path license))])
+           (project-xml/element "DebugType"
+                                [(project-xml/text "portable")])
+           (project-xml/element "IncludeSymbols"
+                                [(project-xml/text "true")])
+           (project-xml/element "SymbolPackageFormat"
+                                [(project-xml/text "snupkg")])]))
         items
-        (str
-         (apply str
-                (for [{:keys [id version]} (sort-by :id (:runtime-packages configuration))]
-                  (str "    <PackageReference Include=\"" (xml-escape id)
-                       "\" Version=\"" (xml-escape version) "\" />\n")))
-         (apply str
-                (for [{:keys [destination package-path]}
-                      (sort-by :package-path (:legal-files configuration))]
-                  (str "    <None Include=\"" (xml-escape source-directory) "/"
-                       (xml-escape destination)
-                       "\" Pack=\"true\" PackagePath=\""
-                       (xml-escape package-path) "\" />\n"))))]
-    (-> base-text
-        (str/replace "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
-                     (str properties
-                          "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"))
-        (str/replace "  </ItemGroup>\n</Project>\n"
-                     (str items "  </ItemGroup>\n</Project>\n")))))
+        (vec
+         (concat
+          (for [{:keys [id version]}
+                (sort-by :id (:runtime-packages configuration))]
+            (project-xml/element
+             "PackageReference"
+             [["Include" id] ["Version" version]]
+             []))
+          (for [{:keys [destination package-path]}
+                (sort-by :package-path (:legal-files configuration))]
+            (project-xml/element
+             "None"
+             [["Include" (str source-directory "/" destination)]
+              ["Pack" "true"]
+              ["PackagePath" package-path]]
+             []))))]
+    (project-xml/render
+     (project-emission/project-node
+      (dissoc configuration :legal-files)
+      resource-artifacts
+      {:additional-properties properties
+       :additional-items items}))))
 
 (def ^:private base-compatibility-namespace "DripSharp.Runtime")
 
@@ -3257,34 +3279,69 @@
   (or (:compatibility-namespace configuration)
       base-compatibility-namespace))
 
-(defn- replacement-ranges [text source]
-  (loop [from 0 ranges []]
-    (let [start (.indexOf ^String text ^String source (int from))]
-      (if (neg? start)
-        ranges
-        (let [end (+ start (count source))]
-          (recur end (conj ranges {:start start :end end})))))))
+(defn- insert-node
+  [nodes index node]
+  (vec (concat (subvec nodes 0 index)
+               [node]
+               (subvec nodes index))))
 
-(defn- shift-mapping
-  [mapping ranges delta]
-  (let [{:keys [start end]} (:destination mapping)
-        start-shift
-        (* delta (count (filter #(<= (:end %) start) ranges)))
-        end-shift
-        (* delta (count (filter #(< (:start %) end) ranges)))]
-    (-> mapping
-        (update-in [:destination :start] + start-shift)
-        (update-in [:destination :end] + end-shift))))
+(defn- declaration?
+  [node declaration-kind source-qualified-name]
+  (and (= :declaration (:kind node))
+       (= declaration-kind (get-in node [:data :declaration-kind]))
+       (= source-qualified-name
+          (get-in node [:data :source-qualified-name]))))
 
-(defn- replace-rendered
-  [{:keys [text mappings] :as rendered} source-token destination-token]
-  (let [ranges (replacement-ranges text source-token)]
-    (if (empty? ranges)
-      rendered
-      (let [delta (- (count destination-token) (count source-token))]
-        (assoc rendered
-               :text (str/replace text source-token destination-token)
-               :mappings (mapv #(shift-mapping % ranges delta) mappings))))))
+(defn- add-base-contract
+  [declaration base-contract]
+  (let [header (:header declaration)
+        nodes (:nodes header)]
+    (when-not (and (= :sequence (:kind header)) (vector? nodes))
+      (fail! "Structured type declaration has no composable header"
+             {:kind :invalid-pdfcube-structured-declaration
+              :declaration-data (:data declaration)}))
+    (let [insertion
+          (if (get-in declaration [:data :has-constraints?])
+            (dec (count nodes))
+            (count nodes))
+          separator
+          (if (get-in declaration [:data :has-base-types?]) ", " " : ")]
+      (-> declaration
+          (assoc-in [:header :nodes]
+                    (insert-node
+                     nodes
+                     insertion
+                     (csharp/sequence-node
+                      [(csharp/raw separator) (csharp/raw base-contract)])))
+          (assoc-in [:data :has-base-types?] true)))))
+
+(defn- update-declaration
+  [node declaration-kind source-qualified-name update-node]
+  (csharp/transform
+   node
+   (fn [current]
+     (if (declaration? current declaration-kind source-qualified-name)
+       (update-node current)
+       current))))
+
+(defn- prepend-member
+  [declaration member]
+  (when-not (= :statement-list
+               (get-in declaration [:body :statements :kind]))
+    (fail! "Structured type declaration has no member statement list"
+           {:kind :invalid-pdfcube-structured-declaration
+            :declaration-data (:data declaration)}))
+  (update-in declaration [:body :statements :statements]
+             #(vec (cons member %))))
+
+(defn- append-statement
+  [declaration statement]
+  (when-not (= :statement-list
+               (get-in declaration [:body :statements :kind]))
+    (fail! "Structured method declaration has no statement list"
+           {:kind :invalid-pdfcube-structured-declaration
+            :declaration-data (:data declaration)}))
+  (update-in declaration [:body :statements :statements] conj statement))
 
 (def ^:private security-handler-carrier
   (str "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
@@ -3294,52 +3351,44 @@
   "global::DripSharp.Runtime.PdfBoxSecurityHandler")
 
 (defn- erase-security-handler-carrier
-  [configuration {:keys [text] :as rendered}]
+  [configuration node]
   (if-not (contains? (:internal-capabilities configuration)
                      :security-handler-erasure)
-    rendered
-    (if (str/includes?
-         text
-         "org/apache/pdfbox/pdmodel/encryption/SecurityHandler.java")
-      (replace-rendered
-       rendered
-       "public abstract class SecurityHandler<TPOLICY> where"
-       (str "public abstract class SecurityHandler<TPOLICY> : "
-            erased-security-handler " where"))
-      (replace-rendered
-       rendered security-handler-carrier erased-security-handler))))
+    node
+    (-> node
+        (csharp/replace-raw-text
+         [[security-handler-carrier erased-security-handler]])
+        (update-declaration
+         :type
+         "org.apache.pdfbox.pdmodel.encryption.SecurityHandler"
+         #(add-base-contract % erased-security-handler)))))
 
 (defn- preserve-calendar-value-semantics
-  [configuration {:keys [text] :as rendered}]
-  (cond
-    (not
-     (and
-      (contains? (:internal-capabilities configuration)
-                 :calendar-value-semantics)
-      (str/includes? text "org/apache/pdfbox/util/DateConverter.java")))
-    rendered
+  [configuration node]
+  (if-not
+   (contains? (:internal-capabilities configuration)
+              :calendar-value-semantics)
+    node
+    (-> node
+        (update-declaration
+         :method
+         "org.apache.pdfbox.util.DateConverter"
+         (fn [declaration]
+           (case (get-in declaration [:data :source-name])
+             "adjustTimeZoneNicely"
+             (-> declaration
+                 (update :header
+                         csharp/replace-raw-text
+                         [["void" "global::System.DateTimeOffset"]])
+                 (append-statement (csharp/raw "return cal;")))
 
-    :else
-    (reduce
-     (fn [current [source destination]]
-       (replace-rendered current source destination))
-     rendered
-     [["private static void adjustTimeZoneNicely("
-       "private static global::System.DateTimeOffset adjustTimeZoneNicely("]
-      [(str "cal = global::DripSharp.Runtime.JavaCompat.CalendarAdd("
-            "cal, 12, -offset);\n}")
-       (str "cal = global::DripSharp.Runtime.JavaCompat.CalendarAdd("
-            "cal, 12, -offset);\nreturn cal;\n}")]
-      [(str "internal static bool parseTZoffset(string text, "
-            "global::System.DateTimeOffset cal,")
-       (str "internal static bool parseTZoffset(string text, "
-            "ref global::System.DateTimeOffset cal,")]
-      ["global::PdfCube.PdfBox.Util.DateConverter.adjustTimeZoneNicely(cal, tz);"
-       (str "cal = global::PdfCube.PdfBox.Util.DateConverter."
-            "adjustTimeZoneNicely(cal, tz);")]
-      ["global::PdfCube.PdfBox.Util.DateConverter.parseTZoffset(text, retCal, where)"
-       (str "global::PdfCube.PdfBox.Util.DateConverter."
-            "parseTZoffset(text, ref retCal, where)")]])))
+             "parseTZoffset"
+             (update declaration :header
+                     csharp/replace-raw-text
+                     [["global::System.DateTimeOffset"
+                       "ref global::System.DateTimeOffset"]])
+
+             declaration))))))
 
 (def ^:private preflight-font-container
   "global::PdfCube.Preflight.Font.Container.FontContainer")
@@ -3354,79 +3403,64 @@
   "global::PdfCube.Preflight.Font.IFontValidator")
 
 (defn- preserve-preflight-raw-generic-contracts
-  [configuration {:keys [text] :as rendered}]
+  [configuration node]
   (if-not (= "PdfCube.Preflight" (get-in configuration [:package :id]))
-    rendered
+    node
     (let [font-like "global::PdfCube.PdfBox.Pdmodel.Font.PDFontLike"
-          erased-container
-          (reduce
-           (fn [current source]
-             (replace-rendered current source preflight-font-container-contract))
-           rendered
-           [(str preflight-font-container "<object>")
-            (str preflight-font-container "<" font-like ">")])
-          erased-validator
-          (reduce
-           (fn [current font-type]
-             (replace-rendered
-              current
-              (str preflight-font-validator "<" preflight-font-container
+          container-replacements
+          [[(str preflight-font-container "<object>")
+            preflight-font-container-contract]
+           [(str preflight-font-container "<" font-like ">")
+            preflight-font-container-contract]]
+          validator-replacements
+          (mapv
+           (fn [font-type]
+             [(str preflight-font-validator "<" preflight-font-container
                    "<global::PdfCube.PdfBox.Pdmodel.Font." font-type ">>")
-              preflight-font-validator-contract))
-           erased-container
+              preflight-font-validator-contract])
            ["PDCIDFont" "PDCIDFontType0" "PDCIDFontType2" "PDFont"])
-          with-container-contract
-          (if (str/includes?
-               text
-               "org/apache/pdfbox/preflight/font/container/FontContainer.java")
-            (replace-rendered
-             erased-validator
-             (str "public abstract class FontContainer<T> where T : "
-                  font-like " {")
-             (str "public abstract class FontContainer<T> : IFontContainer where T : "
-                  font-like " {"))
-            erased-validator)
-          with-validator-contract
-          (if (str/includes?
-               text
-               "org/apache/pdfbox/preflight/font/FontValidator.java")
-            (replace-rendered
-             with-container-contract
-             (str "public abstract class FontValidator<T> where T : "
-                  preflight-font-container-contract " {")
-             (str
-              "public abstract class FontValidator<T> : IFontValidator where T : "
-              preflight-font-container-contract " {\n"
-              preflight-font-container-contract
-              " IFontValidator.GetFontContainer() => GetFontContainer();"))
-            with-container-contract)]
-      (if (str/includes?
-           text
-           "org/apache/pdfbox/preflight/font/Type3FontValidator.java")
-        (reduce
-         (fn [current [source destination]]
-           (replace-rendered current source destination))
-         with-validator-contract
-         [["global::System.Collections.Generic.IList<float>"
-           "global::System.Collections.Generic.IList<float?>"]
-          [(str "float width = global::DripSharp.Runtime.JavaCompat."
-                "ListGet(widths, i);")
-           (str "float width = global::DripSharp.Runtime.JavaCompat.Unbox("
-                "global::DripSharp.Runtime.JavaCompat.ListGet(widths, i));")]
-          ["global::System.Array.Empty<float>()"
-           "global::System.Array.Empty<float?>()"]])
-        with-validator-contract))))
+          width-replacements
+          [["global::System.Collections.Generic.IList<float>"
+            "global::System.Collections.Generic.IList<float?>"]
+           [(str "float width = global::DripSharp.Runtime.JavaCompat."
+                 "ListGet(widths, i);")
+            (str "float width = global::DripSharp.Runtime.JavaCompat.Unbox("
+                 "global::DripSharp.Runtime.JavaCompat.ListGet(widths, i));")]
+           ["global::System.Array.Empty<float>()"
+            "global::System.Array.Empty<float?>()"]]
+          node
+          (csharp/replace-raw-text
+           node
+           (concat container-replacements validator-replacements))]
+      (-> node
+          (update-declaration
+           :type
+           "org.apache.pdfbox.preflight.font.container.FontContainer"
+           #(add-base-contract % "IFontContainer"))
+          (update-declaration
+           :type
+           "org.apache.pdfbox.preflight.font.FontValidator"
+           #(-> %
+                (add-base-contract "IFontValidator")
+                (prepend-member
+                 (csharp/raw
+                  (str preflight-font-container-contract
+                       " IFontValidator.GetFontContainer() => "
+                       "GetFontContainer();")))))
+          (update-declaration
+           :type
+           "org.apache.pdfbox.preflight.font.Type3FontValidator"
+           #(csharp/replace-raw-text % width-replacements))))))
 
-(defn- transform-rendered [configuration {:keys [text mappings] :as rendered}]
+(defn- transform-node [configuration node]
   (let [destination (compatibility-namespace configuration)
-        rendered
+        node
         (if (= base-compatibility-namespace destination)
-          rendered
-          (replace-rendered
-           rendered
-           (str "global::" base-compatibility-namespace)
-           (str "global::" destination)))]
-    (->> rendered
+          node
+          (csharp/transform-namespaces
+           node
+           {base-compatibility-namespace destination}))]
+    (->> node
          (erase-security-handler-carrier configuration)
          (preserve-calendar-value-semantics configuration)
          (preserve-preflight-raw-generic-contracts configuration))))
@@ -3552,7 +3586,7 @@
         (assoc-in [:rules :project-policy]
                   {:validate-configuration! validate-configuration!
                    :project-text project-text
-                   :transform-rendered transform-rendered})
+                   :transform-node transform-node})
         (assoc-in
          [:rules :structural-declarations :create-context]
          (fn [options]

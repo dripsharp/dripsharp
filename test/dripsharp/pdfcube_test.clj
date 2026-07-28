@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.concurrency :as concurrency]
+            [dripsharp.csharp :as csharp]
             [dripsharp.harness :as harness]
             [dripsharp.java-project :as project-emission]
             [dripsharp.paths :as paths]
@@ -23,59 +24,90 @@
   (Files/createTempDirectory "dripsharp-pdfcube"
                              (make-array FileAttribute 0)))
 
+(defn- transform-node
+  [configuration node]
+  ((get-in (pdfcube/rule-bundle)
+           [:rules :project-policy :transform-node])
+   configuration
+   node))
+
+(defn- render-transformed
+  [configuration node]
+  (csharp/render (transform-node configuration node)))
+
+(defn- structured-type
+  [qualified-name header-nodes members constraints?]
+  (csharp/declaration
+   (csharp/sequence-node header-nodes)
+   (csharp/block (csharp/statement-list members "\n\n"))
+   {:declaration-kind :type
+    :name (last (str/split qualified-name #"[.]"))
+    :source-qualified-name qualified-name
+    :has-base-types? false
+    :has-constraints? constraints?}))
+
 (deftest compatibility-namespace-transform-shifts-source-map-ranges
-  (let [transform
-        (get-in (pdfcube/rule-bundle)
-                [:rules :project-policy :transform-rendered])
-        source-token "global::DripSharp.Runtime"
+  (let [source-token "global::DripSharp.Runtime"
         destination-token "global::PdfCube.FB.Runtime"
-        text (str "a" source-token ".One b " source-token ".Two")
-        first-start 1
-        first-end (+ first-start (count source-token))
-        second-start (.lastIndexOf text source-token)
-        rendered
-        {:text text
-         :mappings
-         [{:destination {:start 0 :end (count text)}}
-          {:destination {:start first-start :end first-end}}
-          {:destination {:start second-start :end (count text)}}]}
+        whole-source {:identity :whole}
+        first-source {:identity :first}
+        second-source {:identity :second}
+        node
+        (csharp/with-source
+          (csharp/sequence-node
+           [(csharp/raw "a")
+            (csharp/with-source (csharp/raw source-token) first-source)
+            (csharp/raw ".One b ")
+            (csharp/with-source
+              (csharp/sequence-node
+               [(csharp/raw source-token) (csharp/raw ".Two")])
+              second-source)])
+          whole-source)
         transformed
-        (transform {:compatibility-namespace "PdfCube.FB.Runtime"} rendered)]
+        (render-transformed
+         {:compatibility-namespace "PdfCube.FB.Runtime"}
+         node)
+        by-source
+        (into {} (map (juxt :source :destination) (:mappings transformed)))
+        first-start 1
+        second-start (.lastIndexOf ^String (:text transformed)
+                                   destination-token)]
     (is (= (str "a" destination-token ".One b " destination-token ".Two")
            (:text transformed)))
-    (is (= [{:start 0 :end (+ 2 (count text))}
-            {:start first-start :end (inc first-end)}
-            {:start (inc second-start) :end (+ 2 (count text))}]
-           (mapv :destination (:mappings transformed))))))
+    (is (= {:start 0 :end (count (:text transformed))}
+           (get by-source whole-source)))
+    (is (= {:start first-start
+            :end (+ first-start (count destination-token))}
+           (get by-source first-source)))
+    (is (= {:start second-start :end (count (:text transformed))}
+           (get by-source second-source)))))
 
 (deftest preflight-raw-font-generics-receive-erased-contracts
-  (let [transform
-        (get-in (pdfcube/rule-bundle)
-                [:rules :project-policy :transform-rendered])
-        configuration {:package {:id "PdfCube.Preflight"}}
+  (let [configuration {:package {:id "PdfCube.Preflight"}}
         container
         "global::PdfCube.Preflight.Font.Container.FontContainer"
         font-like "global::PdfCube.PdfBox.Pdmodel.Font.PDFontLike"
-        container-text
-        (str "// org/apache/pdfbox/preflight/font/container/FontContainer.java\n"
-             "public abstract class FontContainer<T> where T : " font-like " {\n"
-             "private " container "<object> value;\n}")
-        validator-text
-        (str "// org/apache/pdfbox/preflight/font/FontValidator.java\n"
-             "public abstract class FontValidator<T> where T : "
-             container "<" font-like "> {\n"
-             "private global::PdfCube.Preflight.Font.FontValidator<"
-             container "<global::PdfCube.PdfBox.Pdmodel.Font.PDCIDFont>> value;\n}")
         container-result
-        (transform configuration
-                   {:text container-text
-                    :mappings [{:destination
-                                {:start 0 :end (count container-text)}}]})
+        (render-transformed
+         configuration
+         (structured-type
+          "org.apache.pdfbox.preflight.font.container.FontContainer"
+          [(csharp/raw "public abstract class FontContainer<T>")
+           (csharp/raw (str " where T : " font-like))]
+          [(csharp/raw (str "private " container "<object> value;"))]
+          true))
         validator-result
-        (transform configuration
-                   {:text validator-text
-                    :mappings [{:destination
-                                {:start 0 :end (count validator-text)}}]})]
+        (render-transformed
+         configuration
+         (structured-type
+          "org.apache.pdfbox.preflight.font.FontValidator"
+          [(csharp/raw "public abstract class FontValidator<T>")
+           (csharp/raw (str " where T : " container "<" font-like ">"))]
+          [(csharp/raw
+            (str "private global::PdfCube.Preflight.Font.FontValidator<"
+                 container
+                 "<global::PdfCube.PdfBox.Pdmodel.Font.PDCIDFont>> value;"))]
+          true))]
     (is (not (str/includes? (:text container-result)
                             "public interface IFontContainer")))
     (is (str/includes?
@@ -95,20 +127,19 @@
          "private global::PdfCube.Preflight.Font.IFontValidator value;"))))
 
 (deftest preflight-type3-widths-preserve-nullable-boxed-floats
-  (let [transform
-        (get-in (pdfcube/rule-bundle)
-                [:rules :project-policy :transform-rendered])
-        configuration {:package {:id "PdfCube.Preflight"}}
-        text
-        (str "// org/apache/pdfbox/preflight/font/Type3FontValidator.java\n"
-             "global::System.Collections.Generic.IList<float> widths = value;\n"
-             "float width = global::DripSharp.Runtime.JavaCompat.ListGet(widths, i);\n"
-             "return global::System.Array.Empty<float>();")
+  (let [configuration {:package {:id "PdfCube.Preflight"}}
         result
-        (transform configuration
-                   {:text text
-                    :mappings [{:destination
-                                {:start 0 :end (count text)}}]})]
+        (render-transformed
+         configuration
+         (structured-type
+          "org.apache.pdfbox.preflight.font.Type3FontValidator"
+          [(csharp/raw "public class Type3FontValidator")]
+          [(csharp/raw
+            (str "global::System.Collections.Generic.IList<float> widths = value;\n"
+                 "float width = global::DripSharp.Runtime.JavaCompat."
+                 "ListGet(widths, i);\n"
+                 "return global::System.Array.Empty<float>();"))]
+          false))]
     (is (str/includes?
          (:text result)
          "global::System.Collections.Generic.IList<float?> widths"))
@@ -121,63 +152,67 @@
          "return global::System.Array.Empty<float?>();"))))
 
 (deftest pdfbox-security-handler-erasure-preserves-specialized-handlers
-  (let [transform
-        (get-in (pdfcube/rule-bundle)
-                [:rules :project-policy :transform-rendered])
-        carrier
+  (let [carrier
         (str "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
              "<global::PdfCube.PdfBox.Pdmodel.Encryption.ProtectionPolicy>")
         erased "global::DripSharp.Runtime.PdfBoxSecurityHandler"
-        carrier-rendered
-        {:text (str "public " carrier " Create() => default!;")
-         :mappings [{:destination
-                     {:start 0
-                      :end (+ 29 (count carrier))}}]}
-        declaration-rendered
-        {:text
-         (str "// org/apache/pdfbox/pdmodel/encryption/SecurityHandler.java\n"
-              "public abstract class SecurityHandler<TPOLICY> where "
-              "TPOLICY : ProtectionPolicy {}")
-         :mappings []}
         specialized
         (str "public sealed class StandardSecurityHandler : "
              "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
              "<global::PdfCube.PdfBox.Pdmodel.Encryption.StandardProtectionPolicy> {}")
         configuration {:internal-capabilities #{:security-handler-erasure}}]
     (is (= (str "public " erased " Create() => default!;")
-           (:text (transform configuration carrier-rendered))))
-    (is (= (str "// org/apache/pdfbox/pdmodel/encryption/SecurityHandler.java\n"
-                "public abstract class SecurityHandler<TPOLICY> : "
+           (:text
+            (render-transformed
+             configuration
+             (csharp/raw
+              (str "public " carrier " Create() => default!;"))))))
+    (is (= (str "public abstract class SecurityHandler<TPOLICY> : "
                 erased " where TPOLICY : ProtectionPolicy {}")
-           (:text (transform configuration declaration-rendered))))
+           (:text
+            (render-transformed
+             configuration
+             (structured-type
+              "org.apache.pdfbox.pdmodel.encryption.SecurityHandler"
+              [(csharp/raw "public abstract class SecurityHandler<TPOLICY>")
+               (csharp/raw " where TPOLICY : ProtectionPolicy")]
+              []
+              true)))))
     (is (= specialized
-           (:text (transform configuration
-                             {:text specialized :mappings []}))))))
+           (:text
+            (render-transformed configuration (csharp/raw specialized)))))))
 
 (deftest pdfbox-calendar-value-semantics-preserve-date-time-zone-mutations
-  (let [transform
-        (get-in (pdfcube/rule-bundle)
-                [:rules :project-policy :transform-rendered])
-        rendered
-        {:text
-         (str
-          "// org/apache/pdfbox/util/DateConverter.java\n"
-          "private static void adjustTimeZoneNicely("
-          "global::System.DateTimeOffset cal, global::System.TimeZoneInfo tz) {\n"
-          "cal = global::DripSharp.Runtime.JavaCompat.CalendarAdd(cal, 12, -offset);\n"
-          "}\n"
-          "internal static bool parseTZoffset(string text, "
-          "global::System.DateTimeOffset cal, Position initialWhere) {\n"
-          "global::PdfCube.PdfBox.Util.DateConverter.adjustTimeZoneNicely(cal, tz);\n"
-          "}\n"
-          "return global::PdfCube.PdfBox.Util.DateConverter."
-          "parseTZoffset(text, retCal, where);")
-         :mappings []}
+  (let [adjust
+        (csharp/declaration
+         (csharp/sequence-node
+          [(csharp/raw "private static ")
+           (csharp/raw "void")
+           (csharp/raw
+            (str " adjustTimeZoneNicely("
+                 "global::System.DateTimeOffset cal, "
+                 "global::System.TimeZoneInfo tz)"))])
+         (csharp/block
+          [(csharp/raw
+            (str "cal = global::DripSharp.Runtime.JavaCompat."
+                 "CalendarAdd(cal, 12, -offset);"))])
+         {:declaration-kind :method
+          :source-name "adjustTimeZoneNicely"
+          :source-qualified-name "org.apache.pdfbox.util.DateConverter"})
+        parse-offset
+        (csharp/declaration
+         (csharp/raw
+          (str "internal static bool parseTZoffset(string text, "
+               "global::System.DateTimeOffset cal, Position initialWhere)"))
+         (csharp/block [])
+         {:declaration-kind :method
+          :source-name "parseTZoffset"
+          :source-qualified-name "org.apache.pdfbox.util.DateConverter"})
         transformed
         (:text
-         (transform
+         (render-transformed
           {:internal-capabilities #{:calendar-value-semantics}}
-          rendered))]
+          (csharp/sequence-node [adjust (csharp/raw "\n") parse-offset])))]
     (is (str/includes?
          transformed
          "private static global::System.DateTimeOffset adjustTimeZoneNicely("))
@@ -187,12 +222,7 @@
     (is (str/includes?
          transformed
          "parseTZoffset(string text, ref global::System.DateTimeOffset cal,"))
-    (is (str/includes?
-         transformed
-         "cal = global::PdfCube.PdfBox.Util.DateConverter.adjustTimeZoneNicely(cal, tz);"))
-    (is (str/includes?
-         transformed
-         "parseTZoffset(text, ref retCal, where)"))))
+    (is (not (str/includes? transformed "private static void")))))
 
 (defn- write-file! [^Path root relative content]
   (let [file (paths/resolve-path root relative)]

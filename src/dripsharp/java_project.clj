@@ -14,6 +14,7 @@
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
             [dripsharp.project-input :as project-input]
+            [dripsharp.project-xml :as project-xml]
             [dripsharp.spoon :as spoon]
             [dripsharp.util :as util])
   (:import [java.nio.charset Charset MalformedInputException]
@@ -309,86 +310,116 @@
 
 (def ^:private write-text! util/write-text!)
 
-(def ^:private xml-escape util/xml-escape)
+(defn- project-property
+  [name value]
+  (project-xml/element name [(project-xml/text value)]))
 
-(defn project-text
-  "Renders the common deterministic SDK project contract."
-  [configuration resource-artifacts]
+(defn- project-node*
+  [configuration resource-artifacts
+   {:keys [additional-properties additional-items]
+    :or {additional-properties [] additional-items []}}]
   (let [project (:project configuration)
         package (:package configuration)
         output (:output configuration)
         legal-files (:legal-files configuration)
-        license-file (some #(when (= :license (:kind %)) %) legal-files)]
-    (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
-         "  <PropertyGroup>\n"
-         "    <TargetFramework>" (xml-escape (:target-framework project)) "</TargetFramework>\n"
-         "    <Nullable>" (xml-escape (:nullable project)) "</Nullable>\n"
-         "    <ImplicitUsings>" (if (:implicit-usings project) "enable" "disable") "</ImplicitUsings>\n"
-         "    <TreatWarningsAsErrors>"
-         (if (:warnings-as-errors project) "true" "false")
-         "</TreatWarningsAsErrors>\n"
-         (when (seq (:no-warn project))
-           (str "    <NoWarn>" (xml-escape (str/join ";" (sort (:no-warn project)))) "</NoWarn>\n"))
-         (when (seq (:define-constants project))
-           (str "    <DefineConstants>$(DefineConstants);"
-                (xml-escape (str/join ";" (sort (:define-constants project))))
-                "</DefineConstants>\n"))
-         "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
-         "    <AssemblyName>" (xml-escape (:assembly-name project)) "</AssemblyName>\n"
-         "    <RootNamespace>" (xml-escape (:root-namespace project)) "</RootNamespace>\n"
-         "    <Deterministic>true</Deterministic>\n"
-         "    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>\n"
-         "    <PackageId>" (xml-escape (:id package)) "</PackageId>\n"
-         "    <Version>" (xml-escape (:version package)) "</Version>\n"
-         "    <Title>" (xml-escape (:title package)) "</Title>\n"
-         "    <Description>" (xml-escape (:description package)) "</Description>\n"
-         "    <Authors>" (xml-escape (:authors package)) "</Authors>\n"
-         (when-let [copyright (:copyright package)]
-           (str "    <Copyright>" (xml-escape copyright) "</Copyright>\n"))
-         "    <PackageTags>" (xml-escape (:tags package)) "</PackageTags>\n"
-         "    <PackageProjectUrl>" (xml-escape (:project-url package)) "</PackageProjectUrl>\n"
-         "    <RepositoryUrl>" (xml-escape (:repository-url package)) "</RepositoryUrl>\n"
-         "    <RepositoryType>" (xml-escape (:repository-type package)) "</RepositoryType>\n"
-         (when-let [commit (:repository-commit package)]
-           (str "    <RepositoryCommit>" (xml-escape commit)
-                "</RepositoryCommit>\n"))
-         (when-let [license (:license-expression package)]
-           (str "    <PackageLicenseExpression>" (xml-escape license)
-                "</PackageLicenseExpression>\n"))
-         (when license-file
-           (str "    <PackageLicenseFile>"
-                (xml-escape (:package-path license-file))
-                "</PackageLicenseFile>\n"))
-         "    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>\n"
-         "    <IsPackable>true</IsPackable>\n"
-         "  </PropertyGroup>\n"
-         "  <ItemGroup>\n"
-         "    <Compile Include=\"" (xml-escape (:source-directory output)) "/**/*.cs\" />\n"
-         (apply str
-                (for [reference (sort (:project-references configuration))]
-                  (str "    <ProjectReference Include=\"" (xml-escape reference) "\" />\n")))
-         (apply str
-                (for [assembly (sort (:friend-assemblies configuration))]
-                  (str "    <AssemblyAttribute Include=\"System.Runtime.CompilerServices.InternalsVisibleToAttribute\">\n"
-                       "      <_Parameter1>" (xml-escape assembly) "</_Parameter1>\n"
-                       "    </AssemblyAttribute>\n")))
-         (apply str
-                (for [{:keys [destination logical-name]}
-                      (sort-by :destination resource-artifacts)]
-                  (str "    <EmbeddedResource Include=\""
-                       (xml-escape destination)
-                       "\" LogicalName=\"" (xml-escape logical-name) "\" />\n")))
-         (apply str
-                (for [{:keys [destination package-path]}
-                      (sort-by :package-path legal-files)]
-                  (str "    <None Include=\""
-                       (xml-escape (str (:source-directory output)
-                                        "/" destination))
-                       "\" Pack=\"true\" PackagePath=\""
-                       (xml-escape package-path)
-                       "\" />\n")))
-         "  </ItemGroup>\n"
-         "</Project>\n")))
+        license-file (some #(when (= :license (:kind %)) %) legal-files)
+        properties
+        (vec
+         (remove
+          nil?
+          [(project-property "TargetFramework" (:target-framework project))
+           (project-property "Nullable" (:nullable project))
+           (project-property "ImplicitUsings"
+                             (if (:implicit-usings project) "enable" "disable"))
+           (project-property "TreatWarningsAsErrors"
+                             (if (:warnings-as-errors project) "true" "false"))
+           (when (seq (:no-warn project))
+             (project-property "NoWarn"
+                               (str/join ";" (sort (:no-warn project)))))
+           (when (seq (:define-constants project))
+             (project-property
+              "DefineConstants"
+              (str "$(DefineConstants);"
+                   (str/join ";" (sort (:define-constants project))))))
+           (project-property "EnableDefaultCompileItems" "false")
+           (project-property "AssemblyName" (:assembly-name project))
+           (project-property "RootNamespace" (:root-namespace project))
+           (project-property "Deterministic" "true")
+           (project-property "ContinuousIntegrationBuild" "true")
+           (project-property "PackageId" (:id package))
+           (project-property "Version" (:version package))
+           (project-property "Title" (:title package))
+           (project-property "Description" (:description package))
+           (project-property "Authors" (:authors package))
+           (when-let [copyright (:copyright package)]
+             (project-property "Copyright" copyright))
+           (project-property "PackageTags" (:tags package))
+           (project-property "PackageProjectUrl" (:project-url package))
+           (project-property "RepositoryUrl" (:repository-url package))
+           (project-property "RepositoryType" (:repository-type package))
+           (when-let [commit (:repository-commit package)]
+             (project-property "RepositoryCommit" commit))
+           (when-let [license (:license-expression package)]
+             (project-property "PackageLicenseExpression" license))
+           (when license-file
+             (project-property "PackageLicenseFile"
+                               (:package-path license-file)))]))
+        properties
+        (into properties
+              (concat additional-properties
+                      [(project-property
+                        "PackageRequireLicenseAcceptance" "false")
+                       (project-property "IsPackable" "true")]))
+        items
+        (vec
+         (concat
+          [(project-xml/element
+            "Compile"
+            [["Include" (str (:source-directory output) "/**/*.cs")]]
+            [])]
+          (for [reference (sort (:project-references configuration))]
+            (project-xml/element
+             "ProjectReference" [["Include" reference]] []))
+          (for [assembly (sort (:friend-assemblies configuration))]
+            (project-xml/element
+             "AssemblyAttribute"
+             [["Include"
+               "System.Runtime.CompilerServices.InternalsVisibleToAttribute"]]
+             [(project-property "_Parameter1" assembly)]))
+          (for [{:keys [destination logical-name]}
+                (sort-by :destination resource-artifacts)]
+            (project-xml/element
+             "EmbeddedResource"
+             [["Include" destination] ["LogicalName" logical-name]]
+             []))
+          (for [{:keys [destination package-path]}
+                (sort-by :package-path legal-files)]
+            (project-xml/element
+             "None"
+             [["Include" (str (:source-directory output) "/" destination)]
+              ["Pack" "true"]
+              ["PackagePath" package-path]]
+             []))
+          additional-items))]
+    (project-xml/element
+     "Project"
+     [["Sdk" "Microsoft.NET.Sdk"]]
+     [(project-xml/element "PropertyGroup" properties)
+      (project-xml/element "ItemGroup" items)])))
+
+(defn project-node
+  "Constructs the common deterministic SDK project contract as structured XML.
+  Destination policies may supply additional property and item nodes; both are
+  placed at stable extension points before the common group closings."
+  ([configuration resource-artifacts]
+   (project-node* configuration resource-artifacts {}))
+  ([configuration resource-artifacts additions]
+   (project-node* configuration resource-artifacts additions)))
+
+(defn project-text
+  "Renders the common deterministic SDK project contract."
+  [configuration resource-artifacts]
+  (project-xml/render (project-node configuration resource-artifacts)))
 
 (defn resource-mapping
   "Applies the common explicit-or-preserve-path resource policy."
@@ -892,11 +923,18 @@
                           node (csharp/sequence-node
                                 [(csharp/raw (str mechanical-header "#nullable "
                                                   (get-in configuration [:project :nullable])
-                                                  "\nnamespace " namespace ";\n\n"))
+                                                  "\n"))
+                                 (csharp/file-scoped-namespace namespace)
+                                 (csharp/raw "\n\n")
                                  (emit-root-node ctx type) (csharp/raw "\n")])
+                          node
+                          (if-let [transform
+                                   (get-in rule-bundle
+                                           [:rules :project-policy
+                                            :transform-node])]
+                            (transform configuration node)
+                            node)
                           rendered (csharp/render node)
-                          rendered
-                          (if-let [transform (get-in rule-bundle [:rules :project-policy :transform-rendered])] (transform configuration rendered) rendered)
                           result (context-results rule-bundle ctx)]
                       (write-text! file (:text rendered))
                       {:index index

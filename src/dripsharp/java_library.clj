@@ -1037,7 +1037,7 @@
   (let [node (child-node children statement)]
     (if (instance? CtBlock statement)
       node
-      (sequence-node [(raw "{\n") node (raw "\n}")]))))
+      (csharp/block [node]))))
 
 (defn- labeled-loop-body-node
   [context children ^CtStatement body ^CtStatement loop]
@@ -1045,12 +1045,9 @@
     (statement-node children body)
     (if (instance? CtBlock body)
       (child-node children body)
-      (sequence-node
-       [(raw "{\n")
-        (child-node children body)
-        (raw (str "\n"
-                  (java/labeled-target-name context loop :continue)
-                  ":;\n}"))]))))
+      (csharp/block
+       [(child-node children body)
+        (raw (str (java/labeled-target-name context loop :continue) ":;"))]))))
 
 (defn- escape-string [value]
   (str "\""
@@ -4606,16 +4603,13 @@
                         (java/labeled-targeted? context parent :continue))
                parent)]
          {:node
-          (sequence-node
-           [(raw "{")
-            (when (or (seq statements) continue-target) (raw "\n"))
-            (sequence-node (mapv #(child-node children %) statements) "\n")
-            (when continue-target
-              (raw (str (when (seq statements) "\n")
-                        (java/labeled-target-name context continue-target :continue)
-                        ":;")))
-            (when (or (seq statements) continue-target) (raw "\n"))
-            (raw "}")])}))}
+          (csharp/block
+           (cond-> (mapv #(child-node children %) statements)
+             continue-target
+             (conj
+              (raw
+               (str (java/labeled-target-name context continue-target :continue)
+                    ":;")))))}))}
 
     {:id :java-library.statement/if
      :class CtIf
@@ -6237,20 +6231,24 @@
         id (register-member! ctx owner method name rule nil (first words))
         method-node
         (csharp/with-source
-          (sequence-node
-           [(raw (str (str/join " " words) " "))
-            (declaration-type-node ctx method
-                                   (emitted-method-return-type owner method))
-            (raw (str " " name))
-            (executable-formals-node method)
-            (raw "(")
-            (sequence-node (mapv #(parameter-node ctx %) (.getParameters method)) ", ")
-            (raw ")")
-            (when-not (some #{"override"} words)
-              (constraints-node ctx formals))
-            (if body-node
-              (sequence-node [(raw " ") body-node])
-              (raw ";"))])
+          (csharp/declaration
+           (sequence-node
+            [(raw (str (str/join " " words) " "))
+             (declaration-type-node ctx method
+                                    (emitted-method-return-type owner method))
+             (raw (str " " name))
+             (executable-formals-node method)
+             (raw "(")
+             (sequence-node (mapv #(parameter-node ctx %) (.getParameters method)) ", ")
+             (raw ")")
+             (when-not (some #{"override"} words)
+               (constraints-node ctx formals))])
+           body-node
+           {:declaration-kind :method
+            :name name
+            :source-name (.getSimpleName method)
+            :source-qualified-name (.getQualifiedName owner)
+            :parameter-count (count (.getParameters method))})
           (source-ref method rule
                       {:declaration-id id :declaration-kind :method}))]
     (sequence-node
@@ -6475,38 +6473,43 @@
                            (str/includes?
                             (:key (invocation-occurrence ctx %))
                             "#<init>(")))
-                 (.getStatements body))]
-            (sequence-node
-             [(raw "{\n")
-              (sequence-node initializers "\n")
-              (when (and (seq initializers) (seq statements)) (raw "\n"))
-              (sequence-node (mapv #(translated-node ctx %) statements) "\n")
-              (raw "\n}")]))
+                 (.getStatements body))
+                body-statements
+                (vec
+                 (concat
+                  initializers
+                  (when (and (seq initializers) (seq statements)) [(raw "")])
+                  (map #(translated-node ctx %) statements)))]
+            (csharp/block
+             (if (seq body-statements) body-statements [(raw "")])))
           (translated-node ctx body))]
     (when-not body
       (unsupported! "Java library constructor has no body" constructor))
     (let [constructor-declaration
           (csharp/with-source
-            (sequence-node
-             [(raw (str emitted-visibility " " name "("))
-              (sequence-node
-               (cond-> (mapv #(parameter-node ctx %)
-                             (.getParameters constructor))
-                 outer-parameter-node (conj outer-parameter-node))
-               ", ")
-              (raw ")")
-              (when constructor-invocation
-                (sequence-node
-                 [(raw (str " : " initializer-kind "("))
-                  (sequence-node
-                   (cond->
-                    constructor-arguments
-                     (and inner? (= "this" initializer-kind))
-                     (conj (raw outer-field-name)))
-                   ", ")
-                  (raw ")")]))
-              (raw " ")
-              body-node])
+            (csharp/declaration
+             (sequence-node
+              [(raw (str emitted-visibility " " name "("))
+               (sequence-node
+                (cond-> (mapv #(parameter-node ctx %)
+                              (.getParameters constructor))
+                  outer-parameter-node (conj outer-parameter-node))
+                ", ")
+               (raw ")")
+               (when constructor-invocation
+                 (sequence-node
+                  [(raw (str " : " initializer-kind "("))
+                   (sequence-node
+                    (cond->
+                     constructor-arguments
+                      (and inner? (= "this" initializer-kind))
+                      (conj (raw outer-field-name)))
+                    ", ")
+                   (raw ")")]))])
+             body-node
+             {:declaration-kind :constructor
+              :name name
+              :source-qualified-name (.getQualifiedName owner)})
             (source-ref constructor rule
                         {:declaration-id id :declaration-kind :constructor}))]
       (sequence-node
@@ -6534,17 +6537,18 @@
         (source-ref initializer rule
                     {:declaration-id id :declaration-kind :initializer}))
       (csharp/with-source
-        (sequence-node
-         [(raw (str "static " name "() {\n"))
-          (sequence-node
-           (mapv
-            (fn [^CtAnonymousExecutable current]
-              (csharp/with-source
-                (translated-node ctx (.getBody current))
-                (source-ref current rule nil)))
-            initializers)
-           "\n")
-          (raw "\n}")])
+        (csharp/declaration
+         (raw (str "static " name "()"))
+         (csharp/block
+          (mapv
+           (fn [^CtAnonymousExecutable current]
+             (csharp/with-source
+               (translated-node ctx (.getBody current))
+               (source-ref current rule nil)))
+           initializers))
+         {:declaration-kind :static-constructor
+          :name name
+          :source-qualified-name (.getQualifiedName owner)})
         (source-ref initializer rule
                     {:declaration-id id :declaration-kind :initializer})))))
 
@@ -7196,23 +7200,28 @@
                            (concat field-anonymous-types
                                    (remove nil? enum-members)))
         functional-method (functional-interface-method type)
+        type-constraints
+        (constraints-node ctx (vec (.getFormalCtTypeParameters type)))
         source (source-ref type rule
                            {:declaration-id id :declaration-kind :type})]
     (sequence-node
      [(csharp/with-source
-        (sequence-node
-         [(project-annotation-attributes-node ctx type)
-          (raw (str (str/join " " (type-words type)) " " name))
-          (type-formals-node type)
-          (when (seq base-nodes)
-            (sequence-node [(raw " : ")
-                            (sequence-node base-nodes ", ")]))
-          (constraints-node ctx (vec (.getFormalCtTypeParameters type)))
-          (if (seq member-nodes)
-            (sequence-node [(raw " {\n")
-                            (sequence-node member-nodes "\n\n")
-                            (raw "\n}")])
-            (raw " {}"))])
+        (csharp/declaration
+         (sequence-node
+          [(project-annotation-attributes-node ctx type)
+           (raw (str (str/join " " (type-words type)) " " name))
+           (type-formals-node type)
+           (when (seq base-nodes)
+             (sequence-node [(raw " : ")
+                             (sequence-node base-nodes ", ")]))
+           type-constraints])
+         (csharp/block
+          (csharp/statement-list member-nodes "\n\n"))
+         {:declaration-kind :type
+          :name name
+          :source-qualified-name (.getQualifiedName type)
+          :has-base-types? (boolean (seq base-nodes))
+          :has-constraints? (boolean type-constraints)})
         source)
       (when functional-method
         (project-functional-adapter-node ctx type functional-method))
