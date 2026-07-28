@@ -8,6 +8,7 @@
   classified as excluded shipped surface."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.spoon :as spoon]
@@ -19,7 +20,7 @@
             CtMethod CtRecordComponent CtType]))
 
 (def pinned-upstream-revision
-  "f7cac257ade5775c1dfc255f4fda2eacc296e9d0")
+  (baseline/upstream-revision :pkl))
 
 (def upstream-columns
   ["source-module" "package" "owner" "kind" "name" "parameter-count"
@@ -528,6 +529,9 @@
         required-rows (->> module-rows
                            (filter #(= "product-api" (:classification %)))
                            vec)
+        expected-required
+        (:public-contract-rows
+         (baseline/profile-by-source-module workspace :pkl source-module))
         type-rows (->> required-rows
                        (filter #(= "type" (:kind %)))
                        (sort-by :owner)
@@ -542,6 +546,12 @@
     (when-not (seq module-rows)
       (fail! "The public API contract has no rows for a generation source module"
              {:kind :missing-generation-source-module :source-module source-module}))
+    (when-not (= expected-required (count required-rows))
+      (fail! "The public API row count differs from the reviewed target baseline"
+             {:kind :public-api-baseline-count-drift
+              :source-module source-module
+              :expected expected-required
+              :actual (count required-rows)}))
     (when (seq duplicate-types)
       (fail! "The public API contract has duplicate product type rows"
              {:kind :duplicate-generation-product-types :rows duplicate-types}))
@@ -567,6 +577,27 @@
                        :expand :public-api
                        :members (get member-selectors (:owner row) #{})})
                     type-rows)})))
+
+(defn observe-public-contract-counts!
+  "Extracts and classifies the live upstream public API without consulting the
+  reviewed count expectations. This is intentionally reserved for the
+  approval-gated re-baseline preview."
+  [workspace output]
+  (let [workspace (paths/absolute workspace)
+        output (paths/absolute output)
+        {:keys [policy]} (contract-paths workspace)
+        _ (extract-upstream! workspace output)
+        upstream-rows (:rows (read-tsv output upstream-columns))
+        classified (contract-rows upstream-rows (read-policy policy))]
+    (into
+     (sorted-map)
+     (for [source-module ["pkl-parser" "pkl-core"]]
+       [source-module
+        (count
+         (filter
+          #(and (= source-module (:source-module %))
+                (= "product-api" (:classification %)))
+          classified))]))))
 
 (defn- parent-type
   [^CtElement element]

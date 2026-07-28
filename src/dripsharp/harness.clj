@@ -1,6 +1,7 @@
 (ns dripsharp.harness
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.java-project :as java-project]
             [dripsharp.maven :as maven]
@@ -17,8 +18,9 @@
    {:schema-version 1
     :profile "pkl-parser"
     :product-family :pkl
+    :baseline-target :pkl
+    :baseline-profile :parser
     :project-root "research/pkl"
-    :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
     :gradle-project ":pkl-parser"
     :destination-bundle 'dripsharp.pkl.java-project/rule-bundle
     :destination-config "config/pkl-parser.edn"}
@@ -85,14 +87,17 @@
                       {:kind :unknown-generation-profile
                        :profile profile-name
                        :available (vec (sort (keys profiles)))})))
-    (let [profile (if-let [file (:configuration-file entry)]
-                    (let [path (paths/resolve-path root file)]
-                      (when-not (paths/regular-file? path)
-                        (throw (ex-info "Generation profile configuration is missing"
-                                        {:kind :missing-generation-profile
-                                         :profile profile-name :path (str path)})))
-                      (edn/read-string (slurp (str path))))
-                    entry)]
+    (let [profile
+          (baseline/hydrate-profile
+           root
+           (if-let [file (:configuration-file entry)]
+             (let [path (paths/resolve-path root file)]
+               (when-not (paths/regular-file? path)
+                 (throw (ex-info "Generation profile configuration is missing"
+                                 {:kind :missing-generation-profile
+                                  :profile profile-name :path (str path)})))
+               (edn/read-string (slurp (str path))))
+             entry))]
       (when-not (and (= 1 (:schema-version profile))
                      (or (not (contains? profiles profile-name))
                          (= profile-name (:profile profile)))

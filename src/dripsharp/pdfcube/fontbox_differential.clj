@@ -1,6 +1,7 @@
 (ns dripsharp.pdfcube.fontbox-differential
-  "Pinned PDFBox 3.0.8 versus package-only PdfCube.FontBox behavioral proof."
-  (:require [clojure.set :as set]
+  "Pinned reviewed PDFBox baseline versus package-only PdfCube.FontBox behavioral proof."
+  (:require [dripsharp.baseline :as baseline]
+            [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
@@ -15,7 +16,10 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
+
+(def ^:private fontbox-contract
+  (baseline/profile :pdfcube :fontbox))
 
 (def supported-hosts
   [{:os "windows" :architecture "x64" :runner "windows-2025"}
@@ -133,7 +137,7 @@
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! (str subject " differs from the pinned PDFBox 3.0.8 oracle")
+      (fail! (str subject " differs from the pinned reviewed PDFBox baseline oracle")
              {:expected (str expected)
               :actual (str actual)
               :comparison comparison
@@ -254,29 +258,27 @@
                        (:assemblies compiled-surface)))
         public-metadata (get-in generation [:emission :public-metadata])
         expected
-        {:project-id "org.apache.pdfbox:fontbox:3.0.8"
+        {:project-id (:source-project-id fontbox-contract)
          :revision pinned-revision
          :package-id "PdfCube.FontBox"
-         :version "3.0.8-dripsharp.0"
+         :version (baseline/package-version :pdfcube "PdfCube.FontBox")
          :target-framework "net10.0"
          :assembly
-         {:name "PdfCube.FontBox" :version "3.0.8.0"
+         {:name "PdfCube.FontBox"
+          :version (baseline/assembly-version :pdfcube "PdfCube.FontBox")
           :dependency-assemblies ["PdfCube.IO"]}
          :dependencies
-         [{:id "PdfCube.IO" :version "3.0.8-dripsharp.0"}
+         [{:id "PdfCube.IO"
+           :version (baseline/package-version :pdfcube "PdfCube.IO")}
           {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
           {:id "SkiaSharp" :version "4.150.1"}
           {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
          :resource-count 93
-         :package-files
-         [{:kind :license :path "LICENSE.txt"
-           :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
-          {:kind :notice :path "NOTICE.txt"
-           :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+         :package-files (baseline/package-legal-files :pdfcube [:upstream])
          :public-contract
          {:strategy :complete-accessible-java-library
-          :required-rows 1440
-          :compiled-contract-members 1440}}
+          :required-rows (:public-contract-rows fontbox-contract)
+          :compiled-contract-members (:public-contract-rows fontbox-contract)}}
         actual
         {:project-id (get-in generation [:project-input :project-id])
          :revision (get-in generation [:source-project :revision])
@@ -341,7 +343,7 @@
            trace (trace-summary oracle)
            summary
            {:profile "pdfcube-fontbox"
-            :source {:version "3.0.8" :revision pinned-revision}
+            :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
             :package
             (merge package-contract
                    {:sha256 (get-in package-proof [:identity :sha256])

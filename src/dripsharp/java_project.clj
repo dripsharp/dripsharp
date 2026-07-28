@@ -9,6 +9,7 @@
   qualified selector is present in destination configuration."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.csharp :as csharp]
             [dripsharp.java-mapping-registry :as mapping-registry]
@@ -324,7 +325,10 @@
   (let [file (paths/resolve-path (paths/absolute workspace-root) config-file)]
     (when-not (paths/regular-file? file)
       (destination-error "Destination configuration is missing" {:path (str file)}))
-    (validate-configuration! (edn/read-string (slurp (str file))))))
+    (validate-configuration!
+     (baseline/hydrate-destination
+      workspace-root
+      (edn/read-string (slurp (str file)))))))
 
 (defn- canonicalize [value]
   (cond

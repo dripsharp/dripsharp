@@ -6,6 +6,7 @@
   public-name policy, source-to-destination dependency projections, legal
   inputs, resource policy, and deterministic project metadata."
   (:require [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
@@ -14,14 +15,13 @@
             [dripsharp.util :as util]))
 
 (def ^:private source-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
 
-(def ^:private source-version "3.0.8")
+(def ^:private source-version
+  (baseline/upstream-version :pdfcube))
 
 (def ^:private mechanical-source
-  {:repository "https://github.com/apache/pdfbox.git"
-   :revision source-revision
-   :notice-reference "NOTICE.txt"})
+  (baseline/mechanical-source :pdfcube))
 
 (def ^:private bundle-selector
   'dripsharp.pdfcube.java-project/rule-bundle)
@@ -34,8 +34,7 @@
 
 (def ^:private commons-dependency
   {:source-scope :compile-runtime
-   :artifact-sha256
-   "d175dbd751dd782a63bde28c7a039520e971f25e84b79c19b8435edc3603e0dc"
+   :artifact-sha256 (baseline/artifact-sha256 :pdfcube commons-coordinate)
    :runtime-package true
    :destination
    {:kind :microsoft-package
@@ -2758,7 +2757,8 @@
   {"org.bouncycastle:bcpkix-jdk18on:jar:1.84"
    {:source-scope :compile-runtime
     :artifact-sha256
-    "c87f16ed9e5ec61bc94151e9f3646ac44e50cd448121ce84367fa4b7ec7ec1bb"
+    (baseline/artifact-sha256
+     :pdfcube "org.bouncycastle:bcpkix-jdk18on:jar:1.84")
     :runtime-package true
     :destination
     {:kind :microsoft-package
@@ -2771,7 +2771,8 @@
    "org.bouncycastle:bcprov-jdk18on:jar:1.84"
    {:source-scope :compile-runtime
     :artifact-sha256
-    "64d6c5a6121fcd927152dd182cbed39afe0fda641a970d9bcc0c9cb1858b2731"
+    (baseline/artifact-sha256
+     :pdfcube "org.bouncycastle:bcprov-jdk18on:jar:1.84")
     :runtime-package false
     :destination
     {:kind :bcl
@@ -2781,7 +2782,8 @@
    "org.bouncycastle:bcutil-jdk18on:jar:1.84"
    {:source-scope :compile-runtime
     :artifact-sha256
-    "b374e16963421fb9cfb01cc20d7ad8fd2f8b8188e3eef0ec0a8965e245f7619a"
+    (baseline/artifact-sha256
+     :pdfcube "org.bouncycastle:bcutil-jdk18on:jar:1.84")
     :runtime-package false
     :destination
     {:kind :bcl
@@ -2816,38 +2818,10 @@
   "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt.")
 
 (def ^:private legal-files
-  [{:kind :license
-    :source "research/pdfbox/LICENSE.txt"
-    :destination "Legal/LICENSE.txt"
-    :package-path "LICENSE.txt"
-    :sha256
-    "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
-   {:kind :notice
-    :source "research/pdfbox/NOTICE.txt"
-    :destination "Legal/NOTICE.txt"
-    :package-path "NOTICE.txt"
-    :sha256
-    "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}])
+  (baseline/legal-files :pdfcube [:upstream]))
 
 (def ^:private pdfbox-codec-legal-files
-  [{:kind :notice
-    :source "vendor/pdfcube/jbig2/LICENSE"
-    :destination "Legal/THIRD-PARTY-JBIG2-LICENSE.txt"
-    :package-path "THIRD-PARTY/JBIG2-LICENSE.txt"
-    :sha256
-    "4b2076ee892bdcf3bcc6f09e68146d2d0b3a4d2c0c66a00383b6e768be128e68"}
-   {:kind :notice
-    :source "vendor/pdfcube/jpx/LICENSE"
-    :destination "Legal/THIRD-PARTY-COREJ2K-LICENSE.txt"
-    :package-path "THIRD-PARTY/COREJ2K-LICENSE.txt"
-    :sha256
-    "2b718cb2d9c117bc0744a9f421083e8b282765e920b71d547a683d257e8cea77"}
-   {:kind :notice
-    :source "vendor/pdfcube/jpx/COPYRIGHT-JJ2000-5.1"
-    :destination "Legal/COPYRIGHT-JJ2000-5.1.txt"
-    :package-path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
-    :sha256
-    "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}])
+  (baseline/legal-files :pdfcube [:codecs]))
 
 (def ^:private preflight-generic-erasure-mappings
   {"org.apache.pdfbox.preflight.font.container.FontContainer"
@@ -2855,13 +2829,17 @@
    "org.apache.pdfbox.preflight.font.FontValidator"
    "global::PdfCube.Preflight.Font.IFontValidator"})
 
+(defn- baseline-profile
+  [profile-key]
+  (baseline/profile :pdfcube profile-key))
+
 (def ^:private products
   (array-map
    :io
    {:profile "pdfcube-io"
     :destination-config "config/pdfcube-io-destination.edn"
     :maven-selector ":pdfbox-io"
-    :source-project-id "org.apache.pdfbox:pdfbox-io:3.0.8"
+    :source-project-id (:source-project-id (baseline-profile :io))
     :package-id "PdfCube.IO"
     :namespace-prefixes {"org.apache.pdfbox.io" "PdfCube.IO"}
     :external-namespace-prefixes {}
@@ -2884,12 +2862,13 @@
    {:profile "pdfcube-fontbox"
     :destination-config "config/pdfcube-fontbox-destination.edn"
     :maven-selector ":fontbox"
-    :source-project-id "org.apache.pdfbox:fontbox:3.0.8"
+    :source-project-id (:source-project-id (baseline-profile :fontbox))
     :package-id "PdfCube.FontBox"
     :namespace-prefixes {"org.apache.fontbox" "PdfCube.FontBox"}
     :external-namespace-prefixes {"org.apache.pdfbox.io" "PdfCube.IO"}
     :dependency-profiles ["pdfcube-io"]
-    :source-project-dependencies ["org.apache.pdfbox:pdfbox-io:3.0.8"]
+    :source-project-dependencies
+    (:source-project-dependencies (baseline-profile :fontbox))
     :package-dependencies ["PdfCube.IO"]
     :project-references ["../pdfcube-io/PdfCube.IO.csproj"]
     :package-consumer
@@ -2908,7 +2887,7 @@
    {:profile "pdfcube-xmpbox"
     :destination-config "config/pdfcube-xmpbox-destination.edn"
     :maven-selector ":xmpbox"
-    :source-project-id "org.apache.pdfbox:xmpbox:3.0.8"
+    :source-project-id (:source-project-id (baseline-profile :xmpbox))
     :package-id "PdfCube.XmpBox"
     :namespace-prefixes {"org.apache.xmpbox" "PdfCube.XmpBox"}
     :external-namespace-prefixes {}
@@ -2932,7 +2911,7 @@
    {:profile "pdfcube-pdfbox"
     :destination-config "config/pdfcube-pdfbox-destination.edn"
     :maven-selector ":pdfbox"
-    :source-project-id "org.apache.pdfbox:pdfbox:3.0.8"
+    :source-project-id (:source-project-id (baseline-profile :pdfbox))
     :package-id "PdfCube.PdfBox"
     :namespace-prefixes {"org.apache.pdfbox" "PdfCube.PdfBox"}
     :external-namespace-prefixes
@@ -2940,8 +2919,7 @@
      "org.apache.pdfbox.io" "PdfCube.IO"}
     :dependency-profiles ["pdfcube-io" "pdfcube-fontbox"]
     :source-project-dependencies
-    ["org.apache.pdfbox:fontbox:3.0.8"
-     "org.apache.pdfbox:pdfbox-io:3.0.8"]
+    (:source-project-dependencies (baseline-profile :pdfbox))
     :package-dependencies ["PdfCube.IO" "PdfCube.FontBox"]
     :project-references
     ["../pdfcube-io/PdfCube.IO.csproj"
@@ -2968,7 +2946,7 @@
    {:profile "pdfcube-preflight"
     :destination-config "config/pdfcube-preflight-destination.edn"
     :maven-selector ":preflight"
-    :source-project-id "org.apache.pdfbox:preflight:3.0.8"
+    :source-project-id (:source-project-id (baseline-profile :preflight))
     :package-id "PdfCube.Preflight"
     :namespace-prefixes {"org.apache.pdfbox.preflight" "PdfCube.Preflight"}
     :external-namespace-prefixes
@@ -2978,10 +2956,7 @@
      "org.apache.xmpbox" "PdfCube.XmpBox"}
     :dependency-profiles ["pdfcube-pdfbox" "pdfcube-xmpbox"]
     :source-project-dependencies
-    ["org.apache.pdfbox:fontbox:3.0.8"
-     "org.apache.pdfbox:pdfbox-io:3.0.8"
-     "org.apache.pdfbox:pdfbox:3.0.8"
-     "org.apache.pdfbox:xmpbox:3.0.8"]
+    (:source-project-dependencies (baseline-profile :preflight))
     :package-dependencies ["PdfCube.PdfBox" "PdfCube.XmpBox"]
     :project-references
     ["../pdfcube-pdfbox/PdfCube.PdfBox.csproj"
@@ -3155,7 +3130,8 @@
               [:project :assembly-name] package-id
               [:project :root-namespace] package-id
               [:package :id] package-id
-              [:package :version] "3.0.8-dripsharp.0"
+              [:package :version]
+              (:version (baseline/package :pdfcube package-id))
               [:package :repository-commit] source-revision
               [:package :authors] package-authors
               [:package :copyright] package-copyright
@@ -3228,7 +3204,7 @@
     (validate-legal-inputs! workspace-root configuration)))
 
 (defn- validate-project-input!
-  [{:keys [project-input configuration] :as context}]
+  [{:keys [workspace-root profile project-input configuration] :as context}]
   (let [base-validator
         (get-in (java-library/rule-bundle)
                 [:orchestration :validate-project-input!])]
@@ -3236,6 +3212,8 @@
     (exact! "Maven selected the wrong PdfCube source project"
             :source-project-id (:source-project-id configuration)
             (:project-id project-input))
+    (baseline/validate-project-input!
+     workspace-root :pdfcube (:profile profile) project-input)
     project-input))
 
 (defn- project-text [configuration resource-artifacts]

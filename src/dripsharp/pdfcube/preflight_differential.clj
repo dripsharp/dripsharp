@@ -1,6 +1,7 @@
 (ns dripsharp.pdfcube.preflight-differential
-  "Pinned PDFBox 3.0.8 versus package-only PdfCube.Preflight proof."
-  (:require [clojure.set :as set]
+  "Pinned reviewed PDFBox baseline versus package-only PdfCube.Preflight proof."
+  (:require [dripsharp.baseline :as baseline]
+            [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
@@ -16,7 +17,10 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
+
+(def ^:private preflight-contract
+  (baseline/profile :pdfcube :preflight))
 
 (def supported-hosts
   [{:os "windows" :architecture "x64" :runner "windows-2025"}
@@ -27,11 +31,16 @@
    {:os "macos" :architecture "arm64" :runner "macos-15"}])
 
 (def expected-restored-closure
-  #{{:id "PdfCube.IO" :version "3.0.8-dripsharp.0"}
-    {:id "PdfCube.FontBox" :version "3.0.8-dripsharp.0"}
-    {:id "PdfCube.XmpBox" :version "3.0.8-dripsharp.0"}
-    {:id "PdfCube.PdfBox" :version "3.0.8-dripsharp.0"}
-    {:id "PdfCube.Preflight" :version "3.0.8-dripsharp.0"}
+  #{{:id "PdfCube.IO"
+     :version (baseline/package-version :pdfcube "PdfCube.IO")}
+    {:id "PdfCube.FontBox"
+     :version (baseline/package-version :pdfcube "PdfCube.FontBox")}
+    {:id "PdfCube.XmpBox"
+     :version (baseline/package-version :pdfcube "PdfCube.XmpBox")}
+    {:id "PdfCube.PdfBox"
+     :version (baseline/package-version :pdfcube "PdfCube.PdfBox")}
+    {:id "PdfCube.Preflight"
+     :version (baseline/package-version :pdfcube "PdfCube.Preflight")}
     {:id "Microsoft.Extensions.DependencyInjection.Abstractions"
      :version "10.0.0"}
     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
@@ -42,38 +51,33 @@
     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}})
 
 (def expected-package-contract
-  {:project-id "org.apache.pdfbox:preflight:3.0.8"
+  {:project-id (:source-project-id preflight-contract)
    :revision pinned-revision
-   :production-sources 116
-   :generated-production-sources 0
+   :production-sources (get-in preflight-contract [:source-counts :ordinary])
+   :generated-production-sources
+   (get-in preflight-contract [:source-counts :generated])
    :clean-builds 2
    :package-id "PdfCube.Preflight"
-   :version "3.0.8-dripsharp.0"
+   :version (baseline/package-version :pdfcube "PdfCube.Preflight")
    :target-framework "net10.0"
    :assembly
    {:name "PdfCube.Preflight"
-    :version "3.0.8.0"
+    :version (baseline/assembly-version :pdfcube "PdfCube.Preflight")
     :dependency-assemblies
     ["PdfCube.FontBox" "PdfCube.IO" "PdfCube.PdfBox" "PdfCube.XmpBox"]}
    :dependencies
-   [{:id "PdfCube.PdfBox" :version "3.0.8-dripsharp.0"}
-    {:id "PdfCube.XmpBox" :version "3.0.8-dripsharp.0"}
+   [{:id "PdfCube.PdfBox"
+     :version (baseline/package-version :pdfcube "PdfCube.PdfBox")}
+    {:id "PdfCube.XmpBox"
+     :version (baseline/package-version :pdfcube "PdfCube.XmpBox")}
     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
     {:id "SkiaSharp" :version "4.150.1"}]
    :resource-count 0
-   :package-files
-   [{:kind :license
-     :path "LICENSE.txt"
-     :sha256
-     "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
-    {:kind :notice
-     :path "NOTICE.txt"
-     :sha256
-     "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+   :package-files (baseline/package-legal-files :pdfcube [:upstream])
    :public-contract
    {:strategy :complete-accessible-java-library
-    :required-rows 946
-    :compiled-contract-members 946
+    :required-rows (:public-contract-rows preflight-contract)
+    :compiled-contract-members (:public-contract-rows preflight-contract)
     :public-stubs 0}})
 
 (def required-execution-families
@@ -238,7 +242,7 @@
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail!
-       "Packed PdfCube.Preflight execution behavior differs from pinned PDFBox 3.0.8"
+       "Packed PdfCube.Preflight execution behavior differs from pinned reviewed PDFBox baseline"
        {:expected (str expected)
         :actual (str actual)
         :comparison comparison
@@ -377,7 +381,7 @@
              :pack-fn (fn [_] package-proof)})
            summary
            {:profile "pdfcube-preflight"
-            :source {:version "3.0.8" :revision pinned-revision}
+            :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
             :package
             (merge
              (select-keys (:identity package-proof)

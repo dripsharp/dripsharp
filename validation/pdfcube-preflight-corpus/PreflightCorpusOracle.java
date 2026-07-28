@@ -26,7 +26,7 @@ import org.apache.pdfbox.preflight.exception.SyntaxValidationException;
 import org.apache.pdfbox.preflight.parser.PreflightParser;
 
 /**
- * Synchronized PDFBox 3.0.8 oracle for the checksum-pinned Preflight corpus.
+ * Synchronized reviewed PDFBox baseline oracle for the checksum-pinned Preflight corpus.
  */
 public final class PreflightCorpusOracle
 {

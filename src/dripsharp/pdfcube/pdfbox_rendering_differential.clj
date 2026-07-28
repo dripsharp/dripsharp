@@ -1,6 +1,7 @@
 (ns dripsharp.pdfcube.pdfbox-rendering-differential
-  "Pinned PDFBox 3.0.8 versus package-only PdfCube.PdfBox CPU rendering proof."
-  (:require [clojure.set :as set]
+  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox CPU rendering proof."
+  (:require [dripsharp.baseline :as baseline]
+            [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.harness :as harness]
             [dripsharp.packaging :as packaging]
@@ -12,7 +13,7 @@
            [java.util.zip ZipFile]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
 
 (def required-image-ids
   #{"annotations" "form-xobject" "graphics2d" "image" "soft-mask"
@@ -360,7 +361,7 @@
            native-assets (native-asset-summary)
            summary
            {:profile "pdfcube-pdfbox"
-            :source {:version "3.0.8" :revision pinned-revision}
+            :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
             :package
             {:id (get-in package-proof [:identity :id])
              :version (get-in package-proof [:identity :version])

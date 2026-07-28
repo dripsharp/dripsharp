@@ -1,15 +1,8 @@
 {:schema-version 1
- :oracle {:product "Apache PDFBox Preflight"
-          :version "3.0.8"
-          :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
-          :repository "https://github.com/apache/pdfbox.git"}
+ :baseline-target :pdfcube
+ :oracle {:product "Apache PDFBox Preflight"}
  :redistribution
- {:license "Apache-2.0"
-  :constraint "Redistribution is permitted with the Apache-2.0 license and PDFBox NOTICE retained."
-  :license-path "research/pdfbox/LICENSE.txt"
-  :license-sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"
-  :notice-path "research/pdfbox/NOTICE.txt"
-  :notice-sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}
+ {:constraint "Redistribution is permitted with the baseline license and upstream NOTICE retained."}
  :supported-formats [:pdf-a1a :pdf-a1b]
  :required-outcomes [:valid :invalid :malformed]
  :required-processes

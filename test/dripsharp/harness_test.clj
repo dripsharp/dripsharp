@@ -2,6 +2,7 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
+            [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
             [dripsharp.java-project :as java-project]
             [dripsharp.paths :as paths]
@@ -51,6 +52,12 @@
      :project-dependencies []
      :external-dependencies []
      :classpath-artifacts [{:scope :compile :path classpath}]}))
+
+(defn- without-live-baseline-input-gate
+  [thunk]
+  (with-redefs [baseline/validate-project-input!
+                (fn [_workspace _target _profile input] input)]
+    (thunk)))
 
 (defn pkl-test-surface-strategy []
   {:schema-version 1 :id :pkl-test-surface :product-family :pkl
@@ -134,48 +141,53 @@
         stale (create-file! root "target/stale/output.cs")
         discovery (fixture-discovery root)
         saw-clean-target? (atom false)
-        config (harness/generate!
-                {:workspace-root root
-                 :verify-checkout-fn
-                 (fn [_] {:path (paths/resolve-path root "research/pkl")
-                          :revision "tracked-revision"})
-                 :discover-main-fn
-                 (fn [{:keys [manifest gradle-project]}]
-                   (reset! saw-clean-target?
-                           (and (paths/directory? (.getParent ^Path manifest))
-                                (not (paths/exists? stale))
-                                (= ":pkl-parser" gradle-project)))
-                   (assoc discovery :project-id gradle-project))
-                 :read-destination-fn
-                 (fn [_ config-file]
-                   (assoc
-                    (java-project/read-configuration
-                     (paths/workspace-root) config-file)
-                    :public-surface
-                    {:strategy
-                     'dripsharp.harness-test/pkl-test-surface-strategy}
-                    :fixture true
-                    :config-file config-file))
-                 :build-resolved-model-fn
-                 (fn [_ _]
-                   (spoon/map->ResolvedJavaModel
-                    {:totals {:compilation-units 2
-                              :project-types 0
-                              :type-references 0
-                              :executable-references 0
-                              :constructor-references 0
-                              :field-references 0
-                              :annotations 0
-                              :symbols 0
-                              :project-occurrences 0
-                              :jdk-occurrences 0
-                              :dependency-occurrences 0
-                              :intrinsic-occurrences 0
-                              :type-parameter-occurrences 0}}))
-                 :emit-project-fn
-                 (fn [{:keys [target]}]
-                   {:project-file (paths/resolve-path target "fixture.csproj")
-                    :summary {:compilation-units 2}})})]
+        config
+        (without-live-baseline-input-gate
+         #(harness/generate!
+           {:workspace-root root
+            :read-profile-fn
+            (fn [_ profile-name]
+              (harness/read-profile (paths/workspace-root) profile-name))
+            :verify-checkout-fn
+            (fn [_] {:path (paths/resolve-path root "research/pkl")
+                     :revision "tracked-revision"})
+            :discover-main-fn
+            (fn [{:keys [manifest gradle-project]}]
+              (reset! saw-clean-target?
+                      (and (paths/directory? (.getParent ^Path manifest))
+                           (not (paths/exists? stale))
+                           (= ":pkl-parser" gradle-project)))
+              (assoc discovery :project-id gradle-project))
+            :read-destination-fn
+            (fn [_ config-file]
+              (assoc
+               (java-project/read-configuration
+                (paths/workspace-root) config-file)
+               :public-surface
+               {:strategy
+                'dripsharp.harness-test/pkl-test-surface-strategy}
+               :fixture true
+               :config-file config-file))
+            :build-resolved-model-fn
+            (fn [_ _]
+              (spoon/map->ResolvedJavaModel
+               {:totals {:compilation-units 2
+                         :project-types 0
+                         :type-references 0
+                         :executable-references 0
+                         :constructor-references 0
+                         :field-references 0
+                         :annotations 0
+                         :symbols 0
+                         :project-occurrences 0
+                         :jdk-occurrences 0
+                         :dependency-occurrences 0
+                         :intrinsic-occurrences 0
+                         :type-parameter-occurrences 0}}))
+            :emit-project-fn
+            (fn [{:keys [target]}]
+              {:project-file (paths/resolve-path target "fixture.csproj")
+               :summary {:compilation-units 2}})}))]
     (is @saw-clean-target?)
     (is (paths/regular-file? (paths/resolve-path root "target/generation-config.edn")))
     (is (= 2 (count (get-in config [:project-input
@@ -260,47 +272,49 @@
   (let [root (temp-directory)
         discovery (fixture-discovery root)
         captured (atom nil)
-        result (harness/generate!
-                {:workspace-root root
-                 :profile "pkl-core-value-model"
-                 :generate-dependencies? false
-                 :read-profile-fn (fn [_ profile-name]
-                                    (harness/read-profile (paths/workspace-root)
-                                                          profile-name))
-                 :verify-checkout-fn
-                 (fn [_] {:path (paths/resolve-path root "research/pkl")
-                          :revision "tracked-revision"})
-                 :discover-main-fn (fn [options]
-                                     (swap! captured assoc :discovery-options options)
-                                     (assoc discovery :project-id
-                                            (:gradle-project options)))
-                 :read-destination-fn (fn [_ file]
-                                        (swap! captured assoc :destination-file file)
-                                        (-> (java-project/read-configuration
-                                             (paths/workspace-root) file)
-                                            (assoc
-                                             :public-surface
-                                             {:strategy
-                                              'dripsharp.harness-test/pkl-test-surface-strategy}
-                                             :fixture true)
-                                            (assoc-in [:package :id]
-                                                      "Pkl.Core.Fixture")))
-                 :build-resolved-closure-fn
-                 (fn [_ _ seeds]
-                   (swap! captured assoc :seeds seeds)
-                   (spoon/map->ResolvedJavaClosure
-                    {:totals {:declarations 1 :source-inputs 1
-                              :type-references 0 :executable-references 0
-                              :constructor-references 0 :field-references 0
-                              :annotations 0 :symbols 0
-                              :project-occurrences 0 :jdk-occurrences 0
-                              :dependency-occurrences 0 :intrinsic-occurrences 0
-                              :type-parameter-occurrences 0}}))
-                 :emit-project-fn
-                 (fn [{:keys [resolved-model target]}]
-                   (swap! captured assoc :resolved-model resolved-model)
-                   {:project-file (paths/resolve-path target "core.csproj")
-                    :summary {:compilation-units 1}})})]
+        result
+        (without-live-baseline-input-gate
+         #(harness/generate!
+           {:workspace-root root
+            :profile "pkl-core-value-model"
+            :generate-dependencies? false
+            :read-profile-fn (fn [_ profile-name]
+                               (harness/read-profile (paths/workspace-root)
+                                                     profile-name))
+            :verify-checkout-fn
+            (fn [_] {:path (paths/resolve-path root "research/pkl")
+                     :revision "tracked-revision"})
+            :discover-main-fn (fn [options]
+                                (swap! captured assoc :discovery-options options)
+                                (assoc discovery :project-id
+                                       (:gradle-project options)))
+            :read-destination-fn (fn [_ file]
+                                   (swap! captured assoc :destination-file file)
+                                   (-> (java-project/read-configuration
+                                        (paths/workspace-root) file)
+                                       (assoc
+                                        :public-surface
+                                        {:strategy
+                                         'dripsharp.harness-test/pkl-test-surface-strategy}
+                                        :fixture true)
+                                       (assoc-in [:package :id]
+                                                 "Pkl.Core.Fixture")))
+            :build-resolved-closure-fn
+            (fn [_ _ seeds]
+              (swap! captured assoc :seeds seeds)
+              (spoon/map->ResolvedJavaClosure
+               {:totals {:declarations 1 :source-inputs 1
+                         :type-references 0 :executable-references 0
+                         :constructor-references 0 :field-references 0
+                         :annotations 0 :symbols 0
+                         :project-occurrences 0 :jdk-occurrences 0
+                         :dependency-occurrences 0 :intrinsic-occurrences 0
+                         :type-parameter-occurrences 0}}))
+            :emit-project-fn
+            (fn [{:keys [resolved-model target]}]
+              (swap! captured assoc :resolved-model resolved-model)
+              {:project-file (paths/resolve-path target "core.csproj")
+               :summary {:compilation-units 1}})}))]
     (is (= ":pkl-core" (get-in @captured [:discovery-options :gradle-project])))
     (is (= "config/pkl-core-value-model-destination.edn"
            (:destination-file @captured)))

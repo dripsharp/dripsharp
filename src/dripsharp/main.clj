@@ -45,7 +45,9 @@
             [dripsharp.pdfcube.xmpbox-metadata-differential
              :as pdfcube-xmpbox-metadata-differential]
             [dripsharp.pkl.core-corpus-runner :as pkl-core-corpus-runner]
-            [dripsharp.pkl.core-test-contract :as pkl-core-test-contract])
+            [dripsharp.pkl.core-test-contract :as pkl-core-test-contract]
+            [dripsharp.paths :as paths]
+            [dripsharp.rebaseline :as rebaseline])
   (:import [clojure.lang ExceptionInfo]))
 
 (defn- fail!
@@ -84,8 +86,12 @@
               (and (= 2 (count args))
                    (contains? #{"generate" "verify" "pack" "package"} (first args)))
               (and (= 3 (count args))
-                   (= "pdfcube-family-host-matrix" (first args))))
-    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|pdfcube-family-build|pdfcube-family-package|pdfcube-family-workflows|pdfcube-family-host-matrix <evidence-root> <output-root>|pdfcube-io-differential|pdfcube-fontbox-differential|pdfcube-pdfbox-differential|pdfcube-pdfbox-bidi-differential|pdfcube-pdfbox-document-lifecycle-differential|pdfcube-pdfbox-font-text-differential|pdfcube-pdfbox-graphics-differential|pdfcube-pdfbox-image-differential|pdfcube-pdfbox-interchange-differential|pdfcube-pdfbox-interaction-differential|pdfcube-pdfbox-low-level-differential|pdfcube-pdfbox-manipulation-differential|pdfcube-pdfbox-printing-differential|pdfcube-pdfbox-rendering-differential|pdfcube-pdfbox-security-differential|pdfcube-preflight-corpus|pdfcube-preflight-differential|pdfcube-xmpbox-metadata-differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus" 2)
+                   (= "pdfcube-family-host-matrix" (first args)))
+              (and (= "rebaseline" (first args))
+                   (or (= 2 (count args))
+                       (and (= 4 (count args))
+                            (= "--approve" (nth args 2))))))
+    (fail! "Usage: clojure -M:run generate|verify|pack|package [profile-name|profile.edn]|differential|pdfcube-family-build|pdfcube-family-package|pdfcube-family-workflows|pdfcube-family-host-matrix <evidence-root> <output-root>|pdfcube-io-differential|pdfcube-fontbox-differential|pdfcube-pdfbox-differential|pdfcube-pdfbox-bidi-differential|pdfcube-pdfbox-document-lifecycle-differential|pdfcube-pdfbox-font-text-differential|pdfcube-pdfbox-graphics-differential|pdfcube-pdfbox-image-differential|pdfcube-pdfbox-interchange-differential|pdfcube-pdfbox-interaction-differential|pdfcube-pdfbox-low-level-differential|pdfcube-pdfbox-manipulation-differential|pdfcube-pdfbox-printing-differential|pdfcube-pdfbox-rendering-differential|pdfcube-pdfbox-security-differential|pdfcube-preflight-corpus|pdfcube-preflight-differential|pdfcube-xmpbox-metadata-differential|language-snippet-contract|language-snippet-package|pkl-core-test-contract|pkl-core-corpus|rebaseline <pkl|pdfcube> [--approve <token>]" 2)
     (try
       (case (first args)
         "generate" (harness/generate! {:profile (or (second args) "pkl-parser")})
@@ -136,7 +142,8 @@
         "language-snippet-contract" (language-snippet-contract/verify-contract!)
         "language-snippet-package" (language-snippet-runner/verify-package-runner!)
         "pkl-core-test-contract" (pkl-core-test-contract/verify-contract!)
-        "pkl-core-corpus" (pkl-core-corpus-runner/verify-corpus-runner!))
+        "pkl-core-corpus" (pkl-core-corpus-runner/verify-corpus-runner!)
+        "rebaseline" (rebaseline/run! (paths/workspace-root) (rest args)))
       (catch ExceptionInfo error
         (let [{:keys [output]} (ex-data error)]
           (fail! (str "DripSharp command failed: " (.getMessage error)

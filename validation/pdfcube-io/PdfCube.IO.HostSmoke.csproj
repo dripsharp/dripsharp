@@ -9,6 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="PdfCube.IO.PackageProbe.cs" />
-    <PackageReference Include="PdfCube.IO" Version="3.0.8-dripsharp.0" />
+    <PackageReference Include="PdfCube.IO" Version="$(PdfCubeIOPackageVersion)" />
   </ItemGroup>
 </Project>

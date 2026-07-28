@@ -1,6 +1,7 @@
 (ns dripsharp.pdfcube.pdfbox-graphics-differential
-  "Pinned PDFBox 3.0.8 versus package-only PdfCube.PdfBox graphics proof."
-  (:require [clojure.set :as set]
+  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox graphics proof."
+  (:require [dripsharp.baseline :as baseline]
+            [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
@@ -13,7 +14,7 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
 
 (def required-trace-families
   #{"backend" "blend-mode" "calibrated-color" "clipping" "color-operator"
@@ -82,7 +83,7 @@
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! "Package-only PdfCube.PdfBox graphics behavior differs from pinned PDFBox 3.0.8"
+      (fail! "Package-only PdfCube.PdfBox graphics behavior differs from pinned reviewed PDFBox baseline"
              {:expected (str expected)
               :actual (str actual)
               :comparison comparison
@@ -221,7 +222,7 @@
            trace (trace-summary java-trace)
            summary
            {:profile "pdfcube-pdfbox"
-            :source {:version "3.0.8" :revision pinned-revision}
+            :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
             :package
             {:id (get-in package-proof [:identity :id])
              :version (get-in package-proof [:identity :version])

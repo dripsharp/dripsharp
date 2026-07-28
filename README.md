@@ -93,6 +93,8 @@ clojure -J-Xmx28g -M:run pdfcube-xmpbox-metadata-differential
 clojure -M:run language-snippet-contract
 clojure -J-Xmx8g -M:run language-snippet-package
 clojure -J-Xmx8g -M:run pkl-core-corpus
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pkl
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pdfcube
 clojure -M:test
 clojure -M:test --namespace dripsharp.harness-test
 ```
@@ -155,6 +157,19 @@ classpath. `dependency-profiles` independently generates translated .NET
 project/package dependencies; each referenced profile can select its own Java
 build root, Gradle project, destination bundle, and public contract.
 
+`config/pkl-baseline.edn` and `config/pdfcube-baseline.edn` are the single
+reviewed baseline records for their respective targets. Profiles, destination
+bundles, packaging checks, and differentials resolve upstream identity, Java
+language level, source and public-contract counts, package versions, artifact
+hashes, and legal-file contracts from those records. `rebaseline <target>`
+observes the clean upstream checkout and prints the complete current and
+candidate records, their field-level delta, and an approval token. It does not
+write the record. Re-run the exact command printed in the preview with
+`--approve <token>` to apply that exact recomputed delta. The approval path can
+replace only the selected baseline record; product goals, port scopes,
+dependency contracts, exclusions, and completion rules are protected and
+remain unchanged.
+
 `verify` performs that same clean generation and immediately builds the fresh
 project with warnings as errors. Compiler diagnostics are parsed and correlated
 through `source-map.edn` to the originating Spoon element and translation rule.
@@ -176,7 +191,7 @@ dependency on `Pkl.Parser`.
 
 `differential` performs both complete package gates. It separately builds and
 runs the pinned upstream JVM parser as an oracle, then runs a package-only .NET
-probe over all 940 LanguageSnippetTests inputs and the upstream lexer/span edge
+probe over the baseline-recorded LanguageSnippetTests inputs and the upstream lexer/span edge
 cases (956 cases and 2,871 normalized observations in total). It retains that
 complete parser proof, then independently compares the
 packaged Pkl.Core evaluator and value model with a separate JVM oracle across
@@ -234,7 +249,7 @@ byte-identical packing, mirrors the complete external dependency closure into a
 local-only feed, and runs a package-reference-only consumer. It then compares
 25 normalized buffer, positioning, view, EOF, file, memory-map, scratch,
 memory-limit, lifecycle, and failure observations with a live oracle compiled
-from the pinned PDFBox 3.0.8 sources. The supported-host workflow applies that
+from the reviewed PDFBox baseline sources. The supported-host workflow applies that
 canonical CPU trace on Windows, Linux, and macOS on x64 and ARM64.
 
 `pdfcube-pdfbox-differential` performs one dependency-closed, twice-clean
@@ -244,7 +259,7 @@ representative create, load, parse, save, incremental-update, manipulation,
 extraction, rendering, form, security, signing, and print-layout workflows.
 It requires the complete compiled public contracts, zero generated public
 stubs, exact resources and legal payloads, exact runtime dependency closure,
-normalized agreement with the pinned PDFBox 3.0.8 Java oracles, and a
+normalized agreement with the reviewed PDFBox baseline Java oracles, and a
 deliberately detected mismatch. Its supported-host workflow restores, builds,
 and smokes the retained package feed on Windows, Linux, and macOS on x64 and
 ARM64.
@@ -257,7 +272,7 @@ validation, result, error, and lifecycle APIs from a fresh local feed and
 isolated cache. The gate requires exact package identity, dependencies,
 resources, legal payload, complete compiled public surface, and zero public
 stubs; compares normalized execution and representative PDF/A corpus
-observations with the pinned PDFBox 3.0.8 Java implementation; and proves
+observations with the reviewed PDFBox baseline Java implementation; and proves
 deliberate mismatch, timeout, crash, leak, missing-row, and nondeterminism
 detection. Its supported-host workflow restores, builds, and smokes the same
 package feed on Windows, Linux, and macOS on x64 and ARM64.

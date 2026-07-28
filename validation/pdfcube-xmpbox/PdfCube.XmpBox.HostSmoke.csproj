@@ -9,6 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="PdfCube.XmpBox.MetadataProbe.cs" />
-    <PackageReference Include="PdfCube.XmpBox" Version="3.0.8-dripsharp.0" />
+    <PackageReference Include="PdfCube.XmpBox" Version="$(PdfCubeXmpBoxPackageVersion)" />
   </ItemGroup>
 </Project>

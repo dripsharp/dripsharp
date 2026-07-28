@@ -210,7 +210,7 @@ try {
             Where-Object { $_.Name -match "HarfBuzz" }
     )
     if ($harfBuzzFiles.Count -ne 0) {
-        throw "HarfBuzz assets were restored even though the 3.0.8 contract does not select them."
+        throw "HarfBuzz assets were restored even though the PdfCube baseline does not select them."
     }
     Add-Observation "native-assets" "HarfBuzzSharp" "not-selected"
 

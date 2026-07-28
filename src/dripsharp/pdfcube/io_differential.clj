@@ -1,6 +1,7 @@
 (ns dripsharp.pdfcube.io-differential
-  "Pinned PDFBox 3.0.8 versus package-only PdfCube.IO differential proof."
-  (:require [clojure.set :as set]
+  "Pinned reviewed PDFBox baseline versus package-only PdfCube.IO differential proof."
+  (:require [dripsharp.baseline :as baseline]
+            [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
@@ -14,7 +15,10 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
+
+(def ^:private io-contract
+  (baseline/profile :pdfcube :io))
 
 (def supported-hosts
   [{:os "windows" :architecture "x64" :runner "windows-2025"}
@@ -81,7 +85,7 @@
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! (str subject " differs from the pinned PDFBox 3.0.8 oracle")
+      (fail! (str subject " differs from the pinned reviewed PDFBox baseline oracle")
              {:expected (str expected) :actual (str actual)
               :comparison comparison :mismatch mismatch}))
     (when-not (= expected-summary actual-summary)
@@ -184,19 +188,15 @@
         inspection (:inspection package-proof)
         resource-proof (get-in package-proof [:packages 0 :resource-proof])
         expected
-        {:project-id "org.apache.pdfbox:pdfbox-io:3.0.8"
+        {:project-id (:source-project-id io-contract)
          :revision pinned-revision
          :package-id "PdfCube.IO"
-         :version "3.0.8-dripsharp.0"
+         :version (baseline/package-version :pdfcube "PdfCube.IO")
          :target-framework "net10.0"
          :assembly-name "PdfCube.IO"
          :dependencies [{:id "Microsoft.Extensions.Logging.Abstractions"
                          :version "10.0.0"}]
-         :package-files
-         [{:kind :license :path "LICENSE.txt"
-           :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
-          {:kind :notice :path "NOTICE.txt"
-           :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]}
+         :package-files (baseline/package-legal-files :pdfcube [:upstream])}
         actual
         {:project-id (get-in generation [:project-input :project-id])
          :revision (get-in generation [:source-project :revision])
@@ -247,7 +247,7 @@
            trace (trace-summary oracle)
            summary
            {:profile "pdfcube-io"
-            :source {:version "3.0.8" :revision pinned-revision}
+            :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
             :package (merge package-contract
                             {:sha256 (get-in package-proof [:identity :sha256])
                              :assembly

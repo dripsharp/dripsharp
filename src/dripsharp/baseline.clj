@@ -1,0 +1,355 @@
+(ns dripsharp.baseline
+  "Authoritative, reviewed upstream baselines for product targets.
+
+  Baselines own pins and derived expectations. Product goals, exclusions, and
+  completion rules are deliberately outside this namespace and outside the
+  files that the re-baseline workflow may write."
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
+            [dripsharp.paths :as paths]))
+
+(def baseline-files
+  {:pkl "config/pkl-baseline.edn"
+   :pdfcube "config/pdfcube-baseline.edn"})
+
+(defn target-key
+  [target]
+  (let [target (if (keyword? target) target (keyword (str target)))]
+    (when-not (contains? baseline-files target)
+      (throw (ex-info "Unknown product baseline target"
+                      {:kind :unknown-baseline-target
+                       :target target
+                       :available (vec (sort (keys baseline-files)))})))
+    target))
+
+(defn baseline-path
+  [workspace-root target]
+  (paths/resolve-path (paths/absolute workspace-root)
+                      (get baseline-files (target-key target))))
+
+(defn- non-blank-string?
+  [value]
+  (and (string? value) (not (str/blank? value))))
+
+(defn- sha256?
+  [value]
+  (and (string? value) (boolean (re-matches #"[0-9a-f]{64}" value))))
+
+(defn- invalid!
+  [message data]
+  (throw (ex-info message (assoc data :kind :invalid-target-baseline))))
+
+(defn validate!
+  [expected-target record]
+  (let [expected-target (target-key expected-target)
+        upstream (:upstream record)
+        packages (:packages record)
+        profiles (:profiles record)
+        legal-sets (:legal-sets record)
+        artifacts (:artifacts record)]
+    (when-not (= 1 (:schema-version record))
+      (invalid! "Target baseline has an unsupported schema version"
+                {:target expected-target :actual (:schema-version record)}))
+    (when-not (= expected-target (:target record))
+      (invalid! "Target baseline identifies the wrong target"
+                {:expected expected-target :actual (:target record)}))
+    (when-not (and (map? upstream)
+                   (every? #(non-blank-string? (get upstream %))
+                           [:name :version :repository :revision :license])
+                   (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}"
+                               (:revision upstream))
+                   (pos-int? (:java-language-version upstream))
+                   (or (nil? (:notice-reference upstream))
+                       (non-blank-string? (:notice-reference upstream))))
+      (invalid! "Target baseline has invalid upstream identity metadata"
+                {:target expected-target :upstream upstream}))
+    (when-not (and (map? artifacts)
+                   (every? non-blank-string? (keys artifacts))
+                   (every? sha256? (vals artifacts)))
+      (invalid! "Target baseline has invalid artifact hashes"
+                {:target expected-target :artifacts artifacts}))
+    (when-not (and (map? legal-sets)
+                   (every? keyword? (keys legal-sets))
+                   (every?
+                    (fn [entries]
+                      (and (vector? entries)
+                           (every?
+                            (fn [entry]
+                              (and (contains? #{:license :notice} (:kind entry))
+                                   (every? #(non-blank-string? (get entry %))
+                                           [:source :destination :package-path])
+                                   (sha256? (:sha256 entry))
+                                   (or (nil? (:source-sha256 entry))
+                                       (sha256? (:source-sha256 entry)))))
+                            entries)))
+                    (vals legal-sets)))
+      (invalid! "Target baseline has invalid legal-file contracts"
+                {:target expected-target :legal-sets legal-sets}))
+    (when-not (and (map? packages)
+                   (seq packages)
+                   (every? non-blank-string? (keys packages))
+                   (every?
+                    (fn [[_ package]]
+                      (and (map? package)
+                           (non-blank-string? (:version package))
+                           (or (nil? (:assembly-version package))
+                               (non-blank-string? (:assembly-version package)))))
+                    packages))
+      (invalid! "Target baseline has invalid package versions"
+                {:target expected-target :packages packages}))
+    (when-not
+     (and
+      (map? profiles)
+      (seq profiles)
+      (every? keyword? (keys profiles))
+      (every?
+       (fn [[_ profile]]
+         (let [counts (:source-counts profile)]
+           (and (map? profile)
+                (every? #(non-blank-string? (get profile %))
+                        [:profile :source-module :package-id])
+                (contains? packages (:package-id profile))
+                (map? counts)
+                (= #{:ordinary :generated} (set (keys counts)))
+                (every? #(and (integer? %) (not (neg? %))) (vals counts))
+                (pos-int? (:public-contract-rows profile))
+                (or (nil? (:source-project-id profile))
+                    (non-blank-string? (:source-project-id profile)))
+                (or (nil? (:source-project-dependencies profile))
+                    (and (vector? (:source-project-dependencies profile))
+                         (every? non-blank-string?
+                                 (:source-project-dependencies profile)))))))
+       profiles))
+      (invalid! "Target baseline has invalid profile expectations"
+                {:target expected-target :profiles profiles}))
+    record))
+
+(defn read-baseline
+  ([target]
+   (read-baseline (paths/workspace-root) target))
+  ([workspace-root target]
+   (let [target (target-key target)
+         file (baseline-path workspace-root target)]
+     (when-not (paths/regular-file? file)
+       (throw (ex-info "Target baseline file is missing"
+                       {:kind :missing-target-baseline
+                        :target target :path (str file)})))
+     (try
+       (validate! target (edn/read-string (slurp (str file))))
+       (catch RuntimeException error
+         (if (ex-data error)
+           (throw error)
+           (throw (ex-info "Target baseline file is not valid EDN"
+                           {:kind :invalid-target-baseline
+                            :target target :path (str file)}
+                           error))))))))
+
+(defn upstream
+  ([target] (:upstream (read-baseline target)))
+  ([workspace-root target] (:upstream (read-baseline workspace-root target))))
+
+(defn upstream-version
+  [target]
+  (:version (upstream target)))
+
+(defn upstream-revision
+  [target]
+  (:revision (upstream target)))
+
+(defn java-language-version
+  [target]
+  (:java-language-version (upstream target)))
+
+(defn mechanical-source
+  ([target] (mechanical-source (paths/workspace-root) target))
+  ([workspace-root target]
+   (let [{:keys [repository revision notice-reference]}
+         (:upstream (read-baseline workspace-root target))]
+     {:repository repository
+      :revision revision
+      :notice-reference notice-reference})))
+
+(defn profile
+  ([target profile-key] (profile (paths/workspace-root) target profile-key))
+  ([workspace-root target profile-key]
+   (let [record (read-baseline workspace-root target)
+         value (get-in record [:profiles profile-key])]
+     (when-not value
+       (throw (ex-info "Target baseline has no such profile"
+                       {:kind :unknown-baseline-profile
+                        :target (target-key target)
+                        :profile profile-key
+                        :available (vec (keys (:profiles record)))})))
+     value)))
+
+(defn profile-by-name
+  ([target profile-name]
+   (profile-by-name (paths/workspace-root) target profile-name))
+  ([workspace-root target profile-name]
+   (let [record (read-baseline workspace-root target)
+         matches (filter #(= profile-name (:profile (val %)))
+                         (:profiles record))]
+     (when-not (= 1 (count matches))
+       (throw (ex-info "Target baseline profile name is missing or ambiguous"
+                       {:kind :unknown-baseline-profile-name
+                        :target (target-key target)
+                        :profile profile-name})))
+     (val (first matches)))))
+
+(defn profile-by-source-module
+  ([target source-module]
+   (profile-by-source-module (paths/workspace-root) target source-module))
+  ([workspace-root target source-module]
+   (let [record (read-baseline workspace-root target)
+         matches (filter #(= source-module (:source-module (val %)))
+                         (:profiles record))]
+     (when-not (= 1 (count matches))
+       (throw (ex-info "Target baseline source module is missing or ambiguous"
+                       {:kind :unknown-baseline-source-module
+                        :target (target-key target)
+                        :source-module source-module})))
+     (val (first matches)))))
+
+(defn package
+  ([target package-id] (package (paths/workspace-root) target package-id))
+  ([workspace-root target package-id]
+   (let [record (read-baseline workspace-root target)
+         value (get-in record [:packages package-id])]
+     (when-not value
+       (throw (ex-info "Target baseline has no such package"
+                       {:kind :unknown-baseline-package
+                        :target (target-key target)
+                        :package-id package-id
+                        :available (vec (sort (keys (:packages record))))})))
+     value)))
+
+(defn package-version
+  [target package-id]
+  (:version (package target package-id)))
+
+(defn assembly-version
+  [target package-id]
+  (:assembly-version (package target package-id)))
+
+(defn legal-files
+  ([target legal-set-keys]
+   (legal-files (paths/workspace-root) target legal-set-keys))
+  ([workspace-root target legal-set-keys]
+   (let [record (read-baseline workspace-root target)]
+     (mapv
+      identity
+      (mapcat
+       (fn [legal-set-key]
+         (or (get-in record [:legal-sets legal-set-key])
+             (throw (ex-info "Target baseline has no such legal-file set"
+                             {:kind :unknown-baseline-legal-set
+                              :target (target-key target)
+                              :legal-set legal-set-key}))))
+       legal-set-keys)))))
+
+(defn package-legal-files
+  [target legal-set-keys]
+  (mapv (fn [{:keys [kind package-path sha256]}]
+          {:kind kind :path package-path :sha256 sha256})
+        (legal-files target legal-set-keys)))
+
+(defn artifact-sha256
+  ([target coordinate]
+   (artifact-sha256 (paths/workspace-root) target coordinate))
+  ([workspace-root target coordinate]
+   (or (get-in (read-baseline workspace-root target)
+               [:artifacts coordinate])
+       (throw (ex-info "Target baseline has no hash for an external artifact"
+                       {:kind :missing-baseline-artifact
+                        :target (target-key target)
+                        :coordinate coordinate})))))
+
+(defn hydrate-profile
+  [workspace-root configuration]
+  (if-let [target (:baseline-target configuration)]
+    (let [profile-key (:baseline-profile configuration)
+          contract (profile workspace-root target profile-key)
+          source-project-id (:source-project-id contract)]
+      (cond->
+       (-> configuration
+           (dissoc :baseline-target :baseline-profile)
+           (assoc :revision
+                  (get-in (read-baseline workspace-root target)
+                          [:upstream :revision])))
+        source-project-id (assoc :maven-project-id source-project-id)))
+    configuration))
+
+(defn- hydrate-artifacts
+  [workspace-root target dependencies]
+  (into
+   (empty dependencies)
+   (map (fn [[coordinate dependency]]
+          [coordinate
+           (assoc dependency :artifact-sha256
+                  (artifact-sha256 workspace-root target coordinate))]))
+   dependencies))
+
+(defn hydrate-destination
+  [workspace-root configuration]
+  (if-let [target (:baseline-target configuration)]
+    (let [profile-key (:baseline-profile configuration)
+          legal-set-keys (:baseline-legal-sets configuration)
+          record (read-baseline workspace-root target)
+          profile-contract (profile workspace-root target profile-key)
+          package-id (get-in configuration [:package :id])
+          package-contract (package workspace-root target package-id)
+          external (:external-dependencies configuration)
+          pdfcube? (= :pdfcube (target-key target))]
+      (cond->
+       (-> configuration
+           (dissoc :baseline-target :baseline-profile :baseline-legal-sets)
+           (assoc :mechanical-source (mechanical-source workspace-root target))
+           (assoc-in [:package :version] (:version package-contract)))
+        (:source-project-id profile-contract)
+        (assoc :source-project-id (:source-project-id profile-contract))
+
+        (contains? profile-contract :source-project-dependencies)
+        (assoc :project-dependencies
+               (:source-project-dependencies profile-contract))
+
+        external
+        (assoc :external-dependencies
+               (hydrate-artifacts workspace-root target external))
+
+        (seq legal-set-keys)
+        (assoc :legal-files (legal-files workspace-root target legal-set-keys))
+
+        (and (seq legal-set-keys) (:notice-appendix record))
+        (assoc :notice-appendix (:notice-appendix record))
+
+        pdfcube?
+        (assoc-in [:package :repository-commit]
+                  (get-in record [:upstream :revision]))))
+    configuration))
+
+(defn validate-project-input!
+  "Checks live discovery against the target's reviewed source counts and Java
+  language level. This is intentionally independent of generated declaration
+  and behavior completeness gates."
+  [workspace-root target profile-name project-input]
+  (let [record (read-baseline workspace-root target)
+        contract (profile-by-name workspace-root target profile-name)
+        expected (:source-counts contract)
+        actual {:ordinary (count (:production-sources project-input))
+                :generated
+                (count (:generated-production-sources project-input))}
+        expected-java (get-in record [:upstream :java-language-version])
+        actual-java (get-in project-input [:java-toolchain :release])]
+    (when-not (= expected actual)
+      (throw (ex-info "Discovered production source counts differ from the reviewed target baseline"
+                      {:kind :baseline-source-count-drift
+                       :target (target-key target)
+                       :profile profile-name
+                       :expected expected :actual actual})))
+    (when-not (= expected-java actual-java)
+      (throw (ex-info "Discovered Java language version differs from the reviewed target baseline"
+                      {:kind :baseline-java-language-version-drift
+                       :target (target-key target)
+                       :profile profile-name
+                       :expected expected-java :actual actual-java})))
+    project-input))

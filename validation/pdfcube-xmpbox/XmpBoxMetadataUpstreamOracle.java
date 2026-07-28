@@ -74,7 +74,7 @@ public final class XmpBoxMetadataUpstreamOracle {
 
         Files.write(new File(args[0]).toPath(), observations, StandardCharsets.UTF_8);
         System.out.println(
-                "Pinned PDFBox 3.0.8 XmpBox metadata oracle passed: "
+                "Pinned reviewed PDFBox baseline XmpBox metadata oracle passed: "
                         + observations.size()
                         + " observations.");
     }

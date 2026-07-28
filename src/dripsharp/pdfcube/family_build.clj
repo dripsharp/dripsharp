@@ -4,6 +4,7 @@
   (:require [clojure.edn :as edn]
             [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.compiler :as compiler]
             [dripsharp.dotnet-surface :as dotnet-surface]
             [dripsharp.paths :as paths]
@@ -568,6 +569,23 @@
       :compiled-members (get-in compiled-surface [:totals :members])
       :public-stubs (reduce + (map :public-stubs projects))}}))
 
+(defn validate-baseline-public-counts!
+  "Checks live Spoon-derived source rows against the reviewed PdfCube target
+  record. Kept at the concrete family gate so synthetic structural validators
+  can still exercise small fixtures."
+  [workspace-root build]
+  (let [root (paths/absolute workspace-root)]
+    (doseq [emission (ordered-emissions (:generation build))
+            :let [profile (:profile emission)
+                  actual (count (get-in emission [:public-metadata :rows]))
+                  expected
+                  (:public-contract-rows
+                   (baseline/profile-by-name root :pdfcube profile))]]
+      (exact! "PdfCube public-contract row count differs from the reviewed target baseline"
+              [profile :baseline-public-contract-rows]
+              expected actual)))
+  build)
+
 (def ^:private sha256-file util/sha256-file)
 
 (defn- generated-output?
@@ -631,9 +649,11 @@
          run! #(verify-clean-build-fn
                 {:workspace-root root :profile "pdfcube-preflight"})
          first-build (run!)
+         _first-baseline (validate-baseline-public-counts! root first-build)
          first-evidence (validate-build! root first-build)
          first-snapshot (generated-snapshot root)
          second-build (run!)
+         _second-baseline (validate-baseline-public-counts! root second-build)
          second-evidence (validate-build! root second-build)
          second-snapshot (generated-snapshot root)
          deterministic (assert-deterministic! first-snapshot second-snapshot)]

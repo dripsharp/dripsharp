@@ -3,6 +3,7 @@
   five-package PdfCube family."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
@@ -22,10 +23,10 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
 
 (def package-version
-  "3.0.8-dripsharp.0")
+  (baseline/package-version :pdfcube "PdfCube.IO"))
 
 (def package-profiles
   {"pdfcube-io" "PdfCube.IO"
@@ -306,11 +307,13 @@
         (->> comparisons
              (keep :mismatch)
              vec)]
-    (when-not (= {:version "3.0.8" :revision pinned-revision}
+    (when-not (= {:version (baseline/upstream-version :pdfcube)
+                  :revision pinned-revision}
                  (:source summary))
       (fail! "Workflow slice used a source outside the synchronized release"
              {:slice id
-              :expected {:version "3.0.8" :revision pinned-revision}
+              :expected {:version (baseline/upstream-version :pdfcube)
+                         :revision pinned-revision}
               :actual (:source summary)}))
     (when-not (= expected-package actual-package)
       (fail! "Workflow slice did not use its exact family package identity"
@@ -486,7 +489,8 @@
           views)
          summary
          {:profile "pdfcube-family-workflows"
-          :source {:version "3.0.8" :revision pinned-revision}
+          :source {:version (baseline/upstream-version :pdfcube)
+                   :revision pinned-revision}
           :packages package-identities
           :runtime-consumer runtime-consumer
           :workflow-coverage (vec (sort required-workflows))

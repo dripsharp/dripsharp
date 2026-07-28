@@ -1,6 +1,7 @@
 (ns dripsharp.pkl.differential
   "Independent upstream-JVM versus packaged-.NET parser and core behavior validation."
   (:require [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
@@ -512,12 +513,17 @@
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "validation" "differential"
                                          "PackageProbe.cs")]
-    (when-not (= 940 upstream-count)
-      (fail! "The pinned LanguageSnippetTests corpus count changed; review the oracle selection"
-             {:expected 940 :actual upstream-count :corpus (str corpus)}))
+    (let [expected-count
+          (get-in (baseline/read-baseline :pkl)
+                  [:contracts :language-snippets :cases])]
+      (when-not (= expected-count upstream-count)
+        (fail! "The pinned LanguageSnippetTests corpus count changed; review the oracle selection"
+               {:expected expected-count :actual upstream-count :corpus (str corpus)})))
     (run-command! {:command ["./gradlew" ":pkl-parser:classes" "--console=plain"]
                    :directory upstream-root})
-    (run-command! {:command ["javac" "--release" "21" "-cp" (str upstream-main)
+    (run-command! {:command ["javac" "--release"
+                             (str (baseline/java-language-version :pkl))
+                             "-cp" (str upstream-main)
                              "-d" (str oracle-classes) (str oracle-source)]
                    :directory root})
     (Files/copy probe-source consumer-source

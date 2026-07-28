@@ -58,7 +58,7 @@ public final class PdfCubeIoUpstreamOracle {
 
     Files.write(new File(args[0]).toPath(), observations, StandardCharsets.UTF_8);
     System.out.println(
-        "Pinned PDFBox 3.0.8 IO oracle passed: " + observations.size() + " observations.");
+        "Pinned reviewed PDFBox baseline IO oracle passed: " + observations.size() + " observations.");
   }
 
   private static void observeBuffersSeekViewsAndEof() throws Exception {

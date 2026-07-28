@@ -1,10 +1,10 @@
 {:schema-version 1
  :profile "pdfcube-pdfbox"
  :product-family :pdfcube
+ :baseline-target :pdfcube
+ :baseline-profile :pdfbox
  :project-root "research/pdfbox"
- :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
  :build-tool :maven
- :maven-project-id "org.apache.pdfbox:pdfbox:3.0.8"
  :maven-selected-projects [":pdfbox"]
  :destination-bundle dripsharp.pdfcube.java-project/rule-bundle
  :destination-config "config/pdfcube-pdfbox-destination.edn"

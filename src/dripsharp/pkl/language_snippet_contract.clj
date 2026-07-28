@@ -1,6 +1,7 @@
 (ns dripsharp.pkl.language-snippet-contract
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
@@ -13,10 +14,13 @@
 (def ^:private manifest-magic "DRIPSHARP_LANGUAGE_SNIPPET_CONTRACT_V1")
 
 (def pinned-upstream-revision
-  "f7cac257ade5775c1dfc255f4fda2eacc296e9d0")
+  (baseline/upstream-revision :pkl))
 
-(def ^:private upstream-repository "https://github.com/apple/pkl.git")
-(def ^:private expected-case-count 940)
+(def ^:private upstream-repository
+  (:repository (baseline/upstream :pkl)))
+(def ^:private expected-case-count
+  (get-in (baseline/read-baseline :pkl)
+          [:contracts :language-snippets :cases]))
 
 (def manifest-columns
   ["case-id"
@@ -598,7 +602,7 @@
            {:kind :language-snippet-columns-drift
             :expected manifest-columns :actual columns}))
   (when-not (= expected-case-count (count cases))
-    (fail! "Language-snippet manifest does not contain exactly 940 cases"
+    (fail! "Language-snippet manifest case count differs from the Pkl baseline"
            {:kind :language-snippet-case-count
             :expected expected-case-count :actual (count cases)}))
   (doseq [[field label] [[:case-id "case identities"] [:input-path "inputs"]]]
@@ -840,7 +844,9 @@
                        (str "-Pdripsharp.manifest=" (paths/absolute manifest))
                        (str "-Pdripsharp.output=" output)]
              :directory upstream}))]
-     (run-command! {:command ["javac" "--release" "17" "-d" (str oracle-classes)
+     (run-command! {:command ["javac" "--release"
+                              (str (baseline/java-language-version :pkl))
+                              "-d" (str oracle-classes)
                               (str oracle-source)]
                     :directory root})
      (run-oracle! first-output)

@@ -2,6 +2,7 @@
   "Deterministic row-level execution of the complete non-language Pkl.Core
   contract through the pinned JVM and an isolated NuGet consumer."
   (:require [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
             [dripsharp.package-provenance :as package-provenance]
             [dripsharp.packaging :as packaging]
@@ -193,7 +194,8 @@
    loading-security-project-package-partition])
 
 (def ^:private complete-matrix-boundary
-  {:cases 605
+  {:cases (get-in (baseline/read-baseline :pkl)
+                  [:contracts :core-tests :cases])
    :classifications
    {"jvm-shared-product-behavior" 251
     "idiomatic-dotnet-adaptation" 272

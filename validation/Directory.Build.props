@@ -1,0 +1,22 @@
+<Project>
+  <PropertyGroup>
+    <PdfCubeBaselinePath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\config\pdfcube-baseline.edn'))</PdfCubeBaselinePath>
+    <PdfCubeBaselineText>$([System.IO.File]::ReadAllText('$(PdfCubeBaselinePath)'))</PdfCubeBaselineText>
+    <PdfCubeIOPackageVersion>$([System.Text.RegularExpressions.Regex]::Match('$(PdfCubeBaselineText)', '&quot;PdfCube\.IO&quot;\s+\{:version\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</PdfCubeIOPackageVersion>
+    <PdfCubeFontBoxPackageVersion>$([System.Text.RegularExpressions.Regex]::Match('$(PdfCubeBaselineText)', '&quot;PdfCube\.FontBox&quot;\s+\{:version\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</PdfCubeFontBoxPackageVersion>
+    <PdfCubeXmpBoxPackageVersion>$([System.Text.RegularExpressions.Regex]::Match('$(PdfCubeBaselineText)', '&quot;PdfCube\.XmpBox&quot;\s+\{:version\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</PdfCubeXmpBoxPackageVersion>
+    <PdfCubePdfBoxPackageVersion>$([System.Text.RegularExpressions.Regex]::Match('$(PdfCubeBaselineText)', '&quot;PdfCube\.PdfBox&quot;\s+\{:version\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</PdfCubePdfBoxPackageVersion>
+    <PdfCubePreflightPackageVersion>$([System.Text.RegularExpressions.Regex]::Match('$(PdfCubeBaselineText)', '&quot;PdfCube\.Preflight&quot;\s+\{:version\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</PdfCubePreflightPackageVersion>
+  </PropertyGroup>
+
+  <Target Name="ValidatePdfCubeBaselinePackageVersions"
+          BeforeTargets="CollectPackageReferences"
+          Condition="'@(PackageReference)' != '' and $([System.String]::Copy('@(PackageReference)').Contains('PdfCube.'))">
+    <Error Condition="'$(PdfCubeIOPackageVersion)' == '' or
+                      '$(PdfCubeFontBoxPackageVersion)' == '' or
+                      '$(PdfCubeXmpBoxPackageVersion)' == '' or
+                      '$(PdfCubePdfBoxPackageVersion)' == '' or
+                      '$(PdfCubePreflightPackageVersion)' == ''"
+           Text="config/pdfcube-baseline.edn does not contain every PdfCube package version." />
+  </Target>
+</Project>

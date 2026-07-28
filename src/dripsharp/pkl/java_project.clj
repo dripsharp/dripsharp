@@ -7,6 +7,7 @@
   its live Spoon owner, and every type is selected through the resolver's exact
   occurrence identity."
   (:require [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
@@ -31,37 +32,16 @@
 (def ^:private core-profile "pkl-core-value-model")
 
 (def ^:private source-revision
-  "f7cac257ade5775c1dfc255f4fda2eacc296e9d0")
+  (baseline/upstream-revision :pkl))
 
 (def ^:private mechanical-source
-  {:repository "https://github.com/apple/pkl.git"
-   :revision source-revision
-   :notice-reference "NOTICE.txt"})
+  (baseline/mechanical-source :pkl))
 
 (def ^:private core-legal-files
-  [{:kind :license
-    :source "research/pkl/LICENSE.txt"
-    :destination "Legal/LICENSE.txt"
-    :package-path "LICENSE.txt"
-    :source-sha256
-    "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
-    :sha256
-    "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"}
-   {:kind :notice
-    :source "research/pkl/NOTICE.txt"
-    :destination "Legal/NOTICE.txt"
-    :package-path "NOTICE.txt"
-    :source-sha256
-    "d03b8db1a0d36ba65550ba30a51c7897f4b48b0eae7582d3f0576ea41e23d48e"
-    :sha256
-    "a9347286ee61b53992fab8c8bd1378f18408e6e548c672ee3f1776b524006715"}])
+  (baseline/legal-files :pkl [:core]))
 
 (def ^:private notice-appendix
-  (str "\n---\n"
-       "DripSharp translation appendix\n\n"
-       "This package is an independent mechanical translation of the above "
-       "software to C#/.NET, produced by DripSharp. It is not developed, "
-       "endorsed, or supported by Apple Inc. or the Pkl project.\n"))
+  (:notice-appendix (baseline/read-baseline :pkl)))
 
 (def ^:private identifier java-library/identifier)
 
@@ -3705,6 +3685,11 @@
         (validate-legal-inputs! workspace-root configuration)
         configuration))))
 
+(defn- validate-project-input!
+  [{:keys [workspace-root profile project-input]}]
+  (baseline/validate-project-input!
+   workspace-root :pkl (:profile profile) project-input))
+
 (defn- legal-assets [{:keys [workspace-root configuration]}]
   (if-not (core-destination? configuration)
     []
@@ -3753,7 +3738,9 @@
     (-> base
         (assoc :id :pkl
                :product-family :pkl
-               :orchestration {:validate-profile! validate-profile!})
+               :orchestration
+               {:validate-profile! validate-profile!
+                :validate-project-input! validate-project-input!})
         (update-in
          [:rules :structural-declarations]
          assoc

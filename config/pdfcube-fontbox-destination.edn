@@ -1,12 +1,10 @@
 {:schema-version 1
  :product-family :pdfcube
  :pdfcube-product :fontbox
+ :baseline-target :pdfcube
+ :baseline-profile :fontbox
+ :baseline-legal-sets [:upstream]
  :destination-bundle dripsharp.pdfcube.java-project/rule-bundle
- :source-project-id "org.apache.pdfbox:fontbox:3.0.8"
- :mechanical-source
- {:repository "https://github.com/apache/pdfbox.git"
-  :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
-  :notice-reference "NOTICE.txt"}
  :project {:assembly-name "PdfCube.FontBox"
            :root-namespace "PdfCube.FontBox"
            :target-framework "net10.0"
@@ -14,7 +12,6 @@
            :implicit-usings false
            :warnings-as-errors true}
  :package {:id "PdfCube.FontBox"
-           :version "3.0.8-dripsharp.0"
            :title "PdfCube FontBox"
            :description "Apache FontBox font parsing and subsetting for .NET, mechanically translated by DripSharp."
            :authors "Vibeformer"
@@ -23,8 +20,7 @@
            :tags "pdf pdfbox fonts opentype truetype dotnet pdfcube"
            :project-url "https://pdfbox.apache.org/"
            :repository-url "https://github.com/apache/pdfbox.git"
-           :repository-type "git"
-           :repository-commit "9286e47d89d6877005c9d2d0f2fd38793a62519a"}
+           :repository-type "git"}
  :output {:project-directory "generated/pdfcube-fontbox"
           :source-directory "src"
           :resource-directory "resources"
@@ -48,13 +44,11 @@
  :external-namespace-prefixes {"org.apache.pdfbox.io" "PdfCube.IO"}
  :resources {}
  :resource-policy {:strategy :embedded-resource-preserve-path}
- :project-dependencies ["org.apache.pdfbox:pdfbox-io:3.0.8"]
  :package-dependencies ["PdfCube.IO"]
  :project-references ["../pdfcube-io/PdfCube.IO.csproj"]
  :external-dependencies
  {"commons-logging:commons-logging:jar:1.4.0"
   {:source-scope :compile-runtime
-   :artifact-sha256 "d175dbd751dd782a63bde28c7a039520e971f25e84b79c19b8435edc3603e0dc"
    :runtime-package true
    :destination {:kind :microsoft-package
                  :id "Microsoft.Extensions.Logging.Abstractions"
@@ -72,16 +66,5 @@
  :internal-capabilities #{:font-discovery :icc :skia-geometry}
  :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
  :compatibility-namespace "PdfCube.FB.Runtime"
- :legal-files
- [{:kind :license
-   :source "research/pdfbox/LICENSE.txt"
-   :destination "Legal/LICENSE.txt"
-   :package-path "LICENSE.txt"
-   :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
-  {:kind :notice
-   :source "research/pdfbox/NOTICE.txt"
-   :destination "Legal/NOTICE.txt"
-   :package-path "NOTICE.txt"
-   :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
  :public-surface
  {:strategy dripsharp.pdfcube.java-project/public-surface-strategy}}

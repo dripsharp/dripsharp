@@ -1,6 +1,7 @@
 (ns dripsharp.pdfcube.xmpbox-metadata-differential
-  "Pinned PDFBox 3.0.8 versus package-only PdfCube.XmpBox differential proof."
-  (:require [clojure.set :as set]
+  "Pinned reviewed PDFBox baseline versus package-only PdfCube.XmpBox differential proof."
+  (:require [dripsharp.baseline :as baseline]
+            [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
@@ -15,7 +16,10 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
+
+(def ^:private xmpbox-contract
+  (baseline/profile :pdfcube :xmpbox))
 
 (def supported-hosts
   [{:os "windows" :architecture "x64" :runner "windows-2025"}
@@ -90,7 +94,7 @@
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! (str subject " differs from the pinned PDFBox 3.0.8 oracle")
+      (fail! (str subject " differs from the pinned reviewed PDFBox baseline oracle")
              {:expected (str expected)
               :actual (str actual)
               :comparison comparison
@@ -216,32 +220,28 @@
                      (get-in % [:generated :implementation]))
                  (:rows public-metadata)))
         expected
-        {:project-id "org.apache.pdfbox:xmpbox:3.0.8"
+        {:project-id (:source-project-id xmpbox-contract)
          :revision pinned-revision
-         :production-sources 74
-         :generated-production-sources 0
+         :production-sources (get-in xmpbox-contract [:source-counts :ordinary])
+         :generated-production-sources
+         (get-in xmpbox-contract [:source-counts :generated])
          :clean-builds 2
          :package-id "PdfCube.XmpBox"
-         :version "3.0.8-dripsharp.0"
+         :version (baseline/package-version :pdfcube "PdfCube.XmpBox")
          :target-framework "net10.0"
          :assembly
-         {:name "PdfCube.XmpBox" :version "3.0.8.0"
+         {:name "PdfCube.XmpBox"
+          :version (baseline/assembly-version :pdfcube "PdfCube.XmpBox")
           :dependency-assemblies []}
          :dependencies
          [{:id "Microsoft.Extensions.Logging.Abstractions"
            :version "10.0.0"}]
          :resource-count 0
-         :package-files
-         [{:kind :license :path "LICENSE.txt"
-           :sha256
-           "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
-          {:kind :notice :path "NOTICE.txt"
-           :sha256
-           "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+         :package-files (baseline/package-legal-files :pdfcube [:upstream])
          :public-contract
          {:strategy :complete-accessible-java-library
-          :required-rows 1199
-          :compiled-contract-members 1199
+          :required-rows (:public-contract-rows xmpbox-contract)
+          :compiled-contract-members (:public-contract-rows xmpbox-contract)
           :public-stubs 0}}
         actual
         {:project-id (:project-id project-input)
@@ -304,7 +304,7 @@
            trace (trace-summary oracle)
            summary
            {:profile "pdfcube-xmpbox"
-            :source {:version "3.0.8" :revision pinned-revision}
+            :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
             :package
             (merge package-contract
                    {:sha256 (get-in package-proof [:identity :sha256])

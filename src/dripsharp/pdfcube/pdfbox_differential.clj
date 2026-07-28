@@ -1,7 +1,8 @@
 (ns dripsharp.pdfcube.pdfbox-differential
   "Aggregate package-only proof for PdfCube.PdfBox and its translated
   PdfCube.IO and PdfCube.FontBox dependency closure."
-  (:require [clojure.set :as set]
+  (:require [dripsharp.baseline :as baseline]
+            [clojure.set :as set]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
             [dripsharp.packaging :as packaging]
@@ -28,7 +29,11 @@
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
+
+(def ^:private io-contract (baseline/profile :pdfcube :io))
+(def ^:private fontbox-contract (baseline/profile :pdfcube :fontbox))
+(def ^:private pdfbox-contract (baseline/profile :pdfcube :pdfbox))
 
 (def supported-hosts
   printing/supported-hosts)
@@ -64,87 +69,77 @@
     :verify printing/verify!}])
 
 (def ^:private common-legal-files
-  [{:kind :license
-    :path "LICENSE.txt"
-    :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
-   {:kind :notice
-    :path "NOTICE.txt"
-    :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}])
+  (baseline/package-legal-files :pdfcube [:upstream]))
 
 (def expected-package-contract
   {"PdfCube.IO"
    {:profile "pdfcube-io"
     :primary? false
-    :project-id "org.apache.pdfbox:pdfbox-io:3.0.8"
+    :project-id (:source-project-id io-contract)
     :revision pinned-revision
-    :version "3.0.8-dripsharp.0"
+    :version (baseline/package-version :pdfcube "PdfCube.IO")
     :target-framework "net10.0"
     :assembly
     {:name "PdfCube.IO"
-     :version "3.0.8.0"
+     :version (baseline/assembly-version :pdfcube "PdfCube.IO")
      :dependency-assemblies []}
     :dependencies
     [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]
     :resources 0
     :package-files common-legal-files
-    :contract-members 177}
+    :contract-members (:public-contract-rows io-contract)}
 
    "PdfCube.FontBox"
    {:profile "pdfcube-fontbox"
     :primary? false
-    :project-id "org.apache.pdfbox:fontbox:3.0.8"
+    :project-id (:source-project-id fontbox-contract)
     :revision pinned-revision
-    :version "3.0.8-dripsharp.0"
+    :version (baseline/package-version :pdfcube "PdfCube.FontBox")
     :target-framework "net10.0"
     :assembly
     {:name "PdfCube.FontBox"
-     :version "3.0.8.0"
+     :version (baseline/assembly-version :pdfcube "PdfCube.FontBox")
      :dependency-assemblies ["PdfCube.IO"]}
     :dependencies
-    [{:id "PdfCube.IO" :version "3.0.8-dripsharp.0"}
+    [{:id "PdfCube.IO"
+      :version (baseline/package-version :pdfcube "PdfCube.IO")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
     :resources 93
     :package-files common-legal-files
-    :contract-members 1440}
+    :contract-members (:public-contract-rows fontbox-contract)}
 
    "PdfCube.PdfBox"
    {:profile "pdfcube-pdfbox"
     :primary? true
-    :project-id "org.apache.pdfbox:pdfbox:3.0.8"
+    :project-id (:source-project-id pdfbox-contract)
     :revision pinned-revision
-    :version "3.0.8-dripsharp.0"
+    :version (baseline/package-version :pdfcube "PdfCube.PdfBox")
     :target-framework "net10.0"
     :assembly
     {:name "PdfCube.PdfBox"
-     :version "3.0.8.0"
+     :version (baseline/assembly-version :pdfcube "PdfCube.PdfBox")
      :dependency-assemblies ["PdfCube.FontBox" "PdfCube.IO"]}
     :dependencies
-    [{:id "PdfCube.FontBox" :version "3.0.8-dripsharp.0"}
-     {:id "PdfCube.IO" :version "3.0.8-dripsharp.0"}
+    [{:id "PdfCube.FontBox"
+      :version (baseline/package-version :pdfcube "PdfCube.FontBox")}
+     {:id "PdfCube.IO"
+      :version (baseline/package-version :pdfcube "PdfCube.IO")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}]
     :resources 22
-    :package-files
-    (into
-     common-legal-files
-     [{:kind :notice
-       :path "THIRD-PARTY/JBIG2-LICENSE.txt"
-       :sha256 "4b2076ee892bdcf3bcc6f09e68146d2d0b3a4d2c0c66a00383b6e768be128e68"}
-      {:kind :notice
-       :path "THIRD-PARTY/COREJ2K-LICENSE.txt"
-       :sha256 "2b718cb2d9c117bc0744a9f421083e8b282765e920b71d547a683d257e8cea77"}
-      {:kind :notice
-       :path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
-       :sha256 "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}])
-    :contract-members 7424}})
+    :package-files (baseline/package-legal-files :pdfcube [:upstream :codecs])
+    :contract-members (:public-contract-rows pdfbox-contract)}})
 
 (def expected-restored-closure
-  #{{:id "PdfCube.IO" :version "3.0.8-dripsharp.0"}
-    {:id "PdfCube.FontBox" :version "3.0.8-dripsharp.0"}
-    {:id "PdfCube.PdfBox" :version "3.0.8-dripsharp.0"}
+  #{{:id "PdfCube.IO"
+     :version (baseline/package-version :pdfcube "PdfCube.IO")}
+    {:id "PdfCube.FontBox"
+     :version (baseline/package-version :pdfcube "PdfCube.FontBox")}
+    {:id "PdfCube.PdfBox"
+     :version (baseline/package-version :pdfcube "PdfCube.PdfBox")}
     {:id "Microsoft.Extensions.DependencyInjection.Abstractions"
      :version "10.0.0"}
     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
@@ -363,7 +358,7 @@
           [:version :hosts])
          summary
          {:profile "pdfcube-pdfbox"
-          :source {:version "3.0.8" :revision pinned-revision}
+          :source {:version (baseline/upstream-version :pdfcube) :revision pinned-revision}
           :package
           (merge
            (select-keys (:identity package-proof) [:id :version :sha256])

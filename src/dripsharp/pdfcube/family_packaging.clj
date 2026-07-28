@@ -3,6 +3,7 @@
   consumption gate for the complete five-package PdfCube family."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
@@ -12,13 +13,15 @@
            [java.util.zip ZipFile]))
 
 (def ^:private source-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
 
-(def ^:private package-version
-  "3.0.8-dripsharp.0")
+(defn- package-version
+  [package-id]
+  (baseline/package-version :pdfcube package-id))
 
-(def ^:private assembly-version
-  "3.0.8.0")
+(defn- assembly-version
+  [package-id]
+  (baseline/assembly-version :pdfcube package-id))
 
 (def ^:private target-framework
   "net10.0")
@@ -30,23 +33,10 @@
   "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt.")
 
 (def ^:private common-legal-files
-  [{:kind :license
-    :path "LICENSE.txt"
-    :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
-   {:kind :notice
-    :path "NOTICE.txt"
-    :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}])
+  (baseline/package-legal-files :pdfcube [:upstream]))
 
 (def ^:private codec-legal-files
-  [{:kind :notice
-    :path "THIRD-PARTY/JBIG2-LICENSE.txt"
-    :sha256 "4b2076ee892bdcf3bcc6f09e68146d2d0b3a4d2c0c66a00383b6e768be128e68"}
-   {:kind :notice
-    :path "THIRD-PARTY/COREJ2K-LICENSE.txt"
-    :sha256 "2b718cb2d9c117bc0744a9f421083e8b282765e920b71d547a683d257e8cea77"}
-   {:kind :notice
-    :path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
-    :sha256 "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}])
+  (baseline/package-legal-files :pdfcube [:codecs]))
 
 (def ^:private package-contract
   {"PdfCube.IO"
@@ -63,7 +53,7 @@
     :primary? false
     :assembly-dependencies ["PdfCube.IO"]
     :dependencies
-    [{:id "PdfCube.IO" :version package-version}
+    [{:id "PdfCube.IO" :version (package-version "PdfCube.IO")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
@@ -84,8 +74,8 @@
     :primary? false
     :assembly-dependencies ["PdfCube.FontBox" "PdfCube.IO"]
     :dependencies
-    [{:id "PdfCube.FontBox" :version package-version}
-     {:id "PdfCube.IO" :version package-version}
+    [{:id "PdfCube.FontBox" :version (package-version "PdfCube.FontBox")}
+     {:id "PdfCube.IO" :version (package-version "PdfCube.IO")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}]
@@ -98,8 +88,8 @@
     :assembly-dependencies
     ["PdfCube.FontBox" "PdfCube.IO" "PdfCube.PdfBox" "PdfCube.XmpBox"]
     :dependencies
-    [{:id "PdfCube.PdfBox" :version package-version}
-     {:id "PdfCube.XmpBox" :version package-version}
+    [{:id "PdfCube.PdfBox" :version (package-version "PdfCube.PdfBox")}
+     {:id "PdfCube.XmpBox" :version (package-version "PdfCube.XmpBox")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}]
     :resources 0
@@ -330,18 +320,18 @@
     (let [expected
           {:profile (:profile expected)
            :primary? (:primary? expected)
-           :version package-version
+           :version (package-version id)
            :target-framework target-framework
            :assembly
            {:name id
-            :version assembly-version
+            :version (assembly-version id)
             :dependency-assemblies (:assembly-dependencies expected)}
            :dependencies (:dependencies expected)
            :resources (:resources expected)
            :package-files (:package-files expected)
            :metadata
            {:id id
-            :version package-version
+            :version (package-version id)
             :authors package-authors
             :copyright package-copyright
             :symbols :snupkg
@@ -350,7 +340,7 @@
             :repository-commit source-revision}
            :symbol
            {:id id
-            :version package-version
+            :version (package-version id)
             :pdb-entry (str "lib/" target-framework "/" id ".pdb")
             :pdb-sha256 (get-in actual [:symbol :pdb-sha256])
             :dependencies (:dependencies expected)}}]
@@ -413,7 +403,7 @@
      {:id id
       :version
       (if (str/starts-with? id "PdfCube.")
-        package-version
+        (package-version id)
         (:version
          (first (filter #(= id (:id %)) external-package-contract))))})
    (sort ids)))
@@ -496,7 +486,7 @@
                 :consumer-profile
                 (get-in package [:destination :package-consumer])
                 :selected-packages
-                [{:id id :version package-version}]
+                [{:id id :version (package-version id)}]
                 :expected-packages
                 (identity-contract (get restored-closures id))
                 :target-framework target-framework
@@ -517,7 +507,8 @@
          consumption
          (validate-consumers! (conj product-consumers family-consumer))
          summary
-         {:source {:version "3.0.8" :revision source-revision}
+         {:source {:version (baseline/upstream-version :pdfcube)
+                   :revision source-revision}
           :clean-builds 2
           :packages (count (:packages package-evidence))
           :symbol-packages (count (:packages package-evidence))

@@ -1,0 +1,52 @@
+{:schema-version 1
+ :target :pkl
+ :upstream
+ {:name "Pkl"
+  :version "0.32.0"
+  :repository "https://github.com/apple/pkl.git"
+  :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
+  :license "Apache-2.0"
+  :java-language-version 17
+  :notice-reference "NOTICE.txt"}
+ :artifacts {}
+ :legal-sets
+ {:core
+  [{:kind :license
+    :source "research/pkl/LICENSE.txt"
+    :destination "Legal/LICENSE.txt"
+    :package-path "LICENSE.txt"
+    :source-sha256 "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    :sha256 "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"}
+   {:kind :notice
+    :source "research/pkl/NOTICE.txt"
+    :destination "Legal/NOTICE.txt"
+    :package-path "NOTICE.txt"
+    :source-sha256 "d03b8db1a0d36ba65550ba30a51c7897f4b48b0eae7582d3f0576ea41e23d48e"
+    :sha256 "a9347286ee61b53992fab8c8bd1378f18408e6e548c672ee3f1776b524006715"}]}
+ :notice-appendix
+ "\n---\nDripSharp translation appendix\n\nThis package is an independent mechanical translation of the above software to C#/.NET, produced by DripSharp. It is not developed, endorsed, or supported by Apple Inc. or the Pkl project.\n"
+ :packages
+ {"Pkl.Parser" {:version "0.0.0-development"}
+  "Pkl.Core" {:version "0.0.0-development"}}
+ :profiles
+ {:parser
+  {:profile "pkl-parser"
+   :source-module "pkl-parser"
+   :package-id "Pkl.Parser"
+   :source-counts {:ordinary 50 :generated 0}
+   :public-contract-rows 958}
+  :core
+  {:profile "pkl-core-value-model"
+   :source-module "pkl-core"
+   :package-id "Pkl.Core"
+   :source-counts {:ordinary 582 :generated 141}
+   :public-contract-rows 1200}}
+ :contracts
+ {:language-snippets {:cases 940}
+  :core-tests
+  {:sources 86
+   :naive-test-sources 85
+   :audit-tokens 585
+   :active-sources 84
+   :declarations 558
+   :cases 605}}}

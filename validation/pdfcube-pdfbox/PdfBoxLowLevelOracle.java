@@ -76,7 +76,7 @@ public final class PdfBoxLowLevelOracle {
 
     Files.write(output, observations, StandardCharsets.UTF_8);
     System.out.println(
-        "Pinned PDFBox 3.0.8 low-level oracle passed: "
+        "Pinned reviewed PDFBox baseline low-level oracle passed: "
             + observations.size()
             + " observations.");
   }

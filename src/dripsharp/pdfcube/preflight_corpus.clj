@@ -1,7 +1,8 @@
 (ns dripsharp.pdfcube.preflight-corpus
   "Checksum-pinned PDF/A corpus validation through synchronized PDFBox Java
   and a fresh package-reference-only PdfCube.Preflight consumer."
-  (:require [clojure.edn :as edn]
+  (:require [dripsharp.baseline :as baseline]
+            [clojure.edn :as edn]
             [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.harness :as harness]
@@ -17,7 +18,7 @@
            [java.util Arrays Base64]))
 
 (def pinned-revision
-  "9286e47d89d6877005c9d2d0f2fd38793a62519a")
+  (baseline/upstream-revision :pdfcube))
 
 (def ^:private manifest-magic
   "DRIPSHARP_PDFCUBE_PREFLIGHT_CORPUS_MANIFEST_V1")
@@ -110,8 +111,24 @@
   (let [root (paths/absolute workspace-root)
         manifest (paths/absolute manifest)
         data (edn/read-string (Files/readString manifest StandardCharsets/UTF_8))
-        oracle (:oracle data)
-        redistribution (:redistribution data)
+        target (:baseline-target data)
+        baseline-record (baseline/read-baseline root target)
+        upstream (:upstream baseline-record)
+        [license-file notice-file]
+        (baseline/legal-files root target [:upstream])
+        oracle
+        (merge (:oracle data)
+               {:version (:version upstream)
+                :revision (:revision upstream)
+                :repository (:repository upstream)})
+        redistribution
+        (merge
+         (:redistribution data)
+         {:license (:license upstream)
+          :license-path (:source license-file)
+          :license-sha256 (:sha256 license-file)
+          :notice-path (:source notice-file)
+          :notice-sha256 (:sha256 notice-file)})
         sources (:sources data)
         cases (:cases data)]
     (when-not (= 1 (:schema-version data))
@@ -119,14 +136,14 @@
              {:kind :invalid-preflight-corpus-manifest-schema
               :actual (:schema-version data)}))
     (when-not (= {:product "Apache PDFBox Preflight"
-                  :version "3.0.8"
-                  :revision pinned-revision
-                  :repository "https://github.com/apache/pdfbox.git"}
+                  :version (:version upstream)
+                  :revision (:revision upstream)
+                  :repository (:repository upstream)}
                  oracle)
       (fail! "Preflight corpus Java oracle provenance drifted"
              {:kind :stale-preflight-corpus-oracle
               :expected-revision pinned-revision :actual oracle}))
-    (when-not (and (= "Apache-2.0" (:license redistribution))
+    (when-not (and (= (:license upstream) (:license redistribution))
                    (not (str/blank? (:constraint redistribution))))
       (fail! "Preflight corpus redistribution constraints are incomplete"
              {:kind :missing-preflight-corpus-redistribution
@@ -781,11 +798,11 @@
           expected
           [{:assembly-name "PdfCube.IO"
             :package-id "PdfCube.IO"
-            :version "3.0.8-dripsharp.0"
+            :version (baseline/package-version :pdfcube "PdfCube.IO")
             :target-framework "net10.0"}
            {:assembly-name "PdfCube.FontBox"
             :package-id "PdfCube.FontBox"
-            :version "3.0.8-dripsharp.0"
+            :version (baseline/package-version :pdfcube "PdfCube.FontBox")
             :target-framework "net10.0"}])
          (reduce
           (fn [by-assembly dependency]

@@ -1,6 +1,7 @@
 (ns dripsharp.pkl.core-test-contract
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
@@ -13,14 +14,17 @@
 (def ^:private manifest-magic "DRIPSHARP_PKL_CORE_TEST_CONTRACT_V1")
 
 (def pinned-upstream-revision
-  "f7cac257ade5775c1dfc255f4fda2eacc296e9d0")
+  (baseline/upstream-revision :pkl))
 
-(def ^:private expected-source-count 86)
-(def ^:private expected-naive-test-source-count 85)
-(def ^:private expected-audit-token-count 585)
-(def ^:private expected-active-source-count 84)
-(def ^:private expected-declaration-count 558)
-(def ^:private expected-case-count 605)
+(def ^:private expected-core-contract
+  (:core-tests (:contracts (baseline/read-baseline :pkl))))
+(def ^:private expected-source-count (:sources expected-core-contract))
+(def ^:private expected-naive-test-source-count
+  (:naive-test-sources expected-core-contract))
+(def ^:private expected-audit-token-count (:audit-tokens expected-core-contract))
+(def ^:private expected-active-source-count (:active-sources expected-core-contract))
+(def ^:private expected-declaration-count (:declarations expected-core-contract))
+(def ^:private expected-case-count (:cases expected-core-contract))
 
 (def source-columns
   ["source-path"

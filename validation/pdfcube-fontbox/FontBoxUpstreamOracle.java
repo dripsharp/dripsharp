@@ -89,7 +89,7 @@ public final class FontBoxUpstreamOracle {
 
     Files.write(new File(args[0]).toPath(), observations, StandardCharsets.UTF_8);
     System.out.println(
-        "Pinned PDFBox 3.0.8 FontBox oracle passed: "
+        "Pinned reviewed PDFBox baseline FontBox oracle passed: "
             + observations.size()
             + " observations.");
   }

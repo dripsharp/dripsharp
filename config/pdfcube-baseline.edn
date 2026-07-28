@@ -1,0 +1,105 @@
+{:schema-version 1
+ :target :pdfcube
+ :upstream
+ {:name "Apache PDFBox"
+  :version "3.0.8"
+  :repository "https://github.com/apache/pdfbox.git"
+  :revision "9286e47d89d6877005c9d2d0f2fd38793a62519a"
+  :license "Apache-2.0"
+  :java-language-version 8
+  :notice-reference "NOTICE.txt"}
+ :artifacts
+ {"commons-logging:commons-logging:jar:1.4.0"
+  "d175dbd751dd782a63bde28c7a039520e971f25e84b79c19b8435edc3603e0dc"
+  "org.bouncycastle:bcpkix-jdk18on:jar:1.84"
+  "c87f16ed9e5ec61bc94151e9f3646ac44e50cd448121ce84367fa4b7ec7ec1bb"
+  "org.bouncycastle:bcprov-jdk18on:jar:1.84"
+  "64d6c5a6121fcd927152dd182cbed39afe0fda641a970d9bcc0c9cb1858b2731"
+  "org.bouncycastle:bcutil-jdk18on:jar:1.84"
+  "b374e16963421fb9cfb01cc20d7ad8fd2f8b8188e3eef0ec0a8965e245f7619a"}
+ :legal-sets
+ {:upstream
+  [{:kind :license
+    :source "research/pdfbox/LICENSE.txt"
+    :destination "Legal/LICENSE.txt"
+    :package-path "LICENSE.txt"
+    :sha256 "1301d8415a4868d82aeeec594849cf7679f1ead4636a9603dc46875f5713157e"}
+   {:kind :notice
+    :source "research/pdfbox/NOTICE.txt"
+    :destination "Legal/NOTICE.txt"
+    :package-path "NOTICE.txt"
+    :sha256 "40741b4ab76d77ba4fbc5e8759277169fb0ce281859d273075de6fd3a3588458"}]
+  :codecs
+  [{:kind :notice
+    :source "vendor/pdfcube/jbig2/LICENSE"
+    :destination "Legal/THIRD-PARTY-JBIG2-LICENSE.txt"
+    :package-path "THIRD-PARTY/JBIG2-LICENSE.txt"
+    :sha256 "4b2076ee892bdcf3bcc6f09e68146d2d0b3a4d2c0c66a00383b6e768be128e68"}
+   {:kind :notice
+    :source "vendor/pdfcube/jpx/LICENSE"
+    :destination "Legal/THIRD-PARTY-COREJ2K-LICENSE.txt"
+    :package-path "THIRD-PARTY/COREJ2K-LICENSE.txt"
+    :sha256 "2b718cb2d9c117bc0744a9f421083e8b282765e920b71d547a683d257e8cea77"}
+   {:kind :notice
+    :source "vendor/pdfcube/jpx/COPYRIGHT-JJ2000-5.1"
+    :destination "Legal/COPYRIGHT-JJ2000-5.1.txt"
+    :package-path "THIRD-PARTY/COPYRIGHT-JJ2000-5.1.txt"
+    :sha256 "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}]}
+ :packages
+ {"PdfCube.IO" {:version "3.0.8-dripsharp.0" :assembly-version "3.0.8.0"}
+  "PdfCube.FontBox" {:version "3.0.8-dripsharp.0" :assembly-version "3.0.8.0"}
+  "PdfCube.XmpBox" {:version "3.0.8-dripsharp.0" :assembly-version "3.0.8.0"}
+  "PdfCube.PdfBox" {:version "3.0.8-dripsharp.0" :assembly-version "3.0.8.0"}
+  "PdfCube.Preflight" {:version "3.0.8-dripsharp.0" :assembly-version "3.0.8.0"}}
+ :profiles
+ {:io
+  {:profile "pdfcube-io"
+   :source-module "io"
+   :maven-selector ":pdfbox-io"
+   :source-project-id "org.apache.pdfbox:pdfbox-io:3.0.8"
+   :source-project-dependencies []
+   :package-id "PdfCube.IO"
+   :source-counts {:ordinary 18 :generated 0}
+   :public-contract-rows 177}
+  :fontbox
+  {:profile "pdfcube-fontbox"
+   :source-module "fontbox"
+   :maven-selector ":fontbox"
+   :source-project-id "org.apache.pdfbox:fontbox:3.0.8"
+   :source-project-dependencies ["org.apache.pdfbox:pdfbox-io:3.0.8"]
+   :package-id "PdfCube.FontBox"
+   :source-counts {:ordinary 143 :generated 0}
+   :public-contract-rows 1440}
+  :xmpbox
+  {:profile "pdfcube-xmpbox"
+   :source-module "xmpbox"
+   :maven-selector ":xmpbox"
+   :source-project-id "org.apache.pdfbox:xmpbox:3.0.8"
+   :source-project-dependencies []
+   :package-id "PdfCube.XmpBox"
+   :source-counts {:ordinary 74 :generated 0}
+   :public-contract-rows 1199}
+  :pdfbox
+  {:profile "pdfcube-pdfbox"
+   :source-module "pdfbox"
+   :maven-selector ":pdfbox"
+   :source-project-id "org.apache.pdfbox:pdfbox:3.0.8"
+   :source-project-dependencies
+   ["org.apache.pdfbox:fontbox:3.0.8"
+    "org.apache.pdfbox:pdfbox-io:3.0.8"]
+   :package-id "PdfCube.PdfBox"
+   :source-counts {:ordinary 621 :generated 0}
+   :public-contract-rows 7424}
+  :preflight
+  {:profile "pdfcube-preflight"
+   :source-module "preflight"
+   :maven-selector ":preflight"
+   :source-project-id "org.apache.pdfbox:preflight:3.0.8"
+   :source-project-dependencies
+   ["org.apache.pdfbox:fontbox:3.0.8"
+    "org.apache.pdfbox:pdfbox-io:3.0.8"
+    "org.apache.pdfbox:pdfbox:3.0.8"
+    "org.apache.pdfbox:xmpbox:3.0.8"]
+   :package-id "PdfCube.Preflight"
+   :source-counts {:ordinary 116 :generated 0}
+   :public-contract-rows 946}}}
