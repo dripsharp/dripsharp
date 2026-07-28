@@ -2848,6 +2848,12 @@
     :sha256
     "10c284b2af1ea5fe8516b5510a7b05a9def383e232a5e1b871be8098f75b9588"}])
 
+(def ^:private preflight-generic-erasure-mappings
+  {"org.apache.pdfbox.preflight.font.container.FontContainer"
+   "global::PdfCube.Preflight.Font.Container.IFontContainer"
+   "org.apache.pdfbox.preflight.font.FontValidator"
+   "global::PdfCube.Preflight.Font.IFontValidator"})
+
 (def ^:private products
   (array-map
    :io
@@ -2988,6 +2994,7 @@
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package]
     :internal-capabilities #{:preflight-font-erasure}
+    :generic-erasure-mappings preflight-generic-erasure-mappings
     :destination-capabilities #{:java-compat :java-regex-unicode}
     :bridge-capabilities #{}}))
 
@@ -3130,6 +3137,8 @@
              [:external-dependencies (:external-dependencies configuration)]
              [:runtime-packages (:runtime-packages configuration)]
              [:internal-capabilities (:internal-capabilities configuration)]
+             [:generic-erasure-mappings
+              (:generic-erasure-mappings configuration)]
              [:destination-capabilities
               (:destination-capabilities configuration)]
              [:bridge-capabilities
@@ -3164,6 +3173,8 @@
               :external-dependencies (:external-dependencies product)
               :runtime-packages (:runtime-packages product)
               :internal-capabilities (:internal-capabilities product)
+              :generic-erasure-mappings
+              (:generic-erasure-mappings product)
               :destination-capabilities (:destination-capabilities product)
               :bridge-capabilities (:bridge-capabilities product)
               :compatibility-namespace (:compatibility-namespace product)
@@ -3390,67 +3401,72 @@
 
              declaration))))))
 
-(def ^:private preflight-font-container
-  "global::PdfCube.Preflight.Font.Container.FontContainer")
-
 (def ^:private preflight-font-container-contract
   "global::PdfCube.Preflight.Font.Container.IFontContainer")
 
-(def ^:private preflight-font-validator
-  "global::PdfCube.Preflight.Font.FontValidator")
+(defn- replace-single-generic-argument
+  [node targets source replacement]
+  (csharp/transform
+   node
+   (fn [current]
+     (if
+      (and
+       (= :generic-name (:kind current))
+       (contains? targets (:text (csharp/render (:target current))))
+       (= 1 (count (:arguments current)))
+       (= source
+          (:text (csharp/render (first (:arguments current))))))
+       (update current :arguments
+               (fn [[argument]]
+                 [(csharp/sequence-node
+                   [argument (csharp/raw replacement)])]))
+       current))))
 
-(def ^:private preflight-font-validator-contract
-  "global::PdfCube.Preflight.Font.IFontValidator")
+(defn- replace-rendered-node
+  [node source replacement]
+  (csharp/transform
+   node
+   (fn [current]
+     (if (= source (:text (csharp/render current)))
+       (cond-> replacement
+         (seq (:sources current))
+         (assoc :sources (:sources current)))
+       current))))
 
-(defn- preserve-preflight-raw-generic-contracts
+(defn- preserve-preflight-generic-contracts
   [configuration node]
   (if-not (= "PdfCube.Preflight" (get-in configuration [:package :id]))
     node
-    (let [font-like "global::PdfCube.PdfBox.Pdmodel.Font.PDFontLike"
-          container-replacements
-          [[(str preflight-font-container "<object>")
-            preflight-font-container-contract]
-           [(str preflight-font-container "<" font-like ">")
-            preflight-font-container-contract]]
-          validator-replacements
-          (mapv
-           (fn [font-type]
-             [(str preflight-font-validator "<" preflight-font-container
-                   "<global::PdfCube.PdfBox.Pdmodel.Font." font-type ">>")
-              preflight-font-validator-contract])
-           ["PDCIDFont" "PDCIDFontType0" "PDCIDFontType2" "PDFont"])
-          width-replacements
-          [["global::System.Collections.Generic.IList<float>"
-            "global::System.Collections.Generic.IList<float?>"]
-           [(str "float width = global::DripSharp.Runtime.JavaCompat."
-                 "ListGet(widths, i);")
-            (str "float width = global::DripSharp.Runtime.JavaCompat.Unbox("
-                 "global::DripSharp.Runtime.JavaCompat.ListGet(widths, i));")]
-           ["global::System.Array.Empty<float>()"
-            "global::System.Array.Empty<float?>()"]]
-          node
-          (csharp/replace-raw-text
-           node
-           (concat container-replacements validator-replacements))]
-      (-> node
-          (update-declaration
-           :type
-           "org.apache.pdfbox.preflight.font.container.FontContainer"
-           #(add-base-contract % "IFontContainer"))
-          (update-declaration
-           :type
-           "org.apache.pdfbox.preflight.font.FontValidator"
-           #(-> %
-                (add-base-contract "IFontValidator")
-                (prepend-member
-                 (csharp/raw
-                  (str preflight-font-container-contract
-                       " IFontValidator.GetFontContainer() => "
-                       "GetFontContainer();")))))
-          (update-declaration
-           :type
-           "org.apache.pdfbox.preflight.font.Type3FontValidator"
-           #(csharp/replace-raw-text % width-replacements))))))
+    (-> node
+        (update-declaration
+         :type
+         "org.apache.pdfbox.preflight.font.container.FontContainer"
+         #(add-base-contract % "IFontContainer"))
+        (update-declaration
+         :type
+         "org.apache.pdfbox.preflight.font.FontValidator"
+         #(-> %
+              (add-base-contract "IFontValidator")
+              (prepend-member
+               (csharp/raw
+                (str preflight-font-container-contract
+                     " IFontValidator.GetFontContainer() => "
+                     "GetFontContainer();")))))
+        (update-declaration
+         :type
+         "org.apache.pdfbox.preflight.font.Type3FontValidator"
+         #(replace-single-generic-argument
+           (replace-rendered-node
+            %
+            "global::System.Array.Empty<float>()"
+            (csharp/invocation
+             (csharp/generic-name
+              (csharp/raw "global::System.Array.Empty")
+              [(csharp/raw "float?")])
+             []))
+           #{"global::System.Collections.Generic.IList"}
+           "float"
+           "?")))))
 
 (defn- transform-node [configuration node]
   (let [destination (compatibility-namespace configuration)
@@ -3463,7 +3479,7 @@
     (->> node
          (erase-security-handler-carrier configuration)
          (preserve-calendar-value-semantics configuration)
-         (preserve-preflight-raw-generic-contracts configuration))))
+         (preserve-preflight-generic-contracts configuration))))
 
 (defn- compatibility-asset [configuration asset]
   (if (= base-compatibility-namespace

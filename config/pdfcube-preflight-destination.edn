@@ -78,6 +78,11 @@
    :version "4.150.1"
    :projection :skia-sharp}]
  :internal-capabilities #{:preflight-font-erasure}
+ :generic-erasure-mappings
+ {"org.apache.pdfbox.preflight.font.container.FontContainer"
+  "global::PdfCube.Preflight.Font.Container.IFontContainer"
+  "org.apache.pdfbox.preflight.font.FontValidator"
+  "global::PdfCube.Preflight.Font.IFontValidator"}
  :destination-capabilities #{:java-compat :java-regex-unicode}
  :bridge-capabilities #{}
  :legal-files

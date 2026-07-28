@@ -82,7 +82,7 @@
     (is (= {:start second-start :end (count (:text transformed))}
            (get by-source second-source)))))
 
-(deftest preflight-raw-font-generics-receive-erased-contracts
+(deftest preflight-font-types-implement-erased-runtime-contracts
   (let [configuration {:package {:id "PdfCube.Preflight"}}
         container
         "global::PdfCube.Preflight.Font.Container.FontContainer"
@@ -102,7 +102,9 @@
          (structured-type
           "org.apache.pdfbox.preflight.font.FontValidator"
           [(csharp/raw "public abstract class FontValidator<T>")
-           (csharp/raw (str " where T : " container "<" font-like ">"))]
+           (csharp/raw
+            (str " where T : "
+                 "global::PdfCube.Preflight.Font.Container.IFontContainer"))]
           [(csharp/raw
             (str "private global::PdfCube.Preflight.Font.FontValidator<"
                  container
@@ -113,9 +115,6 @@
     (is (str/includes?
          (:text container-result)
          "public abstract class FontContainer<T> : IFontContainer"))
-    (is (str/includes?
-         (:text container-result)
-         "private global::PdfCube.Preflight.Font.Container.IFontContainer value;"))
     (is (not (str/includes? (:text validator-result)
                             "public interface IFontValidator")))
     (is (str/includes?
@@ -124,7 +123,8 @@
               "global::PdfCube.Preflight.Font.Container.IFontContainer")))
     (is (str/includes?
          (:text validator-result)
-         "private global::PdfCube.Preflight.Font.IFontValidator value;"))))
+         (str "global::PdfCube.Preflight.Font.Container.IFontContainer "
+              "IFontValidator.GetFontContainer() => GetFontContainer();")))))
 
 (deftest preflight-type3-widths-preserve-nullable-boxed-floats
   (let [configuration {:package {:id "PdfCube.Preflight"}}
@@ -134,19 +134,31 @@
          (structured-type
           "org.apache.pdfbox.preflight.font.Type3FontValidator"
           [(csharp/raw "public class Type3FontValidator")]
-          [(csharp/raw
-            (str "global::System.Collections.Generic.IList<float> widths = value;\n"
-                 "float width = global::DripSharp.Runtime.JavaCompat."
-                 "ListGet(widths, i);\n"
-                 "return global::System.Array.Empty<float>();"))]
+          [(csharp/sequence-node
+            [(csharp/generic-name
+              (csharp/raw "global::System.Collections.Generic.IList")
+              [(csharp/raw "float")])
+             (csharp/raw " widths = value;\nfloat width = ")
+             (csharp/invocation
+              (csharp/generic-name
+               (csharp/raw
+                "global::DripSharp.Runtime.JavaCompat.UnboxObject")
+               [(csharp/raw "float")])
+              [(csharp/raw "value")])
+             (csharp/raw ";\nreturn ")
+             (csharp/sequence-node
+              [(csharp/raw "global::System.Array.Empty<")
+               (csharp/raw "float")
+               (csharp/raw ">()")])
+             (csharp/raw ";")])]
           false))]
     (is (str/includes?
          (:text result)
          "global::System.Collections.Generic.IList<float?> widths"))
     (is (str/includes?
          (:text result)
-         (str "float width = global::DripSharp.Runtime.JavaCompat.Unbox("
-              "global::DripSharp.Runtime.JavaCompat.ListGet(widths, i));")))
+         (str "float width = global::DripSharp.Runtime.JavaCompat."
+              "UnboxObject<float>(value);")))
     (is (str/includes?
          (:text result)
          "return global::System.Array.Empty<float?>();"))))
@@ -425,6 +437,14 @@
     (is (= #{:preflight-font-erasure}
            (:internal-capabilities
             (:destination (read-profile-and-destination "pdfcube-preflight")))))
+    (is (=
+         {"org.apache.pdfbox.preflight.font.container.FontContainer"
+          "global::PdfCube.Preflight.Font.Container.IFontContainer"
+          "org.apache.pdfbox.preflight.font.FontValidator"
+          "global::PdfCube.Preflight.Font.IFontValidator"}
+         (:generic-erasure-mappings
+          (:destination
+           (read-profile-and-destination "pdfcube-preflight")))))
     (is (= #{"PdfCube.PdfBox" "PdfCube.Preflight"}
            (:friend-assemblies
             (:destination (read-profile-and-destination "pdfcube-io")))))

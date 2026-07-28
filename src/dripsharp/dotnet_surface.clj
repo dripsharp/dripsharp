@@ -259,7 +259,7 @@
               (let [bare (str/replace segment #"^@" "")]
                 (if (contains? csharp-keywords bare)
                   (str "@" bare)
-                  segment))))
+                  bare))))
        (str/join ".")))
 
 (defn- reflected-shape [row]

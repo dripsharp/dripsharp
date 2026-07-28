@@ -3209,6 +3209,87 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest configured-generic-erasure-preserves-raw-and-wildcard-contracts
+  (let [fixture
+        (model!
+         {"example/Value.java"
+          "package example; public interface Value {}"
+          "example/ConcreteValue.java"
+          (str "package example; "
+               "public final class ConcreteValue implements Value {}")
+          "example/ErasedBox.java"
+          "package example; public interface ErasedBox {}"
+          "example/Box.java"
+          (str "package example; "
+               "public abstract class Box<T extends Value> "
+               "implements ErasedBox {}")
+          "example/ErasedValidator.java"
+          "package example; public interface ErasedValidator {}"
+          "example/Validator.java"
+          (str "package example; "
+               "public abstract class Validator<T extends Box> "
+               "implements ErasedValidator {}")
+          "example/SpecialBox.java"
+          (str "package example; "
+               "public final class SpecialBox extends Box<ConcreteValue> {}")
+          "example/SpecialValidator.java"
+          (str "package example; "
+               "public final class SpecialValidator "
+               "extends Validator<SpecialBox> {}")
+          "example/Uses.java"
+          (str "package example; public final class Uses { "
+               "public Box<?> wildcardBox(Box<?> value) { return value; } "
+               "public Box rawBox(Box value) { return value; } "
+               "public Validator<? extends Box<? extends Value>> "
+               "wildcardValidator("
+               "Validator<? extends Box<? extends Value>> value) { "
+               "return value; } }")})
+        erasures
+        {"example.Box" "global::Example.Java.Library.ErasedBox"
+         "example.Validator" "global::Example.Java.Library.ErasedValidator"}
+        emission
+        (emit! fixture 1
+               #{:java-compat :java-regex-unicode}
+               {:generic-erasure-mappings erasures})
+        root (:project-root emission)
+        validator-source
+        (slurp (str (paths/resolve-path
+                     root "src/Example/Java/Library/Validator.cs")))
+        special-box-source
+        (slurp (str (paths/resolve-path
+                     root "src/Example/Java/Library/SpecialBox.cs")))
+        uses-source
+        (slurp (str (paths/resolve-path
+                     root "src/Example/Java/Library/Uses.cs")))]
+    (is (str/includes?
+         validator-source
+         (str "where T : "
+              "global::Example.Java.Library.ErasedBox")))
+    (is (str/includes?
+         special-box-source
+         (str "SpecialBox : global::Example.Java.Library.Box<"
+              "global::Example.Java.Library.ConcreteValue>")))
+    (is (= 4
+           (count
+            (re-seq
+             #"global::Example[.]Java[.]Library[.]ErasedBox"
+             uses-source))))
+    (is (= 2
+           (count
+            (re-seq
+             #"global::Example[.]Java[.]Library[.]ErasedValidator"
+             uses-source))))
+    (is (not (str/includes? uses-source "Box<object>")))
+    (is (not (str/includes? uses-source "Validator<")))
+    (is (zero? (get-in emission
+                       [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory root
+                               :command ["dotnet" "build"
+                                         (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neutral-stream-reduce-expands-binary-operator-and-static-max
   (let [fixture
         (model! {"example/References.java"

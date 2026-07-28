@@ -180,6 +180,28 @@
                              (mapcat identity (:namespace-prefixes configuration)))))
     (destination-error "Destination namespace-prefix mappings must be non-blank strings"
                        {:namespace-prefixes (:namespace-prefixes configuration)}))
+  (when-not
+   (or
+    (nil? (:generic-erasure-mappings configuration))
+    (and
+     (map? (:generic-erasure-mappings configuration))
+     (every?
+      (fn [[source destination]]
+        (and
+         (string? source)
+         (boolean
+          (re-matches
+           #"[A-Za-z_$][A-Za-z0-9_$]*(?:[.][A-Za-z_$][A-Za-z0-9_$]*)*"
+           source))
+         (string? destination)
+         (boolean
+          (re-matches
+           #"global::@?[A-Za-z_][A-Za-z0-9_]*(?:[.]@?[A-Za-z_][A-Za-z0-9_]*)*"
+           destination))))
+      (:generic-erasure-mappings configuration))))
+    (destination-error
+     "Generic erasure mappings must map resolved Java type identities to global C# contract types"
+     {:generic-erasure-mappings (:generic-erasure-mappings configuration)}))
   (when-not (and (map? (:resources configuration))
                  (every? (fn [[source {:keys [strategy destination logical-name]}]]
                            (and (= :embedded-resource strategy)

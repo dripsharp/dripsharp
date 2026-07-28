@@ -349,6 +349,29 @@
          declarations)))
       (raw (project-type-base ctx declaration)))))
 
+(defn- wildcard-generic-reference?
+  [^CtTypeReference reference]
+  (or
+   (instance? CtWildcardReference reference)
+   (some wildcard-generic-reference?
+         (.getActualTypeArguments reference))))
+
+(defn- generic-erasure-node
+  [ctx ^CtTypeReference reference occurrence]
+  (when
+   (= :project (:origin occurrence))
+    (when-let
+     [destination
+      (get-in ctx
+              [:configuration :generic-erasure-mappings
+               (.getQualifiedName reference)])]
+      (let [arguments (vec (.getActualTypeArguments reference))]
+        (when
+         (or (empty? arguments)
+             (some wildcard-generic-reference? arguments))
+          [(raw destination)
+           :dotnet.type/raw-or-wildcard-generic-erasure])))))
+
 (defn- neutral-type-shape
   [ctx ^CtTypeReference reference occurrence recur-node]
   (cond
@@ -365,46 +388,48 @@
      :dotnet.type/wildcard-bound]
 
     :else
-    (let [[target rule] (mapped-type-base ctx reference occurrence)
-          declaration (when (= :project (:origin occurrence))
-                        (or (:declaration occurrence)
-                            (.getTypeDeclaration reference)))
-          actual-arguments (vec (.getActualTypeArguments reference))
-          arguments
-          (cond
-            (contains?
-             #{"java.lang.Class" "java.lang.reflect.Constructor"}
-             (.getQualifiedName reference))
-            []
+    (or
+     (generic-erasure-node ctx reference occurrence)
+     (let [[target rule] (mapped-type-base ctx reference occurrence)
+           declaration (when (= :project (:origin occurrence))
+                         (or (:declaration occurrence)
+                             (.getTypeDeclaration reference)))
+           actual-arguments (vec (.getActualTypeArguments reference))
+           arguments
+           (cond
+             (contains?
+              #{"java.lang.Class" "java.lang.reflect.Constructor"}
+              (.getQualifiedName reference))
+             []
 
-            (= "java.util.function.BinaryOperator"
-               (.getQualifiedName reference))
-            (let [argument (first actual-arguments)]
-              (when argument
-                [(recur-node argument)
-                 (recur-node argument)
-                 (recur-node argument)]))
+             (= "java.util.function.BinaryOperator"
+                (.getQualifiedName reference))
+             (let [argument (first actual-arguments)]
+               (when argument
+                 [(recur-node argument)
+                  (recur-node argument)
+                  (recur-node argument)]))
 
-            (and (empty? actual-arguments)
-                 (instance? CtType declaration)
-                 (seq (.getFormalCtTypeParameters ^CtType declaration)))
-            (mapv #(raw-project-type-argument-node ctx %)
-                  (.getFormalCtTypeParameters ^CtType declaration))
+             (and (empty? actual-arguments)
+                  (instance? CtType declaration)
+                  (seq (.getFormalCtTypeParameters ^CtType declaration)))
+             (mapv #(raw-project-type-argument-node ctx %)
+                   (.getFormalCtTypeParameters ^CtType declaration))
 
-            :else
-            (mapv recur-node actual-arguments))]
-      [(if-let [raw-target
-                (when (empty? actual-arguments)
-                  (get raw-generic-type-nodes
-                       (.getQualifiedName reference)))]
-         (raw raw-target)
-         (if (and (= :project (:origin occurrence))
-                  (instance? CtType declaration))
-           (project-reference-node ctx reference declaration)
-           (if (seq arguments)
-             (csharp/generic-name (raw target) arguments)
-             (raw target))))
-       rule])))
+             :else
+             (mapv recur-node actual-arguments))]
+       [(if-let [raw-target
+                 (when (empty? actual-arguments)
+                   (get raw-generic-type-nodes
+                        (.getQualifiedName reference)))]
+          (raw raw-target)
+          (if (and (= :project (:origin occurrence))
+                   (instance? CtType declaration))
+            (project-reference-node ctx reference declaration)
+            (if (seq arguments)
+              (csharp/generic-name (raw target) arguments)
+              (raw target))))
+        rule]))))
 
 (defn type-node
   "Emits one resolved type through the shared occurrence, recursion, and

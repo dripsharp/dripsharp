@@ -121,6 +121,33 @@
                   :visibility "public"}
     :source {:location {:file source-file :line 1}}}})
 
+(deftest generated-owner-escapes-reconcile-with-reflected-metadata-names
+  (let [workspace (paths/workspace-root)
+        source-file
+        (paths/resolve-path workspace
+                            "test/dripsharp/dotnet_surface_test.clj")
+        reflected
+        [(row {:owner "Correct.Library.Operator.Api"
+               :kind "type" :name "Api" :parameter-count "0"
+               :signature "class Api" :nullability "type=oblivious"})
+         (row {:owner "Correct.Library.operator.Api"
+               :kind "type" :name "Api" :parameter-count "0"
+               :signature "class Api" :nullability "type=oblivious"})]
+        generated
+        [(assoc-in
+          (generated-row source-file "type:Operator.Api" "type" "Api" 0)
+          [:generated :destination :owner]
+          "Correct.Library.@Operator.Api")
+         (assoc-in
+          (generated-row source-file "type:operator.Api" "type" "Api" 0)
+          [:generated :destination :owner]
+          "Correct.Library.@operator.Api")]
+        result
+        (surface/verify-generated-rows!
+         workspace reflected {:required-rows 2 :rows generated})]
+    (is (= {:rows 2 :types 2 :members 0 :contract-members 2}
+           (select-keys result [:rows :types :members :contract-members])))))
+
 (deftest spoon-derived-metadata-detects-every-missing-or-misplaced-shape
   (let [workspace (paths/workspace-root)
         source-file
