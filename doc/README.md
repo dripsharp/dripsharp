@@ -13,6 +13,9 @@ These documents apply to every Java-to-C# target:
   and validation choices.
 * [Transform Pipeline](transform-pipeline.md) defines recursive translation,
   rule dispatch, generation, and validation contracts.
+* [Target Directory Contract](target-directory-contract.md) defines the
+  product-neutral, fail-closed operational manifest used to compose target
+  profiles, mappings, runtime assets, baselines, and validation evidence.
 * [Conversion Concerns](conversion-concerns.md) records Java-to-.NET semantic
   differences that every target must address deliberately.
 

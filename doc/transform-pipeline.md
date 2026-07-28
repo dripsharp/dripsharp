@@ -110,6 +110,16 @@ and product runtime
 sources require an explicit bundle capability. Isolated-consumer behavior is
 destination metadata, not a product-name dispatch table.
 
+Operational target inputs follow the shared
+[target-directory contract](target-directory-contract.md). The exact-key,
+schema-versioned manifest is validated before discovery and binds the
+authoritative product documents, baseline, legal policy, Java versions,
+profiles, destinations, mapping overlays, runtime assets, and validation
+contracts. The product-neutral loader has no target registry: a conforming
+target directory can be added without editing generic source. A validated
+directory is configuration evidence only and does not weaken any target's
+generation, packaging, consumption, behavior, or completion gates.
+
 Generation is from scratch. Compiler failures are mapped to source elements and
 translation rules; generated C# is never edited in place.
 

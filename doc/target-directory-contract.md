@@ -1,0 +1,186 @@
+# Target Directory Contract
+
+## Purpose and authority
+
+An operational target is a directory at `targets/<target-id>`. Its manifest
+selects all target-owned translation inputs without registering the target in a
+generic Clojure dispatch table. The target directory references the durable
+product contracts under `doc/targets/`; it does not restate, narrow, exclude,
+or replace them.
+
+Target ids are stable lowercase names. Adding a conforming directory may add
+target-owned rule bundles or validation runners, but does not require a change
+to the product-neutral directory loader.
+
+## Manifest
+
+`targets/<target-id>/target.edn` uses schema version 1 and has exactly these
+keys:
+
+```clojure
+{:schema-version 1
+ :target :example
+ :product-family :example
+
+ :contracts
+ {:product-goal "doc/targets/example/product-goal.md"
+  :port-scope "doc/targets/example/port-scope.md"
+  :dependencies []}
+
+ :baseline "baseline.edn"
+ :legal-policy "legal/policy.edn"
+
+ :java
+ {:source-language-version 17
+  :runtime-major 21
+  :preview-features? false}
+
+ :capabilities
+ #{:java-compat :example/mappings :example/runtime}
+
+ :profiles
+ [{:id "example-core"
+   :path "profiles/core.edn"
+   :destination :core
+   :mapping-overlays [:example/core]
+   :runtime-assets [:example/runtime]
+   :validation-contracts [:example-core]
+   :required-capabilities
+   #{:java-compat :example/mappings :example/runtime}}]
+
+ :destinations
+ [{:id :core
+   :path "destinations/core.edn"}]
+
+ :mapping-overlays
+ [{:id :example/core
+   :path "mappings/core.edn"}]
+
+ :runtime-assets
+ [{:id :example/runtime
+   :path "runtime/Example.Core.Runtime.cs"
+   :capabilities #{:example/runtime}}]
+
+ :validation-contracts
+ [{:id :example-core
+   :kind :differential
+   :path "validation/core.edn"}]}
+```
+
+Unknown or missing keys are errors. Descriptor ids and paths are unique.
+Operational paths are normalized portable relative paths and must remain in
+their declared target-owned areas. Product-goal, port-scope, and dependency
+documents remain workspace-relative paths under `doc/targets/`.
+
+Every declared destination, overlay, runtime asset, and validation contract
+must be selected by at least one profile. Every selected id must exist.
+Declared capabilities must exactly equal the union provided by destinations,
+mapping overlays, and runtime assets; a profile's required capabilities must
+be available from its selected inputs.
+
+## Owned file contracts
+
+### Baseline
+
+`baseline.edn` is the target's single reviewed upstream baseline record. It
+uses the shared baseline schema and identifies the same target. Its profile
+names must exactly match the manifest profiles. Its Java language version,
+upstream license, legal sets, package ids, and profile identities are checked
+against the manifest and referenced files.
+
+The source language level and build runtime are separate declarations. The
+runtime major may be newer than the source language level but not older.
+Explicit profile runtime selections must agree with the target declaration.
+Live discovery still verifies the observed compiler release against the
+baseline; directory validation does not substitute for that evidence.
+
+### Legal policy
+
+`legal/policy.edn` schema version 1 has exactly these keys:
+
+```clojure
+{:schema-version 1
+ :target :example
+ :upstream-license "Apache-2.0"
+ :allowed-upstream-licenses #{"Apache-2.0"}
+ :legal-sets #{:upstream}
+ :profile-legal-sets {"example-core" [:upstream]}}
+```
+
+The selected license must be allowed and must equal the baseline license.
+Legal-set names must equal the baseline legal sets, and every profile has one
+ordered legal-set selection. Destination and validation package contracts
+must use that same selection. Legal source, destination, and package paths are
+validated before discovery. Hash verification, attribution content, forbidden
+marks, and final package inspection remain separate legal gates.
+
+### Mapping overlays
+
+Each `mappings/*.edn` file uses this exact wrapper:
+
+```clojure
+{:schema-version 1
+ :target :example
+ :product-family :example
+ :id :example/core
+ :capabilities #{:example/mappings}
+ :custom-handlers {}
+ :entries []}
+```
+
+Entries use the shared declarative resolved-symbol registry schema. The loader
+compiles every overlay before returning the target contract, so malformed
+keys, duplicate ownership, contradictory strategies, missing evidence, and
+unresolved custom handlers fail before source discovery. `:custom-handlers`
+maps qualified handler keywords to qualified target-owned Clojure symbols.
+Entry provenance must name the target or one of its profiles.
+
+### Runtime assets
+
+Runtime descriptors point to regular `.cs` files under `runtime/` and declare
+the capabilities those files provide. For each profile, the selected runtime
+paths must exactly match its destination's `:runtime-sources`. Shared
+product-neutral compatibility sources remain shared inputs; a target
+directory must not claim product behavior belonging to another target.
+
+### Validation
+
+A `:differential` descriptor points to the shared exact-key differential
+contract. Its target, baseline profile, generation profile, assembly, target
+framework, and legal sets must agree with the target baseline, destination,
+and legal policy. Oracle sources are target-owned `.java` files under
+`validation/oracle/`; package-only probes are target-owned `.cs` files under
+`validation/probe/`. Required context paths are checked before execution.
+
+A target whose evidence model is genuinely different may use `:kind :custom`.
+Its contract has exactly these keys:
+
+```clojure
+{:schema-version 1
+ :id :example-core
+ :target :example
+ :profile "example-core"
+ :baseline-profile :core
+ :runner example.validation/run!
+ :oracle-sources ["validation/oracle/ExampleOracle.java"]
+ :probe-sources ["validation/probe/ExampleProbe.cs"]
+ :legal-sets [:upstream]}
+```
+
+The runner must resolve to a callable target-owned symbol. Custom validation
+retains the same identity, path, baseline, and legal checks as common
+differentials; it does not weaken the product's independent behavior-evidence
+or completion requirements.
+
+## Preflight rule
+
+`dripsharp.target-directory/read-target` is the product-neutral preflight. A
+workflow must obtain a fully validated result before source checkout
+verification, Gradle or Maven discovery, output cleanup, generation, packing,
+consumption, or differential execution. A returned contract contains the
+validated records and compiled mapping registries; later stages must consume
+those records rather than re-reading unvalidated target files.
+
+Successful directory validation is configuration evidence only. It is not
+clean-generation, compilation, packaging, consumption, behavior, milestone,
+or product-completion evidence.

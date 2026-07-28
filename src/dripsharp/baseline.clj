@@ -39,9 +39,17 @@
   [message data]
   (throw (ex-info message (assoc data :kind :invalid-target-baseline))))
 
-(defn validate!
+(defn validate-record!
+  "Validates a baseline record for an already validated target identity.
+
+  Unlike `validate!`, this entry point does not consult the legacy baseline
+  file registry. Target-directory discovery uses it so a new target can
+  validate its owned baseline without changing generic source."
   [expected-target record]
-  (let [expected-target (target-key expected-target)
+  (when-not (keyword? expected-target)
+    (invalid! "Target baseline requires a keyword target identity"
+              {:target expected-target}))
+  (let [expected-target expected-target
         upstream (:upstream record)
         packages (:packages record)
         profiles (:profiles record)
@@ -123,6 +131,10 @@
       (invalid! "Target baseline has invalid profile expectations"
                 {:target expected-target :profiles profiles}))
     record))
+
+(defn validate!
+  [expected-target record]
+  (validate-record! (target-key expected-target) record))
 
 (defn read-baseline
   ([target]
