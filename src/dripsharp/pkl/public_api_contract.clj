@@ -1,4 +1,4 @@
-(ns dripsharp.public-api-contract
+(ns dripsharp.pkl.public-api-contract
   "Executable upstream-to-.NET public surface and behavior contract.
 
   The upstream extractor is intentionally independent of DripSharp's Spoon
@@ -10,11 +10,11 @@
             [clojure.string :as str]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
-            [dripsharp.spoon :as spoon])
+            [dripsharp.spoon :as spoon]
+            [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file FileVisitOption Files OpenOption Path]
+           [java.nio.file FileVisitOption Files Path]
            [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]
            [spoon.reflect.declaration CtConstructor CtElement CtEnumValue CtField
             CtMethod CtRecordComponent CtType]))
 
@@ -267,11 +267,7 @@
         (iterate inc 2)
         (rest content))})))
 
-(defn- write-text!
-  [^Path file text]
-  (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
-  (Files/writeString file text StandardCharsets/UTF_8 (make-array OpenOption 0))
-  file)
+(def ^:private write-text! util/write-text!)
 
 (defn- command-output
   [request]
@@ -326,15 +322,7 @@
                 :prefix (subs text 0 (min 120 (count text)))}))
       (write-text! (paths/path output) text))))
 
-(defn- sha256
-  [value]
-  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (str value) StandardCharsets/UTF_8))]
-    (apply str (map #(format "%02x" (bit-and 0xff (int %))) digest))))
-
-(defn- portable-path
-  [^Path root ^Path file]
-  (str/replace (str (.relativize root file)) "\\" "/"))
+(def ^:private sha256 util/sha256-text)
 
 (def ^:private executed-behavior-probes
   #{"validation/differential/PackageProbe.cs"

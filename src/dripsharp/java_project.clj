@@ -14,7 +14,8 @@
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
             [dripsharp.project-input :as project-input]
-            [dripsharp.spoon :as spoon])
+            [dripsharp.spoon :as spoon]
+            [dripsharp.util :as util])
   (:import [java.nio.charset Charset MalformedInputException]
            [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
@@ -306,16 +307,9 @@
 (defn- edn-text [value]
   (str (pr-str (canonicalize value)) "\n"))
 
-(defn- write-text! [^Path file text]
-  (Files/createDirectories (.getParent file)
-                           (make-array java.nio.file.attribute.FileAttribute 0))
-  (Files/writeString file text (make-array java.nio.file.OpenOption 0))
-  file)
+(def ^:private write-text! util/write-text!)
 
-(defn- xml-escape [value]
-  (-> (str value) (str/replace "&" "&amp;") (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;") (str/replace "\"" "&quot;")
-      (str/replace "'" "&apos;")))
+(def ^:private xml-escape util/xml-escape)
 
 (defn project-text
   "Renders the common deterministic SDK project contract."
@@ -532,8 +526,7 @@
     (str/replace (str (.relativize ^Path (first roots) resource)) "\\" "/")))
 
 (defn- portable [^Path root value]
-  (let [path (paths/absolute value)]
-    (str/replace (if (.startsWith path root) (str (.relativize root path)) (str path)) "\\" "/")))
+  (util/portable-or-absolute-path root (paths/absolute value)))
 
 (defn- source-relative [source-roots source]
   (let [canonical #(-> (paths/absolute %) (.toRealPath paths/no-links))

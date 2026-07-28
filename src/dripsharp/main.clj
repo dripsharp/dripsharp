@@ -1,10 +1,10 @@
 (ns dripsharp.main
   (:require [clojure.string :as str]
             [dripsharp.compiler :as compiler]
-            [dripsharp.differential :as differential]
+            [dripsharp.pkl.differential :as differential]
             [dripsharp.harness :as harness]
-            [dripsharp.language-snippet-contract :as language-snippet-contract]
-            [dripsharp.language-snippet-runner :as language-snippet-runner]
+            [dripsharp.pkl.language-snippet-contract :as language-snippet-contract]
+            [dripsharp.pkl.language-snippet-runner :as language-snippet-runner]
             [dripsharp.packaging :as packaging]
             [dripsharp.pdfcube.fontbox-differential :as pdfcube-fontbox-differential]
             [dripsharp.pdfcube.family-build :as pdfcube-family-build]
@@ -44,8 +44,8 @@
              :as pdfcube-preflight-corpus]
             [dripsharp.pdfcube.xmpbox-metadata-differential
              :as pdfcube-xmpbox-metadata-differential]
-            [dripsharp.pkl-core-corpus-runner :as pkl-core-corpus-runner]
-            [dripsharp.pkl-core-test-contract :as pkl-core-test-contract])
+            [dripsharp.pkl.core-corpus-runner :as pkl-core-corpus-runner]
+            [dripsharp.pkl.core-test-contract :as pkl-core-test-contract])
   (:import [clojure.lang ExceptionInfo]))
 
 (defn- fail!

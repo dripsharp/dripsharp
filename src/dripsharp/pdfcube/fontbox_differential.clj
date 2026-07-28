@@ -6,13 +6,13 @@
             [dripsharp.harness :as harness]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.io File]
            [java.net URI]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
-           [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]))
+           [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
   "9286e47d89d6877005c9d2d0f2fd38793a62519a")
@@ -49,10 +49,7 @@
    (ex-info message
             (assoc data :kind :pdfcube-fontbox-differential-failed))))
 
-(defn- write-text! [^Path file value]
-  (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
-  (Files/writeString file value (make-array OpenOption 0))
-  file)
+(def ^:private write-text! util/write-text!)
 
 (defn- configured-path [^Path root value]
   (let [path (paths/path value)]
@@ -61,18 +58,7 @@
        path
        (paths/resolve-path root path)))))
 
-(defn- sha512 [^Path file]
-  (let [digest (MessageDigest/getInstance "SHA-512")
-        buffer (byte-array 65536)]
-    (with-open [input (Files/newInputStream file (make-array OpenOption 0))]
-      (loop []
-        (let [count (.read input buffer)]
-          (when (pos? count)
-            (.update digest buffer 0 count)
-            (recur)))))
-    (apply str
-           (map #(format "%02x" (bit-and (int %) 0xff))
-                (.digest digest)))))
+(def ^:private sha512 util/sha512-file)
 
 (defn- ensure-font-fixtures! [^Path root]
   (let [directory
@@ -253,21 +239,7 @@
                    :directory consumer-root
                    :timeout-ms 120000})))
 
-(defn- current-host []
-  (let [os-name (str/lower-case (System/getProperty "os.name" ""))
-        architecture (str/lower-case (System/getProperty "os.arch" ""))
-        os (cond
-             (str/includes? os-name "win") "windows"
-             (str/includes? os-name "mac") "macos"
-             (str/includes? os-name "linux") "linux"
-             :else os-name)
-        architecture (case architecture
-                       "amd64" "x64"
-                       "x86_64" "x64"
-                       "aarch64" "arm64"
-                       "arm64" "arm64"
-                       architecture)]
-    {:os os :architecture architecture}))
+(def ^:private current-host util/current-host)
 
 (defn- validate-package-contract! [package-proof]
   (let [generation (get-in package-proof [:verification :generation])

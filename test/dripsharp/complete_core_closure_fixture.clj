@@ -6,7 +6,7 @@
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.project :as project]
-            [dripsharp.public-api-contract :as public-api]
+            [dripsharp.pkl.public-api-contract :as public-api]
             [dripsharp.spoon :as spoon])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

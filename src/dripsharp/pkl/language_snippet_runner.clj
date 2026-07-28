@@ -1,15 +1,15 @@
-(ns dripsharp.language-snippet-runner
+(ns dripsharp.pkl.language-snippet-runner
   "Isolated package-only execution of the pinned language-snippet contract."
   (:require [clojure.string :as str]
             [dripsharp.harness :as harness]
-            [dripsharp.language-snippet-contract :as contract]
+            [dripsharp.package-provenance :as package-provenance]
+            [dripsharp.pkl.language-snippet-contract :as contract]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file Files LinkOption OpenOption Path StandardCopyOption]
-           [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]
+           [java.nio.file Files LinkOption Path StandardCopyOption]
            [java.util Base64]))
 
 (def ^:private result-magic "DRIPSHARP_LANGUAGE_SNIPPET_PACKAGE_RESULTS_V1")
@@ -36,18 +36,12 @@
 (def ^:private default-process-timeout-ms 30000)
 (def ^:private default-worker-count 2)
 
-(declare read-packed-assembly-manifest)
-
 (defn- fail!
   [message data]
   (throw (ex-info message (assoc data :kind (or (:kind data)
                                                 :language-snippet-runner-failed)))))
 
-(defn- write-text!
-  [^Path output value]
-  (Files/createDirectories (.getParent output) (make-array FileAttribute 0))
-  (Files/writeString output value StandardCharsets/UTF_8 (make-array OpenOption 0))
-  output)
+(def ^:private write-text! util/write-text!)
 
 (defn- decode-base64!
   [value context]
@@ -162,11 +156,7 @@
    (range)
    (str/split-lines (Files/readString (paths/path oracle-file) StandardCharsets/UTF_8))))
 
-(defn- sha256-text
-  [value]
-  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (str value) StandardCharsets/UTF_8))]
-    (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
+(def ^:private sha256-text util/sha256-text)
 
 (defn- execution-requirement?
   [case-data requirement]
@@ -274,14 +264,14 @@
         (->> (map vector first second)
              (keep (fn [[left right]]
                      (when-not (= (select-keys left [:case-id :status :payload-base64
-                                                    :logger-base64 :diagnostic-base64])
+                                                     :logger-base64 :diagnostic-base64])
                                   (select-keys right [:case-id :status :payload-base64
-                                                     :logger-base64 :diagnostic-base64]))
+                                                      :logger-base64 :diagnostic-base64]))
                        {:case (:case-id left)
                         :first (select-keys left [:status :payload-base64 :logger-base64
-                                                 :diagnostic-base64])
+                                                  :diagnostic-base64])
                         :second (select-keys right [:status :payload-base64 :logger-base64
-                                                   :diagnostic-base64])})))
+                                                    :diagnostic-base64])})))
              vec)]
     {:observations (count first) :mismatches mismatches
      :deterministic? (empty? mismatches)}))
@@ -358,30 +348,6 @@
     (let [rows (update (:rows parsed) index assoc :payload-base64 "UFJPVkU=")]
       (write-text! (paths/absolute output) (render-package-results rows)))))
 
-(defn write-packed-assembly-manifest!
-  "Writes the exact assembly identities and payload hashes proven by the
-  deterministic package gate. Shared corpus runners use this manifest instead
-  of reconstructing package provenance independently."
-  [^Path output packages]
-  (let [assemblies
-        (mapv (fn [package]
-                {:name (get-in package [:resource-proof :assembly-identity :name])
-                 :sha256 (get-in package [:resource-proof :assembly-artifact :sha256])})
-              packages)
-        invalid (filterv #(or (str/blank? (:name %))
-                              (not (re-matches #"[0-9a-f]{64}" (or (:sha256 %) ""))))
-                         assemblies)
-        duplicate-names (duplicate-values (map :name assemblies))]
-    (when (or (seq invalid) (seq duplicate-names))
-      (fail! "Packed assembly provenance is incomplete or ambiguous"
-             {:kind :invalid-language-snippet-assembly-provenance
-              :invalid invalid :duplicate-names duplicate-names}))
-    (write-text! output
-                 (apply str
-                        (for [{:keys [name sha256]} (sort-by :name assemblies)]
-                          (str name "\t" sha256 "\n"))))
-    {:path output :assemblies (vec (sort-by :name assemblies))}))
-
 (defn verify-source-isolation!
   "Rejects source/project escape hatches in a freshly restored package-only
   consumer."
@@ -415,9 +381,9 @@
                (for [[family counts] summary]
                  (str family "\t"
                       (str/join "\t" (map counts [:total :in-scope :excluded :matched
-                                                   :approved-excluded-surface-boundaries
-                                                   :conformant :mismatched :success :error
-                                                   :timeout :crash]))
+                                                  :approved-excluded-surface-boundaries
+                                                  :conformant :mismatched :success :error
+                                                  :timeout :crash]))
                       "\n"))))))
 
 (defn- write-mismatches!
@@ -504,7 +470,8 @@
               {:kind :invalid-language-snippet-runner-bounds
                :evaluation-timeout-ms evaluation-timeout-ms
                :process-timeout-ms process-timeout-ms :worker-count worker-count}))
-     (write-packed-assembly-manifest! assembly-manifest (:packages package-proof))
+     (package-provenance/write-packed-assembly-manifest!
+      assembly-manifest (:packages package-proof))
      (Files/copy runner-source source
                  (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
      (let [source-isolation (verify-source-isolation! consumer-root project source)]
@@ -560,18 +527,12 @@
            {:summary summary
             :package-proof package-proof
             :source-isolation source-isolation
-            :assembly-provenance (read-packed-assembly-manifest assembly-manifest)
+            :assembly-provenance
+            (package-provenance/read-packed-assembly-manifest
+             assembly-manifest)
             :manifest (paths/absolute manifest)
             :expected expected
             :first-output first-output
             :second-output second-output
             :family-baseline family-output
             :mismatches mismatch-output}))))))
-
-(defn read-packed-assembly-manifest
-  "Reads an assembly manifest emitted from the deterministic package proof."
-  [manifest]
-  (mapv (fn [line]
-          (let [[name sha256] (str/split line #"\t" -1)]
-            {:name name :sha256 sha256}))
-        (str/split-lines (Files/readString manifest StandardCharsets/UTF_8))))

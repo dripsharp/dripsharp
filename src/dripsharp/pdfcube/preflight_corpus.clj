@@ -5,15 +5,15 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.harness :as harness]
-            [dripsharp.language-snippet-runner :as package-provenance]
+            [dripsharp.package-provenance :as package-provenance]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption OpenOption Path StandardCopyOption]
            [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]
            [java.util Arrays Base64]))
 
 (def pinned-revision
@@ -48,13 +48,7 @@
     (assoc data :kind (or (:kind data)
                           :pdfcube-preflight-corpus-failed)))))
 
-(defn- write-text!
-  [^Path output value]
-  (Files/createDirectories (.getParent output)
-                           (make-array FileAttribute 0))
-  (Files/writeString output value StandardCharsets/UTF_8
-                     (make-array OpenOption 0))
-  output)
+(def ^:private write-text! util/write-text!)
 
 (defn- duplicate-values
   [values]
@@ -64,19 +58,8 @@
        sort
        vec))
 
-(defn- hex
-  [bytes]
-  (apply str (map #(format "%02x" (bit-and 0xff %)) bytes)))
-
-(defn- sha256-bytes
-  [bytes]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (.update digest bytes)
-    (hex (.digest digest))))
-
-(defn- sha256-file
-  [^Path input]
-  (sha256-bytes (Files/readAllBytes input)))
+(def ^:private sha256-bytes util/sha256-bytes)
+(def ^:private sha256-file util/sha256-file)
 
 (defn- b64
   [value]
@@ -681,14 +664,7 @@
     :timeout-ms default-process-timeout-ms
     :environment {"DRIPSHARP_WORKERS" "22"}}))
 
-(defn- xml-escape
-  [value]
-  (-> (str value)
-      (str/replace "&" "&amp;")
-      (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;")
-      (str/replace "\"" "&quot;")
-      (str/replace "'" "&apos;")))
+(def ^:private xml-escape util/xml-escape)
 
 (defn- consumer-project
   [package-id version]

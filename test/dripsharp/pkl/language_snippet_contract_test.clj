@@ -1,7 +1,7 @@
-(ns dripsharp.language-snippet-contract-test
+(ns dripsharp.pkl.language-snippet-contract-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [dripsharp.language-snippet-contract :as contract]
+            [dripsharp.pkl.language-snippet-contract :as contract]
             [dripsharp.paths :as paths])
   (:import [clojure.lang ExceptionInfo]
            [java.nio.charset StandardCharsets]
@@ -31,7 +31,7 @@
 (defn- temp-file
   [name]
   (let [directory (Files/createTempDirectory "language-snippet-contract-test"
-                                               (make-array FileAttribute 0))]
+                                             (make-array FileAttribute 0))]
     (.resolve directory name)))
 
 (deftest authoritative-manifest-is-complete-source-backed-and-scope-safe
@@ -110,30 +110,30 @@
     (testing "missing and duplicate rows fail"
       (is (= :language-snippet-case-count
              (thrown-kind #(#'contract/validate-rows!
-                             (assoc parsed :cases (pop cases))))))
+                            (assoc parsed :cases (pop cases))))))
       (is (= :duplicate-language-snippet-row
              (thrown-kind #(#'contract/validate-rows!
-                             (assoc parsed :cases (assoc cases (dec (count cases))
+                            (assoc parsed :cases (assoc cases (dec (count cases))
                                                         first-case))))))
 
-    (testing "unclassified and unexecutable rows fail"
-      (is (= :unclassified-language-snippet-scope
-             (thrown-kind #(#'contract/validate-rows!
-                             (assoc parsed :cases
-                                    (assoc cases 0 (assoc first-case
-                                                        :product-scope "pending")))))))
-      (is (= :unexecutable-language-snippet-row
-             (thrown-kind #(#'contract/validate-rows!
-                             (assoc parsed :cases
-                                    (assoc cases 0 (assoc first-case
-                                                        :execution-requirements "-"))))))))
+      (testing "unclassified and unexecutable rows fail"
+        (is (= :unclassified-language-snippet-scope
+               (thrown-kind #(#'contract/validate-rows!
+                              (assoc parsed :cases
+                                     (assoc cases 0 (assoc first-case
+                                                           :product-scope "pending")))))))
+        (is (= :unexecutable-language-snippet-row
+               (thrown-kind #(#'contract/validate-rows!
+                              (assoc parsed :cases
+                                     (assoc cases 0 (assoc first-case
+                                                           :execution-requirements "-"))))))))
 
-    (testing "outside-epic rows require the approved exclusion evidence"
-      (is (= :unapproved-language-snippet-exclusion
-             (thrown-kind #(#'contract/validate-rows!
-                             (assoc parsed :cases
-                                    (update cases outside-index assoc
-                                            :scope-basis "unimplemented"))))))))))
+      (testing "outside-epic rows require the approved exclusion evidence"
+        (is (= :unapproved-language-snippet-exclusion
+               (thrown-kind #(#'contract/validate-rows!
+                              (assoc parsed :cases
+                                     (update cases outside-index assoc
+                                             :scope-basis "unimplemented"))))))))))
 
 (deftest oracle-result-contract-rejects-coverage-execution-and-content-drift
   (let [expected (contract/write-expected-results! @validated (temp-file "expected.tsv"))
@@ -153,7 +153,7 @@
                        StandardCharsets/UTF_8 (make-array OpenOption 0))
     (Files/writeString unexecutable
                        (str (str/replace-first first-line "\tSUCCESS\t"
-                                              "\tUNEXECUTABLE\t")
+                                               "\tUNEXECUTABLE\t")
                             "\n" (str/join "\n" (rest lines)) "\n")
                        StandardCharsets/UTF_8 (make-array OpenOption 0))
     (let [[case-id status _] (str/split first-line #"\t" -1)]

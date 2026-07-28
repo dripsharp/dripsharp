@@ -1,10 +1,10 @@
-(ns dripsharp.public-api-contract-test
+(ns dripsharp.pkl.public-api-contract-test
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
-            [dripsharp.public-api-contract :as contract])
+            [dripsharp.pkl.public-api-contract :as contract])
   (:import [clojure.lang ExceptionInfo]
            [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]))

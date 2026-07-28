@@ -1,11 +1,11 @@
-(ns dripsharp.pkl-core-corpus-runner-test
+(ns dripsharp.pkl.core-corpus-runner-test
   (:require [clojure.test :refer [deftest is testing]]
             [dripsharp.paths :as paths]
-            [dripsharp.pkl-core-corpus-runner :as runner]
-            [dripsharp.pkl-core-test-contract :as contract])
+            [dripsharp.pkl.core-corpus-runner :as runner]
+            [dripsharp.pkl.core-test-contract :as contract])
   (:import [clojure.lang ExceptionInfo]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files OpenOption Path StandardCopyOption]
+           [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
            [java.util Base64]))
 
@@ -328,7 +328,7 @@
                                        "packaging.clj"))
         corpus (Files/readString
                 (paths/resolve-path root "src" "dripsharp"
-                                    "pkl_core_corpus_runner.clj"))]
+                                    "pkl" "core_corpus_runner.clj"))]
     (is (.contains packaging ":packages-root packages"))
     (is (.contains corpus "packages-root (:packages-root package-proof)"))
     (is (.contains corpus "Corpus.Resources.payload.txt"))

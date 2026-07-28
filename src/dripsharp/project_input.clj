@@ -5,9 +5,9 @@
   orchestration, Spoon, or destination rules consume it."
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [dripsharp.paths :as paths])
-  (:import [java.nio.file Files Path]
-           [java.security MessageDigest]))
+            [dripsharp.paths :as paths]
+            [dripsharp.util :as util])
+  (:import [java.nio.file Files Path]))
 
 (def ^:private input-keys
   #{:schema-version
@@ -60,19 +60,7 @@
               {:field field :scope value :supported (sort scopes)}))
   value)
 
-(defn- file-sha256
-  [^Path input]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (with-open [stream (Files/newInputStream
-                        input
-                        (make-array java.nio.file.OpenOption 0))]
-      (let [buffer (byte-array 8192)]
-        (loop [read (.read stream buffer)]
-          (when-not (neg? read)
-            (when (pos? read)
-              (.update digest buffer 0 read))
-            (recur (.read stream buffer))))))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+(def ^:private file-sha256 util/sha256-file)
 
 (defn- path-vector!
   [field values predicate missing-kind]

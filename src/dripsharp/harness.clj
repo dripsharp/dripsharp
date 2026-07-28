@@ -8,7 +8,8 @@
             [dripsharp.project :as project]
             [dripsharp.project-input :as project-input]
             [dripsharp.public-surface :as public-surface]
-            [dripsharp.spoon :as spoon])
+            [dripsharp.spoon :as spoon]
+            [dripsharp.util :as util])
   (:import [java.nio.file FileVisitOption Files Path]))
 
 (def ^:private profiles
@@ -148,13 +149,7 @@
     (Files/createDirectories directory (make-array java.nio.file.attribute.FileAttribute 0))
     directory))
 
-(defn- portable-path
-  [^Path root ^Path input]
-  (let [input (.normalize input)]
-    (-> (if (.startsWith input root)
-          (str (.relativize root input))
-          (str input))
-        (str/replace "\\" "/"))))
+(def ^:private portable-path util/portable-or-absolute-path)
 
 (defn configuration
   "Builds the deterministic, serializable configuration used by later stages."

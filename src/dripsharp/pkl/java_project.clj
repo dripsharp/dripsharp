@@ -13,9 +13,9 @@
             [dripsharp.java-types :as java-types]
             [dripsharp.paths :as paths]
             [dripsharp.pkl.java-body :as java-body]
-            [dripsharp.spoon :as spoon])
-  (:import [java.nio.file Files OpenOption Path]
-           [java.security MessageDigest]
+            [dripsharp.spoon :as spoon]
+            [dripsharp.util :as util])
+  (:import [java.nio.file Files]
            [java.util IdentityHashMap]
            [spoon.reflect.code CtConstructorCall CtExpression CtLambda CtLiteral CtLocalVariable
             CtThisAccess CtVariableAccess]
@@ -24,11 +24,9 @@
             CtFormalTypeDeclarer CtInterface CtMethod CtModifiable CtParameter CtRecord
             CtRecordComponent CtType CtTypeParameter ModifierKind]
            [spoon.reflect.reference CtArrayTypeReference CtIntersectionTypeReference
-            CtExecutableReference CtFieldReference CtTypeParameterReference
+            CtExecutableReference CtTypeParameterReference
             CtTypeReference CtWildcardReference]
            [spoon.reflect.visitor.filter TypeFilter]))
-
-(def ^:private default-config-file "config/pkl-parser.edn")
 
 (def ^:private core-profile "pkl-core-value-model")
 
@@ -68,16 +66,6 @@
 (def ^:private identifier java-library/identifier)
 
 (def ^:private pascal java-library/pascal)
-
-(defn validate-configuration!
-  [configuration]
-  (project-emission/validate-configuration! configuration))
-
-(defn read-configuration
-  ([workspace-root]
-   (read-configuration workspace-root default-config-file))
-  ([workspace-root config-file]
-   (project-emission/read-configuration workspace-root config-file)))
 
 (defn- source-ref
   ([^CtElement element rule]
@@ -1265,15 +1253,6 @@
                 parameters)]
       (when (seq clauses) (sequence-node clauses)))))
 
-(defn- blocker! [ctx ^CtElement element blocker-kind owner]
-  (let [number (swap! (:blocker-counter ctx) inc)
-        id (format "DRIPSHARP_%s_%04d" (-> blocker-kind name str/upper-case (str/replace "-" "_")) number)
-        diagnostic {:id id :severity :error :blocking? true :kind blocker-kind
-                    :message "Executable Java semantics are pending direct recursive translation"
-                    :owner owner :source (source-ref element :java.executable/pending)}]
-    (swap! (:diagnostics ctx) conj diagnostic)
-    id))
-
 (defn- current-body-context [ctx]
   ;; The complete semantic mapping registry is intentionally built once. Its
   ;; type service consults this holder so each sequential member translation
@@ -1419,10 +1398,6 @@
 
 (def ^:private pair-iterator-contract-key
   "executable:org.pkl.core.Pair#iterator()")
-
-(defn- method-contract-keys [ctx ^CtMethod method]
-  (set (keep #(when % (spoon/declaration-key %))
-             (cons method (top-definitions ctx method)))))
 
 (defn- method-signature-adaptation [ctx ^CtMethod method]
   (let [definitions (cons method (top-definitions ctx method))
@@ -3608,16 +3583,7 @@
 (defn- fail! [message data]
   (throw (ex-info message data)))
 
-(defn- digest-file [^Path input]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (with-open [stream (Files/newInputStream input (make-array OpenOption 0))]
-      (let [buffer (byte-array 16384)]
-        (loop [read (.read stream buffer)]
-          (when-not (neg? read)
-            (when (pos? read)
-              (.update digest buffer 0 read))
-            (recur (.read stream buffer))))))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+(def ^:private digest-file util/sha256-file)
 
 (defn- core-destination? [configuration]
   (= "Pkl.Core" (get-in configuration [:package :id])))
@@ -3760,9 +3726,3 @@
                          :validate-configuration! validate-configuration!))
         (assoc-in [:rules :product-runtime-assets :assets]
                   product-runtime-assets))))
-
-(defn emit-project!
-  "Compatibility entry point for the Pkl destination. All project orchestration
-  is delegated to the product-neutral emitter with this Pkl-owned rule bundle."
-  [options]
-  (project-emission/emit-project! (assoc options :rule-bundle (rule-bundle))))

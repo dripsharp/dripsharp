@@ -373,13 +373,6 @@
         (some array-component-reference (.getArguments element))]
     (generic-call destination-context target [component] arguments)))
 
-(defn- result-array-generic-call
-  [destination-context ^CtInvocation element target arguments]
-  (generic-call
-   destination-context target
-   [(array-component-reference element)]
-   arguments))
-
 (defn- record-property-invocation-name
   [services ^CtInvocation invocation resolved]
   (let [reference (.getExecutable invocation)

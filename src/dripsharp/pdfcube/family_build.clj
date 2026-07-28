@@ -7,10 +7,9 @@
             [dripsharp.compiler :as compiler]
             [dripsharp.dotnet-surface :as dotnet-surface]
             [dripsharp.paths :as paths]
-            [dripsharp.pdfcube.java-project :as pdfcube])
-  (:import [java.nio.charset StandardCharsets]
-           [java.nio.file FileVisitOption Files OpenOption Path]
-           [java.security MessageDigest]))
+            [dripsharp.pdfcube.java-project :as pdfcube]
+            [dripsharp.util :as util])
+  (:import [java.nio.file FileVisitOption Files Path]))
 
 (def ^:private zero-model-counters
   [:shadow-symbols :unresolved-symbols :ambiguous-symbols :fallback-symbols])
@@ -65,13 +64,7 @@
        (sort-by str)
        vec))
 
-(defn- portable-path
-  [^Path root ^Path input]
-  (let [input (.normalize input)]
-    (-> (if (.startsWith input root)
-          (str (.relativize root input))
-          (str input))
-        (str/replace "\\" "/"))))
+(def ^:private portable-path util/portable-or-absolute-path)
 
 (defn- family-contract
   []
@@ -582,17 +575,7 @@
       :compiled-members (get-in compiled-surface [:totals :members])
       :public-stubs (reduce + (map :public-stubs projects))}}))
 
-(defn- sha256-file
-  [^Path file]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (with-open [input (Files/newInputStream file (make-array OpenOption 0))]
-      (let [buffer (byte-array 16384)]
-        (loop [read (.read input buffer)]
-          (when-not (neg? read)
-            (when (pos? read)
-              (.update digest buffer 0 read))
-            (recur (.read input buffer))))))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+(def ^:private sha256-file util/sha256-file)
 
 (defn- generated-output?
   [^Path target ^Path file]
@@ -618,11 +601,10 @@
 
 (defn- snapshot-sha256
   [snapshot]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (doseq [[path hash] snapshot]
-      (.update digest (.getBytes (str path "\t" hash "\n")
-                                 StandardCharsets/UTF_8)))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+  (util/sha256-text
+   (apply str
+          (for [[path hash] snapshot]
+            (str path "\t" hash "\n")))))
 
 (defn assert-deterministic!
   "Fails with an exact added/removed/changed file report when two clean

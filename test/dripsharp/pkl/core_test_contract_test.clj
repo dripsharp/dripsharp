@@ -1,8 +1,8 @@
-(ns dripsharp.pkl-core-test-contract-test
+(ns dripsharp.pkl.core-test-contract-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.paths :as paths]
-            [dripsharp.pkl-core-test-contract :as contract])
+            [dripsharp.pkl.core-test-contract :as contract])
   (:import [clojure.lang ExceptionInfo]))
 
 (def ^:private manifest

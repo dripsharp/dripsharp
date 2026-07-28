@@ -15,7 +15,8 @@
              :as pdfbox-interchange]
             [dripsharp.pdfcube.preflight-differential :as preflight]
             [dripsharp.pdfcube.xmpbox-metadata-differential :as xmpbox]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio.file Files OpenOption Path StandardCopyOption
             StandardOpenOption]
            [java.nio.file.attribute FileAttribute]))
@@ -89,12 +90,7 @@
    (ex-info message
             (assoc data :kind :pdfcube-family-workflows-failed))))
 
-(defn- write-text!
-  [^Path file value]
-  (Files/createDirectories (.getParent file)
-                           (make-array FileAttribute 0))
-  (Files/writeString file value (make-array OpenOption 0))
-  file)
+(def ^:private write-text! util/write-text!)
 
 (defn workflow-coverage
   "Requires the family slices to cover every selected cross-package workflow

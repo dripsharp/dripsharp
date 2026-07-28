@@ -4,8 +4,9 @@
             [clojure.test :refer [deftest is testing]]
             [dripsharp.complete-core-closure-fixture :as fixture]
             [dripsharp.concurrency :as concurrency]
-            [dripsharp.pkl.java-project :as java-project]
-            [dripsharp.paths :as paths])
+            [dripsharp.java-project :as project-emission]
+            [dripsharp.paths :as paths]
+            [dripsharp.pkl.java-project :as pkl-project])
   (:import [java.nio.file FileVisitOption Files Path]
            [java.nio.file.attribute FileAttribute]))
 
@@ -64,13 +65,14 @@
   (let [{:keys [root discovery]} (fixture/models)]
     (concurrency/call-with-executor
      {:worker-count worker-count}
-     #(java-project/emit-project!
+     #(project-emission/emit-project!
        {:workspace-root root
         :target target
         :project-input discovery
         :resolved-model resolved-model
+        :rule-bundle (pkl-project/rule-bundle)
         :configuration
-        (java-project/read-configuration
+        (project-emission/read-configuration
          root "config/pkl-core-value-model-destination.edn")}))))
 
 (deftest complete-core-value-model-emission-is-zero-failure-and-stable

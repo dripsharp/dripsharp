@@ -1,6 +1,6 @@
-(ns dripsharp.language-snippet-runner-test
+(ns dripsharp.pkl.language-snippet-runner-test
   (:require [clojure.test :refer [deftest is testing]]
-            [dripsharp.language-snippet-runner :as runner])
+            [dripsharp.pkl.language-snippet-runner :as runner])
   (:import [clojure.lang ExceptionInfo]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path]

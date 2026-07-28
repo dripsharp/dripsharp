@@ -6,10 +6,10 @@
             [dripsharp.dotnet-surface :as dotnet-surface]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file FileVisitOption Files Path]
-           [java.security MessageDigest]
            [java.util Base64]))
 
 (def ^:private observation-header "DRIPSHARP_RAWHTTP_OBSERVATIONS_V1")
@@ -27,13 +27,7 @@
   (process/run! (assoc options :timeout-ms (or (:timeout-ms options)
                                                command-timeout-ms))))
 
-(defn- hex [bytes]
-  (apply str (map #(format "%02x" (bit-and 0xff %)) bytes)))
-
-(defn- sha256 [^Path file]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (.update digest (Files/readAllBytes file))
-    (hex (.digest digest))))
+(def ^:private sha256 util/sha256-file)
 
 (defn- decode-base64! [value context]
   (try

@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.harness :as harness]
+            [dripsharp.java-project :as project-emission]
             [dripsharp.paths :as paths]
             [dripsharp.pkl.java-project :as pkl-project])
   (:import [java.nio.charset StandardCharsets]
@@ -41,7 +42,7 @@
   (let [workspace (paths/workspace-root)
         profile (harness/read-profile workspace "pkl-core-value-model")
         destination
-        (pkl-project/read-configuration
+        (project-emission/read-configuration
          workspace "config/pkl-core-value-model-destination.edn")
         bundle (pkl-project/rule-bundle)
         validate-profile! (get-in bundle [:orchestration :validate-profile!])
@@ -99,7 +100,7 @@
   (let [workspace (paths/workspace-root)
         profile (harness/read-profile workspace "pkl-core-value-model")
         destination
-        (pkl-project/read-configuration
+        (project-emission/read-configuration
          workspace "config/pkl-core-value-model-destination.edn")
         root (temp-directory)
         _ (copy-legal-inputs! workspace root)

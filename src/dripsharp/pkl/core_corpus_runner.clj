@@ -1,16 +1,17 @@
-(ns dripsharp.pkl-core-corpus-runner
+(ns dripsharp.pkl.core-corpus-runner
   "Deterministic row-level execution of the complete non-language Pkl.Core
   contract through the pinned JVM and an isolated NuGet consumer."
   (:require [clojure.string :as str]
             [dripsharp.harness :as harness]
-            [dripsharp.language-snippet-runner :as package-provenance]
+            [dripsharp.package-provenance :as package-provenance]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.pkl-core-test-contract :as contract]
-            [dripsharp.process :as process])
+            [dripsharp.pkl.core-test-contract :as contract]
+            [dripsharp.pkl.language-snippet-runner :as language-runner]
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file Files LinkOption OpenOption Path StandardCopyOption]
-           [java.nio.file.attribute FileAttribute]
+           [java.nio.file Files LinkOption Path StandardCopyOption]
            [java.util Base64]))
 
 (def ^:private result-magic "DRIPSHARP_PKL_CORE_CORPUS_RESULTS_V1")
@@ -209,11 +210,7 @@
   (throw (ex-info message (assoc data :kind (or (:kind data)
                                                 :pkl-core-corpus-runner-failed)))))
 
-(defn- write-text!
-  [^Path output value]
-  (Files/createDirectories (.getParent output) (make-array FileAttribute 0))
-  (Files/writeString output value StandardCharsets/UTF_8 (make-array OpenOption 0))
-  output)
+(def ^:private write-text! util/write-text!)
 
 (defn- b64
   [value]
@@ -706,7 +703,7 @@
 (defn- verify-package-source-isolation!
   [^Path consumer-root ^Path project ^Path source]
   (let [base (try
-               (package-provenance/verify-source-isolation!
+               (language-runner/verify-source-isolation!
                 consumer-root project source)
                (catch clojure.lang.ExceptionInfo error
                  (fail! "Package Pkl.Core corpus consumer crosses the shared package isolation boundary"

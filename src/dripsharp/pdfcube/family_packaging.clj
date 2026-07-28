@@ -5,10 +5,10 @@
             [clojure.string :as str]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio ByteBuffer ByteOrder]
-           [java.nio.file Files OpenOption Path]
-           [java.security MessageDigest]
+           [java.nio.file Files Path]
            [java.util.zip ZipFile]))
 
 (def ^:private source-revision
@@ -174,18 +174,7 @@
    (ex-info message
             (assoc data :kind :pdfcube-family-packaging-failed))))
 
-(defn- sha256-file
-  [^Path file]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (with-open [input (Files/newInputStream
-                       file (make-array OpenOption 0))]
-      (let [buffer (byte-array 16384)]
-        (loop [read (.read input buffer)]
-          (when-not (neg? read)
-            (when (pos? read)
-              (.update digest buffer 0 read))
-            (recur (.read input buffer))))))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+(def ^:private sha256-file util/sha256-file)
 
 (defn- regular-files
   [^Path directory]

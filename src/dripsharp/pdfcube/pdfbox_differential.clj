@@ -2,7 +2,6 @@
   "Aggregate package-only proof for PdfCube.PdfBox and its translated
   PdfCube.IO and PdfCube.FontBox dependency closure."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
             [dripsharp.packaging :as packaging]
@@ -23,7 +22,8 @@
              :as rendering]
             [dripsharp.pdfcube.pdfbox-security-differential
              :as security]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
            [java.nio.file.attribute FileAttribute]))
 
@@ -159,10 +159,7 @@
    (ex-info message
             (assoc data :kind :pdfcube-pdfbox-differential-failed))))
 
-(defn- write-text! [^Path file value]
-  (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
-  (Files/writeString file value (make-array OpenOption 0))
-  file)
+(def ^:private write-text! util/write-text!)
 
 (defn workflow-coverage
   "Returns and validates the aggregate package-only workflow coverage."
@@ -277,21 +274,7 @@
                {:oracle (str oracle) :perturbed (str perturbed)}))
       comparison)))
 
-(defn- current-host []
-  (let [os-name (str/lower-case (System/getProperty "os.name" ""))
-        architecture (str/lower-case (System/getProperty "os.arch" ""))
-        os (cond
-             (str/includes? os-name "win") "windows"
-             (str/includes? os-name "mac") "macos"
-             (str/includes? os-name "linux") "linux"
-             :else os-name)
-        architecture (case architecture
-                       "amd64" "x64"
-                       "x86_64" "x64"
-                       "aarch64" "arm64"
-                       "arm64" "arm64"
-                       architecture)]
-    {:os os :architecture architecture}))
+(def ^:private current-host util/current-host)
 
 (defn- run-slice!
   [^Path root package-proof run-command! {:keys [id workflows verify]}]

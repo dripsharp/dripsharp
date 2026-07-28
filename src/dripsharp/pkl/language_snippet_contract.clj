@@ -1,13 +1,13 @@
-(ns dripsharp.language-snippet-contract
+(ns dripsharp.pkl.language-snippet-contract
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file FileSystems FileVisitOption Files LinkOption OpenOption Path]
            [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]
            [java.util Base64]))
 
 (def ^:private manifest-magic "DRIPSHARP_LANGUAGE_SNIPPET_CONTRACT_V1")
@@ -67,10 +67,7 @@
   (throw (ex-info message (assoc data :kind (or (:kind data)
                                                 :invalid-language-snippet-contract)))))
 
-(defn- portable-path
-  [^Path root ^Path path]
-  (-> (str (.relativize root (.normalize path)))
-      (str/replace "\\" "/")))
+(def ^:private portable-path util/portable-path)
 
 (defn- path-under?
   [^Path root ^Path path]
@@ -90,14 +87,7 @@
   (or (Files/isRegularFile path (make-array LinkOption 0))
       (Files/isSymbolicLink path)))
 
-(defn- sha256-bytes
-  [bytes]
-  (let [digest (.digest (MessageDigest/getInstance "SHA-256") bytes)]
-    (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
-
-(defn- sha256-file
-  [^Path file]
-  (sha256-bytes (Files/readAllBytes file)))
+(def ^:private sha256-file util/sha256-file)
 
 (defn- read-text
   [^Path file]

@@ -9,9 +9,8 @@
             [dripsharp.csharp :as csharp]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as project-emission]
-            [dripsharp.paths :as paths])
-  (:import [java.nio.file Files OpenOption Path]
-           [java.security MessageDigest]))
+            [dripsharp.paths :as paths]
+            [dripsharp.util :as util]))
 
 (def ^:private source-revision
   "9286e47d89d6877005c9d2d0f2fd38793a62519a")
@@ -3161,16 +3160,7 @@
             (:public-surface configuration))
     configuration))
 
-(defn- digest-file [^Path input]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (with-open [stream (Files/newInputStream input (make-array OpenOption 0))]
-      (let [buffer (byte-array 16384)]
-        (loop [read (.read stream buffer)]
-          (when-not (neg? read)
-            (when (pos? read)
-              (.update digest buffer 0 read))
-            (recur (.read stream buffer))))))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+(def ^:private digest-file util/sha256-file)
 
 (defn- validate-legal-inputs! [workspace-root configuration]
   (doseq [{:keys [kind source sha256]} (:legal-files configuration)]
@@ -3220,13 +3210,7 @@
             (:project-id project-input))
     project-input))
 
-(defn- xml-escape [value]
-  (-> (str value)
-      (str/replace "&" "&amp;")
-      (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;")
-      (str/replace "\"" "&quot;")
-      (str/replace "'" "&apos;")))
+(def ^:private xml-escape util/xml-escape)
 
 (defn- project-text [configuration resource-artifacts]
   (let [base-text (project-emission/project-text

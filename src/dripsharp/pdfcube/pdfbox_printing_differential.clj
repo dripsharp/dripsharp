@@ -6,10 +6,11 @@
             [dripsharp.harness :as harness]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
-           [java.nio.file Files OpenOption Path StandardCopyOption]
+           [java.nio.file Files Path StandardCopyOption]
            [java.nio.file.attribute FileAttribute]))
 
 (def pinned-revision
@@ -40,11 +41,7 @@
        path
        (paths/resolve-path root path)))))
 
-(defn- write-text! [^Path file value]
-  (Files/createDirectories (.getParent file)
-                           (make-array FileAttribute 0))
-  (Files/writeString file value (make-array OpenOption 0))
-  file)
+(def ^:private write-text! util/write-text!)
 
 (defn trace-summary
   "Validates a normalized printing trace and returns its coverage."
@@ -199,21 +196,7 @@
                    :directory consumer-root
                    :timeout-ms 300000})))
 
-(defn- current-host []
-  (let [os-name (str/lower-case (System/getProperty "os.name" ""))
-        architecture (str/lower-case (System/getProperty "os.arch" ""))
-        os (cond
-             (str/includes? os-name "win") "windows"
-             (str/includes? os-name "mac") "macos"
-             (str/includes? os-name "linux") "linux"
-             :else os-name)
-        architecture (case architecture
-                       "amd64" "x64"
-                       "x86_64" "x64"
-                       "aarch64" "arm64"
-                       "arm64" "arm64"
-                       architecture)]
-    {:os os :architecture architecture}))
+(def ^:private current-host util/current-host)
 
 (defn verify!
   "Runs clean deterministic packaging, independent package consumption, and

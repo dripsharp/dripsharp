@@ -6,11 +6,11 @@
             [dripsharp.harness :as harness]
             [dripsharp.java-project :as java-project]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.io ByteArrayInputStream]
            [java.nio.charset StandardCharsets]
            [java.nio.file FileVisitOption Files Path StandardCopyOption]
-           [java.security MessageDigest]
            [java.util.zip ZipEntry ZipFile ZipOutputStream]
            [javax.xml.parsers DocumentBuilderFactory]
            [org.w3c.dom Element Node]))
@@ -18,19 +18,9 @@
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind :package-consumption-failed))))
 
-(defn- xml-escape [value]
-  (-> (str value)
-      (str/replace "&" "&amp;")
-      (str/replace "<" "&lt;")
-      (str/replace ">" "&gt;")
-      (str/replace "\"" "&quot;")
-      (str/replace "'" "&apos;")))
+(def ^:private xml-escape util/xml-escape)
 
-(defn- write-text! [^Path file value]
-  (Files/createDirectories (.getParent file)
-                           (make-array java.nio.file.attribute.FileAttribute 0))
-  (Files/writeString file value (make-array java.nio.file.OpenOption 0))
-  file)
+(def ^:private write-text! util/write-text!)
 
 (defn- regular-files [^Path directory]
   (if-not (paths/directory? directory)
@@ -86,23 +76,7 @@
     (with-open [input (.getInputStream archive entry)]
       (String. (.readAllBytes input) StandardCharsets/UTF_8))))
 
-(defn- hex [bytes]
-  (apply str (map #(format "%02x" (bit-and 0xff %)) bytes)))
-
-(defn- sha256-input [input]
-  (let [digest (MessageDigest/getInstance "SHA-256")
-        buffer (byte-array 8192)]
-    (loop []
-      (let [read (.read input buffer)]
-        (when (pos? read)
-          (.update digest buffer 0 read)
-          (recur))))
-    (hex (.digest digest))))
-
-(defn- sha256 [^Path file]
-  (with-open [input (Files/newInputStream
-                     file (make-array java.nio.file.OpenOption 0))]
-    (sha256-input input)))
+(def ^:private sha256 util/sha256-file)
 
 (defn- verify-packaged-assembly!
   [artifact assembly-entry ^Path verified-assembly]
@@ -117,7 +91,7 @@
                {:artifact (str artifact) :assembly-entry assembly-entry}))
       (let [expected (sha256 verified-assembly)
             actual (with-open [input (.getInputStream archive entry)]
-                     (sha256-input input))]
+                     (util/digest-input "SHA-256" input))]
         (when-not (= expected actual)
           (fail! "Packaged assembly does not match the verified clean-build artifact"
                  {:artifact (str artifact) :assembly-entry assembly-entry
@@ -563,10 +537,7 @@
    (inspect-relationships! (zip-text archive "_rels/.rels") nuspec-name)
    (inspect-core-properties! (zip-text archive canonical-core-properties) package)))
 
-(defn- sha256-bytes [bytes]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (.update digest bytes)
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+(def ^:private sha256-bytes util/sha256-bytes)
 
 (defn- inspect-symbol-nuspec!
   [nuspec package target-framework expected-dependencies]
@@ -716,7 +687,7 @@
           (fail! "NuGet symbol package does not contain a portable PDB"
                  {:pdb-entry pdb-entry :magic
                   (when bytes
-                    (hex (take (min 4 (alength ^bytes bytes)) bytes)))}))
+                    (util/hex (take (min 4 (alength ^bytes bytes)) bytes)))}))
         (inspect-opc-envelope!
          archive nuspec-name
          package

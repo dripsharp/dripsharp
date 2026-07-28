@@ -2,10 +2,10 @@
   (:require [clojure.string :as str]
             [dripsharp.paths :as paths]
             [dripsharp.project-input :as project-input]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [clojure.lang ExceptionInfo]
-           [java.nio.file Files Path]
-           [java.security MessageDigest]))
+           [java.nio.file Files Path]))
 
 (def ^:private manifest-versions
   {"DRIPSHARP_GRADLE_INPUTS_V3" 3
@@ -118,19 +118,7 @@
                :record-kind kind
                :value value})))))
 
-(defn- sha256
-  [^Path input]
-  (let [digest (MessageDigest/getInstance "SHA-256")]
-    (with-open [stream (Files/newInputStream
-                        input
-                        (make-array java.nio.file.OpenOption 0))]
-      (let [buffer (byte-array 8192)]
-        (loop [read (.read stream buffer)]
-          (when-not (neg? read)
-            (when (pos? read)
-              (.update digest buffer 0 read))
-            (recur (.read stream buffer))))))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+(def ^:private sha256 util/sha256-file)
 
 (defn- validate-gradle-project!
   [gradle-project]
@@ -150,9 +138,7 @@
        path
        (paths/resolve-path project-root path)))))
 
-(defn- windows?
-  []
-  (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "windows"))
+(def ^:private windows? util/windows?)
 
 (defn- resolve-gradle-wrapper
   "Resolves the Gradle wrapper launcher for the host platform. The wrapper ships

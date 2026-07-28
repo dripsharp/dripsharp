@@ -10,7 +10,8 @@
             [clojure.string :as str]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
-            [dripsharp.project-input :as project-input])
+            [dripsharp.project-input :as project-input]
+            [dripsharp.util :as util])
   (:import [clojure.lang ExceptionInfo]
            [java.io BufferedInputStream File FileOutputStream]
            [java.net URI]
@@ -45,22 +46,8 @@
   [message data]
   (throw (ex-info message data)))
 
-(defn- digest-file
-  [algorithm ^Path input]
-  (let [digest (MessageDigest/getInstance algorithm)]
-    (with-open [stream (Files/newInputStream
-                        input
-                        (make-array OpenOption 0))]
-      (let [buffer (byte-array 16384)]
-        (loop [read (.read stream buffer)]
-          (when-not (neg? read)
-            (when (pos? read)
-              (.update digest buffer 0 read))
-            (recur (.read stream buffer))))))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
-
-(defn- sha256 [^Path input] (digest-file "SHA-256" input))
-(defn- sha512 [^Path input] (digest-file "SHA-512" input))
+(def ^:private sha256 util/sha256-file)
+(def ^:private sha512 util/sha512-file)
 
 (defn- cache-root
   []
@@ -163,11 +150,7 @@
           (recur (.getNextEntry input))))))
   destination)
 
-(defn- windows?
-  []
-  (str/starts-with?
-   (str/lower-case (System/getProperty "os.name" ""))
-   "windows"))
+(def ^:private windows? util/windows?)
 
 (defn- maven-launcher
   [^Path maven-home]
@@ -249,7 +232,7 @@
               (recur (.read stream buffer)))))))
     (.update digest (.getBytes maven-version
                                java.nio.charset.StandardCharsets/UTF_8))
-    (apply str (map #(format "%02x" (bit-and 0xff %)) (.digest digest)))))
+    (util/hex (.digest digest))))
 
 (defn- java-tool
   [tool]

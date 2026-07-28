@@ -3,8 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [dripsharp.java-project :as java-project]
             [dripsharp.packaging :as packaging]
-            [dripsharp.paths :as paths]
-            [dripsharp.pkl.java-project :as pkl-project])
+            [dripsharp.paths :as paths])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path Paths StandardCopyOption]
            [java.nio.file.attribute FileAttribute]
@@ -499,7 +498,7 @@
 (deftest pkl-core-package-inspection-requires-pinned-license-and-notice
   (let [workspace (paths/workspace-root)
         destination
-        (pkl-project/read-configuration
+        (java-project/read-configuration
          workspace "config/pkl-core-value-model-destination.edn")
         package
         (assoc (:package destination)

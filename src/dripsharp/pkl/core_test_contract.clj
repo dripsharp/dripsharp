@@ -1,13 +1,13 @@
-(ns dripsharp.pkl-core-test-contract
+(ns dripsharp.pkl.core-test-contract
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file FileVisitOption Files LinkOption OpenOption Path]
            [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]
            [java.util Base64]))
 
 (def ^:private manifest-magic "DRIPSHARP_PKL_CORE_TEST_CONTRACT_V1")
@@ -120,10 +120,7 @@
   (throw (ex-info message (assoc data :kind (or (:kind data)
                                                 :invalid-pkl-core-test-contract)))))
 
-(defn- portable-path
-  [^Path root ^Path path]
-  (-> (str (.relativize root (.normalize path)))
-      (str/replace "\\" "/")))
+(def ^:private portable-path util/portable-path)
 
 (defn- walk-paths
   [^Path root predicate]
@@ -134,14 +131,7 @@
          (sort-by #(portable-path root %))
          vec)))
 
-(defn- sha256-bytes
-  [bytes]
-  (let [digest (.digest (MessageDigest/getInstance "SHA-256") bytes)]
-    (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
-
-(defn- sha256-file
-  [^Path file]
-  (sha256-bytes (Files/readAllBytes file)))
+(def ^:private sha256-file util/sha256-file)
 
 (defn- command-output
   [request]
@@ -626,7 +616,7 @@
                   outcome (outcome-contract declaration raw)
                   unique-id (:unique-id raw)]
               (merge
-               {:case-id (str "pkl-core-junit/" (sha256-bytes
+               {:case-id (str "pkl-core-junit/" (util/sha256-bytes
                                                  (.getBytes unique-id
                                                             StandardCharsets/UTF_8)))
                 :junit-unique-id unique-id
@@ -885,8 +875,9 @@
                  {:kind :missing-pkl-core-source :case (:case-id case-data)}))
         (when-not (= (:case-id case-data)
                      (str "pkl-core-junit/"
-                          (sha256-bytes (.getBytes (:junit-unique-id case-data)
-                                                   StandardCharsets/UTF_8))))
+                          (util/sha256-bytes
+                           (.getBytes (:junit-unique-id case-data)
+                                      StandardCharsets/UTF_8))))
           (fail! "A Pkl.Core case ID is not derived from its JUnit identifier"
                  {:kind :unstable-pkl-core-case-id :case (:case-id case-data)}))
         (when-not (case-kinds (:case-kind case-data))

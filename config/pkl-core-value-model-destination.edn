@@ -37,7 +37,7 @@
  :namespaces {"org.pkl.core" "Pkl.Core"}
  :namespace-prefixes {"org.pkl.core" "Pkl.Core"}
  :destination-capabilities #{:java-compat :java-regex-unicode}
- :public-surface {:strategy dripsharp.public-api-contract/strategy
+ :public-surface {:strategy dripsharp.pkl.public-api-contract/strategy
                   :source-module "pkl-core"}
  :package-consumer {:strategy :source-file
                     :project-file "Pkl.Core.PackageConsumer.csproj"

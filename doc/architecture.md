@@ -32,7 +32,7 @@ flowchart TD
   CLI -->|verify| Verify["compiler/verify-clean-build!"]
   CLI -->|pack| Pack["packaging/pack-verified-profile!"]
   CLI -->|package| Consume["packaging/verify-package-consumption!"]
-  CLI -->|differential| PklDifferential["differential/verify-differential!"]
+  CLI -->|differential| PklDifferential["pkl.differential/verify-differential!"]
   CLI -->|pdfcube-io-differential| PdfCubeIoDifferential["pdfcube.io-differential/verify!"]
 
   Verify -->|regenerates| Generate
@@ -70,7 +70,7 @@ This composition is implemented by
 [`dripsharp.main`](../src/dripsharp/main.clj),
 [`dripsharp.compiler`](../src/dripsharp/compiler.clj),
 [`dripsharp.packaging`](../src/dripsharp/packaging.clj), and
-[`dripsharp.differential`](../src/dripsharp/differential.clj). The current
+[`dripsharp.pkl.differential`](../src/dripsharp/pkl/differential.clj). The current
 PdfCube.IO proof is implemented by
 [`dripsharp.pdfcube.io-differential`](../src/dripsharp/pdfcube/io_differential.clj).
 

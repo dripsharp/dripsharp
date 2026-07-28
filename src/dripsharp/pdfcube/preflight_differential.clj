@@ -7,7 +7,8 @@
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
             [dripsharp.pdfcube.preflight-corpus :as preflight-corpus]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption
@@ -102,21 +103,7 @@
    (assoc options
           :pack-fn preflight-corpus/pack-verified-profile!)))
 
-(defn- current-host []
-  (let [os-name (str/lower-case (System/getProperty "os.name" ""))
-        architecture (str/lower-case (System/getProperty "os.arch" ""))
-        os (cond
-             (str/includes? os-name "win") "windows"
-             (str/includes? os-name "mac") "macos"
-             (str/includes? os-name "linux") "linux"
-             :else os-name)
-        architecture (case architecture
-                       "amd64" "x64"
-                       "x86_64" "x64"
-                       "aarch64" "arm64"
-                       "arm64" "arm64"
-                       architecture)]
-    {:os os :architecture architecture}))
+(def ^:private current-host util/current-host)
 
 (defn validate-package-contract!
   "Requires the exact primary package identity, translated/runtime dependency

@@ -3,11 +3,11 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
   (:import [java.nio.charset MalformedInputException StandardCharsets]
            [java.nio.file Files OpenOption Path]
-           [java.nio.file.attribute FileAttribute]
-           [java.security MessageDigest]))
+           [java.nio.file.attribute FileAttribute]))
 
 (def surface-columns
   ["assembly" "owner" "kind" "name" "parameter-count" "visibility"
@@ -131,10 +131,8 @@
   "Returns SHA-256 over the exact normalized reflection rows."
   [rows]
   (let [text (str/join "\n" (map #(str/join "\t" (surface-identity %))
-                                 (sort-by surface-identity rows)))
-        digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes text StandardCharsets/UTF_8))]
-    (apply str (map #(format "%02x" (bit-and 0xff (int %))) digest))))
+                                 (sort-by surface-identity rows)))]
+    (util/sha256-text text)))
 
 (defn- compiled-surface-evidence
   [rows contract-members]
