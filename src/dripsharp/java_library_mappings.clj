@@ -2272,6 +2272,10 @@
    "global::DripSharp.Runtime.JavaRoundingMode.Up"
    "field:java.nio.charset.CodingErrorAction#REPORT"
    "global::DripSharp.Runtime.JavaCodingErrorAction.Report"
+   "field:java.nio.charset.StandardCharsets#ISO_8859_1"
+   "global::DripSharp.Runtime.JavaStandardCharsets.ISO88591"
+   "field:java.nio.charset.StandardCharsets#US_ASCII"
+   "global::DripSharp.Runtime.JavaStandardCharsets.USASCII"
    "field:java.nio.charset.StandardCharsets#UTF_16"
    "global::DripSharp.Runtime.JavaStandardCharsets.UTF16"
    "field:java.nio.charset.StandardCharsets#UTF_16BE"
@@ -2369,6 +2373,16 @@
   {"field:java.nio.file.LinkOption#NOFOLLOW_LINKS"
    #{:opaque-option-token :usage-dependent-approximation}})
 
+(def field-metadata-overrides
+  {"field:java.nio.charset.StandardCharsets#ISO_8859_1"
+   {:introduced-by :pdfcube
+    :evidence #{:differential/pdfcube-fontbox
+                :test/pdfcube-standard-charsets}}
+   "field:java.nio.charset.StandardCharsets#US_ASCII"
+   {:introduced-by :pdfcube
+    :evidence #{:differential/pdfcube-fontbox
+                :test/pdfcube-standard-charsets}}})
+
 (def neutral-field-destinations
   {"field:java.net.http.HttpClient$Version#HTTP_2" "HTTP_2"
    "field:java.nio.channels.FileChannel$MapMode#READ_ONLY" "READ_ONLY"
@@ -2397,7 +2411,9 @@
   (vec
    (concat
     (for [[key destination] (sort-by key field-constant-destinations)]
-      (constant (field-id key) key destination (get field-caveats key #{})))
+      (merge
+       (constant (field-id key) key destination (get field-caveats key #{}))
+       (get field-metadata-overrides key)))
     [(custom
       :java.io.byte-array-output-stream/buffer
       "field:java.io.ByteArrayOutputStream#buf"

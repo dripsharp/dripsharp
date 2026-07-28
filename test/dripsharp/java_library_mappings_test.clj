@@ -84,10 +84,10 @@
          registry
          "field:java.io.ByteArrayOutputStream#buf")]
     (is (mapping-registry/compiled-registry? registry))
-    (is (= 1652 (count library-mappings/entries)))
+    (is (= 1654 (count library-mappings/entries)))
     (is (= 1316 (count library-mappings/executable-keys)))
     (is (= 185 (count library-mappings/constructor-keys)))
-    (is (= 151 (count library-mappings/field-entries)))
+    (is (= 153 (count library-mappings/field-entries)))
     (is (= :compat-call (:strategy list-size)))
     (is (= :custom-handler (:strategy stream-collect)))
     (is (= :java-library.mapping/stream-collect (:handler stream-collect)))
@@ -131,12 +131,38 @@
                csharp/render
                :text)))))
 
+(deftest pdfcube-standard-charsets-have-focused-declarative-evidence
+  (let [registry (library-mappings/compile-registry custom-handlers)
+        expected
+        {"field:java.nio.charset.StandardCharsets#US_ASCII"
+         "global::DripSharp.Runtime.JavaStandardCharsets.USASCII"
+         "field:java.nio.charset.StandardCharsets#ISO_8859_1"
+         "global::DripSharp.Runtime.JavaStandardCharsets.ISO88591"}]
+    (doseq [[resolved-key destination] expected]
+      (let [entry (mapping-registry/registry-entry registry resolved-key)]
+        (is (= {:strategy :template
+                :introduced-by :pdfcube
+                :evidence #{:differential/pdfcube-fontbox
+                            :test/pdfcube-standard-charsets}}
+               (select-keys entry [:strategy :introduced-by :evidence])))
+        (is (= destination
+               (-> (mapping-registry/interpret registry resolved-key {})
+                   :node
+                   csharp/render
+                   :text)))))))
+
 (deftest every-shared-member-entry-carries-reportable-metadata
   (is (= (count library-mappings/entries)
          (count (set (map :id library-mappings/entries)))))
   (is (= (count library-mappings/entries)
          (count (set (map :key library-mappings/entries)))))
-  (is (every? #(= :rawhttp (:introduced-by %))
-              library-mappings/entries))
+  (is (= #{:rawhttp :pdfcube}
+         (set (map :introduced-by library-mappings/entries))))
+  (is (= #{"field:java.nio.charset.StandardCharsets#US_ASCII"
+           "field:java.nio.charset.StandardCharsets#ISO_8859_1"}
+         (->> library-mappings/entries
+              (filter #(= :pdfcube (:introduced-by %)))
+              (map :key)
+              set)))
   (is (every? set? (map :caveats library-mappings/entries)))
   (is (every? seq (map :evidence library-mappings/entries))))

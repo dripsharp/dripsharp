@@ -733,6 +733,59 @@
               "global::PdfCube.IO.RandomAccessRead value)")))
     (is (not (str/includes? source "org.apache.pdfbox.io")))))
 
+(deftest fontbox-standard-charset-fields-have-complete-batch-mappings
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-fontbox")
+        fixture
+        (model!
+         "org/apache/fontbox/StandardCharsetFixture.java"
+         (str "package org.apache.fontbox; "
+              "import java.nio.charset.StandardCharsets; "
+              "public final class StandardCharsetFixture { "
+              "public static byte[] ascii(String value) { "
+              "return value.getBytes(StandardCharsets.US_ASCII); "
+              "} "
+              "public static String latin1(byte[] value) { "
+              "return new String(value, StandardCharsets.ISO_8859_1); "
+              "} }"))
+        emission (emit! fixture destination)
+        mapping-report (:mapping-report emission)
+        charset-mappings
+        (->> (:used-mappings mapping-report)
+             (filter #(str/starts-with?
+                       (:resolved-key %)
+                       "field:java.nio.charset.StandardCharsets#"))
+             (map (juxt :resolved-key identity))
+             (into {}))
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               "src/PdfCube/FontBox/StandardCharsetFixture.cs")))]
+    (is (= :pdfcube (:target mapping-report)))
+    (is (zero? (get-in mapping-report [:summary :unmapped-occurrences])))
+    (is (empty? (:unmapped-symbols mapping-report)))
+    (is (= #{"field:java.nio.charset.StandardCharsets#US_ASCII"
+             "field:java.nio.charset.StandardCharsets#ISO_8859_1"}
+           (set (keys charset-mappings))))
+    (is (every?
+         #(= {:registry :java-members
+              :strategy :template
+              :introduced-by :pdfcube
+              :evidence [:differential/pdfcube-fontbox
+                         :test/pdfcube-standard-charsets]
+              :occurrences 1}
+             (select-keys %
+                          [:registry :strategy :introduced-by
+                           :evidence :occurrences]))
+         (vals charset-mappings)))
+    (is (str/includes?
+         source
+         "global::PdfCube.FB.Runtime.JavaStandardCharsets.USASCII"))
+    (is (str/includes?
+         source
+         "global::PdfCube.FB.Runtime.JavaStandardCharsets.ISO88591"))))
+
 (deftest fontbox-discovery-uses-the-internal-platform-adapter
   (let [{destination :destination}
         (read-profile-and-destination "pdfcube-fontbox")
