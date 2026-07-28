@@ -21,7 +21,8 @@ internal static class Program
         }
     }
 
-    private static readonly List<string> Observations = [];
+    private static readonly List<string> Observations =
+        ["DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1"];
 
     private static void Main(string[] args)
     {
@@ -41,7 +42,7 @@ internal static class Program
             ValidateHost(args[2], args[3]);
 
         Console.WriteLine(
-            $"PdfCube.IO package differential passed: {Observations.Count} observations.");
+            $"PdfCube.IO package differential passed: {Observations.Count - 1} observations.");
     }
 
     private static void ObserveBuffersSeekViewsAndEof()

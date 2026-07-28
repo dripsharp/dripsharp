@@ -44,6 +44,10 @@ public final class PdfCubeIoUpstreamOracle {
 
   private static final List<String> observations = new ArrayList<String>();
 
+  static {
+    observations.add("DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1");
+  }
+
   private PdfCubeIoUpstreamOracle() {}
 
   public static void main(String[] args) throws Exception {
@@ -58,7 +62,9 @@ public final class PdfCubeIoUpstreamOracle {
 
     Files.write(new File(args[0]).toPath(), observations, StandardCharsets.UTF_8);
     System.out.println(
-        "Pinned reviewed PDFBox baseline IO oracle passed: " + observations.size() + " observations.");
+        "Pinned reviewed PDFBox baseline IO oracle passed: "
+            + (observations.size() - 1)
+            + " observations.");
   }
 
   private static void observeBuffersSeekViewsAndEof() throws Exception {

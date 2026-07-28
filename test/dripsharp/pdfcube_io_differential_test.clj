@@ -8,7 +8,10 @@
 (defn- trace-file [contents]
   (let [file (Files/createTempFile "pdfcube-io-trace-" ".tsv"
                                    (make-array FileAttribute 0))]
-    (Files/writeString file contents (make-array OpenOption 0))
+    (Files/writeString
+     file
+     (str "DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1\n" contents)
+     (make-array OpenOption 0))
     file))
 
 (deftest canonical-trace-covers-the-complete-selected-behavior-contract

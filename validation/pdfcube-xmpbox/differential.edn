@@ -1,0 +1,63 @@
+{:schema-version 1
+ :id :pdfcube-xmpbox-metadata
+ :target :pdfcube
+ :baseline-profile :xmpbox
+ :failure-kind :pdfcube-xmpbox-metadata-differential-failed
+ :observation
+ {:schema-version 1
+  :header "DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1"
+  :columns [:family :id :value]
+  :required-families
+  ["array" "date" "extension" "fixture" "invalid" "lang-alt" "lifetime"
+   "namespace" "parser" "parser-failure" "registry" "round-trip" "security"
+   "serialization" "simple" "strict-lenient" "structured"]
+  :expected-count 57}
+ :runner
+ {:profile "pdfcube-xmpbox"
+  :output-directory "pdfcube-xmpbox-metadata-differential"
+  :context
+  {:resources "research/pdfbox/xmpbox/src/test/resources"}
+  :required-files []
+  :required-directories [:resources]
+  :canonical nil
+  :oracle
+  {:source "validation/pdfcube-xmpbox/XmpBoxMetadataUpstreamOracle.java"
+   :main-class "XmpBoxMetadataUpstreamOracle"
+   :arguments [:oracle :resources]
+   :include-resource-roots? false
+   :compile-timeout-ms 300000
+   :run-timeout-ms 120000}
+  :probe
+  {:source "validation/pdfcube-xmpbox/PdfCube.XmpBox.MetadataProbe.cs"
+   :arguments [:packaged :resources]
+   :build-timeout-ms 300000
+   :run-timeout-ms 120000}
+  :supported-hosts
+  [{:os "windows" :architecture "x64" :runner "windows-2025"}
+   {:os "windows" :architecture "arm64" :runner "windows-11-arm"}
+   {:os "linux" :architecture "x64" :runner "ubuntu-24.04"}
+   {:os "linux" :architecture "arm64" :runner "ubuntu-24.04-arm"}
+   {:os "macos" :architecture "x64" :runner "macos-15-intel"}
+   {:os "macos" :architecture "arm64" :runner "macos-15"}]}
+ :package-contract
+ {:target-framework "net10.0"
+  :assembly-name "PdfCube.XmpBox"
+  :assembly-dependencies []
+  :dependencies
+  [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]
+  :legal-sets [:upstream]
+  :resource-count 0
+  :clean-builds 2}
+ :summary
+ {:fixtures
+  ["org/apache/xmpbox/parser/AltBagSeqTest.xml"
+   "org/apache/xmpbox/parser/ThumbisartorStyle.xml"
+   "org/apache/xmpbox/parser/structured_recursive.xml"
+   "org/apache/xmpbox/parser/empty_list.xml"
+   "org/apache/xmpbox/xml/PDFBOX-3882-dematbox.xml"
+   "validxmp/attr_as_props.xml"
+   "validxmp/only_space_fields.xmp"
+   "validxmp/override_ns.rdf"
+   "validxmp/PDFBOX-6099.xmp"
+   "undefinedxmp/prism.xmp"
+   "invalidxmp/*.xml"]}}

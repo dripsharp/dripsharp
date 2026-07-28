@@ -18,7 +18,8 @@ using RuntimeInformation = System.Runtime.InteropServices.RuntimeInformation;
 
 internal static class Program
 {
-    private static readonly List<string> Observations = [];
+    private static readonly List<string> Observations =
+        ["DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1"];
 
     private static void Main(string[] args)
     {
@@ -65,7 +66,7 @@ internal static class Program
             ValidateHost(args[3], args[4]);
         Console.WriteLine(
             "PdfCube.XmpBox package differential passed: " +
-            Observations.Count.ToString(CultureInfo.InvariantCulture) +
+            (Observations.Count - 1).ToString(CultureInfo.InvariantCulture) +
             " observations.");
     }
 

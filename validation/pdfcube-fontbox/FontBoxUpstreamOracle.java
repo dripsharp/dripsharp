@@ -62,6 +62,10 @@ public final class FontBoxUpstreamOracle {
 
   private static final List<String> observations = new ArrayList<String>();
 
+  static {
+    observations.add("DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1");
+  }
+
   private FontBoxUpstreamOracle() {}
 
   public static void main(String[] args) throws Exception {
@@ -90,7 +94,7 @@ public final class FontBoxUpstreamOracle {
     Files.write(new File(args[0]).toPath(), observations, StandardCharsets.UTF_8);
     System.out.println(
         "Pinned reviewed PDFBox baseline FontBox oracle passed: "
-            + observations.size()
+            + (observations.size() - 1)
             + " observations.");
   }
 

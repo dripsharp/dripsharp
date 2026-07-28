@@ -21,7 +21,8 @@ using PdfCube.IO;
 
 internal static class Program
 {
-    private static readonly List<string> Observations = [];
+    private static readonly List<string> Observations =
+        ["DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1"];
 
     private static void Main(string[] args)
     {
@@ -53,7 +54,7 @@ internal static class Program
         if (args.Length == 6)
             ValidateHost(args[4], args[5]);
         Console.WriteLine(
-            $"PdfCube.FontBox package differential passed: {Observations.Count} observations.");
+            $"PdfCube.FontBox package differential passed: {Observations.Count - 1} observations.");
     }
 
     private static void ObserveEncodings()

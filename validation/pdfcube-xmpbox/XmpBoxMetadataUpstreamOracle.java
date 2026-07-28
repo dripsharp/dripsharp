@@ -46,6 +46,10 @@ public final class XmpBoxMetadataUpstreamOracle {
 
     private static final List<String> observations = new ArrayList<>();
 
+    static {
+        observations.add("DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1");
+    }
+
     private XmpBoxMetadataUpstreamOracle() {}
 
     public static void main(String[] args) throws Exception {
@@ -75,7 +79,7 @@ public final class XmpBoxMetadataUpstreamOracle {
         Files.write(new File(args[0]).toPath(), observations, StandardCharsets.UTF_8);
         System.out.println(
                 "Pinned reviewed PDFBox baseline XmpBox metadata oracle passed: "
-                        + observations.size()
+                        + (observations.size() - 1)
                         + " observations.");
     }
 

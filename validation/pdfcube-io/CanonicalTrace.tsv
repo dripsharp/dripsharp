@@ -1,3 +1,4 @@
+DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1
 buffer	memory-read	5|0|10|0|10
 seek-rewind	memory-positioning	255|30|5|5
 eof	memory-end	-1|true

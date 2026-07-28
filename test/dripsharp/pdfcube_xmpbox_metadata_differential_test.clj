@@ -8,7 +8,10 @@
 (defn- trace-file [contents]
   (let [file (Files/createTempFile "pdfcube-xmpbox-trace-" ".tsv"
                                    (make-array FileAttribute 0))]
-    (Files/writeString file contents (make-array OpenOption 0))
+    (Files/writeString
+     file
+     (str "DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1\n" contents)
+     (make-array OpenOption 0))
     file))
 
 (deftest trace-validation-accepts-the-selected-metadata-contract
@@ -30,12 +33,15 @@
          "serialization\tbytes\tvalue\n"
          "round-trip\tmetadata\tvalue\n"
          "security\tdoctype\tvalue\n"
-         "lifetime\tstreams\tvalue\n")
+         "lifetime\tstreams\tvalue\n"
+         (apply str
+                (for [index (range 40)]
+                  (str "parser\textra-" index "\tvalue\n"))))
         summary (xmpbox-differential/trace-summary (trace-file contents))]
-    (is (= 17 (:observations summary)))
+    (is (= 57 (:observations summary)))
     (is (= xmpbox-differential/required-trace-families
            (set (:families summary))))
-    (is (= 17 (count (set (:identities summary)))))))
+    (is (= 57 (count (set (:identities summary)))))))
 
 (deftest trace-validation-fails-closed
   (testing "a missing behavior family is rejected"

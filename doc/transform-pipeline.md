@@ -120,3 +120,23 @@ projects validate integration and compilation. Independent differential tests
 validate behavior through the packed package or public .NET API.
 
 The implementation under test must not generate its own expected behavior.
+
+Common differentials use the product-neutral runner in
+`dripsharp.differential` and a target-owned, schema-versioned contract. The
+contract selects the baseline profile, JVM oracle source, isolated package-only
+.NET probe, required observation families and count, package expectations,
+supported hosts, and summary data. Observation streams begin with
+`DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1`, followed by exact
+`family<TAB>id<TAB>value` rows. Unknown contract keys, unsupported schema
+versions, malformed or duplicate rows, missing families, count drift, or a
+header mismatch fail before evidence can be accepted.
+
+The neutral proof ladder performs clean deterministic packing and isolated
+consumption, compiles the JVM oracle against the pinned project input, runs the
+probe only inside the package consumer, compares normalized observations,
+deliberately perturbs the oracle to prove mismatch detection, validates the
+package against the authoritative baseline plus generation evidence, and emits
+one summary. A bounded target extension may prepare unusual fixtures or add
+non-core summary evidence, but it cannot replace runner-owned proof fields.
+Differentials whose evidence model is genuinely different may keep a
+target-specific runner while reusing the neutral comparison primitives.
