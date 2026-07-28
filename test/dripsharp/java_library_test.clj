@@ -1537,6 +1537,9 @@
                       "return left.compareTo(right); } "
                       "public static Calendar calendarClear(Calendar value) { "
                       "value.clear(); return value; } "
+                      "public static Calendar calendarMutationsAfterNull(Calendar replacement) { "
+                      "Calendar value = null; value = replacement; "
+                      "value.clear(); value.set(1, 2); return value; } "
                       "public static String objectText(Object value) { return value.toString(); } "
                       "public static String integerText(Integer value) { return value.toString(); } "
                       "static String optionalText(Optional<Object> value) { "
@@ -1577,6 +1580,14 @@
          first-source
          (str "value = global::DripSharp.Runtime.JavaCompat.CalendarClear(value);\n"
               "return value;")))
+    (is (str/includes?
+         first-source
+         (str "global::System.DateTimeOffset value = default!;\n"
+              "value = replacement;\n"
+              "value = global::DripSharp.Runtime.JavaCompat.CalendarClear(value!);\n"
+              "value = global::DripSharp.Runtime.JavaCompat.CalendarSet(value!, 1, 2);\n"
+              "return value!;")))
+    (is (not (str/includes? first-source "value! =")))
     (is (str/includes?
          first-source
          (str "global::System.Text.StringBuilder builder = "
