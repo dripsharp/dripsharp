@@ -5,9 +5,10 @@
   direct .NET representation or an existing generic DripSharp compatibility
   type. Product identities and destination-library package names do not belong
   here. Resolved occurrence identity remains the caller's dispatch key."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [dripsharp.java-mapping-registry :as mapping-registry]))
 
-(def ^:private mappings
+(def ^:private mapping-specifications
   {"void" ["void" :dotnet.type/void]
    "boolean" ["bool" :dotnet.type/boolean]
    "byte" ["sbyte" :dotnet.type/sbyte]
@@ -36,18 +37,18 @@
    "java.lang.FunctionalInterface" ["global::System.Attribute" :dotnet.type/source-annotation]
    "java.lang.Class" ["global::System.Type" :dotnet.type/type]
    "java.lang.Cloneable" ["global::DripSharp.Runtime.JavaCloneable"
-                           :dotnet.type/cloneable]
+                          :dotnet.type/cloneable]
    "java.io.Serializable" ["object" :dotnet.type/serializable]
    "java.io.Console" ["object" :dotnet.type/console-marker]
    "java.lang.constant.Constable" ["object" :dotnet.type/constable]
    "java.lang.constant.ConstantDesc" ["object" :dotnet.type/constant-description]
    "java.lang.ClassLoader" ["object" :dotnet.type/class-loader]
    "java.lang.Process" ["global::DripSharp.Runtime.JavaProcess"
-                         :dotnet.type/process]
+                        :dotnet.type/process]
    "java.lang.ProcessBuilder" ["global::DripSharp.Runtime.JavaProcessBuilder"
-                                :dotnet.type/process-builder]
+                               :dotnet.type/process-builder]
    "java.lang.ProcessBuilder$Redirect" ["global::DripSharp.Runtime.JavaProcessRedirect"
-                                         :dotnet.type/process-redirect]
+                                        :dotnet.type/process-redirect]
    "java.lang.Enum" ["object" :dotnet.type/enum-base]
    "java.lang.Record" ["object" :dotnet.type/record-base]
    "java.lang.Throwable" ["global::System.Exception" :dotnet.type/exception]
@@ -58,15 +59,15 @@
    ["global::System.TypeInitializationException"
     :dotnet.type/type-initialization-exception]
    "java.lang.StackTraceElement" ["global::System.Diagnostics.StackFrame"
-                                   :dotnet.type/stack-frame]
+                                  :dotnet.type/stack-frame]
    "java.lang.IllegalArgumentException" ["global::System.ArgumentException"
                                          :dotnet.type/argument-exception]
    "java.lang.IllegalStateException" ["global::System.InvalidOperationException"
                                       :dotnet.type/invalid-operation]
    "java.lang.ArithmeticException" ["global::System.ArithmeticException"
-                                     :dotnet.type/arithmetic-exception]
+                                    :dotnet.type/arithmetic-exception]
    "java.lang.CloneNotSupportedException" ["global::System.NotSupportedException"
-                                            :dotnet.type/not-supported]
+                                           :dotnet.type/not-supported]
    "java.lang.IllegalAccessException" ["global::System.MemberAccessException"
                                        :dotnet.type/member-access-exception]
    "java.lang.InstantiationException" ["global::System.MemberAccessException"
@@ -121,11 +122,11 @@
    "java.lang.ThreadLocal" ["global::DripSharp.Runtime.JavaThreadLocal"
                             :dotnet.type/thread-local]
    "java.lang.ref.SoftReference" ["global::DripSharp.Runtime.JavaSoftReference"
-                                   :dotnet.type/soft-reference]
+                                  :dotnet.type/soft-reference]
    "java.lang.ref.WeakReference" ["global::DripSharp.Runtime.JavaWeakReference"
-                                   :dotnet.type/weak-reference]
+                                  :dotnet.type/weak-reference]
    "java.lang.ref.Reference" ["global::DripSharp.Runtime.JavaReference"
-                               :dotnet.type/reference]
+                              :dotnet.type/reference]
    "java.lang.Runnable" ["global::System.Action" :dotnet.type/action]
    "java.lang.Iterable" ["global::System.Collections.Generic.IEnumerable"
                          :dotnet.type/enumerable]
@@ -146,14 +147,14 @@
    "java.io.OutputStream" ["global::System.IO.Stream" :dotnet.type/stream]
    "java.io.Reader" ["global::System.IO.TextReader" :dotnet.type/text-reader]
    "java.io.StringReader" ["global::System.IO.StringReader"
-                            :dotnet.type/string-reader]
+                           :dotnet.type/string-reader]
    "java.io.Writer" ["global::System.IO.TextWriter" :dotnet.type/text-writer]
    "java.io.FileWriter" ["global::System.IO.StreamWriter"
-                          :dotnet.type/stream-writer]
+                         :dotnet.type/stream-writer]
    "java.io.InputStreamReader" ["global::System.IO.StreamReader"
                                 :dotnet.type/stream-reader]
    "java.io.OutputStreamWriter" ["global::System.IO.StreamWriter"
-                                  :dotnet.type/stream-writer]
+                                 :dotnet.type/stream-writer]
    "java.io.BufferedReader" ["global::System.IO.TextReader"
                              :dotnet.type/buffered-reader]
    "java.io.BufferedWriter" ["global::System.IO.TextWriter"
@@ -210,7 +211,7 @@
    "java.lang.reflect.Modifier" ["global::DripSharp.Runtime.JavaCompat"
                                  :dotnet.type/reflection-modifier]
    "java.lang.reflect.AccessibleObject" ["global::System.Reflection.MemberInfo"
-                                        :dotnet.type/reflection-member]
+                                         :dotnet.type/reflection-member]
    "java.lang.reflect.Method" ["global::System.Reflection.MethodInfo"
                                :dotnet.type/reflection-method]
    "java.lang.reflect.Constructor" ["global::System.Reflection.ConstructorInfo"
@@ -259,7 +260,7 @@
    "java.nio.charset.CodingErrorAction" ["global::DripSharp.Runtime.JavaCodingErrorAction"
                                          :dotnet.type/coding-error-action]
    "java.nio.charset.CharacterCodingException" ["global::System.Text.DecoderFallbackException"
-                                                 :dotnet.type/decoder-fallback-exception]
+                                                :dotnet.type/decoder-fallback-exception]
    "java.nio.CharBuffer" ["string" :dotnet.type/char-buffer]
    "java.nio.charset.StandardCharsets" ["global::DripSharp.Runtime.JavaStandardCharsets"
                                         :dotnet.type/standard-charsets]
@@ -306,7 +307,7 @@
    "java.nio.file.attribute.AclEntry" ["global::DripSharp.Runtime.JavaAclEntry"
                                        :dotnet.type/acl-entry]
    "java.nio.file.attribute.BasicFileAttributes" ["global::System.IO.FileSystemInfo"
-                                                   :dotnet.type/file-info]
+                                                  :dotnet.type/file-info]
    "java.nio.file.attribute.AclEntry$Builder" ["global::DripSharp.Runtime.JavaAclEntryBuilder"
                                                :dotnet.type/acl-entry-builder]
    "java.nio.file.attribute.AclEntryPermission" ["global::DripSharp.Runtime.JavaAclEntryPermission"
@@ -365,7 +366,7 @@
    "java.text.Normalizer" ["global::DripSharp.Runtime.JavaCompat"
                            :dotnet.type/java-compat]
    "java.text.Normalizer$Form" ["global::System.Text.NormalizationForm"
-                               :dotnet.type/normalization-form]
+                                :dotnet.type/normalization-form]
    "java.text.DateFormat" ["global::DripSharp.Runtime.JavaSimpleDateFormat"
                            :dotnet.type/date-format]
    "java.text.SimpleDateFormat" ["global::DripSharp.Runtime.JavaSimpleDateFormat"
@@ -400,7 +401,7 @@
    "java.util.EnumSet" ["global::System.Collections.Generic.ISet"
                         :dotnet.type/set-interface]
    "java.util.Enumeration" ["global::DripSharp.Runtime.JavaIterator"
-                           :dotnet.type/java-enumeration]
+                            :dotnet.type/java-enumeration]
    "java.util.HashMap" ["global::System.Collections.Generic.Dictionary"
                         :dotnet.type/dictionary]
    "java.util.HashSet" ["global::System.Collections.Generic.HashSet"
@@ -487,13 +488,13 @@
    "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary"
                         :dotnet.type/sorted-dictionary]
    "java.util.WeakHashMap" ["global::DripSharp.Runtime.JavaWeakHashMap"
-                             :dotnet.type/weak-map]
+                            :dotnet.type/weak-map]
    "java.util.Base64" ["global::DripSharp.Runtime.JavaBase64"
-                        :dotnet.type/base64]
+                       :dotnet.type/base64]
    "java.util.Base64$Decoder" ["global::DripSharp.Runtime.JavaBase64Decoder"
-                                :dotnet.type/base64-decoder]
+                               :dotnet.type/base64-decoder]
    "java.util.Base64$Encoder" ["global::DripSharp.Runtime.JavaBase64Encoder"
-                                :dotnet.type/base64-encoder]
+                               :dotnet.type/base64-encoder]
    "java.util.TreeSet" ["global::System.Collections.Generic.SortedSet"
                         :dotnet.type/sorted-set]
 
@@ -581,9 +582,9 @@
    "javax.xml.parsers.DocumentBuilderFactory" ["global::System.Xml.XmlReaderSettings"
                                                :dotnet.type/xml-reader-settings]
    "javax.xml.parsers.ParserConfigurationException" ["global::System.Xml.XmlException"
-                                                      :dotnet.type/xml-exception]
+                                                     :dotnet.type/xml-exception]
    "javax.xml.parsers.FactoryConfigurationError" ["global::System.Xml.XmlException"
-                                                    :dotnet.type/xml-exception]
+                                                  :dotnet.type/xml-exception]
    "javax.xml.xpath.XPathFactory" ["global::DripSharp.Runtime.JavaXPathFactory"
                                    :dotnet.type/xpath-factory]
    "javax.xml.xpath.XPath" ["global::DripSharp.Runtime.JavaXPath"
@@ -605,7 +606,7 @@
    "javax.xml.transform.TransformerFactory" ["global::System.Xml.XmlWriterSettings"
                                              :dotnet.type/xml-writer-settings]
    "javax.xml.transform.dom.DOMSource" ["global::System.Xml.XmlNode"
-                                       :dotnet.type/xml-node]
+                                        :dotnet.type/xml-node]
    "javax.xml.transform.stream.StreamResult" ["global::System.IO.Stream"
                                               :dotnet.type/xml-result]
    "org.w3c.dom.Attr" ["global::System.Xml.XmlAttribute"
@@ -647,7 +648,7 @@
    "java.security.KeyStoreException" ["global::System.Security.Cryptography.CryptographicException"
                                       :dotnet.type/cryptographic-exception]
    "java.security.InvalidKeyException" ["global::System.Security.Cryptography.CryptographicException"
-                                       :dotnet.type/cryptographic-exception]
+                                        :dotnet.type/cryptographic-exception]
    "java.security.NoSuchAlgorithmException" ["global::DripSharp.Runtime.JavaNoSuchAlgorithmException"
                                              :dotnet.type/no-such-algorithm-exception]
    "java.security.UnrecoverableKeyException" ["global::DripSharp.Runtime.JavaUnrecoverableKeyException"
@@ -656,11 +657,11 @@
                              :dotnet.type/key-store]
    "java.security.Key" ["object" :dotnet.type/security-key]
    "java.security.PrivateKey" ["global::System.Security.Cryptography.AsymmetricAlgorithm"
-                              :dotnet.type/private-key]
+                               :dotnet.type/private-key]
    "java.security.PublicKey" ["global::System.Security.Cryptography.AsymmetricAlgorithm"
-                             :dotnet.type/public-key]
+                              :dotnet.type/public-key]
    "java.security.Provider" ["global::DripSharp.Runtime.JavaSecurityProvider"
-                            :dotnet.type/security-provider]
+                             :dotnet.type/security-provider]
    "java.security.AlgorithmParameterGenerator"
    ["global::DripSharp.Runtime.JavaAlgorithmParameterGenerator"
     :dotnet.type/algorithm-parameter-generator]
@@ -706,7 +707,7 @@
    "javax.crypto.SecretKey" ["global::DripSharp.Runtime.JavaSecretKey"
                              :dotnet.type/secret-key]
    "javax.crypto.spec.IvParameterSpec" ["global::DripSharp.Runtime.JavaIvParameterSpec"
-                                       :dotnet.type/iv-parameter-spec]
+                                        :dotnet.type/iv-parameter-spec]
    "javax.crypto.spec.SecretKeySpec" ["global::DripSharp.Runtime.JavaSecretKeySpec"
                                       :dotnet.type/secret-key-spec]
 
@@ -727,18 +728,98 @@
    "javax.net.ssl.X509TrustManager" ["global::DripSharp.Runtime.JavaX509TrustManager"
                                      :dotnet.type/x509-trust-manager]})
 
+(def ^:private caveats-by-type
+  {"java.lang.Throwable"
+   #{:exception-hierarchy-collapse :usage-dependent-approximation}
+   "java.lang.Exception"
+   #{:exception-hierarchy-collapse :usage-dependent-approximation}
+   "java.lang.RuntimeException"
+   #{:exception-hierarchy-collapse :usage-dependent-approximation}
+   "java.lang.Error"
+   #{:exception-hierarchy-collapse :usage-dependent-approximation}
+
+   "java.util.LinkedHashSet"
+   #{:deterministic-iteration-order-loss :usage-dependent-approximation}
+   "java.util.EnumMap"
+   #{:ordering-difference :usage-dependent-approximation}
+
+   "java.io.Writer"
+   #{:writer-contract-difference :usage-dependent-approximation}
+   "java.io.BufferedWriter"
+   #{:writer-contract-difference :usage-dependent-approximation}
+   "java.io.InputStream"
+   #{:stream-contract-difference :usage-dependent-approximation}
+   "java.io.OutputStream"
+   #{:stream-contract-difference :usage-dependent-approximation}
+   "java.io.BufferedInputStream"
+   #{:stream-contract-difference :usage-dependent-approximation}
+   "java.io.BufferedOutputStream"
+   #{:stream-contract-difference :usage-dependent-approximation}
+   "java.io.FileInputStream"
+   #{:stream-contract-difference :usage-dependent-approximation}
+   "java.io.FileOutputStream"
+   #{:stream-contract-difference :usage-dependent-approximation}
+   "java.io.SequenceInputStream"
+   #{:stream-contract-difference :usage-dependent-approximation}
+   "java.io.PrintStream"
+   #{:stream-writer-contract-difference :usage-dependent-approximation}
+   "java.io.PrintWriter"
+   #{:writer-contract-difference :usage-dependent-approximation}
+
+   "java.util.Calendar"
+   #{:calendar-model-difference :usage-dependent-approximation}
+   "java.util.GregorianCalendar"
+   #{:calendar-model-difference :usage-dependent-approximation}})
+
+(defn- registry-identity
+  [qualified-name]
+  (keyword "java.type" qualified-name))
+
+(def entries
+  "Declarative context-free Java type mappings.
+
+  The private source specification retains the historical translation-rule
+  identity returned by `mapping`; the validated registry identity is exact and
+  unique per resolved Java type."
+  (mapv
+   (fn [[qualified-name [destination _mapping-rule]]]
+     (let [caveats (get caveats-by-type qualified-name #{})]
+       {:id (registry-identity qualified-name)
+        :key (str "type:" qualified-name)
+        :strategy :rename
+        :destination destination
+        :caveats caveats
+        :introduced-by :rawhttp
+        :evidence (cond-> #{:test/shared-java-library}
+                    (seq caveats) (conj :review/java-type-approximations))}))
+   (sort-by key mapping-specifications)))
+
+(def registry
+  "Validated, deterministic context-free Java type registry."
+  (mapping-registry/compile-registry entries))
+
+(defn mapping-entry
+  "Returns the validated declarative entry for an exact Java qualified name."
+  [qualified-name]
+  (mapping-registry/registry-entry registry (str "type:" qualified-name)))
+
 (defn mapping
   "Returns [destination-type mapping-rule] for an exact Java qualified name."
   [qualified-name]
-  (get mappings qualified-name))
+  (when-let [entry (mapping-entry qualified-name)]
+    [(:destination entry)
+     (second (get mapping-specifications qualified-name))]))
 
 (defn mapped-identities
   "Returns the stable sorted Java identities covered by the neutral registry."
   []
-  (vec (sort (keys mappings))))
+  (vec (sort (keys mapping-specifications))))
 
 (defn product-neutral?
-  "Checks that registry text contains no supplied destination identity fragment."
+  "Checks that destination shapes contain no supplied product identity
+  fragment. Provenance metadata may name the target that introduced an entry."
   [fragment]
   (let [fragment (str/lower-case (str fragment))]
-    (not-any? #(str/includes? (str/lower-case (pr-str %)) fragment) mappings)))
+    (not-any?
+     #(str/includes? (str/lower-case (:destination %)) fragment)
+     entries)))

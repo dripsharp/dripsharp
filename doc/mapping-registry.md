@@ -40,6 +40,35 @@ An optional `:kind` may repeat the key-derived kind, but cannot override it.
 Constructor entries use `executable:...#<init>(...)` keys and normalize to the
 `:constructor` kind.
 
+The shared context-free JDK type entries live in
+[`dripsharp.java-types`](../src/dripsharp/java_types.clj). Their declarative
+registry retains the historical destination rule returned by `mapping`, so
+moving the table does not change generated C# or existing source evidence.
+Reusable member entries are grouped by JDK area in
+[`dripsharp.java-library-mappings`](../src/dripsharp/java_library_mappings.clj).
+The Java-library bundle supplies the named custom handlers when it compiles
+those data entries.
+
+## Semantic Caveats
+
+Caveats describe a review or differential obligation; they are not product
+exclusions and do not make a behavior difference acceptable. Known
+context-free approximations record, at minimum:
+
+* Java exception-hierarchy collapse when several Java exception types project
+  onto one .NET exception type.
+* Deterministic iteration-order loss or other ordering differences in
+  collection projections.
+* Stream and writer contract differences when Java I/O types project onto BCL
+  stream or text-writer types.
+* Calendar-model differences and other usage-dependent approximations.
+* Stream evaluation, encounter-order, and collector-result differences on
+  member adaptations.
+
+Every caveated entry carries at least one evidence reference. Later reporting
+can therefore distinguish an exact rename from an adaptation that still
+requires usage-specific validation.
+
 ## Strategies
 
 The interpreter supports these closed strategies:

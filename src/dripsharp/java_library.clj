@@ -10,6 +10,8 @@
             [clojure.string :as str]
             [dripsharp.csharp :as csharp]
             [dripsharp.dotnet-surface :as dotnet-surface]
+            [dripsharp.java-library-mappings :as library-mappings]
+            [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.java-project :as project-emission]
             [dripsharp.java-types :as java-types]
             [dripsharp.java-translate :as java]
@@ -2364,6 +2366,58 @@
     (sequence-node arguments ", ")
     (raw ")")]))
 
+(defn- stream-collect-mapping
+  [{:keys [destination-context element target arguments]}]
+  {:node
+   (case (some-> ^CtInvocation element .getType .getQualifiedName)
+     "java.lang.String"
+     (compat-call "Collect" (into [target] arguments))
+
+     "java.util.Map"
+     (compat-call "Collect" (into [target] arguments))
+
+     ("java.util.Set" "java.util.HashSet" "java.util.LinkedHashSet")
+     (sequence-node
+      [(csharp/generic-name
+        (raw "global::DripSharp.Runtime.JavaCompat.SetOfValues")
+        [(type-node destination-context (collection-element-type element))])
+       (raw "(") target (raw ")")])
+
+     "java.util.ArrayList"
+     (sequence-node
+      [(raw "new ")
+       (type-node destination-context (.getType ^CtInvocation element))
+       (raw "(") target (raw ")")])
+
+     (compat-call "ToListValues" [target]))})
+
+(defn- atomic-reference-get-mapping
+  [{:keys [element target]}]
+  {:node
+   (sequence-node
+    [target
+     (raw ".Get()")
+     (when-not (statement-expression? element) (raw "!"))])})
+
+(def ^:private declarative-shared-mappings
+  (library-mappings/compile-registry
+   {:java-library.mapping/stream-collect stream-collect-mapping
+    :java-library.mapping/atomic-reference-get atomic-reference-get-mapping}))
+
+(defn- declarative-shared-invocation-node
+  [ctx ^CtInvocation element occurrence target arguments]
+  (when (mapping-registry/registry-entry
+         declarative-shared-mappings
+         (:key occurrence))
+    (:node
+     (mapping-registry/interpret
+      declarative-shared-mappings
+      (:key occurrence)
+      {:target target
+       :arguments arguments
+       :element element
+       :destination-context ctx}))))
+
 (defn- nullable-boxed-expression? [ctx ^CtExpression expression]
   (or
    (some boxed-primitive-reference? (.getTypeCasts expression))
@@ -3114,7 +3168,9 @@
                (= "executable:java.util.Comparator#compare(java.lang.Object,java.lang.Object)"
                   (:key occurrence))
                 (compat-call "ComparatorCompare"
-                             (into [target-node] arguments))))
+                             (into [target-node] arguments)))
+              (declarative-shared-invocation-node
+               @ctx-holder element occurrence target-node arguments))
              raw-node
              (if (= :constructor (:kind occurrence))
                (raw "")
@@ -6058,7 +6114,7 @@
                     (= (destination-field-name ctx field)
                        (destination-field-name ctx ^CtField %)))
                %)
-           (.getFields ^CtClass declaration))
+            (.getFields ^CtClass declaration))
            (recur (.getSuperclass ^CtClass declaration))))))))
 
 (defn- enum-value-ordinal [^CtEnum enum ^CtEnumValue value]
