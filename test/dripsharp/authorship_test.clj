@@ -513,6 +513,34 @@
                  (:reason (ex-data escaped-manifest))))
           (is (= ["escaped"]
                  (:targets (ex-data escaped-manifest))))))
+      (Files/delete (.resolve root "targets/escaped/target.edn"))
+      (Files/delete (.resolve root "targets/escaped"))
+      (let [dangling-target (.resolve root "targets/dangling")]
+        (Files/createSymbolicLink
+         dangling-target (.resolve outside "missing-target")
+         (make-array FileAttribute 0))
+        (let [invalid-target (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data invalid-target))))
+          (is (= :unresolved-symbolic-link
+                 (:reason (ex-data invalid-target))))
+          (is (= ["dangling"]
+                 (:targets (ex-data invalid-target)))))
+        (Files/delete dangling-target))
+      (let [target-root (.resolve root "targets/dangling")
+            manifest-link (.resolve target-root "target.edn")]
+        (Files/createDirectories target-root (make-array FileAttribute 0))
+        (Files/createSymbolicLink
+         manifest-link (.resolve outside "missing-target.edn")
+         (make-array FileAttribute 0))
+        (let [invalid-manifest
+              (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data invalid-manifest))))
+          (is (= :invalid-target-manifest
+                 (:reason (ex-data invalid-manifest))))
+          (is (= ["dangling"]
+                 (:targets (ex-data invalid-manifest))))))
       (finally
         (delete-tree! root)
         (delete-tree! outside)))))

@@ -59,12 +59,45 @@
         candidates
         (when (paths/directory? targets-root)
           (with-open [entries (Files/list targets-root)]
-            (->> (.toArray entries)
-                 (map #(cast Path %))
-                 (filter paths/directory?)
-                 (filter
-                  #(paths/regular-file? (paths/resolve-path % "target.edn")))
-                 vec)))
+            (let [entries
+                  (->> (.toArray entries)
+                       (map #(cast Path %))
+                       vec)
+                  invalid-entries
+                  (->> entries
+                       (filter
+                        #(and (Files/isSymbolicLink ^Path %)
+                              (not (paths/exists? %))))
+                       (map #(str (.getFileName ^Path %)))
+                       sort
+                       vec)
+                  _ (when (seq invalid-entries)
+                      (fail! "Target inventory contains unresolved symbolic links"
+                             {:targets invalid-entries
+                              :reason :unresolved-symbolic-link}))
+                  candidates
+                  (->> entries
+                       (filter paths/directory?)
+                       (filter
+                        (fn [^Path target-root]
+                          (let [manifest
+                                (paths/resolve-path target-root "target.edn")]
+                            (or (paths/exists? manifest)
+                                (Files/isSymbolicLink manifest)))))
+                       vec)
+                  invalid-manifests
+                  (->> candidates
+                       (remove
+                        #(paths/regular-file?
+                          (paths/resolve-path % "target.edn")))
+                       (map #(str (.getFileName ^Path %)))
+                       sort
+                       vec)]
+              (when (seq invalid-manifests)
+                (fail! "Target manifests are not readable regular files"
+                       {:targets invalid-manifests
+                        :reason :invalid-target-manifest}))
+              candidates)))
         escaped
         (->> candidates
              (keep
