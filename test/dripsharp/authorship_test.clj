@@ -761,7 +761,30 @@
             (is (= :unresolved-symbolic-link
                    (:reason (ex-data unresolved-directory))))
             (is (= ["runtime/dangling-tree/Pending"]
-                   (:paths (ex-data unresolved-directory)))))))
+                   (:paths (ex-data unresolved-directory))))
+            (Files/delete dangling-directory))
+          (let [linked-source-root (.resolve root "runtime/linked-source")
+                _ (write-text!
+                   root "runtime/linked-source/Runtime.cs"
+                   (str header "internal static class Runtime { }\n"))
+                linked-directory (.resolve tree-root "Linked")
+                _ (Files/createSymbolicLink
+                   linked-directory linked-source-root
+                   (make-array FileAttribute 0))
+                untraversed-directory
+                (caught
+                 #(authorship/source-observation
+                   root
+                   {:id :fixture/linked-directory
+                    :kind :tree
+                    :provenance "runtime/dangling-tree"
+                    :include-pattern #".*\.cs"}))]
+            (is (= :invalid-authorship-ledger
+                   (:kind (ex-data untraversed-directory))))
+            (is (= :untraversed-symbolic-link-directory
+                   (:reason (ex-data untraversed-directory))))
+            (is (= ["runtime/dangling-tree/Linked"]
+                   (:paths (ex-data untraversed-directory)))))))
       (finally
         (delete-tree! root)
         (delete-tree! outside)))))

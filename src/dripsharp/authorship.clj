@@ -103,8 +103,8 @@
 
       [])))
 
-(defn- unresolved-source-links
-  [^Path workspace-root ^Path source-root _source-group]
+(defn- source-links
+  [^Path source-root]
   (let [candidates
         (cond
           (paths/directory? source-root)
@@ -122,8 +122,20 @@
           [])]
     (->> candidates
          (filter #(Files/isSymbolicLink ^Path %))
-         (remove paths/exists?)
-         (mapv #(portable workspace-root %)))))
+         vec)))
+
+(defn- unresolved-source-links
+  [^Path workspace-root links]
+  (->> links
+       (remove paths/exists?)
+       (mapv #(portable workspace-root %))))
+
+(defn- untraversed-source-directory-links
+  [^Path workspace-root links]
+  (->> links
+       (filter paths/exists?)
+       (filter paths/directory?)
+       (mapv #(portable workspace-root %))))
 
 (defn source-observation
   "Observes one contracted source group without trusting its asserted contract."
@@ -139,14 +151,24 @@
                    {:source (:id source-group)
                     :provenance (:provenance source-group)
                     :reason :outside-workspace}))
+        observed-links (source-links source-root)
         unresolved-links
-        (unresolved-source-links workspace-root source-root source-group)
+        (unresolved-source-links workspace-root observed-links)
         _ (when (seq unresolved-links)
             (fail! "Contracted source inventory contains unresolved symbolic links"
                    {:source (:id source-group)
                     :provenance (:provenance source-group)
                     :paths unresolved-links
                     :reason :unresolved-symbolic-link}))
+        untraversed-directory-links
+        (untraversed-source-directory-links workspace-root observed-links)
+        _ (when (seq untraversed-directory-links)
+            (fail!
+             "Contracted source inventory contains untraversed symbolic-link directories"
+             {:source (:id source-group)
+              :provenance (:provenance source-group)
+              :paths untraversed-directory-links
+              :reason :untraversed-symbolic-link-directory}))
         charset (:charset source-group)
         files (source-group-files workspace-root source-group)
         escaped-files
