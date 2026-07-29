@@ -160,7 +160,10 @@ resolve upstream identity, Java language level, source and public-contract
 counts, package versions, artifact hashes, and legal-file contracts from that
 record. `rebaseline <target>` observes the clean upstream checkout and prints
 the complete current and candidate records, their field-level delta, and an
-approval token. It does not write the record. Re-run the exact command printed
+approval token. Its `:legal-review` section separately calls out any observed
+upstream-license, pinned legal-file hash, or NOTICE-appendix changes that need
+explicit review; those changes remain covered by the same exact approval
+token. The preview does not write the record. Re-run the exact command printed
 in the preview with `--approve <token>` to apply that exact recomputed delta.
 The approval path can replace only the selected baseline record; product goals,
 port scopes, dependency contracts, exclusions, and completion rules are

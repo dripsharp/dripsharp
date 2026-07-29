@@ -1,6 +1,5 @@
 (ns dripsharp.rebaseline-test
-  (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing]]
             [dripsharp.baseline :as baseline]
             [dripsharp.paths :as paths]
             [dripsharp.rebaseline :as rebaseline]
@@ -53,11 +52,48 @@
            (:delta preview)))
     (is (= 1 (:changed-fields preview)))
     (is (true? (:approval-required? preview)))
+    (is (= {:required? false
+            :changed-fields 0
+            :delta []}
+           (:legal-review preview)))
     (is (string? (:approval-command preview)))
     (is (re-matches #"[0-9a-f]{64}" (:approval-token preview)))
     (is (= :unchanged (:protected-contract-action preview)))
     (is (every? #(contains? (set (:protected-contract-files preview)) %)
                 rebaseline/protected-contract-files))))
+
+(deftest preview-surfaces-legal-changes-for-explicit-review
+  (let [root (isolated-workspace)
+        changed-hash (apply str (repeat 64 "a"))
+        appendix "\nExplicitly reviewed replacement appendix.\n"
+        observe
+        (fn [workspace target]
+          (-> (baseline/read-baseline workspace target)
+              (assoc-in [:upstream :license] "LicenseRef-Review-Required")
+              (assoc-in [:legal-sets :core 0 :source-sha256] changed-hash)
+              (assoc-in [:legal-sets :core 0 :sha256] changed-hash)
+              (assoc :notice-appendix appendix)))
+        preview (rebaseline/preview! root :pkl observe)
+        legal-review (:legal-review preview)]
+    (is (true? (:required? legal-review)))
+    (is (= 4 (:changed-fields legal-review)))
+    (is (= (set (:delta legal-review))
+           (set (filter #(contains?
+                          #{[:upstream :license]
+                            [:legal-sets :core 0 :source-sha256]
+                            [:legal-sets :core 0 :sha256]
+                            [:notice-appendix]}
+                          (:path %))
+                        (:delta preview)))))
+    (is (= #{[:upstream :license]
+             [:legal-sets :core 0 :source-sha256]
+             [:legal-sets :core 0 :sha256]
+             [:notice-appendix]}
+           (set (map :path (:delta legal-review)))))
+    (let [result
+          (rebaseline/approve!
+           root :pkl (:approval-token preview) observe)]
+      (is (= legal-review (:legal-review result))))))
 
 (deftest approval-is-token-gated-and-writes-only-the-selected-record
   (let [root (isolated-workspace)
@@ -112,5 +148,9 @@
           nil
           (catch clojure.lang.ExceptionInfo caught caught))]
     (is (false? (:approval-required? preview)))
+    (is (= {:required? false
+            :changed-fields 0
+            :delta []}
+           (:legal-review preview)))
     (is (not (contains? preview :approval-command)))
     (is (= :empty-rebaseline-delta (:kind (ex-data error))))))

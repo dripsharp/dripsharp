@@ -374,6 +374,27 @@
         :after (get after path missing)})
      (filter #(not= (get before % missing) (get after % missing)) paths))))
 
+(def ^:private legal-review-path-prefixes
+  [[:upstream :license]
+   [:legal-sets]
+   [:notice-appendix]])
+
+(defn- path-prefix?
+  [prefix path]
+  (and (<= (count prefix) (count path))
+       (= prefix (subvec path 0 (count prefix)))))
+
+(defn- legal-review
+  [delta]
+  (let [legal-delta
+        (filterv
+         (fn [{:keys [path]}]
+           (some #(path-prefix? % path) legal-review-path-prefixes))
+         delta)]
+    {:required? (boolean (seq legal-delta))
+     :changed-fields (count legal-delta)
+     :delta legal-delta}))
+
 (defn approval-token
   [target current candidate]
   (util/sha256-text
@@ -395,6 +416,7 @@
          candidate (baseline/validate! target
                                        (observe-fn root target))
          delta (full-delta current candidate)
+         legal-review (legal-review delta)
          token (approval-token target current candidate)]
      (cond->
       {:schema-version 1
@@ -407,6 +429,7 @@
        :changed-fields (count delta)
        :approval-required? (boolean (seq delta))
        :approval-token token
+       :legal-review legal-review
        :protected-contract-files protected-contract-files
        :protected-contract-action :unchanged}
        (seq delta)
@@ -483,7 +506,7 @@
                    :after protected-after})))
        (assoc (select-keys preview
                            [:schema-version :target :baseline-file
-                            :changed-fields :delta])
+                            :changed-fields :delta :legal-review])
               :operation :approved-target-rebaseline
               :approval-token supplied-token
               :protected-contract-action :unchanged)))))
