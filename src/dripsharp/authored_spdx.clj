@@ -69,26 +69,48 @@
 
 (defn- consolidated-source-groups!
   [target-contracts]
-  (->>
-   target-contracts
-   (reduce
-    (fn [groups target-contract]
-      (reduce
-       (fn [groups {:keys [id] :as group}]
-         (if-let [existing (get groups id)]
-           (if (= existing group)
-             groups
-             (fail! "Target authorship contracts disagree on a source group"
+  (let [groups
+        (->>
+         target-contracts
+         (reduce
+          (fn [groups target-contract]
+            (reduce
+             (fn [groups {:keys [id] :as group}]
+               (if-let [existing (get groups id)]
+                 (if (= existing group)
+                   groups
+                   (fail!
+                    "Target authorship contracts disagree on a source group"
                     {:source id
                      :targets (mapv :target target-contracts)
                      :existing existing
                      :conflicting group}))
-           (assoc groups id group)))
-       groups
-       (target-source-groups target-contract)))
-    (sorted-map))
-   vals
-   vec))
+                 (assoc groups id group)))
+             groups
+             (target-source-groups target-contract)))
+          (sorted-map))
+         vals
+         vec)
+        conflicts
+        (->> groups
+             (mapcat
+              (fn [{:keys [id class paths]}]
+                (map
+                 (fn [path]
+                   {:path path :group id :class class})
+                 paths)))
+             (group-by :path)
+             (keep
+              (fn [[path usages]]
+                (when (< 1 (count usages))
+                  {:path path
+                   :usages (mapv #(dissoc % :path) usages)})))
+             (sort-by :path)
+             vec)]
+    (when (seq conflicts)
+      (fail! "Source paths have conflicting authorship classifications"
+             {:conflicts conflicts}))
+    groups))
 
 (defn verify-targets!
   "Loads target contracts and verifies one approved SPDX policy across their

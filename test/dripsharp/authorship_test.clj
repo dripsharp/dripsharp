@@ -304,6 +304,42 @@
       (finally
         (delete-tree! root)))))
 
+(deftest repository-authored-spdx-gate-rejects-source-classification-conflicts
+  (let [path "runtime/Shared.cs"
+        target-contracts
+        [{:target :one
+          :authorship
+          {:compatibility {:sources {}}
+           :destination
+           {:sources
+            {:one/runtime
+             {:id :one/runtime
+              :class :authored-destination-runtime
+              :paths [path]}}}
+           :third-party {:sources {}}}}
+         {:target :two
+          :authorship
+          {:compatibility {:sources {}}
+           :destination {:sources {}}
+           :third-party
+           {:sources
+            {:two/vendor
+             {:id :two/vendor
+              :class :vendored-third-party
+              :paths [path]}}}}}]
+        conflict
+        (caught
+         #(#'authored-spdx/consolidated-source-groups! target-contracts))]
+    (is (= :invalid-authored-spdx-gate
+           (:kind (ex-data conflict))))
+    (is (= [{:path path
+             :usages
+             [{:group :one/runtime
+               :class :authored-destination-runtime}
+              {:group :two/vendor
+               :class :vendored-third-party}]}]
+           (:conflicts (ex-data conflict))))))
+
 (deftest repository-authored-spdx-gate-rejects-missing-policy
   (let [root (Files/createTempDirectory
               "dripsharp-authored-spdx-missing-policy-"
