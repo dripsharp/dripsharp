@@ -104,8 +104,7 @@
       [])))
 
 (defn- unresolved-source-links
-  [^Path workspace-root ^Path source-root
-   {:keys [kind include-pattern]}]
+  [^Path workspace-root ^Path source-root _source-group]
   (let [candidates
         (cond
           (paths/directory? source-root)
@@ -120,19 +119,10 @@
           [source-root]
 
           :else
-          [])
-        pattern (when (= :tree kind) (re-pattern include-pattern))]
+          [])]
     (->> candidates
          (filter #(Files/isSymbolicLink ^Path %))
          (remove paths/exists?)
-         (filter
-          (fn [^Path link]
-            (or
-             (= :file kind)
-             (re-matches
-              pattern
-              (str/replace
-               (str (.relativize source-root link)) "\\" "/")))))
          (mapv #(portable workspace-root %)))))
 
 (defn source-observation

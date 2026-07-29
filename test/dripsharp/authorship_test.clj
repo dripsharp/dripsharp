@@ -742,7 +742,26 @@
           (is (= :unresolved-symbolic-link
                  (:reason (ex-data unresolved-tree))))
           (is (= ["runtime/dangling-tree/Dangling.cs"]
-                 (:paths (ex-data unresolved-tree))))))
+                 (:paths (ex-data unresolved-tree))))
+          (Files/delete dangling-source)
+          (let [dangling-directory (.resolve tree-root "Pending")
+                _ (Files/createSymbolicLink
+                   dangling-directory (.resolve outside "missing-directory")
+                   (make-array FileAttribute 0))
+                unresolved-directory
+                (caught
+                 #(authorship/source-observation
+                   root
+                   {:id :fixture/dangling-directory
+                    :kind :tree
+                    :provenance "runtime/dangling-tree"
+                    :include-pattern #".*\.cs"}))]
+            (is (= :invalid-authorship-ledger
+                   (:kind (ex-data unresolved-directory))))
+            (is (= :unresolved-symbolic-link
+                   (:reason (ex-data unresolved-directory))))
+            (is (= ["runtime/dangling-tree/Pending"]
+                   (:paths (ex-data unresolved-directory)))))))
       (finally
         (delete-tree! root)
         (delete-tree! outside)))))
