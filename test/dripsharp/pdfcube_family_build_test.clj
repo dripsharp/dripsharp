@@ -301,6 +301,27 @@
         (is (= :pdfcube-family-build-failed (:kind (ex-data error))))
         (is (= :manifest-sources (:subject (ex-data error))))))))
 
+(deftest family-build-gate-rejects-malformed-generation-manifests
+  (doseq [[label contents reason]
+          [["empty" "" :empty-edn]
+           ["invalid" "{" :invalid-edn]
+           ["trailing" ::append-trailing :trailing-data]]]
+    (let [root
+          (Files/createTempDirectory
+           (str "pdfcube-family-" label "-manifest-")
+           (make-array FileAttribute 0))
+          build (clean-build root)
+          relative "target/generated/pdfcube-io/generation-manifest.edn"
+          file (paths/resolve-path root relative)
+          contents (if (= ::append-trailing contents)
+                     (str (slurp (str file)) "\n{}")
+                     contents)
+          _ (write-file! root relative contents)
+          error (caught #(family-build/validate-build! root build))]
+      (is (= :pdfcube-family-build-failed (:kind (ex-data error))) label)
+      (is (= "pdfcube-io" (:profile (ex-data error))) label)
+      (is (= reason (:reason (ex-data error))) label))))
+
 (deftest family-public-surface-gate-rejects-source-and-compiled-defects
   (let [root (Files/createTempDirectory
               "pdfcube-family-surface-gap-"

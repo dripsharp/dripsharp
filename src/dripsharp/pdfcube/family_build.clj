@@ -1,8 +1,7 @@
 (ns dripsharp.pdfcube.family-build
   "Clean, deterministic generation, compilation, and complete accessible
   public-surface gate for the five-project PdfCube family."
-  (:require [clojure.edn :as edn]
-            [clojure.set :as set]
+  (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.baseline :as baseline]
             [dripsharp.compiler :as compiler]
@@ -155,7 +154,14 @@
     (when-not (paths/regular-file? file)
       (fail! "PdfCube generation manifest is missing"
              {:profile (:profile emission) :path (str file)}))
-    (edn/read-string (slurp (str file)))))
+    (try
+      (util/read-single-edn-string! (slurp (str file)))
+      (catch RuntimeException error
+        (fail! "PdfCube generation manifest is not exactly one EDN value"
+               (merge
+                {:profile (:profile emission)
+                 :path (str file)}
+                (select-keys (ex-data error) [:reason])))))))
 
 (defn- validate-zero-counters!
   [profile summary]
