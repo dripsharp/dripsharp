@@ -121,6 +121,30 @@
           (is (= :package (:section (ex-data error))))
           (is (= setting (:setting (ex-data error)))))))))
 
+(deftest destination-authors-must-be-a-single-line-publisher
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")]
+    (doseq [separator
+            ["\u0000" "\u000B" "\u000C" "\r" "\n"
+             "\u0085" "\u2028" "\u2029"]]
+      (let [authors (str "Publisher" separator "Other")
+            error
+            (try
+              (project-emission/validate-configuration!
+               (assoc-in configuration [:package :authors] authors))
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))]
+        (is (= :invalid-destination-configuration
+               (:kind (ex-data error))))
+        (is (= :package (:section (ex-data error))))
+        (is (= :authors (:setting (ex-data error))))))
+    (is (map?
+         (project-emission/validate-configuration!
+          (assoc-in configuration [:package :authors]
+                    "Publisher \uD83D\uDE80"))))))
+
 (deftest destination-files-require-exactly-one-edn-value
   (let [root (temp-directory)
         relative "targets/rawhttp/destinations/core.edn"

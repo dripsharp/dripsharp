@@ -156,6 +156,18 @@
        #(and (string? %)
              (not (str/blank? %))
              (project-xml/valid-text? %)))))
+  (let [authors (get-in configuration [:package :authors])]
+    (validation/check!
+     (destination-context "Destination package metadata"
+                          {:section :package :setting :authors})
+     [:package :authors] authors
+     "a non-blank single-line XML-compatible publisher identity"
+     #(and (string? %)
+           (not (str/blank? %))
+           (not (re-find
+                 #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
+                 %))
+           (project-xml/valid-text? %))))
   (when-let [commit (get-in configuration [:package :repository-commit])]
     (validation/check!
      (destination-context "Destination package repository commit")
