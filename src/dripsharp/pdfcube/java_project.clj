@@ -3700,8 +3700,12 @@
                     (let [configuration (:configuration context)
                           code-assets
                           (mapv #(compatibility-asset configuration %)
-                                (concat (base-assets context)
-                                        (internal-capability-assets context)))]
+                                (concat
+                                 (base-assets context)
+                                 (map #(assoc %
+                                              :authorship-class
+                                              :authored-destination-runtime)
+                                      (internal-capability-assets context))))]
                       (into code-assets (legal-assets context))))))))
 
 (defn public-surface-strategy

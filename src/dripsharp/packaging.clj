@@ -1,7 +1,9 @@
 (ns dripsharp.packaging
   "Local NuGet packaging and isolated independent-consumer verification."
-  (:require [clojure.set :as set]
+  (:require [clojure.edn :as edn]
+            [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.authorship :as authorship]
             [dripsharp.compiler :as compiler]
             [dripsharp.harness :as harness]
             [dripsharp.java-project :as java-project]
@@ -1038,6 +1040,13 @@
              _ (when-not (:mechanical-source-header-proof emission)
                  (fail! "Package plan is missing mechanical source header evidence"
                         {:profile profile}))
+             _ (when-not (= authorship/schema-version
+                            (get-in emission [:authorship :schema-version]))
+                 (fail! "Package plan is missing the schema-versioned authorship ledger"
+                        {:profile profile
+                         :expected authorship/schema-version
+                         :actual (get-in emission
+                                         [:authorship :schema-version])}))
              mechanical-source-headers
              (java-project/verify-mechanical-source-headers! emission)
              dependency-emissions
@@ -1091,6 +1100,7 @@
          {:profile profile
           :emission emission
           :destination destination
+          :authorship (:authorship emission)
           :mechanical-source-headers mechanical-source-headers
           :expected-dependencies expected-dependencies
           :expected-package-files
@@ -1111,12 +1121,14 @@
      emissions)))
 
 (defn- package-reproducibility-plan [specs]
-  (mapv (fn [{:keys [profile destination mechanical-source-headers
+  (mapv (fn [{:keys [profile destination authorship
+                     mechanical-source-headers
                      expected-dependencies
                      expected-package-files expected-assembly-dependencies
                      primary?]}]
           {:profile profile
            :destination destination
+           :authorship authorship
            :mechanical-source-headers mechanical-source-headers
            :expected-dependencies
            (mapv #(select-keys % [:id :version]) expected-dependencies)
@@ -1135,10 +1147,86 @@
               :actual commit :output (:output result)}))
     commit))
 
+(defn- verified-authorship!
+  [emission]
+  (let [project-root (:project-root emission)
+        project-file (:project-file emission)
+        configuration (:configuration emission)
+        manifest-file
+        (or (:manifest-file emission)
+            (paths/resolve-path
+             project-root
+             (get-in configuration [:output :manifest-file])))
+        _ (when-not (and manifest-file
+                         (paths/regular-file? manifest-file))
+            (fail! "Package source inspection cannot read the generation manifest"
+                   {:manifest (some-> manifest-file str)}))
+        manifest
+        (edn/read-string
+         (Files/readString manifest-file StandardCharsets/UTF_8))
+        ledger (:authorship manifest)
+        expected (:authorship emission)
+        _ (when-not (= expected ledger)
+            (fail! "Generation manifest authorship ledger differs from the emitted package plan"
+                   {:expected expected :actual ledger
+                    :manifest (str manifest-file)}))
+        workspace-root
+        (or (:workspace-root emission)
+            (paths/workspace-root project-root))
+        source-root
+        (or (:source-root emission)
+            (paths/resolve-path
+             project-root
+             (get-in configuration [:output :source-directory])))
+        proof
+        (authorship/verify-ledger!
+         {:workspace-root workspace-root
+          :project-root project-root
+          :source-root source-root
+          :mechanical-source (:mechanical-source configuration)
+          :mechanical-header java-project/mechanical-source-header
+          :ledger ledger})
+        _ (when-not (paths/regular-file? project-file)
+            (fail! "Package source inspection cannot read the generated project"
+                   {:project (some-> project-file str)}))
+        project-document
+        (parse-xml!
+         (Files/readString project-file StandardCharsets/UTF_8)
+         :generated-project)
+        project-root-element (.getDocumentElement project-document)
+        compile-items
+        (->> (child-elements project-root-element "ItemGroup")
+             (mapcat #(child-elements % "Compile"))
+             vec)
+        actual-compile-inputs
+        (mapv element-attributes compile-items)
+        expected-compile-inputs
+        [{"Include"
+          (str (get-in configuration [:output :source-directory])
+               "/**/*.cs")}]
+        _ (when-not (= expected-compile-inputs actual-compile-inputs)
+            (fail! "Generated project assembly inputs do not match the authorship source inventory"
+                   {:project (str project-file)
+                    :expected expected-compile-inputs
+                    :actual actual-compile-inputs}))
+        _ (doseq [^Element compile-item compile-items]
+            (when (seq (child-elements compile-item))
+              (fail! "Generated project compile input contains unsupported metadata"
+                     {:project (str project-file)
+                      :input (element-attributes compile-item)})))
+        proof
+        (assoc proof
+               :assembly-input
+               {:include (get (first actual-compile-inputs) "Include")
+                :source-inventory-sha256
+                (:source-inventory-sha256 proof)})]
+    {:ledger ledger :proof proof :manifest manifest-file}))
+
 (defn- pack-project! [run-command! build-configuration ^Path output
                       {:keys [emission]}]
   (let [project-root (:project-root emission)
-        project-file (:project-file emission)]
+        project-file (:project-file emission)
+        _ (verified-authorship! emission)]
     (run-command! {:command ["dotnet" "pack" (str project-file)
                              "--nologo" "--verbosity:minimal"
                              "--configuration" build-configuration
@@ -1262,7 +1350,8 @@
              (pack-project! run-command! build-configuration second-output spec))
            (let [packages
                  (mapv
-                  (fn [{:keys [profile emission destination mechanical-source-headers
+                  (fn [{:keys [profile emission destination authorship
+                               mechanical-source-headers
                                expected-dependencies
                                expected-package-files
                                expected-assembly-dependencies primary?]}]
@@ -1311,6 +1400,11 @@
                           second-hash (sha256 second-artifact)
                           first-symbol-hash (some-> first-symbol sha256)
                           second-symbol-hash (some-> second-symbol sha256)]
+                      (when-not (= authorship (:authorship emission))
+                        (fail! "Package authorship ledger drifted after the reproducibility plan"
+                               {:profile profile
+                                :expected authorship
+                                :actual (:authorship emission)}))
                       (when-not (= first-hash second-hash)
                         (fail! "Independent clean builds did not produce byte-identical NuGet packages"
                                {:profile profile :first first-hash :second second-hash}))
@@ -1336,12 +1430,17 @@
                                   StandardCopyOption
                                   [StandardCopyOption/REPLACE_EXISTING]))
                                 destination))
+                            source-inspection
+                            (verified-authorship! emission)
                             inspection
-                            (inspect-package!
-                             artifact
-                             (assoc package :repository-commit repository-commit)
-                             target-framework assembly-name expected-dependencies
-                             expected-package-files)
+                            (assoc
+                             (inspect-package!
+                              artifact
+                              (assoc package
+                                     :repository-commit repository-commit)
+                              target-framework assembly-name
+                              expected-dependencies expected-package-files)
+                             :authorship (:proof source-inspection))
                             expected-resources
                             (->> (:resource-artifacts emission)
                                  (map :logical-name) sort vec)
@@ -1371,6 +1470,7 @@
                             :file symbol-filename
                             :pdb-sha256 (:pdb-sha256 symbol-inspection)})
                          :mechanical-source-headers mechanical-source-headers
+                         :authorship authorship
                          :inspection inspection :resource-proof resource-proof
                          :symbol-inspection symbol-inspection
                          :public-surface (:public-surface resource-proof)
@@ -1390,6 +1490,13 @@
                   (into (sorted-map)
                         (map (juxt #(get-in % [:identity :id])
                                    :mechanical-source-headers) packages))
+                  :authorship
+                  (into
+                   (sorted-map)
+                   (map
+                    (juxt #(get-in % [:identity :id])
+                          #(get-in % [:authorship :totals]))
+                    packages))
                   :resource-counts
                   (into (sorted-map)
                         (map (juxt #(get-in % [:identity :id])

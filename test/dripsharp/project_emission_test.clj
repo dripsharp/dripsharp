@@ -1,13 +1,15 @@
 (ns dripsharp.project-emission-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [dripsharp.authorship :as authorship]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.csharp :as csharp]
             [dripsharp.java-project :as project-emission]
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
-            [dripsharp.spoon :as spoon])
+            [dripsharp.spoon :as spoon]
+            [dripsharp.util :as util])
   (:import [java.nio.file FileVisitOption Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
            [spoon.reflect.declaration CtElement CtType]))
@@ -189,6 +191,19 @@
     nil
     (catch clojure.lang.ExceptionInfo error error)))
 
+(defn- verify-authorship!
+  ([emission]
+   (verify-authorship! emission (:authorship emission)))
+  ([emission ledger]
+   (authorship/verify-ledger!
+    {:workspace-root (:workspace-root emission)
+     :project-root (:project-root emission)
+     :source-root (:source-root emission)
+     :mechanical-source
+     (get-in emission [:configuration :mechanical-source])
+     :mechanical-header project-emission/mechanical-source-header
+     :ledger ledger})))
+
 (deftest minimal-non-product-destination-uses-the-reusable-emitter
   (let [fixture (minimal-model)
         first (emit! fixture (temp-directory) 1 (minimal-rule-bundle))
@@ -243,6 +258,31 @@
             :verified-files 1}
            (:mechanical-source-header-proof first)
            (:mechanical-source-header-proof second)))
+    (is (= {:schema-version 1
+            :files
+            [{:path "src/Example/Library/Greeting.cs"
+              :class :mechanical
+              :source
+              {:file "java/example/Greeting.java"
+               :revision "1111111111111111111111111111111111111111"}
+              :lines 11}]
+            :totals
+            {:files 1
+             :mechanical-lines 11
+             :authored-compat-lines 0
+             :authored-destination-runtime-lines 0
+             :authored-lines 0
+             :total-lines 11
+             :authored-fraction 0.0}}
+           (:authorship first)
+           (:authorship second)))
+    (is (= {:schema-version 1
+            :verified-files 1
+            :source-paths ["src/Example/Library/Greeting.cs"]
+            :source-inventory-sha256
+            (util/sha256-text "src/Example/Library/Greeting.cs")
+            :totals (:totals (:authorship first))}
+           (verify-authorship! first)))
     (let [text (slurp (str source))
           artifact (clojure.core/first (:artifacts first))
           mapping (clojure.core/first (:mappings artifact))]
@@ -319,36 +359,92 @@
          "// Applicable upstream notices: upstream supplies no NOTICE file.\n")))
   (let [fixture (minimal-model)
         authored-source (paths/resolve-path (:root fixture) "authored/Runtime.cs")
+        destination-source
+        (paths/resolve-path (:root fixture) "authored/Product.cs")
         _ (Files/createDirectories (.getParent authored-source)
                                    (make-array FileAttribute 0))
         _ (Files/writeString authored-source
-                             "// authored runtime\nnamespace Example.Runtime;\n"
+                             "// authored compatibility\nnamespace Example.Runtime;\n"
+                             (make-array OpenOption 0))
+        _ (Files/writeString destination-source
+                             "// destination runtime\nnamespace Example.Product;\n"
                              (make-array OpenOption 0))
         bundle
-        (assoc-in
-         (minimal-rule-bundle)
-         [:rules :destination-bridges :assets]
-         (fn [_]
-           [{:source (str authored-source)
-             :destination "Example/Runtime/Runtime.cs"
-             :strategy :reviewable-authored-runtime
-             :missing-kind :missing-authored-runtime
-             :missing-message "Authored runtime fixture is missing"}]))
+        (-> (minimal-rule-bundle)
+            (assoc-in
+             [:rules :destination-bridges :assets]
+             (fn [_]
+               [{:source (str authored-source)
+                 :destination "Example/Runtime/Runtime.cs"
+                 :strategy :reviewable-authored-runtime
+                 :missing-kind :missing-authored-runtime
+                 :missing-message "Authored runtime fixture is missing"}]))
+            (assoc-in
+             [:rules :product-runtime-assets :assets]
+             (fn [_]
+               [{:source (str destination-source)
+                 :destination "Example/Product/Product.cs"
+                 :strategy :reviewable-product-runtime
+                 :missing-kind :missing-product-runtime
+                 :missing-message "Product runtime fixture is missing"}])))
         emission (emit! fixture (temp-directory) 2 bundle)
         authored-output
         (paths/resolve-path (:project-root emission)
                             "src/Example/Runtime/Runtime.cs")
+        destination-output
+        (paths/resolve-path (:project-root emission)
+                            "src/Example/Product/Product.cs")
         mechanical-output
         (paths/resolve-path (:project-root emission)
                             "src/Example/Library/Greeting.cs")]
-    (is (= "// authored runtime\nnamespace Example.Runtime;\n"
+    (is (= "// authored compatibility\nnamespace Example.Runtime;\n"
            (slurp (str authored-output))))
+    (is (= "// destination runtime\nnamespace Example.Product;\n"
+           (slurp (str destination-output))))
     (is (str/starts-with? (slurp (str mechanical-output))
                           "// <auto-generated />\n"))
     (is (= 1 (get-in emission
                      [:mechanical-source-header-proof :verified-files])))
-    (is (= #{:reviewable-authored-runtime}
-           (set (keep :strategy (:artifacts emission)))))))
+    (is (= #{:reviewable-authored-runtime :reviewable-product-runtime}
+           (set (keep :strategy (:artifacts emission)))))
+    (is (= [:mechanical :authored-destination-runtime :authored-compat]
+           (mapv :class (get-in emission [:authorship :files]))))
+    (is (= {:files 3
+            :mechanical-lines 11
+            :authored-compat-lines 2
+            :authored-destination-runtime-lines 2
+            :authored-lines 4
+            :total-lines 15
+            :authored-fraction (/ 4.0 15.0)}
+           (get-in emission [:authorship :totals])))
+    (let [authored-entry
+          (first
+           (filter #(= :authored-compat (:class %))
+                   (get-in emission [:authorship :files])))]
+      (is (= "authored/Runtime.cs" (:provenance authored-entry)))
+      (is (= (util/sha256-file authored-output)
+             (:sha256 authored-entry))))
+    (let [authored-index
+          (first
+           (keep-indexed
+            (fn [index file]
+              (when (= :authored-compat (:class file)) index))
+            (get-in emission [:authorship :files])))
+          wrong-hash
+          (assoc-in (:authorship emission) [:files authored-index :sha256]
+                    (apply str (repeat 64 "0")))
+          error (caught #(verify-authorship! emission wrong-hash))]
+      (is (= :invalid-authorship-ledger (:kind (ex-data error)))))
+    (let [unlisted
+          (paths/resolve-path (:source-root emission)
+                              "Example/Runtime/Unlisted.cs")
+          _ (Files/writeString unlisted
+                               "namespace Example.Runtime;\n"
+                               (make-array OpenOption 0))
+          error (caught #(verify-authorship! emission))]
+      (is (= :invalid-authorship-ledger (:kind (ex-data error))))
+      (is (= ["src/Example/Runtime/Unlisted.cs"]
+             (:missing (ex-data error)))))))
 
 (deftest missing-and-unsupported-rules-fail-with-live-spoon-evidence
   (let [fixture (minimal-model)

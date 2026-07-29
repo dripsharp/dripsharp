@@ -1,6 +1,7 @@
 (ns dripsharp.packaging-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [dripsharp.authorship :as authorship]
             [dripsharp.java-project :as java-project]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths])
@@ -142,14 +143,20 @@
 (defn- reproducibility-fixture [^Path root divergent?]
   (let [verification-count (atom 0)
         project-root (.resolve root "generated/pkl-parser")
+        source-root (.resolve project-root "src")
         project-file (.resolve project-root "Pkl.Parser.csproj")
         generated-source (.resolve project-root "src/Pkl/Parser/Parser.cs")
         assembly (.resolve project-root "bin/Release/net8.0/Pkl.Parser.dll")
-        mechanical-header
-        (java-project/mechanical-source-header
+        configuration
+        {:mechanical-source
          {:repository "https://github.com/apple/pkl.git"
           :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
           :notice-reference "NOTICE.txt"}
+         :output {:source-directory "src"
+                  :manifest-file "generation-manifest.edn"}}
+        mechanical-header
+        (java-project/mechanical-source-header
+         (:mechanical-source configuration)
          "org/pkl/parser/Parser.java")
         mechanical-proof
         {:schema-version 1
@@ -162,32 +169,53 @@
         verify-fn
         (fn [_]
           (let [build (swap! verification-count inc)]
-            (write-file! project-file "<Project />")
+            (write-file!
+             project-file
+             (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+                  "  <ItemGroup>\n"
+                  "    <Compile Include=\"src/**/*.cs\" />\n"
+                  "  </ItemGroup>\n"
+                  "</Project>\n"))
             (write-file! generated-source
                          (str mechanical-header
                               "#nullable enable\nnamespace Pkl.Parser;\n"))
-            (write-file! assembly
-                         (if (and divergent? (= 2 build))
-                           "different second clean build"
-                           "reproducible clean build"))
-            {:generation
-             {:generation-profile {:profile "pkl-parser"}
-              :dependency-emissions []
-              :emission {:project-root project-root
-                         :project-file project-file
-                         :resource-artifacts []
-                         :configuration
-                         {:mechanical-source
-                          {:repository "https://github.com/apple/pkl.git"
-                           :revision "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
-                           :notice-reference "NOTICE.txt"}}
-                         :artifacts
-                         [{:file "src/Pkl/Parser/Parser.cs"
-                           :upstream-source "org/pkl/parser/Parser.java"
-                           :mechanical-source-header mechanical-header}]
-                         :mechanical-source-header-proof mechanical-proof}
-              :destination destination}
-             :build-configuration "Release"}))
+            (let [artifacts
+                  [{:file "src/Pkl/Parser/Parser.cs"
+                    :upstream-source "org/pkl/parser/Parser.java"
+                    :mechanical-source-header mechanical-header}]
+                  ledger
+                  (authorship/create-ledger!
+                   {:workspace-root root
+                    :project-root project-root
+                    :source-root source-root
+                    :artifacts artifacts
+                    :mechanical-source (:mechanical-source configuration)
+                    :mechanical-header
+                    java-project/mechanical-source-header})
+                  manifest-file
+                  (write-file!
+                   (.resolve project-root "generation-manifest.edn")
+                   (str (pr-str {:authorship ledger}) "\n"))]
+              (write-file! assembly
+                           (if (and divergent? (= 2 build))
+                             "different second clean build"
+                             "reproducible clean build"))
+              {:generation
+               {:generation-profile {:profile "pkl-parser"}
+                :dependency-emissions []
+                :emission
+                {:workspace-root root
+                 :project-root project-root
+                 :source-root source-root
+                 :project-file project-file
+                 :manifest-file manifest-file
+                 :resource-artifacts []
+                 :configuration configuration
+                 :artifacts artifacts
+                 :authorship ledger
+                 :mechanical-source-header-proof mechanical-proof}
+                :destination destination}
+               :build-configuration "Release"})))
         run-command!
         (fn [{:keys [command]}]
           (cond
@@ -238,8 +266,81 @@
             :verified-files 1}
            (get-in proof [:summary :mechanical-source-headers "Pkl.Parser"])
            (get-in proof [:packages 0 :mechanical-source-headers])))
+    (is (= {:files 1
+            :mechanical-lines 9
+            :authored-compat-lines 0
+            :authored-destination-runtime-lines 0
+            :authored-lines 0
+            :total-lines 9
+            :authored-fraction 0.0}
+           (get-in proof [:summary :authorship "Pkl.Parser"])
+           (get-in proof [:packages 0 :authorship :totals])
+           (get-in proof [:inspection :authorship :totals])))
+    (is (= ["src/Pkl/Parser/Parser.cs"]
+           (get-in proof [:inspection :authorship :source-paths])))
+    (is (= {:include "src/**/*.cs"
+            :source-inventory-sha256
+            (get-in proof
+                    [:inspection :authorship
+                     :source-inventory-sha256])}
+           (get-in proof
+                   [:inspection :authorship :assembly-input])))
     (is (Files/isRegularFile ^Path (:artifact proof)
                              (make-array java.nio.file.LinkOption 0)))))
+
+(deftest package-source-inspection-reconciles-the-ledger-with-actual-inputs
+  (let [root (Files/createTempDirectory "dripsharp-ledger-reconciliation"
+                                        (make-array FileAttribute 0))
+        {:keys [verify-fn]} (reproducibility-fixture root false)
+        emission (get-in (verify-fn {}) [:generation :emission])
+        unlisted (write-file!
+                  (paths/resolve-path (:source-root emission)
+                                      "Pkl/Parser/Unlisted.cs")
+                  "namespace Pkl.Parser;\n")
+        _ unlisted
+        inventory-error
+        (try
+          (#'packaging/verified-authorship! emission)
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))
+        _ (Files/delete unlisted)
+        _ (write-file!
+           (:project-file emission)
+           (str "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup>"
+                "<Compile Include=\"src/**/*.cs\" />"
+                "<Compile Include=\"../Authored.cs\" />"
+                "</ItemGroup></Project>"))
+        assembly-input-error
+        (try
+          (#'packaging/verified-authorship! emission)
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))
+        _ (write-file!
+           (:project-file emission)
+           (str "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup>"
+                "<Compile Include=\"src/**/*.cs\" />"
+                "</ItemGroup></Project>"))
+        _ (write-file!
+           (:manifest-file emission)
+           (str
+            (pr-str
+             {:authorship
+              (assoc-in (:authorship emission)
+                        [:totals :mechanical-lines] 0)})
+            "\n"))
+        manifest-error
+        (try
+          (#'packaging/verified-authorship! emission)
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :invalid-authorship-ledger
+           (:kind (ex-data inventory-error))))
+    (is (= ["src/Pkl/Parser/Unlisted.cs"]
+           (:missing (ex-data inventory-error))))
+    (is (= :package-consumption-failed
+           (:kind (ex-data assembly-input-error))))
+    (is (= :package-consumption-failed
+           (:kind (ex-data manifest-error))))))
 
 (deftest package-reproducibility-rejects-divergent-clean-builds
   (let [root (Files/createTempDirectory "dripsharp-clean-build-divergence"
@@ -288,7 +389,18 @@
            {:schema-version 1
             :translator "DripSharp"
             :translator-version "0.1.0"
-            :verified-files 0}})
+            :verified-files 0}
+           :authorship
+           {:schema-version 1
+            :files []
+            :totals
+            {:files 0
+             :mechanical-lines 0
+             :authored-compat-lines 0
+             :authored-destination-runtime-lines 0
+             :authored-lines 0
+             :total-lines 0
+             :authored-fraction 0.0}}})
         dependency-emissions
         [(emission "io" [] [])
          (emission "fontbox" ["io"] ["../io/io.csproj"])

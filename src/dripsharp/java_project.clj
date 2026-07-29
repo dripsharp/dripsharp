@@ -9,6 +9,7 @@
   qualified selector is present in destination configuration."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
+            [dripsharp.authorship :as authorship]
             [dripsharp.baseline :as baseline]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.csharp :as csharp]
@@ -826,7 +827,7 @@
     (mapv
      (fn [{:keys [source destination strategy missing-kind missing-message
                   text-charset-fallback text-prefix text-suffix
-                  text-replacements]}]
+                  text-replacements authorship-class]}]
        (let [source (absolute-asset-source root source)
              relative (relative-path! destination "destination asset")
              destination (paths/resolve-path source-root relative)]
@@ -869,10 +870,17 @@
          {:file (portable project-root destination)
           :source {:file (portable root source) :line 1 :column 1}
           :mappings []
-          :strategy strategy}))
+          :strategy strategy
+          :authorship-class authorship-class}))
      (mapcat
       #(expand-asset-tree root %)
-      (concat bridge-assets product-assets)))))
+      (concat
+       (map #(update % :authorship-class
+                     (fnil identity :authored-compat))
+            bridge-assets)
+       (map #(update % :authorship-class
+                     (fnil identity :authored-destination-runtime))
+            product-assets))))))
 
 (defn emit-project!
   "Emits one deterministic project through an explicit destination rule bundle.
@@ -1129,6 +1137,14 @@
                        :file-collisions (mapv #(mapv :file %) artifact-collisions)
                        :declaration-collisions declaration-collisions})))
     (let [map-resource (rule rule-bundle :resource-policy :resource-mapping)
+          authorship-ledger
+          (authorship/create-ledger!
+           {:workspace-root root
+            :project-root project-root
+            :source-root source-root
+            :artifacts artifacts
+            :mechanical-source (:mechanical-source configuration)
+            :mechanical-header mechanical-source-header})
           resource-artifacts
           (mapv
            (fn [^Path source]
@@ -1210,12 +1226,15 @@
                               :rule-bundle (:id rule-bundle)
                               :mechanical-source-headers
                               mechanical-source-header-proof
+                              :authorship authorship-ledger
                               :mapping-report mapping-report
                               :sources accounts
                               :resources resource-artifacts
                               :artifacts (mapv #(dissoc % :mappings) artifacts)
                               :summary summary}))
-      {:project-root project-root
+      {:workspace-root root
+       :project-root project-root
+       :source-root source-root
        :project-file project-file
        :manifest-file manifest-file
        :configuration configuration
@@ -1226,6 +1245,7 @@
        :diagnostics (:diagnostics ctx)
        :declarations (:declarations ctx)
        :artifacts artifacts
+       :authorship authorship-ledger
        :mechanical-source-header-proof mechanical-source-header-proof
        :source-accounts accounts
        :resource-artifacts resource-artifacts})))
