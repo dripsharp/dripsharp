@@ -1007,6 +1007,51 @@
              {:library-target library-target :installed versions :output (:output result)}))
     (str "net" (first selected) "." (second selected))))
 
+(defn- resource-notice-attribution!
+  [profile emission destination]
+  (let [attribution
+        (or (:resource-notice-attribution destination)
+            {:legal-sets [] :package-paths []})
+        expected-keys #{:legal-sets :package-paths}
+        actual-keys (set (keys attribution))
+        legal-sets (:legal-sets attribution)
+        package-paths (:package-paths attribution)
+        resources (vec (:resource-artifacts emission))
+        notice-paths
+        (set
+         (keep #(when (= :notice (:kind %)) (:package-path %))
+               (:legal-files destination)))
+        missing-paths
+        (vec (sort (set/difference (set package-paths) notice-paths)))]
+    (when-not (= expected-keys actual-keys)
+      (fail! "Resource NOTICE attribution has an invalid shape"
+             {:profile profile
+              :expected (vec (sort expected-keys))
+              :actual (vec (sort actual-keys))}))
+    (when-not (and (vector? legal-sets)
+                   (= (count legal-sets) (count (distinct legal-sets)))
+                   (every? keyword? legal-sets)
+                   (vector? package-paths)
+                   (= (count package-paths) (count (distinct package-paths)))
+                   (every? string? package-paths)
+                   (= (boolean (seq legal-sets))
+                      (boolean (seq package-paths))))
+      (fail! "Resource NOTICE attribution is malformed"
+             {:profile profile :attribution attribution}))
+    (when (and (seq legal-sets) (empty? resources))
+      (fail! "Resource NOTICE attribution selects legal sets but the profile emitted no resources"
+             {:profile profile :attribution attribution}))
+    (when (seq missing-paths)
+      (fail! "Attributed production resources lack their declared NOTICE package files"
+             {:profile profile
+              :resources (mapv :logical-name resources)
+              :legal-sets legal-sets
+              :expected package-paths
+              :missing missing-paths}))
+    {:legal-sets legal-sets
+     :package-paths package-paths
+     :resources (mapv :logical-name resources)}))
+
 (defn- package-specs [generation]
   (let [primary-profile (get-in generation [:generation-profile :profile])
         dependency-emissions (:dependency-emissions generation)
@@ -1050,6 +1095,9 @@
                                          [:authorship :schema-version])}))
              mechanical-source-headers
              (java-project/verify-mechanical-source-headers! emission)
+             resource-notice-attribution
+             (resource-notice-attribution!
+              profile emission destination)
              dependency-emissions
              (mapv
               (fn [dependency-profile]
@@ -1103,6 +1151,7 @@
           :destination destination
           :authorship (:authorship emission)
           :mechanical-source-headers mechanical-source-headers
+          :resource-notice-attribution resource-notice-attribution
           :expected-dependencies expected-dependencies
           :expected-package-files
           (mapv (fn [{:keys [kind package-path sha256]}]
@@ -1124,6 +1173,7 @@
 (defn- package-reproducibility-plan [specs]
   (mapv (fn [{:keys [profile destination authorship
                      mechanical-source-headers
+                     resource-notice-attribution
                      expected-dependencies
                      expected-package-files expected-assembly-dependencies
                      primary?]}]
@@ -1131,6 +1181,7 @@
            :destination destination
            :authorship authorship
            :mechanical-source-headers mechanical-source-headers
+           :resource-notice-attribution resource-notice-attribution
            :expected-dependencies
            (mapv #(select-keys % [:id :version]) expected-dependencies)
            :expected-package-files expected-package-files
@@ -1360,6 +1411,7 @@
                  (mapv
                   (fn [{:keys [profile emission destination authorship
                                mechanical-source-headers
+                               resource-notice-attribution
                                expected-dependencies
                                expected-package-files
                                expected-assembly-dependencies primary?]}]
@@ -1478,6 +1530,8 @@
                             :file symbol-filename
                             :pdb-sha256 (:pdb-sha256 symbol-inspection)})
                          :mechanical-source-headers mechanical-source-headers
+                         :resource-notice-attribution
+                         resource-notice-attribution
                          :authorship authorship
                          :inspection inspection :resource-proof resource-proof
                          :symbol-inspection symbol-inspection
@@ -1535,6 +1589,10 @@
                   (into (sorted-map)
                         (map (juxt #(get-in % [:identity :id])
                                    #(count (:resources %))) packages))
+                  :resource-notice-attribution
+                  (into (sorted-map)
+                        (map (juxt #(get-in % [:identity :id])
+                                   :resource-notice-attribution) packages))
                   :public-surfaces
                   (into (sorted-map)
                         (map (juxt #(get-in % [:identity :id])

@@ -114,15 +114,16 @@ baseline; directory validation does not substitute for that evidence.
 
 ### Legal policy
 
-`legal/policy.edn` schema version 2 has exactly these keys:
+`legal/policy.edn` schema version 3 has exactly these keys:
 
 ```clojure
-{:schema-version 2
+{:schema-version 3
  :target :example
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
  :legal-sets #{:upstream}
  :profile-legal-sets {"example-core" [:upstream]}
+ :resource-notice-legal-sets {"example-core" [:upstream]}
  :package-metadata
  {"example-core"
   {:required-description-fragments
@@ -141,8 +142,17 @@ titles, authors, assembly names, root namespaces, or destination namespace
 identities. Upstream attribution in descriptions, copyright metadata,
 repository URLs, LICENSE, and NOTICE remains allowed. Exact nupkg inspection
 then proves that the validated description and identity metadata reached the
-artifact unchanged. Legal hash verification and resource-specific NOTICE
-attribution remain separate legal gates.
+artifact unchanged.
+
+Every profile has one exact `:resource-notice-legal-sets` vector. An empty
+vector explicitly declares that its mechanically copied production resources
+do not depend on NOTICE attribution. Each selected legal set must also be in
+the profile's legal-set selection and must contain at least one pinned NOTICE
+input. Execution resolves those inputs to exact package paths. Package planning
+then fails if a profile that declares attributed resources emits none, or if
+any declared NOTICE path is absent from its legal-file contract; exact nupkg
+inspection proves the pinned NOTICE payloads and assembly resources both
+reached the artifact.
 
 ### Mapping overlays
 

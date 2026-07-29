@@ -1,9 +1,11 @@
-{:schema-version 2
+{:schema-version 3
  :target :rawhttp
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
  :legal-sets #{}
  :profile-legal-sets
+ {"rawhttp-core" []}
+ :resource-notice-legal-sets
  {"rawhttp-core" []}
  :package-metadata
  {"rawhttp-core"

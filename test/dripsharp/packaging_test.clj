@@ -473,6 +473,68 @@
     (is (= [false false false false true]
            (mapv :primary? specs)))))
 
+(deftest package-plan-binds-attributed-resources-to-declared-notice-files
+  (let [notice
+        {:kind :notice
+         :source "/upstream/NOTICE.txt"
+         :destination "Legal/NOTICE.txt"
+         :package-path "NOTICE.txt"
+         :sha256
+         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+        destination
+        (assoc (dag-package-destination "fontbox" [] [])
+               :legal-files [notice]
+               :resource-notice-attribution
+               {:legal-sets [:upstream]
+                :package-paths ["NOTICE.txt"]})
+        emission
+        {:project-root
+         (Paths/get "/generated/fontbox" (make-array String 0))
+         :project-file
+         (Paths/get "/generated/fontbox/fontbox.csproj"
+                    (make-array String 0))
+         :resource-artifacts
+         [{:logical-name "org.apache.fontbox.resources.glyphlist.txt"}]
+         :artifacts []
+         :mechanical-source-header-proof
+         {:schema-version 1
+          :translator "DripSharp"
+          :translator-version "0.1.0"
+          :verified-files 0}
+         :authorship
+         {:schema-version 2
+          :files []
+          :totals
+          {:files 0
+           :mechanical-lines 0
+           :authored-compat-lines 0
+           :authored-destination-runtime-lines 0
+           :authored-lines 0
+           :total-lines 0
+           :authored-fraction 0.0}
+          :policy nil}}
+        generation
+        {:generation-profile {:profile "fontbox"}
+         :dependency-profiles []
+         :dependency-emissions []
+         :destination destination
+         :emission emission}
+        spec (first (#'packaging/package-specs generation))]
+    (is (= {:legal-sets [:upstream]
+            :package-paths ["NOTICE.txt"]
+            :resources
+            ["org.apache.fontbox.resources.glyphlist.txt"]}
+           (:resource-notice-attribution spec)))
+    (let [error
+          (try
+            (#'packaging/package-specs
+             (assoc generation :destination
+                    (assoc destination :legal-files [])))
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :package-consumption-failed (:kind (ex-data error))))
+      (is (= ["NOTICE.txt"] (:missing (ex-data error)))))))
+
 (deftest package-inspection-requires-exact-release-layout
   (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
                                     "lib/net8.0/Pkl.Parser.dll" "assembly"})

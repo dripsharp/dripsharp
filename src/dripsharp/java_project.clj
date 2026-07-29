@@ -74,6 +74,9 @@
 (def ^:private mechanical-source-keys
   #{:repository :revision :notice-reference})
 
+(def ^:private resource-notice-attribution-keys
+  #{:legal-sets :package-paths})
+
 (defn- relative-path!
   ([value label]
    (relative-path! value label [label]))
@@ -212,6 +215,52 @@
        {:license-expression
         (get-in configuration [:package :license-expression])
         :legal-files legal-files})))
+  (when-let [attribution (:resource-notice-attribution configuration)]
+    (let [context
+          (destination-context
+           "Production-resource NOTICE attribution contract")
+          legal-sets (:legal-sets attribution)
+          package-paths (:package-paths attribution)
+          configured-notice-paths
+          (set
+           (keep #(when (= :notice (:kind %)) (:package-path %))
+                 (:legal-files configuration)))]
+      (validation/exact-keys!
+       context [:resource-notice-attribution] attribution
+       resource-notice-attribution-keys resource-notice-attribution-keys)
+      (doseq [[field values expected]
+              [[:legal-sets legal-sets
+                "a vector of distinct legal-set keywords"]
+               [:package-paths package-paths
+                "a vector of distinct relative package paths"]]]
+        (validation/check!
+         context [:resource-notice-attribution field] values expected
+         #(and (vector? %)
+               (= (count %) (count (distinct %))))))
+      (doseq [[index legal-set] (map-indexed vector legal-sets)]
+        (validation/check!
+         context [:resource-notice-attribution :legal-sets index]
+         legal-set "a keyword" keyword?))
+      (doseq [[index package-path] (map-indexed vector package-paths)]
+        (validation/check!
+         context [:resource-notice-attribution :package-paths index]
+         package-path "a string" string?)
+        (relative-path!
+         package-path "resource NOTICE package path"
+         [:resource-notice-attribution :package-paths index]))
+      (validation/check!
+       context [:resource-notice-attribution :package-paths]
+       package-paths
+       "one or more paths exactly when resource NOTICE legal sets are selected"
+       #(= (boolean (seq legal-sets)) (boolean (seq %))))
+      (let [missing
+            (vec (remove configured-notice-paths package-paths))]
+        (when (seq missing)
+          (validation/fail!
+           context [:resource-notice-attribution :package-paths]
+           package-paths
+           (str "paths backed by configured :notice legal files; missing "
+                missing))))))
   (when-let [symbols (get-in configuration [:package :symbols])]
     (validation/check!
      (destination-context "Destination package symbol format")

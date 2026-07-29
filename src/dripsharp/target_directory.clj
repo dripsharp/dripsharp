@@ -16,7 +16,7 @@
   (:import [java.nio.file Files LinkOption]))
 
 (def schema-version 3)
-(def legal-policy-schema-version 2)
+(def legal-policy-schema-version 3)
 (def mapping-overlay-schema-version 1)
 
 (def ^:private manifest-keys
@@ -58,7 +58,8 @@
 
 (def ^:private legal-policy-keys
   #{:schema-version :target :upstream-license :allowed-upstream-licenses
-    :legal-sets :profile-legal-sets :package-metadata})
+    :legal-sets :profile-legal-sets :resource-notice-legal-sets
+    :package-metadata})
 
 (def ^:private package-metadata-policy-keys
   #{:required-description-fragments :forbidden-identity-marks})
@@ -440,6 +441,8 @@
                                    [:legal-policy :legal-sets]
                                    (:legal-sets policy))
           profile-legal-sets (:profile-legal-sets policy)
+          resource-notice-legal-sets
+          (:resource-notice-legal-sets policy)
           package-metadata (:package-metadata policy)
           baseline-sets (set (keys (:legal-sets baseline-record)))]
       (let [context (validation-context "Target legal policy")]
@@ -466,7 +469,10 @@
                            [:legal-policy :legal-sets] legal-sets)
         (validation/exact-keys!
          context [:legal-policy :profile-legal-sets]
-         profile-legal-sets profile-names profile-names))
+         profile-legal-sets profile-names profile-names)
+        (validation/exact-keys!
+         context [:legal-policy :resource-notice-legal-sets]
+         resource-notice-legal-sets profile-names profile-names))
       (validation/exact-keys!
        (validation-context "Target package-metadata policy")
        [:legal-policy :package-metadata]
@@ -488,6 +494,34 @@
                              (str "a selection from "
                                   (vec (sort legal-sets)))
                              #(set/subset? (set %) legal-sets))))
+      (doseq [[profile notice-sets] resource-notice-legal-sets]
+        (let [path [:legal-policy :resource-notice-legal-sets profile]
+              selected (set (get profile-legal-sets profile))
+              context
+              (validation-context
+               "Production-resource NOTICE attribution"
+               {:profile profile
+                :selected-legal-sets (vec (sort selected))})]
+          (validation/check! context path notice-sets
+                             "a vector without duplicate legal-set identities"
+                             #(and (vector? %)
+                                   (= (count %) (count (distinct %)))))
+          (doseq [[index legal-set] (map-indexed vector notice-sets)]
+            (validation/check! context (conj path index) legal-set
+                               "a keyword" keyword?))
+          (validation/check! context path notice-sets
+                             (str "a selection from the profile legal sets "
+                                  (vec (sort selected)))
+                             #(set/subset? (set %) selected))
+          (doseq [legal-set notice-sets]
+            (when-not
+             (some #(= :notice (:kind %))
+                   (get-in baseline-record [:legal-sets legal-set]))
+              (fail!
+               "Resource-attribution legal set has no pinned NOTICE input"
+               {:profile profile
+                :path path
+                :legal-set legal-set})))))
       (doseq [[profile metadata] package-metadata]
         (let [path [:legal-policy :package-metadata profile]
               context
@@ -1027,6 +1061,9 @@
                       policy-legal-sets
                       (get-in legal-policy
                               [:contract :profile-legal-sets id])
+                      resource-notice-legal-sets
+                      (get-in legal-policy
+                              [:contract :resource-notice-legal-sets id])
                       destination-legal-sets
                       (vec (or (:baseline-legal-sets destination-config) []))]
                   (when (seq missing)
@@ -1060,6 +1097,8 @@
                        :destination destination-record
                        :mapping-overlays selected-mappings
                        :runtime-assets selected-runtime
+                       :resource-notice-legal-sets
+                       resource-notice-legal-sets
                        :provided-capabilities provided
                        :authorship
                        (profile-authorship!

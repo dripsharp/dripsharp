@@ -1,4 +1,4 @@
-{:schema-version 2
+{:schema-version 3
  :target :pdfcube
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
@@ -9,6 +9,12 @@
   "pdfcube-xmpbox" [:upstream]
   "pdfcube-pdfbox" [:upstream :codecs]
   "pdfcube-preflight" [:upstream]}
+ :resource-notice-legal-sets
+ {"pdfcube-io" []
+  "pdfcube-fontbox" [:upstream]
+  "pdfcube-xmpbox" []
+  "pdfcube-pdfbox" [:upstream]
+  "pdfcube-preflight" []}
  :package-metadata
  {"pdfcube-io"
   {:required-description-fragments

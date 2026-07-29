@@ -78,7 +78,13 @@
       :destination "Legal/LICENSE.txt"
       :package-path "LICENSE.txt"
       :sha256
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+     {:kind :notice
+      :source "upstream/acme/NOTICE.txt"
+      :destination "Legal/NOTICE.txt"
+      :package-path "NOTICE.txt"
+      :sha256
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}
    :packages
    {"Acme.Core" {:version "1.0.0" :assembly-version "1.0.0.0"}}
    :profiles
@@ -286,12 +292,13 @@
 
 (defn- legal-policy
   []
-  {:schema-version 2
+  {:schema-version 3
    :target :acme
    :upstream-license "Apache-2.0"
    :allowed-upstream-licenses #{"Apache-2.0"}
    :legal-sets #{:upstream}
    :profile-legal-sets {"acme-core" [:upstream]}
+   :resource-notice-legal-sets {"acme-core" [:upstream]}
    :package-metadata
    {"acme-core"
     {:required-description-fragments
@@ -353,6 +360,10 @@
        (is (= [:acme-required-proof]
               (mapv :id (get-in target [:proof :ladders]))))
        (is (= #{"acme-core"} (set (keys (:profiles target)))))
+       (is (= [:upstream]
+              (get-in target
+                      [:profiles "acme-core"
+                       :resource-notice-legal-sets])))
        (is (= #{:java-compat :acme/mapping :acme/runtime}
               (:capabilities target)))
        (is (= :acme/string-length
@@ -448,6 +459,46 @@
                 (:path failure)))
          (is (= "UpstreamCo" (:mark failure)))
          (is (= "UpstreamCo" (:actual failure))))))))
+
+(deftest resource-notice-attribution-policy-fails-closed
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (testing "every profile has an exact resource NOTICE policy"
+       (update-edn! root "targets/acme/legal/policy.edn"
+                    assoc :resource-notice-legal-sets {})
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :resource-notice-legal-sets]
+                (:path failure)))
+         (is (= ["acme-core"] (:missing failure)))))
+     (testing "resource NOTICE sets must be selected by the profile"
+       (write-edn! root "targets/acme/legal/policy.edn" (legal-policy))
+       (update-edn! root "targets/acme/legal/policy.edn"
+                    assoc-in
+                    [:resource-notice-legal-sets "acme-core"]
+                    [:unselected])
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :resource-notice-legal-sets
+                 "acme-core"]
+                (:path failure)))))
+     (testing "resource NOTICE sets must contain pinned NOTICE input"
+       (write-edn! root "targets/acme/legal/policy.edn" (legal-policy))
+       (update-edn! root "targets/acme/baseline.edn"
+                    update-in [:legal-sets :upstream]
+                    #(vec (remove (fn [entry]
+                                    (= :notice (:kind entry)))
+                                  %)))
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= :upstream (:legal-set failure)))
+         (is (= [:legal-policy :resource-notice-legal-sets
+                 "acme-core"]
+                (:path failure))))))))
 
 (deftest profile-destination-and-validation-identities-fail-closed
   (in-target-workspace
@@ -713,7 +764,9 @@
                (emit-project-fn {:rule-bundle base-rule-bundle})
                (swap! generated conj
                       {:profile profile
-                       :runtime-sources (:runtime-sources destination)})
+                       :runtime-sources (:runtime-sources destination)
+                       :resource-notice-attribution
+                       (:resource-notice-attribution destination)})
                {:stage :generate :options options}))
            verify-fn
            (fn [{:keys [generate-fn] :as options}]
@@ -745,6 +798,11 @@
        (is (every?
             #(= ["targets/acme/runtime/Acme.Core.Runtime.cs"]
                 (:runtime-sources %))
+            @generated))
+       (is (every?
+            #(= {:legal-sets [:upstream]
+                 :package-paths ["NOTICE.txt"]}
+                (:resource-notice-attribution %))
             @generated))
        (let [registries
              ((get-in @emitted-bundle

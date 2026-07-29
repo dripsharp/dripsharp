@@ -1,4 +1,4 @@
-{:schema-version 2
+{:schema-version 3
  :target :pkl
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
@@ -6,6 +6,9 @@
  :profile-legal-sets
  {"pkl-parser" []
   "pkl-core-value-model" [:core]}
+ :resource-notice-legal-sets
+ {"pkl-parser" []
+  "pkl-core-value-model" []}
  :package-metadata
  {"pkl-parser"
   {:required-description-fragments

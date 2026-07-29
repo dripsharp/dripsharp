@@ -39,6 +39,17 @@
             (when sources
               (mapv #(target-relative target %) sources)))))
 
+(defn- resource-notice-attribution
+  [baseline-record legal-set-keys]
+  {:legal-sets legal-set-keys
+   :package-paths
+   (->> legal-set-keys
+        (mapcat #(get-in baseline-record [:legal-sets %]))
+        (filter #(= :notice (:kind %)))
+        (map :package-path)
+        distinct
+        vec)})
+
 (defn- overlay-registries
   [profile-record]
   (into {}
@@ -105,7 +116,8 @@
           (binding [baseline/*target-records* records]
             (reduce
              (fn [result [_profile-id
-                          {:keys [destination authorship]}]]
+                          {:keys [destination authorship
+                                  resource-notice-legal-sets]}]]
                (let [path (get-in destination [:descriptor :path])
                      configuration
                      (assoc
@@ -113,7 +125,10 @@
                        target
                        (baseline/hydrate-destination
                         root (:configuration destination)))
-                      :authorship authorship)]
+                      :authorship authorship
+                      :resource-notice-attribution
+                      (resource-notice-attribution
+                       baseline-record resource-notice-legal-sets))]
                  (if-let [existing (get result path)]
                    (if (= existing configuration)
                      result
