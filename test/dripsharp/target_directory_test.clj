@@ -426,6 +426,101 @@
          (is (= (str (.resolve ^Path root path))
                 (:path failure))))))))
 
+(deftest target-contract-paths-reject-symlink-escapes
+  (let [outside
+        (Files/createTempDirectory
+         "dripsharp-target-directory-outside-"
+         (make-array FileAttribute 0))]
+    (try
+      (in-target-workspace
+       (fn [root]
+         (create-target-workspace! root)
+         (let [target-root (.resolve ^Path root "targets/acme")
+               outside-target-root (.resolve outside "escaped-target")]
+           (delete-tree! target-root)
+           (write-edn! outside-target-root "target.edn"
+                       (target-manifest))
+           (Files/createSymbolicLink
+            target-root outside-target-root (make-array FileAttribute 0))
+           (let [failure
+                 (failure-data
+                  #(target-directory/read-target root :acme))]
+             (is (= :invalid-target-directory (:kind failure)))
+             (is (= :outside-workspace (:reason failure)))
+             (is (= :acme (:target failure)))))))
+      (in-target-workspace
+       (fn [root]
+         (create-target-workspace! root)
+         (let [manifest (.resolve ^Path root "targets/acme/target.edn")
+               outside-manifest
+               (write-edn! outside "target.edn" (target-manifest))]
+           (Files/delete manifest)
+           (Files/createSymbolicLink
+            manifest outside-manifest (make-array FileAttribute 0))
+           (let [failure
+                 (failure-data
+                  #(target-directory/read-target root :acme))]
+             (is (= :invalid-target-directory (:kind failure)))
+             (is (= :outside-workspace (:reason failure)))
+             (is (= :acme (:target failure)))))))
+      (in-target-workspace
+       (fn [root]
+         (create-target-workspace! root)
+         (let [policy (.resolve ^Path root "targets/acme/legal/policy.edn")
+               outside-policy
+               (write-edn! outside "policy.edn" (legal-policy))]
+           (Files/delete policy)
+           (Files/createSymbolicLink
+            policy outside-policy (make-array FileAttribute 0))
+           (let [failure
+                 (failure-data
+                  #(target-directory/read-target root :acme))]
+             (is (= :invalid-target-directory (:kind failure)))
+             (is (= :outside-target-root (:reason failure)))
+             (is (= "Legal policy" (:subject failure)))
+             (is (= "legal/policy.edn" (:path failure)))))))
+      (in-target-workspace
+       (fn [root]
+         (create-target-workspace! root)
+         (let [goal
+               (.resolve ^Path root "doc/targets/acme/product-goal.md")
+               outside-goal
+               (write-text! outside "product-goal.md"
+                            "# External product goal\n")]
+           (Files/delete goal)
+           (Files/createSymbolicLink
+            goal outside-goal (make-array FileAttribute 0))
+           (let [failure
+                 (failure-data
+                  #(target-directory/read-target root :acme))]
+             (is (= :invalid-target-directory (:kind failure)))
+             (is (= :outside-workspace (:reason failure)))
+             (is (= "Product goal" (:subject failure)))
+             (is (= "doc/targets/acme/product-goal.md"
+                    (:path failure)))))))
+      (in-target-workspace
+       (fn [root]
+         (create-target-workspace! root)
+         (let [source
+               (.resolve ^Path root
+                         "targets/acme/runtime/Acme.Core.Runtime.cs")
+               outside-source
+               (write-text! outside "Acme.Core.Runtime.cs"
+                            "namespace External.Acme.Core;\n")]
+           (Files/delete source)
+           (Files/createSymbolicLink
+            source outside-source (make-array FileAttribute 0))
+           (let [failure
+                 (failure-data
+                  #(target-directory/read-target root :acme))]
+             (is (= :invalid-target-directory (:kind failure)))
+             (is (= :outside-workspace (:reason failure)))
+             (is (= :acme/runtime (:source failure)))
+             (is (= "targets/acme/runtime/Acme.Core.Runtime.cs"
+                    (:provenance failure)))))))
+      (finally
+        (delete-tree! outside)))))
+
 (deftest manifest-schema-and-owned-paths-fail-closed
   (in-target-workspace
    (fn [root]

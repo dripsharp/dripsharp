@@ -198,6 +198,9 @@
     (when-not (regular-file? file)
       (fail! (str subject " is missing")
              {:subject subject :path (str file)}))
+    (when-not (paths/real-contained? target-root file)
+      (fail! (str subject " resolves outside its target-owned area")
+             {:subject subject :path path :reason :outside-target-root}))
     file))
 
 (defn- workspace-file!
@@ -207,6 +210,9 @@
     (when-not (regular-file? file)
       (fail! (str subject " is missing")
              {:subject subject :path (str file)}))
+    (when-not (paths/real-contained? workspace-root file)
+      (fail! (str subject " resolves outside the workspace")
+             {:subject subject :path path :reason :outside-workspace}))
     file))
 
 (defn- read-edn!
@@ -1587,6 +1593,12 @@
      (when-not (regular-file? manifest-file)
        (fail! "Target manifest is missing"
               {:target requested-target :path (str manifest-file)}))
+     (when-not (and (paths/real-contained? workspace-root target-root)
+                    (paths/real-contained? workspace-root manifest-file))
+       (fail! "Target manifest resolves outside the workspace"
+              {:target requested-target
+               :path (str manifest-file)
+               :reason :outside-workspace}))
      (let [manifest (read-edn! "Target manifest" manifest-file)]
        (exact-keys! "Target manifest" [] manifest-keys manifest)
        (validation/check!

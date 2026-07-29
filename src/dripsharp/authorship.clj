@@ -107,8 +107,28 @@
   "Observes one contracted source group without trusting its asserted contract."
   [workspace-root source-group]
   (let [workspace-root (paths/absolute workspace-root)
+        source-root
+        (paths/absolute
+         (paths/resolve-path workspace-root (:provenance source-group)))
+        _ (when (and (paths/exists? source-root)
+                     (not (paths/real-contained?
+                           workspace-root source-root)))
+            (fail! "Contracted source provenance resolves outside the workspace"
+                   {:source (:id source-group)
+                    :provenance (:provenance source-group)
+                    :reason :outside-workspace}))
         charset (:charset source-group)
         files (source-group-files workspace-root source-group)
+        escaped-files
+        (->> files
+             (remove #(paths/real-contained? workspace-root %))
+             (mapv #(portable workspace-root %)))
+        _ (when (seq escaped-files)
+            (fail! "Contracted source files resolve outside the workspace"
+                   {:source (:id source-group)
+                    :provenance (:provenance source-group)
+                    :paths escaped-files
+                    :reason :outside-workspace}))
         records
         (mapv
          (fn [^Path file]

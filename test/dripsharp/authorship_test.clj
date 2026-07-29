@@ -664,20 +664,45 @@
                                          (make-array FileAttribute 0))
               _ (Files/createSymbolicLink
                  source-link outside-source (make-array FileAttribute 0))
-              groups
-              (vals
-               (normalized-groups
-                root :authored-destination-runtime :fixture
-                [(source-group root :fixture/runtime
-                               "runtime/Runtime.cs" nil 4)]))
               escaped-source
               (caught
-               #(authorship/verify-authored-spdx-headers!
-                 root groups (dissoc policy :package-publisher)))]
+               #(normalized-groups
+                 root :authored-destination-runtime :fixture
+                 [(source-group root :fixture/runtime
+                                "runtime/Runtime.cs" nil 4)]))]
           (is (= :invalid-authorship-ledger
                  (:kind (ex-data escaped-source))))
+          (is (= :outside-workspace
+                 (:reason (ex-data escaped-source))))
+          (is (= :fixture/runtime
+                 (:source (ex-data escaped-source))))
           (is (= "runtime/Runtime.cs"
-                 (:path (ex-data escaped-source))))))
+                 (:provenance (ex-data escaped-source))))
+          (Files/delete source-link))
+        (let [outside-tree
+              (write-text!
+               outside "tree/Runtime.cs"
+               (str header "internal static class Runtime { }\n"))
+              tree-link (.resolve root "runtime/tree")
+              _ (Files/createSymbolicLink
+                 tree-link (.getParent outside-tree)
+                 (make-array FileAttribute 0))
+              escaped-tree
+              (caught
+               #(authorship/source-observation
+                 root
+                 {:id :fixture/tree
+                  :kind :tree
+                  :provenance "runtime/tree"
+                  :include-pattern #".*\.cs"}))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data escaped-tree))))
+          (is (= :outside-workspace
+                 (:reason (ex-data escaped-tree))))
+          (is (= :fixture/tree
+                 (:source (ex-data escaped-tree))))
+          (is (= "runtime/tree"
+                 (:provenance (ex-data escaped-tree))))))
       (finally
         (delete-tree! root)
         (delete-tree! outside)))))
