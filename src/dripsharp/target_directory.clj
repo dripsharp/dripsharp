@@ -11,7 +11,8 @@
             [dripsharp.baseline :as baseline]
             [dripsharp.differential :as differential]
             [dripsharp.java-mapping-registry :as mapping-registry]
-            [dripsharp.paths :as paths])
+            [dripsharp.paths :as paths]
+            [dripsharp.validation :as validation])
   (:import [java.nio.file Files LinkOption]))
 
 (def schema-version 3)
@@ -82,6 +83,14 @@
   [message data]
   (throw (ex-info message (assoc data :kind :invalid-target-directory))))
 
+(defn- validation-context
+  ([subject]
+   (validation-context subject {}))
+  ([subject data]
+   {:kind :invalid-target-directory
+    :subject subject
+    :data data}))
+
 (defn- non-blank-string?
   [value]
   (and (string? value)
@@ -89,49 +98,50 @@
        (not (re-find #"[\r\n\u0000]" value))))
 
 (defn- exact-keys!
-  [subject expected value]
-  (when-not (map? value)
-    (fail! (str subject " must be a map")
-           {:subject subject :value value}))
-  (let [actual (set (keys value))]
-    (when-not (= expected actual)
-      (fail! (str subject " has missing or unknown keys")
-             {:subject subject
-              :expected (vec (sort expected))
-              :actual (vec (sort actual))
-              :missing (vec (sort (set/difference expected actual)))
-              :unknown (vec (sort (set/difference actual expected)))})))
-  value)
+  ([subject expected value]
+   (exact-keys! subject [] expected value))
+  ([subject path expected value]
+   (validation/exact-keys! (validation-context subject)
+                           path value expected expected)))
 
 (defn- target-id
   [target]
-  (let [target (cond
+  (let [context (validation-context "Target identity")
+        target (cond
                  (keyword? target) target
                  (string? target) (keyword target)
-                 :else nil)]
-    (when-not (and (simple-keyword? target)
-                   (re-matches #"[a-z][a-z0-9-]*" (name target)))
-      (fail! "Target identity must be a stable lowercase keyword"
-             {:target target}))
+                 :else target)]
+    (validation/check! context [:target] target
+                       "a simple keyword" simple-keyword?)
+    (validation/check! context [:target] target
+                       "a stable lowercase keyword"
+                       #(boolean
+                         (re-matches #"[a-z][a-z0-9-]*" (name %))))
     target))
 
 (defn- keyword-set!
-  [subject value]
-  (when-not (and (set? value) (every? keyword? value))
-    (fail! (str subject " must be a set of keywords")
-           {:subject subject :value value}))
-  value)
+  ([subject value]
+   (keyword-set! subject [] value))
+  ([subject path value]
+   (let [context (validation-context subject)]
+     (validation/check! context path value "a set" set?)
+     (doseq [item value]
+       (validation/check! context (conj path item) item "a keyword" keyword?)))
+   value))
 
 (defn- distinct-vector!
-  [subject value value-fn]
-  (when-not (vector? value)
-    (fail! (str subject " must be a vector")
-           {:subject subject :value value}))
-  (let [identities (mapv value-fn value)]
-    (when-not (= (count identities) (count (distinct identities)))
-      (fail! (str subject " contains duplicate identities")
-             {:subject subject :identities identities})))
-  value)
+  ([subject value value-fn]
+   (distinct-vector! subject [] value value-fn))
+  ([subject path value value-fn]
+   (let [context (validation-context subject)]
+     (validation/check! context path value "a vector" vector?)
+     (let [identities (mapv value-fn value)]
+       (validation/check! context path value
+                          "a vector without duplicate identities"
+                          (fn [_]
+                            (= (count identities)
+                               (count (distinct identities)))))))
+   value))
 
 (defn- relative-components
   [value]
@@ -219,7 +229,7 @@
 
 (defn- load-authorship!
   [workspace-root target-root target paths-contract]
-  (exact-keys! "Target authorship paths"
+  (exact-keys! "Target authorship paths" [:authorship]
                authorship-path-keys paths-contract)
   (let [{:keys [compatibility destination]} paths-contract
         compatibility-file
@@ -247,7 +257,7 @@
 
 (defn- validate-documents!
   [workspace-root documents]
-  (exact-keys! "Target document contract" document-keys documents)
+  (exact-keys! "Target document contract" [:contracts] document-keys documents)
   (let [{:keys [product-goal port-scope dependencies]} documents]
     (doseq [[subject path required-name]
             [["Product goal" product-goal "product-goal.md"]
@@ -257,7 +267,8 @@
                      (= required-name (last (relative-components path))))
         (fail! (str subject " must remain under doc/targets")
                {:subject subject :path path :required-name required-name})))
-    (distinct-vector! "Target dependency documents" dependencies identity)
+    (distinct-vector! "Target dependency documents"
+                      [:contracts :dependencies] dependencies identity)
     (doseq [path dependencies]
       (workspace-file! workspace-root "Target dependency contract" path)
       (when-not (starts-with-components? path ["doc" "targets"])
@@ -267,25 +278,41 @@
 
 (defn- validate-java!
   [java]
-  (exact-keys! "Target Java contract" java-keys java)
+  (exact-keys! "Target Java contract" [:java] java-keys java)
   (let [{:keys [source-language-version runtime-major preview-features?]} java]
-    (when-not (and (pos-int? source-language-version)
-                   (pos-int? runtime-major)
-                   (<= source-language-version runtime-major)
-                   (boolean? preview-features?))
-      (fail! "Target Java-version declarations are invalid"
-             {:java java})))
+    (validation/check!
+     (validation-context "Target Java contract")
+     [:java :source-language-version] source-language-version
+     "a positive integer" pos-int?)
+    (validation/check!
+     (validation-context "Target Java contract")
+     [:java :runtime-major] runtime-major
+     "a positive integer" pos-int?)
+    (validation/check!
+     (validation-context "Target Java contract")
+     [:java :runtime-major] runtime-major
+     (str "greater than or equal to :source-language-version "
+          source-language-version)
+     #(<= source-language-version %))
+    (validation/check!
+     (validation-context "Target Java contract")
+     [:java :preview-features?] preview-features?
+     "a boolean" boolean?))
   java)
 
 (defn- validate-path-descriptors!
-  [subject expected-keys descriptors]
-  (distinct-vector! subject descriptors :id)
-  (distinct-vector! subject descriptors :path)
-  (doseq [descriptor descriptors]
-    (exact-keys! (str subject " entry") expected-keys descriptor)
+  [subject path expected-keys descriptors]
+  (distinct-vector! subject path descriptors :id)
+  (distinct-vector! subject path descriptors :path)
+  (doseq [[index descriptor] (map-indexed vector descriptors)]
+    (exact-keys! (str subject " entry") (conj path index)
+                 expected-keys descriptor)
     (when-not (keyword? (:id descriptor))
       (fail! (str subject " identity must be a keyword")
-             {:descriptor descriptor}))
+             {:path (conj path index :id)
+              :value (:id descriptor)
+              :expected "a keyword"
+              :descriptor descriptor}))
     (relative-path! (str subject " path") (:path descriptor)))
   descriptors)
 
@@ -332,19 +359,29 @@
       (let [file (target-file! target-root "Mapping overlay"
                                ["mappings"] path)
             overlay (read-edn! "Mapping overlay" file)]
-        (exact-keys! "Mapping overlay" mapping-overlay-keys overlay)
+        (exact-keys! "Mapping overlay" [:mapping-overlays id]
+                     mapping-overlay-keys overlay)
         (when-not (= mapping-overlay-schema-version (:schema-version overlay))
           (fail! "Mapping overlay has an unsupported schema version"
                  {:overlay id :actual (:schema-version overlay)}))
-        (when-not (and (= target (:target overlay))
-                       (= family (:product-family overlay))
-                       (= id (:id overlay)))
-          (fail! "Mapping overlay identities disagree with its target descriptor"
-                 {:descriptor {:target target :product-family family :id id}
-                  :overlay
-                  (select-keys overlay [:target :product-family :id])}))
+        (let [context
+              (validation-context "Mapping overlay"
+                                  {:overlay id})]
+          (validation/agree! context
+                             [:target :target] target
+                             [:mapping-overlays id :target]
+                             (:target overlay))
+          (validation/agree! context
+                             [:target :product-family] family
+                             [:mapping-overlays id :product-family]
+                             (:product-family overlay))
+          (validation/agree! context
+                             [:target :mapping-overlays id :id] id
+                             [:mapping-overlays id :id]
+                             (:id overlay)))
         (let [capabilities
               (keyword-set! "Mapping overlay capabilities"
+                            [:mapping-overlays id :capabilities]
                             (:capabilities overlay))
               undeclared (set/difference capabilities declared-capabilities)]
           (when (seq undeclared)
@@ -387,7 +424,7 @@
   [target-root target policy-path baseline-record profile-names]
   (let [file (target-file! target-root "Legal policy" ["legal"] policy-path)
         policy (read-edn! "Legal policy" file)]
-    (exact-keys! "Legal policy" legal-policy-keys policy)
+    (exact-keys! "Legal policy" [:legal-policy] legal-policy-keys policy)
     (when-not (= legal-policy-schema-version (:schema-version policy))
       (fail! "Legal policy has an unsupported schema version"
              {:actual (:schema-version policy)}))
@@ -396,36 +433,53 @@
              {:expected target :actual (:target policy)}))
     (let [allowed (:allowed-upstream-licenses policy)
           selected (:upstream-license policy)
-          legal-sets (keyword-set! "Legal policy sets" (:legal-sets policy))
+          legal-sets (keyword-set! "Legal policy sets"
+                                   [:legal-policy :legal-sets]
+                                   (:legal-sets policy))
           profile-legal-sets (:profile-legal-sets policy)
           baseline-sets (set (keys (:legal-sets baseline-record)))]
-      (when-not (and (set? allowed)
-                     (seq allowed)
-                     (every? non-blank-string? allowed)
-                     (non-blank-string? selected)
-                     (contains? allowed selected))
-        (fail! "Legal policy license selection is invalid"
-               {:selected selected :allowed allowed}))
-      (when-not (= selected (get-in baseline-record [:upstream :license]))
-        (fail! "Legal policy and baseline select different upstream licenses"
-               {:policy selected
-                :baseline (get-in baseline-record [:upstream :license])}))
-      (when-not (= legal-sets baseline-sets)
-        (fail! "Legal policy and baseline define different legal sets"
-               {:policy legal-sets :baseline baseline-sets}))
-      (when-not (and (map? profile-legal-sets)
-                     (= profile-names (set (keys profile-legal-sets))))
-        (fail! "Legal policy must declare legal sets for every target profile"
-               {:expected (vec (sort profile-names))
-                :actual (vec (sort (keys profile-legal-sets)))}))
+      (let [context (validation-context "Target legal policy")]
+        (validation/check! context [:legal-policy :allowed-upstream-licenses]
+                           allowed "a nonempty set of non-blank strings"
+                           #(and (set? %) (seq %)))
+        (doseq [license allowed]
+          (validation/check! context
+                             [:legal-policy :allowed-upstream-licenses license]
+                             license "a non-blank string" non-blank-string?))
+        (validation/check! context [:legal-policy :upstream-license]
+                           selected
+                           "a non-blank member of :allowed-upstream-licenses"
+                           #(and (non-blank-string? %)
+                                 (contains? allowed %)))
+        (validation/agree!
+         context
+         [:baseline :upstream :license]
+         (get-in baseline-record [:upstream :license])
+         [:legal-policy :upstream-license]
+         selected)
+        (validation/agree! context
+                           [:baseline :legal-sets] baseline-sets
+                           [:legal-policy :legal-sets] legal-sets)
+        (validation/exact-keys!
+         context [:legal-policy :profile-legal-sets]
+         profile-legal-sets profile-names profile-names))
       (doseq [[profile sets] profile-legal-sets]
-        (when-not (and (vector? sets)
-                       (= (count sets) (count (distinct sets)))
-                       (every? keyword? sets)
-                       (set/subset? (set sets) legal-sets))
-          (fail! "Profile legal-set selection is invalid"
-                 {:profile profile :legal-sets sets
-                  :available legal-sets})))
+        (let [path [:legal-policy :profile-legal-sets profile]
+              context
+              (validation-context "Profile legal-set selection"
+                                  {:profile profile
+                                   :available (vec (sort legal-sets))})]
+          (validation/check! context path sets
+                             "a vector without duplicate identities"
+                             #(and (vector? %)
+                                   (= (count %) (count (distinct %)))))
+          (doseq [[index legal-set] (map-indexed vector sets)]
+            (validation/check! context (conj path index) legal-set
+                               "a keyword" keyword?))
+          (validation/check! context path sets
+                             (str "a selection from "
+                                  (vec (sort legal-sets)))
+                             #(set/subset? (set %) legal-sets))))
       {:path file :contract policy})))
 
 (defn- load-baseline!
@@ -503,7 +557,7 @@
   (reduce
    (fn [result field]
      (let [value (or (get destination field) #{})]
-       (keyword-set! (str "Destination " (name field)) value)
+       (keyword-set! (str "Destination " (name field)) [field] value)
        (into result value)))
    #{}
    [:destination-capabilities :internal-capabilities :bridge-capabilities]))
@@ -515,7 +569,8 @@
    (map
     (fn [{:keys [id path capabilities] :as descriptor}]
       (let [capabilities
-            (keyword-set! "Runtime asset capabilities" capabilities)
+            (keyword-set! "Runtime asset capabilities"
+                          [:runtime-assets id :capabilities] capabilities)
             undeclared (set/difference capabilities declared-capabilities)]
         (when (empty? capabilities)
           (fail! "Runtime asset must provide at least one capability"
@@ -544,33 +599,52 @@
             baseline-contract (get-in baseline-record
                                       [:profiles baseline-profile])
             capabilities (destination-capabilities! destination)]
-        (when-not (= 1 (:schema-version destination))
-          (fail! "Destination configuration has an unsupported schema version"
-                 {:destination id :actual (:schema-version destination)}))
-        (when-not (and (= family (:product-family destination))
-                       (= target (:baseline-target destination))
-                       (keyword? baseline-profile)
-                       baseline-contract)
-          (fail! "Destination identity disagrees with its target or baseline"
-                 {:destination id
-                  :target target
-                  :product-family family
-                  :actual
-                  (select-keys destination
-                               [:product-family :baseline-target
-                                :baseline-profile])}))
+        (let [context
+              (validation-context "Destination configuration"
+                                  {:destination id})]
+          (validation/check! context
+                             [:destinations id :schema-version]
+                             (:schema-version destination)
+                             "the integer 1" #{1})
+          (validation/agree! context
+                             [:target :product-family] family
+                             [:destinations id :product-family]
+                             (:product-family destination))
+          (validation/agree! context
+                             [:target :target] target
+                             [:destinations id :baseline-target]
+                             (:baseline-target destination))
+          (validation/check! context
+                             [:destinations id :baseline-profile]
+                             baseline-profile
+                             "a keyword naming a baseline profile"
+                             keyword?)
+          (validation/check! context
+                             [:destinations id :baseline-profile]
+                             baseline-profile
+                             (str "one of " (vec (sort (keys (:profiles
+                                                              baseline-record)))))
+                             #(contains? (:profiles baseline-record) %)))
         (let [package-id (get-in destination [:package :id])
               assembly-name (get-in destination [:project :assembly-name])
-              target-framework (get-in destination [:project :target-framework])]
-          (when-not (and (= package-id (:package-id baseline-contract))
-                         (non-blank-string? assembly-name)
-                         (non-blank-string? target-framework))
-            (fail! "Destination package identity disagrees with its baseline"
-                   {:destination id
-                    :package-id package-id
-                    :baseline-package-id (:package-id baseline-contract)
-                    :assembly-name assembly-name
-                    :target-framework target-framework})))
+              target-framework (get-in destination [:project :target-framework])
+              context
+              (validation-context "Destination configuration"
+                                  {:destination id})]
+          (validation/agree!
+           context
+           [:baseline :profiles baseline-profile :package-id]
+           (:package-id baseline-contract)
+           [:destinations id :package :id]
+           package-id)
+          (validation/check! context
+                             [:destinations id :project :assembly-name]
+                             assembly-name "a non-blank string"
+                             non-blank-string?)
+          (validation/check! context
+                             [:destinations id :project :target-framework]
+                             target-framework "a non-blank string"
+                             non-blank-string?))
         (let [undeclared (set/difference capabilities declared-capabilities)]
           (when (seq undeclared)
             (fail! "Destination requests undeclared target capabilities"
@@ -610,14 +684,48 @@
    runtime-records authorship-contracts]
   (let [selection (:authorship descriptor)]
     (exact-keys! "Profile authorship contract"
+                 [:profiles profile-id :authorship]
                  profile-authorship-keys selection)
     (exact-keys! "Profile authorship budget"
+                 [:profiles profile-id :authorship :budget]
                  authorship-budget-keys (:budget selection))
     (let [{:keys [sources evidence review budget]} selection
           available-destination-sources
           (get-in authorship-contracts [:destination :sources])
           source-ids (set (keys available-destination-sources))
-          selected-source-ids (set sources)
+          context
+          (validation-context "Profile authorship selections"
+                              {:profile profile-id
+                               :available-sources (vec (sort source-ids))})
+          sources-path [:profiles profile-id :authorship :sources]
+          evidence-path [:profiles profile-id :authorship :evidence]
+          _sources-shape
+          (validation/check! context sources-path sources
+                             "a vector without duplicate identities"
+                             #(and (vector? %)
+                                   (= (count %) (count (distinct %)))))
+          _source-items
+          (doseq [[index source] (map-indexed vector sources)]
+            (validation/check! context (conj sources-path index) source
+                               "a qualified keyword" qualified-keyword?))
+          _source-selection
+          (validation/check! context sources-path sources
+                             (str "a selection from "
+                                  (vec (sort source-ids)))
+                             #(set/subset? (set %) source-ids))
+          _evidence-shape
+          (validation/check! context evidence-path evidence
+                             "a nonempty vector without duplicate identities"
+                             #(and (vector? %) (seq %)
+                                   (= (count %) (count (distinct %)))))
+          _evidence-items
+          (doseq [[index evidence-id] (map-indexed vector evidence)]
+            (validation/check! context (conj evidence-path index) evidence-id
+                               "a keyword" keyword?))
+          _review
+          (validation/check! context
+                             [:profiles profile-id :authorship :review]
+                             review "a non-blank string" non-blank-string?)
           compatibility-capabilities
           (set
            (if (contains? destination :bridge-capabilities)
@@ -653,22 +761,6 @@
            (product-identity-fragments target family destination)
            :compatibility-sources compatibility-sources
            :destination-sources destination-sources}]
-      (when-not
-       (and (vector? sources)
-            (= (count sources) (count selected-source-ids))
-            (every? qualified-keyword? sources)
-            (set/subset? selected-source-ids source-ids)
-            (vector? evidence)
-            (seq evidence)
-            (= (count evidence) (count (distinct evidence)))
-            (every? keyword? evidence)
-            (non-blank-string? review))
-        (fail! "Profile authorship selections are invalid"
-               {:profile profile-id
-                :sources sources
-                :available-sources (vec (sort source-ids))
-                :evidence evidence
-                :review review}))
       (when-not (set/subset? selected-runtime-paths
                              contracted-runtime-paths)
         (fail! "Selected target runtime assets lack authored source contracts"
@@ -717,24 +809,35 @@
                   runtime-ids (:runtime-assets descriptor)
                   validation-ids (:validation-contracts descriptor)
                   selections
-                  [["mapping overlay" mapping-ids
-                    (set (keys overlay-records))]
-                   ["runtime asset" runtime-ids
-                    (set (keys asset-records))]
-                   ["validation contract" validation-ids
+                  [[:mapping-overlays mapping-ids (set (keys overlay-records))]
+                   [:runtime-assets runtime-ids (set (keys asset-records))]
+                   [:validation-contracts validation-ids
                     validation-descriptor-ids]]]
               (when-not (non-blank-string? id)
-                (fail! "Target profile descriptor id must be a nonblank string"
-                       {:descriptor descriptor}))
-              (doseq [[subject values available] selections]
-                (when-not (and (vector? values)
-                               (= (count values) (count (distinct values)))
-                               (every? keyword? values)
-                               (set/subset? (set values) available))
-                  (fail! (str "Target profile selects an invalid " subject)
-                         {:profile id :selection values
-                          :available (vec (sort available))})))
+                (validation/fail!
+                 (validation-context "Target profile descriptor")
+                 [:profiles :id] id "a non-blank string"))
+              (doseq [[field values available] selections]
+                (let [path [:profiles id field]
+                      context
+                      (validation-context "Target profile descriptor"
+                                          {:profile id
+                                           :available (vec (sort available))})]
+                  (validation/check! context path values
+                                     "a vector of distinct keywords" vector?)
+                  (when-not (= (count values) (count (distinct values)))
+                    (validation/fail! context path values
+                                      "a vector without duplicate identities"))
+                  (doseq [[index value] (map-indexed vector values)]
+                    (validation/check! context (conj path index) value
+                                       "a keyword" keyword?))
+                  (let [unknown (set/difference (set values) available)]
+                    (when (seq unknown)
+                      (validation/fail!
+                       context path values
+                       (str "a selection from " (vec (sort available))))))))
               (keyword-set! "Profile required capabilities"
+                            [:profiles id :required-capabilities]
                             required-capabilities)
               (let [file (target-file! target-root "Generation profile"
                                        ["profiles"] path)
@@ -748,53 +851,89 @@
                   (fail! "Target profile selects an unknown destination"
                          {:profile id :destination destination
                           :available (vec (sort (keys destinations)))}))
-                (when-not (and (= 1 (:schema-version profile))
-                               (= id (:profile profile))
-                               (= family (:product-family profile))
-                               (= target (:baseline-target profile))
-                               (keyword? baseline-profile)
-                               baseline-contract
-                               (= id (:profile baseline-contract)))
-                  (fail! "Generation profile identities disagree with its target or baseline"
-                         {:descriptor-id id
-                          :profile
-                          (select-keys profile
-                                       [:schema-version :profile
-                                        :product-family :baseline-target
-                                        :baseline-profile])
-                          :baseline-profile baseline-contract}))
-                (when-not (= (:path (:descriptor destination-record))
-                             (:destination-config profile))
-                  (fail! "Generation profile selects a destination outside its descriptor"
-                         {:profile id
-                          :expected (:path (:descriptor destination-record))
-                          :actual (:destination-config profile)}))
-                (when-not (= (:destination-bundle profile)
-                             (:destination-bundle destination-config))
-                  (fail! "Generation profile and destination select different rule bundles"
-                         {:profile id
-                          :profile-bundle (:destination-bundle profile)
-                          :destination-bundle
-                          (:destination-bundle destination-config)}))
-                (when-not (qualified-symbol? (:destination-bundle profile))
-                  (fail! "Generation profile must select a qualified rule bundle"
-                         {:profile id
-                          :destination-bundle (:destination-bundle profile)}))
-                (let [dependencies (or (:dependency-profiles profile) [])]
-                  (when-not (and (vector? dependencies)
-                                 (= (count dependencies)
-                                    (count (distinct dependencies)))
-                                 (every? non-blank-string? dependencies)
-                                 (not (contains? (set dependencies) id)))
-                    (fail! "Generation profile dependencies are invalid"
-                           {:profile id :dependencies dependencies})))
+                (let [context
+                      (validation-context "Generation profile"
+                                          {:profile id})]
+                  (validation/check! context
+                                     [:profiles id :schema-version]
+                                     (:schema-version profile)
+                                     "the integer 1" #{1})
+                  (validation/agree! context
+                                     [:target :profiles id :id] id
+                                     [:profiles id :profile]
+                                     (:profile profile))
+                  (validation/agree! context
+                                     [:target :product-family] family
+                                     [:profiles id :product-family]
+                                     (:product-family profile))
+                  (validation/agree! context
+                                     [:target :target] target
+                                     [:profiles id :baseline-target]
+                                     (:baseline-target profile))
+                  (validation/check! context
+                                     [:profiles id :baseline-profile]
+                                     baseline-profile
+                                     "a keyword naming a baseline profile"
+                                     keyword?)
+                  (validation/check! context
+                                     [:profiles id :baseline-profile]
+                                     baseline-profile
+                                     (str "one of "
+                                          (vec
+                                           (sort
+                                            (keys (:profiles baseline-record)))))
+                                     #(contains? (:profiles baseline-record) %))
+                  (validation/agree!
+                   context
+                   [:target :profiles id :id] id
+                   [:baseline :profiles baseline-profile :profile]
+                   (:profile baseline-contract))
+                  (validation/agree!
+                   context
+                   [:target :profiles id :destination]
+                   (:path (:descriptor destination-record))
+                   [:profiles id :destination-config]
+                   (:destination-config profile))
+                  (validation/agree!
+                   context
+                   [:destinations destination :destination-bundle]
+                   (:destination-bundle destination-config)
+                   [:profiles id :destination-bundle]
+                   (:destination-bundle profile))
+                  (validation/check! context
+                                     [:profiles id :destination-bundle]
+                                     (:destination-bundle profile)
+                                     "a namespace-qualified symbol"
+                                     qualified-symbol?))
+                (let [dependencies (or (:dependency-profiles profile) [])
+                      context
+                      (validation-context "Generation profile"
+                                          {:profile id})
+                      path [:profiles id :dependency-profiles]]
+                  (validation/check! context path dependencies
+                                     "a vector of distinct profile names"
+                                     vector?)
+                  (when-not (= (count dependencies)
+                               (count (distinct dependencies)))
+                    (validation/fail! context path dependencies
+                                      "a vector without duplicate names"))
+                  (doseq [[index dependency]
+                          (map-indexed vector dependencies)]
+                    (validation/check! context (conj path index) dependency
+                                       "a non-blank string"
+                                       non-blank-string?))
+                  (when (contains? (set dependencies) id)
+                    (validation/fail! context path dependencies
+                                      "a vector that excludes its own profile")))
                 (when (and (contains? profile :gradle-java-major)
                            (not= (:runtime-major java)
                                  (:gradle-java-major profile)))
-                  (fail! "Generation profile and target declare different Java runtimes"
-                         {:profile id
-                          :target-runtime (:runtime-major java)
-                          :profile-runtime (:gradle-java-major profile)}))
+                  (validation/agree!
+                   (validation-context "Generation profile"
+                                       {:profile id})
+                   [:target :java :runtime-major] (:runtime-major java)
+                   [:profiles id :gradle-java-major]
+                   (:gradle-java-major profile)))
                 (source-root! workspace-root profile)
                 (let [selected-mappings
                       (select-keys overlay-records mapping-ids)
@@ -826,18 +965,22 @@
                            {:profile id
                             :missing (vec (sort missing))
                             :provided (vec (sort provided))}))
-                  (when-not (= (vec (sort configured-runtime))
-                               selected-runtime-paths)
-                    (fail! "Destination runtime sources disagree with target assets"
-                           {:profile id
-                            :destination destination
-                            :configured (vec (sort configured-runtime))
-                            :selected selected-runtime-paths}))
-                  (when-not (= policy-legal-sets destination-legal-sets)
-                    (fail! "Destination and legal policy select different legal sets"
-                           {:profile id
-                            :policy policy-legal-sets
-                            :destination destination-legal-sets}))
+                  (validation/agree!
+                   (validation-context
+                    "Destination runtime-source contract"
+                    {:profile id :destination destination})
+                   [:target :profiles id :runtime-assets]
+                   selected-runtime-paths
+                   [:destinations destination :runtime-sources]
+                   (vec (sort configured-runtime)))
+                  (validation/agree!
+                   (validation-context
+                    "Destination legal-set contract"
+                    {:profile id :destination destination})
+                   [:legal-policy :profile-legal-sets id]
+                   policy-legal-sets
+                   [:destinations destination :baseline-legal-sets]
+                   destination-legal-sets)
                   [id {:descriptor descriptor
                        :path file
                        :configuration profile
@@ -869,12 +1012,15 @@
 
 (defn- validate-custom-sources!
   [target-root subject area extension sources]
-  (when-not (and (vector? sources)
-                 (seq sources)
-                 (= (count sources) (count (distinct sources)))
-                 (every? non-blank-string? sources))
-    (fail! (str subject " sources must be a nonempty distinct vector")
-           {:sources sources}))
+  (let [path [:validation area :sources]
+        context (validation-context (str subject " sources"))]
+    (validation/check! context path sources
+                       "a nonempty vector without duplicate paths"
+                       #(and (vector? %) (seq %)
+                             (= (count %) (count (distinct %)))))
+    (doseq [[index source] (map-indexed vector sources)]
+      (validation/check! context (conj path index) source
+                         "a non-blank string" non-blank-string?)))
   (mapv #(validation-source! target-root subject area % extension) sources))
 
 (defn- resolve-custom-runner!
@@ -898,20 +1044,23 @@
     resolved))
 
 (defn- proof-selection!
-  [subject values available ladder-id]
-  (when-not (and (vector? values)
-                 (seq values)
-                 (= (count values) (count (distinct values)))
-                 (set/subset? (set values) available))
-    (fail! (str "Proof ladder selects invalid " subject)
-           {:ladder ladder-id
-            :selection values
-            :available (vec (sort available))}))
+  [subject path values available ladder-id]
+  (let [context
+        (validation-context (str "Proof ladder " subject)
+                            {:ladder ladder-id
+                             :available (vec (sort available))})]
+    (validation/check! context path values
+                       "a nonempty vector without duplicate identities"
+                       #(and (vector? %) (seq %)
+                             (= (count %) (count (distinct %)))))
+    (validation/check! context path values
+                       (str "a selection from " (vec (sort available)))
+                       #(set/subset? (set %) available)))
   values)
 
 (defn- load-proof!
   [target family proof profiles validations]
-  (exact-keys! "Target proof contract" proof-keys proof)
+  (exact-keys! "Target proof contract" [:proof] proof-keys proof)
   (let [role (:role proof)
         profile-ids (set (keys profiles))
         validation-ids (set (keys validations))
@@ -923,17 +1072,19 @@
                (not= :java-library family))
       (fail! "Reusable-translator conformance targets must use the Java-library product family"
              {:target target :product-family family}))
-    (distinct-vector! "Target proof ladders" ladders :id)
+    (distinct-vector! "Target proof ladders" [:proof :ladders] ladders :id)
     (when (empty? ladders)
       (fail! "Target proof contract must declare at least one required ladder"
              {:target target}))
     (let [loaded
           (mapv
-           (fn [{:keys [id kind profiles validation-contracts resource-class
+           (fn [index
+                {:keys [id kind profiles validation-contracts resource-class
                         runner]
                  :as ladder}]
              (exact-keys!
               "Target proof ladder"
+              [:proof :ladders index]
               (if (= :custom kind)
                 custom-ladder-keys
                 target-validation-ladder-keys)
@@ -954,50 +1105,59 @@
                (fail! "Reusable-translator conformance ladders must use the conformance resource class"
                       {:target target :ladder id
                        :resource-class resource-class}))
-             (proof-selection! "profiles" profiles profile-ids id)
+             (proof-selection! "profiles"
+                               [:proof :ladders index :profiles]
+                               profiles profile-ids id)
              (proof-selection! "validation contracts"
+                               [:proof :ladders index :validation-contracts]
                                validation-contracts validation-ids id)
              (cond-> ladder
                (= :custom kind)
                (assoc :runner (resolve-custom-runner! runner id))))
+           (range)
            ladders)
           selected-profiles (mapcat :profiles loaded)
           selected-validations (mapcat :validation-contracts loaded)]
-      (when-not (and (= (count selected-profiles)
-                        (count (distinct selected-profiles)))
-                     (= profile-ids (set selected-profiles)))
-        (fail! "Required proof ladders must cover every target profile exactly once"
-               {:target target
-                :expected (vec (sort profile-ids))
-                :actual (vec (sort selected-profiles))}))
-      (when-not (and (= (count selected-validations)
-                        (count (distinct selected-validations)))
-                     (= validation-ids (set selected-validations)))
-        (fail! "Required proof ladders must cover every target validation exactly once"
-               {:target target
-                :expected (vec (sort validation-ids))
-                :actual (vec (sort selected-validations))}))
+      (let [context (validation-context "Required proof ladder coverage"
+                                        {:target target})]
+        (validation/check!
+         context [:proof :ladders :profiles] (vec selected-profiles)
+         "each target profile exactly once"
+         #(and (= (count %) (count (distinct %)))
+               (= profile-ids (set %))))
+        (validation/check!
+         context [:proof :ladders :validation-contracts]
+         (vec selected-validations)
+         "each target validation exactly once"
+         #(and (= (count %) (count (distinct %)))
+               (= validation-ids (set %)))))
       {:role role :ladders loaded})))
 
 (defn- validate-authorship-evidence!
   [target profiles proof]
   (let [ladders (into {} (map (juxt :id identity)) (:ladders proof))]
     (doseq [[profile-id {:keys [authorship]}] profiles
-            evidence-id (:evidence authorship)]
+            [evidence-index evidence-id]
+            (map-indexed vector (:evidence authorship))]
       (let [ladder (get ladders evidence-id)]
-        (when-not (and ladder
-                       (contains? (set (:profiles ladder)) profile-id))
-          (fail! "Profile authored sources lack a covering required proof ladder"
-                 {:target target
-                  :profile profile-id
-                  :evidence evidence-id
-                  :available
-                  (vec
-                   (sort
-                    (for [[id candidate] ladders
-                          :when (contains? (set (:profiles candidate))
-                                           profile-id)]
-                      id)))}))))
+        (validation/check!
+         (validation-context
+          "Profile authorship evidence"
+          {:target target
+           :profile profile-id
+           :evidence evidence-id
+           :available
+           (vec
+            (sort
+             (for [[id candidate] ladders
+                   :when (contains? (set (:profiles candidate)) profile-id)]
+               id)))})
+         [:profiles profile-id :authorship :evidence evidence-index]
+         evidence-id
+         "a required proof ladder that covers this profile"
+         (fn [_]
+           (and ladder
+                (contains? (set (:profiles ladder)) profile-id))))))
     profiles))
 
 (defn- load-differential-validation!
@@ -1009,51 +1169,63 @@
         destination (get-in profile-record [:destination :configuration])
         profile-legal-sets
         (get-in legal-policy [:contract :profile-legal-sets profile-name])]
-    (when-not (and (= id (:id contract))
-                   (= target (:target contract))
-                   profile-record
-                   (= (:baseline-profile contract)
-                      (get-in profile-record
-                              [:configuration :baseline-profile]))
-                   (contains?
-                    (set (get-in profile-record
-                                 [:descriptor :validation-contracts]))
-                    id))
-      (fail! "Validation contract identities disagree with its target profile"
-             {:descriptor-id id
-              :contract
-              (select-keys contract [:id :target :baseline-profile])
-              :profile profile-name}))
+    (let [context
+          (validation-context "Differential validation contract"
+                              {:validation id :profile profile-name})]
+      (validation/agree! context
+                         [:target :validation-contracts id :id] id
+                         [:validation-contracts id :id] (:id contract))
+      (validation/agree! context
+                         [:target :target] target
+                         [:validation-contracts id :target] (:target contract))
+      (validation/check! context
+                         [:validation-contracts id :runner :profile]
+                         profile-name
+                         (str "one of " (vec (sort (keys profiles))))
+                         #(contains? profiles %))
+      (validation/agree!
+       context
+       [:profiles profile-name :baseline-profile]
+       (get-in profile-record [:configuration :baseline-profile])
+       [:validation-contracts id :baseline-profile]
+       (:baseline-profile contract))
+      (validation/check!
+       context
+       [:target :profiles profile-name :validation-contracts]
+       (get-in profile-record [:descriptor :validation-contracts])
+       (str "a selection containing " id)
+       #(contains? (set %) id)))
     (validation-source!
      target-root "Validation oracle" "oracle"
      (get-in contract [:runner :oracle :source]) ".java")
     (validation-source!
      target-root "Validation probe" "probe"
      (get-in contract [:runner :probe :source]) ".cs")
-    (when-not (= profile-legal-sets
-                 (get-in contract [:package-contract :legal-sets]))
-      (fail! "Validation and legal-policy package contracts disagree"
-             {:validation id
-              :profile profile-name
-              :policy profile-legal-sets
-              :validation-legal-sets
-              (get-in contract [:package-contract :legal-sets])}))
-    (when-not (= (get-in destination [:project :assembly-name])
-                 (get-in contract [:package-contract :assembly-name]))
-      (fail! "Validation and destination assembly identities disagree"
-             {:validation id
-              :destination
-              (get-in destination [:project :assembly-name])
-              :validation-assembly
-              (get-in contract [:package-contract :assembly-name])}))
-    (when-not (= (get-in destination [:project :target-framework])
-                 (get-in contract [:package-contract :target-framework]))
-      (fail! "Validation and destination target frameworks disagree"
-             {:validation id
-              :destination
-              (get-in destination [:project :target-framework])
-              :validation-target-framework
-              (get-in contract [:package-contract :target-framework])}))
+    (let [context
+          (validation-context "Differential validation package contract"
+                              {:validation id :profile profile-name})]
+      (validation/agree!
+       context
+       [:legal-policy :profile-legal-sets profile-name]
+       profile-legal-sets
+       [:validation-contracts id :package-contract :legal-sets]
+       (get-in contract [:package-contract :legal-sets]))
+      (validation/agree!
+       context
+       [:destinations
+        (get-in profile-record [:descriptor :destination])
+        :project :assembly-name]
+       (get-in destination [:project :assembly-name])
+       [:validation-contracts id :package-contract :assembly-name]
+       (get-in contract [:package-contract :assembly-name]))
+      (validation/agree!
+       context
+       [:destinations
+        (get-in profile-record [:descriptor :destination])
+        :project :target-framework]
+       (get-in destination [:project :target-framework])
+       [:validation-contracts id :package-contract :target-framework]
+       (get-in contract [:package-contract :target-framework])))
     (doseq [[context-id context-path] (get-in contract [:runner :context])]
       (let [required-file?
             (contains? (set (get-in contract [:runner :required-files]))
@@ -1092,38 +1264,49 @@
         profile-name (:profile contract)
         profile-record (get profiles profile-name)
         legal-sets (:legal-sets contract)]
-    (exact-keys! "Custom validation contract" custom-validation-keys contract)
+    (exact-keys! "Custom validation contract"
+                 [:validation-contracts id]
+                 custom-validation-keys contract)
     (when-not (= 1 (:schema-version contract))
       (fail! "Custom validation contract has an unsupported schema version"
              {:validation id :actual (:schema-version contract)}))
-    (when-not (and (= id (:id contract))
-                   (= target (:target contract))
-                   profile-record
-                   (= (:baseline-profile contract)
-                      (get-in profile-record
-                              [:configuration :baseline-profile]))
-                   (contains?
-                    (set (get-in profile-record
-                                 [:descriptor :validation-contracts]))
-                    id))
-      (fail! "Custom validation identities disagree with its target profile"
-             {:descriptor-id id
-              :contract
-              (select-keys contract
-                           [:id :target :profile :baseline-profile])}))
+    (let [context
+          (validation-context "Custom validation contract"
+                              {:validation id :profile profile-name})]
+      (validation/agree! context
+                         [:target :validation-contracts id :id] id
+                         [:validation-contracts id :id] (:id contract))
+      (validation/agree! context
+                         [:target :target] target
+                         [:validation-contracts id :target] (:target contract))
+      (validation/check! context
+                         [:validation-contracts id :profile]
+                         profile-name
+                         (str "one of " (vec (sort (keys profiles))))
+                         #(contains? profiles %))
+      (validation/agree!
+       context
+       [:profiles profile-name :baseline-profile]
+       (get-in profile-record [:configuration :baseline-profile])
+       [:validation-contracts id :baseline-profile]
+       (:baseline-profile contract))
+      (validation/check!
+       context
+       [:target :profiles profile-name :validation-contracts]
+       (get-in profile-record [:descriptor :validation-contracts])
+       (str "a selection containing " id)
+       #(contains? (set %) id)))
     (validate-custom-sources! target-root "Validation oracle" "oracle" ".java"
                               (:oracle-sources contract))
     (validate-custom-sources! target-root "Validation probe" "probe" ".cs"
                               (:probe-sources contract))
-    (when-not (= legal-sets
-                 (get-in legal-policy
-                         [:contract :profile-legal-sets profile-name]))
-      (fail! "Custom validation and legal-policy contracts disagree"
-             {:validation id :profile profile-name
-              :validation-legal-sets legal-sets
-              :policy
-              (get-in legal-policy
-                      [:contract :profile-legal-sets profile-name])}))
+    (validation/agree!
+     (validation-context "Custom validation legal-set contract"
+                         {:validation id :profile profile-name})
+     [:legal-policy :profile-legal-sets profile-name]
+     (get-in legal-policy [:contract :profile-legal-sets profile-name])
+     [:validation-contracts id :legal-sets]
+     legal-sets)
     (doseq [legal-set legal-sets]
       (when-not (contains? (set (keys (:legal-sets baseline-record)))
                            legal-set)
@@ -1191,42 +1374,51 @@
        (fail! "Target manifest is missing"
               {:target requested-target :path (str manifest-file)}))
      (let [manifest (read-edn! "Target manifest" manifest-file)]
-       (exact-keys! "Target manifest" manifest-keys manifest)
-       (when-not (= schema-version (:schema-version manifest))
-         (fail! "Target manifest has an unsupported schema version"
-                {:expected schema-version
-                 :actual (:schema-version manifest)}))
+       (exact-keys! "Target manifest" [] manifest-keys manifest)
+       (validation/check!
+        (validation-context "Target manifest")
+        [:schema-version] (:schema-version manifest)
+        (str "the supported schema version " schema-version)
+        #{schema-version})
        (let [target (target-id (:target manifest))
              family (:product-family manifest)
              java (validate-java! (:java manifest))
              declared-capabilities
-             (keyword-set! "Target capabilities" (:capabilities manifest))]
-         (when-not (= requested-target target)
-           (fail! "Target manifest identity disagrees with its directory"
-                  {:requested requested-target :manifest target}))
-         (when-not (keyword? family)
-           (fail! "Target product-family identity must be a keyword"
-                  {:product-family family}))
+             (keyword-set! "Target capabilities" [:capabilities]
+                           (:capabilities manifest))]
+         (validation/agree!
+          (validation-context "Target manifest identity")
+          [:target-directory] requested-target
+          [:target] target)
+         (validation/check!
+          (validation-context "Target manifest")
+          [:product-family] family "a keyword" keyword?)
          (validate-documents! workspace-root (:contracts manifest))
-         (validate-path-descriptors! "Target destinations"
+         (validate-path-descriptors! "Target destinations" [:destinations]
                                      path-descriptor-keys
                                      (:destinations manifest))
          (validate-path-descriptors! "Target mapping overlays"
+                                     [:mapping-overlays]
                                      path-descriptor-keys
                                      (:mapping-overlays manifest))
-         (validate-path-descriptors! "Target runtime assets"
+         (validate-path-descriptors! "Target runtime assets" [:runtime-assets]
                                      runtime-descriptor-keys
                                      (:runtime-assets manifest))
          (validate-path-descriptors! "Target validation contracts"
+                                     [:validation-contracts]
                                      validation-descriptor-keys
                                      (:validation-contracts manifest))
-         (distinct-vector! "Target profiles" (:profiles manifest) :id)
-         (distinct-vector! "Target profiles" (:profiles manifest) :path)
+         (distinct-vector! "Target profiles" [:profiles]
+                           (:profiles manifest) :id)
+         (distinct-vector! "Target profiles" [:profiles]
+                           (:profiles manifest) :path)
          (when (empty? (:profiles manifest))
            (fail! "Target directory must declare at least one profile"
                   {:target target}))
-         (doseq [descriptor (:profiles manifest)]
+         (doseq [[index descriptor]
+                 (map-indexed vector (:profiles manifest))]
            (exact-keys! "Target profile descriptor"
+                        [:profiles index]
                         profile-descriptor-keys descriptor)
            (relative-path! "Target profile path" (:path descriptor)))
          (let [baseline (load-baseline! workspace-root target-root target
@@ -1235,19 +1427,18 @@
            (let [manifest-profiles (set (map :id (:profiles manifest)))
                  baseline-profiles
                  (set (map :profile (vals (:profiles baseline-record))))]
-             (when-not (= manifest-profiles baseline-profiles)
-               (fail! "Target manifest and baseline define different profiles"
-                      {:manifest (vec (sort manifest-profiles))
-                       :baseline (vec (sort baseline-profiles))})))
-           (when-not (= (:source-language-version java)
-                        (get-in baseline-record
-                                [:upstream :java-language-version]))
-             (fail! "Target manifest and baseline declare different Java language versions"
-                    {:target target
-                     :manifest (:source-language-version java)
-                     :baseline
-                     (get-in baseline-record
-                             [:upstream :java-language-version])}))
+             (validation/agree!
+              (validation-context "Target profile contract"
+                                  {:target target})
+              [:baseline :profiles] baseline-profiles
+              [:profiles] manifest-profiles))
+           (validation/agree!
+            (validation-context "Target Java language contract"
+                                {:target target})
+            [:baseline :upstream :java-language-version]
+            (get-in baseline-record [:upstream :java-language-version])
+            [:java :source-language-version]
+            (:source-language-version java))
            (let [profile-names (set (map :id (:profiles manifest)))
                  legal-policy
                  (validate-legal-policy!

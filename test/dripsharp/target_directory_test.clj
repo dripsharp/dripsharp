@@ -355,7 +355,10 @@
        (let [failure (failure-data
                       #(target-directory/read-target root :acme))]
          (is (= :invalid-target-directory (:kind failure)))
-         (is (= [:unknown] (:unknown failure)))))
+         (is (= [] (:path failure)))
+         (is (= [:unknown] (:unknown failure)))
+         (is (= [:unknown] (:unknown-keys failure)))
+         (is (= [] (:missing-keys failure)))))
      (testing "target-owned paths cannot escape their area"
        (write-edn! root "targets/acme/target.edn" (target-manifest))
        (update-edn!
@@ -418,6 +421,60 @@
          (is (= :invalid-target-directory (:kind failure)))
          (is (= "Validation oracle" (:subject failure))))))))
 
+(deftest target-metadata-and-cross-contract-diagnostics-name-exact-paths
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (testing "target Java fields report their offending values and predicate"
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in [:java :runtime-major] "17")
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= [:java :runtime-major] (:path failure)))
+         (is (= "17" (:value failure)))
+         (is (= "a positive integer" (:expected failure)))))
+     (testing "profile and destination bundle disagreement names both contracts"
+       (write-edn! root "targets/acme/target.edn" (target-manifest))
+       (update-edn! root "targets/acme/profiles/core.edn"
+                    assoc :destination-bundle 'wrong.bundle/rule-bundle)
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= [:profiles "acme-core" :destination-bundle]
+                (:path failure)))
+         (is (= 'wrong.bundle/rule-bundle (:value failure)))
+         (is (= [:destinations :core :destination-bundle]
+                (:expected-path failure)))
+         (is (= 'acme.java-project/rule-bundle
+                (:expected-value failure)))))
+     (testing "destination and baseline package disagreement names package id"
+       (write-edn! root "targets/acme/profiles/core.edn"
+                   (generation-profile))
+       (update-edn! root "targets/acme/destinations/core.edn"
+                    assoc-in [:package :id] "Acme.Other")
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= [:destinations :core :package :id] (:path failure)))
+         (is (= "Acme.Other" (:value failure)))
+         (is (= [:baseline :profiles :core :package-id]
+                (:expected-path failure)))
+         (is (= "Acme.Core" (:expected-value failure)))))
+     (testing "validation and destination agreement names validation field"
+       (write-edn! root "targets/acme/destinations/core.edn"
+                   (destination))
+       (update-edn! root "targets/acme/validation/contract.edn"
+                    assoc-in [:package-contract :assembly-name]
+                    "Acme.Other")
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (=
+              [:validation-contracts :acme-core
+               :package-contract :assembly-name]
+              (:path failure)))
+         (is (= "Acme.Other" (:value failure)))
+         (is (= [:destinations :core :project :assembly-name]
+                (:expected-path failure)))
+         (is (= "Acme.Core" (:expected-value failure))))))))
+
 (deftest required-proof-ladders-cover-target-contracts-fail-closed
   (in-target-workspace
    (fn [root]
@@ -428,7 +485,9 @@
        (let [failure (failure-data
                       #(target-directory/read-target root :acme))]
          (is (= :invalid-target-directory (:kind failure)))
-         (is (= :acme-required-proof (:ladder failure)))))
+         (is (= :acme-required-proof (:ladder failure)))
+         (is (= [:proof :ladders 0 :profiles] (:path failure)))
+         (is (= [] (:value failure)))))
      (testing "every target validation remains in a required proof ladder"
        (write-edn! root "targets/acme/target.edn" (target-manifest))
        (update-edn! root "targets/acme/target.edn"
@@ -436,7 +495,10 @@
        (let [failure (failure-data
                       #(target-directory/read-target root :acme))]
          (is (= :invalid-target-directory (:kind failure)))
-         (is (= :acme-required-proof (:ladder failure)))))
+         (is (= :acme-required-proof (:ladder failure)))
+         (is (= [:proof :ladders 0 :validation-contracts]
+                (:path failure)))
+         (is (= [] (:value failure)))))
      (testing "the reusable conformance role is target- and resource-specific"
        (write-edn! root "targets/acme/target.edn" (target-manifest))
        (update-edn! root "targets/acme/target.edn"
@@ -471,7 +533,10 @@
        (let [failure
              (failure-data #(target-directory/read-target root :acme))]
          (is (= :invalid-target-directory (:kind failure)))
-         (is (= :acme/missing-proof (:evidence failure)))))
+         (is (= :acme/missing-proof (:evidence failure)))
+         (is (= [:profiles "acme-core" :authorship :evidence 0]
+                (:path failure)))
+         (is (= :acme/missing-proof (:value failure)))))
      (testing "all shared groups stay neutral even when a profile omits them"
        (write-edn! root "targets/acme/target.edn" (target-manifest))
        (write-text! root "runtime/Leaky.cs" "namespace Acme.Leak;\n")

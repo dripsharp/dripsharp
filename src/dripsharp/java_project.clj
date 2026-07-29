@@ -19,7 +19,8 @@
             [dripsharp.project-input :as project-input]
             [dripsharp.project-xml :as project-xml]
             [dripsharp.spoon :as spoon]
-            [dripsharp.util :as util])
+            [dripsharp.util :as util]
+            [dripsharp.validation :as validation])
   (:import [java.nio.charset Charset MalformedInputException]
            [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
@@ -60,94 +61,168 @@
 (defn- destination-error [message data]
   (throw (ex-info message (assoc data :kind :invalid-destination-configuration))))
 
-(defn- relative-path! [value label]
-  (let [value (str value)
-        path (paths/path value)]
-    (when (or (str/blank? value) (.isAbsolute path)
-              (some #(= ".." (str %)) (iterator-seq (.iterator path))))
-      (destination-error (str label " must be a safe relative path")
-                         {:field label :value value}))
-    value))
+(defn- destination-context
+  ([subject]
+   (destination-context subject {}))
+  ([subject data]
+   {:kind :invalid-destination-configuration
+    :subject subject
+    :data data}))
 
-(defn- project-reference! [value]
-  (let [value (str value)
-        path (paths/path value)
-        segments (mapv str (iterator-seq (.iterator path)))]
-    (when (or (str/blank? value) (.isAbsolute path)
-              (some #(= ".." %) (rest segments))
-              (not (str/ends-with? value ".csproj")))
-      (destination-error "Project reference must name a sibling or child csproj"
-                         {:field :project-references :value value}))
-    value))
+(def ^:private project-required-keys
+  #{:assembly-name :root-namespace :target-framework :nullable
+    :implicit-usings :warnings-as-errors})
+
+(def ^:private project-allowed-keys
+  (into project-required-keys [:define-constants :no-warn]))
+
+(def ^:private package-required-keys
+  #{:id :version :title :description :authors :tags
+    :project-url :repository-url :repository-type})
+
+(def ^:private package-allowed-keys
+  (into package-required-keys
+        [:repository-commit :license-expression :copyright :symbols]))
+
+(def ^:private output-keys
+  #{:project-directory :source-directory :resource-directory :project-file
+    :source-map-file :diagnostics-file :manifest-file :public-metadata-file
+    :annotation-decisions-file})
+
+(def ^:private mechanical-source-keys
+  #{:repository :revision :notice-reference})
+
+(defn- relative-path!
+  ([value label]
+   (relative-path! value label [label]))
+  ([value label field-path]
+   (let [value (str value)
+         path (paths/path value)]
+     (when (or (str/blank? value) (.isAbsolute path)
+               (some #(= ".." (str %)) (iterator-seq (.iterator path))))
+       (validation/fail!
+        (destination-context label {:field label})
+        field-path value "a safe relative path"))
+     value)))
+
+(defn- project-reference!
+  ([value]
+   (project-reference! value [:project-references]))
+  ([value field-path]
+   (let [value (str value)
+         path (paths/path value)
+         segments (mapv str (iterator-seq (.iterator path)))]
+     (when (or (str/blank? value) (.isAbsolute path)
+               (some #(= ".." %) (rest segments))
+               (not (str/ends-with? value ".csproj")))
+       (validation/fail!
+        (destination-context "Destination project reference"
+                             {:field :project-references})
+        field-path value "a sibling or child .csproj path"))
+     value)))
 
 (defn validate-configuration!
   "Validates the destination-neutral project, package, namespace, resource,
   output, bridge, and optional runtime-asset configuration contract."
   [configuration]
-  (when-not (= 1 (:schema-version configuration))
-    (destination-error "Unsupported destination configuration schema"
-                       {:schema-version (:schema-version configuration)}))
-  (let [selector (:destination-bundle configuration)]
-    (when-not (and (symbol? selector) (namespace selector))
-      (destination-error
-       "Destination bundle must be an explicit namespace-qualified symbol"
-       {:destination-bundle selector})))
-  (when-not (keyword? (:product-family configuration))
-    (destination-error "Destination product family must be an explicit keyword"
-                       {:product-family (:product-family configuration)}))
-  (doseq [[section keys] [[:project [:assembly-name :root-namespace
-                                     :target-framework :nullable :implicit-usings]]
-                          [:package [:id :version :title :description :authors :tags
-                                     :project-url :repository-url :repository-type]]
-                          [:output [:project-directory :source-directory
-                                    :resource-directory :project-file
-                                    :source-map-file :diagnostics-file
-                                    :manifest-file :public-metadata-file
-                                    :annotation-decisions-file]]]]
-    (when-not (map? (get configuration section))
-      (destination-error (str "Missing destination " (name section) " section")
-                         {:section section}))
-    (doseq [key keys]
-      (when-not (contains? (get configuration section) key)
-        (destination-error (str "Missing destination setting " section "/" key)
-                           {:section section :setting key}))))
+  (let [context (destination-context "Destination configuration")]
+    (validation/check! context [:schema-version] (:schema-version configuration)
+                       "the integer 1" #{1})
+    (validation/check! context [:destination-bundle]
+                       (:destination-bundle configuration)
+                       "a namespace-qualified symbol" qualified-symbol?)
+    (validation/check! context [:product-family]
+                       (:product-family configuration)
+                       "a keyword" keyword?)
+    (validation/exact-keys!
+     (destination-context "Destination project settings"
+                          {:section :project})
+     [:project] (:project configuration)
+     project-required-keys project-allowed-keys)
+    (validation/exact-keys!
+     (destination-context "Destination package metadata"
+                          {:section :package})
+     [:package] (:package configuration)
+     package-required-keys package-allowed-keys)
+    (validation/exact-keys!
+     (destination-context "Destination output settings"
+                          {:section :output})
+     [:output] (:output configuration)
+     output-keys output-keys))
+  (doseq [key [:assembly-name :root-namespace :target-framework]]
+    (let [value (get-in configuration [:project key])]
+      (validation/check!
+       (destination-context "Destination project setting"
+                            {:section :project :setting key})
+       [:project key] value "a non-blank string"
+       #(and (string? %) (not (str/blank? %))))))
+  (validation/check!
+   (destination-context "Destination project setting"
+                        {:section :project :setting :implicit-usings})
+   [:project :implicit-usings]
+   (get-in configuration [:project :implicit-usings])
+   "a boolean" boolean?)
   (doseq [key [:id :version :title :description :authors :tags
                :project-url :repository-url :repository-type]]
     (let [value (get-in configuration [:package key])]
-      (when-not (and (string? value) (not (str/blank? value)))
-        (destination-error "Destination package metadata must be a non-blank string"
-                           {:section :package :setting key :value value}))))
+      (validation/check!
+       (destination-context "Destination package metadata"
+                            {:section :package :setting key})
+       [:package key] value "a non-blank string"
+       #(and (string? %) (not (str/blank? %))))))
   (when-let [commit (get-in configuration [:package :repository-commit])]
-    (when-not (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" commit))
-      (destination-error "Destination repository commit must be an exact Git identity"
-                         {:repository-commit commit})))
+    (validation/check!
+     (destination-context "Destination package repository commit")
+     [:package :repository-commit] commit
+     "a 40- or 64-character lowercase Git identity"
+     #(and (string? %)
+           (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" %)))))
   (when-let [license (get-in configuration [:package :license-expression])]
-    (when-not (and (string? license) (not (str/blank? license)))
-      (destination-error "Destination license expression must be non-blank"
-                         {:license-expression license})))
+    (validation/check!
+     (destination-context "Destination package license expression")
+     [:package :license-expression] license
+     "a non-blank string"
+     #(and (string? %) (not (str/blank? %)))))
   (when-let [copyright (get-in configuration [:package :copyright])]
-    (when-not (and (string? copyright) (not (str/blank? copyright)))
-      (destination-error "Destination package copyright must be non-blank"
-                         {:copyright copyright})))
+    (validation/check!
+     (destination-context "Destination package copyright")
+     [:package :copyright] copyright
+     "a non-blank string"
+     #(and (string? %) (not (str/blank? %)))))
   (let [legal-files (:legal-files configuration)]
-    (when-not
-     (or
-      (nil? legal-files)
-      (and
-       (vector? legal-files)
-       (every?
-        (fn [{:keys [kind destination package-path]}]
-          (and (contains? #{:license :notice} kind)
-               (string? destination)
-               (relative-path! destination "legal file destination")
-               (string? package-path)
-               (relative-path! package-path "legal file package path")))
-        legal-files)
-       (= (count legal-files)
-          (count (distinct (map :package-path legal-files))))
-       (<= (count (filter #(= :license (:kind %)) legal-files)) 1)))
-      (destination-error "Invalid destination legal-file packaging contract"
-                         {:legal-files legal-files}))
+    (when legal-files
+      (let [context
+            (destination-context "Destination legal-file packaging contract")]
+        (validation/check! context [:legal-files] legal-files
+                           "a vector" vector?)
+        (doseq [[index legal-file] (map-indexed vector legal-files)]
+          (validation/exact-keys!
+           context [:legal-files index] legal-file
+           #{:kind :destination :package-path}
+           #{:kind :source :destination :package-path :sha256 :source-sha256})
+          (validation/check! context [:legal-files index :kind]
+                             (:kind legal-file)
+                             ":license or :notice"
+                             #{:license :notice})
+          (validation/check! context [:legal-files index :destination]
+                             (:destination legal-file)
+                             "a string" string?)
+          (relative-path! (:destination legal-file)
+                          "legal file destination"
+                          [:legal-files index :destination])
+          (validation/check! context [:legal-files index :package-path]
+                             (:package-path legal-file)
+                             "a string" string?)
+          (relative-path! (:package-path legal-file)
+                          "legal file package path"
+                          [:legal-files index :package-path]))
+        (when-not (= (count legal-files)
+                     (count (distinct (map :package-path legal-files))))
+          (validation/fail! context [:legal-files] legal-files
+                            "entries with distinct :package-path values"))
+        (when (< 1 (count (filter #(= :license (:kind %)) legal-files)))
+          (validation/fail! context [:legal-files] legal-files
+                            "at most one :license entry"))))
     (when (and (seq legal-files)
                (get-in configuration [:package :license-expression]))
       (destination-error
@@ -156,168 +231,242 @@
         (get-in configuration [:package :license-expression])
         :legal-files legal-files})))
   (when-let [symbols (get-in configuration [:package :symbols])]
-    (when-not (= :snupkg symbols)
-      (destination-error "Destination package symbol format is unsupported"
-                         {:symbols symbols})))
+    (validation/check!
+     (destination-context "Destination package symbol format")
+     [:package :symbols] symbols ":snupkg" #{:snupkg}))
   (doseq [key [:project-directory :source-directory :resource-directory
                :project-file :source-map-file :diagnostics-file :manifest-file
                :public-metadata-file :annotation-decisions-file]]
-    (relative-path! (get-in configuration [:output key]) (name key)))
-  (when-not (contains? #{"enable" "disable"}
-                       (get-in configuration [:project :nullable]))
-    (destination-error "Destination nullable setting must be enable or disable"
-                       {:nullable (get-in configuration [:project :nullable])}))
-  (when-not (boolean? (get-in configuration [:project :warnings-as-errors]))
-    (destination-error "Destination warnings-as-errors policy must be explicit"
-                       {:warnings-as-errors
-                        (get-in configuration [:project :warnings-as-errors])}))
-  (when-not (or (nil? (get-in configuration [:project :define-constants]))
-                (and (vector? (get-in configuration [:project :define-constants]))
-                     (every? #(and (string? %)
-                                   (re-matches #"[A-Za-z_][A-Za-z0-9_]*" %))
-                             (get-in configuration [:project :define-constants]))))
-    (destination-error "Destination define constants must be C# identifiers"
-                       {:define-constants (get-in configuration [:project :define-constants])}))
-  (when-not (and (map? (:namespaces configuration))
-                 (every? #(and (string? %) (not (str/blank? %)))
-                         (mapcat identity (:namespaces configuration))))
-    (destination-error "Destination namespace mappings must be non-blank strings"
-                       {:namespaces (:namespaces configuration)}))
-  (when-not (or (nil? (:namespace-prefixes configuration))
-                (and (map? (:namespace-prefixes configuration))
-                     (every? #(and (string? %) (not (str/blank? %)))
-                             (mapcat identity (:namespace-prefixes configuration)))))
-    (destination-error "Destination namespace-prefix mappings must be non-blank strings"
-                       {:namespace-prefixes (:namespace-prefixes configuration)}))
-  (when-not
-   (or
-    (nil? (:generic-erasure-mappings configuration))
-    (and
-     (map? (:generic-erasure-mappings configuration))
-     (every?
-      (fn [[source destination]]
-        (and
-         (string? source)
-         (boolean
-          (re-matches
-           #"[A-Za-z_$][A-Za-z0-9_$]*(?:[.][A-Za-z_$][A-Za-z0-9_$]*)*"
-           source))
-         (string? destination)
-         (boolean
-          (re-matches
-           #"global::@?[A-Za-z_][A-Za-z0-9_]*(?:[.]@?[A-Za-z_][A-Za-z0-9_]*)*"
-           destination))))
-      (:generic-erasure-mappings configuration))))
-    (destination-error
-     "Generic erasure mappings must map resolved Java type identities to global C# contract types"
-     {:generic-erasure-mappings (:generic-erasure-mappings configuration)}))
-  (when-not (and (map? (:resources configuration))
-                 (every? (fn [[source {:keys [strategy destination logical-name]}]]
-                           (and (= :embedded-resource strategy)
-                                (string? source) (string? logical-name)
-                                (relative-path! destination "resource destination")))
-                         (:resources configuration)))
-    (destination-error "Invalid destination resource mapping"
-                       {:resources (:resources configuration)}))
+    (relative-path! (get-in configuration [:output key])
+                    (name key) [:output key]))
+  (validation/check!
+   (destination-context "Destination nullable setting")
+   [:project :nullable] (get-in configuration [:project :nullable])
+   "\"enable\" or \"disable\"" #{"enable" "disable"})
+  (validation/check!
+   (destination-context "Destination warnings-as-errors policy")
+   [:project :warnings-as-errors]
+   (get-in configuration [:project :warnings-as-errors])
+   "a boolean" boolean?)
+  (when-let [constants (get-in configuration [:project :define-constants])]
+    (let [context (destination-context "Destination define constants")]
+      (validation/check! context [:project :define-constants] constants
+                         "a vector of C# identifiers" vector?)
+      (doseq [[index constant] (map-indexed vector constants)]
+        (validation/check!
+         context [:project :define-constants index] constant
+         "a C# identifier"
+         #(and (string? %)
+               (boolean
+                (re-matches #"[A-Za-z_][A-Za-z0-9_]*" %)))))))
+  (let [context (destination-context "Destination namespace mappings")
+        mappings (:namespaces configuration)]
+    (validation/check! context [:namespaces] mappings "a map" map?)
+    (doseq [[source destination] mappings]
+      (validation/check! context [:namespaces source :source] source
+                         "a non-blank string"
+                         #(and (string? %) (not (str/blank? %))))
+      (validation/check! context [:namespaces source] destination
+                         "a non-blank string"
+                         #(and (string? %) (not (str/blank? %))))))
+  (when-let [mappings (:namespace-prefixes configuration)]
+    (let [context (destination-context "Destination namespace-prefix mappings")]
+      (validation/check! context [:namespace-prefixes] mappings "a map" map?)
+      (doseq [[source destination] mappings]
+        (validation/check! context [:namespace-prefixes source :source] source
+                           "a non-blank string"
+                           #(and (string? %) (not (str/blank? %))))
+        (validation/check! context [:namespace-prefixes source] destination
+                           "a non-blank string"
+                           #(and (string? %) (not (str/blank? %)))))))
+  (when-let [mappings (:generic-erasure-mappings configuration)]
+    (let [context (destination-context "Generic erasure mappings")]
+      (validation/check! context [:generic-erasure-mappings] mappings
+                         "a map" map?)
+      (doseq [[source destination] mappings]
+        (validation/check!
+         context [:generic-erasure-mappings source :source] source
+         "a resolved Java type identity"
+         #(and
+           (string? %)
+           (boolean
+            (re-matches
+             #"[A-Za-z_$][A-Za-z0-9_$]*(?:[.][A-Za-z_$][A-Za-z0-9_$]*)*"
+             %))))
+        (validation/check!
+         context [:generic-erasure-mappings source] destination
+         "a global C# contract type"
+         #(and
+           (string? %)
+           (boolean
+            (re-matches
+             #"global::@?[A-Za-z_][A-Za-z0-9_]*(?:[.]@?[A-Za-z_][A-Za-z0-9_]*)*"
+             %)))))))
+  (let [resources (:resources configuration)
+        context (destination-context "Destination resource mappings")]
+    (validation/check! context [:resources] resources "a map" map?)
+    (doseq [[source resource] resources]
+      (validation/check! context [:resources source :source] source
+                         "a string" string?)
+      (validation/exact-keys! context [:resources source] resource
+                              #{:strategy :destination :logical-name}
+                              #{:strategy :destination :logical-name})
+      (validation/check! context [:resources source :strategy]
+                         (:strategy resource)
+                         ":embedded-resource" #{:embedded-resource})
+      (validation/check! context [:resources source :logical-name]
+                         (:logical-name resource)
+                         "a string" string?)
+      (relative-path! (:destination resource) "resource destination"
+                      [:resources source :destination])))
   (when-not (or (nil? (:resource-policy configuration))
                 (= {:strategy :embedded-resource-preserve-path}
                    (:resource-policy configuration)))
     (destination-error "Invalid destination resource policy"
                        {:resource-policy (:resource-policy configuration)}))
-  (when-not (or (nil? (:project-references configuration))
-                (and (vector? (:project-references configuration))
-                     (every? project-reference! (:project-references configuration))))
-    (destination-error "Invalid destination project references"
-                       {:project-references (:project-references configuration)}))
-  (when-not (or (nil? (:project-dependencies configuration))
-                (and (vector? (:project-dependencies configuration))
-                     (every? #(and (string? %) (not (str/blank? %)))
-                             (:project-dependencies configuration))))
-    (destination-error "Invalid source project-dependency contract"
-                       {:project-dependencies (:project-dependencies configuration)}))
-  (when-not
-   (or (nil? (:external-dependencies configuration))
-       (and
-        (map? (:external-dependencies configuration))
-        (every?
-         (fn [[coordinate {:keys [source-scope artifact-sha256 runtime-package]}]]
-           (and (string? coordinate) (not (str/blank? coordinate))
-                (contains? #{:compile-only :compile-runtime} source-scope)
-                (or (nil? artifact-sha256)
-                    (boolean (re-matches #"[0-9a-f]{64}" artifact-sha256)))
-                (boolean? runtime-package)))
-         (:external-dependencies configuration))))
-    (destination-error "Invalid source external-dependency contract"
-                       {:external-dependencies (:external-dependencies configuration)}))
-  (when-not (or (nil? (:runtime-sources configuration))
-                (and (vector? (:runtime-sources configuration))
-                     (every? #(relative-path! % "runtime source")
-                             (:runtime-sources configuration))))
-    (destination-error "Invalid destination runtime sources"
-                       {:runtime-sources (:runtime-sources configuration)}))
-  (when-not (or (nil? (:destination-capabilities configuration))
-                (and (set? (:destination-capabilities configuration))
-                     (every? keyword? (:destination-capabilities configuration))))
-    (destination-error "Destination capabilities must be an explicit keyword set"
-                       {:destination-capabilities
-                        (:destination-capabilities configuration)}))
+  (when-let [references (:project-references configuration)]
+    (let [context (destination-context "Destination project references")]
+      (validation/check! context [:project-references] references
+                         "a vector" vector?)
+      (doseq [[index reference] (map-indexed vector references)]
+        (project-reference! reference [:project-references index]))))
+  (when-let [dependencies (:project-dependencies configuration)]
+    (let [context (destination-context "Source project-dependency contract")]
+      (validation/check! context [:project-dependencies] dependencies
+                         "a vector" vector?)
+      (doseq [[index dependency] (map-indexed vector dependencies)]
+        (validation/check! context [:project-dependencies index] dependency
+                           "a non-blank string"
+                           #(and (string? %) (not (str/blank? %)))))))
+  (when-let [dependencies (:external-dependencies configuration)]
+    (let [context (destination-context "Source external-dependency contract")]
+      (validation/check! context [:external-dependencies] dependencies
+                         "a map" map?)
+      (doseq [[coordinate dependency] dependencies]
+        (validation/check! context [:external-dependencies coordinate :coordinate]
+                           coordinate "a non-blank string"
+                           #(and (string? %) (not (str/blank? %))))
+        (validation/check! context [:external-dependencies coordinate]
+                           dependency "a map" map?)
+        (validation/check! context
+                           [:external-dependencies coordinate :source-scope]
+                           (:source-scope dependency)
+                           ":compile-only or :compile-runtime"
+                           #{:compile-only :compile-runtime})
+        (when-let [artifact-sha256 (:artifact-sha256 dependency)]
+          (validation/check!
+           context [:external-dependencies coordinate :artifact-sha256]
+           artifact-sha256 "a lowercase SHA-256 hash"
+           #(and (string? %)
+                 (boolean (re-matches #"[0-9a-f]{64}" %)))))
+        (validation/check! context
+                           [:external-dependencies coordinate :runtime-package]
+                           (:runtime-package dependency)
+                           "a boolean" boolean?))))
+  (when-let [sources (:runtime-sources configuration)]
+    (let [context (destination-context "Destination runtime sources")]
+      (validation/check! context [:runtime-sources] sources "a vector" vector?)
+      (doseq [[index source] (map-indexed vector sources)]
+        (relative-path! source "runtime source" [:runtime-sources index]))))
+  (when-let [capabilities (:destination-capabilities configuration)]
+    (let [context (destination-context "Destination capabilities")]
+      (validation/check! context [:destination-capabilities] capabilities
+                         "a set of keywords" set?)
+      (doseq [capability capabilities]
+        (validation/check! context [:destination-capabilities capability]
+                           capability "a keyword" keyword?))))
   (let [mechanical-source (:mechanical-source configuration)
-        expected-keys #{:repository :revision :notice-reference}
+        context (destination-context "Destination mechanical-source provenance")
         single-line? #(and (string? %)
                            (not (str/blank? %))
                            (not (re-find #"[\r\n]" %)))]
-    (when-not (and (map? mechanical-source)
-                   (= expected-keys (set (keys mechanical-source)))
-                   (single-line? (:repository mechanical-source))
-                   (boolean
-                    (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}"
-                                (:revision mechanical-source)))
-                   (or (nil? (:notice-reference mechanical-source))
-                       (single-line? (:notice-reference mechanical-source))))
-      (destination-error
-       "Destination mechanical-source provenance must pin its repository, revision, and NOTICE reference"
-       {:mechanical-source mechanical-source
-        :required-keys expected-keys})))
+    (validation/exact-keys! context [:mechanical-source] mechanical-source
+                            mechanical-source-keys mechanical-source-keys)
+    (validation/check! context [:mechanical-source :repository]
+                       (:repository mechanical-source)
+                       "a non-blank single-line repository identity"
+                       single-line?)
+    (validation/check!
+     context [:mechanical-source :revision] (:revision mechanical-source)
+     "a 40- or 64-character lowercase revision"
+     #(and (string? %)
+           (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" %))))
+    (when-let [notice (:notice-reference mechanical-source)]
+      (validation/check! context [:mechanical-source :notice-reference]
+                         notice "a non-blank single-line string"
+                         single-line?)))
   (let [surface (:public-surface configuration)]
-    (when-not (and (map? surface)
-                   (let [selector (:strategy surface)]
-                     (and (symbol? selector) (namespace selector))))
-      (destination-error
-       "Destination public surface must select a namespace-qualified strategy"
-       {:public-surface surface})))
+    (validation/check!
+     (destination-context "Destination public surface")
+     [:public-surface] surface "a map" map?)
+    (validation/check!
+     (destination-context "Destination public surface")
+     [:public-surface :strategy] (:strategy surface)
+     "a namespace-qualified symbol" qualified-symbol?))
   (when-let [consumer (:package-consumer configuration)]
-    (when-not (and (map? consumer)
-                   (contains? #{:source-file :compile-only} (:strategy consumer))
-                   (string? (:project-file consumer))
-                   (str/ends-with? (:project-file consumer) ".csproj")
-                   (relative-path! (:project-file consumer)
-                                   "package consumer project file")
-                   (string? (:success-message consumer))
-                   (not (str/blank? (:success-message consumer)))
-                   (case (:strategy consumer)
-                     :compile-only
-                     (and (vector? (:compile-types consumer))
-                          (seq (:compile-types consumer))
-                          (every? #(and (string? %)
-                                        (re-matches
-                                         #"[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)*"
-                                         %))
-                                  (:compile-types consumer)))
-                     :source-file
-                     (let [fixture-file (:fixture-file consumer)
-                           source-path (:source-path consumer)]
-                       (or
-                        (and (string? fixture-file)
-                             (not (str/blank? fixture-file))
-                             (nil? source-path))
-                        (and (nil? fixture-file)
-                             (string? source-path)
-                             (str/ends-with? source-path ".cs")
-                             (relative-path! source-path
-                                             "package consumer source path"))))
-                     false))
-      (destination-error "Invalid independent package-consumer contract"
-                         {:package-consumer consumer})))
+    (let [context
+          (destination-context "Independent package-consumer contract")
+          strategy (:strategy consumer)
+          common #{:strategy :project-file :success-message}]
+      (validation/check! context [:package-consumer] consumer "a map" map?)
+      (validation/check! context [:package-consumer :strategy] strategy
+                         ":source-file or :compile-only"
+                         #{:source-file :compile-only})
+      (validation/exact-keys!
+       context [:package-consumer] consumer
+       (case strategy
+         :compile-only (conj common :compile-types)
+         :source-file common)
+       (case strategy
+         :compile-only (conj common :compile-types)
+         :source-file (into common [:fixture-file :source-path])))
+      (validation/check!
+       context [:package-consumer :project-file] (:project-file consumer)
+       "a relative .csproj path"
+       #(and (string? %) (str/ends-with? % ".csproj")))
+      (relative-path! (:project-file consumer)
+                      "package consumer project file"
+                      [:package-consumer :project-file])
+      (validation/check!
+       context [:package-consumer :success-message] (:success-message consumer)
+       "a non-blank string"
+       #(and (string? %) (not (str/blank? %))))
+      (case strategy
+        :compile-only
+        (let [types (:compile-types consumer)]
+          (validation/check! context [:package-consumer :compile-types] types
+                             "a nonempty vector of C# type names"
+                             #(and (vector? %) (seq %)))
+          (doseq [[index type-name] (map-indexed vector types)]
+            (validation/check!
+             context [:package-consumer :compile-types index] type-name
+             "a qualified C# type name"
+             #(and
+               (string? %)
+               (boolean
+                (re-matches
+                 #"[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)*"
+                 %))))))
+
+        :source-file
+        (let [fixture-file (:fixture-file consumer)
+              source-path (:source-path consumer)]
+          (validation/check!
+           context [:package-consumer] consumer
+           "exactly one of :fixture-file or :source-path"
+           (fn [_] (not= (nil? fixture-file) (nil? source-path))))
+          (if fixture-file
+            (validation/check!
+             context [:package-consumer :fixture-file] fixture-file
+             "a non-blank string"
+             #(and (string? %) (not (str/blank? %))))
+            (do
+              (validation/check!
+               context [:package-consumer :source-path] source-path
+               "a relative .cs path"
+               #(and (string? %) (str/ends-with? % ".cs")))
+              (relative-path! source-path "package consumer source path"
+                              [:package-consumer :source-path])))))))
   (when-let [contract (:authorship configuration)]
     (try
       (authorship/validate-policy-contract! contract)

@@ -29,6 +29,15 @@
     (Files/writeString file content (make-array OpenOption 0))
     file))
 
+(defn- profile-diagnostic
+  [root profile]
+  (write-file! root "profiles/diagnostic.edn" (str (pr-str profile) "\n"))
+  (try
+    (harness/read-profile root "profiles/diagnostic.edn")
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
 (defn- fixture-discovery
   [root]
   (let [java-home (doto (paths/resolve-path root "toolchain")
@@ -138,6 +147,63 @@
     (is (every? #(not (contains? % :source-verifier))
                 [pkl-parser pkl-core rawhttp]))
     (is (true? (:require-clean-source rawhttp)))))
+
+(deftest generation-profile-diagnostics-name-fields-for-each-discovery-backend
+  (let [root (temp-directory)
+        common
+        {:schema-version 1
+         :profile "diagnostic"
+         :product-family :java-library
+         :project-root "research/example"
+         :destination-bundle 'dripsharp.java-library/rule-bundle
+         :destination-config "destinations/example.edn"}
+        gradle-error
+        (profile-diagnostic
+         root
+         (assoc common
+                :gradle-project ":example"
+                :gradle-java-major "17"))
+        maven-error
+        (profile-diagnostic
+         root
+         (assoc common
+                :build-tool :maven
+                :maven-project-id "org.example:library:1.0.0"
+                :maven-selected-projects [":library" "--also-make"]))
+        key-error
+        (profile-diagnostic
+         root
+         (assoc common
+                :gradle-project ":example"
+                :opaque-setting true))
+        missing-error
+        (profile-diagnostic
+         root
+         (dissoc (assoc common :gradle-project ":example")
+                 :destination-config))
+        seed-error
+        (profile-diagnostic
+         root
+         (assoc common
+                :gradle-project ":example"
+                :seeds [{:key "type:example.Type"
+                         :expand :opaque}]))]
+    (is (= :invalid-generation-profile (:kind gradle-error)))
+    (is (= [:gradle-java-major] (:path gradle-error)))
+    (is (= "17" (:value gradle-error)))
+    (is (= "a positive integer" (:expected gradle-error)))
+    (is (= [:maven-selected-projects 1] (:path maven-error)))
+    (is (= "--also-make" (:value maven-error)))
+    (is (string? (:expected maven-error)))
+    (is (= [] (:path key-error)))
+    (is (= [:opaque-setting] (:unknown-keys key-error)))
+    (is (= [] (:missing-keys key-error)))
+    (is (= [:destination-config] (:missing-keys missing-error)))
+    (is (= [] (:unknown-keys missing-error)))
+    (is (= [:seeds 0 :expand] (:path seed-error)))
+    (is (= :opaque (:value seed-error)))
+    (is (= "one of :shell, :body, or :public-api"
+           (:expected seed-error)))))
 
 (deftest generation-cleans-output-and-writes-configuration
   (let [root (temp-directory)

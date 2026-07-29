@@ -10,43 +10,169 @@
             [dripsharp.project-input :as project-input]
             [dripsharp.public-surface :as public-surface]
             [dripsharp.spoon :as spoon]
-            [dripsharp.util :as util])
+            [dripsharp.util :as util]
+            [dripsharp.validation :as validation])
   (:import [java.nio.file FileVisitOption Files Path]))
 
 (defn- non-blank-string? [value]
   (and (string? value) (not (str/blank? value))))
 
-(defn- valid-gradle-profile? [profile]
-  (and (contains? #{nil :gradle} (:build-tool profile))
-       (re-matches
-        #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$"
-        (:gradle-project profile))
-       (or (nil? (:gradle-wrapper profile))
-           (non-blank-string? (:gradle-wrapper profile)))
-       (or (nil? (:gradle-java-major profile))
-           (and (integer? (:gradle-java-major profile))
-                (pos? (:gradle-java-major profile))))
-       (not-any? #(contains? profile %)
-                 [:maven-project-id :maven-selected-projects :maven-pom-file])))
+(def ^:private common-profile-required-keys
+  #{:schema-version :profile :product-family :project-root
+    :destination-bundle :destination-config})
 
-(defn- valid-maven-profile? [profile]
-  (and (= :maven (:build-tool profile))
-       (non-blank-string? (:maven-project-id profile))
-       (boolean
-        (re-matches #"[^:\\s]+:[^:\\s]+:[^:\\s]+"
-                    (:maven-project-id profile)))
-       (vector? (:maven-selected-projects profile))
-       (seq (:maven-selected-projects profile))
-       (= (count (:maven-selected-projects profile))
-          (count (distinct (:maven-selected-projects profile))))
-       (every? #(and (non-blank-string? %)
-                     (not (str/starts-with? % "-"))
-                     (not (str/includes? % ",")))
-               (:maven-selected-projects profile))
-       (or (nil? (:maven-pom-file profile))
-           (non-blank-string? (:maven-pom-file profile)))
-       (not-any? #(contains? profile %)
-                 [:gradle-project :gradle-wrapper :gradle-java-major])))
+(def ^:private common-profile-optional-keys
+  #{:build-tool :revision :require-clean-source :dependency-profiles
+    :identity-guard :seeds :project-contract})
+
+(def ^:private gradle-profile-keys
+  #{:gradle-project :gradle-wrapper :gradle-java-major})
+
+(def ^:private maven-profile-keys
+  #{:maven-project-id :maven-selected-projects :maven-pom-file})
+
+(defn- profile-context
+  [profile-name]
+  {:kind :invalid-generation-profile
+   :subject "DripSharp generation profile"
+   :data {:profile profile-name}})
+
+(defn- validate-gradle-profile!
+  [context profile]
+  (validation/check! context [:build-tool] (:build-tool profile)
+                     "nil or :gradle" #(contains? #{nil :gradle} %))
+  (validation/check!
+   context [:gradle-project] (:gradle-project profile)
+   "a Gradle project path such as : or :module"
+   #(and (string? %)
+         (boolean
+          (re-matches
+           #"^:(?:[A-Za-z0-9][A-Za-z0-9_-]*(?::[A-Za-z0-9][A-Za-z0-9_-]*)*)?$"
+           %))))
+  (when (contains? profile :gradle-wrapper)
+    (validation/check! context [:gradle-wrapper] (:gradle-wrapper profile)
+                       "a non-blank string" non-blank-string?))
+  (when (contains? profile :gradle-java-major)
+    (validation/check! context [:gradle-java-major]
+                       (:gradle-java-major profile)
+                       "a positive integer" pos-int?))
+  (doseq [field maven-profile-keys
+          :when (contains? profile field)]
+    (validation/fail! context [field] (get profile field)
+                      "absent for a Gradle profile"))
+  profile)
+
+(defn- validate-maven-profile!
+  [context profile]
+  (validation/check! context [:build-tool] (:build-tool profile)
+                     ":maven" #{:maven})
+  (validation/check!
+   context [:maven-project-id] (:maven-project-id profile)
+   "a Maven project id in group:artifact:version form"
+   #(and (non-blank-string? %)
+         (boolean (re-matches #"[^:\\s]+:[^:\\s]+:[^:\\s]+" %))))
+  (let [selected (:maven-selected-projects profile)]
+    (validation/check!
+     context [:maven-selected-projects] selected
+     "a nonempty vector of distinct reactor selectors"
+     #(and (vector? %) (seq %) (= (count %) (count (distinct %)))))
+    (doseq [[index selector] (map-indexed vector selected)]
+      (validation/check!
+       context [:maven-selected-projects index] selector
+       "a non-blank reactor selector that does not start with '-' or contain ','"
+       #(and (non-blank-string? %)
+             (not (str/starts-with? % "-"))
+             (not (str/includes? % ","))))))
+  (when (contains? profile :maven-pom-file)
+    (validation/check! context [:maven-pom-file] (:maven-pom-file profile)
+                       "a non-blank string" non-blank-string?))
+  (doseq [field gradle-profile-keys
+          :when (contains? profile field)]
+    (validation/fail! context [field] (get profile field)
+                      "absent for a Maven profile"))
+  profile)
+
+(defn- validate-profile!
+  [profile-name profile]
+  (let [context (profile-context profile-name)
+        allowed (into common-profile-required-keys
+                      (concat common-profile-optional-keys
+                              gradle-profile-keys
+                              maven-profile-keys))]
+    (validation/exact-keys! context [] profile
+                            common-profile-required-keys allowed)
+    (validation/check! context [:schema-version] (:schema-version profile)
+                       "the integer 1" #{1})
+    (validation/check! context [:profile] (:profile profile)
+                       "a non-blank string" non-blank-string?)
+    (validation/check! context [:product-family] (:product-family profile)
+                       "a keyword" keyword?)
+    (validation/check! context [:project-root] (:project-root profile)
+                       "a non-blank string" non-blank-string?)
+    (validation/check! context [:destination-bundle]
+                       (:destination-bundle profile)
+                       "a namespace-qualified symbol" qualified-symbol?)
+    (validation/check! context [:destination-config]
+                       (:destination-config profile)
+                       "a non-blank string" non-blank-string?)
+    (when (contains? profile :revision)
+      (validation/check! context [:revision] (:revision profile)
+                         "a non-blank string" non-blank-string?))
+    (when (contains? profile :require-clean-source)
+      (validation/check! context [:require-clean-source]
+                         (:require-clean-source profile)
+                         "a boolean" boolean?))
+    (when (contains? profile :project-contract)
+      (validation/check! context [:project-contract] (:project-contract profile)
+                         "a non-blank string" non-blank-string?))
+    (when (contains? profile :dependency-profiles)
+      (let [dependencies (:dependency-profiles profile)]
+        (validation/check!
+         context [:dependency-profiles] dependencies
+         "a vector of distinct profile names that excludes this profile"
+         #(and (vector? %)
+               (= (count %) (count (distinct %)))
+               (not (some #{(:profile profile)} %))))
+        (doseq [[index dependency] (map-indexed vector dependencies)]
+          (validation/check! context [:dependency-profiles index] dependency
+                             "a non-blank string" non-blank-string?))))
+    (when (contains? profile :identity-guard)
+      (let [guard (:identity-guard profile)
+            guard-context
+            (assoc context :subject "Generation profile identity guard")]
+        (validation/exact-keys! guard-context [:identity-guard] guard
+                                #{:forbidden-fragments}
+                                #{:forbidden-fragments})
+        (let [fragments (:forbidden-fragments guard)]
+          (validation/check! context [:identity-guard :forbidden-fragments]
+                             fragments "a vector" vector?)
+          (doseq [[index fragment] (map-indexed vector fragments)]
+            (validation/check!
+             context [:identity-guard :forbidden-fragments index] fragment
+             "a non-blank string" non-blank-string?)))))
+    (when (contains? profile :seeds)
+      (let [seeds (:seeds profile)]
+        (validation/check! context [:seeds] seeds "a vector" vector?)
+        (doseq [[index seed] (map-indexed vector seeds)]
+          (let [path [:seeds index]]
+            (validation/exact-keys! context path seed
+                                    #{:key}
+                                    #{:key :expand :members})
+            (validation/check! context (conj path :key) (:key seed)
+                               "a string" string?)
+            (when (contains? seed :expand)
+              (validation/check! context (conj path :expand) (:expand seed)
+                                 "one of :shell, :body, or :public-api"
+                                 #(contains? #{:shell :body :public-api} %)))
+            (when (contains? seed :members)
+              (validation/check! context (conj path :members) (:members seed)
+                                 "a set" set?))))))
+    (case (or (:build-tool profile) :gradle)
+      :gradle (validate-gradle-profile! context profile)
+      :maven (validate-maven-profile! context profile)
+      (validation/fail! context [:build-tool] (:build-tool profile)
+                        ":gradle or :maven"))
+    profile))
 
 (defn- target-owned-profile
   [profile-name profile]
@@ -54,7 +180,8 @@
            (re-matches #"^(targets/[^/]+)/profiles/[^/]+\.edn$"
                        profile-name)]
     (update profile :destination-config
-            #(if (str/starts-with? % "destinations/")
+            #(if (and (string? %)
+                      (str/starts-with? % "destinations/"))
                (str target-root "/" %)
                %))
     profile))
@@ -87,46 +214,7 @@
                              :profile profile-name :path (str path)})))
                 (edn/read-string (slurp (str path))))
               entry)))]
-      (when-not (and (= 1 (:schema-version profile))
-                     (string? (:profile profile))
-                     (not (str/blank? (:profile profile)))
-                     (keyword? (:product-family profile))
-                     (string? (:project-root profile))
-                     (not (str/blank? (:project-root profile)))
-                     (let [selector (:destination-bundle profile)]
-                       (and (symbol? selector) (namespace selector)))
-                     (or (valid-gradle-profile? profile)
-                         (valid-maven-profile? profile))
-                     (or (nil? (:revision profile))
-                         (and (string? (:revision profile))
-                              (not (str/blank? (:revision profile)))))
-                     (or (nil? (:require-clean-source profile))
-                         (boolean? (:require-clean-source profile)))
-                     (string? (:destination-config profile))
-                     (let [dependencies (:dependency-profiles profile)]
-                       (or (nil? dependencies)
-                           (and (vector? dependencies)
-                                (every? #(and (string? %)
-                                              (not (str/blank? %)))
-                                        dependencies)
-                                (= (count dependencies)
-                                   (count (distinct dependencies)))
-                                (not (some #{(:profile profile)}
-                                           dependencies)))))
-                     (or (nil? (:identity-guard profile))
-                         (and (map? (:identity-guard profile))
-                              (= #{:forbidden-fragments}
-                                 (set (keys (:identity-guard profile))))
-                              (vector? (get-in profile [:identity-guard
-                                                        :forbidden-fragments]))
-                              (every? #(and (string? %) (not (str/blank? %)))
-                                      (get-in profile [:identity-guard
-                                                       :forbidden-fragments]))))
-                     (or (nil? (:seeds profile)) (vector? (:seeds profile))))
-        (throw (ex-info "Invalid DripSharp generation profile"
-                        {:kind :invalid-generation-profile
-                         :profile profile-name :configuration profile})))
-      profile)))
+      (validate-profile! profile-name profile))))
 
 (defn clean-directory!
   "Deletes a directory tree, then recreates the empty directory."

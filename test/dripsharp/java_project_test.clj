@@ -57,6 +57,46 @@
     (is (= :package (:section (ex-data error))))
     (is (= :title (:setting (ex-data error))))))
 
+(deftest destination-diagnostics-name-nested-fields-and-key-drift
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/rawhttp/destinations/core.edn")
+        diagnostic
+        (fn [candidate]
+          (try
+            (project-emission/validate-configuration! candidate)
+            nil
+            (catch clojure.lang.ExceptionInfo error
+              (ex-data error))))
+        unknown
+        (diagnostic (assoc-in configuration [:project :opaque-setting] true))
+        resource
+        (diagnostic
+         (assoc-in
+          configuration
+          [:resources
+           "META-INF/services/rawhttp.core.body.encoding.HttpMessageDecoder"
+           :logical-name]
+          42))
+        mechanical
+        (diagnostic
+         (update configuration :mechanical-source dissoc :revision))]
+    (is (= :invalid-destination-configuration (:kind unknown)))
+    (is (= [:project] (:path unknown)))
+    (is (= [:opaque-setting] (:unknown-keys unknown)))
+    (is (= [] (:missing-keys unknown)))
+    (is (=
+         [:resources
+          "META-INF/services/rawhttp.core.body.encoding.HttpMessageDecoder"
+          :logical-name]
+         (:path resource)))
+    (is (= 42 (:value resource)))
+    (is (= "a string" (:expected resource)))
+    (is (= [:mechanical-source] (:path mechanical)))
+    (is (= [:revision] (:missing-keys mechanical)))
+    (is (= [] (:unknown-keys mechanical)))))
+
 (deftest pkl-bundle-composes-over-the-shared-java-library-contract
   (let [shared (java-library/rule-bundle)
         pkl (pkl-project/rule-bundle)]
