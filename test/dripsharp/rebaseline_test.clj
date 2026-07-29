@@ -159,6 +159,24 @@
         (is (= :rawhttp (:target (ex-data error))))
         (is (= (str manifest) (:path (ex-data error))))))))
 
+(deftest rebaseline-refuses-a-baseline-with-trailing-edn
+  (let [root (isolated-workspace)
+        baseline-file (baseline/baseline-path root :pkl)
+        original (Files/readString baseline-file)]
+    (Files/writeString
+     baseline-file
+     (str original "\n{:unreviewed :trailing-form}\n")
+     (make-array java.nio.file.OpenOption 0))
+    (let [error
+          (try
+            (rebaseline/preview! root :pkl (observed-version "0.33.0"))
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :invalid-target-baseline (:kind (ex-data error))))
+      (is (= :trailing-data (:reason (ex-data error))))
+      (is (= :pkl (:target (ex-data error))))
+      (is (= (str baseline-file) (:path (ex-data error)))))))
+
 (deftest approval-is-token-gated-and-writes-only-the-selected-record
   (let [root (isolated-workspace)
         observe (observed-version "0.33.0")

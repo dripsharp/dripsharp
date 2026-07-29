@@ -6,7 +6,35 @@
             [dripsharp.harness :as harness]
             [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as java-project]
-            [dripsharp.paths :as paths]))
+            [dripsharp.paths :as paths])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
+
+(deftest baseline-files-require-exactly-one-edn-form
+  (let [root
+        (Files/createTempDirectory
+         "dripsharp-baseline-test"
+         (make-array FileAttribute 0))
+        target :rawhttp
+        file (baseline/baseline-path root target)
+        record (baseline/read-baseline target)]
+    (Files/createDirectories (.getParent file)
+                             (make-array FileAttribute 0))
+    (doseq [[text reason]
+            [["" :empty-edn]
+             ["{" :invalid-edn]
+             [(str (pr-str record) "\n{:unreviewed :trailing-form}\n")
+              :trailing-data]]]
+      (Files/writeString file text (make-array java.nio.file.OpenOption 0))
+      (let [error
+            (try
+              (baseline/read-baseline root target)
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))]
+        (is (= :invalid-target-baseline (:kind (ex-data error))))
+        (is (= target (:target (ex-data error))))
+        (is (= (str file) (:path (ex-data error))))
+        (is (= reason (:reason (ex-data error))))))))
 
 (deftest target-records-own-the-reviewed-baseline-contract
   (doseq [target [:pkl :pdfcube :rawhttp]

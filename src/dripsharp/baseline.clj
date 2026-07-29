@@ -6,7 +6,8 @@
   files that the re-baseline workflow may write."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [dripsharp.paths :as paths]))
+            [dripsharp.paths :as paths])
+  (:import [java.io PushbackReader StringReader]))
 
 (def baseline-files
   {:pkl "targets/pkl/baseline.edn"
@@ -49,6 +50,36 @@
 (defn- invalid!
   [message data]
   (throw (ex-info message (assoc data :kind :invalid-target-baseline))))
+
+(defn- read-single-edn!
+  [target file]
+  (let [eof (Object.)
+        [record trailing]
+        (try
+          (with-open [reader
+                      (PushbackReader.
+                       (StringReader. (slurp (str file))))]
+            [(edn/read {:eof eof} reader)
+             (edn/read {:eof eof} reader)])
+          (catch RuntimeException error
+            (throw
+             (ex-info "Target baseline file is not valid EDN"
+                      {:kind :invalid-target-baseline
+                       :target target
+                       :path (str file)
+                       :reason :invalid-edn}
+                      error))))]
+    (when (identical? eof record)
+      (invalid! "Target baseline file is empty"
+                {:target target
+                 :path (str file)
+                 :reason :empty-edn}))
+    (when-not (identical? eof trailing)
+      (invalid! "Target baseline file contains trailing EDN data"
+                {:target target
+                 :path (str file)
+                 :reason :trailing-data}))
+    record))
 
 (defn validate-record!
   "Validates a baseline record for an already validated target identity.
@@ -159,15 +190,7 @@
            (throw (ex-info "Target baseline file is missing"
                            {:kind :missing-target-baseline
                             :target target :path (str file)})))
-         (try
-           (validate! target (edn/read-string (slurp (str file))))
-           (catch RuntimeException error
-             (if (ex-data error)
-               (throw error)
-               (throw (ex-info "Target baseline file is not valid EDN"
-                               {:kind :invalid-target-baseline
-                                :target target :path (str file)}
-                               error))))))))))
+         (validate! target (read-single-edn! target file)))))))
 
 (defn upstream
   ([target] (:upstream (read-baseline target)))
