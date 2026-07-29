@@ -126,6 +126,57 @@
          (str "global::PdfCube.Preflight.Font.Container.IFontContainer "
               "IFontValidator.GetFontContainer() => GetFontContainer();")))))
 
+(deftest preflight-position-lookup-erases-unused-method-type-parameter
+  (let [position-method
+        (csharp/declaration
+         (csharp/sequence-node
+          [(csharp/raw "public int ")
+           (csharp/raw "GetClosestTypePosition")
+           (csharp/raw "<T>")
+           (csharp/raw "(global::System.Type type)")])
+         (csharp/block
+          (csharp/statement-list [(csharp/raw "return -1;")] "\n"))
+         {:declaration-kind :method
+          :source-qualified-name
+          "org.apache.pdfbox.preflight.PreflightPath"
+          :source-name "getClosestTypePosition"})
+        path-method
+        (csharp/declaration
+         (csharp/raw
+          "public T GetClosestPathElement<T>(global::System.Type type)")
+         (csharp/block
+          (csharp/statement-list
+           [(csharp/sequence-node
+             [(csharp/raw "return ")
+              (csharp/raw "GetPathElement")
+              (csharp/raw "(")
+              (csharp/invocation
+               (csharp/generic-name
+                (csharp/sequence-node
+                 [(csharp/raw "vPath.")
+                  (csharp/raw "GetClosestTypePosition")])
+                [(csharp/raw "object")])
+               [(csharp/raw "type")])
+              (csharp/raw ", type);")])]
+           "\n"))
+         {:declaration-kind :method
+          :source-qualified-name
+          "org.apache.pdfbox.preflight.PreflightPath"
+          :source-name "getClosestPathElement"})
+        transformed
+        (render-transformed
+         {:package {:id "PdfCube.Preflight"}}
+         (csharp/sequence-node [position-method path-method] "\n"))]
+    (is (str/includes?
+         (:text transformed)
+         "public int GetClosestTypePosition(global::System.Type type)"))
+    (is (not (str/includes? (:text transformed)
+                            "GetClosestTypePosition<T>")))
+    (is (str/includes? (:text transformed)
+                       "GetPathElement<T>("))
+    (is (not (str/includes? (:text transformed)
+                            "GetClosestTypePosition<object>")))))
+
 (deftest preflight-type3-widths-preserve-nullable-boxed-floats
   (let [configuration {:package {:id "PdfCube.Preflight"}}
         result
@@ -789,6 +840,39 @@
     (is (str/includes?
          source
          "global::PdfCube.FB.Runtime.JavaStandardCharsets.ISO88591"))))
+
+(deftest pdfbox-system-output-and-attributed-character-constructor-are-mapped
+  (let [{destination :destination}
+        (read-profile-and-destination "pdfcube-pdfbox")
+        fixture
+        (model!
+         "org/apache/pdfbox/pdmodel/JdkSymbolFixture.java"
+         (str
+          "package org.apache.pdfbox.pdmodel; "
+          "import java.text.AttributedCharacterIterator.Attribute; "
+          "public final class JdkSymbolFixture { "
+          "static class TextAttribute extends Attribute { "
+          "TextAttribute(String name) { super(name); } } "
+          "public static final Attribute WIDTH = new TextAttribute(\"width\"); "
+          "public static void printWidth() { System.out.println(\"width\"); } }"))
+        emission (emit! fixture destination)
+        mapping-report (:mapping-report emission)
+        source
+        (slurp
+         (str (paths/resolve-path
+               (:project-root emission)
+               "src/PdfCube/PdfBox/Pdmodel/JdkSymbolFixture.cs")))]
+    (is (zero? (get-in mapping-report [:summary :unmapped-occurrences])))
+    (is (empty? (:unmapped-symbols mapping-report)))
+    (is (some
+         #(= "field:java.lang.System#out" (:resolved-key %))
+         (:used-mappings mapping-report)))
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaCompat.@out"))
+    (is (str/includes?
+         source
+         "global::DripSharp.Runtime.JavaAttributedCharacterAttribute"))))
 
 (deftest fontbox-discovery-uses-the-internal-platform-adapter
   (let [{destination :destination}

@@ -2253,6 +2253,7 @@
    "field:java.lang.Short#SIZE" "16"
    "field:java.lang.StrictMath#E" "global::System.Math.E"
    "field:java.lang.StrictMath#PI" "global::System.Math.PI"
+   "field:java.lang.System#out" "global::DripSharp.Runtime.JavaCompat.@out"
    "field:java.lang.System#err" "global::DripSharp.Runtime.JavaCompat.err"
    "field:java.math.RoundingMode#CEILING"
    "global::DripSharp.Runtime.JavaRoundingMode.Ceiling"

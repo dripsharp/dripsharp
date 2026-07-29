@@ -12,6 +12,10 @@
   [_]
   :validated)
 
+(defn custom-package-proof-runner
+  [{:keys [pack-fn]}]
+  (pack-fn {:profile "acme-core"}))
+
 (defn- write-text!
   [^Path root relative text]
   (let [file (.resolve root relative)]
@@ -598,6 +602,45 @@
                 :result :validated}]
               (target-execution/proof!
                {:workspace-root root :target :acme})))))))
+
+(deftest custom-proof-runners-use-target-directory-stage-execution
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (update-edn!
+      root "targets/acme/target.edn"
+      update-in [:proof :ladders 0]
+      assoc
+      :kind :custom
+      :runner
+      'dripsharp.target-directory-test/custom-package-proof-runner)
+     (let [generate-fn
+           (fn [{:keys [profile read-profile-fn]}]
+             {:stage :generate
+              :profile (:profile (read-profile-fn root profile))})
+           verify-fn
+           (fn [{:keys [generate-fn] :as options}]
+             {:stage :verify
+              :generation (generate-fn options)})
+           pack-fn
+           (fn [{:keys [verify-fn] :as options}]
+             {:stage :pack
+              :verification (verify-fn options)})]
+       (is
+        (=
+         [{:id :acme-required-proof
+           :resource-class :high-memory
+           :result
+           {:stage :pack
+            :verification
+            {:stage :verify
+             :generation {:stage :generate :profile "acme-core"}}}}]
+         (target-execution/proof!
+          {:workspace-root root
+           :target :acme
+           :generate-fn generate-fn
+           :verify-fn verify-fn
+           :pack-fn pack-fn})))))))
 
 (deftest conforming-unregistered-target-drives-every-generic-stage
   (in-target-workspace

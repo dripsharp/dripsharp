@@ -453,15 +453,17 @@
   slices, proves repeatability, and runs deliberate mismatch controls."
   ([]
    (verify! {}))
-  ([{:keys [workspace-root family-fn run-command! slices]
+  ([{:keys [workspace-root family-fn pack-fn run-command! slices]
      :or {family-fn family-packaging/verify!
           run-command! process/run!
           slices verification-slices}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
          _ (workflow-coverage slices)
          family-proof
-         (family-fn {:workspace-root root
-                     :run-command! run-command!})
+         (family-fn
+          (cond-> {:workspace-root root
+                   :run-command! run-command!}
+            pack-fn (assoc :pack-fn pack-fn)))
          runtime-consumer (runtime-family-consumer! family-proof)
          views (package-views family-proof)
          proof-root

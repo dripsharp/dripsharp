@@ -4,6 +4,7 @@
             [clojure.test :refer [deftest is]]
             [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
+            [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as java-project]
             [dripsharp.paths :as paths]
             [dripsharp.project-input :as project-input]
@@ -93,6 +94,23 @@
    (fn [_ dependency-emissions]
      {:dependency-profiles (mapv :profile dependency-emissions)})
    :verify-compiled! (fn [& _] {})})
+
+(defn runtime-validating-rule-bundle
+  []
+  (let [base (java-library/rule-bundle)]
+    (assoc
+     base
+     :id :runtime-validating
+     :orchestration
+     (assoc
+      (:orchestration base)
+      :validate-profile!
+      (fn [{:keys [configuration]}]
+        (throw
+         (ex-info
+          "Product profile validator received runtime assets"
+          {:kind :product-runtime-assets-validated
+           :runtime-sources (:runtime-sources configuration)})))))))
 
 (defn- fake-destination [family bundle surface file]
   {:schema-version 1
@@ -458,6 +476,20 @@
       (let [{:keys [error stale?]} (preflight-error profile destination)]
         (is (= expected (:kind (ex-data error))) (name label))
         (is stale? (str (name label) " must fail before output cleanup"))))))
+
+(deftest product-profile-validation-can-own-runtime-asset-selection
+  (let [bundle
+        'dripsharp.harness-test/runtime-validating-rule-bundle
+        destination
+        (assoc (guarded-destination bundle)
+               :runtime-sources ["runtime/product-owned.cs"])
+        {:keys [error stale?]}
+        (preflight-error (guarded-profile bundle) destination)]
+    (is (= :product-runtime-assets-validated
+           (:kind (ex-data error))))
+    (is (= ["runtime/product-owned.cs"]
+           (:runtime-sources (ex-data error))))
+    (is stale?)))
 
 (deftest non-product-identity-guard-covers-source-output-package-and-namespace
   (let [bundle 'dripsharp.java-library/rule-bundle

@@ -483,7 +483,10 @@
                          :bundle (:id bundle)
                          :bundle-product-family (:product-family bundle)})))
       (when (and (seq (:runtime-sources destination))
-                 (nil? (get-in bundle [:rules :product-runtime-assets :assets])))
+                 (nil? (get-in bundle
+                               [:rules :product-runtime-assets :assets]))
+                 (nil? (get-in bundle
+                               [:orchestration :validate-profile!])))
         (throw (ex-info "Destination requests product runtime assets without that capability"
                         {:kind :unsupported-product-runtime-assets
                          :profile (:profile profile) :bundle (:id bundle)

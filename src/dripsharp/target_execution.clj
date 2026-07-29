@@ -356,8 +356,18 @@
            validation-contracts)
 
           :custom
-          (runner {:workspace-root (:workspace-root execution)
-                   :target-contract (:contract execution)})
+          (runner
+           {:workspace-root (:workspace-root execution)
+            :target-contract (:contract execution)
+            :pack-fn
+            (fn [pack-options]
+              (let [profile (profile-selection! (:profile pack-options))]
+                (pack-loaded!
+                 (assoc execution :profile profile)
+                 (merge options pack-options)
+                 (or (:pack-fn options) packaging/pack-verified-profile!)
+                 (or (:verify-fn options) compiler/verify-clean-build!)
+                 (or (:generate-fn options) harness/generate!))))})
 
           (fail! "Proof ladder has an unsupported kind"
                  {:target (:target execution) :ladder id :kind kind}))})

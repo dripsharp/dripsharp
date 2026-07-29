@@ -1727,6 +1727,8 @@
    (direct-instance-adaptation "Dispose")
    "executable:org.apache.pdfbox.io.RandomAccessReadView#close()"
    (direct-instance-adaptation "Dispose")
+   "executable:org.apache.pdfbox.preflight.PreflightPath#getClosestTypePosition(java.lang.Class)"
+   (direct-instance-adaptation "GetClosestTypePosition")
 
    "executable:org.apache.pdfbox.util.DateConverter#adjustTimeZoneNicely(java.util.GregorianCalendar,java.util.TimeZone)"
    (fn [target arguments]
@@ -2046,6 +2048,13 @@
    (fn [arguments]
      (sequence-node
       [(raw "new global::DripSharp.Runtime.JavaAttributedString(")
+       (csharp/sequence-node arguments ", ")
+       (raw ")")]))
+
+   "executable:java.text.AttributedCharacterIterator$Attribute#<init>(java.lang.String)"
+   (fn [arguments]
+     (sequence-node
+      [(raw "new global::DripSharp.Runtime.JavaAttributedCharacterAttribute(")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))
 
@@ -3448,6 +3457,19 @@
          (assoc :sources (:sources current)))
        current))))
 
+(defn- erase-generic-name
+  [node name]
+  (csharp/transform
+   node
+   (fn [current]
+     (let [rendered
+           (when (= :generic-name (:kind current))
+             (:text (csharp/render current)))]
+       (if (and rendered
+                (str/includes? rendered (str name "<")))
+         (:target current)
+         current)))))
+
 (defn- preserve-preflight-generic-contracts
   [configuration node]
   (if-not (= "PdfCube.Preflight" (get-in configuration [:package :id]))
@@ -3481,7 +3503,26 @@
              []))
            #{"global::System.Collections.Generic.IList"}
            "float"
-           "?")))))
+           "?"))
+        (update-declaration
+         :method
+         "org.apache.pdfbox.preflight.PreflightPath"
+         (fn [declaration]
+           (if (= "getClosestTypePosition"
+                  (get-in declaration [:data :source-name]))
+             (update declaration :header replace-rendered-node
+                     "<T>" (csharp/raw ""))
+             declaration)))
+        (update-declaration
+         :method
+         "org.apache.pdfbox.preflight.PreflightPath"
+         (fn [declaration]
+           (if (= "getClosestPathElement"
+                  (get-in declaration [:data :source-name]))
+             (update declaration :body csharp/replace-raw-text
+                     [["GetPathElement" "GetPathElement<T>"]])
+             declaration)))
+        (erase-generic-name "GetClosestTypePosition"))))
 
 (defn- transform-node [configuration node]
   (let [destination (compatibility-namespace configuration)
