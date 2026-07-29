@@ -94,10 +94,14 @@
   (let [workspace-root (paths/absolute workspace-root)
         ^Path policy-file
         (paths/absolute (paths/resolve-path workspace-root policy-path))]
-    (when-not (and (.startsWith policy-file workspace-root)
-                   (paths/regular-file? policy-file))
-      (fail! "Approved SPDX policy file is missing or outside the workspace"
-             {:path (str policy-path)}))
+    (when-not (.startsWith policy-file workspace-root)
+      (fail! "Approved SPDX policy file is outside the workspace"
+             {:path (str policy-path)
+              :reason :outside-workspace}))
+    (when-not (paths/regular-file? policy-file)
+      (fail! "Approved SPDX policy file is missing"
+             {:path (str policy-path)
+              :reason :missing-policy}))
     {:file policy-file
      :policy
      (try

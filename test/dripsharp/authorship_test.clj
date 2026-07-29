@@ -292,6 +292,24 @@
       (finally
         (delete-tree! root)))))
 
+(deftest repository-authored-spdx-gate-rejects-missing-policy
+  (let [root (Files/createTempDirectory
+              "dripsharp-authored-spdx-missing-policy-"
+              (make-array FileAttribute 0))]
+    (try
+      (let [missing-policy
+            (caught
+             #(authored-spdx/verify-policy-file!
+               root "config/missing-authored-spdx.edn" [:one]))]
+        (is (= :invalid-authored-spdx-gate
+               (:kind (ex-data missing-policy))))
+        (is (= :missing-policy
+               (:reason (ex-data missing-policy))))
+        (is (= "config/missing-authored-spdx.edn"
+               (:path (ex-data missing-policy)))))
+      (finally
+        (delete-tree! root)))))
+
 (deftest authored-policy-rejects-unlisted-and-unevidenced-package-code
   (let [root (Files/createTempDirectory
               "dripsharp-authorship-inventory-"
