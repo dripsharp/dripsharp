@@ -73,6 +73,13 @@ function Restore-Build {
             "--force",
             "--force-evaluate"
         )
+    $harfBuzzFiles = @(
+        Get-ChildItem -Path $cache -Recurse -File |
+            Where-Object { $_.Name -match "HarfBuzz" }
+    )
+    if ($harfBuzzFiles.Count -ne 0) {
+        throw "HarfBuzz assets were restored even though the PdfCube baseline does not select them."
+    }
     Invoke-DotNet -Description "Build $Name without incremental state" `
         -Arguments @(
             "build", $Project,
@@ -82,6 +89,25 @@ function Restore-Build {
             "--no-incremental",
             "-warnaserror"
         )
+}
+
+function Remove-RestoreBuild {
+    param(
+        [string] $Name,
+        [string] $Project
+    )
+
+    $projectRoot = [System.IO.Path]::GetDirectoryName(
+        [System.IO.Path]::GetFullPath($Project))
+    foreach ($generatedPath in @(
+        (Join-Path $PackagesRoot $Name),
+        (Join-Path $projectRoot "bin"),
+        (Join-Path $projectRoot "obj")
+    )) {
+        if (Test-Path $generatedPath) {
+            Remove-Item -Recurse -Force $generatedPath
+        }
+    }
 }
 
 function Run-Project {
@@ -122,6 +148,7 @@ try {
         "validation/pdfcube-family/PdfCube.Family.HostSmoke.csproj"
     Restore-Build "family" $familyProject
     Run-Project "Run the complete five-package workflow" $familyProject @()
+    Remove-RestoreBuild "family" $familyProject
     foreach ($package in @(
         "PdfCube.IO",
         "PdfCube.FontBox",
@@ -141,6 +168,7 @@ try {
         $OperatingSystem,
         $Architecture
     )
+    Remove-RestoreBuild "io" $ioProject
     Add-Observation "capability" "file-memory-mapping" "passed"
 
     $fontBoxProject =
@@ -154,6 +182,7 @@ try {
         $OperatingSystem,
         $Architecture
     )
+    Remove-RestoreBuild "fontbox" $fontBoxProject
     Add-Observation "capability" "font-discovery" "passed"
 
     $xmpBoxProject =
@@ -166,6 +195,7 @@ try {
         $OperatingSystem,
         $Architecture
     )
+    Remove-RestoreBuild "xmpbox" $xmpBoxProject
     Add-Observation "capability" "xml" "passed"
 
     $securityProject =
@@ -178,6 +208,7 @@ try {
             (Join-Path $FixtureRoot "security"),
             "--write-only"
         )
+    Remove-RestoreBuild "security" $securityProject
     Add-Observation "capability" "cryptography" "passed"
 
     $printingProject =
@@ -190,6 +221,7 @@ try {
             $OperatingSystem,
             $Architecture
         )
+    Remove-RestoreBuild "printing" $printingProject
     Add-Observation "capability" "cpu-rendering" "passed"
     Add-Observation "capability" "page-layout" "passed"
     Add-Observation "native-assets" "SkiaSharp" "loaded"
@@ -203,15 +235,9 @@ try {
         $OperatingSystem,
         $Architecture
     )
+    Remove-RestoreBuild "preflight" $preflightProject
     Add-Observation "capability" "preflight" "passed"
 
-    $harfBuzzFiles = @(
-        Get-ChildItem -Path $PackagesRoot -Recurse -File |
-            Where-Object { $_.Name -match "HarfBuzz" }
-    )
-    if ($harfBuzzFiles.Count -ne 0) {
-        throw "HarfBuzz assets were restored even though the PdfCube baseline does not select them."
-    }
     Add-Observation "native-assets" "HarfBuzzSharp" "not-selected"
 
     Add-Observation "capability" "clean-restore" "passed"

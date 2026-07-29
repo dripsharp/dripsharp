@@ -7,6 +7,9 @@
 (def ^:private required-workflow
   ".github/workflows/required-proof-ladders.yml")
 
+(def ^:private family-host-smoke
+  ".github/scripts/pdfcube-family-host-smoke.ps1")
+
 (def ^:private proof-workflows
   {:rawhttp required-workflow
    :pkl required-workflow
@@ -77,3 +80,17 @@
           (.getPath workflow))
       (is (not (str/includes? contents "dripsharp-proof"))
           (.getPath workflow)))))
+
+(deftest complete-family-host-smoke-releases-per-probe-build-state
+  (let [contents (slurp family-host-smoke)]
+    (is (str/includes? contents "function Remove-RestoreBuild"))
+    (doseq [probe
+            ["family" "io" "fontbox" "xmpbox"
+             "security" "printing" "preflight"]]
+      (is (str/includes?
+           contents
+           (str "Remove-RestoreBuild \"" probe "\""))))
+    (is (str/includes? contents "Get-ChildItem -Path $cache -Recurse -File"))
+    (is (not (str/includes?
+              contents
+              "Get-ChildItem -Path $PackagesRoot -Recurse -File")))))
