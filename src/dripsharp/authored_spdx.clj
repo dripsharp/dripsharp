@@ -47,9 +47,16 @@
   "Discovers every checked-in target manifest so the repository gate cannot
   silently omit a newly added product target."
   [workspace-root]
-  (let [targets-root
+  (let [workspace-root (paths/absolute workspace-root)
+        targets-root
         (paths/absolute (paths/resolve-path workspace-root "targets"))
-        targets
+        _ (when (and (paths/directory? targets-root)
+                     (not (paths/real-contained?
+                           workspace-root targets-root)))
+            (fail! "Target inventory resolves outside the workspace"
+                   {:path "targets"
+                    :reason :outside-workspace}))
+        candidates
         (when (paths/directory? targets-root)
           (with-open [entries (Files/list targets-root)]
             (->> (.toArray entries)
@@ -57,9 +64,27 @@
                  (filter paths/directory?)
                  (filter
                   #(paths/regular-file? (paths/resolve-path % "target.edn")))
-                 (map #(keyword (str (.getFileName ^Path %))))
-                 sort
-                 vec)))]
+                 vec)))
+        escaped
+        (->> candidates
+             (keep
+              (fn [^Path target-root]
+                (let [manifest (paths/resolve-path target-root "target.edn")]
+                  (when-not
+                   (and (paths/real-contained? workspace-root target-root)
+                        (paths/real-contained? workspace-root manifest))
+                    (str (.getFileName target-root))))))
+             sort
+             vec)
+        _ (when (seq escaped)
+            (fail! "Target manifests resolve outside the workspace"
+                   {:targets escaped
+                    :reason :outside-workspace}))
+        targets
+        (->> candidates
+             (map #(keyword (str (.getFileName ^Path %))))
+             sort
+             vec)]
     (when-not (seq targets)
       (fail! "No target manifests are available for the authored SPDX gate"
              {:targets-root (str targets-root)}))

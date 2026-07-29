@@ -465,6 +465,58 @@
       (finally
         (delete-tree! root)))))
 
+(deftest repository-authored-spdx-gate-rejects-target-discovery-symlink-escapes
+  (let [root (Files/createTempDirectory
+              "dripsharp-authored-spdx-target-root-"
+              (make-array FileAttribute 0))
+        outside (Files/createTempDirectory
+                 "dripsharp-authored-spdx-target-outside-"
+                 (make-array FileAttribute 0))
+        outside-target
+        (write-text! outside "escaped/target.edn" "{}")]
+    (try
+      (let [targets-link (.resolve root "targets")]
+        (Files/createSymbolicLink
+         targets-link outside (make-array FileAttribute 0))
+        (let [escaped-root (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data escaped-root))))
+          (is (= :outside-workspace
+                 (:reason (ex-data escaped-root))))
+          (is (= "targets"
+                 (:path (ex-data escaped-root)))))
+        (Files/delete targets-link))
+      (let [targets-root (.resolve root "targets")
+            target-link (.resolve targets-root "escaped")]
+        (Files/createDirectories targets-root (make-array FileAttribute 0))
+        (Files/createSymbolicLink
+         target-link (.getParent outside-target)
+         (make-array FileAttribute 0))
+        (let [escaped-target (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data escaped-target))))
+          (is (= :outside-workspace
+                 (:reason (ex-data escaped-target))))
+          (is (= ["escaped"]
+                 (:targets (ex-data escaped-target)))))
+        (Files/delete target-link))
+      (let [target-root (.resolve root "targets/escaped")
+            manifest-link (.resolve target-root "target.edn")]
+        (Files/createDirectories target-root (make-array FileAttribute 0))
+        (Files/createSymbolicLink
+         manifest-link outside-target (make-array FileAttribute 0))
+        (let [escaped-manifest
+              (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data escaped-manifest))))
+          (is (= :outside-workspace
+                 (:reason (ex-data escaped-manifest))))
+          (is (= ["escaped"]
+                 (:targets (ex-data escaped-manifest))))))
+      (finally
+        (delete-tree! root)
+        (delete-tree! outside)))))
+
 (deftest authored-spdx-gate-rejects-symlink-escapes
   (let [root (Files/createTempDirectory
               "dripsharp-authored-spdx-symlink-root-"
