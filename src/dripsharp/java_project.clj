@@ -165,16 +165,24 @@
            (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" %)))))
   (when-let [license (get-in configuration [:package :license-expression])]
     (validation/check!
-     (destination-context "Destination package license expression")
+     (destination-context "Destination package license expression"
+                          {:section :package
+                           :setting :license-expression})
      [:package :license-expression] license
-     "a non-blank string"
-     #(and (string? %) (not (str/blank? %)))))
+     "a non-blank XML-compatible string"
+     #(and (string? %)
+           (not (str/blank? %))
+           (project-xml/valid-text? %))))
   (when-let [copyright (get-in configuration [:package :copyright])]
     (validation/check!
-     (destination-context "Destination package copyright")
+     (destination-context "Destination package copyright"
+                          {:section :package
+                           :setting :copyright})
      [:package :copyright] copyright
-     "a non-blank string"
-     #(and (string? %) (not (str/blank? %)))))
+     "a non-blank XML-compatible string"
+     #(and (string? %)
+           (not (str/blank? %))
+           (project-xml/valid-text? %))))
   (let [legal-files (:legal-files configuration)]
     (when legal-files
       (let [context

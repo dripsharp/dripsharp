@@ -107,17 +107,19 @@
   (let [configuration
         (project-emission/read-configuration
          (paths/workspace-root)
-         "targets/pkl/destinations/parser.edn")
-        error
-        (try
-          (project-emission/validate-configuration!
-           (assoc-in configuration [:package :authors]
-                     (str "Publisher" (char 1) "Other")))
-          nil
-          (catch clojure.lang.ExceptionInfo caught caught))]
-    (is (= :invalid-destination-configuration (:kind (ex-data error))))
-    (is (= :package (:section (ex-data error))))
-    (is (= :authors (:setting (ex-data error))))))
+         "targets/pkl/destinations/parser.edn")]
+    (doseq [setting [:authors :license-expression :copyright]]
+      (testing (name setting)
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc-in configuration [:package setting]
+                           (str "Legal metadata" (char 1) "suffix")))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration (:kind (ex-data error))))
+          (is (= :package (:section (ex-data error))))
+          (is (= setting (:setting (ex-data error)))))))))
 
 (deftest destination-files-require-exactly-one-edn-value
   (let [root (temp-directory)
