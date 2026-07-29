@@ -82,6 +82,7 @@ DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pdfcube
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pdfcube
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline rawhttp
 clojure -M:unit-test
 clojure -M:test
 clojure -M:test --namespace dripsharp.harness-test

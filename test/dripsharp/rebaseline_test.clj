@@ -1,5 +1,6 @@
 (ns dripsharp.rebaseline-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.baseline :as baseline]
             [dripsharp.paths :as paths]
             [dripsharp.rebaseline :as rebaseline]
@@ -94,6 +95,42 @@
           (rebaseline/approve!
            root :pkl (:approval-token preview) observe)]
       (is (= legal-review (:legal-review result))))))
+
+(deftest rawhttp-preview-reports-its-baseline-and-isolates-legal-review
+  (let [root (isolated-workspace)
+        changed-hash (apply str (repeat 64 "b"))
+        observe
+        (fn [workspace target]
+          (-> (baseline/read-baseline workspace target)
+              (assoc-in [:upstream :license]
+                        "LicenseRef-RawHTTP-Review-Required")
+              (assoc-in [:legal-sets :upstream 0 :source-sha256]
+                        changed-hash)
+              (assoc-in [:legal-sets :upstream 0 :sha256]
+                        changed-hash)))
+        preview (rebaseline/preview! root :rawhttp observe)
+        legal-review (:legal-review preview)]
+    (is (= :rawhttp (:target preview)))
+    (is (= "targets/rawhttp/baseline.edn" (:baseline-file preview)))
+    (is (= #{[:upstream :license]
+             [:legal-sets :upstream 0 :source-sha256]
+             [:legal-sets :upstream 0 :sha256]}
+           (set (map :path (:delta legal-review)))))
+    (is (true? (:required? legal-review)))
+    (is (= 3 (:changed-fields legal-review)))
+    (is (str/includes? (:approval-command preview)
+                       "rebaseline rawhttp --approve"))))
+
+(deftest rawhttp-package-rebasing-preserves-absent-optional-fields
+  (let [root (isolated-workspace)
+        record (baseline/read-baseline root :rawhttp)
+        observe-packages
+        (ns-resolve 'dripsharp.rebaseline 'observed-packages)
+        packages (observe-packages :rawhttp record "2.6.0")]
+    (is (= {"RawHttp.Core" {:version "2.6.0-dripsharp.0"}}
+           packages))
+    (is (not (contains? (get packages "RawHttp.Core")
+                        :assembly-version)))))
 
 (deftest approval-is-token-gated-and-writes-only-the-selected-record
   (let [root (isolated-workspace)

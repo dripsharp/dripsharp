@@ -10,7 +10,8 @@
 
 (def baseline-files
   {:pkl "targets/pkl/baseline.edn"
-   :pdfcube "targets/pdfcube/baseline.edn"})
+   :pdfcube "targets/pdfcube/baseline.edn"
+   :rawhttp "targets/rawhttp/baseline.edn"})
 
 (def ^:dynamic *target-records*
   "Validated target-directory baseline records available to the current

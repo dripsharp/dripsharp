@@ -6,7 +6,8 @@
   dependency, exclusion, and completion-contract documents are never writable
   through this workflow."
   (:refer-clojure :exclude [run!])
-  (:require [clojure.pprint :as pprint]
+  (:require [clojure.edn :as edn]
+            [clojure.pprint :as pprint]
             [clojure.string :as str]
             [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
@@ -27,7 +28,9 @@
    "doc/targets/pkl/port-scope.md"
    "doc/targets/pdfbox/product-goal.md"
    "doc/targets/pdfbox/port-scope.md"
-   "doc/targets/pdfbox/dependencies.md"])
+   "doc/targets/pdfbox/dependencies.md"
+   "doc/targets/rawhttp/product-goal.md"
+   "doc/targets/rawhttp/port-scope.md"])
 
 (defn- fail!
   [message data]
@@ -56,7 +59,12 @@
 
 (defn- checkout-path
   [root target]
-  (paths/resolve-path root "research" (case target :pkl "pkl" :pdfcube "pdfbox")))
+  (paths/resolve-path
+   root "research"
+   (case target
+     :pkl "pkl"
+     :pdfcube "pdfbox"
+     :rawhttp "rawhttp")))
 
 (defn- clean-checkout!
   [checkout]
@@ -124,7 +132,13 @@
           (matching-value
            (paths/resolve-path checkout "pom.xml")
            #"(?s)<artifactId>pdfbox-parent</artifactId>\s*<version>([^<]+)</version>"
-           "PDFBox upstream version"))]
+           "PDFBox upstream version")
+
+          :rawhttp
+          (matching-value
+           (paths/resolve-path checkout "gradle.properties")
+           #"(?m)^rawHttpCoreVersion=([^\s]+)$"
+           "RawHTTP Core upstream version"))]
     (assoc (:upstream record)
            :version version
            :revision revision
@@ -141,12 +155,52 @@
                 [:project-root :gradle-wrapper :gradle-project
                  :gradle-java-major])))
 
-(defn- observe-pkl-inputs!
-  [root evidence record]
+(defn- target-profile
+  [root target profile-name]
+  (let [target-root (paths/resolve-path root "targets" (name target))
+        manifest-file (paths/resolve-path target-root "target.edn")]
+    (when-not (paths/real-contained? target-root manifest-file)
+      (fail! "Re-baseline target manifest is missing or outside its target directory"
+             {:kind :missing-rebaseline-target-manifest
+              :target target
+              :path (str manifest-file)}))
+    (let [manifest
+          (edn/read-string
+           (Files/readString manifest-file StandardCharsets/UTF_8))
+          matches
+          (filterv #(= profile-name (:id %)) (:profiles manifest))]
+      (when-not (= target (:target manifest))
+        (fail! "Re-baseline target manifest identifies the wrong target"
+               {:kind :rebaseline-target-mismatch
+                :expected target
+                :actual (:target manifest)
+                :path (str manifest-file)}))
+      (when-not (= 1 (count matches))
+        (fail! "Could not resolve exactly one target-owned generation profile"
+               {:kind :ambiguous-rebaseline-profile
+                :target target
+                :profile profile-name
+                :matches (mapv :path matches)}))
+      (let [profile-file
+            (paths/resolve-path target-root (:path (first matches)))]
+        (when-not (paths/real-contained? target-root profile-file)
+          (fail! "Re-baseline generation profile is missing or outside its target directory"
+                 {:kind :missing-rebaseline-profile
+                  :target target
+                  :profile profile-name
+                  :path (str profile-file)}))
+        (harness/read-profile
+         root
+         (str (.relativize (paths/absolute root)
+                           (paths/absolute profile-file))))))))
+
+(defn- observe-gradle-inputs!
+  [root target evidence record]
   (into
    (sorted-map)
    (for [[profile-key profile-contract] (:profiles record)
-         :let [profile (harness/read-profile root (:profile profile-contract))
+         :let [profile (target-profile
+                        root target (:profile profile-contract))
                input (harness/discover-project!
                       (gradle-discovery-options root evidence profile))]]
      [profile-key input])))
@@ -193,7 +247,7 @@
               :versions versions}))
     (first versions)))
 
-(defn- observe-pdfcube-public-counts!
+(defn- observe-java-library-public-counts!
   [root inputs]
   (let [strategy (java-library/public-surface-strategy)
         empty-surface ((:read! strategy) root {})]
@@ -275,7 +329,7 @@
 
 (defn- observed-packages
   [target record version]
-  (if-not (= :pdfcube target)
+  (if-not (contains? #{:pdfcube :rawhttp} target)
     (:packages record)
     (let [old-version (get-in record [:upstream :version])]
       (into
@@ -283,10 +337,12 @@
        (map
         (fn [[package-id package]]
           [package-id
-           (-> package
-               (update :version replace-version-prefix old-version version)
-               (update :assembly-version
-                       replace-version-prefix old-version version))]))
+           (cond->
+            (update package :version
+                    replace-version-prefix old-version version)
+             (contains? package :assembly-version)
+             (update :assembly-version
+                     replace-version-prefix old-version version))]))
        (:packages record)))))
 
 (defn- observed-profiles
@@ -324,12 +380,14 @@
         version (:version upstream)
         inputs
         (case target
-          :pkl (observe-pkl-inputs! root evidence record)
-          :pdfcube (observe-pdfcube-inputs! root evidence record version))
+          :pkl (observe-gradle-inputs! root target evidence record)
+          :pdfcube (observe-pdfcube-inputs! root evidence record version)
+          :rawhttp (observe-gradle-inputs! root target evidence record))
         public-counts
         (case target
           :pkl (observe-pkl-public-counts! root evidence record)
-          :pdfcube (observe-pdfcube-public-counts! root inputs))
+          :pdfcube (observe-java-library-public-counts! root inputs)
+          :rawhttp (observe-java-library-public-counts! root inputs))
         candidate
         (-> record
             (assoc :upstream
@@ -519,7 +577,7 @@
           (or (nil? target) (seq extra)
               (and flag (not= "--approve" flag))
               (and (= "--approve" flag) (str/blank? token)))
-          (fail! "Usage: rebaseline <pkl|pdfcube> [--approve <token>]"
+          (fail! "Usage: rebaseline <pkl|pdfcube|rawhttp> [--approve <token>]"
                  {:kind :invalid-rebaseline-command
                   :arguments (vec args)})
 
