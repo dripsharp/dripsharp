@@ -14,7 +14,8 @@
             [dripsharp.paths :as paths]
             [dripsharp.util :as util]
             [dripsharp.validation :as validation])
-  (:import [java.nio.file Files LinkOption]))
+  (:import [java.io PushbackReader StringReader]
+           [java.nio.file Files LinkOption]))
 
 (def schema-version 4)
 (def legal-policy-schema-version 4)
@@ -210,16 +211,33 @@
 
 (defn- read-edn!
   [subject file]
-  (try
-    (edn/read-string (slurp (str file)))
-    (catch RuntimeException error
-      (if (ex-data error)
-        (throw error)
-        (throw (ex-info (str subject " is not valid EDN")
-                        {:kind :invalid-target-directory
-                         :subject subject
-                         :path (str file)}
-                        error))))))
+  (let [eof (Object.)
+        [value trailing]
+        (try
+          (with-open [reader
+                      (PushbackReader.
+                       (StringReader. (slurp (str file))))]
+            [(edn/read {:eof eof} reader)
+             (edn/read {:eof eof} reader)])
+          (catch RuntimeException error
+            (throw
+             (ex-info (str subject " is not valid EDN")
+                      {:kind :invalid-target-directory
+                       :subject subject
+                       :path (str file)
+                       :reason :invalid-edn}
+                      error))))]
+    (when (identical? eof value)
+      (fail! (str subject " is empty")
+             {:subject subject
+              :path (str file)
+              :reason :empty-edn}))
+    (when-not (identical? eof trailing)
+      (fail! (str subject " contains trailing EDN data")
+             {:subject subject
+              :path (str file)
+              :reason :trailing-data}))
+    value))
 
 (defn- load-authored-source-contract!
   [workspace-root expected-scope expected-class subject file]

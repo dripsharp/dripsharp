@@ -396,6 +396,36 @@
                (mapping-registry/registry-entry
                 registry "executable:java.lang.String#length()"))))))))
 
+(deftest target-contract-edn-files-require-exactly-one-form
+  (in-target-workspace
+   (fn [root]
+     (doseq [[path subject text reason]
+             [["targets/acme/target.edn"
+               "Target manifest"
+               ""
+               :empty-edn]
+              ["targets/acme/target.edn"
+               "Target manifest"
+               "{"
+               :invalid-edn]
+              ["targets/acme/target.edn"
+               "Target manifest"
+               (str (pr-str (target-manifest)) "\n{:ignored true}\n")
+               :trailing-data]
+              ["targets/acme/destinations/core.edn"
+               "Destination configuration"
+               (str (pr-str (destination)) "\n{:ignored true}\n")
+               :trailing-data]]]
+       (create-target-workspace! root)
+       (write-text! root path text)
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= subject (:subject failure)))
+         (is (= reason (:reason failure)))
+         (is (= (str (.resolve ^Path root path))
+                (:path failure))))))))
+
 (deftest manifest-schema-and-owned-paths-fail-closed
   (in-target-workspace
    (fn [root]
