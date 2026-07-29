@@ -152,8 +152,10 @@
       (validation/check!
        (destination-context "Destination package metadata"
                             {:section :package :setting key})
-       [:package key] value "a non-blank string"
-       #(and (string? %) (not (str/blank? %))))))
+       [:package key] value "a non-blank XML-compatible string"
+       #(and (string? %)
+             (not (str/blank? %))
+             (project-xml/valid-text? %)))))
   (when-let [commit (get-in configuration [:package :repository-commit])]
     (validation/check!
      (destination-context "Destination package repository commit")

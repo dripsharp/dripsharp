@@ -9,6 +9,24 @@
 (def ^:private xml-name-pattern
   #"[A-Za-z_][A-Za-z0-9_.:-]*")
 
+(defn valid-text?
+  "Returns true when value is a string containing only XML 1.0 characters."
+  [value]
+  (and
+   (string? value)
+   (loop [offset 0]
+     (if (= offset (.length ^String value))
+       true
+       (let [code-point (.codePointAt ^String value offset)]
+         (if (or (= 0x9 code-point)
+                 (= 0xA code-point)
+                 (= 0xD code-point)
+                 (<= 0x20 code-point 0xD7FF)
+                 (<= 0xE000 code-point 0xFFFD)
+                 (<= 0x10000 code-point 0x10FFFF))
+           (recur (+ offset (Character/charCount code-point)))
+           false))))))
+
 (defn- xml-name!
   [kind value]
   (when-not (and (string? value) (re-matches xml-name-pattern value))
@@ -21,7 +39,12 @@
 (defn text
   "Creates an escaped XML text node."
   [value]
-  {:kind :text :text (str value)})
+  (let [text (str value)]
+    (when-not (valid-text? text)
+      (throw (ex-info "Invalid project XML text"
+                      {:kind :invalid-project-xml-text
+                       :text text})))
+    {:kind :text :text text}))
 
 (defn- node!
   [node]
@@ -49,8 +72,15 @@
               (ex-info "Project XML attribute must be a name/value pair"
                        {:kind :invalid-project-xml-attribute
                         :attribute attribute})))
-           (let [[name value] attribute]
-             [(xml-name! :attribute name) (str value)]))
+           (let [[name value] attribute
+                 value (str value)]
+             (when-not (valid-text? value)
+               (throw
+                (ex-info "Invalid project XML attribute value"
+                         {:kind :invalid-project-xml-attribute-value
+                          :attribute name
+                          :value value})))
+             [(xml-name! :attribute name) value]))
          attributes)
         duplicates
         (->> normalized

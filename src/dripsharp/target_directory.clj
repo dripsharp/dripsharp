@@ -12,6 +12,7 @@
             [dripsharp.differential :as differential]
             [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.paths :as paths]
+            [dripsharp.project-xml :as project-xml]
             [dripsharp.util :as util]
             [dripsharp.validation :as validation])
   (:import [java.io PushbackReader StringReader]
@@ -108,6 +109,11 @@
   (and (string? value)
        (not (str/blank? value))
        (not (str/includes? value "\u0000"))))
+
+(defn- non-blank-single-line-xml-text?
+  [value]
+  (and (non-blank-string? value)
+       (project-xml/valid-text? value)))
 
 (defn- exact-keys!
   ([subject expected value]
@@ -854,8 +860,8 @@
        context
        [:destinations destination-id :package :authors]
        authors
-       "a non-blank single-line publisher identity"
-       non-blank-string?)
+       "a non-blank single-line XML-compatible publisher identity"
+       non-blank-single-line-xml-text?)
       (validation/check!
        context
        [:destinations destination-id :package :description]

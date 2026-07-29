@@ -103,6 +103,22 @@
     (is (= :package (:section (ex-data error))))
     (is (= :title (:setting (ex-data error))))))
 
+(deftest destination-package-metadata-must-be-valid-xml-text
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")
+        error
+        (try
+          (project-emission/validate-configuration!
+           (assoc-in configuration [:package :authors]
+                     (str "Publisher" (char 1) "Other")))
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :invalid-destination-configuration (:kind (ex-data error))))
+    (is (= :package (:section (ex-data error))))
+    (is (= :authors (:setting (ex-data error))))))
+
 (deftest destination-files-require-exactly-one-edn-value
   (let [root (temp-directory)
         relative "targets/rawhttp/destinations/core.edn"

@@ -411,8 +411,8 @@
           (is (contains? (:expected-keys (ex-data missing-publisher))
                          :package-publisher)))
         (doseq [separator
-                ["\u0000" "\u000B" "\u000C" "\r" "\n"
-                 "\u0085" "\u2028" "\u2029"]
+                ["\u0000" "\u0001" "\u000B" "\u000C" "\r" "\n"
+                 "\u0085" "\u2028" "\u2029" "\uFFFE"]
                 :let [publisher
                       (str "Fixture Publisher"
                            separator

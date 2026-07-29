@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [dripsharp.authorship :as authorship]
             [dripsharp.paths :as paths]
+            [dripsharp.project-xml :as project-xml]
             [dripsharp.target-directory :as target-directory])
   (:import [java.io PushbackReader StringReader]
            [java.nio.charset StandardCharsets]
@@ -194,7 +195,8 @@
                  (string? (:package-publisher policy))
                  (not (str/blank? (:package-publisher policy)))
                  (not (re-find #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
-                               (:package-publisher policy))))
+                               (:package-publisher policy)))
+                 (project-xml/valid-text? (:package-publisher policy)))
     (fail! "Approved legal and publisher policy is invalid"
            {:expected-keys decision-policy-keys
             :policy policy}))

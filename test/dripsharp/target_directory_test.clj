@@ -602,8 +602,8 @@
                (concat
                 [nil ""]
                 (map #(str "Publisher" % "Other")
-                     ["\u0000" "\u000B" "\u000C" "\r" "\n"
-                      "\u0085" "\u2028" "\u2029"]))]
+                     ["\u0000" "\u0001" "\u000B" "\u000C" "\r" "\n"
+                      "\u0085" "\u2028" "\u2029" "\uFFFE"]))]
          (write-edn! root "targets/acme/destinations/core.edn" (destination))
          (update-edn! root "targets/acme/destinations/core.edn"
                       assoc-in [:package :authors]
