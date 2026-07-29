@@ -144,6 +144,15 @@
        (remove paths/directory?)
        (mapv #(portable workspace-root %))))
 
+(defn- source-ancestor-links
+  [^Path workspace-root ^Path source-root]
+  (->> (iterate #(.getParent ^Path %) (.getParent source-root))
+       (take-while #(and % (not= workspace-root %)))
+       (filter #(Files/isSymbolicLink ^Path %))
+       (map #(portable workspace-root %))
+       reverse
+       vec))
+
 (defn source-observation
   "Observes one contracted source group without trusting its asserted contract."
   [workspace-root source-group]
@@ -158,6 +167,14 @@
                    {:source (:id source-group)
                     :provenance (:provenance source-group)
                     :reason :outside-workspace}))
+        ancestor-links (source-ancestor-links workspace-root source-root)
+        _ (when (seq ancestor-links)
+            (fail!
+             "Contracted source provenance path contains symbolic-link directories"
+             {:source (:id source-group)
+              :provenance (:provenance source-group)
+              :paths ancestor-links
+              :reason :symbolic-link-source-directory}))
         observed-links (source-links source-root)
         unresolved-links
         (unresolved-source-links workspace-root observed-links)

@@ -834,6 +834,28 @@
           (is (= "runtime/Runtime.cs"
                  (:provenance (ex-data escaped-source))))
           (Files/delete source-link))
+        (let [internal-source
+              (write-text!
+               root "internal-source/Runtime.cs"
+               (str header "internal static class Runtime { }\n"))
+              source-directory-link (.resolve root "source-alias")
+              _ (Files/createSymbolicLink
+                 source-directory-link (.getParent internal-source)
+                 (make-array FileAttribute 0))
+              linked-ancestor
+              (caught
+               #(authorship/source-observation
+                 root
+                 {:id :fixture/linked-ancestor
+                  :kind :file
+                  :provenance "source-alias/Runtime.cs"
+                  :include-pattern nil}))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data linked-ancestor))))
+          (is (= :symbolic-link-source-directory
+                 (:reason (ex-data linked-ancestor))))
+          (is (= ["source-alias"]
+                 (:paths (ex-data linked-ancestor)))))
         (let [outside-tree
               (write-text!
                outside "tree/Runtime.cs"
