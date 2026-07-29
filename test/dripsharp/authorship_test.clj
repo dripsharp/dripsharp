@@ -722,6 +722,29 @@
           (is (= ["runtime/Dangling.cs"]
                  (:paths (ex-data unresolved-file))))
           (Files/delete dangling-file))
+        (let [linked-file-target
+              (write-text!
+               root "runtime/linked-file-target/Runtime.cs"
+               (str header "internal static class Runtime { }\n"))
+              linked-file (.resolve root "runtime/Linked.cs")
+              _ (Files/createSymbolicLink
+                 linked-file linked-file-target
+                 (make-array FileAttribute 0))
+              resolved-file
+              (caught
+               #(authorship/source-observation
+                 root
+                 {:id :fixture/linked-file
+                  :kind :file
+                  :provenance "runtime/Linked.cs"
+                  :include-pattern nil}))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data resolved-file))))
+          (is (= :resolved-symbolic-link
+                 (:reason (ex-data resolved-file))))
+          (is (= ["runtime/Linked.cs"]
+                 (:paths (ex-data resolved-file))))
+          (Files/delete linked-file))
         (let [tree-root (.resolve root "runtime/dangling-tree")
               dangling-source (.resolve tree-root "Dangling.cs")
               _ (Files/createDirectories tree-root
@@ -763,6 +786,29 @@
             (is (= ["runtime/dangling-tree/Pending"]
                    (:paths (ex-data unresolved-directory))))
             (Files/delete dangling-directory))
+          (let [linked-file-target
+                (write-text!
+                 root "runtime/linked-tree-target/Runtime.cs"
+                 (str header "internal static class Runtime { }\n"))
+                linked-file (.resolve tree-root "Linked.cs")
+                _ (Files/createSymbolicLink
+                   linked-file linked-file-target
+                   (make-array FileAttribute 0))
+                resolved-file
+                (caught
+                 #(authorship/source-observation
+                   root
+                   {:id :fixture/linked-tree-file
+                    :kind :tree
+                    :provenance "runtime/dangling-tree"
+                    :include-pattern #".*\.cs"}))]
+            (is (= :invalid-authorship-ledger
+                   (:kind (ex-data resolved-file))))
+            (is (= :resolved-symbolic-link
+                   (:reason (ex-data resolved-file))))
+            (is (= ["runtime/dangling-tree/Linked.cs"]
+                   (:paths (ex-data resolved-file))))
+            (Files/delete linked-file))
           (let [linked-source-root (.resolve root "runtime/linked-source")
                 _ (write-text!
                    root "runtime/linked-source/Runtime.cs"

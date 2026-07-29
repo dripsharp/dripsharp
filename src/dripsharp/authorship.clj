@@ -137,6 +137,13 @@
        (filter paths/directory?)
        (mapv #(portable workspace-root %))))
 
+(defn- resolved-source-nondirectory-links
+  [^Path workspace-root links]
+  (->> links
+       (filter paths/exists?)
+       (remove paths/directory?)
+       (mapv #(portable workspace-root %))))
+
 (defn source-observation
   "Observes one contracted source group without trusting its asserted contract."
   [workspace-root source-group]
@@ -169,6 +176,15 @@
               :provenance (:provenance source-group)
               :paths untraversed-directory-links
               :reason :untraversed-symbolic-link-directory}))
+        resolved-nondirectory-links
+        (resolved-source-nondirectory-links workspace-root observed-links)
+        _ (when (seq resolved-nondirectory-links)
+            (fail!
+             "Contracted source inventory contains resolved symbolic links"
+             {:source (:id source-group)
+              :provenance (:provenance source-group)
+              :paths resolved-nondirectory-links
+              :reason :resolved-symbolic-link}))
         charset (:charset source-group)
         files (source-group-files workspace-root source-group)
         escaped-files
