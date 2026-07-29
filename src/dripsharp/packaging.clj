@@ -4,6 +4,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.authorship :as authorship]
+            [dripsharp.authorship-report :as authorship-report]
             [dripsharp.compiler :as compiler]
             [dripsharp.harness :as harness]
             [dripsharp.java-project :as java-project]
@@ -1486,6 +1487,31 @@
                  external-packages
                  (publish-external-packages! run-command! root feed specs)
                  primary (first (filter :primary? packages))
+                 boundary-report
+                 (authorship-report/write-report!
+                  {:workspace-root root
+                   :output-root
+                   (paths/resolve-path proof-root "release-evidence")
+                   :repository-commit repository-commit
+                   :packages
+                   (mapv
+                    (fn [{:keys [profile identity authorship inspection]}]
+                      {:profile profile
+                       :identity identity
+                       :ledger authorship
+                       :verification (:authorship inspection)})
+                    packages)})
+                 boundary-summary
+                 {:schema-version (:schema-version boundary-report)
+                  :files
+                  {:edn (util/portable-path proof-root
+                                            (:edn boundary-report))
+                   :markdown
+                   (util/portable-path proof-root
+                                       (:markdown boundary-report))}
+                  :sha256
+                  {:edn (:edn-sha256 boundary-report)
+                   :markdown (:markdown-sha256 boundary-report)}}
                  summary
                  {:profile profile
                   :clean-builds 2
@@ -1504,6 +1530,7 @@
                     (juxt #(get-in % [:identity :id])
                           #(get-in % [:authorship :totals]))
                     packages))
+                  :mechanical-authored-boundary boundary-summary
                   :resource-counts
                   (into (sorted-map)
                         (map (juxt #(get-in % [:identity :id])
@@ -1518,6 +1545,7 @@
               :packages packages :artifact (:artifact primary)
               :identity (:identity primary) :inspection (:inspection primary)
               :external-packages external-packages
+              :boundary-report boundary-report
               :summary summary})))
        (finally
          (delete-tree! first-output))))))
@@ -1728,6 +1756,7 @@
       :external-packages (:external-packages package-proof)
       :feed (:feed package-proof)
       :packing-summary (:summary package-proof)
+      :boundary-report (:boundary-report package-proof)
       :dependency-proof (:dependency-proof consumer-proof)
       :proof-root (:proof-root package-proof)
       :packages-root (:packages-root consumer-proof)

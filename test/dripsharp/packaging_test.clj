@@ -1,5 +1,6 @@
 (ns dripsharp.packaging-test
-  (:require [clojure.string :as str]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.authorship :as authorship]
             [dripsharp.java-project :as java-project]
@@ -285,6 +286,24 @@
                      :source-inventory-sha256])}
            (get-in proof
                    [:inspection :authorship :assembly-input])))
+    (is (= {:edn "release-evidence/mechanical-authored-boundary.edn"
+            :markdown "release-evidence/mechanical-authored-boundary.md"}
+           (get-in proof
+                   [:summary :mechanical-authored-boundary :files])))
+    (is (= {:mechanical-lines 9
+            :authored-compat-lines 0
+            :authored-destination-runtime-lines 0
+            :authored-lines 0
+            :total-lines 9}
+           (-> (:boundary-report proof)
+               :edn
+               Files/readString
+               edn/read-string
+               (get-in [:packages 0 :lines]))))
+    (is (str/includes?
+         (Files/readString ^Path
+          (get-in proof [:boundary-report :markdown]))
+         "# Mechanical / Authored Boundary Release Evidence"))
     (is (Files/isRegularFile ^Path (:artifact proof)
                              (make-array java.nio.file.LinkOption 0)))))
 
