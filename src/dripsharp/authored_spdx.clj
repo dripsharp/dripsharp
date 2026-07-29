@@ -86,6 +86,17 @@
                       (fail! "Target inventory contains non-directory symbolic links"
                              {:targets non-directory-links
                               :reason :non-directory-symbolic-link}))
+                  non-directory-entries
+                  (->> entries
+                       (remove #(or (Files/isSymbolicLink ^Path %)
+                                    (paths/directory? %)))
+                       (map #(str (.getFileName ^Path %)))
+                       sort
+                       vec)
+                  _ (when (seq non-directory-entries)
+                      (fail! "Target inventory contains non-directory entries"
+                             {:targets non-directory-entries
+                              :reason :non-directory-target-entry}))
                   directories
                   (->> entries
                        (filter paths/directory?)

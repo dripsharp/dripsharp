@@ -573,6 +573,17 @@
           (is (= ["not-a-target"]
                  (:targets (ex-data invalid-target)))))
         (Files/delete non-directory-target))
+      (let [non-directory-target
+            (write-text! root "targets/not-a-directory" "{}")
+            invalid-target
+            (caught #(authored-spdx/active-targets root))]
+        (is (= :invalid-authored-spdx-gate
+               (:kind (ex-data invalid-target))))
+        (is (= :non-directory-target-entry
+               (:reason (ex-data invalid-target))))
+        (is (= ["not-a-directory"]
+               (:targets (ex-data invalid-target))))
+        (Files/delete non-directory-target))
       (let [target-root (.resolve root "targets/dangling")
             manifest-link (.resolve target-root "target.edn")]
         (Files/createDirectories target-root (make-array FileAttribute 0))
