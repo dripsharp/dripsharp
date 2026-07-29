@@ -1,8 +1,7 @@
 (ns dripsharp.differential
   "Product-neutral execution and comparison of versioned differential proofs."
   (:refer-clojure :exclude [run!])
-  (:require [clojure.edn :as edn]
-            [clojure.set :as set]
+  (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
@@ -223,7 +222,7 @@
        (fail! "Differential contract file is missing"
               {:path (str file)}))
      (try
-       (validate-contract! (edn/read-string (slurp (str file))))
+       (validate-contract! (util/read-single-edn-string! (slurp (str file))))
        (catch RuntimeException error
          (if (ex-data error)
            (throw error)

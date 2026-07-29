@@ -3,7 +3,48 @@
             [clojure.test :refer [deftest is testing]]
             [dripsharp.differential :as differential]
             [dripsharp.java-compat-differential :as java-compat]
-            [dripsharp.paths :as paths]))
+            [dripsharp.paths :as paths])
+  (:import [java.nio.file Files OpenOption]
+           [java.nio.file.attribute FileAttribute]))
+
+(deftest direct-contract-reader-rejects-trailing-edn
+  (let [root (paths/workspace-root)
+        source (paths/resolve-path root "validation" "java-compat" "contract.edn")
+        temporary-root (Files/createTempDirectory
+                        "dripsharp-java-compat-contract-"
+                        (make-array FileAttribute 0))
+        file (paths/resolve-path
+              temporary-root "validation" "java-compat" "contract.edn")]
+    (Files/createDirectories (.getParent file)
+                             (make-array FileAttribute 0))
+    (Files/writeString file
+                       (str (Files/readString source) "\n{:hidden true}\n")
+                       (make-array OpenOption 0))
+    (let [error
+          (try
+            (java-compat/read-contract temporary-root)
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :trailing-data (:reason (ex-data error)))))))
+
+(deftest java-compat-target-inventory-rejects-trailing-edn
+  (let [temporary-root (Files/createTempDirectory
+                        "dripsharp-java-compat-target-"
+                        (make-array FileAttribute 0))
+        file (paths/resolve-path temporary-root "targets" "fake" "target.edn")]
+    (Files/createDirectories (.getParent file)
+                             (make-array FileAttribute 0))
+    (Files/writeString file
+                       "{:target :fake}\n{:hidden true}\n"
+                       (make-array OpenOption 0))
+    (let [error
+          (try
+            (java-compat/read-provenance
+             {:provenance "missing.tsv"}
+             temporary-root)
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :trailing-data (:reason (ex-data error)))))))
 
 (deftest direct-contract-covers-every-authored-compatibility-type
   (let [root (paths/workspace-root)

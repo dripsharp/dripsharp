@@ -1,8 +1,7 @@
 (ns dripsharp.java-compat-differential
   "Direct JVM-versus-.NET proof for the authored Java compatibility runtime."
   (:refer-clojure :exclude [run!])
-  (:require [clojure.edn :as edn]
-            [clojure.set :as set]
+  (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
@@ -106,7 +105,7 @@
        (fail! {} "JavaCompat differential contract is missing"
               {:path (str file)}))
      (try
-       (validate-contract! (edn/read-string (slurp (str file))))
+       (validate-contract! (util/read-single-edn-string! (slurp (str file))))
        (catch RuntimeException error
          (if (ex-data error)
            (throw error)
@@ -125,7 +124,7 @@
          (map #(.toPath %))
          (map #(paths/resolve-path % "target.edn"))
          (filter paths/regular-file?)
-         (map #(edn/read-string (slurp (str %))))
+         (map #(util/read-single-edn-string! (slurp (str %))))
          (filter #(contains? (:capabilities %) :java-compat))
          (filter #(some (fn [profile]
                           (contains? (:required-capabilities profile)

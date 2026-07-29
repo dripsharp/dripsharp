@@ -72,6 +72,22 @@
         (is (= :pdfcube-io-differential-failed
                (:kind (ex-data error))))))))
 
+(deftest differential-contract-reader-rejects-trailing-edn
+  (let [root (paths/workspace-root)
+        source (paths/resolve-path
+                root "targets" "pdfcube" "validation" "io.edn")
+        file (Files/createTempFile "dripsharp-differential-contract-" ".edn"
+                                   (make-array FileAttribute 0))]
+    (Files/writeString file
+                       (str (Files/readString source) "\n{:hidden true}\n")
+                       (make-array OpenOption 0))
+    (let [error
+          (try
+            (differential/read-contract file)
+            nil
+            (catch clojure.lang.ExceptionInfo caught caught))]
+      (is (= :trailing-data (:reason (ex-data error)))))))
+
 (deftest versioned-observations-and-perturbation-fail-closed
   (let [contract
         (differential/read-contract
@@ -167,4 +183,4 @@
       (is (= version (get-in (ex-data error)
                              [:expected :version])))
       (is (= "drift" (get-in (ex-data error)
-                              [:actual :version]))))))
+                             [:actual :version]))))))
