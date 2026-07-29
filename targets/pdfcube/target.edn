@@ -1,4 +1,4 @@
-{:schema-version 2
+{:schema-version 3
  :target :pdfcube
  :product-family :pdfcube
  :contracts
@@ -16,6 +16,9 @@
    :java-io :java-nio :java-regex-unicode :jbig2 :jpx :managed-raster
    :preflight-font-erasure :printing :security-handler-erasure :skia-geometry
    :skia-graphics :unicode-bidi :xml}
+ :authorship
+ {:compatibility "config/authored-compat.edn"
+  :destination "authorship.edn"}
  :profiles
  [{:id "pdfcube-io"
    :path "profiles/io.edn"
@@ -23,6 +26,11 @@
    :mapping-overlays []
    :runtime-assets []
    :validation-contracts [:pdfcube-io]
+   :authorship
+   {:sources []
+    :evidence [:pdfcube-complete-family-proof]
+    :review "pkl-c8t.20"
+    :budget {:authored-lines 12730 :total-lines 14920}}
    :required-capabilities
    #{:java-compat :java-io :java-nio :java-regex-unicode}}
   {:id "pdfcube-fontbox"
@@ -33,6 +41,13 @@
    [:pdfcube/fontbox-compat :pdfcube/fontbox-discovery :pdfcube/icc
     :pdfcube/image-codecs-unsupported]
    :validation-contracts [:pdfcube-fontbox]
+   :authorship
+   {:sources
+    [:pdfcube/fontbox-compat :pdfcube/fontbox-discovery :pdfcube/icc
+     :pdfcube/image-codecs-unsupported]
+    :evidence [:pdfcube-complete-family-proof]
+    :review "pkl-c8t.20"
+    :budget {:authored-lines 24351 :total-lines 41907}}
    :required-capabilities
    #{:font-discovery :icc :java-bidi :java-compat :java-regex-unicode
      :skia-geometry}}
@@ -42,6 +57,11 @@
    :mapping-overlays []
    :runtime-assets []
    :validation-contracts [:pdfcube-xmpbox-metadata]
+   :authorship
+   {:sources []
+    :evidence [:pdfcube-complete-family-proof]
+    :review "pkl-c8t.20"
+    :budget {:authored-lines 12730 :total-lines 20233}}
    :required-capabilities #{:java-compat :java-regex-unicode :xml}}
   {:id "pdfcube-pdfbox"
    :path "profiles/pdfbox.edn"
@@ -51,6 +71,13 @@
    [:pdfcube/fontbox-compat :pdfcube/icc :pdfcube/image-codecs
     :pdfcube/pdfbox-compat]
    :validation-contracts []
+   :authorship
+   {:sources
+    [:pdfcube/fontbox-compat :pdfcube/icc :pdfcube/image-codecs
+     :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx]
+    :evidence [:pdfcube-complete-family-proof]
+    :review "pkl-c8t.20"
+    :budget {:authored-lines 117326 :total-lines 192936}}
    :required-capabilities
    #{:calendar-value-semantics :icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing
@@ -61,6 +88,11 @@
    :mapping-overlays []
    :runtime-assets [:pdfcube/preflight-compat]
    :validation-contracts []
+   :authorship
+   {:sources [:pdfcube/preflight-compat]
+    :evidence [:pdfcube-complete-family-proof]
+    :review "pkl-c8t.20"
+    :budget {:authored-lines 44 :total-lines 8455}}
    :required-capabilities
    #{:java-compat :java-regex-unicode :preflight-font-erasure}}]
  :destinations

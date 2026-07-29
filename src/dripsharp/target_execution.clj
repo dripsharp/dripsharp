@@ -103,15 +103,25 @@
              profiles))
           prepared-destinations
           (binding [baseline/*target-records* records]
-            (into
+            (reduce
+             (fn [result [_profile-id
+                          {:keys [destination authorship]}]]
+               (let [path (get-in destination [:descriptor :path])
+                     configuration
+                     (assoc
+                      (execution-destination
+                       target
+                       (baseline/hydrate-destination
+                        root (:configuration destination)))
+                      :authorship authorship)]
+                 (if-let [existing (get result path)]
+                   (if (= existing configuration)
+                     result
+                     (fail! "Profiles sharing a destination have different authorship contracts"
+                            {:target target :destination path}))
+                   (assoc result path configuration))))
              {}
-             (map
-              (fn [[_id {:keys [descriptor configuration]}]]
-                [(:path descriptor)
-                 (->> configuration
-                      (baseline/hydrate-destination root)
-                      (execution-destination target))]))
-             (:destinations target-contract)))]
+             (:profiles target-contract)))]
       {:workspace-root root
        :target target
        :profile profile-name

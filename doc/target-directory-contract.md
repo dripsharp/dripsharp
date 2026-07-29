@@ -14,11 +14,11 @@ to the product-neutral directory loader.
 
 ## Manifest
 
-`targets/<target-id>/target.edn` uses schema version 2 and has exactly these
+`targets/<target-id>/target.edn` uses schema version 3 and has exactly these
 keys:
 
 ```clojure
-{:schema-version 2
+{:schema-version 3
  :target :example
  :product-family :example
 
@@ -38,6 +38,10 @@ keys:
  :capabilities
  #{:java-compat :example/mappings :example/runtime}
 
+ :authorship
+ {:compatibility "config/authored-compat.edn"
+  :destination "authorship.edn"}
+
  :profiles
  [{:id "example-core"
    :path "profiles/core.edn"
@@ -45,6 +49,11 @@ keys:
    :mapping-overlays [:example/core]
    :runtime-assets [:example/runtime]
    :validation-contracts [:example-core]
+   :authorship
+   {:sources [:example/runtime]
+    :evidence [:example-complete-proof]
+    :review "reviewed-change-id"
+    :budget {:authored-lines 120 :total-lines 1200}}
    :required-capabilities
    #{:java-compat :example/mappings :example/runtime}}]
 
@@ -151,6 +160,57 @@ the capabilities those files provide. For each profile, the selected runtime
 paths must exactly match its destination's `:runtime-sources`. Shared
 product-neutral compatibility sources remain shared inputs; a target
 directory must not claim product behavior belonging to another target.
+
+### Authored source contracts
+
+The workspace owns one shared compatibility contract under `config/`; each
+target owns `authorship.edn`. Both use schema version 1 and list the complete
+reviewed authored source inventory. Shared groups are
+`:authored-compat`; target groups are `:authored-destination-runtime`.
+
+```clojure
+{:schema-version 1
+ :scope :example
+ :class :authored-destination-runtime
+ :sources
+ [{:id :example/runtime
+   :kind :file
+   :provenance "targets/example/runtime/Example.Core.Runtime.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 120
+   :max-emitted-lines 120
+   :source-inventory-sha256 "…"
+   :public-types {:count 3 :sha256 "…"}}]}
+```
+
+A `:tree` group uses an anchored `:include-pattern`; a shared compatibility
+group also names the capability that selects it. File count, portable path
+inventory, source line ceiling, emitted line ceiling, and public declaration
+fingerprint are frozen reviewed facts. Drift fails target preflight and is
+recomputed again from live inputs during emission and package inspection.
+Every declared target group must be selected by at least one profile, and
+every selected runtime asset must belong to a selected target group.
+
+Each profile freezes its package-level authored line count and authored/total
+line fraction. The declared authored count must equal the sum of its selected
+group ceilings. Increasing a group ceiling, changing the public-type
+fingerprint, selecting a new group, or raising the package budget therefore
+requires an explicit `:review` contract diff. `:evidence` must name a required
+proof ladder that covers that profile; a successful product proof makes the
+linked behavior evidence green.
+
+Emission records every compile input in authorship-ledger schema version 2.
+Mechanical inputs carry exact upstream revision and header provenance;
+authored inputs carry their reviewed source path, class, hash, line count,
+evidence linkage, and budget proof. Package inspection rejects a missing or
+extra compile input, an uncontracted authored source, authored growth, public
+authored surface drift, or an authored fraction above the frozen ratio.
+Shared compatibility text is additionally scanned for target, product-family,
+package, assembly, and destination namespace identities so it remains
+product-neutral for existing and future targets.
 
 ### Validation
 

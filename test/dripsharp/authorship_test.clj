@@ -1,0 +1,251 @@
+(ns dripsharp.authorship-test
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is]]
+            [dripsharp.authorship :as authorship]
+            [dripsharp.java-project :as java-project])
+  (:import [java.nio.file FileVisitOption Files OpenOption Path]
+           [java.nio.file.attribute FileAttribute]))
+
+(defn- write-text!
+  [^Path root relative text]
+  (let [file (.resolve root relative)]
+    (Files/createDirectories (.getParent file)
+                             (make-array FileAttribute 0))
+    (Files/writeString file text (make-array OpenOption 0))
+    file))
+
+(defn- delete-tree!
+  [^Path root]
+  (when (Files/exists root (make-array java.nio.file.LinkOption 0))
+    (with-open [entries (Files/walk root (make-array FileVisitOption 0))]
+      (doseq [^Path entry
+              (->> (.toArray entries)
+                   (map #(cast Path %))
+                   (sort-by #(.getNameCount ^Path %) >))]
+        (Files/delete entry)))))
+
+(defn- caught
+  [thunk]
+  (try
+    (thunk)
+    nil
+    (catch clojure.lang.ExceptionInfo error error)))
+
+(defn- source-group
+  [root id provenance capability max-emitted-lines]
+  (let [base
+        {:id id
+         :kind :file
+         :provenance provenance
+         :include-pattern nil
+         :charset nil
+         :capability capability}
+        observation (authorship/source-observation root base)]
+    (merge
+     base
+     {:source-files (:files observation)
+      :max-source-lines (:source-lines observation)
+      :max-emitted-lines max-emitted-lines
+      :source-inventory-sha256 (:source-inventory-sha256 observation)
+      :public-types (:public-types observation)})))
+
+(defn- normalized-groups
+  [root class scope groups]
+  (:sources
+   (authorship/validate-source-contract!
+    root scope class
+    {:schema-version 1
+     :scope scope
+     :class class
+     :sources groups})))
+
+(defn- policy
+  [compatibility-sources budget]
+  {:schema-version 1
+   :target :fixture
+   :profile "fixture"
+   :package-id "Fixture.Package"
+   :review "pkl-c8t.20"
+   :evidence [:fixture/behavior-proof]
+   :budget budget
+   :forbidden-identities ["fixture"]
+   :compatibility-sources compatibility-sources
+   :destination-sources (sorted-map)})
+
+(defn- create-ledger!
+  [root artifacts contract]
+  (let [project-root (.resolve ^Path root "generated")
+        source-root (.resolve project-root "src")
+        configuration
+        {:package {:id "Fixture.Package"}
+         :mechanical-source
+         {:repository "https://example.invalid/upstream.git"
+          :revision "1111111111111111111111111111111111111111"
+          :notice-reference nil}}]
+    (authorship/create-ledger!
+     {:workspace-root root
+      :project-root project-root
+      :source-root source-root
+      :artifacts artifacts
+      :mechanical-source (:mechanical-source configuration)
+      :mechanical-header java-project/mechanical-source-header
+      :configuration configuration
+      :contract contract})))
+
+(deftest authored-policy-rejects-unlisted-and-unevidenced-package-code
+  (let [root (Files/createTempDirectory
+              "dripsharp-authorship-inventory-"
+              (make-array FileAttribute 0))]
+    (try
+      (write-text! root "runtime/Neutral.cs"
+                   "internal static class Neutral { }\n")
+      (write-text! root "runtime/Extra.cs"
+                   "internal static class Extra { }\n")
+      (write-text! root "generated/src/Neutral.cs"
+                   "internal static class Neutral { }\n")
+      (write-text! root "generated/src/Extra.cs"
+                   "internal static class Extra { }\n")
+      (let [groups
+            (normalized-groups
+             root :authored-compat :shared-compatibility
+             [(source-group root :shared/neutral "runtime/Neutral.cs"
+                            :java-compat 1)])
+            contract (policy groups {:authored-lines 1 :total-lines 1})
+            artifacts
+            [{:file "src/Neutral.cs"
+              :source {:file "runtime/Neutral.cs"}
+              :authorship-class :authored-compat}
+             {:file "src/Extra.cs"
+              :source {:file "runtime/Extra.cs"}
+              :authorship-class :authored-compat}]
+            unlisted (caught #(create-ledger! root artifacts contract))
+            unevidenced
+            (caught
+             #(create-ledger!
+               root
+               [(first artifacts)]
+               (assoc contract :evidence [])))]
+        (is (= :invalid-authorship-ledger
+               (:kind (ex-data unlisted))))
+        (is (= ["runtime/Extra.cs"]
+               (:unexpected (ex-data unlisted))))
+        (is (= :invalid-authorship-ledger
+               (:kind (ex-data unevidenced))))
+        (is (= []
+               (get-in (ex-data unevidenced) [:contract :evidence]))))
+      (finally
+        (delete-tree! root)))))
+
+(deftest authored-policy-freezes-growth-public-types-and-package-fraction
+  (let [root (Files/createTempDirectory
+              "dripsharp-authorship-budget-"
+              (make-array FileAttribute 0))]
+    (try
+      (let [source-text "public sealed class Neutral { }\n"
+            _ (write-text! root "runtime/Neutral.cs" source-text)
+            output (write-text! root "generated/src/Neutral.cs" source-text)
+            groups
+            (normalized-groups
+             root :authored-compat :shared-compatibility
+             [(source-group root :shared/neutral "runtime/Neutral.cs"
+                            :java-compat 1)])
+            exact-contract
+            (policy groups {:authored-lines 1 :total-lines 1})
+            authored-artifact
+            {:file "src/Neutral.cs"
+             :source {:file "runtime/Neutral.cs"}
+             :authorship-class :authored-compat}]
+        (is (= 1
+               (:count
+                (authorship/public-type-proof
+                 [(str "public\n#if EXAMPLE\n#endif\n"
+                       "sealed class SplitDeclaration\n{\n}\n")]))))
+        (is (= [:fixture/behavior-proof]
+               (get-in
+                (create-ledger! root [authored-artifact] exact-contract)
+                [:policy :sources 0 :evidence])))
+        (Files/writeString
+         output
+         (str source-text "// unreviewed authored growth\n")
+         (make-array OpenOption 0))
+        (let [growth
+              (caught
+               #(create-ledger! root [authored-artifact] exact-contract))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data growth))))
+          (is (= 1 (:expected-at-most (ex-data growth))))
+          (is (= 2 (:actual (ex-data growth)))))
+        (Files/writeString output
+                           "public sealed class Changed { }\n"
+                           (make-array OpenOption 0))
+        (let [public-type
+              (caught
+               #(create-ledger! root [authored-artifact] exact-contract))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data public-type))))
+          (is (not=
+               (get-in (ex-data public-type) [:expected :sha256])
+               (get-in (ex-data public-type) [:actual :sha256]))))
+        (Files/writeString output source-text (make-array OpenOption 0))
+        (let [configuration
+              {:repository "https://example.invalid/upstream.git"
+               :revision "1111111111111111111111111111111111111111"
+               :notice-reference nil}
+              upstream "example/Mechanical.java"
+              header
+              (java-project/mechanical-source-header configuration upstream)
+              mechanical-text (str header "internal class Mechanical { }\n")
+              mechanical-lines
+              (count (str/split-lines mechanical-text))
+              _ (write-text! root "generated/src/Mechanical.cs"
+                             mechanical-text)
+              mechanical-artifact
+              {:file "src/Mechanical.cs"
+               :upstream-source upstream
+               :mechanical-source-header header}
+              over-fraction-contract
+              (assoc exact-contract :budget
+                     {:authored-lines 1
+                      :total-lines (+ mechanical-lines 2)})
+              fraction
+              (caught
+               #(create-ledger!
+                 root [authored-artifact mechanical-artifact]
+                 over-fraction-contract))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data fraction))))
+          (is (= {:numerator 1
+                  :denominator (+ mechanical-lines 1)}
+                 (:actual (ex-data fraction))))))
+      (finally
+        (delete-tree! root)))))
+
+(deftest shared-authored-compatibility-is-product-neutral
+  (let [root (Files/createTempDirectory
+              "dripsharp-authorship-identity-"
+              (make-array FileAttribute 0))]
+    (try
+      (let [text "namespace Fixture.Compatibility;\n"
+            _ (write-text! root "runtime/Compatibility.cs" text)
+            _ (write-text! root "generated/src/Compatibility.cs" text)
+            groups
+            (normalized-groups
+             root :authored-compat :shared-compatibility
+             [(source-group root :shared/compatibility
+                            "runtime/Compatibility.cs" :java-compat 1)])
+            contract (policy groups {:authored-lines 1 :total-lines 1})
+            identity-error
+            (caught
+             #(create-ledger!
+               root
+               [{:file "src/Compatibility.cs"
+                 :source {:file "runtime/Compatibility.cs"}
+                 :authorship-class :authored-compat}]
+               contract))]
+        (is (= :invalid-authorship-ledger
+               (:kind (ex-data identity-error))))
+        (is (= "fixture" (:fragment (ex-data identity-error))))
+        (is (= "runtime/Compatibility.cs"
+               (:path (ex-data identity-error)))))
+      (finally
+        (delete-tree! root)))))

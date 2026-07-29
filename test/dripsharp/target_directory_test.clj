@@ -3,7 +3,8 @@
             [clojure.test :refer [deftest is testing]]
             [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.target-directory :as target-directory]
-            [dripsharp.target-execution :as target-execution])
+            [dripsharp.target-execution :as target-execution]
+            [dripsharp.util :as util])
   (:import [java.nio.file FileVisitOption Files Path]
            [java.nio.file.attribute FileAttribute]))
 
@@ -180,7 +181,7 @@
 
 (defn- target-manifest
   []
-  {:schema-version 2
+  {:schema-version 3
    :target :acme
    :product-family :acme
    :contracts
@@ -194,6 +195,9 @@
     :runtime-major 17
     :preview-features? false}
    :capabilities #{:java-compat :acme/mapping :acme/runtime}
+   :authorship
+   {:compatibility "config/authored-compat.edn"
+    :destination "authorship.edn"}
    :profiles
    [{:id "acme-core"
      :path "profiles/core.edn"
@@ -201,6 +205,11 @@
      :mapping-overlays [:acme/core]
      :runtime-assets [:acme/runtime]
      :validation-contracts [:acme-core]
+     :authorship
+     {:sources [:acme/runtime]
+      :evidence [:acme-required-proof]
+      :review "acme-authorship-review"
+      :budget {:authored-lines 2 :total-lines 2}}
      :required-capabilities
      #{:java-compat :acme/mapping :acme/runtime}}]
    :destinations [{:id :core :path "destinations/core.edn"}]
@@ -222,6 +231,50 @@
       :validation-contracts [:acme-core]
       :resource-class :high-memory}]}})
 
+(defn- public-type-proof
+  []
+  {:count 0
+   :sha256
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"})
+
+(defn- shared-authorship
+  []
+  {:schema-version 1
+   :scope :shared-compatibility
+   :class :authored-compat
+   :sources
+   [{:id :shared/java-compat
+     :kind :file
+     :provenance "runtime/Shared.JavaCompat.cs"
+     :include-pattern nil
+     :charset nil
+     :capability :java-compat
+     :source-files 1
+     :max-source-lines 1
+     :max-emitted-lines 1
+     :source-inventory-sha256
+     (util/sha256-text "runtime/Shared.JavaCompat.cs")
+     :public-types (public-type-proof)}]})
+
+(defn- target-authorship
+  []
+  {:schema-version 1
+   :scope :acme
+   :class :authored-destination-runtime
+   :sources
+   [{:id :acme/runtime
+     :kind :file
+     :provenance "targets/acme/runtime/Acme.Core.Runtime.cs"
+     :include-pattern nil
+     :charset nil
+     :capability nil
+     :source-files 1
+     :max-source-lines 1
+     :max-emitted-lines 1
+     :source-inventory-sha256
+     (util/sha256-text "targets/acme/runtime/Acme.Core.Runtime.cs")
+     :public-types (public-type-proof)}]})
+
 (defn- legal-policy
   []
   {:schema-version 1
@@ -240,6 +293,7 @@
            ["upstream/acme/LICENSE.txt" "Apache License\n"]
            ["upstream/acme/NOTICE.txt" "Acme notice\n"]
            ["upstream/acme/src/Acme.java" "class Acme {}\n"]
+           ["runtime/Shared.JavaCompat.cs" "namespace Shared.Java;\n"]
            ["targets/acme/runtime/Acme.Core.Runtime.cs"
             "namespace Acme.Core;\n"]
            ["targets/acme/validation/oracle/AcmeOracle.java"
@@ -252,6 +306,8 @@
     (write-text! root path text))
   (doseq [[path value]
           [["targets/acme/target.edn" (target-manifest)]
+           ["config/authored-compat.edn" (shared-authorship)]
+           ["targets/acme/authorship.edn" (target-authorship)]
            ["targets/acme/baseline.edn" (baseline-record)]
            ["targets/acme/legal/policy.edn" (legal-policy)]
            ["targets/acme/profiles/core.edn" (generation-profile)]
@@ -391,6 +447,53 @@
          (is (= :invalid-target-directory (:kind failure)))
          (is (= :acme (:target failure)))
          (is (= :acme (:product-family failure))))))))
+
+(deftest authored-source-contracts-and-evidence-fail-closed
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (testing "authored package budgets equal their reviewed source ceilings"
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in
+                    [:profiles 0 :authorship :budget :authored-lines]
+                    3)
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= 3
+                (get-in failure
+                        [:contract :budget :authored-lines])))))
+     (testing "evidence must be a required ladder covering the profile"
+       (write-edn! root "targets/acme/target.edn" (target-manifest))
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in [:profiles 0 :authorship :evidence]
+                    [:acme/missing-proof])
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= :acme/missing-proof (:evidence failure)))))
+     (testing "all shared groups stay neutral even when a profile omits them"
+       (write-edn! root "targets/acme/target.edn" (target-manifest))
+       (write-text! root "runtime/Leaky.cs" "namespace Acme.Leak;\n")
+       (update-edn!
+        root "config/authored-compat.edn" update :sources conj
+        {:id :shared/unselected
+         :kind :file
+         :provenance "runtime/Leaky.cs"
+         :include-pattern nil
+         :charset nil
+         :capability :unused/compat
+         :source-files 1
+         :max-source-lines 1
+         :max-emitted-lines 1
+         :source-inventory-sha256
+         (util/sha256-text "runtime/Leaky.cs")
+         :public-types (public-type-proof)})
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= :shared/unselected (:source failure)))
+         (is (= "acme" (:fragment failure))))))))
 
 (deftest custom-oracle-and-probe-contracts-remain-supported
   (in-target-workspace

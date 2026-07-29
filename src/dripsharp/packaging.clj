@@ -1170,6 +1170,11 @@
             (fail! "Generation manifest authorship ledger differs from the emitted package plan"
                    {:expected expected :actual ledger
                     :manifest (str manifest-file)}))
+        _ (when (and (pos? (get-in ledger [:totals :authored-lines] 0))
+                     (not (seq (get-in ledger [:policy :evidence]))))
+            (fail! "Package authorship ledger has no reviewed green behavior evidence"
+                   {:package (get-in configuration [:package :id])
+                    :profile (:profile emission)}))
         workspace-root
         (or (:workspace-root emission)
             (paths/workspace-root project-root))
@@ -1185,6 +1190,8 @@
           :source-root source-root
           :mechanical-source (:mechanical-source configuration)
           :mechanical-header java-project/mechanical-source-header
+          :configuration configuration
+          :contract (:authorship configuration)
           :ledger ledger})
         _ (when-not (paths/regular-file? project-file)
             (fail! "Package source inspection cannot read the generated project"

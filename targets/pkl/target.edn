@@ -1,4 +1,4 @@
-{:schema-version 2
+{:schema-version 3
  :target :pkl
  :product-family :pkl
  :contracts
@@ -12,6 +12,9 @@
   :runtime-major 17
   :preview-features? false}
  :capabilities #{:java-compat :java-regex-unicode :pkl/runtime}
+ :authorship
+ {:compatibility "config/authored-compat.edn"
+  :destination "authorship.edn"}
  :profiles
  [{:id "pkl-parser"
    :path "profiles/parser.edn"
@@ -19,6 +22,11 @@
    :mapping-overlays []
    :runtime-assets []
    :validation-contracts [:pkl-differential]
+   :authorship
+   {:sources []
+    :evidence [:pkl-complete-product-proof]
+    :review "pkl-c8t.20"
+    :budget {:authored-lines 12730 :total-lines 22083}}
    :required-capabilities #{:java-compat :java-regex-unicode}}
   {:id "pkl-core-value-model"
    :path "profiles/core.edn"
@@ -28,6 +36,11 @@
    [:pkl/dotnet :pkl/loading :pkl/runtime-bridge :pkl/substrate
     :pkl/value-model-dotnet]
    :validation-contracts []
+   :authorship
+   {:sources [:pkl/runtime]
+    :evidence [:pkl-complete-product-proof]
+    :review "pkl-c8t.20"
+    :budget {:authored-lines 19762 :total-lines 136886}}
    :required-capabilities
    #{:java-compat :java-regex-unicode :pkl/runtime}}]
  :destinations

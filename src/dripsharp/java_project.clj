@@ -318,6 +318,15 @@
                      false))
       (destination-error "Invalid independent package-consumer contract"
                          {:package-consumer consumer})))
+  (when-let [contract (:authorship configuration)]
+    (try
+      (authorship/validate-policy-contract! contract)
+      (catch clojure.lang.ExceptionInfo error
+        (throw
+         (ex-info "Invalid destination authorship contract"
+                  (assoc (ex-data error)
+                         :kind :invalid-destination-configuration)
+                  error)))))
   configuration)
 
 (defn read-configuration
@@ -1144,7 +1153,9 @@
             :source-root source-root
             :artifacts artifacts
             :mechanical-source (:mechanical-source configuration)
-            :mechanical-header mechanical-source-header})
+            :mechanical-header mechanical-source-header
+            :configuration configuration
+            :contract (:authorship configuration)})
           resource-artifacts
           (mapv
            (fn [^Path source]

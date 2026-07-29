@@ -1,0 +1,4 @@
+{:schema-version 1
+ :scope :rawhttp
+ :class :authored-destination-runtime
+ :sources []}

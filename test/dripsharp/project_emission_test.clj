@@ -258,7 +258,7 @@
             :verified-files 1}
            (:mechanical-source-header-proof first)
            (:mechanical-source-header-proof second)))
-    (is (= {:schema-version 1
+    (is (= {:schema-version 2
             :files
             [{:path "src/Example/Library/Greeting.cs"
               :class :mechanical
@@ -273,15 +273,17 @@
              :authored-destination-runtime-lines 0
              :authored-lines 0
              :total-lines 11
-             :authored-fraction 0.0}}
+             :authored-fraction 0.0}
+            :policy nil}
            (:authorship first)
            (:authorship second)))
-    (is (= {:schema-version 1
+    (is (= {:schema-version 2
             :verified-files 1
             :source-paths ["src/Example/Library/Greeting.cs"]
             :source-inventory-sha256
             (util/sha256-text "src/Example/Library/Greeting.cs")
-            :totals (:totals (:authorship first))}
+            :totals (:totals (:authorship first))
+            :policy nil}
            (verify-authorship! first)))
     (let [text (slurp (str source))
           artifact (clojure.core/first (:artifacts first))

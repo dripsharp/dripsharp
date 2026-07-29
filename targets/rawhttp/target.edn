@@ -1,4 +1,4 @@
-{:schema-version 2
+{:schema-version 3
  :target :rawhttp
  :product-family :java-library
  :contracts
@@ -12,6 +12,9 @@
   :runtime-major 17
   :preview-features? false}
  :capabilities #{:java-compat :java-regex-unicode}
+ :authorship
+ {:compatibility "config/authored-compat.edn"
+  :destination "authorship.edn"}
  :profiles
  [{:id "rawhttp-core"
    :path "profiles/core.edn"
@@ -19,6 +22,11 @@
    :mapping-overlays []
    :runtime-assets []
    :validation-contracts [:rawhttp-package-equivalence]
+   :authorship
+   {:sources []
+    :evidence [:rawhttp-permanent-conformance]
+    :review "pkl-c8t.20"
+    :budget {:authored-lines 12730 :total-lines 17744}}
    :required-capabilities #{:java-compat :java-regex-unicode}}]
  :destinations [{:id :core :path "destinations/core.edn"}]
  :mapping-overlays []

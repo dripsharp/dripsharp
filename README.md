@@ -179,7 +179,7 @@ dependency on `Pkl.Parser`.
 
 `differential <target> [validation-id]` dispatches the target manifest's
 validation contracts. The Pkl validation performs both complete package gates.
-`proof <target>` runs every required ladder in the target's schema-version 2
+`proof <target>` runs every required ladder in the target's schema-version 3
 proof contract. That contract exhaustively covers the target's profiles and
 validations and assigns CI resources without making any proof optional.
 It separately builds and

@@ -1,0 +1,19 @@
+{:schema-version 1
+ :scope :pkl
+ :class :authored-destination-runtime
+ :sources
+ [{:id :pkl/runtime
+   :kind :tree
+   :provenance "targets/pkl/runtime"
+   :include-pattern "Pkl\\.Core\\..*\\.cs"
+   :charset nil
+   :capability nil
+   :source-files 5
+   :max-source-lines 7032
+   :max-emitted-lines 7032
+   :source-inventory-sha256
+   "4f985cd339326c88c8941dd5ae9a72cd5562959c788a64bca88aa4ccfd57de86"
+   :public-types
+   {:count 101
+    :sha256
+    "2ca10d4e1318d4875523d69b19a08eff8833dd41d847e80c0121792d0db1c714"}}]}

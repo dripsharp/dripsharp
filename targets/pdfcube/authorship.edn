@@ -1,0 +1,139 @@
+{:schema-version 1
+ :scope :pdfcube
+ :class :authored-destination-runtime
+ :sources
+ [{:id :pdfcube/fontbox-compat
+   :kind :file
+   :provenance "targets/pdfcube/runtime/PdfCube.FontBox.Compat.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 6108
+   :max-emitted-lines 6108
+   :source-inventory-sha256
+   "d74a7aaab15a468fa94e0ed7711a26ef0757f21cd7c2ac8a95403f9fe7dbdb6f"
+   :public-types
+   {:count 58
+    :sha256
+    "cc5775457e010c0f58a8c0359bf145f9d58dba7260ffd524d0a18f120bc02e02"}}
+  {:id :pdfcube/fontbox-discovery
+   :kind :file
+   :provenance "targets/pdfcube/runtime/PdfCube.FontBox.Discovery.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 120
+   :max-emitted-lines 120
+   :source-inventory-sha256
+   "f6794d89a5290f828bd60432979e75266b7ef5ae143829363735c05e9f0d13b6"
+   :public-types
+   {:count 0
+    :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
+  {:id :pdfcube/icc
+   :kind :file
+   :provenance "targets/pdfcube/runtime/PdfCube.Icc.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 752
+   :max-emitted-lines 752
+   :source-inventory-sha256
+   "791904516ade546b35e485d39962d044c29e81dd44a5c89483abe769bdccb287"
+   :public-types
+   {:count 0
+    :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
+  {:id :pdfcube/image-codecs-unsupported
+   :kind :file
+   :provenance "targets/pdfcube/runtime/PdfCube.ImageCodecs.Unsupported.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 19
+   :max-emitted-lines 19
+   :source-inventory-sha256
+   "9e0a3bb3fc3e029d86ac713bfea3bc31feac775fc87726c1355801e6820379eb"
+   :public-types
+   {:count 0
+    :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
+  {:id :pdfcube/image-codecs
+   :kind :file
+   :provenance "targets/pdfcube/runtime/PdfCube.ImageCodecs.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 127
+   :max-emitted-lines 127
+   :source-inventory-sha256
+   "396f3d07a85f349ee7fa5b26a67b9cc7dd9749b74cb43056ec14198d48ac8df0"
+   :public-types
+   {:count 0
+    :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
+  {:id :pdfcube/pdfbox-compat
+   :kind :file
+   :provenance "targets/pdfcube/runtime/PdfCube.PdfBox.Compat.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 62
+   :max-emitted-lines 62
+   :source-inventory-sha256
+   "304e899e18a0e15293bd67b3647a408af87535027528f370acb3e51725ba7461"
+   :public-types
+   {:count 1
+    :sha256
+    "3cc685fe26a5c912f207b92c2fd93fbf4562d04074081b7f400df51b5567f300"}}
+  {:id :pdfcube/preflight-compat
+   :kind :file
+   :provenance "targets/pdfcube/runtime/PdfCube.Preflight.Compat.cs"
+   :include-pattern nil
+   :charset nil
+   :capability nil
+   :source-files 1
+   :max-source-lines 44
+   :max-emitted-lines 44
+   :source-inventory-sha256
+   "78d975493b1ff693cf916bf2e99068a08fee61faa7a4afb479369851c20f15dc"
+   :public-types
+   {:count 2
+    :sha256
+    "61aad4ec327b871fceb2b3ae844e48fbdd9d65c000543e97537f29251ce3a125"}}
+  {:id :pdfcube/jbig2
+   :kind :tree
+   :provenance "vendor/pdfcube/jbig2"
+   :include-pattern ".*\\.cs"
+   :charset nil
+   :capability nil
+   :source-files 34
+   :max-source-lines 5777
+   :max-emitted-lines 5845
+   :source-inventory-sha256
+   "6c619257e3742cc64c73f134ff417683e7456d5c8a3ffbd88b9a03fb3ccf0655"
+   :public-types
+   {:count 34
+    :sha256
+    "46b28445a12356c467f6a7e60f8a01ba45c69f9761bb2526774059200424c90b"}}
+  {:id :pdfcube/jpx
+   :kind :tree
+   :provenance "vendor/pdfcube/jpx"
+   :include-pattern ".*\\.cs"
+   :charset "ISO-8859-1"
+   :capability nil
+   :source-files 296
+   :max-source-lines 99218
+   :max-emitted-lines 99810
+   :source-inventory-sha256
+   "fd4e1d470b862ca711049110229c761a291b236a62004148c10ccb33a29bd883"
+   :public-types
+   {:count 371
+    :sha256
+    "0859675308ae1698d7c8dc61534f7da0423cf9da0a40e932029b9c58e9de6e8e"}}]}

@@ -391,7 +391,7 @@
             :translator-version "0.1.0"
             :verified-files 0}
            :authorship
-           {:schema-version 1
+           {:schema-version 2
             :files []
             :totals
             {:files 0
@@ -400,7 +400,8 @@
              :authored-destination-runtime-lines 0
              :authored-lines 0
              :total-lines 0
-             :authored-fraction 0.0}}})
+             :authored-fraction 0.0}
+            :policy nil}})
         dependency-emissions
         [(emission "io" [] [])
          (emission "fontbox" ["io"] ["../io/io.csproj"])

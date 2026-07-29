@@ -7,20 +7,21 @@
   (:require [clojure.edn :as edn]
             [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.authorship :as authorship]
             [dripsharp.baseline :as baseline]
             [dripsharp.differential :as differential]
             [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.paths :as paths])
   (:import [java.nio.file Files LinkOption]))
 
-(def schema-version 2)
+(def schema-version 3)
 (def legal-policy-schema-version 1)
 (def mapping-overlay-schema-version 1)
 
 (def ^:private manifest-keys
   #{:schema-version :target :product-family :contracts :baseline :legal-policy
     :java :capabilities :profiles :destinations :mapping-overlays
-    :runtime-assets :validation-contracts :proof})
+    :runtime-assets :validation-contracts :authorship :proof})
 
 (def ^:private document-keys
   #{:product-goal :port-scope :dependencies})
@@ -30,7 +31,16 @@
 
 (def ^:private profile-descriptor-keys
   #{:id :path :destination :mapping-overlays :runtime-assets
-    :validation-contracts :required-capabilities})
+    :validation-contracts :required-capabilities :authorship})
+
+(def ^:private authorship-path-keys
+  #{:compatibility :destination})
+
+(def ^:private profile-authorship-keys
+  #{:sources :evidence :review :budget})
+
+(def ^:private authorship-budget-keys
+  #{:authored-lines :total-lines})
 
 (def ^:private path-descriptor-keys
   #{:id :path})
@@ -189,6 +199,51 @@
                          :subject subject
                          :path (str file)}
                         error))))))
+
+(defn- load-authored-source-contract!
+  [workspace-root expected-scope expected-class subject file]
+  (let [contract (read-edn! subject file)]
+    (try
+      (assoc
+       (authorship/validate-source-contract!
+        workspace-root expected-scope expected-class contract)
+       :path file)
+      (catch clojure.lang.ExceptionInfo error
+        (throw
+         (ex-info (str subject " is invalid")
+                  (assoc (ex-data error)
+                         :kind :invalid-target-directory
+                         :subject subject
+                         :path (str file))
+                  error))))))
+
+(defn- load-authorship!
+  [workspace-root target-root target paths-contract]
+  (exact-keys! "Target authorship paths"
+               authorship-path-keys paths-contract)
+  (let [{:keys [compatibility destination]} paths-contract
+        compatibility-file
+        (workspace-file! workspace-root
+                         "Shared authored compatibility contract"
+                         compatibility)
+        _ (when-not (= "config/authored-compat.edn" compatibility)
+            (fail! "Shared authored compatibility contract must use its canonical path"
+                   {:path compatibility
+                    :expected "config/authored-compat.edn"}))
+        destination-file
+        (target-file! target-root "Target authored source contract"
+                      [] destination)]
+    (when-not (= "authorship.edn" destination)
+      (fail! "Target authored source contract must use its canonical path"
+             {:path destination :expected "authorship.edn"}))
+    {:compatibility
+     (load-authored-source-contract!
+      workspace-root :shared-compatibility :authored-compat
+      "Shared authored compatibility contract" compatibility-file)
+     :destination
+     (load-authored-source-contract!
+      workspace-root target :authored-destination-runtime
+      "Target authored source contract" destination-file)}))
 
 (defn- validate-documents!
   [workspace-root documents]
@@ -527,10 +582,131 @@
              :capabilities capabilities}]))
     descriptors)))
 
+(defn- product-identity-fragments
+  [target family destination]
+  (let [leading
+        (fn [value]
+          (when (non-blank-string? value)
+            (first (str/split value #"[.]"))))]
+    (->> (concat
+          [(name target)]
+          (when-not (= :java-library family) [(name family)])
+          (map leading
+               (concat
+                [(get-in destination [:package :id])
+                 (get-in destination [:project :assembly-name])
+                 (get-in destination [:project :root-namespace])]
+                (vals (:namespaces destination))
+                (vals (:namespace-prefixes destination)))))
+         (filter non-blank-string?)
+         (map str/lower-case)
+         (filter #(<= 3 (count %)))
+         distinct
+         sort
+         vec)))
+
+(defn- profile-authorship!
+  [workspace-root target family profile-id descriptor destination
+   runtime-records authorship-contracts]
+  (let [selection (:authorship descriptor)]
+    (exact-keys! "Profile authorship contract"
+                 profile-authorship-keys selection)
+    (exact-keys! "Profile authorship budget"
+                 authorship-budget-keys (:budget selection))
+    (let [{:keys [sources evidence review budget]} selection
+          available-destination-sources
+          (get-in authorship-contracts [:destination :sources])
+          source-ids (set (keys available-destination-sources))
+          selected-source-ids (set sources)
+          compatibility-capabilities
+          (set
+           (if (contains? destination :bridge-capabilities)
+             (:bridge-capabilities destination)
+             (:destination-capabilities destination)))
+          compatibility-sources
+          (into
+           (sorted-map)
+           (filter
+            (fn [[_ group]]
+              (contains? compatibility-capabilities
+                         (:capability group))))
+           (get-in authorship-contracts [:compatibility :sources]))
+          destination-sources
+          (select-keys available-destination-sources sources)
+          selected-runtime-paths
+          (set
+           (map
+            #(str "targets/" (name target) "/"
+                  (get-in % [:descriptor :path]))
+            (vals runtime-records)))
+          contracted-runtime-paths
+          (set (mapcat :paths (vals destination-sources)))
+          policy
+          {:schema-version authorship/policy-schema-version
+           :target target
+           :profile profile-id
+           :package-id (get-in destination [:package :id])
+           :review review
+           :evidence evidence
+           :budget budget
+           :forbidden-identities
+           (product-identity-fragments target family destination)
+           :compatibility-sources compatibility-sources
+           :destination-sources destination-sources}]
+      (when-not
+       (and (vector? sources)
+            (= (count sources) (count selected-source-ids))
+            (every? qualified-keyword? sources)
+            (set/subset? selected-source-ids source-ids)
+            (vector? evidence)
+            (seq evidence)
+            (= (count evidence) (count (distinct evidence)))
+            (every? keyword? evidence)
+            (non-blank-string? review))
+        (fail! "Profile authorship selections are invalid"
+               {:profile profile-id
+                :sources sources
+                :available-sources (vec (sort source-ids))
+                :evidence evidence
+                :review review}))
+      (when-not (set/subset? selected-runtime-paths
+                             contracted-runtime-paths)
+        (fail! "Selected target runtime assets lack authored source contracts"
+               {:profile profile-id
+                :missing
+                (vec
+                 (sort
+                  (set/difference selected-runtime-paths
+                                  contracted-runtime-paths)))}))
+      (try
+        (authorship/verify-compatibility-neutrality!
+         workspace-root
+         (vals (get-in authorship-contracts
+                       [:compatibility :sources]))
+         (:forbidden-identities policy)
+         {:target target :profile profile-id})
+        (catch clojure.lang.ExceptionInfo error
+          (throw
+           (ex-info "Shared authored compatibility contract is product-specific"
+                    (assoc (ex-data error)
+                           :kind :invalid-target-directory
+                           :profile profile-id)
+                    error))))
+      (try
+        (authorship/validate-policy-contract! policy)
+        (catch clojure.lang.ExceptionInfo error
+          (throw
+           (ex-info "Profile authorship policy is invalid"
+                    (assoc (ex-data error)
+                           :kind :invalid-target-directory
+                           :profile profile-id)
+                    error))))
+      policy)))
+
 (defn- load-profiles!
   [workspace-root target-root target family java baseline-record descriptors
    destinations overlay-records asset-records validation-descriptor-ids
-   legal-policy]
+   legal-policy authorship-contracts]
   (let [profiles
         (into
          {}
@@ -668,7 +844,12 @@
                        :destination destination-record
                        :mapping-overlays selected-mappings
                        :runtime-assets selected-runtime
-                       :provided-capabilities provided}])))))
+                       :provided-capabilities provided
+                       :authorship
+                       (profile-authorship!
+                        workspace-root target family id descriptor
+                        destination-config selected-runtime
+                        authorship-contracts)}])))))
          descriptors)]
     (profile-dag! profiles)))
 
@@ -797,6 +978,27 @@
                 :expected (vec (sort validation-ids))
                 :actual (vec (sort selected-validations))}))
       {:role role :ladders loaded})))
+
+(defn- validate-authorship-evidence!
+  [target profiles proof]
+  (let [ladders (into {} (map (juxt :id identity)) (:ladders proof))]
+    (doseq [[profile-id {:keys [authorship]}] profiles
+            evidence-id (:evidence authorship)]
+      (let [ladder (get ladders evidence-id)]
+        (when-not (and ladder
+                       (contains? (set (:profiles ladder)) profile-id))
+          (fail! "Profile authored sources lack a covering required proof ladder"
+                 {:target target
+                  :profile profile-id
+                  :evidence evidence-id
+                  :available
+                  (vec
+                   (sort
+                    (for [[id candidate] ladders
+                          :when (contains? (set (:profiles candidate))
+                                           profile-id)]
+                      id)))}))))
+    profiles))
 
 (defn- load-differential-validation!
   [workspace-root target-root target baseline-record legal-policy
@@ -1051,6 +1253,9 @@
                  (validate-legal-policy!
                   target-root target (:legal-policy manifest)
                   baseline-record profile-names)
+                 authorship-contracts
+                 (load-authorship!
+                  workspace-root target-root target (:authorship manifest))
                  destinations
                  (load-destinations!
                   target-root target family baseline-record
@@ -1070,7 +1275,8 @@
                  (load-profiles!
                   workspace-root target-root target family java baseline-record
                   (:profiles manifest) destinations mapping-overlays
-                  runtime-assets validation-descriptor-ids legal-policy)
+                  runtime-assets validation-descriptor-ids legal-policy
+                  authorship-contracts)
                  validations
                  (load-validation-contracts!
                   workspace-root target-root target baseline-record legal-policy
@@ -1078,6 +1284,7 @@
                  proof
                  (load-proof! target family (:proof manifest)
                               profiles validations)
+                 _ (validate-authorship-evidence! target profiles proof)
                  selected-destinations
                  (set (map #(get-in % [:descriptor :destination])
                            (vals profiles)))
@@ -1089,6 +1296,9 @@
                               (vals profiles)))
                  selected-validations
                  (set (mapcat #(get-in % [:descriptor :validation-contracts])
+                              (vals profiles)))
+                 selected-authored-sources
+                 (set (mapcat #(get-in % [:descriptor :authorship :sources])
                               (vals profiles)))
                  provided-capabilities
                  (into #{}
@@ -1105,6 +1315,13 @@
              (validate-used! "validation contracts"
                              (set (keys validations))
                              selected-validations)
+             (validate-used!
+              "target authored sources"
+              (set
+               (keys
+                (get-in authorship-contracts
+                        [:destination :sources])))
+              selected-authored-sources)
              (when-not (= declared-capabilities provided-capabilities)
                (fail! "Target capability declaration and providers disagree"
                       {:declared (vec (sort declared-capabilities))
@@ -1133,5 +1350,6 @@
               :destinations destinations
               :mapping-overlays mapping-overlays
               :runtime-assets runtime-assets
+              :authorship authorship-contracts
               :validation-contracts validations
               :proof proof})))))))
