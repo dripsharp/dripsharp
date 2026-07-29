@@ -1,0 +1,11 @@
+{:schema-version 1
+ :profile "pdfcube-fontbox"
+ :product-family :pdfcube
+ :baseline-target :pdfcube
+ :baseline-profile :fontbox
+ :project-root "research/pdfbox"
+ :build-tool :maven
+ :maven-selected-projects [":fontbox"]
+ :destination-bundle dripsharp.pdfcube.java-project/rule-bundle
+ :destination-config "destinations/fontbox.edn"
+ :dependency-profiles ["pdfcube-io"]}

@@ -1,9 +1,9 @@
 (ns dripsharp.pdfcube-io-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [dripsharp.compiler :as compiler]
             [dripsharp.paths :as paths]
-            [dripsharp.process :as process])
+            [dripsharp.process :as process]
+            [dripsharp.target-execution :as target-execution])
   (:import [java.nio.file CopyOption Files OpenOption Path StandardCopyOption]
            [java.nio.file.attribute FileAttribute]
            [java.util Comparator]))
@@ -69,7 +69,9 @@
    "</Project>\n"))
 
 (deftest complete-pdfcube-io-generates-packs-and-passes-focused-behavior
-  (let [verification (compiler/verify-clean-build! {:profile "pdfcube-io"})
+  (let [verification
+        (target-execution/verify!
+         {:target :pdfcube :profile "pdfcube-io"})
         generation (:generation verification)
         summary (get-in generation [:emission :summary])
         coverage (:executable-coverage summary)
@@ -116,7 +118,8 @@
         (write-string! consumer-project-file
                        (consumer-project packages package-id package-version))
         (write-string! (paths/resolve-path consumer "Program.cs")
-                       (slurp "validation/pdfcube-io/PdfCube.IO.FocusedConsumer.cs"))
+                       (slurp
+                        "targets/pdfcube/validation/probe/PdfCube.IO.FocusedConsumer.cs"))
         (process/run! {:directory consumer
                        :environment package-environment
                        :command ["dotnet" "restore" consumer-project-file

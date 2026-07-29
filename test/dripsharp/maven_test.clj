@@ -195,8 +195,11 @@
         profiles
         (mapv harness/read-profile
               (repeat workspace)
-              ["pdfcube-io" "pdfcube-fontbox" "pdfcube-xmpbox"
-               "pdfcube-pdfbox" "pdfcube-preflight"])
+              ["targets/pdfcube/profiles/io.edn"
+               "targets/pdfcube/profiles/fontbox.edn"
+               "targets/pdfcube/profiles/xmpbox.edn"
+               "targets/pdfcube/profiles/pdfbox.edn"
+               "targets/pdfcube/profiles/preflight.edn"])
         destinations
         (mapv #(java-project/read-configuration
                 workspace (:destination-config %))

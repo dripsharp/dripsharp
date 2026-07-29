@@ -34,12 +34,13 @@
         :project-input discovery
         :resolved-model first
         :configuration (project-emission/read-configuration
-                        root "config/pkl-parser.edn")
+                        root "targets/pkl/destinations/parser.edn")
         :rule-bundle (pkl-project/rule-bundle)}))))
 
 (deftest destination-package-metadata-must-be-non-blank
   (let [configuration (project-emission/read-configuration
-                       (paths/workspace-root) "config/pkl-parser.edn")
+                       (paths/workspace-root)
+                       "targets/pkl/destinations/parser.edn")
         validate!
         (get-in (pkl-project/rule-bundle)
                 [:rules :project-policy :validate-configuration!])

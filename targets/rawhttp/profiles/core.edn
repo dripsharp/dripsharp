@@ -1,0 +1,14 @@
+{:schema-version 1
+ :profile "rawhttp-core"
+ :product-family :java-library
+ :baseline-target :rawhttp
+ :baseline-profile :core
+ :project-root "research/rawhttp"
+ :gradle-wrapper "gradlew"
+ :gradle-java-major 17
+ :gradle-project ":rawhttp-core"
+ :require-clean-source true
+ :destination-bundle dripsharp.java-library/rule-bundle
+ :destination-config "destinations/core.edn"
+ :project-contract "targets/rawhttp/validation/contracts/ProjectContract.tsv"
+ :identity-guard {:forbidden-fragments ["pkl"]}}

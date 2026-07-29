@@ -17,8 +17,8 @@
 (deftest canonical-trace-covers-the-selected-behavior-contract
   (let [canonical
         (paths/resolve-path (paths/workspace-root)
-                            "validation" "pdfcube-fontbox"
-                            "canonical-trace.tsv")
+                            "targets" "pdfcube" "validation"
+                            "fontbox-canonical.tsv")
         summary (fontbox-differential/trace-summary canonical)]
     (is (= 55 (:observations summary)))
     (is (= fontbox-differential/required-trace-families

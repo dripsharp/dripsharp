@@ -38,10 +38,10 @@
 
 (deftest versioned-target-contracts-own-the-common-runner-data
   (doseq [[file expected-id expected-count]
-          [["validation/pdfcube-io/differential.edn" :pdfcube-io 25]
-           ["validation/pdfcube-fontbox/differential.edn"
+          [["targets/pdfcube/validation/io.edn" :pdfcube-io 25]
+           ["targets/pdfcube/validation/fontbox-common.edn"
             :pdfcube-fontbox 55]
-           ["validation/pdfcube-xmpbox/differential.edn"
+           ["targets/pdfcube/validation/xmpbox.edn"
             :pdfcube-xmpbox-metadata 57]]
           :let [contract (differential/read-contract file)]]
     (is (= 1 (:schema-version contract)) file)
@@ -58,7 +58,7 @@
 (deftest versioned-contract-schema-is-exact-and-protects-runner-evidence
   (let [contract
         (differential/read-contract
-         "validation/pdfcube-io/differential.edn")]
+         "targets/pdfcube/validation/io.edn")]
     (doseq [invalid
             [(assoc contract :unknown true)
              (assoc contract :schema-version 2)
@@ -75,11 +75,11 @@
 (deftest versioned-observations-and-perturbation-fail-closed
   (let [contract
         (differential/read-contract
-         "validation/pdfcube-io/differential.edn")
+         "targets/pdfcube/validation/io.edn")
         canonical
         (paths/resolve-path (paths/workspace-root)
-                            "validation" "pdfcube-io"
-                            "CanonicalTrace.tsv")
+                            "targets" "pdfcube" "validation"
+                            "io-canonical.tsv")
         perturbed
         (Files/createTempFile "dripsharp-perturbed-" ".tsv"
                               (make-array FileAttribute 0))
@@ -108,7 +108,7 @@
   (let [root (paths/workspace-root)
         contract
         (differential/read-contract
-         "validation/pdfcube-io/differential.edn")
+         "targets/pdfcube/validation/io.edn")
         profile (baseline/profile root :pdfcube :io)
         revision (baseline/upstream-revision :pdfcube)
         version (baseline/package-version :pdfcube "PdfCube.IO")

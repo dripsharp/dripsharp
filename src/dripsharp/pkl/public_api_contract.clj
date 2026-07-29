@@ -326,8 +326,8 @@
 (def ^:private sha256 util/sha256-text)
 
 (def ^:private executed-behavior-probes
-  #{"validation/differential/PackageProbe.cs"
-    "validation/package-consumer/Pkl.Core.Program.cs"
+  #{"targets/pkl/validation/probe/PackageProbe.cs"
+    "targets/pkl/validation/probe/CorePackageConsumer.cs"
     "validation/loading-contract/LoadingContractDotNetProbe.cs"
     "validation/schema-codegen/GeneratedConsumer.cs"
     "validation/schema-codegen/SchemaGeneratorProbe.cs"})
@@ -927,8 +927,9 @@
 
 (defn- validate-package-consumer-boundary!
   [workspace]
-  (let [source (paths/resolve-path workspace "validation"
-                                   "package-consumer" "Pkl.Core.Program.cs")
+  (let [source
+        (paths/resolve-path workspace "targets" "pkl" "validation" "probe"
+                            "CorePackageConsumer.cs")
         text (Files/readString source)]
     (when (re-find #"(?:using Pkl[.]Core[.]Runtime|DripSharp[.]Runtime|\bJava[A-Z][A-Za-z0-9_]*\b)"
                    text)

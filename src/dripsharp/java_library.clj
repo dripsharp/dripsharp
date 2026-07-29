@@ -1666,6 +1666,10 @@
        :target-element target-element
        :element element}))))
 
+(defn- target-declarative-node
+  [ctx-holder mapping-fn]
+  (some mapping-fn (:target-mapping-registries @ctx-holder)))
+
 (defn- nullable-boxed-expression? [ctx ^CtExpression expression]
   (or
    (some boxed-primitive-reference? (.getTypeCasts expression))
@@ -5075,17 +5079,30 @@
                   (supplemental-neutral-invocation-node
                    @ctx-holder element (:key occurrence) target-node arguments)
                   (or
-                   (declarative-shared-invocation-node
-                    shared-mappings
-                    @ctx-holder
-                    element
-                    occurrence
-                    target
-                    target-node
-                    default-target-node
-                    arguments
-                    children
-                    declaration)
+                  (target-declarative-node
+                   ctx-holder
+                   #(declarative-shared-invocation-node
+                     %
+                     @ctx-holder
+                     element
+                     occurrence
+                     target
+                     target-node
+                     default-target-node
+                     arguments
+                     children
+                     declaration))
+                  (declarative-shared-invocation-node
+                   shared-mappings
+                   @ctx-holder
+                   element
+                   occurrence
+                   target
+                   target-node
+                   default-target-node
+                   arguments
+                   children
+                   declaration)
                    (sequence-node
                     [(when target
                        (sequence-node [default-target-node (raw ".")]))
@@ -5214,7 +5231,12 @@
                (if destination-adaptation
                  destination-adaptation
                  (or
-                  (declarative-shared-constructor-node shared-mappings @ctx-holder element occurrence arguments)
+                  (target-declarative-node
+                   ctx-holder
+                   #(declarative-shared-constructor-node
+                     % @ctx-holder element occurrence arguments))
+                  (declarative-shared-constructor-node
+                   shared-mappings @ctx-holder element occurrence arguments)
                   (sequence-node
                    [(raw "new ")
                     (type-node @ctx-holder (.getType element))
@@ -5845,7 +5867,21 @@
                         (get (:destination-field-adaptations @ctx-holder)
                              (:key occurrence))]
                  (adaptation target-node)
-                 (or (declarative-shared-field-node shared-mappings element occurrence target target-node) (if (and (instance? CtTypeAccess target) (= "class" (.getSimpleName (.getVariable element)))) (sequence-node [(raw "typeof(") target-node (raw ")")]) (sequence-node [(when target (sequence-node [target-node (raw ".")])) (if (= "field:<array>#length" (:key occurrence)) (raw "Length") (child-node children (.getVariable element)))]))))]
+                 (or
+                  (target-declarative-node
+                   ctx-holder
+                   #(declarative-shared-field-node
+                     % element occurrence target target-node))
+                  (declarative-shared-field-node
+                   shared-mappings element occurrence target target-node)
+                  (if (and (instance? CtTypeAccess target)
+                           (= "class" (.getSimpleName (.getVariable element))))
+                    (sequence-node [(raw "typeof(") target-node (raw ")")])
+                    (sequence-node
+                     [(when target (sequence-node [target-node (raw ".")]))
+                      (if (= "field:<array>#length" (:key occurrence))
+                        (raw "Length")
+                        (child-node children (.getVariable element)))]))))]
            {:node
             (expression-cast-node
              @ctx-holder element

@@ -69,8 +69,8 @@ jobs:
           cp -R \
             research/pdfbox/examples/src/test/resources/org/apache/pdfbox/examples/signature/. \
             "$fixtures/security/examples/src/test/resources/org/apache/pdfbox/examples/signature/"
-          cp validation/pdfcube-io/CanonicalTrace.tsv "$canonical/io.tsv"
-          cp validation/pdfcube-fontbox/canonical-trace.tsv \
+          cp targets/pdfcube/validation/io-canonical.tsv "$canonical/io.tsv"
+          cp targets/pdfcube/validation/fontbox-canonical.tsv \
             "$canonical/fontbox.tsv"
           cp \
             validation-output/pdfcube-xmpbox-metadata-differential/upstream-java.tsv \

@@ -9,23 +9,33 @@
             [dripsharp.paths :as paths]))
 
 (def baseline-files
-  {:pkl "config/pkl-baseline.edn"
-   :pdfcube "config/pdfcube-baseline.edn"})
+  {:pkl "targets/pkl/baseline.edn"
+   :pdfcube "targets/pdfcube/baseline.edn"})
+
+(def ^:dynamic *target-records*
+  "Validated target-directory baseline records available to the current
+  execution. Generic target workflows bind this map before loading a
+  target-owned rule bundle or running a later stage, so existing baseline
+  consumers use the preflighted record instead of reopening configuration."
+  {})
 
 (defn target-key
   [target]
   (let [target (if (keyword? target) target (keyword (str target)))]
-    (when-not (contains? baseline-files target)
-      (throw (ex-info "Unknown product baseline target"
-                      {:kind :unknown-baseline-target
-                       :target target
-                       :available (vec (sort (keys baseline-files)))})))
+    (when-not (and (simple-keyword? target)
+                   (re-matches #"[a-z][a-z0-9-]*" (name target)))
+      (throw (ex-info "Invalid product baseline target"
+                      {:kind :invalid-baseline-target
+                       :target target})))
     target))
 
 (defn baseline-path
   [workspace-root target]
-  (paths/resolve-path (paths/absolute workspace-root)
-                      (get baseline-files (target-key target))))
+  (let [target (target-key target)]
+    (paths/resolve-path
+     (paths/absolute workspace-root)
+     (or (get baseline-files target)
+         (str "targets/" (name target) "/baseline.edn")))))
 
 (defn- non-blank-string?
   [value]
@@ -140,21 +150,23 @@
   ([target]
    (read-baseline (paths/workspace-root) target))
   ([workspace-root target]
-   (let [target (target-key target)
-         file (baseline-path workspace-root target)]
-     (when-not (paths/regular-file? file)
-       (throw (ex-info "Target baseline file is missing"
-                       {:kind :missing-target-baseline
-                        :target target :path (str file)})))
-     (try
-       (validate! target (edn/read-string (slurp (str file))))
-       (catch RuntimeException error
-         (if (ex-data error)
-           (throw error)
-           (throw (ex-info "Target baseline file is not valid EDN"
-                           {:kind :invalid-target-baseline
-                            :target target :path (str file)}
-                           error))))))))
+   (let [target (target-key target)]
+     (if-let [record (get *target-records* target)]
+       (validate-record! target record)
+       (let [file (baseline-path workspace-root target)]
+         (when-not (paths/regular-file? file)
+           (throw (ex-info "Target baseline file is missing"
+                           {:kind :missing-target-baseline
+                            :target target :path (str file)})))
+         (try
+           (validate! target (edn/read-string (slurp (str file))))
+           (catch RuntimeException error
+             (if (ex-data error)
+               (throw error)
+               (throw (ex-info "Target baseline file is not valid EDN"
+                               {:kind :invalid-target-baseline
+                                :target target :path (str file)}
+                               error))))))))))
 
 (defn upstream
   ([target] (:upstream (read-baseline target)))
@@ -288,7 +300,8 @@
            (assoc :revision
                   (get-in (read-baseline workspace-root target)
                           [:upstream :revision])))
-        source-project-id (assoc :maven-project-id source-project-id)))
+        source-project-id
+        (assoc :maven-project-id source-project-id)))
     configuration))
 
 (defn- hydrate-artifacts
@@ -317,6 +330,7 @@
            (dissoc :baseline-target :baseline-profile :baseline-legal-sets)
            (assoc :mechanical-source (mechanical-source workspace-root target))
            (assoc-in [:package :version] (:version package-contract)))
+
         (:source-project-id profile-contract)
         (assoc :source-project-id (:source-project-id profile-contract))
 
@@ -329,7 +343,8 @@
                (hydrate-artifacts workspace-root target external))
 
         (seq legal-set-keys)
-        (assoc :legal-files (legal-files workspace-root target legal-set-keys))
+        (assoc :legal-files
+               (legal-files workspace-root target legal-set-keys))
 
         (and (seq legal-set-keys) (:notice-appendix record))
         (assoc :notice-appendix (:notice-appendix record))

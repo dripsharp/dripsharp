@@ -2837,7 +2837,7 @@
   (array-map
    :io
    {:profile "pdfcube-io"
-    :destination-config "config/pdfcube-io-destination.edn"
+    :destination-config "destinations/io.edn"
     :maven-selector ":pdfbox-io"
     :source-project-id (:source-project-id (baseline-profile :io))
     :package-id "PdfCube.IO"
@@ -2850,7 +2850,8 @@
     :package-consumer
     {:strategy :source-file
      :project-file "PdfCube.IO.PackageConsumer.csproj"
-     :source-path "validation/pdfcube-io/PdfCube.IO.FocusedConsumer.cs"
+     :source-path
+     "targets/pdfcube/validation/probe/PdfCube.IO.FocusedConsumer.cs"
      :success-message "PdfCube.IO focused behavior passed."}
     :friend-assemblies #{"PdfCube.PdfBox" "PdfCube.Preflight"}
     :external-dependencies {commons-coordinate commons-dependency}
@@ -2860,7 +2861,7 @@
 
    :fontbox
    {:profile "pdfcube-fontbox"
-    :destination-config "config/pdfcube-fontbox-destination.edn"
+    :destination-config "destinations/fontbox.edn"
     :maven-selector ":fontbox"
     :source-project-id (:source-project-id (baseline-profile :fontbox))
     :package-id "PdfCube.FontBox"
@@ -2875,7 +2876,7 @@
     {:strategy :source-file
      :project-file "PdfCube.FontBox.PackageConsumer.csproj"
      :source-path
-     "validation/pdfcube-fontbox/PdfCube.FontBox.FocusedConsumer.cs"
+     "targets/pdfcube/validation/probe/PdfCube.FontBox.FocusedConsumer.cs"
      :success-message "PdfCube.FontBox focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package skia-linux-package]
@@ -2885,7 +2886,7 @@
 
    :xmpbox
    {:profile "pdfcube-xmpbox"
-    :destination-config "config/pdfcube-xmpbox-destination.edn"
+    :destination-config "destinations/xmpbox.edn"
     :maven-selector ":xmpbox"
     :source-project-id (:source-project-id (baseline-profile :xmpbox))
     :package-id "PdfCube.XmpBox"
@@ -2899,7 +2900,7 @@
     {:strategy :source-file
      :project-file "PdfCube.XmpBox.PackageConsumer.csproj"
      :source-path
-     "validation/pdfcube-xmpbox/PdfCube.XmpBox.FocusedConsumer.cs"
+     "targets/pdfcube/validation/probe/PdfCube.XmpBox.FocusedConsumer.cs"
      :success-message "PdfCube.XmpBox focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package]
@@ -2909,7 +2910,7 @@
 
    :pdfbox
    {:profile "pdfcube-pdfbox"
-    :destination-config "config/pdfcube-pdfbox-destination.edn"
+    :destination-config "destinations/pdfbox.edn"
     :maven-selector ":pdfbox"
     :source-project-id (:source-project-id (baseline-profile :pdfbox))
     :package-id "PdfCube.PdfBox"
@@ -2944,7 +2945,7 @@
 
    :preflight
    {:profile "pdfcube-preflight"
-    :destination-config "config/pdfcube-preflight-destination.edn"
+    :destination-config "destinations/preflight.edn"
     :maven-selector ":preflight"
     :source-project-id (:source-project-id (baseline-profile :preflight))
     :package-id "PdfCube.Preflight"
@@ -2965,7 +2966,7 @@
     {:strategy :source-file
      :project-file "PdfCube.Preflight.PackageConsumer.csproj"
      :source-path
-     "validation/pdfcube-preflight/PdfCube.Preflight.FocusedConsumer.cs"
+     "targets/pdfcube/validation/probe/PdfCube.Preflight.FocusedConsumer.cs"
      :success-message "PdfCube.Preflight focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package]
@@ -3196,7 +3197,12 @@
          :destination-bundle bundle-selector
          :destination-config (:destination-config product)
          :dependency-profiles (:dependency-profiles product)}
-        actual (select-keys profile (keys expected))]
+        actual
+        (cond-> (select-keys profile (keys expected))
+          (str/starts-with? (:destination-config profile)
+                            "targets/pdfcube/")
+          (update :destination-config
+                  #(subs % (count "targets/pdfcube/"))))]
     (when-not (= expected actual)
       (fail! "PdfCube generation profile differs from the approved product contract"
              {:kind :invalid-pdfcube-profile
@@ -3509,11 +3515,27 @@
            :missing-message "Configured PdfCube license or notice input is missing"})
         (:legal-files configuration)))
 
+(defn- configured-runtime-source
+  [configuration file-name]
+  (or
+   (some
+    (fn [source]
+      (when (= file-name (str (.getFileName (paths/path source))))
+        source))
+    (:runtime-sources configuration))
+   (throw
+    (ex-info "PdfCube capability has no selected target runtime asset"
+             {:kind :missing-pdfcube-runtime-selection
+              :asset file-name
+              :selected (:runtime-sources configuration)}))))
+
 (defn- internal-capability-assets [{:keys [configuration]}]
   (cond-> []
     (contains? (:internal-capabilities configuration) :font-discovery)
     (conj
-     {:source "runtime/PdfCube.FontBox.Discovery.cs"
+     {:source
+      (configured-runtime-source configuration
+                                 "PdfCube.FontBox.Discovery.cs")
       :destination "DripSharp/Runtime/PdfCubeFontDiscovery.cs"
       :strategy :pdfcube.fontbox/font-discovery
       :missing-kind :missing-pdfcube-fontbox-discovery-source
@@ -3522,7 +3544,9 @@
     (or (contains? (:internal-capabilities configuration) :skia-geometry)
         (contains? (:internal-capabilities configuration) :skia-graphics))
     (conj
-     {:source "runtime/PdfCube.FontBox.Compat.cs"
+     {:source
+      (configured-runtime-source configuration
+                                 "PdfCube.FontBox.Compat.cs")
       :destination "DripSharp/Runtime/PdfCubeFontBoxCompat.cs"
       :strategy :pdfcube.fontbox/skia-geometry
       :missing-kind :missing-pdfcube-fontbox-compatibility-source
@@ -3533,7 +3557,9 @@
      (not (or (contains? (:internal-capabilities configuration) :jbig2)
               (contains? (:internal-capabilities configuration) :jpx))))
     (conj
-     {:source "runtime/PdfCube.ImageCodecs.Unsupported.cs"
+     {:source
+      (configured-runtime-source configuration
+                                 "PdfCube.ImageCodecs.Unsupported.cs")
       :destination "DripSharp/Runtime/PdfCubeImageCodecs.cs"
       :strategy :pdfcube.fontbox/no-image-codecs
       :missing-kind :missing-pdfcube-fontbox-no-image-codecs-source
@@ -3541,7 +3567,7 @@
 
     (contains? (:internal-capabilities configuration) :icc)
     (conj
-     {:source "runtime/PdfCube.Icc.cs"
+     {:source (configured-runtime-source configuration "PdfCube.Icc.cs")
       :destination "DripSharp/Runtime/PdfCubeIcc.cs"
       :strategy :pdfcube.pdfbox/icc
       :missing-kind :missing-pdfcube-icc-source
@@ -3550,7 +3576,8 @@
     (or (contains? (:internal-capabilities configuration) :jbig2)
         (contains? (:internal-capabilities configuration) :jpx))
     (conj
-     {:source "runtime/PdfCube.ImageCodecs.cs"
+     {:source
+      (configured-runtime-source configuration "PdfCube.ImageCodecs.cs")
       :destination "DripSharp/Runtime/PdfCubeImageCodecs.cs"
       :strategy :pdfcube.pdfbox/image-codec-adapters
       :missing-kind :missing-pdfcube-image-codec-adapter
@@ -3580,7 +3607,8 @@
     (contains? (:internal-capabilities configuration)
                :security-handler-erasure)
     (conj
-     {:source "runtime/PdfCube.PdfBox.Compat.cs"
+     {:source
+      (configured-runtime-source configuration "PdfCube.PdfBox.Compat.cs")
       :destination "DripSharp/Runtime/PdfBoxSecurityHandler.cs"
       :strategy :pdfcube.pdfbox/security-handler-erasure
       :missing-kind :missing-pdfcube-pdfbox-compatibility-source
@@ -3589,7 +3617,9 @@
     (contains? (:internal-capabilities configuration)
                :preflight-font-erasure)
     (conj
-     {:source "runtime/PdfCube.Preflight.Compat.cs"
+     {:source
+      (configured-runtime-source configuration
+                                 "PdfCube.Preflight.Compat.cs")
       :destination "DripSharp/Runtime/PdfCubePreflightCompat.cs"
       :strategy :pdfcube.preflight/font-erasure
       :missing-kind :missing-pdfcube-preflight-compatibility-source

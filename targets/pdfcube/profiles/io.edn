@@ -1,0 +1,11 @@
+{:schema-version 1
+ :profile "pdfcube-io"
+ :product-family :pdfcube
+ :baseline-target :pdfcube
+ :baseline-profile :io
+ :project-root "research/pdfbox"
+ :build-tool :maven
+ :maven-selected-projects [":pdfbox-io"]
+ :destination-bundle dripsharp.pdfcube.java-project/rule-bundle
+ :destination-config "destinations/io.edn"
+ :dependency-profiles []}

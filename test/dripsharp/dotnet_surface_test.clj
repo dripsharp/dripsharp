@@ -204,7 +204,7 @@
   (let [workspace (paths/workspace-root)
         sources
         ["vendor/pdfcube/jpx/Color/ColorSpace.cs"
-         "runtime/PdfCube.FontBox.Compat.cs"
+         "targets/pdfcube/runtime/PdfCube.FontBox.Compat.cs"
          "vendor/pdfcube/jpx/Configuration/EncoderComponents.cs"
          "vendor/pdfcube/jpx/J2kImage.FastPath.cs"
          "vendor/pdfcube/jpx/J2kImage.cs"

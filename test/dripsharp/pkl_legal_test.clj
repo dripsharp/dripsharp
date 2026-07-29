@@ -40,10 +40,11 @@
 
 (deftest pkl-core-legal-inputs-and-package-metadata-are-pinned
   (let [workspace (paths/workspace-root)
-        profile (harness/read-profile workspace "pkl-core-value-model")
+        profile
+        (harness/read-profile workspace "targets/pkl/profiles/core.edn")
         destination
         (project-emission/read-configuration
-         workspace "config/pkl-core-value-model-destination.edn")
+         workspace "targets/pkl/destinations/core.edn")
         bundle (pkl-project/rule-bundle)
         validate-profile! (get-in bundle [:orchestration :validate-profile!])
         project-text
@@ -98,10 +99,11 @@
 
 (deftest pkl-core-generation-rejects-changed-legal-inputs
   (let [workspace (paths/workspace-root)
-        profile (harness/read-profile workspace "pkl-core-value-model")
+        profile
+        (harness/read-profile workspace "targets/pkl/profiles/core.edn")
         destination
         (project-emission/read-configuration
-         workspace "config/pkl-core-value-model-destination.edn")
+         workspace "targets/pkl/destinations/core.edn")
         root (temp-directory)
         _ (copy-legal-inputs! workspace root)
         changed-notice (paths/resolve-path root "research/pkl/NOTICE.txt")

@@ -15,9 +15,9 @@ meta	junit-test-convention-sha256	e3147062286404e094d5b75e7a97c60155ee679d123f71
 meta	listener-source-sha256	6f94b54f25956576015aea897675f9f33de81fc25dbe631e31a20437aea29a06
 meta	listener-service-sha256	022415680402be53dcf329189688a37b33e7ce22acccb97c0f9d060742bf28b7
 meta	gradle-init-sha256	51916f1ecc66187d5901a8187435b6458936e9f140094b53729a8c038bb3904f
-meta	evidence-parser	validation/differential/UpstreamOracle.java
+meta	evidence-parser	targets/pkl/validation/oracle/UpstreamOracle.java
 meta	evidence-language	validation/language-snippet-contract/LanguageSnippetContract.tsv
-meta	evidence-core	validation/differential/CoreUpstreamOracle.java
+meta	evidence-core	targets/pkl/validation/oracle/CoreUpstreamOracle.java
 meta	evidence-loading	validation/loading-contract/ContractEvidence.tsv
 meta	evidence-public-api	validation/public-api-contract/BehaviorContract.tsv
 meta	evidence-schema-codegen	validation/schema-codegen/ContractEvidence.tsv

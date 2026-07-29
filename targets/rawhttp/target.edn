@@ -1,0 +1,29 @@
+{:schema-version 1
+ :target :rawhttp
+ :product-family :java-library
+ :contracts
+ {:product-goal "doc/targets/rawhttp/product-goal.md"
+  :port-scope "doc/targets/rawhttp/port-scope.md"
+  :dependencies []}
+ :baseline "baseline.edn"
+ :legal-policy "legal/policy.edn"
+ :java
+ {:source-language-version 8
+  :runtime-major 17
+  :preview-features? false}
+ :capabilities #{:java-compat :java-regex-unicode}
+ :profiles
+ [{:id "rawhttp-core"
+   :path "profiles/core.edn"
+   :destination :core
+   :mapping-overlays []
+   :runtime-assets []
+   :validation-contracts [:rawhttp-package-equivalence]
+   :required-capabilities #{:java-compat :java-regex-unicode}}]
+ :destinations [{:id :core :path "destinations/core.edn"}]
+ :mapping-overlays []
+ :runtime-assets []
+ :validation-contracts
+ [{:id :rawhttp-package-equivalence
+   :kind :custom
+   :path "validation/package-equivalence.edn"}]}

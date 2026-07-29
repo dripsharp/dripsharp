@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <PdfCubeBaselinePath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\config\pdfcube-baseline.edn'))</PdfCubeBaselinePath>
+    <PdfCubeBaselinePath>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\targets\pdfcube\baseline.edn'))</PdfCubeBaselinePath>
     <PdfCubeBaselineText>$([System.IO.File]::ReadAllText('$(PdfCubeBaselinePath)'))</PdfCubeBaselineText>
     <PdfCubeIOPackageVersion>$([System.Text.RegularExpressions.Regex]::Match('$(PdfCubeBaselineText)', '&quot;PdfCube\.IO&quot;\s+\{:version\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</PdfCubeIOPackageVersion>
     <PdfCubeFontBoxPackageVersion>$([System.Text.RegularExpressions.Regex]::Match('$(PdfCubeBaselineText)', '&quot;PdfCube\.FontBox&quot;\s+\{:version\s+&quot;([^&quot;]+)&quot;').Groups[1].Value)</PdfCubeFontBoxPackageVersion>
@@ -17,6 +17,6 @@
                       '$(PdfCubeXmpBoxPackageVersion)' == '' or
                       '$(PdfCubePdfBoxPackageVersion)' == '' or
                       '$(PdfCubePreflightPackageVersion)' == ''"
-           Text="config/pdfcube-baseline.edn does not contain every PdfCube package version." />
+           Text="targets/pdfcube/baseline.edn does not contain every PdfCube package version." />
   </Target>
 </Project>

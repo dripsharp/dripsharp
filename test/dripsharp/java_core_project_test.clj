@@ -73,7 +73,7 @@
         :rule-bundle (pkl-project/rule-bundle)
         :configuration
         (project-emission/read-configuration
-         root "config/pkl-core-value-model-destination.edn")}))))
+         root "targets/pkl/destinations/core.edn")}))))
 
 (deftest complete-core-value-model-emission-is-zero-failure-and-stable
   (let [{:keys [first second]} (fixture/models)

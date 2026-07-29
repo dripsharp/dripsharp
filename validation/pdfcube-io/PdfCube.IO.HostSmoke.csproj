@@ -8,7 +8,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="PdfCube.IO.PackageProbe.cs" />
+    <Compile Include="../../targets/pdfcube/validation/probe/PdfCube.IO.PackageProbe.cs" />
     <PackageReference Include="PdfCube.IO" Version="$(PdfCubeIOPackageVersion)" />
   </ItemGroup>
 </Project>

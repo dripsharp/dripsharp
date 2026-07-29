@@ -27,13 +27,18 @@ stronger proof around a freshly generated project.
 ```mermaid
 flowchart TD
   CLI["dripsharp.main/-main"]
+  Target["targets/&lt;target&gt;/target.edn"]
+  Execute["target-execution/run!"]
 
-  CLI -->|generate| Generate["harness/generate!"]
-  CLI -->|verify| Verify["compiler/verify-clean-build!"]
-  CLI -->|pack| Pack["packaging/pack-verified-profile!"]
-  CLI -->|package| Consume["packaging/verify-package-consumption!"]
-  CLI -->|differential| PklDifferential["pkl.differential/verify-differential!"]
-  CLI -->|pdfcube-io-differential| PdfCubeIoDifferential["pdfcube.io-differential/verify!"]
+  CLI --> Execute
+  Target --> Execute
+  Execute -->|generate| Generate["harness/generate!"]
+  Execute -->|verify| Verify["compiler/verify-clean-build!"]
+  Execute -->|pack| Pack["packaging/pack-verified-profile!"]
+  Execute -->|package| Consume["packaging/verify-package-consumption!"]
+  Execute -->|differential| Validation["target validation metadata"]
+  Validation --> SharedDifferential["differential/run!"]
+  Validation --> CustomDifferential["target custom runner"]
 
   Verify -->|regenerates| Generate
   Verify --> Build["dotnet build with warnings as errors"]
@@ -50,29 +55,24 @@ flowchart TD
   Feed --> Restore
   Restore --> ConsumerRun["consumer build and run"]
 
-  PklDifferential --> ParserProof["parser proof"]
-  PklDifferential --> CoreProof["Pkl.Core proof"]
-  PdfCubeIoDifferential --> PdfCubeIoProof["PdfCube.IO proof"]
-  ParserProof --> Consume
-  CoreProof --> Consume
-  PdfCubeIoProof --> Consume
-  ParserProof --> JavaOracle["upstream JVM oracle"]
-  CoreProof --> JavaOracle
-  PdfCubeIoProof --> JavaOracle
-  ParserProof --> PackageProbe["package-only .NET probe"]
-  CoreProof --> PackageProbe
-  PdfCubeIoProof --> PackageProbe
+  SharedDifferential --> PackageProof["package behavior proof"]
+  CustomDifferential --> PackageProof
+  PackageProof --> Consume
+  PackageProof --> JavaOracle["upstream JVM oracle"]
+  PackageProof --> PackageProbe["package-only .NET probe"]
   JavaOracle --> Compare["normalized observation comparison"]
   PackageProbe --> Compare
 ```
 
 This composition is implemented by
 [`dripsharp.main`](../src/dripsharp/main.clj),
+[`dripsharp.target-execution`](../src/dripsharp/target_execution.clj),
 [`dripsharp.compiler`](../src/dripsharp/compiler.clj),
 [`dripsharp.packaging`](../src/dripsharp/packaging.clj), and
-[`dripsharp.pkl.differential`](../src/dripsharp/pkl/differential.clj). The current
-PdfCube.IO proof is implemented by
-[`dripsharp.pdfcube.io-differential`](../src/dripsharp/pdfcube/io_differential.clj).
+the validation contracts selected from each target directory. Shared oracle/
+probe contracts run through
+[`dripsharp.differential`](../src/dripsharp/differential.clj); exceptional
+target proofs declare a custom runner in metadata.
 
 ### Source-to-Project Generation
 
@@ -168,8 +168,9 @@ and [`dripsharp.java-project`](../src/dripsharp/java_project.clj).
 Product-owned composition is supplied by rule bundles such as
 [`dripsharp.pkl.java-project`](../src/dripsharp/pkl/java_project.clj) and
 [`dripsharp.pdfcube.java-project`](../src/dripsharp/pdfcube/java_project.clj).
-Destination files such as [`pkl-parser.edn`](../config/pkl-parser.edn) and
-[`pdfcube-io.edn`](../config/pdfcube-io.edn) select the bundle and output
+Target-owned destination files such as
+[`parser.edn`](../targets/pkl/destinations/parser.edn) and
+[`io.edn`](../targets/pdfcube/destinations/io.edn) select the bundle and output
 contract explicitly.
 
 ### Recursive Translation Kernel

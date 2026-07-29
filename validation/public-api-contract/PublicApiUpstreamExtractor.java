@@ -580,7 +580,7 @@ public final class PublicApiUpstreamExtractor {
   }
 
   private static EvidenceIndex loadEvidence(Path workspace) throws IOException {
-    List<Path> roots =
+    List<Path> researchRoots =
         List.of(
             workspace.resolve("research/pkl/pkl-parser/src/test"),
             workspace.resolve("research/pkl/pkl-core/src/test"),
@@ -588,8 +588,7 @@ public final class PublicApiUpstreamExtractor {
             workspace.resolve("research/pkl/pkl-config-kotlin/src/test"),
             workspace.resolve("research/pkl/pkl-codegen-java/src/test"),
             workspace.resolve("research/pkl/pkl-codegen-kotlin/src/test"),
-            workspace.resolve("research/pkl/docs/modules/java-binding"),
-            workspace.resolve("validation"));
+            workspace.resolve("research/pkl/docs/modules/java-binding"));
     Predicate<Path> evidenceFile =
         path -> {
           String name = path.getFileName().toString(), portable = slash(path);
@@ -602,9 +601,54 @@ public final class PublicApiUpstreamExtractor {
     Map<String, String> members = new HashMap<>();
     Pattern tokenPattern = Pattern.compile("[A-Za-z_$][A-Za-z0-9_.$]*");
     Pattern memberPattern = Pattern.compile("(?:[.]|::)([A-Za-z_$][A-Za-z0-9_$]*)");
-    for (Path root : roots) {
+    List<List<Path>> evidenceGroups = new ArrayList<>();
+    for (Path root : researchRoots) {
       if (!Files.isDirectory(root)) continue;
-      for (Path file : files(root, evidenceFile)) {
+      evidenceGroups.add(files(root, evidenceFile));
+    }
+    Path targetEvidence = workspace.resolve("targets/pkl/validation");
+    if (Files.isDirectory(targetEvidence)) {
+      List<Path> migratedDifferential =
+          files(
+                  targetEvidence,
+                  path ->
+                      evidenceFile.test(path)
+                          && !path.getFileName().toString().contains("Consumer"))
+              .stream()
+              .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+              .toList();
+      evidenceGroups.add(migratedDifferential);
+    }
+    Path validation = workspace.resolve("validation");
+    for (String area :
+        List.of("language-snippet-contract", "language-snippet-runner", "loading-contract")) {
+      Path root = validation.resolve(area);
+      if (Files.isDirectory(root)) evidenceGroups.add(files(root, evidenceFile));
+    }
+    if (Files.isDirectory(targetEvidence)) {
+      List<Path> migratedConsumers =
+          files(
+                  targetEvidence,
+                  path ->
+                      evidenceFile.test(path)
+                          && path.getFileName().toString().contains("Consumer"))
+              .stream()
+              .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+              .toList();
+      evidenceGroups.add(migratedConsumers);
+    }
+    for (String area :
+        List.of(
+            "package-inspector",
+            "pkl-core-corpus",
+            "public-api-contract",
+            "regex-compat",
+            "schema-codegen")) {
+      Path root = validation.resolve(area);
+      if (Files.isDirectory(root)) evidenceGroups.add(files(root, evidenceFile));
+    }
+    for (List<Path> group : evidenceGroups) {
+      for (Path file : group) {
         List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
         String relative = slash(workspace.relativize(file));
         for (int index = 0; index < lines.size(); index++) {

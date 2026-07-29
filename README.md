@@ -67,32 +67,16 @@ local rule but is not evidence that a module or the product is complete.
 Run these commands from the repository root:
 
 ```text
-clojure -M:run generate
-clojure -M:run generate path/to/java-project-profile.edn
-clojure -M:run verify
-clojure -J-Xmx8g -M:run pack pkl-core-value-model
-clojure -M:run package
-clojure -J-Xmx8g -M:run package pkl-core-value-model
-clojure -M:run differential
-clojure -J-Xmx28g -M:run pdfcube-family-build
-clojure -J-Xmx28g -M:run pdfcube-family-package
-clojure -J-Xmx28g -M:run pdfcube-io-differential
-clojure -J-Xmx28g -M:run pdfcube-fontbox-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-low-level-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-document-lifecycle-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-font-text-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-graphics-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-rendering-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-image-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-interchange-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-interaction-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-manipulation-differential
-clojure -J-Xmx28g -M:run pdfcube-pdfbox-security-differential
-clojure -J-Xmx28g -M:run pdfcube-xmpbox-metadata-differential
-clojure -M:run language-snippet-contract
-clojure -J-Xmx8g -M:run language-snippet-package
-clojure -J-Xmx8g -M:run pkl-core-corpus
+clojure -M:run generate pkl pkl-parser
+clojure -M:run verify pkl pkl-parser
+clojure -J-Xmx8g -M:run pack pkl pkl-core-value-model
+clojure -J-Xmx8g -M:run package pkl pkl-core-value-model
+clojure -J-Xmx28g -M:run differential pkl
+clojure -J-Xmx28g -M:run differential pdfcube pdfcube-io
+clojure -J-Xmx28g -M:run differential pdfcube pdfcube-fontbox
+clojure -J-Xmx28g -M:run differential pdfcube pdfcube-xmpbox-metadata
+clojure -J-Xmx8g -M:run package rawhttp rawhttp-core
+clojure -J-Xmx8g -M:run differential rawhttp
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pdfcube
 clojure -M:test
@@ -112,16 +96,17 @@ the same bounded work queue as ordinary roots and are reassembled in canonical
 source order, eliminating the single-worker tail without changing generated
 bytes.
 
-`generate` verifies every configured source checkout, including its exact
-revision when pinned, before it removes and recreates `target` or starts project
-discovery. With the default profile it verifies `research/pkl` at its configured
-revision and obtains the pkl-parser production sources, resources, compile
-classpath, and Java toolchain from its Gradle project. Generated files under
-`target` are disposable.
+`generate <target> <profile>` preflights the selected target directory,
+including its baseline, profile, destination, legal policy, mapping overlays,
+runtime assets, and validation contracts, before it removes and recreates
+`target` or starts project discovery. There is no implicit target or profile.
+The selected profile obtains production sources, resources, compile classpath,
+and Java toolchain from its configured build. Generated files under `target`
+are disposable.
 
-The optional profile argument may also be a workspace-relative or absolute EDN
-file for another Gradle Java build. A profile uses this durable ingestion
-contract:
+Low-level harness calls also require an explicit profile selection and may use
+a workspace-relative or absolute profile EDN file. A profile uses this durable
+ingestion contract:
 
 ```clojure
 {:schema-version 1
@@ -157,39 +142,41 @@ classpath. `dependency-profiles` independently generates translated .NET
 project/package dependencies; each referenced profile can select its own Java
 build root, Gradle project, destination bundle, and public contract.
 
-`config/pkl-baseline.edn` and `config/pdfcube-baseline.edn` are the single
-reviewed baseline records for their respective targets. Profiles, destination
-bundles, packaging checks, and differentials resolve upstream identity, Java
-language level, source and public-contract counts, package versions, artifact
-hashes, and legal-file contracts from those records. `rebaseline <target>`
-observes the clean upstream checkout and prints the complete current and
-candidate records, their field-level delta, and an approval token. It does not
-write the record. Re-run the exact command printed in the preview with
-`--approve <token>` to apply that exact recomputed delta. The approval path can
-replace only the selected baseline record; product goals, port scopes,
-dependency contracts, exclusions, and completion rules are protected and
-remain unchanged.
+Each `targets/<target>/baseline.edn` is the single reviewed baseline record for
+that target. Profiles, destination bundles, packaging checks, and differentials
+resolve upstream identity, Java language level, source and public-contract
+counts, package versions, artifact hashes, and legal-file contracts from that
+record. `rebaseline <target>` observes the clean upstream checkout and prints
+the complete current and candidate records, their field-level delta, and an
+approval token. It does not write the record. Re-run the exact command printed
+in the preview with `--approve <token>` to apply that exact recomputed delta.
+The approval path can replace only the selected baseline record; product goals,
+port scopes, dependency contracts, exclusions, and completion rules are
+protected and remain unchanged.
 
 `verify` performs that same clean generation and immediately builds the fresh
 project with warnings as errors. Compiler diagnostics are parsed and correlated
 through `source-map.edn` to the originating Spoon element and translation rule.
 
-`pack [profile]` performs clean Release generation and verification, packs the
+`pack <target> <profile>` performs clean Release generation and verification, packs the
 selected profile and all declared dependency profiles twice, proves byte-for-byte
 package determinism, and writes the inspected packages to a fresh local feed.
 The pkl-core profile currently requires an explicit larger JVM heap, such as
 `-J-Xmx8g`, in this environment.
 
-`package [profile]` first performs the clean `verify` gate, packs that exact generated
+`package <target> <profile>` first performs the clean `verify` gate, packs that exact generated
 build into a fresh local feed, and restores, builds, and runs a newly created
 consumer with an isolated NuGet package cache. The consumer has no project
 reference or access to generated source. Consumer selection belongs to the
-destination configuration rather than a profile-name switch. The default Pkl
-profile still exercises the public parser package; `pkl-core-value-model`
+destination configuration rather than a profile-name switch.
+`pkl-parser`
+exercises the public parser package; `pkl-core-value-model`
 exercises the packed evaluator and value-model surface plus its exact package
 dependency on `Pkl.Parser`.
 
-`differential` performs both complete package gates. It separately builds and
+`differential <target> [validation-id]` dispatches the target manifest's
+validation contracts. The Pkl validation performs both complete package gates.
+It separately builds and
 runs the pinned upstream JVM parser as an oracle, then runs a package-only .NET
 probe over the baseline-recorded LanguageSnippetTests inputs and the upstream lexer/span edge
 cases (956 cases and 2,871 normalized observations in total). It retains that

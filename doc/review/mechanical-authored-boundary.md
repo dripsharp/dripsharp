@@ -26,7 +26,7 @@ exactly one class:
 | --- | --- | --- | --- |
 | **M — Mechanical** | Emitted by the translator from resolved upstream source. Never edited. | Disposable; regenerated from scratch | Upstream tests + differential proofs |
 | **A1 — Authored compat** | Generic JVM-semantics replacements (`runtime/Vibeformer.JavaCompat.cs`, regex data). Product-neutral by rule. | Durable | Direct compat tests + every target's differential |
-| **A2 — Authored destination runtime** | Product substrates (`runtime/Pkl.Core.*.cs`, `runtime/PdfCube.FontBox.*.cs`). May contain product semantics. | Durable | Ported upstream tests + target differentials |
+| **A2 — Authored destination runtime** | Product substrates (`targets/pkl/runtime/Pkl.Core.*.cs`, `targets/pdfcube/runtime/PdfCube.FontBox.*.cs`). May contain product semantics. | Durable | Ported upstream tests + target differentials |
 | **V — Validation** | Oracles, probes, consumers, contracts (`validation/`). Never shipped. | Durable | The perturbation self-tests; review |
 | **T — Translator** | The Clojure system itself. Never shipped. | Durable | Its test suite + the proof ladder it runs |
 

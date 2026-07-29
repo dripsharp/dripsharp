@@ -1,0 +1,10 @@
+{:schema-version 1
+ :profile "pkl-parser"
+ :product-family :pkl
+ :baseline-target :pkl
+ :baseline-profile :parser
+ :project-root "research/pkl"
+ :gradle-project ":pkl-parser"
+ :destination-bundle dripsharp.pkl.java-project/rule-bundle
+ :destination-config "destinations/parser.edn"
+ :dependency-profiles []}

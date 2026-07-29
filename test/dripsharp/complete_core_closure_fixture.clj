@@ -20,10 +20,8 @@
 (defn- resolve-complete-core-closure
   []
   (let [root (paths/workspace-root)
-        configuration (edn/read-string
-                       (slurp (str (paths/resolve-path
-                                    root "config"
-                                    "pkl-core-value-model.edn"))))
+        configuration
+        (harness/read-profile root "targets/pkl/profiles/core.edn")
         destination (java-project/read-configuration
                      root (:destination-config configuration))
         status-before (research-status root)

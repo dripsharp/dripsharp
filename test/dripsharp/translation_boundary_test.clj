@@ -351,9 +351,9 @@
               #"(?m)#if DRIPSHARP_INTERNAL_JAVA_COMPAT\ninternal\n#else\npublic\n#endif\n(?:(?:sealed|abstract|static)\s+)?(?:class|interface|enum)\s+([A-Za-z0-9_]+)"
               runtime))
         expected-types (map first configurable-java-compat-types)
-        pkl-parser (slurp "config/pkl-parser.edn")
-        pkl-core (slurp "config/pkl-core-value-model-destination.edn")
-        rawhttp (slurp "config/rawhttp-core-destination.edn")]
+        pkl-parser (slurp "targets/pkl/destinations/parser.edn")
+        pkl-core (slurp "targets/pkl/destinations/core.edn")
+        rawhttp (slurp "targets/rawhttp/destinations/core.edn")]
     (is (= (sort expected-types) (sort guarded-types))
         (str "Unexpected configurable JavaCompat boundary: "
              (sort guarded-types)))
@@ -386,7 +386,7 @@
   (let [generic-rules (source "java_library")
         body-rules (source "pkl/java_body")
         project-rules (source "pkl/java_project")
-        bridge (slurp "runtime/Pkl.Core.RuntimeBridge.cs")]
+        bridge (slurp "targets/pkl/runtime/Pkl.Core.RuntimeBridge.cs")]
     (is (str/includes? body-rules
                        "(pkl-runtime-call \"IsRrbTreeLeaf\""))
     (is (str/includes? body-rules "MapOfEntriesLoose"))

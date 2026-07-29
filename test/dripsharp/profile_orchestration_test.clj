@@ -141,7 +141,7 @@
 (deftest complete-independent-profile-selects-an-explicit-pinned-public-contract
   (let [workspace (paths/workspace-root)
         profile (harness/read-profile workspace
-                                      "config/rawhttp-core.edn")
+                                      "targets/rawhttp/profiles/core.edn")
         destination (java-project/read-configuration
                      workspace (:destination-config profile))
         strategy (public-surface/resolve-strategy!
@@ -154,7 +154,7 @@
            (:destination-bundle profile)
            (:destination-bundle destination)))
     (is (= 510 (count (:rows surface))))
-    (is (= "validation/rawhttp-core/CompiledPublicSurface.tsv"
+    (is (= "targets/rawhttp/validation/contracts/CompiledPublicSurface.tsv"
            (get-in destination [:public-surface :compiled-contract-file])))
     (is (empty? (:seeds surface))
         "the complete independent project is audited without a source allowlist")
@@ -168,7 +168,8 @@
                                 :source-scope])))
     (is (= {:strategy :source-file
             :project-file "RawHttp.Core.PackageConsumer.csproj"
-            :fixture-file "RawHttp.Core.Program.cs"
+            :source-path
+            "targets/rawhttp/validation/probe/RawHttp.Core.Program.cs"
             :success-message "Independent RawHttp.Core package behavior passed."}
            (:package-consumer destination)))))
 

@@ -128,7 +128,7 @@ Product naming is already right: distinct marks (`PdfCube`, not
 things:
 
 * **Authors field.** `"Apache PDFBox contributors,Vibeformer translation"`
-  (`config/pdfcube-*-destination.edn`) puts the ASF's contributors in the
+  (`targets/pdfcube/destinations/*.edn`) puts the ASF's contributors in the
   publisher/authorship position of an artifact they never released — the
   exact implication trademark policies prohibit. Authors should be the
   publishing org only; upstream credit belongs in `Copyright`, the

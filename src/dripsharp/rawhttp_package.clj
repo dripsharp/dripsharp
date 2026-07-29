@@ -18,8 +18,6 @@
 (def ^:private success-count 16)
 (def ^:private failure-count 12)
 (def ^:private command-timeout-ms (* 30 60 1000))
-(def ^:private profile-file "config/rawhttp-core.edn")
-
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind :rawhttp-package-equivalence-failed))))
 
@@ -461,16 +459,26 @@
   "Runs the Java oracle in a separate process, then performs two clean .NET
   packs and a fresh package-only behavior/provenance gate."
   ([] (verify-package-equivalence! {}))
-  ([{:keys [workspace-root run-command! package-fn]
+  ([{:keys [workspace-root profile run-command! package-fn]
      :or {run-command! bounded-run!
           package-fn packaging/verify-package-consumption!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         contract-file (paths/resolve-path root "validation"
-                                           "rawhttp-core" "ProjectContract.tsv")
+         profile
+         (or profile
+             (fail! "RawHTTP package equivalence requires an explicit profile"
+                    {:reason :missing-profile-selection}))
+         contract-file
+         (paths/resolve-path
+          root "targets" "rawhttp" "validation" "contracts"
+          "ProjectContract.tsv")
          contract (read-contract! contract-file)
          java-proof
-         (run-command! {:command ["sh" (str (paths/resolve-path root "validation" "rawhttp-core"
-                                                                "verify.sh"))]
+         (run-command! {:command
+                        ["sh"
+                         (str
+                          (paths/resolve-path
+                           root "targets" "rawhttp" "validation"
+                           "contracts" "verify.sh"))]
                         :directory root :timeout-ms command-timeout-ms})
          _ (when-not (str/includes? (:output java-proof) "RawHTTP contract verified:")
              (fail! "Independent Java oracle did not report successful verification"
@@ -479,7 +487,7 @@
          expected-text (Files/readString expected-file StandardCharsets/UTF_8)
          expected-rows (validate-observation-family! (parse-observations! expected-text))
          package-proof
-         (package-fn {:workspace-root root :profile profile-file
+         (package-fn {:workspace-root root :profile profile
                       :run-command! run-command!})
          first-output (extract-probe-output! (get-in package-proof [:run :output]))
          consumer-root (:consumer-root package-proof)

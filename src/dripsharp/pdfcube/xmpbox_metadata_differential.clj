@@ -1,11 +1,12 @@
 (ns dripsharp.pdfcube.xmpbox-metadata-differential
   "Versioned, data-driven PDFBox baseline versus PdfCube.XmpBox package proof."
   (:require [dripsharp.baseline :as baseline]
-            [dripsharp.differential :as differential]))
+            [dripsharp.differential :as differential]
+            [dripsharp.target-execution :as target-execution]))
 
 (def ^:private contract
   (differential/read-contract
-   "validation/pdfcube-xmpbox/differential.edn"))
+   "targets/pdfcube/validation/xmpbox.edn"))
 
 (def pinned-revision
   (baseline/upstream-revision :pdfcube))
@@ -27,4 +28,8 @@
   differential."
   ([] (verify! {}))
   ([options]
-   (differential/run! (assoc options :contract contract))))
+   (differential/run!
+    (assoc options
+           :contract
+           (target-execution/execution-differential-contract
+            :pdfcube contract)))))

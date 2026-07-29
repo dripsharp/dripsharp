@@ -101,7 +101,7 @@ jobs:
           $config = "validation/pdfcube-io/NuGet.Config"
           $packages = "target/pdfcube-io-host-packages"
           $trace = "target/host-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
-          $canonical = "validation/pdfcube-io/CanonicalTrace.tsv"
+          $canonical = "targets/pdfcube/validation/io-canonical.tsv"
           dotnet --info | Out-File `
             "target/dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt" `
             -Encoding utf8

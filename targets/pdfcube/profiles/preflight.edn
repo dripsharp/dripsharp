@@ -1,0 +1,11 @@
+{:schema-version 1
+ :profile "pdfcube-preflight"
+ :product-family :pdfcube
+ :baseline-target :pdfcube
+ :baseline-profile :preflight
+ :project-root "research/pdfbox"
+ :build-tool :maven
+ :maven-selected-projects [":preflight"]
+ :destination-bundle dripsharp.pdfcube.java-project/rule-bundle
+ :destination-config "destinations/preflight.edn"
+ :dependency-profiles ["pdfcube-pdfbox" "pdfcube-xmpbox"]}

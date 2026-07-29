@@ -1,0 +1,56 @@
+DRIPSHARP_JAVA_LIBRARY_CONTRACT_V1
+source-name	RawHTTP Core
+source-repository	https://github.com/renatoathaydes/rawhttp.git
+source-revision	947cfdc619100a23f5e429ccb3c42ba6fedc8141
+source-release	core-2.5.2
+source-path	research/rawhttp
+license-spdx	Apache-2.0
+license-file	research/rawhttp/LICENSE.txt
+license-sha256	f6bc359d3a4bf1e4851ead6019d8f33075e06ff2c16ed171ecb83ee90509c69c
+gradle-project	:rawhttp-core
+gradle-wrapper	research/rawhttp/gradlew
+gradle-inventory-script	gradle/discover-java-library.gradle
+profile-file	targets/rawhttp/profiles/core.edn
+destination-file	targets/rawhttp/destinations/core.edn
+baseline-file	targets/rawhttp/baseline.edn
+inventory-file	targets/rawhttp/validation/contracts/GradleInventory.tsv
+observations-file	targets/rawhttp/validation/contracts/JavaObservations.tsv
+public-surface-file	targets/rawhttp/validation/contracts/PublicSurface.tsv
+compiled-public-surface-file	targets/rawhttp/validation/contracts/CompiledPublicSurface.tsv
+body-review-file	targets/rawhttp/validation/contracts/BodyReview.tsv
+oracle-source	targets/rawhttp/validation/oracle/RawHttpContractOracle.java
+java-release	8
+oracle-runtime-major	17
+production-source-count	62
+generated-source-count	0
+resource-count	1
+project-dependency-count	0
+external-dependency-count	1
+external-artifact-count	1
+observation-count	28
+successful-observation-count	16
+failure-observation-count	12
+public-surface-row-count	510
+compiled-public-surface-type-count	83
+compiled-public-surface-member-count	505
+compiled-public-surface-row-count	588
+compiled-public-surface-sha256	56823218c594d964720b9b91271898775108786f8577fed86f329c750d5de4eb
+package-inspector-public-surface-sha256	7572eb99ea564b5827535b15b03c0873a649e5c7ca1d488c0ab4de2bcf982e78
+external-dependency	com.google.code.findbugs:jsr305:3.0.2
+external-dependency-scope	compile
+external-dependency-artifact	jsr305-3.0.2.jar
+external-dependency-artifact-sha256	766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7
+external-dependency-license-spdx	Apache-2.0
+external-dependency-provenance	https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.pom
+resource	META-INF/services/rawhttp.core.body.encoding.HttpMessageDecoder
+destination-profile	rawhttp-core
+destination-assembly	RawHttp.Core
+destination-root-namespace	RawHttp.Core
+destination-package	RawHttp.Core
+destination-resource-strategy	embedded-resource-preserve-path
+destination-project-dependencies	none
+destination-external-dependency-policy	jsr305 compile-only annotations become nullable metadata and add no runtime package
+public-surface-strategy	all accessible public and protected declared types and members from every compiled production class; synthetic and bridge members omitted
+compiled-public-surface-strategy	exact externally visible CLR types and public/protected members, including signatures, generic constraints, nullability, ownership, reusable compatibility types required by public signatures or bases, IDisposable translation, and CLR property/accessor expansion
+normalization	UTF-8; LF output; rows sorted by stable identity; payloads base64; Java exception identities and boolean spellings; URI original text; exception class, message, and RawHTTP line number only; no stack traces, paths, ports, clocks, or locale-sensitive text
+scope-statement	This is bounded evidence for translator reuse; unsupported production behavior remains blocking implementation work and is not excluded.

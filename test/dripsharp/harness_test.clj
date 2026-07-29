@@ -124,9 +124,12 @@
 
 (deftest pkl-and-rawhttp-profiles-use-configured-revisions
   (let [root (paths/workspace-root)
-        pkl-parser (harness/read-profile root "pkl-parser")
-        pkl-core (harness/read-profile root "pkl-core-value-model")
-        rawhttp (harness/read-profile root "config/rawhttp-core.edn")]
+        pkl-parser
+        (harness/read-profile root "targets/pkl/profiles/parser.edn")
+        pkl-core
+        (harness/read-profile root "targets/pkl/profiles/core.edn")
+        rawhttp
+        (harness/read-profile root "targets/rawhttp/profiles/core.edn")]
     (is (= "f7cac257ade5775c1dfc255f4fda2eacc296e9d0"
            (:revision pkl-parser)
            (:revision pkl-core)))
@@ -145,6 +148,7 @@
         (without-live-baseline-input-gate
          #(harness/generate!
            {:workspace-root root
+            :profile "targets/pkl/profiles/parser.edn"
             :read-profile-fn
             (fn [_ profile-name]
               (harness/read-profile (paths/workspace-root) profile-name))
@@ -192,7 +196,7 @@
     (is (paths/regular-file? (paths/resolve-path root "target/generation-config.edn")))
     (is (= 2 (count (get-in config [:project-input
                                     :production-sources]))))
-    (is (= "config/pkl-parser.edn"
+    (is (= "targets/pkl/destinations/parser.edn"
            (get-in config [:destination :config-file])))
     (is (= ["research/pkl/pkl-parser/src/main/java/A.java"
             "research/pkl/pkl-parser/src/main/java/B.java"]
@@ -276,7 +280,7 @@
         (without-live-baseline-input-gate
          #(harness/generate!
            {:workspace-root root
-            :profile "pkl-core-value-model"
+            :profile "targets/pkl/profiles/core.edn"
             :generate-dependencies? false
             :read-profile-fn (fn [_ profile-name]
                                (harness/read-profile (paths/workspace-root)
@@ -316,7 +320,7 @@
               {:project-file (paths/resolve-path target "core.csproj")
                :summary {:compilation-units 1}})}))]
     (is (= ":pkl-core" (get-in @captured [:discovery-options :gradle-project])))
-    (is (= "config/pkl-core-value-model-destination.edn"
+    (is (= "targets/pkl/destinations/core.edn"
            (:destination-file @captured)))
     (is (= 48 (count (:seeds @captured))))
     (is (instance? dripsharp.spoon.ResolvedJavaClosure (:resolved-model @captured)))

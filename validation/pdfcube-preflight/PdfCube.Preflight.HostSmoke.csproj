@@ -8,7 +8,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="PdfCube.Preflight.FocusedConsumer.cs" />
+    <Compile Include="../../targets/pdfcube/validation/probe/PdfCube.Preflight.FocusedConsumer.cs" />
     <PackageReference Include="PdfCube.Preflight" Version="$(PdfCubePreflightPackageVersion)" />
   </ItemGroup>
 </Project>

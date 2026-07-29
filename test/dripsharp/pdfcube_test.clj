@@ -266,7 +266,11 @@
 
 (defn- read-profile-and-destination [profile-name]
   (let [workspace (paths/workspace-root)
-        profile (harness/read-profile workspace profile-name)]
+        profile-file
+        (str "targets/pdfcube/profiles/"
+             (str/replace profile-name #"^pdfcube-" "")
+             ".edn")
+        profile (harness/read-profile workspace profile-file)]
     {:profile profile
      :destination
      (project-emission/read-configuration

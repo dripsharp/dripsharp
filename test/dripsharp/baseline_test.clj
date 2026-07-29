@@ -29,10 +29,11 @@
 (deftest profiles-and-destinations-resolve-their-pins-from-the-record
   (let [root (paths/workspace-root)
         pdf-record (baseline/read-baseline :pdfcube)
-        profile (harness/read-profile root "pdfcube-pdfbox")
+        profile
+        (harness/read-profile root "targets/pdfcube/profiles/pdfbox.edn")
         destination
         (java-project/read-configuration
-         root "config/pdfcube-pdfbox-destination.edn")]
+         root "targets/pdfcube/destinations/pdfbox.edn")]
     (is (= (get-in pdf-record [:upstream :revision]) (:revision profile)))
     (is (= (get-in pdf-record [:profiles :pdfbox :source-project-id])
            (:maven-project-id profile)))
@@ -82,7 +83,7 @@
         family (slurp (str (paths/resolve-path
                             root "validation" "pdfcube-family"
                             "PdfCube.Family.HostSmoke.csproj")))]
-    (is (str/includes? props "config\\pdfcube-baseline.edn"))
+    (is (str/includes? props "targets\\pdfcube\\baseline.edn"))
     (is (str/includes? family "$(PdfCubeIOPackageVersion)"))
     (is (str/includes? family "$(PdfCubePreflightPackageVersion)"))
     (is (not (str/includes? family "3.0.8-dripsharp.0")))))
@@ -90,13 +91,14 @@
 (deftest configuration-files-contain-baseline-references-not-copied-pins
   (let [root (paths/workspace-root)
         files (concat
-               ["config/pkl-parser.edn"
-                "config/pkl-core-value-model.edn"
-                "config/pkl-core-value-model-destination.edn"]
+               ["targets/pkl/profiles/parser.edn"
+                "targets/pkl/profiles/core.edn"
+                "targets/pkl/destinations/parser.edn"
+                "targets/pkl/destinations/core.edn"]
                (mapcat
                 (fn [name]
-                  [(str "config/pdfcube-" name ".edn")
-                   (str "config/pdfcube-" name "-destination.edn")])
+                  [(str "targets/pdfcube/profiles/" name ".edn")
+                   (str "targets/pdfcube/destinations/" name ".edn")])
                 ["io" "fontbox" "xmpbox" "pdfbox" "preflight"]))]
     (doseq [relative files
             :let [data (edn/read-string

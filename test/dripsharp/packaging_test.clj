@@ -223,6 +223,7 @@
         (reproducibility-fixture root false)
         proof (packaging/pack-verified-profile!
                {:workspace-root root
+                :profile "fixture"
                 :verify-fn verify-fn
                 :run-command! run-command!
                 :inspect-resources-fn
@@ -248,6 +249,7 @@
         error (try
                 (packaging/pack-verified-profile!
                  {:workspace-root root
+                  :profile "fixture"
                   :verify-fn verify-fn
                   :run-command! run-command!
                   :inspect-resources-fn (fn [& _] {})})
@@ -499,7 +501,7 @@
   (let [workspace (paths/workspace-root)
         destination
         (java-project/read-configuration
-         workspace "config/pkl-core-value-model-destination.edn")
+         workspace "targets/pkl/destinations/core.edn")
         package
         (assoc (:package destination)
                :repository-commit

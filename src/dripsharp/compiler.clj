@@ -71,12 +71,15 @@
      :or {generate-fn harness/generate! run-command! process/run!
           verify-public-surface-fn public-surface/verify-compiled!}}]
    (let [build-configuration (or build-configuration "Release")
-         generation-options (cond-> {}
-                              profile (assoc :profile profile)
-                              workspace-root (assoc :workspace-root workspace-root))
-         generation (if (seq generation-options)
-                      (generate-fn generation-options)
-                      (generate-fn))
+         profile
+         (or profile
+             (throw
+              (ex-info "Clean verification requires an explicit profile selection"
+                       {:kind :missing-generation-profile-selection})))
+         generation-options (cond-> {:profile profile}
+                              workspace-root
+                              (assoc :workspace-root workspace-root))
+         generation (generate-fn generation-options)
          emission (:emission generation)
          ^Path project-root (:project-root emission)
          project-file (:project-file emission)

@@ -1,0 +1,15 @@
+{:schema-version 1
+ :id :pkl-differential
+ :target :pkl
+ :profile "pkl-parser"
+ :baseline-profile :parser
+ :runner dripsharp.pkl.differential/verify-differential!
+ :oracle-sources
+ ["validation/oracle/UpstreamOracle.java"
+  "validation/oracle/CoreUpstreamOracle.java"]
+ :probe-sources
+ ["validation/probe/PackageProbe.cs"
+  "validation/probe/CorePackageProbe.cs"
+  "validation/probe/ParserPackageConsumer.cs"
+  "validation/probe/CorePackageConsumer.cs"]
+ :legal-sets []}

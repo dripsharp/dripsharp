@@ -1209,7 +1209,10 @@
           run-command! process/run!
           inspect-resources-fn inspect-package-assembly!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         profile (or profile "pkl-parser")
+         profile
+         (or profile
+             (fail! "Packaging requires an explicit profile selection"
+                    {:kind :missing-generation-profile-selection}))
          first-verification
          (verify-fn {:workspace-root root :profile profile
                      :build-configuration "Release"})
@@ -1573,7 +1576,10 @@
           pack-fn pack-verified-profile!
           run-command! process/run!}}]
    (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-         profile (or profile "pkl-parser")
+         profile
+         (or profile
+             (fail! "Package consumption requires an explicit profile selection"
+                    {:kind :missing-generation-profile-selection}))
          package-proof (pack-fn {:workspace-root root :profile profile
                                  :verify-fn verify-fn :run-command! run-command!})
          verification (:verification package-proof)

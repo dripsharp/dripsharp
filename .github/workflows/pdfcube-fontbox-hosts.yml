@@ -127,7 +127,7 @@ jobs:
           $resources = "$fixtures/resources"
           $fonts = "$fixtures/fonts"
           $trace = "target/fontbox-host-${{ matrix.os }}-${{ matrix.architecture }}.tsv"
-          $canonical = "validation/pdfcube-fontbox/canonical-trace.tsv"
+          $canonical = "targets/pdfcube/validation/fontbox-canonical.tsv"
           dotnet --info | Out-File `
             "target/fontbox-dotnet-${{ matrix.os }}-${{ matrix.architecture }}.txt" `
             -Encoding utf8

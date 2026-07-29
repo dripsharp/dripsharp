@@ -1,0 +1,56 @@
+{:schema-version 1
+ :target :pkl
+ :product-family :pkl
+ :contracts
+ {:product-goal "doc/targets/pkl/product-goal.md"
+  :port-scope "doc/targets/pkl/port-scope.md"
+  :dependencies []}
+ :baseline "baseline.edn"
+ :legal-policy "legal/policy.edn"
+ :java
+ {:source-language-version 17
+  :runtime-major 17
+  :preview-features? false}
+ :capabilities #{:java-compat :java-regex-unicode :pkl/runtime}
+ :profiles
+ [{:id "pkl-parser"
+   :path "profiles/parser.edn"
+   :destination :parser
+   :mapping-overlays []
+   :runtime-assets []
+   :validation-contracts [:pkl-differential]
+   :required-capabilities #{:java-compat :java-regex-unicode}}
+  {:id "pkl-core-value-model"
+   :path "profiles/core.edn"
+   :destination :core
+   :mapping-overlays []
+   :runtime-assets
+   [:pkl/dotnet :pkl/loading :pkl/runtime-bridge :pkl/substrate
+    :pkl/value-model-dotnet]
+   :validation-contracts []
+   :required-capabilities
+   #{:java-compat :java-regex-unicode :pkl/runtime}}]
+ :destinations
+ [{:id :parser :path "destinations/parser.edn"}
+  {:id :core :path "destinations/core.edn"}]
+ :mapping-overlays []
+ :runtime-assets
+ [{:id :pkl/dotnet
+   :path "runtime/Pkl.Core.DotNet.cs"
+   :capabilities #{:pkl/runtime}}
+  {:id :pkl/loading
+   :path "runtime/Pkl.Core.Loading.cs"
+   :capabilities #{:pkl/runtime}}
+  {:id :pkl/runtime-bridge
+   :path "runtime/Pkl.Core.RuntimeBridge.cs"
+   :capabilities #{:pkl/runtime}}
+  {:id :pkl/substrate
+   :path "runtime/Pkl.Core.Substrate.cs"
+   :capabilities #{:pkl/runtime}}
+  {:id :pkl/value-model-dotnet
+   :path "runtime/Pkl.Core.ValueModel.DotNet.cs"
+   :capabilities #{:pkl/runtime}}]
+ :validation-contracts
+ [{:id :pkl-differential
+   :kind :custom
+   :path "validation/differential.edn"}]}

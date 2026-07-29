@@ -660,10 +660,10 @@
 
 (defn- evidence-metadata
   []
-  [["evidence-parser" "validation/differential/UpstreamOracle.java"]
+  [["evidence-parser" "targets/pkl/validation/oracle/UpstreamOracle.java"]
    ["evidence-language"
     "validation/language-snippet-contract/LanguageSnippetContract.tsv"]
-   ["evidence-core" "validation/differential/CoreUpstreamOracle.java"]
+   ["evidence-core" "targets/pkl/validation/oracle/CoreUpstreamOracle.java"]
    ["evidence-loading" "validation/loading-contract/ContractEvidence.tsv"]
    ["evidence-public-api" "validation/public-api-contract/BehaviorContract.tsv"]
    ["evidence-schema-codegen"

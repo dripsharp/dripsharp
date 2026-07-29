@@ -16,8 +16,8 @@
 
 (deftest canonical-trace-covers-the-complete-selected-behavior-contract
   (let [canonical (paths/resolve-path (paths/workspace-root)
-                                      "validation" "pdfcube-io"
-                                      "CanonicalTrace.tsv")
+                                      "targets" "pdfcube" "validation"
+                                      "io-canonical.tsv")
         summary (io-differential/trace-summary canonical)]
     (is (= 25 (:observations summary)))
     (is (= io-differential/required-trace-families

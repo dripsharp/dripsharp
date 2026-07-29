@@ -325,10 +325,24 @@
   (let [file (paths/resolve-path (paths/absolute workspace-root) config-file)]
     (when-not (paths/regular-file? file)
       (destination-error "Destination configuration is missing" {:path (str file)}))
-    (validate-configuration!
-     (baseline/hydrate-destination
-      workspace-root
-      (edn/read-string (slurp (str file)))))))
+    (let [configuration
+          (baseline/hydrate-destination
+           workspace-root
+           (edn/read-string (slurp (str file))))
+          configuration
+          (if-let [[_ target-root]
+                   (re-matches
+                    #"^(targets/[^/]+)/destinations/[^/]+\.edn$"
+                    config-file)]
+            (update configuration :runtime-sources
+                    (fn [sources]
+                      (when sources
+                        (mapv #(if (str/starts-with? % "runtime/")
+                                 (str target-root "/" %)
+                                 %)
+                              sources))))
+            configuration)]
+      (validate-configuration! configuration))))
 
 (defn- canonicalize [value]
   (cond

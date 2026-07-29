@@ -1,0 +1,7 @@
+{:schema-version 1
+ :target :rawhttp
+ :upstream-license "Apache-2.0"
+ :allowed-upstream-licenses #{"Apache-2.0"}
+ :legal-sets #{}
+ :profile-legal-sets
+ {"rawhttp-core" []}}

@@ -13,30 +13,6 @@
             [dripsharp.util :as util])
   (:import [java.nio.file FileVisitOption Files Path]))
 
-(def ^:private profiles
-  {"pkl-parser"
-   {:schema-version 1
-    :profile "pkl-parser"
-    :product-family :pkl
-    :baseline-target :pkl
-    :baseline-profile :parser
-    :project-root "research/pkl"
-    :gradle-project ":pkl-parser"
-    :destination-bundle 'dripsharp.pkl.java-project/rule-bundle
-    :destination-config "config/pkl-parser.edn"}
-   "pkl-core-value-model"
-   {:configuration-file "config/pkl-core-value-model.edn"}
-   "pdfcube-io"
-   {:configuration-file "config/pdfcube-io.edn"}
-   "pdfcube-fontbox"
-   {:configuration-file "config/pdfcube-fontbox.edn"}
-   "pdfcube-xmpbox"
-   {:configuration-file "config/pdfcube-xmpbox.edn"}
-   "pdfcube-pdfbox"
-   {:configuration-file "config/pdfcube-pdfbox.edn"}
-   "pdfcube-preflight"
-   {:configuration-file "config/pdfcube-preflight.edn"}})
-
 (defn- non-blank-string? [value]
   (and (string? value) (not (str/blank? value))))
 
@@ -72,6 +48,17 @@
        (not-any? #(contains? profile %)
                  [:gradle-project :gradle-wrapper :gradle-java-major])))
 
+(defn- target-owned-profile
+  [profile-name profile]
+  (if-let [[_ target-root]
+           (re-matches #"^(targets/[^/]+)/profiles/[^/]+\.edn$"
+                       profile-name)]
+    (update profile :destination-config
+            #(if (str/starts-with? % "destinations/")
+               (str target-root "/" %)
+               %))
+    profile))
+
 (defn read-profile
   "Reads and validates an explicit generation profile. Profile configuration
   selects the real Gradle project, destination policy, and optional resolved
@@ -79,28 +66,28 @@
   [workspace-root profile-name]
   (let [root (paths/absolute workspace-root)
         configured-file (paths/resolve-path root profile-name)
-        entry (or (get profiles profile-name)
-                  (when (paths/regular-file? configured-file)
-                    {:configuration-file profile-name}))]
+        entry (when (paths/regular-file? configured-file)
+                {:configuration-file profile-name})]
     (when-not entry
       (throw (ex-info (str "Unknown DripSharp generation profile " profile-name)
                       {:kind :unknown-generation-profile
                        :profile profile-name
-                       :available (vec (sort (keys profiles)))})))
+                       :available []})))
     (let [profile
-          (baseline/hydrate-profile
-           root
-           (if-let [file (:configuration-file entry)]
-             (let [path (paths/resolve-path root file)]
-               (when-not (paths/regular-file? path)
-                 (throw (ex-info "Generation profile configuration is missing"
-                                 {:kind :missing-generation-profile
-                                  :profile profile-name :path (str path)})))
-               (edn/read-string (slurp (str path))))
-             entry))]
+          (target-owned-profile
+           profile-name
+           (baseline/hydrate-profile
+            root
+            (if-let [file (:configuration-file entry)]
+              (let [path (paths/resolve-path root file)]
+                (when-not (paths/regular-file? path)
+                  (throw
+                   (ex-info "Generation profile configuration is missing"
+                            {:kind :missing-generation-profile
+                             :profile profile-name :path (str path)})))
+                (edn/read-string (slurp (str path))))
+              entry)))]
       (when-not (and (= 1 (:schema-version profile))
-                     (or (not (contains? profiles profile-name))
-                         (= profile-name (:profile profile)))
                      (string? (:profile profile))
                      (not (str/blank? (:profile profile)))
                      (keyword? (:product-family profile))
@@ -754,7 +741,11 @@
          read-destination-fn java-project/read-configuration
          emit-project-fn java-project/emit-project!}}]
   (let [root (paths/absolute (or workspace-root (paths/workspace-root)))
-        profile-name (or profile "pkl-parser")
+        profile-name
+        (or profile
+            (throw
+             (ex-info "Generation requires an explicit profile selection"
+                      {:kind :missing-generation-profile-selection})))
         include-dependencies? (not= false generate-dependencies?)
         graph
         (cond-> (resolve-profile-dag!

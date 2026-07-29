@@ -1,0 +1,9 @@
+{:schema-version 1
+ :id :rawhttp-package-equivalence
+ :target :rawhttp
+ :profile "rawhttp-core"
+ :baseline-profile :core
+ :runner dripsharp.rawhttp-package/verify-package-equivalence!
+ :oracle-sources ["validation/oracle/RawHttpContractOracle.java"]
+ :probe-sources ["validation/probe/RawHttp.Core.Program.cs"]
+ :legal-sets []}

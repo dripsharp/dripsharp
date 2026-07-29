@@ -501,7 +501,7 @@
                                           "java" "main")
         upstream-resources (paths/resolve-path upstream-root "pkl-parser" "build"
                                                "resources" "main")
-        oracle-source (paths/resolve-path root "validation" "differential"
+        oracle-source (paths/resolve-path root "targets" "pkl" "validation" "oracle"
                                           "UpstreamOracle.java")
         oracle-output (paths/resolve-path proof-root "upstream.tsv")
         package-output (paths/resolve-path proof-root "package.tsv")
@@ -511,7 +511,7 @@
         consumer-root (:consumer-root package-proof)
         consumer-project (paths/resolve-path consumer-root "Pkl.Parser.PackageConsumer.csproj")
         consumer-source (paths/resolve-path consumer-root "Program.cs")
-        probe-source (paths/resolve-path root "validation" "differential"
+        probe-source (paths/resolve-path root "targets" "pkl" "validation" "probe"
                                          "PackageProbe.cs")]
     (let [expected-count
           (get-in (baseline/read-baseline :pkl)
@@ -1570,7 +1570,7 @@
         oracle-classes (doto (paths/resolve-path proof-root "upstream-classes")
                          (Files/createDirectories (make-array FileAttribute 0)))
         upstream-root (paths/resolve-path root "research" "pkl")
-        oracle-source (paths/resolve-path root "validation" "differential"
+        oracle-source (paths/resolve-path root "targets" "pkl" "validation" "oracle"
                                           "CoreUpstreamOracle.java")
         oracle-output (paths/resolve-path proof-root "upstream.tsv")
         package-output (paths/resolve-path proof-root "package.tsv")
@@ -1589,7 +1589,7 @@
         consumer-root (:consumer-root package-proof)
         consumer-project (paths/resolve-path consumer-root "Pkl.Core.PackageConsumer.csproj")
         consumer-source (paths/resolve-path consumer-root "Program.cs")
-        probe-source (paths/resolve-path root "validation" "differential"
+        probe-source (paths/resolve-path root "targets" "pkl" "validation" "probe"
                                          "CorePackageProbe.cs")]
     (when-not (and (= 27 (count base-core-cases))
                    (= 68 (count to-fixed-cases))

@@ -2,7 +2,8 @@
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.java-mapping-registry :as mapping-registry]
-            [dripsharp.target-directory :as target-directory])
+            [dripsharp.target-directory :as target-directory]
+            [dripsharp.target-execution :as target-execution])
   (:import [java.nio.file FileVisitOption Files Path]
            [java.nio.file.attribute FileAttribute]))
 
@@ -376,3 +377,111 @@
            runner (get-in target
                           [:validation-contracts :acme-core :runner])]
        (is (= :validated (runner {})))))))
+
+(deftest conforming-unregistered-target-drives-every-generic-stage
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (let [generated (atom [])
+           emitted-bundle (atom nil)
+           base-rule-bundle
+           {:rules
+            {:resolved-mappings
+             {:declarative-mapping-registries
+              (fn [_] {:base :base-registry})}
+             :structural-declarations
+             {:create-template
+              (fn [_ _] {:base-template true})}}}
+           generate-fn
+           (fn [{:keys [profile read-profile-fn read-destination-fn
+                        emit-project-fn]
+                 :as options}]
+             (let [profile-record (read-profile-fn root profile)
+                   destination
+                   (read-destination-fn
+                    root (:destination-config profile-record))]
+               (emit-project-fn {:rule-bundle base-rule-bundle})
+               (swap! generated conj
+                      {:profile profile
+                       :runtime-sources (:runtime-sources destination)})
+               {:stage :generate :options options}))
+           verify-fn
+           (fn [{:keys [generate-fn] :as options}]
+             {:stage :verify
+              :generation (generate-fn options)})
+           pack-fn
+           (fn [{:keys [verify-fn] :as options}]
+             {:stage :pack
+              :verification (verify-fn options)})
+           package-fn
+           (fn [{:keys [pack-fn] :as options}]
+             {:stage :package
+              :packing (pack-fn options)})
+           options
+           {:workspace-root root
+            :target :acme
+            :profile "acme-core"
+            :generate-fn generate-fn
+            :verify-fn verify-fn
+            :pack-fn pack-fn
+            :package-fn package-fn
+            :emit-project-fn
+            (fn [{:keys [rule-bundle]}]
+              (reset! emitted-bundle rule-bundle))}]
+       (is (= :generate (:stage (target-execution/generate! options))))
+       (is (= :verify (:stage (target-execution/verify! options))))
+       (is (= :pack (:stage (target-execution/pack! options))))
+       (is (= :package (:stage (target-execution/package! options))))
+       (is (every?
+            #(= ["targets/acme/runtime/Acme.Core.Runtime.cs"]
+                (:runtime-sources %))
+            @generated))
+       (let [registries
+             ((get-in @emitted-bundle
+                      [:rules :resolved-mappings
+                       :declarative-mapping-registries])
+              {})
+             template
+             ((get-in @emitted-bundle
+                      [:rules :structural-declarations
+                       :create-template])
+              {} {})]
+         (is (= #{:base :acme/core} (set (keys registries))))
+         (is (= :acme/string-length
+                (:id
+                 (mapping-registry/registry-entry
+                  (:acme/core registries)
+                  "executable:java.lang.String#length()"))))
+         (is (= 1 (count (:target-mapping-registries template)))))
+       (is (= {:target :acme
+               :profile "acme-core"
+               :contract-id :acme-core
+               :oracle
+               "targets/acme/validation/oracle/AcmeOracle.java"
+               :probe
+               "targets/acme/validation/probe/AcmeProbe.cs"}
+              (first
+               (target-execution/differential!
+                (assoc options
+                       :validation :acme-core
+                       :differential-fn
+                       (fn [{:keys [contract]}]
+                         {:target (:target contract)
+                          :profile (get-in contract [:runner :profile])
+                          :contract-id (:id contract)
+                          :oracle (get-in contract
+                                          [:runner :oracle :source])
+                          :probe (get-in contract
+                                         [:runner :probe :source])}))))))))))
+
+(deftest target-execution-requires-explicit-selections
+  (is (= :invalid-target-execution
+         (:kind
+          (failure-data
+           #(target-execution/generate!
+             {:target :acme :generate-fn identity})))))
+  (is (= :invalid-target-execution
+         (:kind
+          (failure-data
+           #(target-execution/generate!
+             {:profile "acme-core" :generate-fn identity}))))))

@@ -8,7 +8,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="PdfCube.XmpBox.MetadataProbe.cs" />
+    <Compile Include="../../targets/pdfcube/validation/probe/PdfCube.XmpBox.MetadataProbe.cs" />
     <PackageReference Include="PdfCube.XmpBox" Version="$(PdfCubeXmpBoxPackageVersion)" />
   </ItemGroup>
 </Project>

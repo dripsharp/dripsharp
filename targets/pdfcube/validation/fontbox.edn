@@ -1,0 +1,9 @@
+{:schema-version 1
+ :id :pdfcube-fontbox
+ :target :pdfcube
+ :profile "pdfcube-fontbox"
+ :baseline-profile :fontbox
+ :runner dripsharp.pdfcube.fontbox-differential/verify!
+ :oracle-sources ["validation/oracle/FontBoxUpstreamOracle.java"]
+ :probe-sources ["validation/probe/PdfCube.FontBox.PackageProbe.cs"]
+ :legal-sets [:upstream]}

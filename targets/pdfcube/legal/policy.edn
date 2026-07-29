@@ -1,0 +1,11 @@
+{:schema-version 1
+ :target :pdfcube
+ :upstream-license "Apache-2.0"
+ :allowed-upstream-licenses #{"Apache-2.0"}
+ :legal-sets #{:upstream :codecs}
+ :profile-legal-sets
+ {"pdfcube-io" [:upstream]
+  "pdfcube-fontbox" [:upstream]
+  "pdfcube-xmpbox" [:upstream]
+  "pdfcube-pdfbox" [:upstream :codecs]
+  "pdfcube-preflight" [:upstream]}}

@@ -3,6 +3,7 @@
   (:require [dripsharp.baseline :as baseline]
             [dripsharp.differential :as differential]
             [dripsharp.paths :as paths]
+            [dripsharp.target-execution :as target-execution]
             [dripsharp.util :as util])
   (:import [java.net URI]
            [java.nio.file Files Path StandardCopyOption]
@@ -10,7 +11,7 @@
 
 (def ^:private contract
   (differential/read-contract
-   "validation/pdfcube-fontbox/differential.edn"))
+   "targets/pdfcube/validation/fontbox-common.edn"))
 
 (def pinned-revision
   (baseline/upstream-revision :pdfcube))
@@ -84,7 +85,9 @@
   ([options]
    (differential/run!
     (assoc options
-           :contract contract
+           :contract
+           (target-execution/execution-differential-contract
+            :pdfcube contract)
            :prepare-context
            (fn [{:keys [workspace-root]}]
              {:fonts (ensure-font-fixtures! workspace-root)})

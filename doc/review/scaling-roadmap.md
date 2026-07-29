@@ -196,7 +196,7 @@ Choose the next targets to maximize what they teach the translator, not just
 their product value:
 
 * **rawhttp-core is already half-formalized** (`rawhttp_package.clj`,
-  `config/rawhttp-core.edn`) as a generality probe — small, network-flavored,
+  `targets/rawhttp/profiles/core.edn`) as a generality probe — small, network-flavored,
   concurrency-touching. Finish formalizing it as a permanent *conformance
   target*: cheap to regenerate, run in CI, and required to stay green, so the
   reusable layer provably stays reusable while big targets evolve.

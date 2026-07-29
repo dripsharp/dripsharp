@@ -1,0 +1,22 @@
+{:schema-version 1
+ :target :rawhttp
+ :upstream
+ {:name "RawHTTP Core"
+  :version "2.5.2"
+  :repository "https://github.com/renatoathaydes/rawhttp.git"
+  :revision "947cfdc619100a23f5e429ccb3c42ba6fedc8141"
+  :license "Apache-2.0"
+  :java-language-version 8}
+ :artifacts
+ {"com.google.code.findbugs:jsr305:3.0.2"
+  "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"}
+ :legal-sets {}
+ :packages
+ {"RawHttp.Core" {:version "2.5.2-dripsharp.0"}}
+ :profiles
+ {:core
+  {:profile "rawhttp-core"
+   :source-module "rawhttp-core"
+   :package-id "RawHttp.Core"
+   :source-counts {:ordinary 62 :generated 0}
+   :public-contract-rows 510}}}
