@@ -23,6 +23,19 @@
                 [(str (.relativize root file)) (vec (Files/readAllBytes file))]))
          (into (sorted-map)))))
 
+(def ^:private java-compat-areas
+  ["Java.IO" "Java.Lang" "Java.Math" "Java.Net" "Java.Nio"
+   "Java.Security" "Java.Text" "Java.Time" "Java.Util"
+   "Java.Util.Concurrent" "Java.Util.Regex" "Java.Xml"])
+
+(defn- generated-java-compat-source [project-root]
+  (->> java-compat-areas
+       (map #(slurp
+              (str (paths/resolve-path
+                    project-root "src" "DripSharp" "Runtime" "JavaCompat"
+                    (str % ".cs")))))
+       (str/join "\n")))
+
 (defn- public-method-frequencies [source]
   (frequencies
    (map second
@@ -108,7 +121,7 @@
 
     (testing "the entire selected declaration and body closure is accounted for"
       (is (= 657 (:compilation-units summary)))
-      (is (= 666 (:generated-files summary)))
+      (is (= 677 (:generated-files summary)))
       (is (= 28 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
@@ -217,9 +230,7 @@
               loading-runtime (slurp (str (paths/resolve-path
                                             source-root "Runtime" "Substrate"
                                             "Pkl.Core.Loading.cs")))
-              java-compat (slurp (str (paths/resolve-path
-                                        project-root "src" "DripSharp" "Runtime"
-                                        "JavaCompat.cs")))
+              java-compat (generated-java-compat-source project-root)
               identifier (slurp (str (paths/resolve-path source-root
                                                            "Runtime" "Identifier.cs")))
               member-lookup-suggestions

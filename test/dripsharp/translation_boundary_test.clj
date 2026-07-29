@@ -17,6 +17,25 @@
          (sort-by #(.getName %))
          vec)))
 
+(def ^:private java-compat-area-files
+  ["DripSharp.JavaCompat.Java.IO.cs"
+   "DripSharp.JavaCompat.Java.Lang.cs"
+   "DripSharp.JavaCompat.Java.Math.cs"
+   "DripSharp.JavaCompat.Java.Net.cs"
+   "DripSharp.JavaCompat.Java.Nio.cs"
+   "DripSharp.JavaCompat.Java.Security.cs"
+   "DripSharp.JavaCompat.Java.Text.cs"
+   "DripSharp.JavaCompat.Java.Time.cs"
+   "DripSharp.JavaCompat.Java.Util.cs"
+   "DripSharp.JavaCompat.Java.Util.Concurrent.cs"
+   "DripSharp.JavaCompat.Java.Util.Regex.cs"
+   "DripSharp.JavaCompat.Java.Xml.cs"])
+
+(defn- java-compat-runtime []
+  (->> java-compat-area-files
+       (map #(slurp (str "runtime/" %)))
+       (str/join "\n")))
+
 (defn- write-string! [^Path file value]
   (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
   (Files/writeString file value (make-array OpenOption 0))
@@ -331,6 +350,11 @@
 (deftest generic-runtime-is-independently-product-neutral
   (let [assets (generic-runtime-assets)]
     (is (seq assets))
+    (is (= (sort java-compat-area-files)
+           (->> assets
+                (map #(.getName %))
+                (filter #(str/starts-with? % "DripSharp.JavaCompat."))
+                sort)))
     (doseq [asset assets
             :let [content (slurp asset)
                   label (.getName asset)]]
@@ -344,7 +368,7 @@
       (is (= "OK" (compile-and-run-generic-runtime! assets true))))))
 
 (deftest product-bundles-select-java-compatibility-visibility-explicitly
-  (let [runtime (slurp "runtime/DripSharp.JavaCompat.cs")
+  (let [runtime (java-compat-runtime)
         guarded-types
         (map second
              (re-seq
@@ -405,7 +429,7 @@
 (deftest java-uri-component-mappings-retain-decoded-and-raw-api-pairs
   (let [body-rules (source "java_library")
         mapping-rules (source "java_library_mappings")
-        runtime (slurp "runtime/DripSharp.JavaCompat.cs")]
+        runtime (java-compat-runtime)]
     (doseq [[java-method helper]
             [["getAuthority" "UriAuthority"]
              ["getFragment" "UriFragment"]
@@ -446,7 +470,7 @@
          "? value.AbsoluteUri"))))
 
 (deftest translated-regex-carriers-retain-the-original-pattern
-  (let [runtime (slurp "runtime/DripSharp.JavaCompat.cs")
+  (let [runtime (java-compat-runtime)
         unicode-data (slurp "runtime/DripSharp.JavaRegexUnicodeData.cs")]
     (is (str/includes?
          runtime
@@ -472,7 +496,8 @@
   (let [body-rules (source "java_library")
         mapping-rules (source "java_library_mappings")
         project-rules (source "pkl/java_project")
-        runtime (slurp "runtime/DripSharp.JavaCompat.cs")]
+        runtime (java-compat-runtime)
+        util-runtime (slurp "runtime/DripSharp.JavaCompat.Java.Util.cs")]
     (is (str/includes?
          project-rules
          "\"java.util.Map$Entry\" [\"global::DripSharp.Runtime.JavaMapEntry\""))
@@ -489,6 +514,7 @@
     (is (str/includes? runtime
                        "internal static void IteratorRemove(IEnumerator iterator)"))
     (is (not (re-find #"(?i)org\\.pkl|Pkl\\.Core|Pkl\\.Parser"
-                      (subs runtime
-                            (.indexOf runtime "internal sealed class JavaMapEntry")
-                            (.indexOf runtime "internal static class JavaCompat")))))))
+                      (subs util-runtime
+                            (.indexOf util-runtime "internal sealed class JavaMapEntry")
+                            (.indexOf util-runtime
+                                      "internal static partial class JavaCompat")))))))

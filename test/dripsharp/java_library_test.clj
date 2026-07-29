@@ -2335,7 +2335,7 @@
         (paths/resolve-path project-root (:project-file emission))
         runtime-source
         (slurp (str (paths/resolve-path project-root
-                                        "src/DripSharp/Runtime/JavaCompat.cs")))
+                                        "src/DripSharp/Runtime/JavaCompat/Java.IO.cs")))
         consumer-root (temp-directory)
         _ (write-sources!
            consumer-root
@@ -4477,7 +4477,7 @@
                                         "src/Example/Java/Library/RandomBytes.cs")))
         runtime-source
         (slurp (str (paths/resolve-path (:project-root emission)
-                                        "src/DripSharp/Runtime/JavaCompat.cs")))]
+                                        "src/DripSharp/Runtime/JavaCompat/Java.Util.cs")))]
     (is (str/includes?
          source
          "global::DripSharp.Runtime.JavaRandom random = new global::DripSharp.Runtime.JavaRandom();"))

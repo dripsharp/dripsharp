@@ -24,6 +24,11 @@
                 [(str (.relativize root file)) (vec (Files/readAllBytes file))]))
          (into (sorted-map)))))
 
+(def ^:private java-compat-areas
+  ["Java.IO" "Java.Lang" "Java.Math" "Java.Net" "Java.Nio"
+   "Java.Security" "Java.Text" "Java.Time" "Java.Util"
+   "Java.Util.Concurrent" "Java.Util.Regex" "Java.Xml"])
+
 (defn- emit! [target worker-count]
   (let [{:keys [root discovery first]} (fixture/models)]
     (concurrency/call-with-executor
@@ -120,7 +125,7 @@
 
     (testing "all production inputs and source declarations are accounted for"
       (is (= 50 (:compilation-units summary)))
-      (is (= 49 (:generated-files summary)))
+      (is (= 60 (:generated-files summary)))
       (is (= 1 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))
@@ -219,10 +224,6 @@
       (let [project (slurp (str (:project-file first-emission)))
             resource (paths/resolve-path first-root
                                          "resources/org/pkl/parser/errorMessages.properties")
-            helper (paths/resolve-path first-root
-                                       "src/DripSharp/Runtime/JavaCompat.cs")
-            helper-source (paths/resolve-path (paths/workspace-root)
-                                              "runtime/DripSharp.JavaCompat.cs")
             unicode-helper (paths/resolve-path first-root
                                                "src/DripSharp/Runtime/JavaRegexUnicodeData.cs")
             unicode-helper-source
@@ -247,8 +248,17 @@
                            "LogicalName=\"org.pkl.parser.errorMessages.properties\""))
         (is (= (vec (Files/readAllBytes ^Path upstream))
                (vec (Files/readAllBytes resource))))
-        (is (= (vec (Files/readAllBytes helper-source))
-               (vec (Files/readAllBytes helper))))
+        (doseq [area java-compat-areas
+                :let [helper
+                      (paths/resolve-path
+                       first-root "src/DripSharp/Runtime/JavaCompat"
+                       (str area ".cs"))
+                      helper-source
+                      (paths/resolve-path
+                       (paths/workspace-root) "runtime"
+                       (str "DripSharp.JavaCompat." area ".cs"))]]
+          (is (= (vec (Files/readAllBytes helper-source))
+                 (vec (Files/readAllBytes helper)))))
         (is (= (vec (Files/readAllBytes unicode-helper-source))
                (vec (Files/readAllBytes unicode-helper))))))
 

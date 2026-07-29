@@ -8692,11 +8692,25 @@
       "DripSharp/Runtime/JavaBidi/UnicodeTrieConstants.cs"
       :reviewable-java-compatibility-source]])
    :java-compat
-   {:source "runtime/DripSharp.JavaCompat.cs"
-    :destination "DripSharp/Runtime/JavaCompat.cs"
-    :strategy :reviewable-java-compatibility-source
-    :missing-kind :missing-java-compatibility-source
-    :missing-message "Java compatibility source is missing"}
+   (mapv
+    (fn [area]
+      {:source (str "runtime/DripSharp.JavaCompat." area ".cs")
+       :destination (str "DripSharp/Runtime/JavaCompat/" area ".cs")
+       :strategy :reviewable-java-compatibility-source
+       :missing-kind :missing-java-compatibility-source
+       :missing-message "Java compatibility source is missing"})
+    ["Java.IO"
+     "Java.Lang"
+     "Java.Math"
+     "Java.Net"
+     "Java.Nio"
+     "Java.Security"
+     "Java.Text"
+     "Java.Time"
+     "Java.Util"
+     "Java.Util.Concurrent"
+     "Java.Util.Regex"
+     "Java.Xml"])
    :java-regex-unicode
    {:source "runtime/DripSharp.JavaRegexUnicodeData.cs"
     :destination "DripSharp/Runtime/JavaRegexUnicodeData.cs"

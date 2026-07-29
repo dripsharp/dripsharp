@@ -88,7 +88,7 @@
     (try
       (testing "clean generation and warnings-as-errors compilation are complete"
         (is (= 18 (:compilation-units summary)))
-        (is (= 22 (:generated-files summary)))
+        (is (= 33 (:generated-files summary)))
         (is (= 321 (:declarations summary)))
         (is (= 0 (:skipped-source-units summary)))
         (is (= 0 (:hard-failures summary)))
