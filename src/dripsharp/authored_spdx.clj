@@ -75,6 +75,17 @@
                       (fail! "Target inventory contains unresolved symbolic links"
                              {:targets invalid-entries
                               :reason :unresolved-symbolic-link}))
+                  non-directory-links
+                  (->> entries
+                       (filter #(Files/isSymbolicLink ^Path %))
+                       (remove paths/directory?)
+                       (map #(str (.getFileName ^Path %)))
+                       sort
+                       vec)
+                  _ (when (seq non-directory-links)
+                      (fail! "Target inventory contains non-directory symbolic links"
+                             {:targets non-directory-links
+                              :reason :non-directory-symbolic-link}))
                   directories
                   (->> entries
                        (filter paths/directory?)

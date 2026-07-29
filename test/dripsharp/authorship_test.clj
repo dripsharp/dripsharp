@@ -560,6 +560,19 @@
           (is (= ["dangling"]
                  (:targets (ex-data invalid-target)))))
         (Files/delete dangling-target))
+      (let [plain-file (write-text! outside "not-a-target.edn" "{}")
+            non-directory-target (.resolve root "targets/not-a-target")]
+        (Files/createSymbolicLink
+         non-directory-target plain-file (make-array FileAttribute 0))
+        (let [invalid-target
+              (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data invalid-target))))
+          (is (= :non-directory-symbolic-link
+                 (:reason (ex-data invalid-target))))
+          (is (= ["not-a-target"]
+                 (:targets (ex-data invalid-target)))))
+        (Files/delete non-directory-target))
       (let [target-root (.resolve root "targets/dangling")
             manifest-link (.resolve target-root "target.edn")]
         (Files/createDirectories target-root (make-array FileAttribute 0))
