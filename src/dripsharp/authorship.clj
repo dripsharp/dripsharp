@@ -354,6 +354,12 @@
         policy (validate-spdx-policy! policy)
         {:keys [path sha256]} (:repository-notice policy)
         notice (paths/absolute (paths/resolve-path workspace-root path))
+        _ (when (and (paths/real-contained? workspace-root notice)
+                     (Files/isSymbolicLink notice))
+            (fail! "Repository legal notice must not be a symbolic link"
+                   {:path path
+                    :decision (:decision policy)
+                    :reason :symbolic-link-repository-notice}))
         actual (when (and (paths/real-contained? workspace-root notice)
                           (paths/regular-file? notice))
                  (util/sha256-file notice))]

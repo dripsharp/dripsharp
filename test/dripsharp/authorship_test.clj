@@ -744,6 +744,21 @@
         (is (= :outside-workspace
                (:reason (ex-data escaped-policy))))
         (Files/delete policy-link)
+        (let [internal-policy
+              (write-text! root "internal-authored-spdx.edn" (pr-str policy))]
+          (Files/createSymbolicLink
+           policy-link internal-policy (make-array FileAttribute 0))
+          (let [linked-policy
+                (caught
+                 #(authored-spdx/verify-policy-file!
+                   root authored-spdx/policy-path [:fixture]))]
+            (is (= :invalid-authored-spdx-gate
+                   (:kind (ex-data linked-policy))))
+            (is (= :symbolic-link-policy
+                   (:reason (ex-data linked-policy))))
+            (is (= authored-spdx/policy-path
+                   (:path (ex-data linked-policy)))))
+          (Files/delete policy-link))
         (write-text! root authored-spdx/policy-path (pr-str policy))
         (let [outside-notice
               (write-text! outside "LICENSE" "Fixture repository license.\n")
@@ -759,6 +774,21 @@
           (is (= "LICENSE" (:path (ex-data escaped-notice))))
           (is (nil? (:actual (ex-data escaped-notice))))
           (Files/delete notice-link)
+          (let [internal-notice
+                (write-text!
+                 root "INTERNAL-LICENSE" "Fixture repository license.\n")]
+            (Files/createSymbolicLink
+             notice-link internal-notice (make-array FileAttribute 0))
+            (let [linked-notice
+                  (caught
+                   #(authorship/verify-repository-notice!
+                     root (dissoc policy :package-publisher)))]
+              (is (= :invalid-authorship-ledger
+                     (:kind (ex-data linked-notice))))
+              (is (= :symbolic-link-repository-notice
+                     (:reason (ex-data linked-notice))))
+              (is (= "LICENSE" (:path (ex-data linked-notice)))))
+            (Files/delete notice-link))
           (write-text! root "LICENSE" "Fixture repository license.\n"))
         (let [outside-source
               (write-text!

@@ -328,6 +328,10 @@
       (fail! "Approved SPDX policy file resolves outside the workspace"
              {:path (str policy-path)
               :reason :outside-workspace}))
+    (when (Files/isSymbolicLink policy-file)
+      (fail! "Approved SPDX policy file must not be a symbolic link"
+             {:path (str policy-path)
+              :reason :symbolic-link-policy}))
     {:file policy-file
      :policy
      (read-single-edn!
