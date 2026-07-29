@@ -1,11 +1,11 @@
 (ns dripsharp.compiler
   "Clean compilation and compiler-to-Spoon diagnostic correlation."
-  (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [dripsharp.harness :as harness]
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
-            [dripsharp.public-surface :as public-surface])
+            [dripsharp.public-surface :as public-surface]
+            [dripsharp.util :as util])
   (:import [clojure.lang ExceptionInfo]
            [java.nio.file Path]))
 
@@ -87,7 +87,7 @@
          source-map-file (paths/resolve-path
                           project-root
                           (get-in generation [:destination :output :source-map-file]))
-         source-map (edn/read-string (slurp (str source-map-file)))
+         source-map (util/read-single-edn-string! (slurp (str source-map-file)))
          command ["dotnet" "build" (str project-file) "--nologo"
                   "--configuration" build-configuration
                   "--verbosity:minimal" "--no-incremental"

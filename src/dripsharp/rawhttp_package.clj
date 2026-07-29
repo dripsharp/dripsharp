@@ -1,7 +1,6 @@
 (ns dripsharp.rawhttp-package
   "Independent RawHTTP Java-oracle and package-only .NET equivalence gate."
-  (:require [clojure.edn :as edn]
-            [clojure.set :as set]
+  (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.dotnet-surface :as dotnet-surface]
             [dripsharp.packaging :as packaging]
@@ -307,7 +306,8 @@
         source-map-file (paths/resolve-path
                          (:project-root emission)
                          (get-in generation [:destination :output :source-map-file]))
-        source-map (edn/read-string (Files/readString source-map-file StandardCharsets/UTF_8))
+        source-map (util/read-single-edn-string!
+                    (Files/readString source-map-file StandardCharsets/UTF_8))
         mapped-ids (set (keep #(get-in % [:source :declaration-id])
                               (:mappings source-map)))
         missing-metadata

@@ -73,6 +73,26 @@
                       :member ".ctor"
                       :parameter-count "0"})))))
 
+(deftest package-surface-audit-rejects-trailing-source-map-edn
+  (let [root (Files/createTempDirectory "rawhttp-source-map"
+                                        (make-array FileAttribute 0))
+        source-map (paths/resolve-path root "source-map.edn")
+        _ (Files/writeString source-map
+                             "{:schema-version 1 :mappings []}\n{:hidden true}\n"
+                             (make-array OpenOption 0))
+        error
+        (caught
+         #(rawhttp/audit-selected-surface!
+           root
+           {:verification
+            {:generation
+             {:destination {:output {:source-map-file "source-map.edn"}}
+              :emission {:project-root root
+                         :public-metadata {:rows []}}}}}
+           {}
+           {"public-surface-row-count" "0"}))]
+    (is (= :trailing-data (:reason (ex-data error))))))
+
 (deftest non-pkl-boundary-is-an-artifact-contract-not-a-loaded-namespace-check
   (let [root (Files/createTempDirectory "rawhttp-boundary"
                                         (make-array FileAttribute 0))

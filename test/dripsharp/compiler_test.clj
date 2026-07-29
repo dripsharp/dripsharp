@@ -48,6 +48,30 @@
     (is (= 1 (count diagnostics)))
     (is (= :warning (:severity (first diagnostics))))))
 
+(deftest clean-build-rejects-trailing-source-map-edn
+  (let [root (Files/createTempDirectory "dripsharp-compiler-source-map"
+                                        (make-array FileAttribute 0))
+        project-file (paths/resolve-path root "Pkl.Core.csproj")
+        source-map (paths/resolve-path root "source-map.edn")
+        _ (Files/writeString project-file "<Project />" (make-array OpenOption 0))
+        _ (Files/writeString source-map
+                             "{:schema-version 1 :mappings []}\n{:hidden true}\n"
+                             (make-array OpenOption 0))
+        error
+        (try
+          (compiler/verify-clean-build!
+           {:workspace-root root
+            :profile "pkl-core-value-model"
+            :generate-fn
+            (fn [_]
+              {:destination {:package {:id "Pkl.Core"}
+                             :output {:source-map-file "source-map.edn"}}
+               :emission {:project-root root :project-file project-file}})
+            :run-command! (fn [_] (throw (ex-info "must not run" {})))})
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= :trailing-data (:reason (ex-data error))))))
+
 (deftest explicit-profile-is-cleanly-generated-and-built-in-release
   (let [root (Files/createTempDirectory "dripsharp-compiler-profile"
                                         (make-array FileAttribute 0))
