@@ -1,10 +1,14 @@
 # RawHTTP Conformance Target Goal
 
-RawHTTP Core is an operational conformance target for the shared Java-library
-translation pipeline. Its durable product scope and completion semantics are
-still governed by the repository product-goal process; this document does not
-add exclusions or treat successful target-directory validation as completion.
+RawHTTP Core is the permanent reusable-translator conformance target for the
+shared Java-library translation pipeline. Its required proof is deliberately
+small enough for continuous integration and must remain green while product
+targets evolve. Its durable product scope and completion semantics are still
+governed by the repository product-goal process; this document does not add
+exclusions or treat successful target-directory validation as completion.
 
-The target must continue to support clean generation, compilation, packaging,
-independent package consumption, and the existing pinned Java/.NET behavior
-equivalence proof.
+The target contract must retain required coverage for reusable Gradle
+ingestion, recursive Java-to-C# translation, clean generation and compilation,
+deterministic packaging, independent package consumption, and the pinned
+Java/.NET behavior equivalence proof. CI resource or duration decisions do not
+make any part of that ladder optional.

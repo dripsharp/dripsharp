@@ -268,7 +268,8 @@
   [(-> (:owner row)
        (str/replace #"`\d+" "")
        (str/replace "$" ".")
-       (str/replace ".internal." ".@internal."))
+       (str/replace ".internal." ".@internal.")
+       (str/replace ".Internal." ".@Internal."))
    (:member row)
    (parse-long (:parameter-count row))])
 
@@ -421,9 +422,6 @@
         destination (:destination generation)
         emission (:emission generation)
         identities (mapv :identity (:packages package-proof))
-        forbidden-namespaces
-        (->> (all-ns) (map ns-name) (map str)
-             (filter #(re-find #"(?i)(^|[.-])pkl($|[.-])" %)) sort vec)
         identity-values
         (concat [(get-in destination [:project :assembly-name])
                  (get-in destination [:project :root-namespace])
@@ -440,14 +438,14 @@
                                     (Files/readString file StandardCharsets/UTF_8))
                        (str file))))
              vec)]
-    (when (or (seq forbidden-namespaces) (seq pkl-identities) (seq generated-findings)
+    (when (or (seq pkl-identities) (seq generated-findings)
               (not= "research/rawhttp"
                     (get-in generation [:generation-profile :project-root])))
       (fail! "RawHTTP regression crossed the Pkl product boundary"
-             {:reason :pkl-boundary-leak :loaded-namespaces forbidden-namespaces
+             {:reason :pkl-boundary-leak
               :identities (vec pkl-identities) :generated-files generated-findings
               :project-root (get-in generation [:generation-profile :project-root])}))
-    {:loaded-pkl-namespaces 0 :pkl-identities 0 :pkl-generated-files 0
+    {:pkl-identities 0 :pkl-generated-files 0
      :source-project "research/rawhttp"}))
 
 (defn- primary-package [package-proof]

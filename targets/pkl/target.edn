@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :target :pkl
  :product-family :pkl
  :contracts
@@ -53,4 +53,12 @@
  :validation-contracts
  [{:id :pkl-differential
    :kind :custom
-   :path "validation/differential.edn"}]}
+   :path "validation/differential.edn"}]
+ :proof
+ {:role :product
+  :ladders
+  [{:id :pkl-complete-product-proof
+    :kind :target-validations
+    :profiles ["pkl-parser" "pkl-core-value-model"]
+    :validation-contracts [:pkl-differential]
+    :resource-class :high-memory}]}}

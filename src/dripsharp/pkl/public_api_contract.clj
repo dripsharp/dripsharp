@@ -286,10 +286,11 @@
         classes (temp-directory "dripsharp-public-api-upstream")]
     (command-output {:command ["javac" "-d" classes upstream-extractor]
                      :directory workspace})
-    (let [text (command-output
-                {:command ["java" "-Xmx4g" "-cp" classes
-                           "PublicApiUpstreamExtractor" "--workspace" workspace]
-                 :directory workspace})]
+    (let [text (process/without-java-tool-options-banner
+                (command-output
+                 {:command ["java" "-Xmx4g" "-cp" classes
+                            "PublicApiUpstreamExtractor" "--workspace" workspace]
+                  :directory workspace}))]
       (when-not (str/starts-with? text "# DRIPSHARP_UPSTREAM_PUBLIC_API_V1\n")
         (fail! "Standalone upstream API extractor returned an invalid stream"
                {:kind :invalid-upstream-api-extraction

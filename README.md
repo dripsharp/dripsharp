@@ -77,6 +77,9 @@ clojure -J-Xmx28g -M:run differential pdfcube pdfcube-fontbox
 clojure -J-Xmx28g -M:run differential pdfcube pdfcube-xmpbox-metadata
 clojure -J-Xmx8g -M:run package rawhttp rawhttp-core
 clojure -J-Xmx8g -M:run differential rawhttp
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof rawhttp
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pkl
+DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pdfcube
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pdfcube
 clojure -M:test
@@ -176,6 +179,9 @@ dependency on `Pkl.Parser`.
 
 `differential <target> [validation-id]` dispatches the target manifest's
 validation contracts. The Pkl validation performs both complete package gates.
+`proof <target>` runs every required ladder in the target's schema-version 2
+proof contract. That contract exhaustively covers the target's profiles and
+validations and assigns CI resources without making any proof optional.
 It separately builds and
 runs the pinned upstream JVM parser as an oracle, then runs a package-only .NET
 probe over the baseline-recorded LanguageSnippetTests inputs and the upstream lexer/span edge

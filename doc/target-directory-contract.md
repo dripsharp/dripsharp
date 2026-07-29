@@ -14,11 +14,11 @@ to the product-neutral directory loader.
 
 ## Manifest
 
-`targets/<target-id>/target.edn` uses schema version 1 and has exactly these
+`targets/<target-id>/target.edn` uses schema version 2 and has exactly these
 keys:
 
 ```clojure
-{:schema-version 1
+{:schema-version 2
  :target :example
  :product-family :example
 
@@ -64,7 +64,16 @@ keys:
  :validation-contracts
  [{:id :example-core
    :kind :differential
-   :path "validation/core.edn"}]}
+   :path "validation/core.edn"}]
+
+ :proof
+ {:role :product
+  :ladders
+  [{:id :example-complete-proof
+    :kind :target-validations
+    :profiles ["example-core"]
+    :validation-contracts [:example-core]
+    :resource-class :high-memory}]}}
 ```
 
 Unknown or missing keys are errors. Descriptor ids and paths are unique.
@@ -184,3 +193,24 @@ those records rather than re-reading unvalidated target files.
 Successful directory validation is configuration evidence only. It is not
 clean-generation, compilation, packaging, consumption, behavior, milestone,
 or product-completion evidence.
+
+## Required proof ladders
+
+The manifest's `:proof` contract makes omission impossible to use as a shorter
+gate. Its role is either `:product` or
+`:reusable-translator-conformance`, and its nonempty `:ladders` vector must
+cover every declared profile and validation contract exactly once. Every
+ladder is required; the schema intentionally has no optional, skip, or
+continue-on-error flag.
+
+A `:target-validations` ladder runs the listed validation contracts through
+the metadata-driven target executor. A `:custom` ladder additionally names a
+qualified callable runner for an aggregate target proof whose evidence model
+cannot be represented as a single common differential. The declared profile
+and validation coverage remains exhaustive for both kinds.
+
+Each ladder selects either the `:conformance` or `:high-memory` resource
+class. The reusable-translator conformance role is restricted to the
+product-neutral Java-library family and the conformance class. Resource
+classes select appropriate required CI runners and time budgets; they never
+make product behavior optional.

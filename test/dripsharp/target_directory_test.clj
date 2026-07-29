@@ -180,7 +180,7 @@
 
 (defn- target-manifest
   []
-  {:schema-version 1
+  {:schema-version 2
    :target :acme
    :product-family :acme
    :contracts
@@ -212,7 +212,15 @@
    :validation-contracts
    [{:id :acme-core
      :kind :differential
-     :path "validation/contract.edn"}]})
+     :path "validation/contract.edn"}]
+   :proof
+   {:role :product
+    :ladders
+    [{:id :acme-required-proof
+      :kind :target-validations
+      :profiles ["acme-core"]
+      :validation-contracts [:acme-core]
+      :resource-class :high-memory}]}})
 
 (defn- legal-policy
   []
@@ -271,6 +279,9 @@
                             [:mapping-overlays :acme/core :registry])]
        (is (= :acme (:target target)))
        (is (= :acme (:product-family target)))
+       (is (= :product (get-in target [:proof :role])))
+       (is (= [:acme-required-proof]
+              (mapv :id (get-in target [:proof :ladders]))))
        (is (= #{"acme-core"} (set (keys (:profiles target)))))
        (is (= #{:java-compat :acme/mapping :acme/runtime}
               (:capabilities target)))
@@ -351,6 +362,36 @@
          (is (= :invalid-target-directory (:kind failure)))
          (is (= "Validation oracle" (:subject failure))))))))
 
+(deftest required-proof-ladders-cover-target-contracts-fail-closed
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (testing "every target profile remains in a required proof ladder"
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in [:proof :ladders 0 :profiles] [])
+       (let [failure (failure-data
+                      #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= :acme-required-proof (:ladder failure)))))
+     (testing "every target validation remains in a required proof ladder"
+       (write-edn! root "targets/acme/target.edn" (target-manifest))
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in [:proof :ladders 0 :validation-contracts] [])
+       (let [failure (failure-data
+                      #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= :acme-required-proof (:ladder failure)))))
+     (testing "the reusable conformance role is target- and resource-specific"
+       (write-edn! root "targets/acme/target.edn" (target-manifest))
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in [:proof :role]
+                    :reusable-translator-conformance)
+       (let [failure (failure-data
+                      #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= :acme (:target failure)))
+         (is (= :acme (:product-family failure))))))))
+
 (deftest custom-oracle-and-probe-contracts-remain-supported
   (in-target-workspace
    (fn [root]
@@ -373,10 +414,22 @@
        :oracle-sources ["validation/oracle/AcmeOracle.java"]
        :probe-sources ["validation/probe/AcmeProbe.cs"]
        :legal-sets [:upstream]})
+     (update-edn!
+      root "targets/acme/target.edn"
+      update-in [:proof :ladders 0]
+      assoc
+      :kind :custom
+      :runner
+      'dripsharp.target-directory-test/custom-validation-runner)
      (let [target (target-directory/read-target root :acme)
            runner (get-in target
                           [:validation-contracts :acme-core :runner])]
-       (is (= :validated (runner {})))))))
+       (is (= :validated (runner {})))
+       (is (= [{:id :acme-required-proof
+                :resource-class :high-memory
+                :result :validated}]
+              (target-execution/proof!
+               {:workspace-root root :target :acme})))))))
 
 (deftest conforming-unregistered-target-drives-every-generic-stage
   (in-target-workspace
@@ -472,7 +525,20 @@
                           :oracle (get-in contract
                                           [:runner :oracle :source])
                           :probe (get-in contract
-                                         [:runner :probe :source])}))))))))))
+                                         [:runner :probe :source])}))))))
+       (is (= [{:id :acme-required-proof
+                :resource-class :high-memory
+                :result
+                [{:target :acme
+                  :profile "acme-core"
+                  :contract-id :acme-core}]}]
+              (target-execution/proof!
+               (assoc options
+                      :differential-fn
+                      (fn [{:keys [contract]}]
+                        {:target (:target contract)
+                         :profile (get-in contract [:runner :profile])
+                         :contract-id (:id contract)})))))))))
 
 (deftest target-execution-requires-explicit-selections
   (is (= :invalid-target-execution

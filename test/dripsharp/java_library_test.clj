@@ -4799,6 +4799,41 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest generic-null-atomic-and-iterator-interop-remain-csharp-safe
+  (let [fixture
+        (model!
+         {"example/Interop.java"
+          (str "package example; import java.util.List; "
+               "import java.util.concurrent.atomic.AtomicReference; "
+               "public final class Interop { "
+               "static String clear(AtomicReference<String> value) { "
+               "return value.getAndSet(null); } "
+               "static String first(List<String> values) { "
+               "return values.iterator().next(); } }")
+          "example/Base.java"
+          (str "package example; public class Base<T> { "
+               "public Eager<T> eager() { return Eager.from(this); } }")
+          "example/Eager.java"
+          (str "package example; public final class Eager<T> extends Base<T> { "
+               "public static <T> Eager<T> from(Base<T> value) { return null; } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        interop
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Interop.cs")))
+        base
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Base.cs")))]
+    (is (str/includes? interop ".GetAndSet(default!)"))
+    (is (not (str/includes? interop ".GetAndSet((object)default!)")))
+    (is (str/includes? interop ".Next()!"))
+    (is (str/includes? base ".from(this)"))
+    (is (not (str/includes? base "<MethodT>")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest implicit-jdk-stream-base-constructors-are-omitted
   (let [fixture
         (model! {"example/Sources.java"
@@ -4825,6 +4860,74 @@
     (is (zero? (:exit
                 (process/run! {:directory (:project-root first)
                                :command ["dotnet" "build" (:project-file first)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest jdk-stream-overrides-use-the-runtime-contract-names
+  (let [fixture
+        (model!
+         {"example/Source.java"
+          (str "package example; import java.io.InputStream; "
+               "public final class Source extends InputStream { "
+               "@Override public int read() { return -1; } "
+               "@Override public int available() { return 0; } "
+               "@Override public boolean markSupported() { return false; } "
+               "public String read(String value) { return value; } }")
+          "example/Sink.java"
+          (str "package example; import java.io.OutputStream; "
+               "public final class Sink extends OutputStream { "
+               "@Override public void write(int value) {} "
+               "@Override public void write(byte[] values, int offset, int count) {} "
+               "@Override public void flush() {} }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Source.cs")))
+        sink
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Sink.cs")))]
+    (doseq [signature ["public override int Read()"
+                       "public override int Available()"
+                       "public override bool MarkSupported()"]]
+      (is (str/includes? source signature)))
+    (is (str/includes? source "public string read(string value)"))
+    (doseq [signature ["public override void Write(int value)"
+                       "public override void Write(sbyte[] values, int offset, int count)"
+                       "public override void Flush()"]]
+      (is (str/includes? sink signature)))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
+(deftest wildcard-generic-covariant-overrides-use-explicit-hiding
+  (let [fixture
+        (model!
+         {"example/Body.java"
+          "package example; public class Body {}"
+          "example/EagerBody.java"
+          "package example; public final class EagerBody extends Body {}"
+          "example/Base.java"
+          (str "package example; import java.util.Optional; "
+               "public class Base { public Optional<? extends Body> getBody() { "
+               "return Optional.empty(); } }")
+          "example/Derived.java"
+          (str "package example; import java.util.Optional; "
+               "public final class Derived extends Base { @Override "
+               "public Optional<EagerBody> getBody() { return Optional.empty(); } }")})
+        emission (emit! fixture 1 #{:java-compat :java-regex-unicode})
+        source
+        (slurp (str (paths/resolve-path (:project-root emission)
+                                        "src/Example/Java/Library/Derived.cs")))]
+    (is (str/includes?
+         source
+         (str "public new global::DripSharp.Runtime.JavaOptional<"
+              "global::Example.Java.Library.EagerBody> getBody()")))
+    (is (not (str/includes? source "override global::DripSharp.Runtime.JavaOptional")))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 

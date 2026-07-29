@@ -93,8 +93,9 @@
     (run-command root "javac" "--release" "17" "-Xlint:all" "-Werror"
                  "-d" classes source)
     (str/trim
-     (run-command root "java" "-cp" classes
-                  "fixture.linkedhashmap.LinkedHashMapFixture"))))
+     (process/without-java-tool-options-banner
+      (run-command root "java" "-cp" classes
+                   "fixture.linkedhashmap.LinkedHashMapFixture")))))
 
 (defn- consumer-project [target-framework]
   (str "<Project Sdk=\"Microsoft.NET.Sdk\">\n"

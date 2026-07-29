@@ -31,11 +31,11 @@ observation-count	28
 successful-observation-count	16
 failure-observation-count	12
 public-surface-row-count	510
-compiled-public-surface-type-count	83
-compiled-public-surface-member-count	505
-compiled-public-surface-row-count	588
-compiled-public-surface-sha256	56823218c594d964720b9b91271898775108786f8577fed86f329c750d5de4eb
-package-inspector-public-surface-sha256	7572eb99ea564b5827535b15b03c0873a649e5c7ca1d488c0ab4de2bcf982e78
+compiled-public-surface-type-count	139
+compiled-public-surface-member-count	787
+compiled-public-surface-row-count	926
+compiled-public-surface-sha256	1a79d93d789d60e911b8f306a959209083e8fdad679647568b1b1391e16a6d42
+package-inspector-public-surface-sha256	a86ed95025bcb19a2b27875b5f3278eb70aacd1234975eb13e5b117028fd13e3
 external-dependency	com.google.code.findbugs:jsr305:3.0.2
 external-dependency-scope	compile
 external-dependency-artifact	jsr305-3.0.2.jar

@@ -13,14 +13,14 @@
             [dripsharp.paths :as paths])
   (:import [java.nio.file Files LinkOption]))
 
-(def schema-version 1)
+(def schema-version 2)
 (def legal-policy-schema-version 1)
 (def mapping-overlay-schema-version 1)
 
 (def ^:private manifest-keys
   #{:schema-version :target :product-family :contracts :baseline :legal-policy
     :java :capabilities :profiles :destinations :mapping-overlays
-    :runtime-assets :validation-contracts})
+    :runtime-assets :validation-contracts :proof})
 
 (def ^:private document-keys
   #{:product-goal :port-scope :dependencies})
@@ -52,6 +52,21 @@
 (def ^:private custom-validation-keys
   #{:schema-version :id :target :profile :baseline-profile :runner
     :oracle-sources :probe-sources :legal-sets})
+
+(def ^:private proof-keys
+  #{:role :ladders})
+
+(def ^:private target-validation-ladder-keys
+  #{:id :kind :profiles :validation-contracts :resource-class})
+
+(def ^:private custom-ladder-keys
+  (conj target-validation-ladder-keys :runner))
+
+(def ^:private target-roles
+  #{:product :reusable-translator-conformance})
+
+(def ^:private proof-resource-classes
+  #{:conformance :high-memory})
 
 (defn- fail!
   [message data]
@@ -701,6 +716,88 @@
              {:validation validation-id :runner selector}))
     resolved))
 
+(defn- proof-selection!
+  [subject values available ladder-id]
+  (when-not (and (vector? values)
+                 (seq values)
+                 (= (count values) (count (distinct values)))
+                 (set/subset? (set values) available))
+    (fail! (str "Proof ladder selects invalid " subject)
+           {:ladder ladder-id
+            :selection values
+            :available (vec (sort available))}))
+  values)
+
+(defn- load-proof!
+  [target family proof profiles validations]
+  (exact-keys! "Target proof contract" proof-keys proof)
+  (let [role (:role proof)
+        profile-ids (set (keys profiles))
+        validation-ids (set (keys validations))
+        ladders (:ladders proof)]
+    (when-not (contains? target-roles role)
+      (fail! "Target proof contract has an unsupported role"
+             {:target target :role role :allowed (vec (sort target-roles))}))
+    (when (and (= :reusable-translator-conformance role)
+               (not= :java-library family))
+      (fail! "Reusable-translator conformance targets must use the Java-library product family"
+             {:target target :product-family family}))
+    (distinct-vector! "Target proof ladders" ladders :id)
+    (when (empty? ladders)
+      (fail! "Target proof contract must declare at least one required ladder"
+             {:target target}))
+    (let [loaded
+          (mapv
+           (fn [{:keys [id kind profiles validation-contracts resource-class
+                        runner]
+                 :as ladder}]
+             (exact-keys!
+              "Target proof ladder"
+              (if (= :custom kind)
+                custom-ladder-keys
+                target-validation-ladder-keys)
+              ladder)
+             (when-not (keyword? id)
+               (fail! "Target proof ladder id must be a keyword"
+                      {:target target :ladder id}))
+             (when-not (contains? #{:target-validations :custom} kind)
+               (fail! "Target proof ladder has an unsupported kind"
+                      {:target target :ladder id :kind kind}))
+             (when-not (contains? proof-resource-classes resource-class)
+               (fail! "Target proof ladder has an unsupported resource class"
+                      {:target target :ladder id
+                       :resource-class resource-class
+                       :allowed (vec (sort proof-resource-classes))}))
+             (when (and (= :reusable-translator-conformance role)
+                        (not= :conformance resource-class))
+               (fail! "Reusable-translator conformance ladders must use the conformance resource class"
+                      {:target target :ladder id
+                       :resource-class resource-class}))
+             (proof-selection! "profiles" profiles profile-ids id)
+             (proof-selection! "validation contracts"
+                               validation-contracts validation-ids id)
+             (cond-> ladder
+               (= :custom kind)
+               (assoc :runner (resolve-custom-runner! runner id))))
+           ladders)
+          selected-profiles (mapcat :profiles loaded)
+          selected-validations (mapcat :validation-contracts loaded)]
+      (when-not (and (= (count selected-profiles)
+                        (count (distinct selected-profiles)))
+                     (= profile-ids (set selected-profiles)))
+        (fail! "Required proof ladders must cover every target profile exactly once"
+               {:target target
+                :expected (vec (sort profile-ids))
+                :actual (vec (sort selected-profiles))}))
+      (when-not (and (= (count selected-validations)
+                        (count (distinct selected-validations)))
+                     (= validation-ids (set selected-validations)))
+        (fail! "Required proof ladders must cover every target validation exactly once"
+               {:target target
+                :expected (vec (sort validation-ids))
+                :actual (vec (sort selected-validations))}))
+      {:role role :ladders loaded})))
+
 (defn- load-differential-validation!
   [workspace-root target-root target baseline-record legal-policy
    descriptor file contract profiles]
@@ -978,6 +1075,9 @@
                  (load-validation-contracts!
                   workspace-root target-root target baseline-record legal-policy
                   (:validation-contracts manifest) profiles)
+                 proof
+                 (load-proof! target family (:proof manifest)
+                              profiles validations)
                  selected-destinations
                  (set (map #(get-in % [:descriptor :destination])
                            (vals profiles)))
@@ -1033,4 +1133,5 @@
               :destinations destinations
               :mapping-overlays mapping-overlays
               :runtime-assets runtime-assets
-              :validation-contracts validations})))))))
+              :validation-contracts validations
+              :proof proof})))))))

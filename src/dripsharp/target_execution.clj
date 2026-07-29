@@ -319,6 +319,40 @@
                               :validation-contracts]))))]
     (mapv #(run-validation! execution options %) selected)))
 
+(defn proof!
+  "Runs every required proof ladder declared by one preflighted target.
+  Ladders are mandatory, exhaustive over target profiles and validations, and
+  carry their CI resource class in the target contract."
+  [options]
+  (let [execution (plan (assoc options :profile nil))
+        validations (get-in execution [:contract :validation-contracts])
+        ladders (get-in execution [:contract :proof :ladders])]
+    (mapv
+     (fn [{:keys [id kind validation-contracts resource-class runner]}]
+       {:id id
+        :resource-class resource-class
+        :result
+        (case kind
+          :target-validations
+          (mapv
+           (fn [validation-id]
+             (run-validation!
+              execution options
+              (or (get validations validation-id)
+                  (fail! "Proof ladder selects an unavailable validation"
+                         {:target (:target execution)
+                          :ladder id
+                          :validation validation-id}))))
+           validation-contracts)
+
+          :custom
+          (runner {:workspace-root (:workspace-root execution)
+                   :target-contract (:contract execution)})
+
+          (fail! "Proof ladder has an unsupported kind"
+                 {:target (:target execution) :ladder id :kind kind}))})
+     ladders)))
+
 (defn run!
   [command options]
   (case command
@@ -327,4 +361,5 @@
     :pack (pack! options)
     :package (package! options)
     :differential (differential! options)
+    :proof (proof! options)
     (fail! "Unknown target execution command" {:command command})))

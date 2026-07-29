@@ -25,3 +25,11 @@
     (is (= :command-timeout (:kind (ex-data error))))
     (is (= 50 (:timeout-ms (ex-data error))))
     (is (= "started" (:output (ex-data error))))))
+
+(deftest java-tool-options-launcher-diagnostic-is-not-program-output
+  (is (= "# contract\nrow\n"
+         (process/without-java-tool-options-banner
+          (str "Picked up JAVA_TOOL_OPTIONS: -Xmx28g\n"
+               "# contract\nrow\n"))))
+  (is (= "ordinary output"
+         (process/without-java-tool-options-banner "ordinary output"))))

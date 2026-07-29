@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :target :pdfcube
  :product-family :pdfcube
  :contracts
@@ -99,4 +99,16 @@
    :path "validation/fontbox.edn"}
   {:id :pdfcube-xmpbox-metadata
    :kind :differential
-   :path "validation/xmpbox.edn"}]}
+   :path "validation/xmpbox.edn"}]
+ :proof
+ {:role :product
+  :ladders
+  [{:id :pdfcube-complete-family-proof
+    :kind :custom
+    :runner dripsharp.pdfcube.family-workflows/verify!
+    :profiles
+    ["pdfcube-io" "pdfcube-fontbox" "pdfcube-xmpbox"
+     "pdfcube-pdfbox" "pdfcube-preflight"]
+    :validation-contracts
+    [:pdfcube-io :pdfcube-fontbox :pdfcube-xmpbox-metadata]
+    :resource-class :high-memory}]}}

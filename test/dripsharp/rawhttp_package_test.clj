@@ -61,3 +61,43 @@
                             (assoc expected :sha256 (apply str (repeat 64 "0")))
                             expected))]
         (is (= :assembly-provenance-mismatch (:reason (ex-data error))))))))
+
+(deftest compiled-body-keys-reconcile-csharp-escaped-internal-namespaces
+  (let [body-key (ns-resolve 'dripsharp.rawhttp-package 'body-key)]
+    (is (= ["RawHttp.Core.@Internal.Bool" "getAndSet" 1]
+           (body-key {:owner "RawHttp.Core.Internal.Bool"
+                      :member "getAndSet"
+                      :parameter-count "1"})))
+    (is (= ["RawHttp.Core.@Internal.Parent.Child" ".ctor" 0]
+           (body-key {:owner "RawHttp.Core.Internal.Parent$Child"
+                      :member ".ctor"
+                      :parameter-count "0"})))))
+
+(deftest non-pkl-boundary-is-an-artifact-contract-not-a-loaded-namespace-check
+  (let [root (Files/createTempDirectory "rawhttp-boundary"
+                                        (make-array FileAttribute 0))
+        source-root (paths/resolve-path root "generated" "src")
+        verify-boundary
+        (ns-resolve 'dripsharp.rawhttp-package 'verify-non-pkl-boundary!)
+        package-proof
+        {:packages [{:identity {:id "RawHttp.Core"}}]
+         :verification
+         {:generation
+          {:destination
+           {:project {:assembly-name "RawHttp.Core"
+                      :root-namespace "RawHttp.Core"}
+            :package {:id "RawHttp.Core"}}
+           :generation-profile {:project-root "research/rawhttp"}
+           :emission {:project-root (paths/resolve-path root "generated")}}}}]
+    (Files/createDirectories source-root (make-array FileAttribute 0))
+    (Files/writeString (paths/resolve-path source-root "RawHttp.cs")
+                       "namespace RawHttp.Core;"
+                       (make-array OpenOption 0))
+    (create-ns 'dripsharp.pkl.loaded-for-boundary-test)
+    (try
+      (is (= {:pkl-identities 0
+              :pkl-generated-files 0
+              :source-project "research/rawhttp"}
+             (verify-boundary package-proof)))
+      (finally
+        (remove-ns 'dripsharp.pkl.loaded-for-boundary-test)))))

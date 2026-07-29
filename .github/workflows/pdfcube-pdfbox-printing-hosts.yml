@@ -35,15 +35,15 @@ jobs:
       - name: Verify proof-runner resources
         shell: bash
         run: |
-          available_kib=$(awk '/MemTotal/ { print $2 }' /proc/meminfo)
+          available_kib=$(awk '/MemAvailable/ { print $2 }' /proc/meminfo)
           available_cpu=$(getconf _NPROCESSORS_ONLN)
           if (( available_kib < 33554432 || available_cpu < 22 )); then
-            echo "PdfCube.PdfBox printing proof requires at least 32 GiB RAM and 22 CPUs."
+            echo "PdfCube.PdfBox printing proof requires at least 32 GiB available RAM and 22 CPUs."
             exit 1
           fi
 
       - name: Pack, consume, and differentially verify
-        run: clojure -J-Xmx28g -M:run pdfcube-pdfbox-printing-differential
+        run: clojure -J-Xmx28g -M:run proof pdfcube
 
       - name: Upload complete local feed
         uses: actions/upload-artifact@v4

@@ -97,7 +97,9 @@
   (let [classes (paths/resolve-path root "java-classes")]
     (Files/createDirectories classes (make-array FileAttribute 0))
     (run-command root "javac" "-Xlint:all" "-Werror" "-d" classes source)
-    (str/trim (run-command root "java" "-cp" classes "LabeledControlFlowFixture"))))
+    (str/trim
+     (process/without-java-tool-options-banner
+      (run-command root "java" "-cp" classes "LabeledControlFlowFixture")))))
 
 (defn- library-source
   [translations]

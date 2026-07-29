@@ -1545,21 +1545,70 @@
    (.getArguments invocation)
    arguments))
 
+(defn- type-parameter-declaration
+  [^CtTypeParameterReference reference]
+  (try
+    (.getDeclaration reference)
+    (catch Throwable _ nil)))
+
+(defn- type-reference-contains-formal?
+  [^CtTypeReference reference ^CtTypeParameter formal]
+  (boolean
+   (or
+    (and
+     (instance? CtTypeParameterReference reference)
+     (= formal
+        (type-parameter-declaration
+         ^CtTypeParameterReference reference)))
+    (and
+     (instance? CtArrayTypeReference reference)
+     (type-reference-contains-formal?
+      (.getComponentType ^CtArrayTypeReference reference)
+      formal))
+    (some #(type-reference-contains-formal? % formal)
+          (.getActualTypeArguments reference)))))
+
+(defn- inferable-formal-type-arguments?
+  [^CtMethod declaration actual]
+  (let [formals (vec (.getFormalCtTypeParameters declaration))
+        parameters (mapv #(.getType ^CtParameter %)
+                         (.getParameters declaration))]
+    (and
+     (= (count formals) (count actual))
+     (every?
+      true?
+      (map
+       (fn [^CtTypeParameter formal ^CtTypeReference argument]
+         (and
+          (= formal
+             (when (instance? CtTypeParameterReference argument)
+               (type-parameter-declaration
+                ^CtTypeParameterReference argument)))
+          (some #(type-reference-contains-formal? % formal)
+                parameters)))
+       formals
+       actual)))))
+
 (defn- project-invocation-type-arguments-node
   [ctx ^CtInvocation invocation declaration]
   (when (and (instance? CtMethod declaration)
              (seq (.getFormalCtTypeParameters ^CtMethod declaration)))
     (let [actual (vec (.getActualTypeArguments (.getExecutable invocation)))
           inferred
-          (if (seq actual)
+          (cond
+            (inferable-formal-type-arguments? declaration actual)
+            nil
+
+            (seq actual)
             actual
-            (when (and (= 1 (count (.getFormalCtTypeParameters
-                                    ^CtMethod declaration)))
-                       (instance? CtTypeParameterReference
-                                  (.getType ^CtMethod declaration))
-                       (not (instance? CtTypeParameterReference
-                                       (.getType invocation))))
-              [(.getType invocation)]))]
+
+            (and (= 1 (count (.getFormalCtTypeParameters
+                              ^CtMethod declaration)))
+                 (instance? CtTypeParameterReference
+                            (.getType ^CtMethod declaration))
+                 (not (instance? CtTypeParameterReference
+                                 (.getType invocation))))
+            [(.getType invocation)])]
       (when (seq inferred)
         (sequence-node
          [(raw "<")
@@ -3060,9 +3109,20 @@
    (fn [{:keys [target-node]}] {:node (sequence-node [target-node (raw ".Message")])}),
    :java-library.mapping.executable/handler-0666
    (fn
-     [{:keys [target-node arguments]}]
+     [{:keys [element target-node arguments]}]
      {:node
-      (sequence-node [target-node (raw ".GetAndSet(") (sequence-node arguments ", ") (raw ")")])}),
+      (sequence-node
+       [target-node
+        (raw ".GetAndSet(")
+        (if (and
+             (= 1 (count (.getArguments ^CtInvocation element)))
+             (instance? CtLiteral (first (.getArguments ^CtInvocation element)))
+             (nil? (.getValue
+                    ^CtLiteral
+                    (first (.getArguments ^CtInvocation element)))))
+          (raw "default!")
+          (sequence-node arguments ", "))
+        (raw ")")])}),
    :java-library.mapping.executable/handler-0029
    (fn [{:keys [target-node]}] {:node (compat-call "FileListFiles" [target-node])}),
    :java-library.mapping.executable/handler-0256
@@ -5130,8 +5190,11 @@
                  raw-node)
                raw-node
                (if (and
-                    (nullable-declaration? @ctx-holder
-                                           (:declaration occurrence))
+                    (or
+                     (nullable-declaration? @ctx-holder
+                                            (:declaration occurrence))
+                     (= "executable:java.util.Iterator#next()"
+                        (:key occurrence)))
                     (not (statement-expression? element))
                     (empty? (.getTypeCasts element)))
                  (null-forgiven-node raw-node)
@@ -7009,6 +7072,16 @@
               (when (instance? CtClass declaration)
                 (recur (.getSuperclass ^CtClass declaration)))))))))
 
+(def ^:private java-stream-method-names
+  {"available" "Available"
+   "flush" "Flush"
+   "mark" "Mark"
+   "markSupported" "MarkSupported"
+   "read" "Read"
+   "reset" "Reset"
+   "skip" "Skip"
+   "write" "Write"})
+
 (defn- java-linked-hash-map-subclass? [^CtType owner]
   (loop [reference (when (instance? CtClass owner)
                      (.getSuperclass ^CtClass owner))]
@@ -7039,6 +7112,11 @@
 
 (defn- method-name [ctx ^CtType owner ^CtMethod method]
   (cond
+    (and (java-stream-subclass? owner)
+         (superclass-method owner method)
+         (contains? java-stream-method-names (.getSimpleName method)))
+    (get java-stream-method-names (.getSimpleName method))
+
     (and (= "removeEldestEntry" (.getSimpleName method))
          (= 1 (count (.getParameters method)))
          (java-linked-hash-map-subclass? owner))
@@ -7165,6 +7243,20 @@
         (.getQualifiedName (.getType ^CtMethod super-method)))
      (contains? clr-value-type-covariant-returns
                 (.getQualifiedName (.getType method))))))
+
+(defn- wildcard-generic-covariant-override?
+  [^CtType owner ^CtMethod method]
+  (when-let [super-method (superclass-method owner method)]
+    (let [^CtTypeReference parent-return (.getType ^CtMethod super-method)
+          ^CtTypeReference child-return (.getType method)
+          parent-arguments (vec (.getActualTypeArguments parent-return))
+          child-arguments (vec (.getActualTypeArguments child-return))]
+      (and (= (.getQualifiedName parent-return)
+              (.getQualifiedName child-return))
+           (= (count parent-arguments) (count child-arguments))
+           (some #(instance? CtWildcardReference %) parent-arguments)
+           (not= (mapv str parent-arguments)
+                 (mapv str child-arguments))))))
 
 (defn- emitted-method-return-type
   [^CtType owner ^CtMethod method]
@@ -7314,11 +7406,14 @@
           (direct-interface-method owner method))
         widened-override-family? (public-override-family? owner method)
         protected-override-family? (protected-override-family? owner method)
+        wildcard-generic-covariant-override?
+        (wildcard-generic-covariant-override? owner method)
         interface-dispose?
         (and (interface-type? owner)
              (= "close" (.getSimpleName method))
              (empty? (.getParameters method)))
         override? (and (not static?)
+                       (not wildcard-generic-covariant-override?)
                        (or (destination-object-method? method)
                            (and (java-map-entry-implementation? owner)
                                 (= "setValue" (.getSimpleName method))
@@ -7363,6 +7458,7 @@
              (when override? "override")
              (when (or interface-dispose?
                        redeclared-interface-method
+                       wildcard-generic-covariant-override?
                        (and (= "getType" (.getSimpleName method))
                             (empty? (.getParameters method))
                             (not (interface-type? owner))))

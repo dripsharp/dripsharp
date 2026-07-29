@@ -11,6 +11,7 @@
    "Usage: clojure -M:run "
    "generate|verify|pack|package <target> <profile>"
    "|differential <target> [validation-id]"
+   "|proof <target>"
    "|java-compat-differential"
    "|rebaseline <pkl|pdfcube> [--approve <token>]"))
 
@@ -37,6 +38,12 @@
       (target-execution/differential!
        (cond-> {:target target}
          selector (assoc :validation selector)))
+
+      (and (= "proof" command)
+           target
+           (nil? selector)
+           (empty? extra))
+      (target-execution/proof! {:target target})
 
       (and (= "java-compat-differential" command)
            (nil? target)

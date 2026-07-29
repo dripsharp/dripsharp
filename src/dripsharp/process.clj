@@ -14,6 +14,14 @@
       (.destroyForcibly descendant)))
   (.destroyForcibly process))
 
+(defn without-java-tool-options-banner
+  "Removes the JVM launcher's standard JAVA_TOOL_OPTIONS diagnostic from
+  merged process output while preserving the child program's exact stream."
+  [output]
+  (str/replace output
+               #"(?m)^Picked up JAVA_TOOL_OPTIONS: [^\r\n]*(?:\r?\n|$)"
+               ""))
+
 (defn run!
   "Runs a command and returns its merged output. Throws on start, timeout, or
   exit failure. `timeout-ms` is optional and must be a positive integer."
