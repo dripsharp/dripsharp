@@ -10,7 +10,14 @@
  :artifacts
  {"com.google.code.findbugs:jsr305:3.0.2"
   "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"}
- :legal-sets {}
+ :legal-sets
+ {:upstream
+  [{:kind :license
+    :source "research/rawhttp/LICENSE.txt"
+    :destination "Legal/LICENSE.txt"
+    :package-path "LICENSE.txt"
+    :source-sha256 "f6bc359d3a4bf1e4851ead6019d8f33075e06ff2c16ed171ecb83ee90509c69c"
+    :sha256 "f6bc359d3a4bf1e4851ead6019d8f33075e06ff2c16ed171ecb83ee90509c69c"}]}
  :packages
  {"RawHttp.Core" {:version "2.5.2-dripsharp.0"}}
  :profiles

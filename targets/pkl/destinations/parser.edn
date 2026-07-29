@@ -2,6 +2,7 @@
  :product-family :pkl
  :baseline-target :pkl
  :baseline-profile :parser
+ :baseline-legal-sets [:core]
  :destination-bundle dripsharp.pkl.java-project/rule-bundle
  :project {:assembly-name "Pkl.Parser"
            :root-namespace "Pkl.Parser"

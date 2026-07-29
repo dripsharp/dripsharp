@@ -16,7 +16,8 @@
             [dripsharp.java-types :as java-types]
             [dripsharp.java-translate :as java]
             [dripsharp.paths :as paths]
-            [dripsharp.spoon :as spoon])
+            [dripsharp.spoon :as spoon]
+            [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.lang.reflect Method]
@@ -8814,7 +8815,30 @@
     :missing-kind :missing-java-compatibility-source
     :missing-message "Java compatibility source is missing"}})
 
-(defn- bridge-assets [{:keys [configuration]}]
+(defn- legal-assets
+  [workspace-root configuration]
+  (mapv
+   (fn [{:keys [kind source destination source-sha256]}]
+     (let [file (paths/resolve-path (paths/absolute workspace-root) source)
+           actual (when (paths/regular-file? file)
+                    (util/sha256-file file))]
+       (when-not (= source-sha256 actual)
+         (fail! "Configured Java-library legal input is missing or changed"
+                {:kind :java-library-legal-input-mismatch
+                 :package-id (get-in configuration [:package :id])
+                 :legal-kind kind
+                 :path (str file)
+                 :expected source-sha256
+                 :actual actual}))
+       {:source source
+        :destination destination
+        :strategy (keyword "java-library.legal" (name kind))
+        :missing-kind :missing-java-library-legal-input
+        :missing-message
+        "Configured Java-library legal input is missing"}))
+   (:legal-files configuration)))
+
+(defn- bridge-assets [{:keys [workspace-root configuration]}]
   (let [destination-capabilities
         (set (:destination-capabilities configuration))
         embedded-capabilities
@@ -8828,16 +8852,19 @@
               :destination-capabilities (sort destination-capabilities)
               :bridge-capabilities (sort embedded-capabilities)
               :invalid-capabilities (sort inherited-capabilities)}))
-    (vec
-     (mapcat
-      (fn [capability]
-        (let [assets
-              (or (get bridge-capabilities capability)
-                  (fail! "Java library destination selected an unknown capability"
-                         {:kind :unknown-java-library-capability
-                          :capability capability}))]
-          (if (vector? assets) assets [assets])))
-      (sort embedded-capabilities)))))
+    (into
+     (vec
+      (mapcat
+       (fn [capability]
+         (let [assets
+               (or (get bridge-capabilities capability)
+                   (fail! "Java library destination selected an unknown capability"
+                          {:kind :unknown-java-library-capability
+                           :capability capability}))]
+           (if (vector? assets) assets [assets])))
+       (sort embedded-capabilities)))
+     (when (= :java-library (:product-family configuration))
+       (legal-assets workspace-root configuration)))))
 
 (defn- dependency-scopes [project-input coordinate]
   (->> (:external-dependencies project-input)

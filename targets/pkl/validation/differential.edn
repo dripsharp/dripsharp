@@ -12,4 +12,4 @@
   "validation/probe/CorePackageProbe.cs"
   "validation/probe/ParserPackageConsumer.cs"
   "validation/probe/CorePackageConsumer.cs"]
- :legal-sets []}
+ :legal-sets [:core]}

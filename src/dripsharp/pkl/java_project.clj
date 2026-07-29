@@ -37,7 +37,7 @@
 (def ^:private mechanical-source
   (baseline/mechanical-source :pkl))
 
-(def ^:private core-legal-files
+(def ^:private pkl-legal-files
   (baseline/legal-files :pkl [:core]))
 
 (def ^:private notice-appendix
@@ -3612,21 +3612,28 @@
 (defn- core-destination? [configuration]
   (= "Pkl.Core" (get-in configuration [:package :id])))
 
-(defn- validate-core-legal-configuration! [configuration]
-  (when (core-destination? configuration)
-    (when-not (= core-legal-files (:legal-files configuration))
-      (fail! "Pkl.Core legal files differ from the pinned package contract"
-             {:kind :invalid-pkl-core-legal-configuration
-              :expected core-legal-files
+(defn- legal-destination? [configuration]
+  (contains? #{"Pkl.Parser" "Pkl.Core"}
+             (get-in configuration [:package :id])))
+
+(defn- validate-pkl-legal-configuration! [configuration]
+  (when (legal-destination? configuration)
+    (when-not (= pkl-legal-files (:legal-files configuration))
+      (fail! "Pkl package legal files differ from the pinned target contract"
+             {:kind :invalid-pkl-legal-configuration
+              :package-id (get-in configuration [:package :id])
+              :expected pkl-legal-files
               :actual (:legal-files configuration)}))
     (when-not (= notice-appendix (:notice-appendix configuration))
-      (fail! "Pkl.Core NOTICE appendix differs from the translation contract"
-             {:kind :invalid-pkl-core-notice-appendix
+      (fail! "Pkl package NOTICE appendix differs from the translation contract"
+             {:kind :invalid-pkl-notice-appendix
+              :package-id (get-in configuration [:package :id])
               :expected notice-appendix
               :actual (:notice-appendix configuration)}))
     (when (get-in configuration [:package :license-expression])
-      (fail! "Pkl.Core must use its packed license file instead of a license expression"
-             {:kind :conflicting-pkl-core-license-metadata
+      (fail! "Pkl packages must use the packed license file instead of a license expression"
+             {:kind :conflicting-pkl-license-metadata
+              :package-id (get-in configuration [:package :id])
               :license-expression
               (get-in configuration [:package :license-expression])})))
   configuration)
@@ -3643,23 +3650,25 @@
   (-> configuration
       project-emission/validate-configuration!
       validate-mechanical-source!
-      validate-core-legal-configuration!))
+      validate-pkl-legal-configuration!))
 
 (defn- validate-legal-inputs! [workspace-root configuration]
-  (when (core-destination? configuration)
-    (validate-core-legal-configuration! configuration)
+  (when (legal-destination? configuration)
+    (validate-pkl-legal-configuration! configuration)
     (doseq [{:keys [kind source source-sha256]}
             (:legal-files configuration)]
       (let [file (paths/resolve-path (paths/absolute workspace-root) source)]
         (when-not (paths/regular-file? file)
-          (fail! "Configured Pkl.Core license or notice input is missing"
-                 {:kind :missing-pkl-core-legal-input
+          (fail! "Configured Pkl license or notice input is missing"
+                 {:kind :missing-pkl-legal-input
+                  :package-id (get-in configuration [:package :id])
                   :legal-kind kind
                   :path (str file)}))
         (let [actual (digest-file file)]
           (when-not (= source-sha256 actual)
-            (fail! "Configured Pkl.Core license or notice input changed"
-                   {:kind :pkl-core-legal-input-mismatch
+            (fail! "Configured Pkl license or notice input changed"
+                   {:kind :pkl-legal-input-mismatch
+                    :package-id (get-in configuration [:package :id])
                     :legal-kind kind
                     :path (str file)
                     :expected source-sha256
@@ -3668,22 +3677,20 @@
 
 (defn- validate-profile! [{:keys [workspace-root profile configuration]}]
   (let [configuration (validate-configuration! configuration)]
-    (if-not (core-destination? configuration)
-      configuration
-      (do
-        (let [expected {:profile core-profile
-                        :product-family :pkl
-                        :project-root "research/pkl"
-                        :revision source-revision
-                        :gradle-project ":pkl-core"}
-              actual (select-keys profile (keys expected))]
-          (when-not (= expected actual)
-            (fail! "Pkl.Core generation profile differs from its pinned source contract"
-                   {:kind :invalid-pkl-core-profile
-                    :expected expected
-                    :actual actual})))
-        (validate-legal-inputs! workspace-root configuration)
-        configuration))))
+    (when (core-destination? configuration)
+      (let [expected {:profile core-profile
+                      :product-family :pkl
+                      :project-root "research/pkl"
+                      :revision source-revision
+                      :gradle-project ":pkl-core"}
+            actual (select-keys profile (keys expected))]
+        (when-not (= expected actual)
+          (fail! "Pkl.Core generation profile differs from its pinned source contract"
+                 {:kind :invalid-pkl-core-profile
+                  :expected expected
+                  :actual actual}))))
+    (validate-legal-inputs! workspace-root configuration)
+    configuration))
 
 (defn- validate-project-input!
   [{:keys [workspace-root profile project-input]}]
@@ -3691,7 +3698,7 @@
    workspace-root :pkl (:profile profile) project-input))
 
 (defn- legal-assets [{:keys [workspace-root configuration]}]
-  (if-not (core-destination? configuration)
+  (if-not (legal-destination? configuration)
     []
     (do
       (validate-legal-inputs! workspace-root configuration)
@@ -3699,10 +3706,10 @@
        (fn [{:keys [kind source destination]}]
          (let [base {:source source
                      :destination destination
-                     :strategy (keyword "pkl-core.legal" (name kind))
-                     :missing-kind :missing-pkl-core-legal-input
+                     :strategy (keyword "pkl.legal" (name kind))
+                     :missing-kind :missing-pkl-legal-input
                      :missing-message
-                     "Configured Pkl.Core license or notice input is missing"}]
+                     "Configured Pkl license or notice input is missing"}]
            (if (= :notice kind)
              (let [upstream (Files/readString
                              (paths/resolve-path
@@ -3710,7 +3717,8 @@
                               source))]
                (assoc base
                       :text-replacements
-                      {upstream (str upstream (:notice-appendix configuration))}))
+                      {upstream (str upstream
+                                     (:notice-appendix configuration))}))
              base)))
        (:legal-files configuration)))))
 

@@ -4,11 +4,12 @@
             [clojure.test :refer [deftest is testing]]
             [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
+            [dripsharp.java-library :as java-library]
             [dripsharp.java-project :as java-project]
             [dripsharp.paths :as paths]))
 
 (deftest target-records-own-the-reviewed-baseline-contract
-  (doseq [target [:pkl :pdfcube]
+  (doseq [target [:pkl :pdfcube :rawhttp]
           :let [record (baseline/read-baseline target)]]
     (testing (name target)
       (is (= target (:target record)))
@@ -25,6 +26,55 @@
       (is (every? #(= #{:ordinary :generated}
                       (set (keys (:source-counts %))))
                   (vals (:profiles record)))))))
+
+(deftest rawhttp-license-input-and-package-file-are-pinned
+  (let [workspace (paths/workspace-root)
+        destination
+        (java-project/read-configuration
+         workspace "targets/rawhttp/destinations/core.edn")
+        assets-fn
+        (get-in (java-library/rule-bundle)
+                [:rules :destination-bridges :assets])
+        assets (assets-fn {:workspace-root workspace
+                           :configuration destination})
+        legal-assets
+        (filterv #(= "java-library.legal"
+                     (namespace (:strategy %)))
+                 assets)
+        project-text (java-project/project-text destination [])
+        expected-hash
+        "f6bc359d3a4bf1e4851ead6019d8f33075e06ff2c16ed171ecb83ee90509c69c"
+        mismatch
+        (try
+          (assets-fn
+           {:workspace-root workspace
+            :configuration
+            (assoc-in destination
+                      [:legal-files 0 :source-sha256]
+                      (apply str (repeat 64 "0")))})
+          nil
+          (catch clojure.lang.ExceptionInfo error error))]
+    (is (= (baseline/legal-files :rawhttp [:upstream])
+           (:legal-files destination)))
+    (is (= expected-hash
+           (get-in destination [:legal-files 0 :source-sha256])))
+    (is (= [{:source "research/rawhttp/LICENSE.txt"
+             :destination "Legal/LICENSE.txt"
+             :strategy :java-library.legal/license
+             :missing-kind :missing-java-library-legal-input
+             :missing-message
+             "Configured Java-library legal input is missing"}]
+           legal-assets))
+    (is (str/includes?
+         project-text
+         "<PackageLicenseFile>LICENSE.txt</PackageLicenseFile>"))
+    (is (str/includes?
+         project-text
+         "Pack=\"true\" PackagePath=\"LICENSE.txt\""))
+    (is (not (str/includes? project-text "PackageLicenseExpression")))
+    (is (= :java-library-legal-input-mismatch
+           (:kind (ex-data mismatch))))
+    (is (= expected-hash (:actual (ex-data mismatch))))))
 
 (deftest profiles-and-destinations-resolve-their-pins-from-the-record
   (let [root (paths/workspace-root)

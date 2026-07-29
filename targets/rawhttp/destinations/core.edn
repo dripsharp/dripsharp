@@ -2,7 +2,7 @@
  :product-family :java-library
  :baseline-target :rawhttp
  :baseline-profile :core
- :baseline-legal-sets []
+ :baseline-legal-sets [:upstream]
  :destination-bundle dripsharp.java-library/rule-bundle
  :mechanical-source
  {:repository "https://github.com/renatoathaydes/rawhttp.git"
@@ -23,8 +23,7 @@
            :project-url "https://github.com/renatoathaydes/rawhttp"
            :repository-url "https://github.com/renatoathaydes/rawhttp.git"
            :repository-type "git"
-           :repository-commit "947cfdc619100a23f5e429ccb3c42ba6fedc8141"
-           :license-expression "Apache-2.0"}
+           :repository-commit "947cfdc619100a23f5e429ccb3c42ba6fedc8141"}
  :output {:project-directory "generated/rawhttp-core"
           :source-directory "src"
           :resource-directory "resources"

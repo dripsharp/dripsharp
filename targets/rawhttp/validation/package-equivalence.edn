@@ -6,4 +6,4 @@
  :runner dripsharp.rawhttp-package/verify-package-equivalence!
  :oracle-sources ["validation/oracle/RawHttpContractOracle.java"]
  :probe-sources ["validation/probe/RawHttp.Core.Program.cs"]
- :legal-sets []}
+ :legal-sets [:upstream]}

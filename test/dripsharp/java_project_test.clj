@@ -204,7 +204,7 @@
 
     (testing "all production inputs and source declarations are accounted for"
       (is (= 50 (:compilation-units summary)))
-      (is (= 60 (:generated-files summary)))
+      (is (= 62 (:generated-files summary)))
       (is (= 1 (:resources summary)))
       (is (= 0 (:skipped-source-units summary)))
       (is (= 0 (:collisions summary)))

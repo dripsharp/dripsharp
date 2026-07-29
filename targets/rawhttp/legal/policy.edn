@@ -2,10 +2,10 @@
  :target :rawhttp
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
- :legal-sets #{}
+ :legal-sets #{:upstream}
  :notice-appendix-sha256 nil
  :profile-legal-sets
- {"rawhttp-core" []}
+ {"rawhttp-core" [:upstream]}
  :resource-notice-legal-sets
  {"rawhttp-core" []}
  :package-metadata

@@ -30,6 +30,15 @@
     (Files/writeString file content (make-array OpenOption 0))
     file))
 
+(defn- copy-live-pkl-legal-inputs!
+  [^Path root]
+  (doseq [name ["LICENSE.txt" "NOTICE.txt"]]
+    (write-file!
+     root
+     (str "research/pkl/" name)
+     (Files/readString
+      (paths/resolve-path (paths/workspace-root) "research/pkl" name)))))
+
 (defn- profile-diagnostic
   [root profile]
   (write-file! root "profiles/diagnostic.edn" (str (pr-str profile) "\n"))
@@ -225,6 +234,7 @@
 
 (deftest generation-cleans-output-and-writes-configuration
   (let [root (temp-directory)
+        _ (copy-live-pkl-legal-inputs! root)
         stale (create-file! root "target/stale/output.cs")
         discovery (fixture-discovery root)
         saw-clean-target? (atom false)
