@@ -29,6 +29,45 @@
    "Java.Security" "Java.Text" "Java.Time" "Java.Util"
    "Java.Util.Concurrent" "Java.Util.Regex" "Java.Xml"])
 
+(def ^:private pkl-non-affiliation-disclaimer
+  "This package is an independent translation and is not affiliated with, endorsed by, or sponsored by Apple Inc.")
+
+(def ^:private pdfbox-non-affiliation-disclaimer
+  "This package is an independent translation and is not affiliated with, endorsed by, or sponsored by the Apache Software Foundation.")
+
+(deftest generated-package-descriptions-carry-target-specific-disclaimers
+  (let [workspace (paths/workspace-root)
+        contracts
+        {"targets/pkl/destinations/parser.edn"
+         ["Pkl.Parser" pkl-non-affiliation-disclaimer]
+         "targets/pkl/destinations/core.edn"
+         ["Pkl.Core" pkl-non-affiliation-disclaimer]
+         "targets/pdfcube/destinations/io.edn"
+         ["PdfCube.IO" pdfbox-non-affiliation-disclaimer]
+         "targets/pdfcube/destinations/fontbox.edn"
+         ["PdfCube.FontBox" pdfbox-non-affiliation-disclaimer]
+         "targets/pdfcube/destinations/xmpbox.edn"
+         ["PdfCube.XmpBox" pdfbox-non-affiliation-disclaimer]
+         "targets/pdfcube/destinations/pdfbox.edn"
+         ["PdfCube.PdfBox" pdfbox-non-affiliation-disclaimer]
+         "targets/pdfcube/destinations/preflight.edn"
+         ["PdfCube.Preflight" pdfbox-non-affiliation-disclaimer]}]
+    (is (= #{"Pkl.Parser" "Pkl.Core"
+             "PdfCube.IO" "PdfCube.FontBox" "PdfCube.XmpBox"
+             "PdfCube.PdfBox" "PdfCube.Preflight"}
+           (set (map (comp first val) contracts))))
+    (doseq [[path [package-id disclaimer]] contracts
+            :let [configuration
+                  (project-emission/read-configuration workspace path)
+                  description (get-in configuration [:package :description])
+                  project (project-emission/project-text configuration [])]]
+      (testing package-id
+        (is (= package-id (get-in configuration [:package :id])))
+        (is (str/ends-with? description disclaimer))
+        (is (str/includes?
+             project
+             (str "<Description>" description "</Description>")))))))
+
 (defn- emit! [target worker-count]
   (let [{:keys [root discovery first]} (fixture/models)]
     (concurrency/call-with-executor
@@ -278,6 +317,7 @@
              "<DefineConstants>$(DefineConstants);DRIPSHARP_INTERNAL_JAVA_COMPAT</DefineConstants>"))
         (is (str/includes? project "<Authors>Vibeformer</Authors>"))
         (is (str/includes? project "<Title>Pkl parser for .NET</Title>"))
+        (is (str/includes? project pkl-non-affiliation-disclaimer))
         (is (str/includes? project "<PackageTags>pkl parser dotnet dripsharp</PackageTags>"))
         (is (str/includes? project
                            "<PackageProjectUrl>https://github.com/isaksky/pkl-net</PackageProjectUrl>"))

@@ -13,7 +13,7 @@
            :warnings-as-errors true}
  :package {:id "PdfCube.FontBox"
            :title "PdfCube FontBox"
-           :description "Apache FontBox font parsing and subsetting for .NET, mechanically translated by DripSharp."
+           :description "Apache FontBox font parsing and subsetting for .NET, mechanically translated by DripSharp. This package is an independent translation and is not affiliated with, endorsed by, or sponsored by the Apache Software Foundation."
            :authors "Vibeformer"
            :copyright "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt."
            :symbols :snupkg

@@ -43,6 +43,9 @@
 (def dependency-nuspec-namespace
   "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd")
 
+(def dc-elements-namespace
+  "http://purl.org/dc/elements/1.1/")
+
 (defn- nuspec []
   (str "<package xmlns=\"" nuspec-namespace "\"><metadata>"
        "<id>" (:id package) "</id>"
@@ -822,6 +825,52 @@
       (is (= :package-consumption-failed (:kind (ex-data error))))
       (is (= "wrong" (:expected (ex-data error))))
       (is (= copyright (:actual (ex-data error)))))))
+
+(deftest package-inspection-requires-the-configured-non-affiliation-description
+  (let [disclaimer
+        "This package is an independent translation and is not affiliated with, endorsed by, or sponsored by Apple Inc."
+        description (str (:description package) " " disclaimer)
+        expected-package (assoc package :description description)]
+    (testing "the nuspec cannot omit the configured disclaimer"
+      (let [artifact
+            (package-archive!
+             {"Pkl.Parser.nuspec" (nuspec)
+              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+            error
+            (try
+              (packaging/inspect-package!
+               artifact expected-package "net8.0" "Pkl.Parser")
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (= "description" (:element (ex-data error))))
+        (is (= description (:expected (ex-data error))))
+        (is (= (:description package) (:actual (ex-data error))))))
+    (testing "the OPC core properties must mirror the disclaimer exactly"
+      (let [with-disclaimer
+            (str/replace
+             (nuspec)
+             (str "<description>" (:description package) "</description>")
+             (str "<description>" description "</description>"))
+            artifact
+            (package-archive!
+             {"Pkl.Parser.nuspec" with-disclaimer
+              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+            error
+            (try
+              (packaging/inspect-package!
+               artifact expected-package "net8.0" "Pkl.Parser")
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))]
+        (is (= :package-consumption-failed (:kind (ex-data error))))
+        (is (some #{[dc-elements-namespace "description"]}
+                  (keys (:expected (ex-data error)))))
+        (is (= description
+               (get (:expected (ex-data error))
+                    [dc-elements-namespace "description"])))
+        (is (= (:description package)
+               (get (:actual (ex-data error))
+                    [dc-elements-namespace "description"])))))))
 
 (deftest package-inspection-rejects-unexpected-metadata-and-attributes
   (doseq [[label altered]
