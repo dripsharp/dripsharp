@@ -3630,6 +3630,7 @@
       :destination-tree "DripSharp/Runtime/Codecs/Jbig2"
       :include-pattern "\\.cs$"
       :text-prefix "#nullable disable\n#pragma warning disable\n"
+      :authorship-class :vendored-third-party
       :strategy :pdfcube.pdfbox/jbig2-source
       :missing-kind :missing-pdfcube-jbig2-source
       :missing-message "Pinned PdfCube JBIG2 source is missing"})
@@ -3641,6 +3642,7 @@
       :include-pattern "\\.cs$"
       :text-charset-fallback "ISO-8859-1"
       :text-prefix "#nullable disable\n#pragma warning disable\n"
+      :authorship-class :vendored-third-party
       :strategy :pdfcube.pdfbox/jpx-source
       :missing-kind :missing-pdfcube-jpx-source
       :missing-message "Pinned PdfCube JPEG 2000 source is missing"})
@@ -3743,9 +3745,10 @@
                           (mapv #(compatibility-asset configuration %)
                                 (concat
                                  (base-assets context)
-                                 (map #(assoc %
-                                              :authorship-class
-                                              :authored-destination-runtime)
+                                 (map #(update %
+                                               :authorship-class
+                                               (fnil identity
+                                                     :authored-destination-runtime))
                                       (internal-capability-assets context))))]
                       (into code-assets (legal-assets context))))))))
 

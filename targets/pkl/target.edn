@@ -1,4 +1,4 @@
-{:schema-version 3
+{:schema-version 4
  :target :pkl
  :product-family :pkl
  :contracts
@@ -14,7 +14,8 @@
  :capabilities #{:java-compat :java-regex-unicode :pkl/runtime}
  :authorship
  {:compatibility "config/authored-compat.edn"
-  :destination "authorship.edn"}
+  :destination "authorship.edn"
+  :third-party "third-party.edn"}
  :profiles
  [{:id "pkl-parser"
    :path "profiles/parser.edn"

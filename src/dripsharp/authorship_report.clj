@@ -7,7 +7,7 @@
   (:import [java.nio.file Path]
            [java.util Locale]))
 
-(def schema-version 1)
+(def schema-version 2)
 
 (defn- fail!
   [message data]
@@ -100,6 +100,11 @@
         (->> (:files ledger)
              (filter authored?)
              (mapv #(select-keys
+                     % [:path :class :lines :provenance :sha256])))
+        third-party-files
+        (->> (:files ledger)
+             (filter #(= :vendored-third-party (:class %)))
+             (mapv #(select-keys
                      % [:path :class :lines :provenance :sha256])))]
     {:package identity
      :target (:target policy)
@@ -111,7 +116,8 @@
      :lines
      (select-keys totals
                   [:mechanical-lines :authored-compat-lines
-                   :authored-destination-runtime-lines :authored-lines
+                   :authored-destination-runtime-lines
+                   :vendored-third-party-lines :authored-lines
                    :total-lines])
      :authored-fraction (:authored-fraction totals)
      :authored-ratio
@@ -119,6 +125,7 @@
       :denominator (:total-lines totals)}
      :mechanical-provenance (mechanical-provenance (:files ledger))
      :authored-files authored-files
+     :third-party-files third-party-files
      :linked-proofs (vec (:evidence policy))
      :review (:review policy)}))
 
@@ -217,7 +224,7 @@
 (defn- render-package
   [{:keys [package profile lines authored-fraction authored-ratio
            verification mechanical-provenance authored-files linked-proofs
-           target]}]
+           third-party-files target]}]
   (str
    "## " (:id package) "\n\n"
    "- Profile: " (code profile) "\n"
@@ -238,6 +245,8 @@
    "| Authored compatibility | " (:authored-compat-lines lines) " |\n"
    "| Authored destination runtime | "
    (:authored-destination-runtime-lines lines) " |\n"
+   "| Vendored third-party | "
+   (:vendored-third-party-lines lines) " |\n"
    "| **Authored total** | **" (:authored-lines lines) "** |\n"
    "| **Package total** | **" (:total-lines lines) "** |\n"
    "| **Authored fraction** | **" (percentage authored-fraction) "** |\n\n"
@@ -274,6 +283,21 @@
                " | " (code sha256) " |\n"))
         authored-files)))
      "_No authored source files._\n")
+   "\n### Vendored third-party files\n\n"
+   (if (seq third-party-files)
+     (str
+      "| Emitted file | Lines | Pinned provenance | SHA-256 |\n"
+      "| --- | ---: | --- | --- |\n"
+      (apply
+       str
+       (map
+        (fn [{:keys [path lines provenance sha256]}]
+          (str "| " (code path)
+               " | " lines
+               " | " (code provenance)
+               " | " (code sha256) " |\n"))
+        third-party-files)))
+     "_No vendored third-party source files._\n")
    "\n"))
 
 (defn render-markdown
@@ -290,9 +314,9 @@
      "or project-completion contracts.\n\n"
      "## Package summary\n\n"
      "| Package | Mechanical lines | Authored compatibility | "
-     "Authored destination | Authored total | Total lines | "
+     "Authored destination | Vendored third-party | Authored total | Total lines | "
      "Authored fraction | Linked proofs |\n"
-     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n"
+     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n"
      (apply
       str
       (map
@@ -301,6 +325,7 @@
               " | " (:mechanical-lines lines)
               " | " (:authored-compat-lines lines)
               " | " (:authored-destination-runtime-lines lines)
+              " | " (:vendored-third-party-lines lines)
               " | " (:authored-lines lines)
               " | " (:total-lines lines)
               " | " (percentage authored-fraction)

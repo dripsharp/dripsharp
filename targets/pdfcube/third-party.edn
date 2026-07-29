@@ -1,0 +1,34 @@
+{:schema-version 1
+ :scope :pdfcube
+ :class :vendored-third-party
+ :sources
+ [{:id :pdfcube/jbig2
+   :kind :tree
+   :provenance "vendor/pdfcube/jbig2"
+   :include-pattern ".*\\.cs"
+   :charset nil
+   :capability nil
+   :source-files 34
+   :max-source-lines 5777
+   :max-emitted-lines 5845
+   :source-inventory-sha256
+   "6c619257e3742cc64c73f134ff417683e7456d5c8a3ffbd88b9a03fb3ccf0655"
+   :public-types
+   {:count 34
+    :sha256
+    "46b28445a12356c467f6a7e60f8a01ba45c69f9761bb2526774059200424c90b"}}
+  {:id :pdfcube/jpx
+   :kind :tree
+   :provenance "vendor/pdfcube/jpx"
+   :include-pattern ".*\\.cs"
+   :charset "ISO-8859-1"
+   :capability nil
+   :source-files 296
+   :max-source-lines 99218
+   :max-emitted-lines 99810
+   :source-inventory-sha256
+   "fd4e1d470b862ca711049110229c761a291b236a62004148c10ccb33a29bd883"
+   :public-types
+   {:count 371
+    :sha256
+    "0859675308ae1698d7c8dc61534f7da0423cf9da0a40e932029b9c58e9de6e8e"}}]}

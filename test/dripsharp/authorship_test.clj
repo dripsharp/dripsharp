@@ -61,7 +61,7 @@
 
 (defn- policy
   [compatibility-sources budget]
-  {:schema-version 1
+  {:schema-version authorship/policy-schema-version
    :target :fixture
    :profile "fixture"
    :package-id "Fixture.Package"
@@ -70,7 +70,8 @@
    :budget budget
    :forbidden-identities ["fixture"]
    :compatibility-sources compatibility-sources
-   :destination-sources (sorted-map)})
+   :destination-sources (sorted-map)
+   :third-party-sources (sorted-map)})
 
 (defn- create-ledger!
   [root artifacts contract]
@@ -247,5 +248,59 @@
         (is (= "fixture" (:fragment (ex-data identity-error))))
         (is (= "runtime/Compatibility.cs"
                (:path (ex-data identity-error)))))
+      (finally
+        (delete-tree! root)))))
+
+(deftest vendored-third-party-sources-are-contracted-but-not-authored
+  (let [root (Files/createTempDirectory
+              "dripsharp-third-party-inventory-"
+              (make-array FileAttribute 0))]
+    (try
+      (let [source-text "public sealed class VendorType { }\n"
+            _ (write-text! root "vendor/Library.cs" source-text)
+            _ (write-text! root "generated/src/Library.cs" source-text)
+            third-party-sources
+            (normalized-groups
+             root :vendored-third-party :fixture
+             [(source-group root :fixture/vendor "vendor/Library.cs" nil 1)])
+            contract
+            (assoc
+             (policy (sorted-map)
+                     {:authored-lines 0 :total-lines 1})
+             :third-party-sources third-party-sources)
+            ledger
+            (create-ledger!
+             root
+             [{:file "src/Library.cs"
+               :source {:file "vendor/Library.cs"}
+               :authorship-class :vendored-third-party}]
+             contract)
+            misclassified
+            (caught
+             #(create-ledger!
+               root
+               [{:file "src/Library.cs"
+                 :source {:file "vendor/Library.cs"}
+                 :authorship-class :authored-destination-runtime}]
+               contract))]
+        (is (= {:files 1
+                :mechanical-lines 0
+                :authored-compat-lines 0
+                :authored-destination-runtime-lines 0
+                :vendored-third-party-lines 1
+                :authored-lines 0
+                :total-lines 1
+                :authored-fraction 0.0}
+               (:totals ledger)))
+        (is (= :vendored-third-party
+               (get-in ledger [:files 0 :class])))
+        (is (= :vendored-third-party
+               (get-in ledger [:policy :sources 0 :class])))
+        (is (= :invalid-authorship-ledger
+               (:kind (ex-data misclassified))))
+        (is (= :vendored-third-party
+               (:expected (ex-data misclassified))))
+        (is (= [:authored-destination-runtime]
+               (:actual (ex-data misclassified)))))
       (finally
         (delete-tree! root)))))

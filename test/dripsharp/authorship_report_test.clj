@@ -27,26 +27,32 @@
           :class :authored-destination-runtime
           :provenance "targets/acme/runtime/ProductRuntime.cs"
           :sha256 (apply str (repeat 64 "b"))
-          :lines 3}]
+          :lines 3}
+         {:path "src/Vendor.cs"
+          :class :vendored-third-party
+          :provenance "vendor/acme/Vendor.cs"
+          :sha256 (apply str (repeat 64 "d"))
+          :lines 11}]
         paths (mapv :path files)
         totals
-        {:files 3
+        {:files 4
          :mechanical-lines 90
          :authored-compat-lines 7
          :authored-destination-runtime-lines 3
+         :vendored-third-party-lines 11
          :authored-lines 10
-         :total-lines 100
-         :authored-fraction 0.1}
+         :total-lines 111
+         :authored-fraction (/ 10.0 111.0)}
         policy
-        {:schema-version 1
+        {:schema-version 2
          :target :acme
          :profile "acme-core"
          :package-id "Acme.Core"
          :review "review-42"
          :evidence [:acme-complete-proof]
          :budget {:authored-lines 10
-                  :total-lines 100
-                  :authored-fraction 0.1}
+                  :total-lines 111
+                  :authored-fraction (/ 10.0 111.0)}
          :guarded-compatibility-sources 1
          :sources []}]
     {:profile "acme-core"
@@ -54,13 +60,13 @@
                 :version "1.2.3"
                 :sha256 (apply str (repeat 64 "c"))
                 :file "Acme.Core.1.2.3.nupkg"}
-     :ledger {:schema-version 2
+     :ledger {:schema-version 3
               :files files
               :totals totals
               :policy policy}
      :verification
-     {:schema-version 2
-      :verified-files 3
+     {:schema-version 3
+      :verified-files 4
       :source-paths paths
       :source-inventory-sha256
       (util/sha256-text (str/join "\n" paths))
@@ -88,8 +94,9 @@
     (is (= {:mechanical-lines 90
             :authored-compat-lines 7
             :authored-destination-runtime-lines 3
+            :vendored-third-party-lines 11
             :authored-lines 10
-            :total-lines 100}
+            :total-lines 111}
            (get-in data [:packages 0 :lines])))
     (is (= [{:path "src/Compatibility.cs"
              :class :authored-compat
@@ -102,11 +109,18 @@
              :sha256 (apply str (repeat 64 "b"))
              :lines 3}]
            (get-in data [:packages 0 :authored-files])))
+    (is (= [{:path "src/Vendor.cs"
+             :class :vendored-third-party
+             :provenance "vendor/acme/Vendor.cs"
+             :sha256 (apply str (repeat 64 "d"))
+             :lines 11}]
+           (get-in data [:packages 0 :third-party-files])))
     (is (= [:acme-complete-proof]
            (get-in data [:packages 0 :linked-proofs])))
     (is (= "targets/acme/target.edn"
            (get-in data [:proof-index 0 :contract])))
     (is (str/includes? markdown "| Mechanical | 90 |"))
+    (is (str/includes? markdown "| Vendored third-party | 11 |"))
     (is (str/includes? markdown "`runtime/Compatibility.cs`"))
     (is (str/includes? markdown
                        "[`:acme-complete-proof`](#proof-acme-acme-complete-proof)"))

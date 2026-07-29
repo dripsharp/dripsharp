@@ -274,6 +274,7 @@
             :mechanical-lines 9
             :authored-compat-lines 0
             :authored-destination-runtime-lines 0
+            :vendored-third-party-lines 0
             :authored-lines 0
             :total-lines 9
             :authored-fraction 0.0}
@@ -296,6 +297,7 @@
     (is (= {:mechanical-lines 9
             :authored-compat-lines 0
             :authored-destination-runtime-lines 0
+            :vendored-third-party-lines 0
             :authored-lines 0
             :total-lines 9}
            (-> (:boundary-report proof)
@@ -413,13 +415,14 @@
             :translator-version "0.1.0"
             :verified-files 0}
            :authorship
-           {:schema-version 2
+           {:schema-version 3
             :files []
             :totals
             {:files 0
              :mechanical-lines 0
              :authored-compat-lines 0
              :authored-destination-runtime-lines 0
+             :vendored-third-party-lines 0
              :authored-lines 0
              :total-lines 0
              :authored-fraction 0.0}
@@ -502,13 +505,14 @@
           :translator-version "0.1.0"
           :verified-files 0}
          :authorship
-         {:schema-version 2
+         {:schema-version 3
           :files []
           :totals
           {:files 0
            :mechanical-lines 0
            :authored-compat-lines 0
            :authored-destination-runtime-lines 0
+           :vendored-third-party-lines 0
            :authored-lines 0
            :total-lines 0
            :authored-fraction 0.0}

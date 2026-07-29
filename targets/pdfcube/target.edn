@@ -1,4 +1,4 @@
-{:schema-version 3
+{:schema-version 4
  :target :pdfcube
  :product-family :pdfcube
  :contracts
@@ -18,7 +18,8 @@
    :skia-graphics :unicode-bidi :xml}
  :authorship
  {:compatibility "config/authored-compat.edn"
-  :destination "authorship.edn"}
+  :destination "authorship.edn"
+  :third-party "third-party.edn"}
  :profiles
  [{:id "pdfcube-io"
    :path "profiles/io.edn"
@@ -77,7 +78,7 @@
      :pdfcube/pdfbox-compat :pdfcube/jbig2 :pdfcube/jpx]
     :evidence [:pdfcube-complete-family-proof]
     :review "pkl-c8t.20"
-    :budget {:authored-lines 117326 :total-lines 192936}}
+    :budget {:authored-lines 11671 :total-lines 192936}}
    :required-capabilities
    #{:calendar-value-semantics :icc :java-bidi :java-compat
      :java-regex-unicode :jbig2 :jpx :managed-raster :printing

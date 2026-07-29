@@ -16,7 +16,7 @@
             [dripsharp.validation :as validation])
   (:import [java.nio.file Files LinkOption]))
 
-(def schema-version 3)
+(def schema-version 4)
 (def legal-policy-schema-version 4)
 (def mapping-overlay-schema-version 1)
 
@@ -36,7 +36,7 @@
     :validation-contracts :required-capabilities :authorship})
 
 (def ^:private authorship-path-keys
-  #{:compatibility :destination})
+  #{:compatibility :destination :third-party})
 
 (def ^:private profile-authorship-keys
   #{:sources :evidence :review :budget})
@@ -242,7 +242,7 @@
   [workspace-root target-root target paths-contract]
   (exact-keys! "Target authorship paths" [:authorship]
                authorship-path-keys paths-contract)
-  (let [{:keys [compatibility destination]} paths-contract
+  (let [{:keys [compatibility destination third-party]} paths-contract
         compatibility-file
         (workspace-file! workspace-root
                          "Shared authored compatibility contract"
@@ -253,10 +253,16 @@
                     :expected "config/authored-compat.edn"}))
         destination-file
         (target-file! target-root "Target authored source contract"
-                      [] destination)]
+                      [] destination)
+        third-party-file
+        (target-file! target-root "Target third-party source contract"
+                      [] third-party)]
     (when-not (= "authorship.edn" destination)
       (fail! "Target authored source contract must use its canonical path"
              {:path destination :expected "authorship.edn"}))
+    (when-not (= "third-party.edn" third-party)
+      (fail! "Target third-party source contract must use its canonical path"
+             {:path third-party :expected "third-party.edn"}))
     {:compatibility
      (load-authored-source-contract!
       workspace-root :shared-compatibility :authored-compat
@@ -264,7 +270,11 @@
      :destination
      (load-authored-source-contract!
       workspace-root target :authored-destination-runtime
-      "Target authored source contract" destination-file)}))
+      "Target authored source contract" destination-file)
+     :third-party
+     (load-authored-source-contract!
+      workspace-root target :vendored-third-party
+      "Target third-party source contract" third-party-file)}))
 
 (defn- validate-documents!
   [workspace-root documents]
@@ -845,7 +855,11 @@
     (let [{:keys [sources evidence review budget]} selection
           available-destination-sources
           (get-in authorship-contracts [:destination :sources])
-          source-ids (set (keys available-destination-sources))
+          available-third-party-sources
+          (get-in authorship-contracts [:third-party :sources])
+          source-ids
+          (set (concat (keys available-destination-sources)
+                       (keys available-third-party-sources)))
           context
           (validation-context "Profile authorship selections"
                               {:profile profile-id
@@ -894,6 +908,8 @@
            (get-in authorship-contracts [:compatibility :sources]))
           destination-sources
           (select-keys available-destination-sources sources)
+          third-party-sources
+          (select-keys available-third-party-sources sources)
           selected-runtime-paths
           (set
            (map
@@ -913,7 +929,8 @@
            :forbidden-identities
            (product-identity-fragments target family destination)
            :compatibility-sources compatibility-sources
-           :destination-sources destination-sources}]
+           :destination-sources destination-sources
+           :third-party-sources third-party-sources}]
       (when-not (set/subset? selected-runtime-paths
                              contracted-runtime-paths)
         (fail! "Selected target runtime assets lack authored source contracts"
@@ -1650,7 +1667,7 @@
                  selected-validations
                  (set (mapcat #(get-in % [:descriptor :validation-contracts])
                               (vals profiles)))
-                 selected-authored-sources
+                 selected-contracted-sources
                  (set (mapcat #(get-in % [:descriptor :authorship :sources])
                               (vals profiles)))
                  provided-capabilities
@@ -1669,12 +1686,16 @@
                              (set (keys validations))
                              selected-validations)
              (validate-used!
-              "target authored sources"
+              "target contracted sources"
               (set
-               (keys
-                (get-in authorship-contracts
-                        [:destination :sources])))
-              selected-authored-sources)
+               (concat
+                (keys
+                 (get-in authorship-contracts
+                         [:destination :sources]))
+                (keys
+                 (get-in authorship-contracts
+                         [:third-party :sources]))))
+              selected-contracted-sources)
              (when-not (= declared-capabilities provided-capabilities)
                (fail! "Target capability declaration and providers disagree"
                       {:declared (vec (sort declared-capabilities))

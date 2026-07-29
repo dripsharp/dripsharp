@@ -1,0 +1,4 @@
+{:schema-version 1
+ :scope :rawhttp
+ :class :vendored-third-party
+ :sources []}

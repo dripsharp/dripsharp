@@ -9,12 +9,13 @@
            [java.nio.file FileVisitOption Files Path]
            [java.util.regex Pattern]))
 
-(def schema-version 2)
-(def policy-schema-version 1)
+(def schema-version 3)
+(def policy-schema-version 2)
 (def source-contract-schema-version 1)
 
 (def ^:private source-classes
-  #{:mechanical :authored-compat :authored-destination-runtime})
+  #{:mechanical :authored-compat :authored-destination-runtime
+    :vendored-third-party})
 
 (defn- fail!
   [message data]
@@ -102,7 +103,7 @@
       [])))
 
 (defn source-observation
-  "Observes one authored source group without trusting its asserted contract."
+  "Observes one contracted source group without trusting its asserted contract."
   [workspace-root source-group]
   (let [workspace-root (paths/absolute workspace-root)
         charset (:charset source-group)
@@ -134,6 +135,10 @@
   [class]
   (contains? #{:authored-compat :authored-destination-runtime} class))
 
+(defn- contracted?
+  [class]
+  (contains? (disj source-classes :mechanical) class))
+
 (defn- totals
   [files]
   (let [mechanical-lines
@@ -145,12 +150,17 @@
                 (map :lines
                      (filter #(= :authored-destination-runtime (:class %))
                              files)))
+        third-party-lines
+        (reduce + 0
+                (map :lines
+                     (filter #(= :vendored-third-party (:class %)) files)))
         authored-lines (+ compatibility-lines destination-lines)
-        total-lines (+ mechanical-lines authored-lines)]
+        total-lines (+ mechanical-lines authored-lines third-party-lines)]
     {:files (count files)
      :mechanical-lines mechanical-lines
      :authored-compat-lines compatibility-lines
      :authored-destination-runtime-lines destination-lines
+     :vendored-third-party-lines third-party-lines
      :authored-lines authored-lines
      :total-lines total-lines
      :authored-fraction
@@ -161,7 +171,7 @@
 (defn- exact-keys!
   [value expected subject]
   (when-not (and (map? value) (= expected (set (keys value))))
-    (fail! "Authorship ledger record has missing or unexpected fields"
+    (fail! "Source-accounting record has missing or unexpected fields"
            {:subject subject :expected expected
             :actual (when (map? value) (set (keys value)))}))
   value)
@@ -199,7 +209,7 @@
                  (= source-inventory-sha256
                     (:source-inventory-sha256 observation))
                  (= public-types (:public-types observation)))
-    (fail! "Authored source group drifted from its reviewed contract"
+    (fail! "Contracted source group drifted from its reviewed contract"
            {:source id
             :expected
             {:files source-files
@@ -210,7 +220,7 @@
   observation)
 
 (defn validate-source-contract!
-  "Validates a shared or target-owned authored-source contract against the
+  "Validates a shared or target-owned source contract against the
   current source tree and returns its normalized groups keyed by id."
   [workspace-root expected-scope expected-class contract]
   (let [workspace-root (paths/absolute workspace-root)]
@@ -220,12 +230,15 @@
                    (= expected-scope (:scope contract))
                    (= expected-class (:class contract))
                    (contains? #{:authored-compat
-                                :authored-destination-runtime}
+                                :authored-destination-runtime
+                                :vendored-third-party}
                               (:class contract))
                    (vector? (:sources contract))
-                   (or (= :authored-destination-runtime expected-class)
+                   (or (contains? #{:authored-destination-runtime
+                                    :vendored-third-party}
+                                  expected-class)
                        (seq (:sources contract))))
-      (fail! "Authored source contract identity or schema is invalid"
+      (fail! "Source contract identity or schema is invalid"
              {:expected-scope expected-scope
               :expected-class expected-class
               :contract
@@ -233,7 +246,7 @@
     (let [ids (mapv :id (:sources contract))]
       (when-not (and (every? qualified-keyword? ids)
                      (= (count ids) (count (distinct ids))))
-        (fail! "Authored source contract identities are invalid or duplicated"
+        (fail! "Source contract identities are invalid or duplicated"
                {:ids ids})))
     (let [groups
           (mapv
@@ -268,19 +281,19 @@
                             (pos-int? max-emitted-lines)
                             (<= max-source-lines max-emitted-lines)
                             (valid-sha256? source-inventory-sha256))
-               (fail! "Authored source group contract is invalid"
+               (fail! "Source group contract is invalid"
                       {:source id :group group}))
              (exact-keys! public-types public-type-proof-keys
                           [id :public-types])
              (when-not (and (nat-int? (:count public-types))
                             (valid-sha256? (:sha256 public-types)))
-               (fail! "Authored public-type fingerprint is invalid"
+               (fail! "Contracted public-type fingerprint is invalid"
                       {:source id :public-types public-types}))
              (let [source-path
                    (paths/absolute
                     (paths/resolve-path workspace-root provenance))
                    _ (when-not (.startsWith source-path workspace-root)
-                       (fail! "Authored source group escapes the workspace"
+                       (fail! "Contracted source group escapes the workspace"
                               {:source id :provenance provenance}))
                    observation
                    (verify-source-observation!
@@ -295,7 +308,7 @@
              (reduce
               (fn [owners path]
                 (if-let [owner (get owners path)]
-                  (fail! "Authored source groups overlap"
+                  (fail! "Contracted source groups overlap"
                          {:path path :owners [owner id]})
                   (assoc owners path id)))
               owners paths))
@@ -312,37 +325,44 @@
 
 (def ^:private policy-contract-keys
   #{:schema-version :target :profile :package-id :review :evidence :budget
-    :forbidden-identities :compatibility-sources :destination-sources})
+    :forbidden-identities :compatibility-sources :destination-sources
+    :third-party-sources})
 
 (def ^:private budget-keys
   #{:authored-lines :total-lines})
 
 (defn validate-policy-contract!
-  "Validates the normalized per-package authored-code policy."
+  "Validates the normalized per-package source-accounting policy."
   [contract]
   (exact-keys! contract policy-contract-keys :authorship-policy)
   (let [{:keys [schema-version target profile package-id review evidence
                 budget forbidden-identities compatibility-sources
-                destination-sources]}
+                destination-sources third-party-sources]}
         contract
         groups (concat (vals compatibility-sources)
-                       (vals destination-sources))
+                       (vals destination-sources)
+                       (vals third-party-sources))
         normalized-source-group-keys
         (conj source-group-keys :class :paths)
         _ (when-not (and (map? compatibility-sources)
-                         (map? destination-sources))
-            (fail! "Authorship policy source selections must be maps"
+                         (map? destination-sources)
+                         (map? third-party-sources))
+            (fail! "Source-accounting policy selections must be maps"
                    {:compatibility-sources compatibility-sources
-                    :destination-sources destination-sources}))
+                    :destination-sources destination-sources
+                    :third-party-sources third-party-sources}))
         _ (doseq [[id group]
-                  (concat compatibility-sources destination-sources)]
+                  (concat compatibility-sources destination-sources
+                          third-party-sources)]
             (exact-keys! group normalized-source-group-keys id))
         identified-groups?
         (and
          (every? (fn [[id group]] (= id (:id group)))
                  compatibility-sources)
          (every? (fn [[id group]] (= id (:id group)))
-                 destination-sources))
+                 destination-sources)
+         (every? (fn [[id group]] (= id (:id group)))
+                 third-party-sources))
         valid?
         (and (= policy-schema-version schema-version)
              (keyword? target)
@@ -360,14 +380,18 @@
                      forbidden-identities)
              (map? compatibility-sources)
              (map? destination-sources)
+             (map? third-party-sources)
              (every? qualified-keyword?
                      (concat (keys compatibility-sources)
-                             (keys destination-sources)))
+                             (keys destination-sources)
+                             (keys third-party-sources)))
              identified-groups?
              (every? #(= :authored-compat (:class %))
                      (vals compatibility-sources))
              (every? #(= :authored-destination-runtime (:class %))
                      (vals destination-sources))
+             (every? #(= :vendored-third-party (:class %))
+                     (vals third-party-sources))
              (every?
               (fn [{:keys [paths source-files max-source-lines
                            max-emitted-lines source-inventory-sha256
@@ -391,7 +415,10 @@
              (pos-int? (:total-lines budget))
              (<= (:authored-lines budget) (:total-lines budget))
              (= (:authored-lines budget)
-                (reduce + 0 (map :max-emitted-lines groups))))]
+                (reduce
+                 + 0
+                 (map :max-emitted-lines
+                      (filter #(authored? (:class %)) groups)))))]
     (exact-keys! budget budget-keys :authorship-budget)
     (when-not valid?
       (fail! "Authorship policy contract is invalid"
@@ -433,7 +460,8 @@
   (sort-by
    (comp str :id)
    (concat (vals (:compatibility-sources contract))
-           (vals (:destination-sources contract)))))
+           (vals (:destination-sources contract))
+           (vals (:third-party-sources contract)))))
 
 (defn- verify-policy!
   [{:keys [workspace-root project-root configuration contract]} files totals]
@@ -443,14 +471,14 @@
             (fail! "Authorship policy package identity differs from the destination"
                    {:expected (get-in configuration [:package :id])
                     :actual (:package-id contract)}))
-        authored-files (filterv #(authored? (:class %)) files)
-        authored-provenance (mapv :provenance authored-files)
-        duplicate-provenance (duplicate-values authored-provenance)
+        contracted-files (filterv #(contracted? (:class %)) files)
+        contracted-provenance (mapv :provenance contracted-files)
+        duplicate-provenance (duplicate-values contracted-provenance)
         _ (when (seq duplicate-provenance)
-            (fail! "Package contains duplicate emitted authored provenance"
+            (fail! "Package contains duplicate contracted source provenance"
                    {:provenance duplicate-provenance}))
         actual-by-provenance (into {} (map (juxt :provenance identity))
-                                   authored-files)
+                                   contracted-files)
         groups
         (mapv
          (fn [{:keys [id class max-emitted-lines public-types]
@@ -462,7 +490,7 @@
                  actual-entries
                  (mapv actual-by-provenance (:paths observation))]
              (when (some nil? actual-entries)
-               (fail! "Reviewed authored source is missing from the package ledger"
+               (fail! "Reviewed contracted source is missing from the package ledger"
                       {:source id
                        :missing
                        (vec
@@ -480,15 +508,15 @@
                     actual-entries)
                    emitted-public-types (public-type-proof emitted-texts)]
                (when-not (every? #(= class (:class %)) actual-entries)
-                 (fail! "Authored source class differs from its reviewed contract"
+                 (fail! "Source class differs from its reviewed contract"
                         {:source id :expected class
                          :actual (mapv :class actual-entries)}))
                (when (> emitted-lines max-emitted-lines)
-                 (fail! "Authored source grew beyond its reviewed line budget"
+                 (fail! "Contracted source grew beyond its reviewed line budget"
                         {:source id :expected-at-most max-emitted-lines
                          :actual emitted-lines}))
                (when-not (= public-types emitted-public-types)
-                 (fail! "Authored public type surface differs from its reviewed evidence contract"
+                 (fail! "Contracted public type surface differs from its reviewed evidence contract"
                         {:source id :expected public-types
                          :actual emitted-public-types}))
                {:id id
@@ -512,7 +540,7 @@
         authored-lines (:authored-lines totals)
         total-lines (:total-lines totals)]
     (when-not (= expected-provenance actual-provenance)
-      (fail! "Package authored sources differ from its reviewed contract"
+      (fail! "Package contracted sources differ from its reviewed contract"
              {:missing
               (vec (sort (set/difference expected-provenance
                                          actual-provenance)))
@@ -549,7 +577,7 @@
                   (filter #(= :authored-compat (:class %)) groups)))
      :sources groups}))
 
-(defn- authored-provenance-path
+(defn- contracted-provenance-path
   [^Path workspace-root provenance]
   (let [path (paths/path provenance)]
     (paths/absolute
@@ -637,16 +665,16 @@
                   provenance-file
                   (when (and (string? provenance)
                              (not (str/blank? provenance)))
-                    (authored-provenance-path workspace-root provenance))
+                    (contracted-provenance-path workspace-root provenance))
                   actual-hash (util/sha256-file file)]
               (when-not (and provenance-file
                              (paths/regular-file? provenance-file))
-                (fail! "Authored source provenance is missing"
+                (fail! "Contracted source provenance is missing"
                        {:path path :provenance provenance}))
               (when-not (and (re-matches #"[0-9a-f]{64}"
                                          (or (:sha256 entry) ""))
                              (= actual-hash (:sha256 entry)))
-                (fail! "Authored source SHA-256 differs from the emitted assembly input"
+                (fail! "Contracted source SHA-256 differs from the emitted assembly input"
                        {:path path :expected actual-hash
                         :actual (:sha256 entry)}))))))
       (let [expected-totals (totals files)
@@ -704,8 +732,8 @@
                              :revision (:revision mechanical-source)}
                     :lines lines})
                  (do
-                   (when-not (authored? authorship-class)
-                     (fail! "Authored C# artifact lacks an exact authorship class"
+                   (when-not (contracted? authorship-class)
+                     (fail! "Contracted C# artifact lacks an exact source class"
                             {:path file :authorship-class authorship-class}))
                    {:path file
                     :class authorship-class

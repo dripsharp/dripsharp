@@ -194,7 +194,7 @@
 
 (defn- target-manifest
   []
-  {:schema-version 3
+  {:schema-version 4
    :target :acme
    :product-family :acme
    :contracts
@@ -210,7 +210,8 @@
    :capabilities #{:java-compat :acme/mapping :acme/runtime}
    :authorship
    {:compatibility "config/authored-compat.edn"
-    :destination "authorship.edn"}
+    :destination "authorship.edn"
+    :third-party "third-party.edn"}
    :profiles
    [{:id "acme-core"
      :path "profiles/core.edn"
@@ -219,10 +220,10 @@
      :runtime-assets [:acme/runtime]
      :validation-contracts [:acme-core]
      :authorship
-     {:sources [:acme/runtime]
+     {:sources [:acme/runtime :acme/vendor]
       :evidence [:acme-required-proof]
       :review "acme-authorship-review"
-      :budget {:authored-lines 2 :total-lines 2}}
+      :budget {:authored-lines 2 :total-lines 3}}
      :required-capabilities
      #{:java-compat :acme/mapping :acme/runtime}}]
    :destinations [{:id :core :path "destinations/core.edn"}]
@@ -288,6 +289,25 @@
      (util/sha256-text "targets/acme/runtime/Acme.Core.Runtime.cs")
      :public-types (public-type-proof)}]})
 
+(defn- third-party-authorship
+  []
+  {:schema-version 1
+   :scope :acme
+   :class :vendored-third-party
+   :sources
+   [{:id :acme/vendor
+     :kind :file
+     :provenance "vendor/acme/Vendor.cs"
+     :include-pattern nil
+     :charset nil
+     :capability nil
+     :source-files 1
+     :max-source-lines 1
+     :max-emitted-lines 1
+     :source-inventory-sha256
+     (util/sha256-text "vendor/acme/Vendor.cs")
+     :public-types (public-type-proof)}]})
+
 (defn- legal-policy
   []
   {:schema-version 4
@@ -314,6 +334,7 @@
            ["upstream/acme/NOTICE.txt" "Acme notice\n"]
            ["upstream/acme/src/Acme.java" "class Acme {}\n"]
            ["runtime/Shared.JavaCompat.cs" "namespace Shared.Java;\n"]
+           ["vendor/acme/Vendor.cs" "namespace Vendor.Acme;\n"]
            ["targets/acme/runtime/Acme.Core.Runtime.cs"
             "namespace Acme.Core;\n"]
            ["targets/acme/validation/oracle/AcmeOracle.java"
@@ -328,6 +349,7 @@
           [["targets/acme/target.edn" (target-manifest)]
            ["config/authored-compat.edn" (shared-authorship)]
            ["targets/acme/authorship.edn" (target-authorship)]
+           ["targets/acme/third-party.edn" (third-party-authorship)]
            ["targets/acme/baseline.edn" (baseline-record)]
            ["targets/acme/legal/policy.edn" (legal-policy)]
            ["targets/acme/profiles/core.edn" (generation-profile)]
@@ -359,6 +381,10 @@
        (is (= [:acme-required-proof]
               (mapv :id (get-in target [:proof :ladders]))))
        (is (= #{"acme-core"} (set (keys (:profiles target)))))
+       (is (= :vendored-third-party
+              (get-in target
+                      [:profiles "acme-core" :authorship
+                       :third-party-sources :acme/vendor :class])))
        (is (= [:upstream]
               (get-in target
                       [:profiles "acme-core"

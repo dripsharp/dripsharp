@@ -35,6 +35,24 @@
   [configuration node]
   (csharp/render (transform-node configuration node)))
 
+(deftest vendored-codec-assets-retain-third-party-authorship-class
+  (let [assets
+        ((ns-resolve 'dripsharp.pdfcube.java-project
+                     'internal-capability-assets)
+         {:configuration
+          {:internal-capabilities #{:jbig2 :jpx}
+           :runtime-sources
+           ["targets/pdfcube/runtime/PdfCube.ImageCodecs.cs"]}})
+        codec-assets
+        (filterv
+         #(contains? #{:pdfcube.pdfbox/jbig2-source
+                       :pdfcube.pdfbox/jpx-source}
+                     (:strategy %))
+         assets)]
+    (is (= 2 (count codec-assets)))
+    (is (every? #(= :vendored-third-party (:authorship-class %))
+                codec-assets))))
+
 (defn- structured-type
   [qualified-name header-nodes members constraints?]
   (csharp/declaration
