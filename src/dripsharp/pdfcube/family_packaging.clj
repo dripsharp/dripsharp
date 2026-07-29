@@ -26,9 +26,6 @@
 (def ^:private target-framework
   "net10.0")
 
-(def ^:private package-authors
-  "Vibeformer")
-
 (def ^:private package-copyright
   "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt.")
 
@@ -332,7 +329,7 @@
            :metadata
            {:id id
             :version (package-version id)
-            :authors package-authors
+            :authors (get-in destination [:package :authors])
             :copyright package-copyright
             :symbols :snupkg
             :repository-url "https://github.com/apache/pdfbox.git"

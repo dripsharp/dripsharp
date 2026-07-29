@@ -2820,9 +2820,6 @@
    :version "4.150.1"
    :projection :skia-sharp-native-assets})
 
-(def ^:private package-authors
-  "Vibeformer")
-
 (def ^:private package-copyright
   "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt.")
 
@@ -3103,8 +3100,6 @@
              [[:package :version] (get-in configuration [:package :version])]
              [[:package :repository-commit]
               (get-in configuration [:package :repository-commit])]
-             [[:package :authors]
-              (get-in configuration [:package :authors])]
              [[:package :copyright]
               (get-in configuration [:package :copyright])]
              [[:package :symbols]
@@ -3143,7 +3138,6 @@
               [:package :version]
               (:version (baseline/package :pdfcube package-id))
               [:package :repository-commit] source-revision
-              [:package :authors] package-authors
               [:package :copyright] package-copyright
               [:package :symbols] :snupkg
               :mechanical-source mechanical-source

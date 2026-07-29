@@ -112,7 +112,7 @@
                :package
                {:id id
                 :version version
-                :authors "Vibeformer"
+                :authors "Fixture Publisher"
                 :copyright copyright
                 :symbols :snupkg
                 :repository-url "https://github.com/apache/pdfbox.git"
@@ -176,6 +176,11 @@
             "PdfCube.PdfBox" "PdfCube.XmpBox"]
            (get-in @#'family-packaging/package-contract
                    ["PdfCube.Preflight" :assembly-dependencies])))
+    (is (= #{"Fixture Publisher"}
+           (->> (:packages evidence)
+                vals
+                (map #(get-in % [:metadata :authors]))
+                set)))
     (is (= 17 (get-in evidence [:feed :artifacts])))
     (is (= ["x64" "arm64"]
            (get-in evidence
