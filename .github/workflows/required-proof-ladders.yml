@@ -13,7 +13,7 @@ permissions:
 jobs:
   java-compat-conformance:
     name: Shared JavaCompat conformance
-    runs-on: [self-hosted, linux, x64, dripsharp-proof]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     env:
       DRIPSHARP_WORKERS: 22
@@ -49,7 +49,7 @@ jobs:
 
   rawhttp-conformance:
     name: Permanent RawHTTP reusable-translator conformance
-    runs-on: [self-hosted, linux, x64, dripsharp-proof]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 45
     env:
       DRIPSHARP_WORKERS: 22
@@ -88,7 +88,7 @@ jobs:
 
   pkl-product-proof:
     name: Complete Pkl product proof ladder
-    runs-on: [self-hosted, linux, x64, dripsharp-proof]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 180
     env:
       DRIPSHARP_WORKERS: 22

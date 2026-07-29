@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   package-proof:
-    runs-on: [self-hosted, linux, x64, dripsharp-proof]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 60
     env:
       DRIPSHARP_WORKERS: 22

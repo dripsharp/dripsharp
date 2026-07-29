@@ -63,7 +63,7 @@
     (is (str/includes? header "// Translator: DripSharp "))
     (is (not (re-find #"(?i)vibeformer" header)))))
 
-(deftest host-workflows-use-root-paths-and-dripsharp-runner
+(deftest host-workflows-use-root-paths-and-product-neutral-runner-selection
   (let [root (paths/workspace-root)
         workflows
         (filter (fn [^Path file]
@@ -72,7 +72,8 @@
     (is (seq workflows))
     (doseq [file workflows]
       (let [content (slurp (str file))]
-        (is (str/includes? content "dripsharp-proof") (str file))
         (is (str/includes? content "DRIPSHARP_WORKERS") (str file))
+        (is (not (str/includes? content "vibeformer-proof")) (str file))
+        (is (not (str/includes? content "dripsharp-proof")) (str file))
         (is (not (str/includes? content "working-directory:")) (str file))
         (is (not (str/includes? content "vibeformer/")) (str file))))))

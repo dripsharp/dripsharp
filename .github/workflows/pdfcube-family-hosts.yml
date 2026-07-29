@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   package-proof:
-    runs-on: [self-hosted, linux, x64, dripsharp-proof]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 120
     env:
       DRIPSHARP_WORKERS: 22
@@ -174,7 +174,7 @@ jobs:
     needs:
       - package-proof
       - host-smoke
-    runs-on: [self-hosted, linux, x64, dripsharp-proof]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

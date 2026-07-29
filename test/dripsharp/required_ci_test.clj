@@ -38,7 +38,8 @@
         (is (str/includes? contents "JAVA_TOOL_OPTIONS: -Xmx28g"))
         (is (str/includes? contents "/MemAvailable/"))
         (is (str/includes? contents "available_cpu < 22"))
-        (is (str/includes? contents "dripsharp-proof"))
+        (is (str/includes? contents
+                           "runs-on: [self-hosted, linux, x64]"))
         (is (= (if (= :rawhttp target)
                  #{:conformance}
                  #{:high-memory})
@@ -59,4 +60,20 @@
       (is (not (re-find
                 #"-M:run pdfcube-(?:family-workflows|io-differential|fontbox-differential|xmpbox-metadata-differential|pdfbox-differential|preflight-differential|pdfbox-printing-differential)"
                 contents))
+          (.getPath workflow)))))
+
+(deftest proof-workflows-use-resource-gated-generic-self-hosted-runners
+  (doseq [^File workflow
+          (->> (.listFiles (File. ".github/workflows"))
+               (filter #(.isFile ^File %))
+               (filter #(or (= "required-proof-ladders.yml"
+                               (.getName ^File %))
+                            (str/starts-with?
+                             (.getName ^File %)
+                             "pdfcube-"))))]
+    (let [contents (slurp workflow)]
+      (is (str/includes? contents
+                         "runs-on: [self-hosted, linux, x64]")
+          (.getPath workflow))
+      (is (not (str/includes? contents "dripsharp-proof"))
           (.getPath workflow)))))
