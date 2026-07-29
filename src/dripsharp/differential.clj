@@ -48,25 +48,15 @@
             :missing (vec (sort (set/difference expected (set (keys value)))))
             :unknown (vec (sort (set/difference (set (keys value)) expected)))})))
 
-(defn validate-contract!
-  "Validates the exact schema for one data-driven differential contract."
+(defn validate-observation-contract!
+  "Validates the reusable versioned observation-stream portion of a proof
+  contract. Focused proofs that do not package a translated target can use
+  this contract without inventing package-runner metadata."
   [contract]
-  (exact-keys!
-   contract "Differential contract"
-   #{:schema-version :id :target :baseline-profile :failure-kind
-     :observation :runner :package-contract :summary}
-   contract)
-  (let [{:keys [schema-version id target baseline-profile failure-kind
-                observation runner package-contract summary]}
-        contract]
-    (when-not (= contract-schema-version schema-version)
-      (fail! contract "Differential contract has an unsupported schema version"
-             {:expected contract-schema-version :actual schema-version}))
-    (when-not (and (keyword? id) (keyword? target) (keyword? baseline-profile)
-                   (keyword? failure-kind))
-      (fail! contract "Differential contract identities are invalid"
-             {:id id :target target :baseline-profile baseline-profile
-              :failure-kind failure-kind}))
+  (let [observation (:observation contract)]
+    (when-not (map? observation)
+      (fail! contract "Observation contract is missing or invalid"
+             {:observation observation}))
     (exact-keys!
      contract "Observation contract"
      #{:schema-version :header :columns :required-families :expected-count}
@@ -87,6 +77,28 @@
              {:observation observation
               :required-header observation-header
               :required-columns observation-columns}))
+    contract))
+
+(defn validate-contract!
+  "Validates the exact schema for one data-driven differential contract."
+  [contract]
+  (exact-keys!
+   contract "Differential contract"
+   #{:schema-version :id :target :baseline-profile :failure-kind
+     :observation :runner :package-contract :summary}
+   contract)
+  (let [{:keys [schema-version id target baseline-profile failure-kind
+                observation runner package-contract summary]}
+        contract]
+    (when-not (= contract-schema-version schema-version)
+      (fail! contract "Differential contract has an unsupported schema version"
+             {:expected contract-schema-version :actual schema-version}))
+    (when-not (and (keyword? id) (keyword? target) (keyword? baseline-profile)
+                   (keyword? failure-kind))
+      (fail! contract "Differential contract identities are invalid"
+             {:id id :target target :baseline-profile baseline-profile
+              :failure-kind failure-kind}))
+    (validate-observation-contract! contract)
     (exact-keys!
      contract "Differential runner contract"
      #{:profile :output-directory :context :required-files
@@ -132,7 +144,7 @@
             (every? pos-int? (map spec timeout-keys)))
         (fail! contract (str subject " is invalid") {:contract spec})))
     (when-not (and (boolean? (get-in runner [:oracle
-                                              :include-resource-roots?]))
+                                             :include-resource-roots?]))
                    (non-blank-string? (get-in runner [:oracle :main-class])))
       (fail! contract "Java oracle contract is invalid"
              {:oracle (:oracle runner)}))
@@ -247,10 +259,11 @@
                       :expected expected-line
                       :actual actual-line}})))))
 
-(defn trace-summary
-  "Validates one versioned family/id/value observation stream."
+(defn observation-trace-summary
+  "Validates one versioned family/id/value observation stream using the
+  reusable observation portion of a proof contract."
   [contract trace]
-  (let [contract (validate-contract! contract)
+  (let [contract (validate-observation-contract! contract)
         trace (paths/path trace)
         [header & lines]
         (vec (Files/readAllLines trace StandardCharsets/UTF_8))
@@ -309,12 +322,19 @@
        :families (vec (sort families))
        :identities identities})))
 
-(defn assert-match!
+(defn trace-summary
+  "Validates one versioned family/id/value observation stream from a complete
+  package differential contract."
+  [contract trace]
+  (validate-contract! contract)
+  (observation-trace-summary contract trace))
+
+(defn assert-observation-match!
   "Requires two independently produced versioned traces to have identical
-  normalized observations and coverage."
+  normalized observations and coverage without requiring package metadata."
   [contract subject expected actual]
-  (let [expected-summary (trace-summary contract expected)
-        actual-summary (trace-summary contract actual)
+  (let [expected-summary (observation-trace-summary contract expected)
+        actual-summary (observation-trace-summary contract actual)
         comparison (compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail! contract
@@ -328,9 +348,18 @@
              {:expected expected-summary :actual actual-summary}))
     comparison))
 
-(defn prove-perturbation!
-  "Appends a valid extra observation and requires the comparator to reject it."
+(defn assert-match!
+  "Requires two independently produced package-differential traces to have
+  identical normalized observations and coverage."
+  [contract subject expected actual]
+  (validate-contract! contract)
+  (assert-observation-match! contract subject expected actual))
+
+(defn prove-observation-perturbation!
+  "Appends a valid extra observation and requires the reusable comparator to
+  reject it."
   [contract ^Path oracle ^Path perturbed]
+  (validate-observation-contract! contract)
   (Files/copy oracle perturbed
               (into-array StandardCopyOption
                           [StandardCopyOption/REPLACE_EXISTING]))
@@ -343,6 +372,13 @@
              "Differential comparator missed a deliberate perturbation"
              {:oracle (str oracle) :perturbed (str perturbed)}))
     comparison))
+
+(defn prove-perturbation!
+  "Appends a valid extra package observation and requires the comparator to
+  reject it."
+  [contract ^Path oracle ^Path perturbed]
+  (validate-contract! contract)
+  (prove-observation-perturbation! contract oracle perturbed))
 
 (defn- configured-path [^Path root value]
   (let [path (paths/path value)]

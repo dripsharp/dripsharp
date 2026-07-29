@@ -1,5 +1,6 @@
 (ns dripsharp.main
   (:require [clojure.string :as str]
+            [dripsharp.java-compat-differential :as java-compat-differential]
             [dripsharp.paths :as paths]
             [dripsharp.rebaseline :as rebaseline]
             [dripsharp.target-execution :as target-execution])
@@ -10,6 +11,7 @@
    "Usage: clojure -M:run "
    "generate|verify|pack|package <target> <profile>"
    "|differential <target> [validation-id]"
+   "|java-compat-differential"
    "|rebaseline <pkl|pdfcube> [--approve <token>]"))
 
 (defn- fail!
@@ -35,6 +37,12 @@
       (target-execution/differential!
        (cond-> {:target target}
          selector (assoc :validation selector)))
+
+      (and (= "java-compat-differential" command)
+           (nil? target)
+           (nil? selector)
+           (empty? extra))
+      (java-compat-differential/verify!)
 
       (and (= "rebaseline" command)
            (or (= 2 (count args))

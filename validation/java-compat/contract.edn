@@ -1,0 +1,38 @@
+{:schema-version 1
+ :id :java-compat-direct
+ :failure-kind :java-compat-differential-failed
+ :java-release 17
+ :output-directory "java-compat-differential"
+ :provenance "validation/java-compat/TypeProvenance.tsv"
+ :runtime
+ {:namespace "DripSharp.Runtime"
+  :visibility-symbol "DRIPSHARP_INTERNAL_JAVA_COMPAT"
+  :sources
+  ["runtime/DripSharp.JavaCompat.Java.IO.cs"
+   "runtime/DripSharp.JavaCompat.Java.Lang.cs"
+   "runtime/DripSharp.JavaCompat.Java.Math.cs"
+   "runtime/DripSharp.JavaCompat.Java.Net.cs"
+   "runtime/DripSharp.JavaCompat.Java.Nio.cs"
+   "runtime/DripSharp.JavaCompat.Java.Security.cs"
+   "runtime/DripSharp.JavaCompat.Java.Text.cs"
+   "runtime/DripSharp.JavaCompat.Java.Time.cs"
+   "runtime/DripSharp.JavaCompat.Java.Util.Concurrent.cs"
+   "runtime/DripSharp.JavaCompat.Java.Util.Regex.cs"
+   "runtime/DripSharp.JavaCompat.Java.Util.cs"
+   "runtime/DripSharp.JavaCompat.Java.Xml.cs"
+   "runtime/DripSharp.JavaRegexUnicodeData.cs"]}
+ :observation
+ {:schema-version 1
+  :header "DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1"
+  :columns [:family :id :value]
+  :required-families ["behavior" "type-contract"]
+  :expected-count 182}
+ :oracle
+ {:source "validation/java-compat/JavaCompatOracle.java"
+  :main-class "JavaCompatOracle"
+  :compile-timeout-ms 120000
+  :run-timeout-ms 30000}
+ :probe
+ {:project "validation/java-compat/DripSharp.JavaCompat.DirectProbe.csproj"
+  :build-timeout-ms 120000
+  :run-timeout-ms 30000}}
