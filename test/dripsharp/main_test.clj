@@ -2,7 +2,9 @@
   (:require [clojure.test :refer [deftest is]]
             [dripsharp.java-compat-differential :as java-compat-differential]
             [dripsharp.main :as main]
+            [dripsharp.paths :as paths]
             [dripsharp.pdfcube.host-matrix :as pdfcube-host-matrix]
+            [dripsharp.rebaseline :as rebaseline]
             [dripsharp.target-execution :as target-execution]))
 
 (defn- failure-data
@@ -37,6 +39,10 @@
                            [:pdfcube-family-host-matrix
                             evidence-root
                             output-root])
+                    :ok)
+                  rebaseline/run!
+                  (fn [root args]
+                    (swap! calls conj [:rebaseline root (vec args)])
                     :ok)]
       (is (= :ok
              (main/dispatch! ["generate" "acme" "acme-core"])))
@@ -50,12 +56,17 @@
       (is (= :ok
              (main/dispatch!
               ["pdfcube-family-host-matrix" "evidence" "output"])))
+      (is (= :ok
+             (main/dispatch! ["rebaseline" "rawhttp"])))
       (is (= [[:generate {:target "acme" :profile "acme-core"}]
               [:differential
                {:target "acme" :validation "acme-contract"}]
               [:proof {:target "acme"}]
               [:java-compat-differential]
-              [:pdfcube-family-host-matrix "evidence" "output"]]
+              [:pdfcube-family-host-matrix "evidence" "output"]
+              [:rebaseline
+               (paths/workspace-root)
+               ["rawhttp"]]]
              @calls)))))
 
 (deftest cli-rejects-implicit-target-or-profile-selection
@@ -73,3 +84,14 @@
                  "extra"]]]
     (is (= :invalid-command-line
            (:kind (failure-data #(main/dispatch! args)))))))
+
+(deftest cli-usage-advertises-every-rebaseline-target
+  (let [error (try
+                (main/dispatch! [])
+                nil
+                (catch clojure.lang.ExceptionInfo error
+                  error))]
+    (is (= :invalid-command-line (:kind (ex-data error))))
+    (is (re-find
+         #"\|rebaseline <pkl\|pdfcube\|rawhttp> \[--approve <token>\]"
+         (ex-message error)))))

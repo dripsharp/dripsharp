@@ -15,7 +15,7 @@
    "|proof <target>"
    "|java-compat-differential"
    "|pdfcube-family-host-matrix <evidence-root> <output-root>"
-   "|rebaseline <pkl|pdfcube> [--approve <token>]"))
+   "|rebaseline <pkl|pdfcube|rawhttp> [--approve <token>]"))
 
 (defn- fail!
   [message exit]
