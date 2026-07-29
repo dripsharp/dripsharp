@@ -136,14 +136,16 @@ The selected license must be allowed and must equal the baseline license.
 Legal-set names must equal the baseline legal sets, and every profile has one
 ordered legal-set selection. Destination and validation package contracts
 must use that same selection. Legal source, destination, and package paths are
-validated before discovery. Every profile also has one exact package-metadata
-policy. Required description fragments must occur in the configured package
-description, and forbidden upstream-owner marks must not occur in package ids,
-titles, authors, assembly names, root namespaces, or destination namespace
-identities. Upstream attribution in descriptions, copyright metadata,
-repository URLs, LICENSE, and NOTICE remains allowed. Exact nupkg inspection
-then proves that the validated description and identity metadata reached the
-artifact unchanged.
+validated before discovery. Each legal source is also hashed during target
+preflight and must match its pinned `:source-sha256`, or its package `:sha256`
+when no distinct source digest is declared. Every profile also has one exact
+package-metadata policy. Required description fragments must occur in the
+configured package description, and forbidden upstream-owner marks must not
+occur in package ids, titles, authors, assembly names, root namespaces, or
+destination namespace identities. Upstream attribution in descriptions,
+copyright metadata, repository URLs, LICENSE, and NOTICE remains allowed.
+Exact nupkg inspection then proves that the validated description and identity
+metadata reached the artifact unchanged.
 
 `:notice-appendix-sha256` is always present. It is `nil` when the target has no
 translation appendix, or the lowercase SHA-256 of the exact target-baseline

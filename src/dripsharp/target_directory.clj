@@ -599,9 +599,21 @@
                   error))))
     (doseq [[legal-set entries] (:legal-sets record)
             entry entries]
-      (workspace-file! workspace-root
-                       (str "Baseline " (name legal-set) " legal source")
-                       (:source entry))
+      (let [source
+            (workspace-file!
+             workspace-root
+             (str "Baseline " (name legal-set) " legal source")
+             (:source entry))
+            expected (or (:source-sha256 entry) (:sha256 entry))
+            actual (util/sha256-file source)]
+        (when-not (= expected actual)
+          (fail! "Baseline legal source differs from its pinned digest"
+                 {:target target
+                  :legal-set legal-set
+                  :legal-kind (:kind entry)
+                  :path (str source)
+                  :expected expected
+                  :actual actual})))
       (relative-path! "Baseline legal destination" (:destination entry))
       (relative-path! "Baseline package legal path" (:package-path entry)))
     {:path file :record record}))

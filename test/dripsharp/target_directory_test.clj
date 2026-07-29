@@ -77,14 +77,12 @@
       :source "upstream/acme/LICENSE.txt"
       :destination "Legal/LICENSE.txt"
       :package-path "LICENSE.txt"
-      :sha256
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+      :sha256 (util/sha256-text "Apache License\n")}
      {:kind :notice
       :source "upstream/acme/NOTICE.txt"
       :destination "Legal/NOTICE.txt"
       :package-path "NOTICE.txt"
-      :sha256
-      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}
+      :sha256 (util/sha256-text "Acme notice\n")}]}
    :packages
    {"Acme.Core" {:version "1.0.0" :assembly-version "1.0.0.0"}}
    :profiles
@@ -460,6 +458,39 @@
                 (:path failure)))
          (is (= "UpstreamCo" (:mark failure)))
          (is (= "UpstreamCo" (:actual failure))))))))
+
+(deftest pinned-legal-input-content-fails-closed
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (testing "a changed legal source fails its direct package digest"
+       (write-text! root "upstream/acme/LICENSE.txt" "changed license\n")
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= :acme (:target failure)))
+         (is (= :upstream (:legal-set failure)))
+         (is (= :license (:legal-kind failure)))
+         (is (= (util/sha256-text "Apache License\n") (:expected failure)))
+         (is (= (util/sha256-text "changed license\n") (:actual failure)))))
+     (testing "a distinct source digest takes precedence over the package digest"
+       (create-target-workspace! root)
+       (update-edn!
+        root "targets/acme/baseline.edn"
+        (fn [baseline]
+          (-> baseline
+              (assoc-in [:legal-sets :upstream 1 :source-sha256]
+                        (util/sha256-text "Acme notice\n"))
+              (assoc-in [:legal-sets :upstream 1 :sha256]
+                        (util/sha256-text
+                         "Acme notice\n---\ntranslation appendix\n")))))
+       (write-text! root "upstream/acme/NOTICE.txt" "changed notice\n")
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= :notice (:legal-kind failure)))
+         (is (= (util/sha256-text "Acme notice\n") (:expected failure)))
+         (is (= (util/sha256-text "changed notice\n") (:actual failure))))))))
 
 (deftest resource-notice-attribution-policy-fails-closed
   (in-target-workspace
