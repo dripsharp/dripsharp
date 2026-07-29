@@ -292,11 +292,12 @@
 
 (defn- legal-policy
   []
-  {:schema-version 3
+  {:schema-version 4
    :target :acme
    :upstream-license "Apache-2.0"
    :allowed-upstream-licenses #{"Apache-2.0"}
    :legal-sets #{:upstream}
+   :notice-appendix-sha256 nil
    :profile-legal-sets {"acme-core" [:upstream]}
    :resource-notice-legal-sets {"acme-core" [:upstream]}
    :package-metadata
@@ -499,6 +500,83 @@
          (is (= [:legal-policy :resource-notice-legal-sets
                  "acme-core"]
                 (:path failure))))))))
+
+(deftest notice-translation-appendix-policy-fails-closed
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (testing "every legal policy explicitly selects an appendix digest"
+       (update-edn! root "targets/acme/legal/policy.edn"
+                    dissoc :notice-appendix-sha256)
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy] (:path failure)))
+         (is (= [:notice-appendix-sha256] (:missing failure)))))
+     (testing "appendix digests must use exact lowercase SHA-256 syntax"
+       (write-edn!
+        root "targets/acme/legal/policy.edn"
+        (assoc (legal-policy) :notice-appendix-sha256 "ABC123"))
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :notice-appendix-sha256]
+                (:path failure)))))
+     (testing "an unapproved baseline appendix is rejected"
+       (write-edn! root "targets/acme/legal/policy.edn" (legal-policy))
+       (update-edn! root "targets/acme/baseline.edn"
+                    assoc :notice-appendix "\nAcme translation appendix\n")
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :notice-appendix-sha256]
+                (:actual-path failure)))
+         (is (nil? (:actual-value failure)))))
+     (testing "a changed appendix fails its exact policy digest"
+       (let [appendix "\nAcme translation appendix\n"]
+         (write-edn! root "targets/acme/baseline.edn"
+                     (assoc (baseline-record) :notice-appendix appendix))
+         (write-edn!
+          root "targets/acme/legal/policy.edn"
+          (assoc (legal-policy)
+                 :notice-appendix-sha256
+                 "0000000000000000000000000000000000000000000000000000000000000000"))
+         (let [failure
+               (failure-data #(target-directory/read-target root :acme))]
+           (is (= :invalid-target-directory (:kind failure)))
+           (is (= (util/sha256-text appendix) (:expected-value failure)))
+           (is (= [:legal-policy :notice-appendix-sha256]
+                  (:actual-path failure))))))
+     (testing "a pinned appendix requires a pinned NOTICE input"
+       (let [appendix "\nAcme translation appendix\n"]
+         (write-edn!
+          root "targets/acme/baseline.edn"
+          (-> (baseline-record)
+              (assoc :notice-appendix appendix)
+              (update-in
+               [:legal-sets :upstream]
+               #(vec (remove (fn [entry] (= :notice (:kind entry))) %)))))
+         (write-edn!
+          root "targets/acme/legal/policy.edn"
+          (assoc (legal-policy)
+                 :notice-appendix-sha256 (util/sha256-text appendix)))
+         (let [failure
+               (failure-data #(target-directory/read-target root :acme))]
+           (is (= :invalid-target-directory (:kind failure)))
+           (is (= [:baseline :legal-sets] (:path failure))))))
+     (testing "an exact appendix digest passes preflight"
+       (let [appendix "\nAcme translation appendix\n"]
+         (write-edn! root "targets/acme/baseline.edn"
+                     (assoc (baseline-record) :notice-appendix appendix))
+         (write-edn!
+          root "targets/acme/legal/policy.edn"
+          (assoc (legal-policy)
+                 :notice-appendix-sha256 (util/sha256-text appendix)))
+         (is (= (util/sha256-text appendix)
+                (get-in
+                 (target-directory/read-target root :acme)
+                 [:legal-policy :contract
+                  :notice-appendix-sha256]))))))))
 
 (deftest profile-destination-and-validation-identities-fail-closed
   (in-target-workspace

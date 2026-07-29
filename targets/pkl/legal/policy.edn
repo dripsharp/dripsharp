@@ -1,8 +1,9 @@
-{:schema-version 3
+{:schema-version 4
  :target :pkl
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
  :legal-sets #{:core}
+ :notice-appendix-sha256 "ea4bc75f258ee98b1b11063502e8c9f4b04210497d59433311449a2f4573b97f"
  :profile-legal-sets
  {"pkl-parser" []
   "pkl-core-value-model" [:core]}

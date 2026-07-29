@@ -12,11 +12,12 @@
             [dripsharp.differential :as differential]
             [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.paths :as paths]
+            [dripsharp.util :as util]
             [dripsharp.validation :as validation])
   (:import [java.nio.file Files LinkOption]))
 
 (def schema-version 3)
-(def legal-policy-schema-version 3)
+(def legal-policy-schema-version 4)
 (def mapping-overlay-schema-version 1)
 
 (def ^:private manifest-keys
@@ -59,7 +60,7 @@
 (def ^:private legal-policy-keys
   #{:schema-version :target :upstream-license :allowed-upstream-licenses
     :legal-sets :profile-legal-sets :resource-notice-legal-sets
-    :package-metadata})
+    :notice-appendix-sha256 :package-metadata})
 
 (def ^:private package-metadata-policy-keys
   #{:required-description-fragments :forbidden-identity-marks})
@@ -100,6 +101,12 @@
   (and (string? value)
        (not (str/blank? value))
        (not (re-find #"[\r\n\u0000]" value))))
+
+(defn- non-blank-text?
+  [value]
+  (and (string? value)
+       (not (str/blank? value))
+       (not (str/includes? value "\u0000"))))
 
 (defn- exact-keys!
   ([subject expected value]
@@ -443,6 +450,8 @@
           profile-legal-sets (:profile-legal-sets policy)
           resource-notice-legal-sets
           (:resource-notice-legal-sets policy)
+          notice-appendix (:notice-appendix baseline-record)
+          notice-appendix-sha256 (:notice-appendix-sha256 policy)
           package-metadata (:package-metadata policy)
           baseline-sets (set (keys (:legal-sets baseline-record)))]
       (let [context (validation-context "Target legal policy")]
@@ -467,6 +476,35 @@
         (validation/agree! context
                            [:baseline :legal-sets] baseline-sets
                            [:legal-policy :legal-sets] legal-sets)
+        (when (some? notice-appendix)
+          (validation/check! context [:baseline :notice-appendix]
+                             notice-appendix
+                             "non-blank text without NUL characters"
+                             non-blank-text?))
+        (validation/check!
+         context [:legal-policy :notice-appendix-sha256]
+         notice-appendix-sha256
+         "nil or a lowercase SHA-256 string"
+         #(or (nil? %)
+              (and (string? %)
+                   (boolean (re-matches #"[0-9a-f]{64}" %)))))
+        (validation/agree!
+         context
+         [:baseline :notice-appendix-sha256]
+         (some-> notice-appendix util/sha256-text)
+         [:legal-policy :notice-appendix-sha256]
+         notice-appendix-sha256)
+        (when notice-appendix-sha256
+          (let [notice-entries
+                (for [[legal-set entries] (:legal-sets baseline-record)
+                      entry entries
+                      :when (= :notice (:kind entry))]
+                  [legal-set entry])]
+            (validation/check!
+             context [:baseline :legal-sets]
+             notice-entries
+             "at least one pinned NOTICE input for the translation appendix"
+             seq)))
         (validation/exact-keys!
          context [:legal-policy :profile-legal-sets]
          profile-legal-sets profile-names profile-names)

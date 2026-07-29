@@ -1,8 +1,9 @@
-{:schema-version 3
+{:schema-version 4
  :target :rawhttp
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
  :legal-sets #{}
+ :notice-appendix-sha256 nil
  :profile-legal-sets
  {"rawhttp-core" []}
  :resource-notice-legal-sets

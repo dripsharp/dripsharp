@@ -114,14 +114,15 @@ baseline; directory validation does not substitute for that evidence.
 
 ### Legal policy
 
-`legal/policy.edn` schema version 3 has exactly these keys:
+`legal/policy.edn` schema version 4 has exactly these keys:
 
 ```clojure
-{:schema-version 3
+{:schema-version 4
  :target :example
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
  :legal-sets #{:upstream}
+ :notice-appendix-sha256 nil
  :profile-legal-sets {"example-core" [:upstream]}
  :resource-notice-legal-sets {"example-core" [:upstream]}
  :package-metadata
@@ -143,6 +144,13 @@ identities. Upstream attribution in descriptions, copyright metadata,
 repository URLs, LICENSE, and NOTICE remains allowed. Exact nupkg inspection
 then proves that the validated description and identity metadata reached the
 artifact unchanged.
+
+`:notice-appendix-sha256` is always present. It is `nil` when the target has no
+translation appendix, or the lowercase SHA-256 of the exact target-baseline
+`:notice-appendix` text. A selected appendix must be nonblank and the baseline
+must contain at least one hash-pinned NOTICE input. Missing, unexpected,
+malformed, or changed appendix text fails target preflight; the legal-file
+package hash then proves that the exact appendix reached the artifact.
 
 Every profile has one exact `:resource-notice-legal-sets` vector. An empty
 vector explicitly declares that its mechanically copied production resources
