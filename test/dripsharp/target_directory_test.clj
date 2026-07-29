@@ -472,6 +472,28 @@
          (is (= [:destinations :core :package :description]
                 (:path failure)))
          (is (= "independent translation" (:fragment failure)))))
+     (testing "publisher metadata must be a non-blank single-line identity"
+       (doseq [authors [nil "" "Publisher\nOther" "Publisher\u0000Other"]]
+         (write-edn! root "targets/acme/destinations/core.edn" (destination))
+         (update-edn! root "targets/acme/destinations/core.edn"
+                      assoc-in [:package :authors]
+                      authors)
+         (let [failure
+               (failure-data #(target-directory/read-target root :acme))]
+           (is (= :invalid-target-directory (:kind failure)))
+           (is (= [:destinations :core :package :authors]
+                  (:path failure))))))
+     (testing "package descriptions must be non-blank text"
+       (doseq [description [nil " " "Description\u0000suffix"]]
+         (write-edn! root "targets/acme/destinations/core.edn" (destination))
+         (update-edn! root "targets/acme/destinations/core.edn"
+                      assoc-in [:package :description]
+                      description)
+         (let [failure
+               (failure-data #(target-directory/read-target root :acme))]
+           (is (= :invalid-target-directory (:kind failure)))
+           (is (= [:destinations :core :package :description]
+                  (:path failure))))))
      (testing "upstream-owner marks cannot become publisher identities"
        (write-edn! root "targets/acme/destinations/core.edn" (destination))
        (update-edn! root "targets/acme/destinations/core.edn"

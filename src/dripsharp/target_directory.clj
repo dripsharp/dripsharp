@@ -804,6 +804,7 @@
   [profile destination-id destination policy]
   (let [package (:package destination)
         description (:description package)
+        authors (:authors package)
         required-fragments (:required-description-fragments policy)
         forbidden-marks (:forbidden-identity-marks policy)
         identity-fields
@@ -821,6 +822,22 @@
          (map (fn [[source value]]
                 [[:namespace-prefixes source] value])
               (:namespace-prefixes destination)))]
+    (let [context
+          (validation-context "Package legal metadata"
+                              {:profile profile
+                               :destination destination-id})]
+      (validation/check!
+       context
+       [:destinations destination-id :package :authors]
+       authors
+       "a non-blank single-line publisher identity"
+       non-blank-string?)
+      (validation/check!
+       context
+       [:destinations destination-id :package :description]
+       description
+       "non-blank text without NUL characters"
+       non-blank-text?))
     (doseq [fragment required-fragments]
       (when-not (and (non-blank-string? description)
                      (str/includes? description fragment))
