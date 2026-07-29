@@ -9,11 +9,18 @@
             [dripsharp.java-project :as project-emission]
             [dripsharp.paths :as paths]
             [dripsharp.pkl.java-project :as pkl-project])
-  (:import [java.nio.file FileVisitOption Files Path]
+  (:import [java.nio.file FileVisitOption Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]))
 
 (defn- temp-directory []
   (Files/createTempDirectory "dripsharp-java-project" (make-array FileAttribute 0)))
+
+(defn- write-file!
+  [^Path root relative content]
+  (let [file (paths/resolve-path root relative)]
+    (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
+    (Files/writeString file content (make-array OpenOption 0))
+    file))
 
 (defn- directory-bytes [^Path root]
   (with-open [files (Files/walk root (make-array FileVisitOption 0))]
@@ -95,6 +102,28 @@
     (is (= :invalid-destination-configuration (:kind (ex-data error))))
     (is (= :package (:section (ex-data error))))
     (is (= :title (:setting (ex-data error))))))
+
+(deftest destination-files-require-exactly-one-edn-value
+  (let [root (temp-directory)
+        relative "targets/rawhttp/destinations/core.edn"
+        live-destination
+        (Files/readString
+         (paths/resolve-path (paths/workspace-root) relative))]
+    (doseq [[label content reason]
+            [[:empty "" :empty-edn]
+             [:invalid "{" :invalid-edn]
+             [:trailing (str live-destination "\n{}") :trailing-data]]]
+      (testing (name label)
+        (write-file! root relative content)
+        (let [error
+              (try
+                (project-emission/read-configuration root relative)
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= reason (:reason (ex-data error))))
+          (is (str/ends-with? (:path (ex-data error)) relative)))))))
 
 (deftest destination-diagnostics-name-nested-fields-and-key-drift
   (let [configuration

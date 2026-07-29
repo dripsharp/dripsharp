@@ -1,6 +1,5 @@
 (ns dripsharp.harness
-  (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [dripsharp.baseline :as baseline]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.java-project :as java-project]
@@ -212,7 +211,17 @@
                    (ex-info "Generation profile configuration is missing"
                             {:kind :missing-generation-profile
                              :profile profile-name :path (str path)})))
-                (edn/read-string (slurp (str path))))
+                (try
+                  (util/read-single-edn-string! (slurp (str path)))
+                  (catch RuntimeException error
+                    (throw
+                     (ex-info
+                      "Generation profile configuration is not exactly one EDN value"
+                      (merge
+                       (profile-context profile-name)
+                       {:path (str path)}
+                       (select-keys (ex-data error) [:reason]))
+                      error)))))
               entry)))]
       (validate-profile! profile-name profile))))
 

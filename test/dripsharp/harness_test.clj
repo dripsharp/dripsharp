@@ -1,7 +1,7 @@
 (ns dripsharp.harness-test
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.baseline :as baseline]
             [dripsharp.harness :as harness]
             [dripsharp.java-library :as java-library]
@@ -174,6 +174,29 @@
     (is (every? #(not (contains? % :source-verifier))
                 [pkl-parser pkl-core rawhttp]))
     (is (true? (:require-clean-source rawhttp)))))
+
+(deftest generation-profile-files-require-exactly-one-edn-value
+  (let [root (temp-directory)
+        live-profile
+        (Files/readString
+         (paths/resolve-path
+          (paths/workspace-root)
+          "targets/rawhttp/profiles/core.edn"))]
+    (doseq [[label content reason]
+            [[:empty "" :empty-edn]
+             [:invalid "{" :invalid-edn]
+             [:trailing (str live-profile "\n{}") :trailing-data]]]
+      (testing (name label)
+        (write-file! root "profiles/malformed.edn" content)
+        (let [error
+              (try
+                (harness/read-profile root "profiles/malformed.edn")
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-generation-profile (:kind (ex-data error))))
+          (is (= reason (:reason (ex-data error))))
+          (is (str/ends-with? (:path (ex-data error))
+                              "profiles/malformed.edn")))))))
 
 (deftest generation-profile-diagnostics-name-fields-for-each-discovery-backend
   (let [root (temp-directory)

@@ -7,8 +7,7 @@
   policy, namespaces, bridges, and optional product runtime assets. This
   namespace deliberately does not load a product rule bundle unless an explicit
   qualified selector is present in destination configuration."
-  (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [dripsharp.authorship :as authorship]
             [dripsharp.baseline :as baseline]
             [dripsharp.bundle-contract :as bundle-contract]
@@ -515,10 +514,18 @@
   (let [file (paths/resolve-path (paths/absolute workspace-root) config-file)]
     (when-not (paths/regular-file? file)
       (destination-error "Destination configuration is missing" {:path (str file)}))
-    (let [configuration
+    (let [raw-configuration
+          (try
+            (util/read-single-edn-string! (slurp (str file)))
+            (catch RuntimeException error
+              (destination-error
+               "Destination configuration is not exactly one EDN value"
+               (merge {:path (str file)}
+                      (select-keys (ex-data error) [:reason])))))
+          configuration
           (baseline/hydrate-destination
            workspace-root
-           (edn/read-string (slurp (str file))))
+           raw-configuration)
           configuration
           (if-let [[_ target-root]
                    (re-matches

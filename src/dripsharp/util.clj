@@ -1,10 +1,37 @@
 (ns dripsharp.util
   "Small product-neutral helpers shared by translation and validation code."
-  (:require [clojure.string :as str])
-  (:import [java.nio.charset StandardCharsets]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str])
+  (:import [java.io PushbackReader StringReader]
+           [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
            [java.security MessageDigest]))
+
+(defn read-single-edn-string!
+  "Reads exactly one EDN value from text and rejects empty or trailing input."
+  [text]
+  (try
+    (let [eof (Object.)]
+      (with-open [reader (PushbackReader. (StringReader. text))]
+        (let [value (edn/read {:eof eof} reader)]
+          (when (identical? eof value)
+            (throw
+             (ex-info "EDN input is empty"
+                      {:reason :empty-edn})))
+          (when-not (identical? eof (edn/read {:eof eof} reader))
+            (throw
+             (ex-info "EDN input has trailing data"
+                      {:reason :trailing-data})))
+          value)))
+    (catch RuntimeException error
+      (if (contains? #{:empty-edn :trailing-data}
+                     (:reason (ex-data error)))
+        (throw error)
+        (throw
+         (ex-info "EDN input is invalid"
+                  {:reason :invalid-edn}
+                  error))))))
 
 (defn hex
   "Returns lowercase hexadecimal for a byte array or byte sequence."
