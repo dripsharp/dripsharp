@@ -93,6 +93,78 @@
       :configuration configuration
       :contract contract})))
 
+(deftest authored-spdx-policy-fails-closed-without-claiming-vendored-sources
+  (let [root (Files/createTempDirectory
+              "dripsharp-authored-spdx-"
+              (make-array FileAttribute 0))]
+    (try
+      (let [policy
+            {:schema-version authorship/spdx-policy-schema-version
+             :decision "fixture-human-decision"
+             :license-identifier "LicenseRef-Fixture"
+             :file-copyright-text "2026 Fixture Owner"}
+            header
+            (str "// SPDX-FileCopyrightText: 2026 Fixture Owner\n"
+                 "// SPDX-License-Identifier: LicenseRef-Fixture\n\n")
+            _ (write-text! root "runtime/Compatibility.cs"
+                           (str header
+                                "internal static class Compatibility { }\n"))
+            destination
+            (write-text! root "runtime/Destination.cs"
+                         (str header
+                              "internal static class Destination { }\n"))
+            _ (write-text! root "vendor/Library.cs"
+                           "public sealed class VendorType { }\n")
+            compatibility-groups
+            (normalized-groups
+             root :authored-compat :shared-compatibility
+             [(source-group root :shared/compatibility
+                            "runtime/Compatibility.cs" :java-compat 4)])
+            destination-groups
+            (normalized-groups
+             root :authored-destination-runtime :fixture
+             [(source-group root :fixture/destination
+                            "runtime/Destination.cs" nil 4)])
+            third-party-groups
+            (normalized-groups
+             root :vendored-third-party :fixture
+             [(source-group root :fixture/vendor
+                            "vendor/Library.cs" nil 1)])
+            groups
+            (concat (vals compatibility-groups)
+                    (vals destination-groups)
+                    (vals third-party-groups))]
+        (is (= ["runtime/Compatibility.cs" "runtime/Destination.cs"]
+               (:paths
+                (authorship/verify-authored-spdx-headers!
+                 root groups policy))))
+        (Files/writeString
+         destination
+         (str "// SPDX-FileCopyrightText: 2026 Different Owner\n"
+              "// SPDX-License-Identifier: LicenseRef-Fixture\n\n"
+              "internal static class Destination { }\n")
+         (make-array OpenOption 0))
+        (let [wrong-header
+              (caught
+               #(authorship/verify-authored-spdx-headers!
+                 root groups policy))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data wrong-header))))
+          (is (= "runtime/Destination.cs"
+                 (:path (ex-data wrong-header))))
+          (is (= "2026 Fixture Owner"
+                 (:file-copyright-text (ex-data wrong-header)))))
+        (let [missing-decision
+              (caught
+               #(authorship/verify-authored-spdx-headers!
+                 root groups (assoc policy :decision "")))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data missing-decision))))
+          (is (= "" (get-in (ex-data missing-decision)
+                            [:policy :decision])))))
+      (finally
+        (delete-tree! root)))))
+
 (deftest authored-policy-rejects-unlisted-and-unevidenced-package-code
   (let [root (Files/createTempDirectory
               "dripsharp-authorship-inventory-"

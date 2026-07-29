@@ -12,6 +12,7 @@
 (def schema-version 3)
 (def policy-schema-version 2)
 (def source-contract-schema-version 1)
+(def spdx-policy-schema-version 1)
 
 (def ^:private source-classes
   #{:mechanical :authored-compat :authored-destination-runtime
@@ -199,6 +200,88 @@
            (not (str/includes? value "\\"))
            (not-any? #(contains? #{"." ".."} (str %))
                      (iterator-seq (.iterator path)))))))
+
+(def ^:private spdx-policy-keys
+  #{:schema-version :decision :license-identifier :file-copyright-text})
+
+(defn- nonblank-single-line?
+  [value]
+  (and (string? value)
+       (not (str/blank? value))
+       (not (re-find #"[\r\n]" value))))
+
+(defn- validate-spdx-policy!
+  [policy]
+  (exact-keys! policy spdx-policy-keys :authored-spdx-policy)
+  (when-not
+   (and (= spdx-policy-schema-version (:schema-version policy))
+        (nonblank-single-line? (:decision policy))
+        (nonblank-single-line? (:license-identifier policy))
+        (nonblank-single-line? (:file-copyright-text policy)))
+    (fail! "Authored SPDX policy is invalid"
+           {:policy policy}))
+  policy)
+
+(defn- spdx-header
+  [{:keys [license-identifier file-copyright-text]}]
+  (str "// SPDX-FileCopyrightText: " file-copyright-text "\n"
+       "// SPDX-License-Identifier: " license-identifier "\n\n"))
+
+(defn verify-authored-spdx-headers!
+  "Verifies the exact approved SPDX header on every normalized authored source.
+
+  The caller supplies normalized source-contract groups from
+  `validate-source-contract!`. Vendored third-party groups are deliberately
+  excluded from DripSharp authorship claims. Mechanical translations are not
+  source-contract groups and are therefore outside this operation."
+  [workspace-root groups policy]
+  (let [workspace-root (paths/absolute workspace-root)
+        policy (validate-spdx-policy! policy)
+        groups (vec groups)
+        invalid-groups
+        (filterv
+         #(not (and (qualified-keyword? (:id %))
+                    (contracted? (:class %))
+                    (vector? (:paths %))
+                    (every? normalized-relative-path? (:paths %))))
+         groups)]
+    (when (seq invalid-groups)
+      (fail! "SPDX verification requires normalized source-contract groups"
+             {:groups invalid-groups}))
+    (let [authored-paths
+          (->> groups
+               (filter #(authored? (:class %)))
+               (mapcat
+                (fn [{:keys [charset paths]}]
+                  (map #(vector % charset) paths)))
+               (sort-by first)
+               vec)
+          duplicates (duplicate-values (map first authored-paths))
+          expected-header (spdx-header policy)]
+      (when (seq duplicates)
+        (fail! "Authored SPDX source inventory contains duplicate paths"
+               {:paths duplicates}))
+      (doseq [[path charset] authored-paths
+              :let [source
+                    (paths/absolute
+                     (paths/resolve-path workspace-root path))]
+              :when
+              (or (not (.startsWith source workspace-root))
+                  (not (paths/regular-file? source))
+                  (not
+                   (str/starts-with?
+                    (read-source-text source charset)
+                    expected-header)))]
+        (fail! "Authored source lacks the exact approved SPDX header"
+               {:path path
+                :decision (:decision policy)
+                :license-identifier (:license-identifier policy)
+                :file-copyright-text (:file-copyright-text policy)}))
+      {:schema-version spdx-policy-schema-version
+       :decision (:decision policy)
+       :license-identifier (:license-identifier policy)
+       :file-copyright-text (:file-copyright-text policy)
+       :paths (mapv first authored-paths)})))
 
 (defn- verify-source-observation!
   [{:keys [id source-files max-source-lines source-inventory-sha256
