@@ -220,6 +220,32 @@
        sort
        vec))
 
+(defn- physical-source-conflicts
+  [^Path workspace-root groups]
+  (let [entries
+        (->> groups
+             (mapcat
+              (fn [{:keys [id class paths]}]
+                (map
+                 (fn [path]
+                   {:path path :group id :class class
+                    :file (paths/resolve-path workspace-root path)})
+                 paths)))
+             (sort-by :path)
+             vec)]
+    (->>
+     (for [left-index (range (count entries))
+           right-index (range (inc left-index) (count entries))
+           :let [left (nth entries left-index)
+                 right (nth entries right-index)]
+           :when (and (not= (:path left) (:path right))
+                      (Files/isSameFile ^Path (:file left)
+                                        ^Path (:file right)))]
+       {:paths [(:path left) (:path right)]
+        :usages [(select-keys left [:group :class])
+                 (select-keys right [:group :class])]})
+     vec)))
+
 (defn- authored?
   [class]
   (contains? #{:authored-compat :authored-destination-runtime} class))
@@ -373,7 +399,13 @@
     (when (seq invalid-groups)
       (fail! "SPDX verification requires normalized source-contract groups"
              {:groups invalid-groups}))
-    (let [authored-paths
+    (let [physical-conflicts
+          (physical-source-conflicts workspace-root groups)
+          _ (when (seq physical-conflicts)
+              (fail! "SPDX source groups contain physical file aliases"
+                     {:reason :physical-source-alias
+                      :conflicts physical-conflicts}))
+          authored-paths
           (->> groups
                (filter #(authored? (:class %)))
                (mapcat

@@ -229,6 +229,61 @@
       (finally
         (delete-tree! root)))))
 
+(deftest authored-spdx-policy-rejects-physical-source-aliases
+  (let [root (Files/createTempDirectory
+              "dripsharp-authored-spdx-hard-link-"
+              (make-array FileAttribute 0))]
+    (try
+      (let [policy
+            {:schema-version authorship/spdx-policy-schema-version
+             :decision "fixture-human-decision"
+             :license-identifier "LicenseRef-Fixture"
+             :file-copyright-text "2026 Fixture Owner"
+             :repository-notice
+             {:path "LICENSE"
+              :sha256
+              "ec71479127126ba0b470229578465117e755e36c287e83c887bd0172aa04f0ce"}}
+            header
+            (str "// SPDX-FileCopyrightText: 2026 Fixture Owner\n"
+                 "// SPDX-License-Identifier: LicenseRef-Fixture\n\n")
+            _ (write-text! root "LICENSE" "Fixture repository license.\n")
+            authored
+            (write-text! root "runtime/Shared.cs"
+                         (str header "internal class Shared { }\n"))
+            alias (.resolve root "vendor/Shared.cs")
+            _ (Files/createDirectories (.getParent alias)
+                                       (make-array FileAttribute 0))
+            _ (Files/createLink alias authored)
+            authored-groups
+            (normalized-groups
+             root :authored-destination-runtime :fixture
+             [(source-group root :fixture/runtime
+                            "runtime/Shared.cs" nil 4)])
+            vendored-groups
+            (normalized-groups
+             root :vendored-third-party :fixture
+             [(source-group root :fixture/vendor
+                            "vendor/Shared.cs" nil 4)])
+            conflict
+            (caught
+             #(authorship/verify-authored-spdx-headers!
+               root
+               (concat (vals authored-groups) (vals vendored-groups))
+               policy))]
+        (is (= :invalid-authorship-ledger
+               (:kind (ex-data conflict))))
+        (is (= :physical-source-alias
+               (:reason (ex-data conflict))))
+        (is (= [{:paths ["runtime/Shared.cs" "vendor/Shared.cs"]
+                 :usages
+                 [{:group :fixture/runtime
+                   :class :authored-destination-runtime}
+                  {:group :fixture/vendor
+                   :class :vendored-third-party}]}]
+               (:conflicts (ex-data conflict)))))
+      (finally
+        (delete-tree! root)))))
+
 (deftest repository-authored-spdx-gate-loads-all-target-contracts
   (let [root (Files/createTempDirectory
               "dripsharp-authored-spdx-gate-"
