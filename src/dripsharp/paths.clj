@@ -1,5 +1,6 @@
 (ns dripsharp.paths
-  (:import [java.nio.file Files LinkOption Path Paths]))
+  (:import [java.io IOException]
+           [java.nio.file Files LinkOption Path Paths]))
 
 (def no-links (make-array LinkOption 0))
 
@@ -28,6 +29,21 @@
 (defn resolve-path
   ^Path [root & children]
   (reduce #(.resolve ^Path %1 (str %2)) (path root) children))
+
+(defn real-contained?
+  "Returns true when value is lexically under root and both resolve to real
+  paths with value still under root. Missing paths and escaped symlinks fail
+  closed."
+  [root value]
+  (let [root (absolute root)
+        value (absolute value)]
+    (and
+     (.startsWith value root)
+     (try
+       (.startsWith (.toRealPath value no-links)
+                    (.toRealPath root no-links))
+       (catch IOException _
+         false)))))
 
 (defn workspace-root
   "Finds the checkout root without embedding a developer-local absolute path."

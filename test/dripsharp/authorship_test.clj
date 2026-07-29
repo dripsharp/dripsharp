@@ -322,6 +322,83 @@
       (finally
         (delete-tree! root)))))
 
+(deftest authored-spdx-gate-rejects-symlink-escapes
+  (let [root (Files/createTempDirectory
+              "dripsharp-authored-spdx-symlink-root-"
+              (make-array FileAttribute 0))
+        outside (Files/createTempDirectory
+                 "dripsharp-authored-spdx-symlink-outside-"
+                 (make-array FileAttribute 0))]
+    (try
+      (let [policy
+            {:schema-version authorship/spdx-policy-schema-version
+             :decision authored-spdx/required-decision
+             :license-identifier "LicenseRef-Fixture"
+             :file-copyright-text "2026 Fixture Owner"
+             :repository-notice
+             {:path "LICENSE"
+              :sha256
+              "ec71479127126ba0b470229578465117e755e36c287e83c887bd0172aa04f0ce"}}
+            header
+            (str "// SPDX-FileCopyrightText: 2026 Fixture Owner\n"
+                 "// SPDX-License-Identifier: LicenseRef-Fixture\n\n")
+            outside-policy
+            (write-text! outside "authored-spdx.edn" (pr-str policy))
+            policy-link (.resolve root authored-spdx/policy-path)
+            _ (Files/createDirectories (.getParent policy-link)
+                                       (make-array FileAttribute 0))
+            _ (Files/createSymbolicLink
+               policy-link outside-policy (make-array FileAttribute 0))
+            escaped-policy
+            (caught
+             #(authored-spdx/verify-policy-file!
+               root authored-spdx/policy-path [:fixture]))]
+        (is (= :invalid-authored-spdx-gate
+               (:kind (ex-data escaped-policy))))
+        (is (= :outside-workspace
+               (:reason (ex-data escaped-policy))))
+        (Files/delete policy-link)
+        (write-text! root authored-spdx/policy-path (pr-str policy))
+        (let [outside-notice
+              (write-text! outside "LICENSE" "Fixture repository license.\n")
+              notice-link (.resolve root "LICENSE")
+              _ (Files/createSymbolicLink
+                 notice-link outside-notice (make-array FileAttribute 0))
+              escaped-notice
+              (caught #(authorship/verify-repository-notice! root policy))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data escaped-notice))))
+          (is (= "LICENSE" (:path (ex-data escaped-notice))))
+          (is (nil? (:actual (ex-data escaped-notice))))
+          (Files/delete notice-link)
+          (write-text! root "LICENSE" "Fixture repository license.\n"))
+        (let [outside-source
+              (write-text!
+               outside "Runtime.cs"
+               (str header "internal static class Runtime { }\n"))
+              source-link (.resolve root "runtime/Runtime.cs")
+              _ (Files/createDirectories (.getParent source-link)
+                                         (make-array FileAttribute 0))
+              _ (Files/createSymbolicLink
+                 source-link outside-source (make-array FileAttribute 0))
+              groups
+              (vals
+               (normalized-groups
+                root :authored-destination-runtime :fixture
+                [(source-group root :fixture/runtime
+                               "runtime/Runtime.cs" nil 4)]))
+              escaped-source
+              (caught
+               #(authorship/verify-authored-spdx-headers!
+                 root groups policy))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data escaped-source))))
+          (is (= "runtime/Runtime.cs"
+                 (:path (ex-data escaped-source))))))
+      (finally
+        (delete-tree! root)
+        (delete-tree! outside)))))
+
 (deftest authored-policy-rejects-unlisted-and-unevidenced-package-code
   (let [root (Files/createTempDirectory
               "dripsharp-authorship-inventory-"

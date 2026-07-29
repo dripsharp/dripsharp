@@ -240,7 +240,7 @@
         policy (validate-spdx-policy! policy)
         {:keys [path sha256]} (:repository-notice policy)
         notice (paths/absolute (paths/resolve-path workspace-root path))
-        actual (when (and (.startsWith notice workspace-root)
+        actual (when (and (paths/real-contained? workspace-root notice)
                           (paths/regular-file? notice))
                  (util/sha256-file notice))]
     (when-not (= sha256 actual)
@@ -296,7 +296,7 @@
                     (paths/absolute
                      (paths/resolve-path workspace-root path))]
               :when
-              (or (not (.startsWith source workspace-root))
+              (or (not (paths/real-contained? workspace-root source))
                   (not (paths/regular-file? source))
                   (not
                    (str/starts-with?

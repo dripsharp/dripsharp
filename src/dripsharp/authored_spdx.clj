@@ -107,6 +107,10 @@
       (fail! "Approved SPDX policy file is missing"
              {:path (str policy-path)
               :reason :missing-policy}))
+    (when-not (paths/real-contained? workspace-root policy-file)
+      (fail! "Approved SPDX policy file resolves outside the workspace"
+             {:path (str policy-path)
+              :reason :outside-workspace}))
     {:file policy-file
      :policy
      (try
