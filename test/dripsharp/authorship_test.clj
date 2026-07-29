@@ -563,6 +563,21 @@
         outside-target
         (write-text! outside "escaped/target.edn" "{}")]
     (try
+      (let [internal-target
+            (write-text! root "internal-targets/one/target.edn" "{}")
+            targets-link (.resolve root "targets")]
+        (Files/createSymbolicLink
+         targets-link (.getParent (.getParent internal-target))
+         (make-array FileAttribute 0))
+        (let [linked-root (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data linked-root))))
+          (is (= :symbolic-link-target-root
+                 (:reason (ex-data linked-root))))
+          (is (= "targets"
+                 (:path (ex-data linked-root)))))
+        (Files/delete targets-link)
+        (delete-tree! (.resolve root "internal-targets")))
       (let [targets-link (.resolve root "targets")]
         (Files/createSymbolicLink
          targets-link outside (make-array FileAttribute 0))
@@ -574,6 +589,41 @@
           (is (= "targets"
                  (:path (ex-data escaped-root)))))
         (Files/delete targets-link))
+      (let [target-source
+            (write-text! root "internal-target/linked/target.edn" "{}")
+            targets-root (.resolve root "targets")
+            target-link (.resolve targets-root "linked")]
+        (Files/createDirectories targets-root (make-array FileAttribute 0))
+        (Files/createSymbolicLink
+         target-link (.getParent target-source)
+         (make-array FileAttribute 0))
+        (let [linked-target (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data linked-target))))
+          (is (= :symbolic-link-target
+                 (:reason (ex-data linked-target))))
+          (is (= ["linked"]
+                 (:targets (ex-data linked-target)))))
+        (Files/delete target-link)
+        (delete-tree! (.resolve root "internal-target")))
+      (let [manifest-source
+            (write-text! root "internal-manifest/target.edn" "{}")
+            target-root (.resolve root "targets/linked")
+            manifest-link (.resolve target-root "target.edn")]
+        (Files/createDirectories target-root (make-array FileAttribute 0))
+        (Files/createSymbolicLink
+         manifest-link manifest-source (make-array FileAttribute 0))
+        (let [linked-manifest
+              (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data linked-manifest))))
+          (is (= :symbolic-link-target-manifest
+                 (:reason (ex-data linked-manifest))))
+          (is (= ["linked"]
+                 (:targets (ex-data linked-manifest)))))
+        (Files/delete manifest-link)
+        (Files/delete target-root)
+        (delete-tree! (.resolve root "internal-manifest")))
       (let [targets-root (.resolve root "targets")
             target-link (.resolve targets-root "escaped")]
         (Files/createDirectories targets-root (make-array FileAttribute 0))

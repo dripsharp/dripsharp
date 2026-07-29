@@ -56,6 +56,10 @@
             (fail! "Target inventory resolves outside the workspace"
                    {:path "targets"
                     :reason :outside-workspace}))
+        _ (when (Files/isSymbolicLink targets-root)
+            (fail! "Target inventory root must not be a symbolic link"
+                   {:path "targets"
+                    :reason :symbolic-link-target-root}))
         candidates
         (when (paths/directory? targets-root)
           (with-open [entries (Files/list targets-root)]
@@ -145,6 +149,28 @@
             (fail! "Target manifests resolve outside the workspace"
                    {:targets escaped
                     :reason :outside-workspace}))
+        linked-targets
+        (->> candidates
+             (filter #(Files/isSymbolicLink ^Path %))
+             (map #(str (.getFileName ^Path %)))
+             sort
+             vec)
+        _ (when (seq linked-targets)
+            (fail! "Target inventory contains symbolic-link directories"
+                   {:targets linked-targets
+                    :reason :symbolic-link-target}))
+        linked-manifests
+        (->> candidates
+             (filter
+              #(Files/isSymbolicLink
+                (paths/resolve-path % "target.edn")))
+             (map #(str (.getFileName ^Path %)))
+             sort
+             vec)
+        _ (when (seq linked-manifests)
+            (fail! "Target inventory contains symbolic-link manifests"
+                   {:targets linked-manifests
+                    :reason :symbolic-link-target-manifest}))
         targets
         (->> candidates
              (map #(keyword (str (.getFileName ^Path %))))
