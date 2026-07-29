@@ -132,6 +132,33 @@
     (is (not (contains? (get packages "RawHttp.Core")
                         :assembly-version)))))
 
+(deftest rebaseline-target-profile-requires-exactly-one-manifest-form
+  (let [root (temp-directory)
+        manifest (paths/resolve-path root "targets/rawhttp/target.edn")
+        target-profile (ns-resolve 'dripsharp.rebaseline 'target-profile)]
+    (Files/createDirectories (.getParent manifest)
+                             (make-array FileAttribute 0))
+    (doseq [[text reason]
+            [["" :empty-manifest]
+             ["{" :invalid-edn]
+             [(str "{:target :rawhttp"
+                   " :profiles [{:id \"rawhttp-core\""
+                   "             :path \"profiles/core.edn\"}]}\n"
+                   "{:unreviewed :trailing-form}\n")
+              :trailing-data]]]
+      (Files/writeString
+       manifest text (make-array java.nio.file.OpenOption 0))
+      (let [error
+            (try
+              (target-profile root :rawhttp "rawhttp-core")
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))]
+        (is (= :invalid-rebaseline-target-manifest
+               (:kind (ex-data error))))
+        (is (= reason (:reason (ex-data error))))
+        (is (= :rawhttp (:target (ex-data error))))
+        (is (= (str manifest) (:path (ex-data error))))))))
+
 (deftest approval-is-token-gated-and-writes-only-the-selected-record
   (let [root (isolated-workspace)
         observe (observed-version "0.33.0")

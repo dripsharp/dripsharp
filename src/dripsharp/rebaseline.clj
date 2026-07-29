@@ -18,7 +18,8 @@
             [dripsharp.process :as process]
             [dripsharp.spoon :as spoon]
             [dripsharp.util :as util])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [java.io PushbackReader StringReader]
+           [java.nio.charset StandardCharsets]
            [java.nio.file AtomicMoveNotSupportedException CopyOption Files Path
             StandardCopyOption]
            [java.nio.file.attribute FileAttribute]))
@@ -89,6 +90,41 @@
               :subject subject
               :file (str file)}))
     value))
+
+(defn- read-single-target-manifest!
+  [target manifest-file]
+  (let [eof (Object.)
+        [manifest trailing]
+        (try
+          (with-open
+           [reader
+            (PushbackReader.
+             (StringReader.
+              (Files/readString manifest-file StandardCharsets/UTF_8)))]
+            [(edn/read {:eof eof} reader)
+             (edn/read {:eof eof} reader)])
+          (catch RuntimeException error
+            (throw
+             (ex-info
+              "Re-baseline target manifest is not valid EDN"
+              {:kind :invalid-rebaseline-target-manifest
+               :target target
+               :path (str manifest-file)
+               :reason :invalid-edn}
+              error))))]
+    (when (identical? eof manifest)
+      (fail! "Re-baseline target manifest is empty"
+             {:kind :invalid-rebaseline-target-manifest
+              :target target
+              :path (str manifest-file)
+              :reason :empty-manifest}))
+    (when-not (identical? eof trailing)
+      (fail! "Re-baseline target manifest contains trailing EDN data"
+             {:kind :invalid-rebaseline-target-manifest
+              :target target
+              :path (str manifest-file)
+              :reason :trailing-data}))
+    manifest))
 
 (defn- observed-license
   [root record]
@@ -164,9 +200,7 @@
              {:kind :missing-rebaseline-target-manifest
               :target target
               :path (str manifest-file)}))
-    (let [manifest
-          (edn/read-string
-           (Files/readString manifest-file StandardCharsets/UTF_8))
+    (let [manifest (read-single-target-manifest! target manifest-file)
           matches
           (filterv #(= profile-name (:id %)) (:profiles manifest))]
       (when-not (= target (:target manifest))
