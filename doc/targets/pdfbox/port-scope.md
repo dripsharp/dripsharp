@@ -151,6 +151,11 @@ Compilation is necessary but insufficient. Verification must include:
   PDFs, fonts, metadata, and other fixtures.
 * Cross-package workflows representative of the complete selected module graph.
 
+By explicit user decision on 2026-07-28, operating-system execution evidence is
+required only for macOS on x64 and ARM64. Windows and Linux remain supported
+destination platforms, but their execution evidence must not be requested,
+required, or treated as a completion blocker.
+
 Generated C# is disposable and must not be edited into correctness. Failures are
 fixed in source discovery, symbol mappings, translation rules, project emission,
 compatibility capabilities, or focused PdfCube runtime code, then regenerated

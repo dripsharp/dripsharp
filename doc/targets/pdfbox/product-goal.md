@@ -62,6 +62,11 @@ PdfCube targets `net10.0`. Its supported host matrix is Windows, Linux, and
 macOS on x64 and ARM64. Mobile, WebAssembly, and NativeAOT are outside this
 platform contract.
 
+By explicit user decision on 2026-07-28, completion evidence is required only
+for macOS on x64 and ARM64. Windows and Linux remain supported destination
+platforms, but execution evidence from those operating systems must not be
+requested, required, or treated as a completion blocker.
+
 ## Stable Upstream Synchronization
 
 PdfCube tracks the latest stable Apache PDFBox release. The initial stable
@@ -136,7 +141,8 @@ translated or faithfully adapted; all remaining exclusions to match the
 user-approved list; clean from-scratch generation; zero public implementation
 stubs; successful separate package consumption; correct inter-package
 dependencies; and independent behavior evidence representative of the complete
-selected-module goal across the supported host matrix.
+selected-module goal on macOS x64 and ARM64. Windows and Linux execution
+evidence is not required for completion.
 
 The reusable translator work used to reach that result must remain suitable for
 future Java targets. PdfCube-specific PDF semantics and platform adaptations
