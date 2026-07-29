@@ -6,6 +6,10 @@
   {:jvm-opts ["-Xmx8g"]
    :main-opts ["-m" "dripsharp.main"]}
 
+  :verify-authored-spdx
+  {:jvm-opts ["-Xms64m" "-Xmx512m"]
+   :main-opts ["-m" "dripsharp.authored-spdx"]}
+
   :test
   {:jvm-opts ["-Xmx8g"]
    :extra-paths ["test"]
