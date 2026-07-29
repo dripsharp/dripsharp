@@ -366,6 +366,30 @@
     (is (= :package-consumption-failed
            (:kind (ex-data manifest-error))))))
 
+(deftest package-source-inspection-requires-one-exact-manifest-form
+  (let [root (Files/createTempDirectory "dripsharp-exact-generation-manifest"
+                                        (make-array FileAttribute 0))
+        {:keys [verify-fn]} (reproducibility-fixture root false)
+        emission (get-in (verify-fn {}) [:generation :emission])
+        valid-manifest (pr-str {:authorship (:authorship emission)})]
+    (doseq [[contents reason]
+            [["" :empty-edn]
+             ["{" :invalid-edn]
+             [(str valid-manifest "\n{}\n") :trailing-data]]]
+      (testing (name reason)
+        (write-file! (:manifest-file emission) contents)
+        (let [error
+              (try
+                (#'packaging/verified-authorship! emission)
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :package-consumption-failed
+                 (:kind (ex-data error))))
+          (is (= reason
+                 (:reason (ex-data error))))
+          (is (= (str (:manifest-file emission))
+                 (:manifest (ex-data error)))))))))
+
 (deftest package-reproducibility-rejects-divergent-clean-builds
   (let [root (Files/createTempDirectory "dripsharp-clean-build-divergence"
                                         (make-array FileAttribute 0))

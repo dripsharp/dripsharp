@@ -11,7 +11,7 @@
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.util :as util])
-  (:import [java.io ByteArrayInputStream]
+  (:import [java.io ByteArrayInputStream PushbackReader StringReader]
            [java.nio.charset StandardCharsets]
            [java.nio.file FileVisitOption Files Path StandardCopyOption]
            [java.util.zip ZipEntry ZipFile ZipOutputStream]
@@ -20,6 +20,34 @@
 
 (defn- fail! [message data]
   (throw (ex-info message (assoc data :kind :package-consumption-failed))))
+
+(defn- read-single-edn!
+  [^Path file]
+  (let [eof (Object.)
+        [value trailing]
+        (try
+          (with-open [reader
+                      (PushbackReader.
+                       (StringReader.
+                        (Files/readString file StandardCharsets/UTF_8)))]
+            [(edn/read {:eof eof} reader)
+             (edn/read {:eof eof} reader)])
+          (catch RuntimeException error
+            (throw
+             (ex-info "Generation manifest is not valid EDN"
+                      {:kind :package-consumption-failed
+                       :manifest (str file)
+                       :reason :invalid-edn}
+                      error))))]
+    (when (identical? eof value)
+      (fail! "Generation manifest is empty"
+             {:manifest (str file)
+              :reason :empty-edn}))
+    (when-not (identical? eof trailing)
+      (fail! "Generation manifest contains trailing EDN data"
+             {:manifest (str file)
+              :reason :trailing-data}))
+    value))
 
 (def ^:private xml-escape util/xml-escape)
 
@@ -1214,8 +1242,7 @@
             (fail! "Package source inspection cannot read the generation manifest"
                    {:manifest (some-> manifest-file str)}))
         manifest
-        (edn/read-string
-         (Files/readString manifest-file StandardCharsets/UTF_8))
+        (read-single-edn! manifest-file)
         ledger (:authorship manifest)
         expected (:authorship emission)
         _ (when-not (= expected ledger)
