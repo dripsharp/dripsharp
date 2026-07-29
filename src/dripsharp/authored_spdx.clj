@@ -75,16 +75,26 @@
                       (fail! "Target inventory contains unresolved symbolic links"
                              {:targets invalid-entries
                               :reason :unresolved-symbolic-link}))
-                  candidates
+                  directories
                   (->> entries
                        (filter paths/directory?)
+                       vec)
+                  missing-manifests
+                  (->> directories
                        (filter
                         (fn [^Path target-root]
                           (let [manifest
                                 (paths/resolve-path target-root "target.edn")]
-                            (or (paths/exists? manifest)
-                                (Files/isSymbolicLink manifest)))))
+                            (not (or (paths/exists? manifest)
+                                     (Files/isSymbolicLink manifest))))))
+                       (map #(str (.getFileName ^Path %)))
+                       sort
                        vec)
+                  _ (when (seq missing-manifests)
+                      (fail! "Target directories are missing target manifests"
+                             {:targets missing-manifests
+                              :reason :missing-target-manifest}))
+                  candidates directories
                   invalid-manifests
                   (->> candidates
                        (remove

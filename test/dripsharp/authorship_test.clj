@@ -238,7 +238,7 @@
             _ (write-text! root authored-spdx/policy-path (pr-str policy))
             _ (write-text! root "targets/one/target.edn" "{}")
             _ (write-text! root "targets/two/target.edn" "{}")
-            _ (write-text! root "targets/not-a-target/README.md" "ignored\n")
+            _ (write-text! root "targets/missing/README.md" "unmanifested\n")
             _ (write-text! root "runtime/Compatibility.cs"
                            (str header "internal class Compatibility { }\n"))
             _ (write-text! root "runtime/One.cs"
@@ -285,6 +285,15 @@
                {:compatibility {:sources compatibility}
                 :destination {:sources destination}
                 :third-party {:sources third-party}}})]
+        (let [missing-manifest
+              (caught #(authored-spdx/active-targets root))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data missing-manifest))))
+          (is (= :missing-target-manifest
+                 (:reason (ex-data missing-manifest))))
+          (is (= ["missing"]
+                 (:targets (ex-data missing-manifest)))))
+        (delete-tree! (.resolve root "targets/missing"))
         (with-redefs
          [target-directory/read-target
           (fn [_ target]
