@@ -84,10 +84,10 @@
          registry
          "field:java.io.ByteArrayOutputStream#buf")]
     (is (mapping-registry/compiled-registry? registry))
-    (is (= 1654 (count library-mappings/entries)))
+    (is (= 1655 (count library-mappings/entries)))
     (is (= 1316 (count library-mappings/executable-keys)))
     (is (= 185 (count library-mappings/constructor-keys)))
-    (is (= 153 (count library-mappings/field-entries)))
+    (is (= 154 (count library-mappings/field-entries)))
     (is (= :compat-call (:strategy list-size)))
     (is (= :custom-handler (:strategy stream-collect)))
     (is (= :java-library.mapping/stream-collect (:handler stream-collect)))
