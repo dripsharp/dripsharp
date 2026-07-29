@@ -102,10 +102,15 @@
             {:schema-version authorship/spdx-policy-schema-version
              :decision "fixture-human-decision"
              :license-identifier "LicenseRef-Fixture"
-             :file-copyright-text "2026 Fixture Owner"}
+             :file-copyright-text "2026 Fixture Owner"
+             :repository-notice
+             {:path "LICENSE"
+              :sha256
+              "ec71479127126ba0b470229578465117e755e36c287e83c887bd0172aa04f0ce"}}
             header
             (str "// SPDX-FileCopyrightText: 2026 Fixture Owner\n"
                  "// SPDX-License-Identifier: LicenseRef-Fixture\n\n")
+            _ (write-text! root "LICENSE" "Fixture repository license.\n")
             _ (write-text! root "runtime/Compatibility.cs"
                            (str header
                                 "internal static class Compatibility { }\n"))
@@ -134,10 +139,13 @@
             (concat (vals compatibility-groups)
                     (vals destination-groups)
                     (vals third-party-groups))]
-        (is (= ["runtime/Compatibility.cs" "runtime/Destination.cs"]
-               (:paths
-                (authorship/verify-authored-spdx-headers!
-                 root groups policy))))
+        (let [verification
+              (authorship/verify-authored-spdx-headers!
+               root groups policy)]
+          (is (= ["runtime/Compatibility.cs" "runtime/Destination.cs"]
+                 (:paths verification)))
+          (is (= (:repository-notice policy)
+                 (:repository-notice verification))))
         (Files/writeString
          destination
          (str "// SPDX-FileCopyrightText: 2026 Different Owner\n"
@@ -161,7 +169,30 @@
           (is (= :invalid-authorship-ledger
                  (:kind (ex-data missing-decision))))
           (is (= "" (get-in (ex-data missing-decision)
-                            [:policy :decision])))))
+                            [:policy :decision]))))
+        (write-text! root "LICENSE" "Changed fixture repository license.\n")
+        (let [changed-notice
+              (caught
+               #(authorship/verify-authored-spdx-headers!
+                 root groups policy))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data changed-notice))))
+          (is (= "LICENSE" (:path (ex-data changed-notice))))
+          (is (= (get-in policy [:repository-notice :sha256])
+                 (:expected (ex-data changed-notice))))
+          (is (not= (:expected (ex-data changed-notice))
+                    (:actual (ex-data changed-notice)))))
+        (let [nested-notice
+              (caught
+               #(authorship/verify-authored-spdx-headers!
+                 root groups
+                 (assoc-in policy [:repository-notice :path]
+                           "legal/LICENSE")))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data nested-notice))))
+          (is (= "legal/LICENSE"
+                 (get-in (ex-data nested-notice)
+                         [:policy :repository-notice :path])))))
       (finally
         (delete-tree! root)))))
 

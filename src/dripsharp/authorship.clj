@@ -12,7 +12,7 @@
 (def schema-version 3)
 (def policy-schema-version 2)
 (def source-contract-schema-version 1)
-(def spdx-policy-schema-version 1)
+(def spdx-policy-schema-version 2)
 
 (def ^:private source-classes
   #{:mechanical :authored-compat :authored-destination-runtime
@@ -202,7 +202,11 @@
                      (iterator-seq (.iterator path)))))))
 
 (def ^:private spdx-policy-keys
-  #{:schema-version :decision :license-identifier :file-copyright-text})
+  #{:schema-version :decision :license-identifier :file-copyright-text
+    :repository-notice})
+
+(def ^:private repository-notice-keys
+  #{:path :sha256})
 
 (defn- nonblank-single-line?
   [value]
@@ -213,14 +217,39 @@
 (defn- validate-spdx-policy!
   [policy]
   (exact-keys! policy spdx-policy-keys :authored-spdx-policy)
-  (when-not
-   (and (= spdx-policy-schema-version (:schema-version policy))
-        (nonblank-single-line? (:decision policy))
-        (nonblank-single-line? (:license-identifier policy))
-        (nonblank-single-line? (:file-copyright-text policy)))
-    (fail! "Authored SPDX policy is invalid"
-           {:policy policy}))
+  (let [{:keys [path sha256] :as notice} (:repository-notice policy)
+        notice-path (when (string? path) (paths/path path))]
+    (exact-keys! notice repository-notice-keys :repository-notice)
+    (when-not
+     (and (= spdx-policy-schema-version (:schema-version policy))
+          (nonblank-single-line? (:decision policy))
+          (nonblank-single-line? (:license-identifier policy))
+          (nonblank-single-line? (:file-copyright-text policy))
+          (normalized-relative-path? path)
+          (= 1 (.getNameCount notice-path))
+          (= path (str notice-path))
+          (valid-sha256? sha256))
+      (fail! "Authored SPDX policy is invalid"
+             {:policy policy})))
   policy)
+
+(defn verify-repository-notice!
+  "Verifies the exact repository-root legal notice pinned by a human decision."
+  [workspace-root policy]
+  (let [workspace-root (paths/absolute workspace-root)
+        policy (validate-spdx-policy! policy)
+        {:keys [path sha256]} (:repository-notice policy)
+        notice (paths/absolute (paths/resolve-path workspace-root path))
+        actual (when (and (.startsWith notice workspace-root)
+                          (paths/regular-file? notice))
+                 (util/sha256-file notice))]
+    (when-not (= sha256 actual)
+      (fail! "Repository legal notice is missing or differs from the approved decision"
+             {:path path
+              :decision (:decision policy)
+              :expected sha256
+              :actual actual}))
+    {:path path :sha256 actual}))
 
 (defn- spdx-header
   [{:keys [license-identifier file-copyright-text]}]
@@ -228,7 +257,7 @@
        "// SPDX-License-Identifier: " license-identifier "\n\n"))
 
 (defn verify-authored-spdx-headers!
-  "Verifies the exact approved SPDX header on every normalized authored source.
+  "Verifies the exact repository notice and SPDX header on authored sources.
 
   The caller supplies normalized source-contract groups from
   `validate-source-contract!`. Vendored third-party groups are deliberately
@@ -237,6 +266,7 @@
   [workspace-root groups policy]
   (let [workspace-root (paths/absolute workspace-root)
         policy (validate-spdx-policy! policy)
+        repository-notice (verify-repository-notice! workspace-root policy)
         groups (vec groups)
         invalid-groups
         (filterv
@@ -281,6 +311,7 @@
        :decision (:decision policy)
        :license-identifier (:license-identifier policy)
        :file-copyright-text (:file-copyright-text policy)
+       :repository-notice repository-notice
        :paths (mapv first authored-paths)})))
 
 (defn- verify-source-observation!
