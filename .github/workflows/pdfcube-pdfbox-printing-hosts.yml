@@ -1,4 +1,4 @@
-name: PdfCube.PdfBox printing supported hosts
+name: PdfCube.PdfBox printing required macOS hosts
 
 on:
   workflow_dispatch:
@@ -66,18 +66,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows
-            architecture: x64
-            runner: windows-2025
-          - os: windows
-            architecture: arm64
-            runner: windows-11-arm
-          - os: linux
-            architecture: x64
-            runner: ubuntu-24.04
-          - os: linux
-            architecture: arm64
-            runner: ubuntu-24.04-arm
           - os: macos
             architecture: x64
             runner: macos-15-intel

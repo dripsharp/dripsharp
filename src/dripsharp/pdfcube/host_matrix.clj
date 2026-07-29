@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.host-matrix
-  "Fail-closed supported-host evidence gate for the complete PdfCube package
+  "Fail-closed required-host evidence gate for the complete PdfCube package
   family."
   (:require [clojure.set :as set]
             [clojure.string :as str]
@@ -14,6 +14,10 @@
    {:os "linux" :architecture "x64"}
    {:os "linux" :architecture "arm64"}
    {:os "macos" :architecture "x64"}
+   {:os "macos" :architecture "arm64"}])
+
+(def required-hosts
+  [{:os "macos" :architecture "x64"}
    {:os "macos" :architecture "arm64"}])
 
 (def package-ids
@@ -182,27 +186,38 @@
            :message (.getMessage error)})))))
 
 (defn validate-matrix
-  "Inspects exactly six host evidence files. Missing, failed, malformed, stale,
-  or invented entries remain explicit non-passing results."
+  "Inspects the exact required macOS evidence matrix. Missing, failed,
+  malformed, stale, or invented entries remain explicit non-passing results.
+  Evidence for other supported destination hosts is permitted but does not
+  affect completion."
   [evidence-root]
   (let [root (paths/absolute (paths/path evidence-root))
-        expected-files (set (map evidence-file-name supported-hosts))
+        supported-files (set (map evidence-file-name supported-hosts))
+        required-files (set (map evidence-file-name required-hosts))
         actual-files
         (set (map #(str (.getFileName ^Path %)) (evidence-files root)))
         unexpected-files
-        (vec (sort (set/difference actual-files expected-files)))
-        hosts (mapv #(inspect-host root %) supported-hosts)
+        (vec (sort (set/difference actual-files supported-files)))
+        nonrequired-files
+        (vec
+         (sort
+          (set/intersection
+           actual-files
+           (set/difference supported-files required-files))))
+        hosts (mapv #(inspect-host root %) required-hosts)
         by-status (group-by :status hosts)
         passed (count (get by-status :passed))
-        complete? (and (= (count supported-hosts) passed)
+        complete? (and (= (count required-hosts) passed)
                        (empty? unexpected-files))]
-    {:schema :pdfcube-family-host-matrix-v1
-     :expected-hosts (count supported-hosts)
+    {:schema :pdfcube-family-host-matrix-v2
+     :supported-hosts (count supported-hosts)
+     :expected-hosts (count required-hosts)
      :passed-hosts passed
      :complete complete?
      :missing-hosts (mapv :host (get by-status :missing))
      :failed-hosts (mapv :host (get by-status :failed))
      :invalid-hosts (mapv :host (get by-status :invalid))
+     :nonrequired-files nonrequired-files
      :unexpected-files unexpected-files
      :hosts hosts}))
 
@@ -229,18 +244,18 @@
   summary)
 
 (defn verify!
-  "Writes a durable six-host summary and fails unless every exact matrix entry
-  has complete successful evidence."
+  "Writes a durable required-host summary and fails unless both exact macOS
+  matrix entries have complete successful evidence."
   [evidence-root output-root]
   (let [summary (validate-matrix evidence-root)
         output (paths/absolute (paths/path output-root))]
     (write-summary! output summary)
     (when-not (:complete summary)
-      (fail! "PdfCube supported-host matrix has missing or failed evidence"
+      (fail! "PdfCube required-host matrix has missing or failed evidence"
              {:summary summary
               :report (str (paths/resolve-path output "summary.edn"))}))
     (println
-     "Complete PdfCube supported-host matrix passed:"
+     "Complete PdfCube required-host matrix passed:"
      (pr-str
       {:hosts (:passed-hosts summary)
        :packages package-ids

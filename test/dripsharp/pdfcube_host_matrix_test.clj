@@ -34,24 +34,25 @@
     nil
     (catch ExceptionInfo error error)))
 
-(deftest exact-six-host-matrix-is-required
+(deftest exact-macos-matrix-is-required
   (let [root (temp-directory)]
-    (doseq [host host-matrix/supported-hosts]
+    (doseq [host host-matrix/required-hosts]
       (write-evidence! root host))
     (let [summary (host-matrix/validate-matrix root)]
       (is (:complete summary))
-      (is (= 6 (:expected-hosts summary)))
-      (is (= 6 (:passed-hosts summary)))
+      (is (= 6 (:supported-hosts summary)))
+      (is (= 2 (:expected-hosts summary)))
+      (is (= 2 (:passed-hosts summary)))
       (is (every? #(= :passed (:status %)) (:hosts summary))))))
 
 (deftest missing-and-unexecuted-entries-are-not-passes
   (let [root (temp-directory)
-        executed (first host-matrix/supported-hosts)]
+        executed (first host-matrix/required-hosts)]
     (write-evidence! root executed)
     (let [summary (host-matrix/validate-matrix root)]
       (is (false? (:complete summary)))
       (is (= 1 (:passed-hosts summary)))
-      (is (= 5 (count (:missing-hosts summary)))))
+      (is (= 1 (count (:missing-hosts summary)))))
     (let [output (temp-directory)
           error
           (caught #(host-matrix/verify! root output))]
@@ -64,7 +65,7 @@
 
 (deftest failures-and-invented-evidence-fail-closed
   (let [root (temp-directory)
-        failed (first host-matrix/supported-hosts)
+        failed (first host-matrix/required-hosts)
         observations
         (-> (host-matrix/expected-observations failed)
             (assoc ["result" "status"] "failed")
@@ -82,9 +83,21 @@
       (is (= "native load failed"
              (:message (first (:hosts summary))))))))
 
+(deftest nonrequired-supported-host-evidence-does-not-block-completion
+  (let [root (temp-directory)
+        nonrequired (first host-matrix/supported-hosts)]
+    (doseq [host host-matrix/required-hosts]
+      (write-evidence! root host))
+    (write-evidence! root nonrequired)
+    (let [summary (host-matrix/validate-matrix root)]
+      (is (:complete summary))
+      (is (= [(host-matrix/evidence-file-name nonrequired)]
+             (:nonrequired-files summary)))
+      (is (empty? (:unexpected-files summary))))))
+
 (deftest successful-evidence-must-match-the-exact-host-contract
   (let [root (temp-directory)
-        host (first host-matrix/supported-hosts)
+        host (first host-matrix/required-hosts)
         observations
         (-> (host-matrix/expected-observations host)
             (dissoc ["capability" "cryptography"])

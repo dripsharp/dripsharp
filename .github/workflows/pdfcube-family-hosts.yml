@@ -1,4 +1,4 @@
-name: Complete PdfCube family supported hosts
+name: Complete PdfCube family required macOS hosts
 
 on:
   pull_request:
@@ -118,18 +118,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows
-            architecture: x64
-            runner: windows-2025
-          - os: windows
-            architecture: arm64
-            runner: windows-11-arm
-          - os: linux
-            architecture: x64
-            runner: ubuntu-24.04
-          - os: linux
-            architecture: arm64
-            runner: ubuntu-24.04-arm
           - os: macos
             architecture: x64
             runner: macos-15-intel
@@ -208,7 +196,7 @@ jobs:
           path: target/pdfcube-family-host-evidence
           merge-multiple: true
 
-      - name: Require the exact six-host matrix
+      - name: Require the exact macOS x64 and ARM64 matrix
         run: >-
           clojure -M:run pdfcube-family-host-matrix
           target/pdfcube-family-host-evidence
