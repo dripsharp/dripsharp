@@ -12,6 +12,7 @@
   (throw (ex-info message (assoc data :kind :invalid-authored-spdx-gate))))
 
 (def policy-path "config/authored-spdx.edn")
+(def required-decision "pkl-c8t.2")
 
 (defn active-targets
   "Discovers every checked-in target manifest so the repository gate cannot
@@ -71,6 +72,10 @@
   [workspace-root targets policy]
   (let [workspace-root (paths/absolute workspace-root)
         targets (vec targets)]
+    (when-not (= required-decision (:decision policy))
+      (fail! "SPDX policy does not cite the required human decision"
+             {:expected-decision required-decision
+              :actual-decision (:decision policy)}))
     (when-not (and (seq targets)
                    (every? keyword? targets)
                    (= (count targets) (count (distinct targets))))

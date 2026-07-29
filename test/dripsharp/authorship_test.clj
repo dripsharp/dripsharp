@@ -205,7 +205,7 @@
     (try
       (let [policy
             {:schema-version authorship/spdx-policy-schema-version
-             :decision "fixture-human-decision"
+             :decision authored-spdx/required-decision
              :license-identifier "LicenseRef-Fixture"
              :file-copyright-text "2026 Fixture Owner"
              :repository-notice
@@ -270,6 +270,18 @@
                     "runtime/One.cs"
                     "runtime/Two.cs"]
                    (:paths verification)))))
+        (let [wrong-decision
+              (caught
+               #(authored-spdx/verify-targets!
+                 root
+                 [:one :two]
+                 (assoc policy :decision "fixture-human-decision")))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data wrong-decision))))
+          (is (= authored-spdx/required-decision
+                 (:expected-decision (ex-data wrong-decision))))
+          (is (= "fixture-human-decision"
+                 (:actual-decision (ex-data wrong-decision)))))
         (with-redefs
          [target-directory/read-target
           (fn [_ target]
