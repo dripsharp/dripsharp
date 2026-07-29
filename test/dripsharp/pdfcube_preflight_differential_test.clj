@@ -1,5 +1,6 @@
 (ns dripsharp.pdfcube-preflight-differential-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [dripsharp.pdfcube.preflight-differential
              :as preflight-differential])
   (:import [java.nio.file Files OpenOption]
@@ -85,6 +86,16 @@
           preflight-differential/expected-package-contract)))
   (is (= 12
          (count preflight-differential/expected-restored-closure))))
+
+(deftest package-consumer-calls-the-erased-position-api
+  (let [source (slurp "validation/pdfcube-preflight/Program.cs")]
+    (is (str/includes?
+         source
+         "path.GetClosestTypePosition(typeof(string))"))
+    (is (str/includes?
+         source
+         "path.GetClosestTypePosition(typeof(int))"))
+    (is (not (str/includes? source "GetClosestTypePosition<")))))
 
 (deftest supported-host-matrix-is-exact
   (is (= #{["windows" "x64"] ["windows" "arm64"]

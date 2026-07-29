@@ -233,6 +233,19 @@
       (is (= :pdfcube-family-workflows-failed
              (:kind (ex-data error)))))))
 
+(deftest consumer-output-is-released-after-a-profiles-last-slice
+  (let [[io io-repeat fontbox]
+        (take 3 family-workflows/verification-slices)]
+    (is (false?
+         (#'family-workflows/last-profile-slice?
+          io [io-repeat fontbox])))
+    (is
+     (#'family-workflows/last-profile-slice?
+      io-repeat [fontbox]))
+    (is
+     (#'family-workflows/last-profile-slice?
+      fontbox []))))
+
 (deftest aggregate-accepts-established-package-summary-identities
   (is (= {:id "PdfCube.IO"
           :version family-workflows/package-version

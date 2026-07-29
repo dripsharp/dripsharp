@@ -337,6 +337,28 @@
      :perturbation? (perturbation-proven? summary)
      :summary summary}))
 
+(defn- last-profile-slice?
+  [slice remaining]
+  (not-any? #(= (:profile slice) (:profile %)) remaining))
+
+(defn- run-slices!
+  [^Path root views run-command! slices]
+  (loop [remaining slices
+         results []]
+    (if (empty? remaining)
+      results
+      (let [slice (first remaining)
+            tail (next remaining)
+            last-profile? (last-profile-slice? slice tail)
+            result
+            (try
+              (run-slice! root views run-command! slice)
+              (finally
+                (when last-profile?
+                  (harness/clean-directory!
+                   (:consumer-root (get views (:profile slice)))))))]
+        (recur tail (conj results result))))))
+
 (defn- stable-repeat-observation
   [result]
   (let [summary (:summary result)]
@@ -465,13 +487,14 @@
                    :run-command! run-command!}
             pack-fn (assoc :pack-fn pack-fn)))
          runtime-consumer (runtime-family-consumer! family-proof)
+         _ (harness/clean-directory! (:consumer-root runtime-consumer))
          views (package-views family-proof)
          proof-root
          (harness/clean-directory!
           (paths/resolve-path root "validation-output"
                               "pdfcube-family-workflows"))
          results
-         (mapv #(run-slice! root views run-command! %) slices)
+         (run-slices! root views run-command! slices)
          execution (validate-slice-results! slices results)
          normalized
          (write-text!

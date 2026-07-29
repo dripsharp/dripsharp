@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [dripsharp.java-compat-differential :as java-compat-differential]
             [dripsharp.paths :as paths]
+            [dripsharp.pdfcube.host-matrix :as pdfcube-host-matrix]
             [dripsharp.rebaseline :as rebaseline]
             [dripsharp.target-execution :as target-execution])
   (:import [clojure.lang ExceptionInfo]))
@@ -13,6 +14,7 @@
    "|differential <target> [validation-id]"
    "|proof <target>"
    "|java-compat-differential"
+   "|pdfcube-family-host-matrix <evidence-root> <output-root>"
    "|rebaseline <pkl|pdfcube> [--approve <token>]"))
 
 (defn- fail!
@@ -50,6 +52,12 @@
            (nil? selector)
            (empty? extra))
       (java-compat-differential/verify!)
+
+      (and (= "pdfcube-family-host-matrix" command)
+           target
+           selector
+           (empty? extra))
+      (pdfcube-host-matrix/verify! target selector)
 
       (and (= "rebaseline" command)
            (or (= 2 (count args))

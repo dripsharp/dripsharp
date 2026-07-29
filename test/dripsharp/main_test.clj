@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [dripsharp.java-compat-differential :as java-compat-differential]
             [dripsharp.main :as main]
+            [dripsharp.pdfcube.host-matrix :as pdfcube-host-matrix]
             [dripsharp.target-execution :as target-execution]))
 
 (defn- failure-data
@@ -29,6 +30,13 @@
                   java-compat-differential/verify!
                   (fn []
                     (swap! calls conj [:java-compat-differential])
+                    :ok)
+                  pdfcube-host-matrix/verify!
+                  (fn [evidence-root output-root]
+                    (swap! calls conj
+                           [:pdfcube-family-host-matrix
+                            evidence-root
+                            output-root])
                     :ok)]
       (is (= :ok
              (main/dispatch! ["generate" "acme" "acme-core"])))
@@ -39,11 +47,15 @@
              (main/dispatch! ["proof" "acme"])))
       (is (= :ok
              (main/dispatch! ["java-compat-differential"])))
+      (is (= :ok
+             (main/dispatch!
+              ["pdfcube-family-host-matrix" "evidence" "output"])))
       (is (= [[:generate {:target "acme" :profile "acme-core"}]
               [:differential
                {:target "acme" :validation "acme-contract"}]
               [:proof {:target "acme"}]
-              [:java-compat-differential]]
+              [:java-compat-differential]
+              [:pdfcube-family-host-matrix "evidence" "output"]]
              @calls)))))
 
 (deftest cli-rejects-implicit-target-or-profile-selection
@@ -52,6 +64,12 @@
                 ["differential"]
                 ["proof"]
                 ["proof" "pkl" "extra"]
-                ["java-compat-differential" "pkl"]]]
+                ["java-compat-differential" "pkl"]
+                ["pdfcube-family-host-matrix"]
+                ["pdfcube-family-host-matrix" "evidence"]
+                ["pdfcube-family-host-matrix"
+                 "evidence"
+                 "output"
+                 "extra"]]]
     (is (= :invalid-command-line
            (:kind (failure-data #(main/dispatch! args)))))))
