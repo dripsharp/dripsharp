@@ -2,7 +2,6 @@
   "Checksum-pinned PDF/A corpus validation through synchronized PDFBox Java
   and a fresh package-reference-only PdfCube.Preflight consumer."
   (:require [dripsharp.baseline :as baseline]
-            [clojure.edn :as edn]
             [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.harness :as harness]
@@ -110,7 +109,18 @@
   [workspace-root manifest]
   (let [root (paths/absolute workspace-root)
         manifest (paths/absolute manifest)
-        data (edn/read-string (Files/readString manifest StandardCharsets/UTF_8))
+        data
+        (try
+          (util/read-single-edn-string!
+           (Files/readString manifest StandardCharsets/UTF_8))
+          (catch RuntimeException error
+            (throw
+             (ex-info
+              "Preflight corpus manifest is not exactly one EDN value"
+              {:kind :invalid-preflight-corpus-manifest
+               :path (str manifest)
+               :reason (:reason (ex-data error))}
+              error))))
         target (:baseline-target data)
         baseline-record (baseline/read-baseline root target)
         upstream (:upstream baseline-record)

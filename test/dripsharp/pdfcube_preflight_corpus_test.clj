@@ -116,6 +116,29 @@
     (is (= :preflight-corpus-checksum-mismatch
            (:kind (ex-data error))))))
 
+(deftest corpus-manifest-requires-exactly-one-edn-value
+  (let [root (paths/workspace-root)
+        original
+        (Files/readString
+         (paths/resolve-path
+          root "validation" "pdfcube-preflight-corpus" "corpus.edn")
+         StandardCharsets/UTF_8)]
+    (doseq [[label contents reason]
+            [["empty" "" :empty-edn]
+             ["invalid" "{" :invalid-edn]
+             ["trailing" (str original "\n{}") :trailing-data]]]
+      (let [manifest
+            (write! (.resolve (temp-dir) (str label "-corpus.edn")) contents)
+            error
+            (try
+              (corpus/validate-manifest! root manifest)
+              nil
+              (catch clojure.lang.ExceptionInfo caught caught))]
+        (is (= :invalid-preflight-corpus-manifest
+               (:kind (ex-data error)))
+            label)
+        (is (= reason (:reason (ex-data error))) label)))))
+
 (deftest package-runner-declares-timeout-crash-leak-and-isolation-controls
   (let [root (paths/workspace-root)
         runner
