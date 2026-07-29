@@ -343,7 +343,7 @@
   [value]
   (and (string? value)
        (not (str/blank? value))
-       (not (re-find #"[\r\n\u0000]" value))))
+       (not (re-find #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]" value))))
 
 (defn- validate-spdx-policy!
   [policy]

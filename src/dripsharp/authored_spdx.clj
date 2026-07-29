@@ -193,7 +193,7 @@
                  (= decision-policy-keys (set (keys policy)))
                  (string? (:package-publisher policy))
                  (not (str/blank? (:package-publisher policy)))
-                 (not (re-find #"[\r\n\u0000]"
+                 (not (re-find #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
                                (:package-publisher policy))))
     (fail! "Approved legal and publisher policy is invalid"
            {:expected-keys decision-policy-keys

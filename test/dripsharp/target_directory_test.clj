@@ -598,7 +598,12 @@
                 (:path failure)))
          (is (= "independent translation" (:fragment failure)))))
      (testing "publisher metadata must be a non-blank single-line identity"
-       (doseq [authors [nil "" "Publisher\nOther" "Publisher\u0000Other"]]
+       (doseq [authors
+               (concat
+                [nil ""]
+                (map #(str "Publisher" % "Other")
+                     ["\u0000" "\u000B" "\u000C" "\r" "\n"
+                      "\u0085" "\u2028" "\u2029"]))]
          (write-edn! root "targets/acme/destinations/core.edn" (destination))
          (update-edn! root "targets/acme/destinations/core.edn"
                       assoc-in [:package :authors]

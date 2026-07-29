@@ -190,10 +190,12 @@
                  (:kind (ex-data missing-decision))))
           (is (= "" (get-in (ex-data missing-decision)
                             [:policy :decision]))))
-        (doseq [[field value]
-                [[:decision "fixture\u0000human-decision"]
-                 [:license-identifier "LicenseRef\u0000Fixture"]
-                 [:file-copyright-text "2026 Fixture\u0000Owner"]]]
+        (doseq [field
+                [:decision :license-identifier :file-copyright-text]
+                separator
+                ["\u0000" "\u000B" "\u000C" "\r" "\n"
+                 "\u0085" "\u2028" "\u2029"]
+                :let [value (str "Fixture" separator "Value")]]
           (let [malformed-policy
                 (caught
                  #(authorship/verify-authored-spdx-headers!
@@ -408,28 +410,23 @@
                  (:kind (ex-data missing-publisher))))
           (is (contains? (:expected-keys (ex-data missing-publisher))
                          :package-publisher)))
-        (let [multiline-publisher
-              (caught
-               #(authored-spdx/verify-targets!
-                 root [:one :two]
-                 (assoc policy :package-publisher
-                        "Fixture Publisher\nDifferent Publisher")))]
-          (is (= :invalid-authored-spdx-gate
-                 (:kind (ex-data multiline-publisher))))
-          (is (= "Fixture Publisher\nDifferent Publisher"
-                 (get-in (ex-data multiline-publisher)
-                         [:policy :package-publisher]))))
-        (let [nul-publisher
-              (caught
-               #(authored-spdx/verify-targets!
-                 root [:one :two]
-                 (assoc policy :package-publisher
-                        "Fixture Publisher\u0000Different Publisher")))]
-          (is (= :invalid-authored-spdx-gate
-                 (:kind (ex-data nul-publisher))))
-          (is (= "Fixture Publisher\u0000Different Publisher"
-                 (get-in (ex-data nul-publisher)
-                         [:policy :package-publisher]))))
+        (doseq [separator
+                ["\u0000" "\u000B" "\u000C" "\r" "\n"
+                 "\u0085" "\u2028" "\u2029"]
+                :let [publisher
+                      (str "Fixture Publisher"
+                           separator
+                           "Different Publisher")]]
+          (let [malformed-publisher
+                (caught
+                 #(authored-spdx/verify-targets!
+                   root [:one :two]
+                   (assoc policy :package-publisher publisher)))]
+            (is (= :invalid-authored-spdx-gate
+                   (:kind (ex-data malformed-publisher))))
+            (is (= publisher
+                   (get-in (ex-data malformed-publisher)
+                           [:policy :package-publisher])))))
         (with-redefs
          [target-directory/read-target
           (fn [_ target]
