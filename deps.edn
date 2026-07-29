@@ -9,4 +9,9 @@
   :test
   {:jvm-opts ["-Xmx8g"]
    :extra-paths ["test"]
-   :main-opts ["-m" "dripsharp.test-runner"]}}}
+   :main-opts ["-m" "dripsharp.test-runner"]}
+
+  :unit-test
+  {:jvm-opts ["-Xms64m" "-Xmx512m"]
+   :extra-paths ["test"]
+   :main-opts ["-m" "dripsharp.test-runner" "--tier" "unit"]}}}

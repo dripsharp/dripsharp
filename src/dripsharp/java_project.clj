@@ -11,6 +11,7 @@
             [clojure.string :as str]
             [dripsharp.authorship :as authorship]
             [dripsharp.baseline :as baseline]
+            [dripsharp.bundle-contract :as bundle-contract]
             [dripsharp.concurrency :as concurrency]
             [dripsharp.csharp :as csharp]
             [dripsharp.java-mapping-registry :as mapping-registry]
@@ -18,6 +19,7 @@
             [dripsharp.paths :as paths]
             [dripsharp.project-input :as project-input]
             [dripsharp.project-xml :as project-xml]
+            [dripsharp.source-accountability :as source-accountability]
             [dripsharp.spoon :as spoon]
             [dripsharp.util :as util]
             [dripsharp.validation :as validation])
@@ -26,21 +28,6 @@
            [java.util IdentityHashMap]
            [spoon.reflect.declaration CtElement CtEnum CtType]
            [spoon.reflect.visitor.filter TypeFilter]))
-
-(def ^:private required-rule-components
-  {:structural-declarations
-   #{:create-template :create-context :emit-root-node :translate-member
-     :merge-context! :context-results}
-   :resolved-mappings
-   #{:type-node :create-body-context :annotation-decisions
-     :declarative-mapping-registries :declarative-mapping-required?}
-   :namespace-policy #{:destination-namespace :destination-file-name}
-   :project-policy #{:validate-configuration! :project-text}
-   :resource-policy #{:resource-mapping}
-   :destination-bridges #{:assets}})
-
-(def ^:private required-runtime-capabilities
-  {:labeled-control-flow #{:exception-type}})
 
 (def translator-version
   "The source-controlled version recorded in every mechanical C# header."
@@ -51,12 +38,7 @@
   destination bundle. Product runtime assets are optional; all other
   components and hooks are required and validated before any file is emitted."
   []
-  {:schema-version 1
-   :required-components required-rule-components
-   :required-runtime-capabilities required-runtime-capabilities
-   :optional-components {:product-runtime-assets #{:assets}
-                         :orchestration #{:validate-profile!
-                                          :validate-project-input!}}})
+  (bundle-contract/contract))
 
 (defn- destination-error [message data]
   (throw (ex-info message (assoc data :kind :invalid-destination-configuration))))
@@ -659,57 +641,9 @@
 
 (defn validate-rule-bundle!
   [rule-bundle resolved-model]
-  (when-not (and (map? rule-bundle)
-                 (= 1 (:schema-version rule-bundle))
-                 (keyword? (:id rule-bundle))
-                 (keyword? (:product-family rule-bundle))
-                 (map? (:rules rule-bundle)))
-    (capability-error! resolved-model "Invalid destination rule bundle"
-                       {:rule-bundle (select-keys rule-bundle
-                                                  [:schema-version :id])}))
-  (doseq [[component required-hooks] required-rule-components]
-    (let [rules (get-in rule-bundle [:rules component])]
-      (when-not (map? rules)
-        (capability-error! resolved-model "Destination rule component is missing"
-                           {:bundle (:id rule-bundle) :component component}))
-      (doseq [hook required-hooks]
-        (when-not (fn? (get rules hook))
-          (capability-error! resolved-model "Destination rule capability is missing"
-                             {:bundle (:id rule-bundle)
-                              :component component :capability hook})))))
-  (let [runtime-capabilities
-        (try
-          (java/runtime-capabilities (:runtime-capabilities rule-bundle))
-          (catch clojure.lang.ExceptionInfo error
-            (capability-error!
-             resolved-model
-             "Destination runtime capability contract is invalid"
-             {:bundle (:id rule-bundle)
-              :component :runtime-capabilities
-              :validation (ex-data error)})))]
-    (doseq [[capability _settings] required-runtime-capabilities]
-      (when-not (contains? runtime-capabilities capability)
-        (capability-error!
-         resolved-model
-         "Destination runtime capability is missing"
-         {:bundle (:id rule-bundle)
-          :component :runtime-capabilities
-          :capability capability}))))
-  (when-let [runtime-rules (get-in rule-bundle [:rules :product-runtime-assets])]
-    (when-not (and (map? runtime-rules) (fn? (:assets runtime-rules)))
-      (capability-error! resolved-model "Product runtime asset capability is invalid"
-                         {:bundle (:id rule-bundle)
-                          :component :product-runtime-assets
-                          :capability :assets})))
-  (when-let [orchestration (:orchestration rule-bundle)]
-    (when-not (and (map? orchestration)
-                   (every? (fn [[_ hook]] (fn? hook)) orchestration)
-                   (every? #{:validate-profile! :validate-project-input!}
-                           (keys orchestration)))
-      (capability-error! resolved-model "Destination orchestration capability is invalid"
-                         {:bundle (:id rule-bundle)
-                          :component :orchestration})))
-  rule-bundle)
+  (bundle-contract/validate!
+   rule-bundle
+   (partial capability-error! resolved-model)))
 
 (defn resolve-rule-bundle!
   [{:keys [rule-bundle configuration resolved-model]}]
@@ -869,26 +803,8 @@
     proof))
 
 (defn- source-accounting [ctx workspace-root files]
-  (let [root (paths/absolute workspace-root)
-        diagnostics (:diagnostics ctx)
-        by-file (group-by #(get-in % [:source :location :file]) diagnostics)
-        outputs-by-file
-        (group-by #(get-in % [:source :location :file])
-                  (filter #(and (= :type (:kind %)) (nil? (:owner %)))
-                          (:declarations ctx)))]
-    (mapv
-     (fn [source]
-       (let [canonical (.getCanonicalPath (.toFile ^Path source))
-             types (get outputs-by-file canonical)
-             package-info? (= "package-info.java" (str (.getFileName ^Path source)))]
-         (when-not (or (seq types) package-info?)
-           (throw (ex-info "Production source has no emitted declaration or package mapping"
-                           {:kind :unaccounted-production-source :path canonical})))
-         {:source (portable root source)
-          :strategy (if package-info? :package-nullability-metadata :generated-csharp)
-          :top-level-declarations (mapv :name types)
-          :hard-failures (count (get by-file canonical))}))
-     (sort-by str files))))
+  (source-accountability/summarize
+   workspace-root (:diagnostics ctx) (:declarations ctx) files))
 
 (defn- selected-source-files [resolved-model input]
   (if-let [source-inputs (:source-inputs resolved-model)]

@@ -8,7 +8,8 @@
   (:require [clojure.string :as str]
             [dripsharp.csharp :as csharp]
             [dripsharp.diagnostics :as diagnostics]
-            [dripsharp.spoon :as spoon])
+            [dripsharp.spoon :as spoon]
+            [dripsharp.translation-kernel :as kernel])
   (:import [java.util IdentityHashMap]
            [spoon.reflect.code CtBlock CtBreak CtContinue CtDo CtExpression CtFor
             CtForEach CtStatement CtTry CtWhile]
@@ -17,118 +18,33 @@
             CtTypeReference]
            [spoon.reflect.visitor.filter TypeFilter]))
 
-(def ^:private mapping-categories
-  #{:types :executables :constructors :fields :annotations})
-
-(def ^:private runtime-capability-keys
-  #{:labeled-control-flow})
-
-(def ^:private global-csharp-type-pattern
-  #"global::@?[A-Za-z_][A-Za-z0-9_]*(?:[.]@?[A-Za-z_][A-Za-z0-9_]*)*")
-
 (defn runtime-capabilities
   "Validates destination runtime identities used by the recursive kernel.
   Capabilities are optional until a corresponding Java construct is observed;
   destination bundles that provide those constructs enforce their required
   capability set before translation begins."
   [capabilities]
-  (let [capabilities (or capabilities {})]
-    (when-not (map? capabilities)
-      (throw (ex-info "Java translation runtime capabilities must be a map"
-                      {:kind :invalid-translation-runtime-capabilities
-                       :runtime-capabilities capabilities})))
-    (when-let [unexpected (seq (remove runtime-capability-keys
-                                       (keys capabilities)))]
-      (throw (ex-info "Unknown Java translation runtime capability"
-                      {:kind :unknown-translation-runtime-capability
-                       :capabilities (vec (sort unexpected))})))
-    (when-let [labeled-control-flow (:labeled-control-flow capabilities)]
-      (when-not (and (map? labeled-control-flow)
-                     (= #{:exception-type} (set (keys labeled-control-flow)))
-                     (string? (:exception-type labeled-control-flow))
-                     (re-matches global-csharp-type-pattern
-                                 (:exception-type labeled-control-flow)))
-        (throw (ex-info "Invalid labeled-control-flow runtime capability"
-                        {:kind :invalid-translation-runtime-capability
-                         :capability :labeled-control-flow
-                         :contract labeled-control-flow}))))
-    capabilities))
+  (kernel/runtime-capabilities capabilities))
 
 (defn runtime-type-identity
   "Returns one validated destination runtime type identity, failing closed when
   a translated construct requires a capability the destination did not supply."
   [translation-context capability]
-  (let [path (case capability
-               :labeled-control-flow
-               [:runtime-capabilities :labeled-control-flow :exception-type]
-
-               (throw (ex-info "Unknown Java translation runtime type"
-                               {:kind :unknown-translation-runtime-type
-                                :capability capability})))]
-    (or (get-in translation-context path)
-        (throw (ex-info "Destination did not supply a required runtime type"
-                        {:kind :missing-translation-runtime-capability
-                         :capability capability})))))
+  (kernel/runtime-type-identity translation-context capability))
 
 (defn structural-rules
   "Validates an ordered structural rule vector.  A rule is
   {:id keyword :class Spoon-interface :emit fn}.  More-specific interfaces must
   precede broader interfaces; this explicit order is part of the registry."
   [rules]
-  (let [rules (vec rules)]
-    (doseq [{:keys [id class emit] :as rule} rules]
-      (when-not (and (keyword? id) (instance? Class class) (ifn? emit))
-        (throw (ex-info "Invalid Java structural translation rule"
-                        {:kind :invalid-structural-rule :rule rule}))))
-    (when-not (= (count rules) (count (distinct (map :id rules))))
-      (throw (ex-info "Java structural rule identities must be unique"
-                      {:kind :duplicate-structural-rule :rules rules})))
-    (when-not (= (count rules) (count (distinct (map :class rules))))
-      (throw (ex-info "Java structural rule classes must be unique"
-                      {:kind :duplicate-structural-class :rules rules})))
-    rules))
-
-(defn- valid-mapping-key?
-  [category key]
-  (and (string? key)
-       (case category
-         :types (or (str/starts-with? key "type:")
-                    (str/starts-with? key "type-parameter:"))
-         :executables (str/starts-with? key "executable:")
-         :constructors (str/starts-with? key "executable:")
-         :fields (str/starts-with? key "field:")
-         :annotations (str/starts-with? key "annotation:")
-         false)))
+  (kernel/structural-rules rules))
 
 (defn mapping-registries
   "Validates semantic mapping registries keyed by resolved symbol identity.
   Mapping values are {:id keyword :emit fn}; emit receives a map containing the
   live element, its translated children, and its resolved occurrence."
   [registries]
-  (let [unexpected (seq (remove mapping-categories (keys registries)))
-        normalized (into {}
-                         (for [category mapping-categories]
-                           [category (or (get registries category) {})]))]
-    (when unexpected
-      (throw (ex-info "Unknown Java semantic mapping registry"
-                      {:kind :unknown-mapping-registry
-                       :categories (vec (sort unexpected))})))
-    (doseq [[category mappings] normalized]
-      (when-not (map? mappings)
-        (throw (ex-info "Java semantic mapping registry must be a map"
-                        {:kind :invalid-mapping-registry
-                         :category category
-                         :registry mappings})))
-      (doseq [[key {:keys [id emit] :as mapping}] mappings]
-        (when-not (and (valid-mapping-key? category key)
-                       (keyword? id)
-                       (ifn? emit))
-          (throw (ex-info "Invalid resolved-symbol mapping"
-                          {:kind :invalid-symbol-mapping
-                           :category category
-                           :key key
-                           :mapping mapping})))))
-    normalized))
+  (kernel/mapping-registries registries))
 
 (defn resolved-occurrence-index
   "Builds an identity index over the resolver's live reference objects.  Java
@@ -295,8 +211,8 @@
   "Returns a collision-free destination label for an exact declaration."
   [translation-context ^CtStatement target kind]
   (let [ordinal (.get ^IdentityHashMap
-                      (get-in translation-context
-                              [:control-flow :declaration-ids])
+                 (get-in translation-context
+                         [:control-flow :declaration-ids])
                       target)]
     (when (nil? ordinal)
       (throw (ex-info "Labeled branch target is outside the translated tree"
@@ -319,7 +235,7 @@
   inside, and exits, a Java finally clause."
   [translation-context]
   (pos? (.size ^IdentityHashMap
-               (get-in translation-context [:control-flow :branch-finalizers]))))
+         (get-in translation-context [:control-flow :branch-finalizers]))))
 
 (defn labeled-branch-node
   "Emits a direct identity-based goto, or an internal control-flow signal when
@@ -332,12 +248,12 @@
       (throw (ex-info "Java labeled branch has no declaration in scope"
                       {:kind :unresolved-labeled-branch-target
                        :branch (spoon/frontend-diagnostic branch)})))
-    (if-let [finalizers (.get ^IdentityHashMap
-                             (get-in translation-context
-                                     [:control-flow :branch-finalizers])
-                             branch)]
+    (if-let [_finalizers (.get ^IdentityHashMap
+                          (get-in translation-context
+                                  [:control-flow :branch-finalizers])
+                               branch)]
       (let [branch-id (.get ^IdentityHashMap
-                            (get-in translation-context [:control-flow :branch-ids])
+                       (get-in translation-context [:control-flow :branch-ids])
                             branch)]
         (csharp/raw
          (str "throw new "
@@ -350,13 +266,13 @@
 (defn- finalizer-branch-id
   [translation-context branch]
   (.get ^IdentityHashMap
-        (get-in translation-context [:control-flow :branch-ids])
+   (get-in translation-context [:control-flow :branch-ids])
         branch))
 
 (defn- branch-finalizers
   [translation-context branch]
   (.get ^IdentityHashMap
-        (get-in translation-context [:control-flow :branch-finalizers])
+   (get-in translation-context [:control-flow :branch-finalizers])
         branch))
 
 (defn- outermost-finalizer?
@@ -366,14 +282,14 @@
 (defn- finalizer-identity
   [translation-context finalizer]
   (.get ^IdentityHashMap
-        (get-in translation-context [:control-flow :finalizer-ids])
+   (get-in translation-context [:control-flow :finalizer-ids])
         finalizer))
 
 (defn- finally-crossing-node
   [translation-context ^CtTry finalizer node]
   (let [branches (.get ^IdentityHashMap
-                       (get-in translation-context
-                               [:control-flow :finalizer-branches])
+                  (get-in translation-context
+                          [:control-flow :finalizer-branches])
                        finalizer)]
     (if-not (seq branches)
       node
@@ -434,66 +350,52 @@
       (instance? CtFieldReference element)
       (instance? CtAnnotation element)))
 
-(defn- occurrence-category
-  [occurrence]
-  (case (:kind occurrence)
-    :type :types
-    :executable :executables
-    :constructor :constructors
-    :field :fields
-    :annotation :annotations
-    nil))
+(defn- plan-for
+  [translation-context element]
+  (let [reference? (reference-element? element)
+        occurrence
+        (when reference?
+          (.get ^IdentityHashMap (:occurrence-index translation-context)
+                element))
+        structural-rule
+        (when-not reference?
+          (some #(when (instance? (:class %) element) %)
+                (:rules translation-context)))
+        plan
+        (kernel/translation-plan
+         {:reference? reference?
+          :occurrence occurrence
+          :mappings (:mappings translation-context)
+          :structural-rule structural-rule})]
+    (case (:kind plan)
+      :missing-mapping
+      (assoc
+       plan
+       :diagnostic
+       (blocking-diagnostic
+        :unsupported-resolved-symbol element
+        (str "No " (name (:category plan)) " mapping for "
+             (:key occurrence))
+        (select-keys occurrence [:kind :key :origin :resolution])))
 
-(defn- semantic-plan
-  [translation-context ^CtElement element]
-  (when (reference-element? element)
-    (if-let [occurrence (.get ^IdentityHashMap (:occurrence-index translation-context)
-                              element)]
-      (let [category (occurrence-category occurrence)
-            mapping (get-in translation-context [:mappings category (:key occurrence)])]
-        (if mapping
-          {:kind :semantic
-           :rule (:id mapping)
-           :mapping {:registry category
-                     :identity (:id mapping)
-                     :resolved-key (:key occurrence)
-                     :origin (:origin occurrence)
-                     :resolution (:resolution occurrence)}
-           :occurrence occurrence
-           :emit (:emit mapping)}
-          {:kind :missing-mapping
-           :diagnostic
-           (blocking-diagnostic
-            :unsupported-resolved-symbol element
-            (str "No " (name category) " mapping for " (:key occurrence))
-            (select-keys occurrence [:kind :key :origin :resolution]))}))
-      {:kind :missing-occurrence
+      :missing-occurrence
+      (assoc
+       plan
        :diagnostic
        (blocking-diagnostic
         :unresolved-reference-occurrence element
-        "Spoon reference was not present in the resolved occurrence index")})))
+        "Spoon reference was not present in the resolved occurrence index"))
 
-(defn- structural-plan
-  [translation-context ^CtElement element]
-  (when-let [rule (some #(when (instance? (:class %) element) %)
-                        (:rules translation-context))]
-    {:kind :structural
-     :rule (:id rule)
-     :emit (:emit rule)}))
+      :unsupported
+      (assoc
+       plan
+       :diagnostic
+       (blocking-diagnostic
+        :unsupported-java-element element
+        (str "No structural translation rule for "
+             (.getName (class element)))))
 
-(defn- unsupported-plan
-  [^CtElement element]
-  {:kind :unsupported
-   :diagnostic
-   (blocking-diagnostic
-    :unsupported-java-element element
-    (str "No structural translation rule for " (.getName (class element))))})
-
-(defn- plan-for
-  [translation-context element]
-  (or (semantic-plan translation-context element)
-      (structural-plan translation-context element)
-      (unsupported-plan element)))
+      plan)))
 
 (defn- direct-children
   [^CtElement element]

@@ -82,9 +82,18 @@ DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run proof pdfcube
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pkl
 DRIPSHARP_WORKERS=22 clojure -J-Xmx28g -M:run rebaseline pdfcube
+clojure -M:unit-test
 clojure -M:test
 clojure -M:test --namespace dripsharp.harness-test
 ```
+
+`clojure -M:unit-test` is the process-free, sub-second feedback tier for pure
+translation planning, mapping registries, configuration diagnostics, C# and
+project rendering, source accountability, and destination bundle contracts.
+It uses a bounded 512 MiB heap and does not launch Spoon models, Gradle, Maven,
+dotnet, package consumers, or differential oracles. It complements the
+default full test suite and the target proof ladders; it does not replace
+either.
 
 Generation and differential validation use one bounded executor. The default
 worker count is the JVM's available-processor count. Set `DRIPSHARP_WORKERS=1`
