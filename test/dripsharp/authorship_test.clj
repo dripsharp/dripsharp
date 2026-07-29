@@ -164,6 +164,24 @@
                  (:path (ex-data wrong-header))))
           (is (= "2026 Fixture Owner"
                  (:file-copyright-text (ex-data wrong-header)))))
+        (Files/writeString
+         destination
+         (str header
+              "internal static class Destination { }\n"
+              "// SPDX-License-Identifier: LicenseRef-Conflicting\n")
+         (make-array OpenOption 0))
+        (let [conflicting-header
+              (caught
+               #(authorship/verify-authored-spdx-headers!
+                 root groups policy))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data conflicting-header))))
+          (is (= "runtime/Destination.cs"
+                 (:path (ex-data conflicting-header))))
+          (is (= {:file-copyright-text 1
+                  :license-identifier 2}
+                 (:spdx-marker-counts
+                  (ex-data conflicting-header)))))
         (let [missing-decision
               (caught
                #(authorship/verify-authored-spdx-headers!

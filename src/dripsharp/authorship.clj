@@ -256,6 +256,13 @@
   (str "// SPDX-FileCopyrightText: " file-copyright-text "\n"
        "// SPDX-License-Identifier: " license-identifier "\n\n"))
 
+(defn- spdx-marker-counts
+  [text]
+  {:file-copyright-text
+   (count (re-seq #"SPDX-FileCopyrightText:" text))
+   :license-identifier
+   (count (re-seq #"SPDX-License-Identifier:" text))})
+
 (defn verify-authored-spdx-headers!
   "Verifies the exact repository notice and SPDX header on authored sources.
 
@@ -291,22 +298,27 @@
       (when (seq duplicates)
         (fail! "Authored SPDX source inventory contains duplicate paths"
                {:paths duplicates}))
-      (doseq [[path charset] authored-paths
-              :let [source
-                    (paths/absolute
-                     (paths/resolve-path workspace-root path))]
-              :when
-              (or (not (paths/real-contained? workspace-root source))
-                  (not (paths/regular-file? source))
-                  (not
-                   (str/starts-with?
-                    (read-source-text source charset)
-                    expected-header)))]
-        (fail! "Authored source lacks the exact approved SPDX header"
-               {:path path
-                :decision (:decision policy)
-                :license-identifier (:license-identifier policy)
-                :file-copyright-text (:file-copyright-text policy)}))
+      (doseq [[path charset] authored-paths]
+        (let [source
+              (paths/absolute
+               (paths/resolve-path workspace-root path))
+              readable?
+              (and (paths/real-contained? workspace-root source)
+                   (paths/regular-file? source))
+              text (when readable? (read-source-text source charset))
+              marker-counts (when text (spdx-marker-counts text))]
+          (when-not
+           (and text
+                (str/starts-with? text expected-header)
+                (= {:file-copyright-text 1
+                    :license-identifier 1}
+                   marker-counts))
+            (fail! "Authored source lacks the exact approved SPDX header"
+                   {:path path
+                    :decision (:decision policy)
+                    :license-identifier (:license-identifier policy)
+                    :file-copyright-text (:file-copyright-text policy)
+                    :spdx-marker-counts marker-counts}))))
       {:schema-version spdx-policy-schema-version
        :decision (:decision policy)
        :license-identifier (:license-identifier policy)
