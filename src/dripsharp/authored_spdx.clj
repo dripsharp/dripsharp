@@ -145,7 +145,8 @@
                  (= decision-policy-keys (set (keys policy)))
                  (string? (:package-publisher policy))
                  (not (str/blank? (:package-publisher policy)))
-                 (not (re-find #"[\r\n]" (:package-publisher policy))))
+                 (not (re-find #"[\r\n\u0000]"
+                               (:package-publisher policy))))
     (fail! "Approved legal and publisher policy is invalid"
            {:expected-keys decision-policy-keys
             :policy policy}))

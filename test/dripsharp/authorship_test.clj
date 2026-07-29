@@ -351,6 +351,17 @@
           (is (= "Fixture Publisher\nDifferent Publisher"
                  (get-in (ex-data multiline-publisher)
                          [:policy :package-publisher]))))
+        (let [nul-publisher
+              (caught
+               #(authored-spdx/verify-targets!
+                 root [:one :two]
+                 (assoc policy :package-publisher
+                        "Fixture Publisher\u0000Different Publisher")))]
+          (is (= :invalid-authored-spdx-gate
+                 (:kind (ex-data nul-publisher))))
+          (is (= "Fixture Publisher\u0000Different Publisher"
+                 (get-in (ex-data nul-publisher)
+                         [:policy :package-publisher]))))
         (with-redefs
          [target-directory/read-target
           (fn [_ target]
