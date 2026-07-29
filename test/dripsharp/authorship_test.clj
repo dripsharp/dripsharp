@@ -190,6 +190,19 @@
                  (:kind (ex-data missing-decision))))
           (is (= "" (get-in (ex-data missing-decision)
                             [:policy :decision]))))
+        (doseq [[field value]
+                [[:decision "fixture\u0000human-decision"]
+                 [:license-identifier "LicenseRef\u0000Fixture"]
+                 [:file-copyright-text "2026 Fixture\u0000Owner"]]]
+          (let [malformed-policy
+                (caught
+                 #(authorship/verify-authored-spdx-headers!
+                   root groups (assoc policy field value)))]
+            (is (= :invalid-authorship-ledger
+                   (:kind (ex-data malformed-policy))))
+            (is (= value
+                   (get-in (ex-data malformed-policy)
+                           [:policy field])))))
         (write-text! root "LICENSE" "Changed fixture repository license.\n")
         (let [changed-notice
               (caught
