@@ -116,7 +116,12 @@
    {:assembly-name "Acme.Core"
     :root-namespace "Acme.Core"
     :target-framework "net10.0"}
-   :package {:id "Acme.Core"}
+   :package
+   {:id "Acme.Core"
+    :title "Acme Core"
+    :description
+    "Acme Core for .NET. This package is an independent translation and is not affiliated with UpstreamCo."
+    :authors "DripSharp"}
    :output {:project-directory "generated/acme-core"
             :project-file "Acme.Core.csproj"}
    :destination-capabilities #{:java-compat}
@@ -281,12 +286,17 @@
 
 (defn- legal-policy
   []
-  {:schema-version 1
+  {:schema-version 2
    :target :acme
    :upstream-license "Apache-2.0"
    :allowed-upstream-licenses #{"Apache-2.0"}
    :legal-sets #{:upstream}
-   :profile-legal-sets {"acme-core" [:upstream]}})
+   :profile-legal-sets {"acme-core" [:upstream]}
+   :package-metadata
+   {"acme-core"
+    {:required-description-fragments
+     ["independent translation" "not affiliated with UpstreamCo"]
+     :forbidden-identity-marks ["UpstreamCo"]}}})
 
 (defn- create-target-workspace!
   [root]
@@ -402,6 +412,42 @@
               (:kind
                (failure-data
                 #(target-directory/read-target root :acme)))))))))
+
+(deftest package-attribution-policy-fails-closed
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (testing "every profile has an exact package-metadata policy"
+       (update-edn! root "targets/acme/legal/policy.edn"
+                    assoc :package-metadata {})
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :package-metadata] (:path failure)))
+         (is (= ["acme-core"] (:missing failure)))))
+     (testing "configured package descriptions contain every required fragment"
+       (write-edn! root "targets/acme/legal/policy.edn" (legal-policy))
+       (update-edn! root "targets/acme/destinations/core.edn"
+                    assoc-in [:package :description]
+                    "Acme Core for .NET.")
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:destinations :core :package :description]
+                (:path failure)))
+         (is (= "independent translation" (:fragment failure)))))
+     (testing "upstream-owner marks cannot become publisher identities"
+       (write-edn! root "targets/acme/destinations/core.edn" (destination))
+       (update-edn! root "targets/acme/destinations/core.edn"
+                    assoc-in [:package :authors]
+                    "UpstreamCo")
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:destinations :core :package :authors]
+                (:path failure)))
+         (is (= "UpstreamCo" (:mark failure)))
+         (is (= "UpstreamCo" (:actual failure))))))))
 
 (deftest profile-destination-and-validation-identities-fail-closed
   (in-target-workspace

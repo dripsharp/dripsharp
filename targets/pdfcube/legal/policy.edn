@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :target :pdfcube
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
@@ -8,4 +8,30 @@
   "pdfcube-fontbox" [:upstream]
   "pdfcube-xmpbox" [:upstream]
   "pdfcube-pdfbox" [:upstream :codecs]
-  "pdfcube-preflight" [:upstream]}}
+  "pdfcube-preflight" [:upstream]}
+ :package-metadata
+ {"pdfcube-io"
+  {:required-description-fragments
+   ["independent translation"
+    "not affiliated with, endorsed by, or sponsored by the Apache Software Foundation"]
+   :forbidden-identity-marks ["Apache"]}
+  "pdfcube-fontbox"
+  {:required-description-fragments
+   ["independent translation"
+    "not affiliated with, endorsed by, or sponsored by the Apache Software Foundation"]
+   :forbidden-identity-marks ["Apache"]}
+  "pdfcube-xmpbox"
+  {:required-description-fragments
+   ["independent translation"
+    "not affiliated with, endorsed by, or sponsored by the Apache Software Foundation"]
+   :forbidden-identity-marks ["Apache"]}
+  "pdfcube-pdfbox"
+  {:required-description-fragments
+   ["independent translation"
+    "not affiliated with, endorsed by, or sponsored by the Apache Software Foundation"]
+   :forbidden-identity-marks ["Apache"]}
+  "pdfcube-preflight"
+  {:required-description-fragments
+   ["independent translation"
+    "not affiliated with, endorsed by, or sponsored by the Apache Software Foundation"]
+   :forbidden-identity-marks ["Apache"]}}}

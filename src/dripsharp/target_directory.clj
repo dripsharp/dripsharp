@@ -16,7 +16,7 @@
   (:import [java.nio.file Files LinkOption]))
 
 (def schema-version 3)
-(def legal-policy-schema-version 1)
+(def legal-policy-schema-version 2)
 (def mapping-overlay-schema-version 1)
 
 (def ^:private manifest-keys
@@ -58,7 +58,10 @@
 
 (def ^:private legal-policy-keys
   #{:schema-version :target :upstream-license :allowed-upstream-licenses
-    :legal-sets :profile-legal-sets})
+    :legal-sets :profile-legal-sets :package-metadata})
+
+(def ^:private package-metadata-policy-keys
+  #{:required-description-fragments :forbidden-identity-marks})
 
 (def ^:private custom-validation-keys
   #{:schema-version :id :target :profile :baseline-profile :runner
@@ -437,6 +440,7 @@
                                    [:legal-policy :legal-sets]
                                    (:legal-sets policy))
           profile-legal-sets (:profile-legal-sets policy)
+          package-metadata (:package-metadata policy)
           baseline-sets (set (keys (:legal-sets baseline-record)))]
       (let [context (validation-context "Target legal policy")]
         (validation/check! context [:legal-policy :allowed-upstream-licenses]
@@ -463,6 +467,10 @@
         (validation/exact-keys!
          context [:legal-policy :profile-legal-sets]
          profile-legal-sets profile-names profile-names))
+      (validation/exact-keys!
+       (validation-context "Target package-metadata policy")
+       [:legal-policy :package-metadata]
+       package-metadata profile-names profile-names)
       (doseq [[profile sets] profile-legal-sets]
         (let [path [:legal-policy :profile-legal-sets profile]
               context
@@ -480,6 +488,25 @@
                              (str "a selection from "
                                   (vec (sort legal-sets)))
                              #(set/subset? (set %) legal-sets))))
+      (doseq [[profile metadata] package-metadata]
+        (let [path [:legal-policy :package-metadata profile]
+              context
+              (validation-context "Target package-metadata policy"
+                                  {:profile profile})]
+          (exact-keys! "Target package-metadata policy" path
+                       package-metadata-policy-keys metadata)
+          (doseq [field [:required-description-fragments
+                         :forbidden-identity-marks]
+                  :let [values (get metadata field)
+                        field-path (conj path field)]]
+            (validation/check! context field-path values
+                               "a vector of distinct non-blank strings"
+                               #(and (vector? %)
+                                     (= (count %) (count (distinct %)))))
+            (doseq [[index value] (map-indexed vector values)]
+              (validation/check! context (conj field-path index)
+                                 value "a non-blank string"
+                                 non-blank-string?)))))
       {:path file :contract policy})))
 
 (defn- load-baseline!
@@ -678,6 +705,48 @@
          distinct
          sort
          vec)))
+
+(defn- validate-package-metadata-policy!
+  [profile destination-id destination policy]
+  (let [package (:package destination)
+        description (:description package)
+        required-fragments (:required-description-fragments policy)
+        forbidden-marks (:forbidden-identity-marks policy)
+        identity-fields
+        (concat
+         [[[:package :id] (:id package)]
+          [[:package :title] (:title package)]
+          [[:package :authors] (:authors package)]
+          [[:project :assembly-name]
+           (get-in destination [:project :assembly-name])]
+          [[:project :root-namespace]
+           (get-in destination [:project :root-namespace])]]
+         (map (fn [[source value]]
+                [[:namespaces source] value])
+              (:namespaces destination))
+         (map (fn [[source value]]
+                [[:namespace-prefixes source] value])
+              (:namespace-prefixes destination)))]
+    (doseq [fragment required-fragments]
+      (when-not (and (non-blank-string? description)
+                     (str/includes? description fragment))
+        (fail! "Package description omits required legal attribution text"
+               {:profile profile
+                :destination destination-id
+                :path [:destinations destination-id :package :description]
+                :fragment fragment
+                :actual description})))
+    (doseq [mark forbidden-marks
+            [path value] identity-fields
+            :when (and (non-blank-string? value)
+                       (str/includes? (str/lower-case value)
+                                      (str/lower-case mark)))]
+      (fail! "Package product or publisher identity contains a forbidden upstream-owner mark"
+             {:profile profile
+              :destination destination-id
+              :path (into [:destinations destination-id] path)
+              :mark mark
+              :actual value}))))
 
 (defn- profile-authorship!
   [workspace-root target family profile-id descriptor destination
@@ -981,6 +1050,10 @@
                    policy-legal-sets
                    [:destinations destination :baseline-legal-sets]
                    destination-legal-sets)
+                  (validate-package-metadata-policy!
+                   id destination destination-config
+                   (get-in legal-policy
+                           [:contract :package-metadata id]))
                   [id {:descriptor descriptor
                        :path file
                        :configuration profile

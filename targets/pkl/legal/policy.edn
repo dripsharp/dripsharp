@@ -1,8 +1,19 @@
-{:schema-version 1
+{:schema-version 2
  :target :pkl
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
  :legal-sets #{:core}
  :profile-legal-sets
  {"pkl-parser" []
-  "pkl-core-value-model" [:core]}}
+  "pkl-core-value-model" [:core]}
+ :package-metadata
+ {"pkl-parser"
+  {:required-description-fragments
+   ["independent translation"
+    "not affiliated with, endorsed by, or sponsored by Apple Inc."]
+   :forbidden-identity-marks ["Apple"]}
+  "pkl-core-value-model"
+  {:required-description-fragments
+   ["independent translation"
+    "not affiliated with, endorsed by, or sponsored by Apple Inc."]
+   :forbidden-identity-marks ["Apple"]}}}

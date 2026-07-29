@@ -114,23 +114,35 @@ baseline; directory validation does not substitute for that evidence.
 
 ### Legal policy
 
-`legal/policy.edn` schema version 1 has exactly these keys:
+`legal/policy.edn` schema version 2 has exactly these keys:
 
 ```clojure
-{:schema-version 1
+{:schema-version 2
  :target :example
  :upstream-license "Apache-2.0"
  :allowed-upstream-licenses #{"Apache-2.0"}
  :legal-sets #{:upstream}
- :profile-legal-sets {"example-core" [:upstream]}}
+ :profile-legal-sets {"example-core" [:upstream]}
+ :package-metadata
+ {"example-core"
+  {:required-description-fragments
+   ["independent translation" "not affiliated with UpstreamCo"]
+   :forbidden-identity-marks ["UpstreamCo"]}}}
 ```
 
 The selected license must be allowed and must equal the baseline license.
 Legal-set names must equal the baseline legal sets, and every profile has one
 ordered legal-set selection. Destination and validation package contracts
 must use that same selection. Legal source, destination, and package paths are
-validated before discovery. Hash verification, attribution content, forbidden
-marks, and final package inspection remain separate legal gates.
+validated before discovery. Every profile also has one exact package-metadata
+policy. Required description fragments must occur in the configured package
+description, and forbidden upstream-owner marks must not occur in package ids,
+titles, authors, assembly names, root namespaces, or destination namespace
+identities. Upstream attribution in descriptions, copyright metadata,
+repository URLs, LICENSE, and NOTICE remains allowed. Exact nupkg inspection
+then proves that the validated description and identity metadata reached the
+artifact unchanged. Legal hash verification and resource-specific NOTICE
+attribution remain separate legal gates.
 
 ### Mapping overlays
 
