@@ -702,7 +702,47 @@
           (is (= :fixture/tree
                  (:source (ex-data escaped-tree))))
           (is (= "runtime/tree"
-                 (:provenance (ex-data escaped-tree))))))
+                 (:provenance (ex-data escaped-tree)))))
+        (let [dangling-file (.resolve root "runtime/Dangling.cs")
+              _ (Files/createSymbolicLink
+                 dangling-file (.resolve outside "missing-file.cs")
+                 (make-array FileAttribute 0))
+              unresolved-file
+              (caught
+               #(authorship/source-observation
+                 root
+                 {:id :fixture/dangling-file
+                  :kind :file
+                  :provenance "runtime/Dangling.cs"
+                  :include-pattern nil}))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data unresolved-file))))
+          (is (= :unresolved-symbolic-link
+                 (:reason (ex-data unresolved-file))))
+          (is (= ["runtime/Dangling.cs"]
+                 (:paths (ex-data unresolved-file))))
+          (Files/delete dangling-file))
+        (let [tree-root (.resolve root "runtime/dangling-tree")
+              dangling-source (.resolve tree-root "Dangling.cs")
+              _ (Files/createDirectories tree-root
+                                         (make-array FileAttribute 0))
+              _ (Files/createSymbolicLink
+                 dangling-source (.resolve outside "missing-tree.cs")
+                 (make-array FileAttribute 0))
+              unresolved-tree
+              (caught
+               #(authorship/source-observation
+                 root
+                 {:id :fixture/dangling-tree
+                  :kind :tree
+                  :provenance "runtime/dangling-tree"
+                  :include-pattern #".*\.cs"}))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data unresolved-tree))))
+          (is (= :unresolved-symbolic-link
+                 (:reason (ex-data unresolved-tree))))
+          (is (= ["runtime/dangling-tree/Dangling.cs"]
+                 (:paths (ex-data unresolved-tree))))))
       (finally
         (delete-tree! root)
         (delete-tree! outside)))))

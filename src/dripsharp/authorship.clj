@@ -103,6 +103,38 @@
 
       [])))
 
+(defn- unresolved-source-links
+  [^Path workspace-root ^Path source-root
+   {:keys [kind include-pattern]}]
+  (let [candidates
+        (cond
+          (paths/directory? source-root)
+          (with-open [files
+                      (Files/walk source-root
+                                  (make-array FileVisitOption 0))]
+            (->> (.toArray files)
+                 (map #(cast Path %))
+                 vec))
+
+          (Files/isSymbolicLink source-root)
+          [source-root]
+
+          :else
+          [])
+        pattern (when (= :tree kind) (re-pattern include-pattern))]
+    (->> candidates
+         (filter #(Files/isSymbolicLink ^Path %))
+         (remove paths/exists?)
+         (filter
+          (fn [^Path link]
+            (or
+             (= :file kind)
+             (re-matches
+              pattern
+              (str/replace
+               (str (.relativize source-root link)) "\\" "/")))))
+         (mapv #(portable workspace-root %)))))
+
 (defn source-observation
   "Observes one contracted source group without trusting its asserted contract."
   [workspace-root source-group]
@@ -117,6 +149,14 @@
                    {:source (:id source-group)
                     :provenance (:provenance source-group)
                     :reason :outside-workspace}))
+        unresolved-links
+        (unresolved-source-links workspace-root source-root source-group)
+        _ (when (seq unresolved-links)
+            (fail! "Contracted source inventory contains unresolved symbolic links"
+                   {:source (:id source-group)
+                    :provenance (:provenance source-group)
+                    :paths unresolved-links
+                    :reason :unresolved-symbolic-link}))
         charset (:charset source-group)
         files (source-group-files workspace-root source-group)
         escaped-files
