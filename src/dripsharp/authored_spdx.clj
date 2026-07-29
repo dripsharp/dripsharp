@@ -315,7 +315,14 @@
   [workspace-root policy-path]
   (let [workspace-root (paths/absolute workspace-root)
         ^Path policy-file
-        (paths/absolute (paths/resolve-path workspace-root policy-path))]
+        (paths/absolute (paths/resolve-path workspace-root policy-path))
+        linked-directories
+        (->> (iterate #(.getParent ^Path %) (.getParent policy-file))
+             (take-while #(and % (not= workspace-root %)))
+             (filter #(Files/isSymbolicLink ^Path %))
+             (map #(str (.relativize workspace-root ^Path %)))
+             reverse
+             vec)]
     (when-not (.startsWith policy-file workspace-root)
       (fail! "Approved SPDX policy file is outside the workspace"
              {:path (str policy-path)
@@ -332,6 +339,11 @@
       (fail! "Approved SPDX policy file must not be a symbolic link"
              {:path (str policy-path)
               :reason :symbolic-link-policy}))
+    (when (seq linked-directories)
+      (fail! "Approved SPDX policy path contains symbolic-link directories"
+             {:path (str policy-path)
+              :paths linked-directories
+              :reason :symbolic-link-policy-directory}))
     {:file policy-file
      :policy
      (read-single-edn!

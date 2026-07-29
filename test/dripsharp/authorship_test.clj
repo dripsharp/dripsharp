@@ -759,6 +759,26 @@
             (is (= authored-spdx/policy-path
                    (:path (ex-data linked-policy)))))
           (Files/delete policy-link))
+        (Files/delete (.getParent policy-link))
+        (let [internal-policy
+              (write-text!
+               root "internal-config/authored-spdx.edn" (pr-str policy))
+              config-link (.getParent policy-link)]
+          (Files/createSymbolicLink
+           config-link (.getParent internal-policy)
+           (make-array FileAttribute 0))
+          (let [linked-policy-directory
+                (caught
+                 #(authored-spdx/verify-policy-file!
+                   root authored-spdx/policy-path [:fixture]))]
+            (is (= :invalid-authored-spdx-gate
+                   (:kind (ex-data linked-policy-directory))))
+            (is (= :symbolic-link-policy-directory
+                   (:reason (ex-data linked-policy-directory))))
+            (is (= ["config"]
+                   (:paths (ex-data linked-policy-directory)))))
+          (Files/delete config-link)
+          (delete-tree! (.getParent internal-policy)))
         (write-text! root authored-spdx/policy-path (pr-str policy))
         (let [outside-notice
               (write-text! outside "LICENSE" "Fixture repository license.\n")
