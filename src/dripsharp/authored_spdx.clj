@@ -4,7 +4,8 @@
             [dripsharp.authorship :as authorship]
             [dripsharp.paths :as paths]
             [dripsharp.target-directory :as target-directory])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [java.io PushbackReader StringReader]
+           [java.nio.charset StandardCharsets]
            [java.nio.file Files Path]))
 
 (defn- fail!
@@ -13,6 +14,30 @@
 
 (def policy-path "config/authored-spdx.edn")
 (def required-decision "pkl-c8t.2")
+
+(defn- read-single-edn!
+  [path text]
+  (let [eof (Object.)
+        [value trailing]
+        (try
+          (with-open [reader (PushbackReader. (StringReader. text))]
+            [(edn/read {:eof eof} reader)
+             (edn/read {:eof eof} reader)])
+          (catch RuntimeException error
+            (throw
+             (ex-info "Approved SPDX policy file is not valid EDN"
+                      {:kind :invalid-authored-spdx-gate
+                       :path (str path)}
+                      error))))]
+    (when (identical? eof value)
+      (fail! "Approved SPDX policy file is empty"
+             {:path (str path)
+              :reason :empty-policy}))
+    (when-not (identical? eof trailing)
+      (fail! "Approved SPDX policy file contains trailing EDN data"
+             {:path (str path)
+              :reason :trailing-data}))
+    value))
 
 (defn active-targets
   "Discovers every checked-in target manifest so the repository gate cannot
@@ -113,15 +138,9 @@
               :reason :outside-workspace}))
     {:file policy-file
      :policy
-     (try
-       (edn/read-string
-        (Files/readString policy-file StandardCharsets/UTF_8))
-       (catch RuntimeException error
-         (throw
-          (ex-info "Approved SPDX policy file is not valid EDN"
-                   {:kind :invalid-authored-spdx-gate
-                    :path (str policy-path)}
-                   error))))}))
+     (read-single-edn!
+      policy-path
+      (Files/readString policy-file StandardCharsets/UTF_8))}))
 
 (defn verify-policy-file!
   "Loads an approved policy file from the workspace and runs the target gate."

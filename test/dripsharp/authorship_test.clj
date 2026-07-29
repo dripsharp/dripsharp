@@ -319,6 +319,26 @@
                (:reason (ex-data missing-policy))))
         (is (= "config/missing-authored-spdx.edn"
                (:path (ex-data missing-policy)))))
+      (write-text! root authored-spdx/policy-path "")
+      (let [empty-policy
+            (caught
+             #(authored-spdx/verify-policy-file!
+               root authored-spdx/policy-path [:one]))]
+        (is (= :invalid-authored-spdx-gate
+               (:kind (ex-data empty-policy))))
+        (is (= :empty-policy
+               (:reason (ex-data empty-policy)))))
+      (write-text! root authored-spdx/policy-path "{:first true}\n{:second true}\n")
+      (let [trailing-policy
+            (caught
+             #(authored-spdx/verify-policy-file!
+               root authored-spdx/policy-path [:one]))]
+        (is (= :invalid-authored-spdx-gate
+               (:kind (ex-data trailing-policy))))
+        (is (= :trailing-data
+               (:reason (ex-data trailing-policy))))
+        (is (= authored-spdx/policy-path
+               (:path (ex-data trailing-policy)))))
       (finally
         (delete-tree! root)))))
 
