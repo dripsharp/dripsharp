@@ -53,6 +53,9 @@
 (def ^:private nuget-org-v3-source
   "https://api.nuget.org/v3/index.json")
 
+(def ^:private isolated-msbuild-environment
+  #{"MSBuildSDKsPath"})
+
 (def ^:private isolated-nuget-config
   (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
        "<configuration>\n"
@@ -790,7 +793,8 @@
           (into ["--runtime" runtime-identifier]))
         restore-result
         (run-command! {:command restore-command
-                       :directory build-directory})
+                       :directory build-directory
+                       :unset-environment isolated-msbuild-environment})
         command
         (cond->
          ["dotnet" "build" (str project-file)
@@ -817,7 +821,8 @@
      :restore-result restore-result
      :result
      (run-command! {:command command
-                    :directory build-directory})}))
+                    :directory build-directory
+                    :unset-environment isolated-msbuild-environment})}))
 
 (defn- direct-files
   [build-root directory platform]

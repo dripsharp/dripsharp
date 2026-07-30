@@ -25,7 +25,7 @@
 (defn run!
   "Runs a command and returns its merged output. Throws on start, timeout, or
   exit failure. `timeout-ms` is optional and must be a positive integer."
-  [{:keys [command directory timeout-ms environment]}]
+  [{:keys [command directory timeout-ms environment unset-environment]}]
   (when-not (seq command)
     (throw (ex-info "Cannot run an empty command" {:kind :empty-command})))
   (when (and (some? timeout-ms)
@@ -45,6 +45,14 @@
                          :environment environment})))
       (doseq [[name value] environment]
         (.put (.environment builder) name value)))
+    (when unset-environment
+      (when-not (and (coll? unset-environment)
+                     (every? string? unset-environment))
+        (throw (ex-info "Process environment removals must be strings"
+                        {:kind :invalid-command-environment-removals
+                         :unset-environment unset-environment})))
+      (doseq [name unset-environment]
+        (.remove (.environment builder) name)))
     (try
       (let [process (.start builder)
             output-future

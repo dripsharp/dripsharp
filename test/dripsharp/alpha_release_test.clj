@@ -1083,15 +1083,20 @@
                "NuGet.Config"
                "<configuration><packageSources>"))
             (process/run!
-             (cond-> request
-               restore?
-               (assoc :environment
-                      {"RestoreSources"
-                       "/host-controlled/alternate-package-source"
-                       "RestoreAdditionalProjectSources"
-                       "/host-controlled/additional-package-source"
-                       "RestoreFallbackFolders"
-                       "/host-controlled/fallback-packages"})))))]
+             (assoc
+              request
+              :environment
+              (merge
+               {"MSBuildSDKsPath"
+                "/host-controlled/nonexistent-msbuild-sdks"}
+               (when restore?
+                 {"RestoreSources"
+                  "/host-controlled/alternate-package-source"
+                  "RestoreAdditionalProjectSources"
+                  "/host-controlled/additional-package-source"
+                  "RestoreFallbackFolders"
+                  "/host-controlled/fallback-packages"})
+               (:environment request))))))]
     (try
       (write!
        workspace "global.json"
@@ -1195,6 +1200,8 @@
                   restore-command))
         (is (some #{"-p:RestoreAdditionalProjectSources="} restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
+        (is (= #{"MSBuildSDKsPath"} (:unset-environment restore-request)))
+        (is (= #{"MSBuildSDKsPath"} (:unset-environment dotnet-request)))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
                          "--untracked-files=all"))))
