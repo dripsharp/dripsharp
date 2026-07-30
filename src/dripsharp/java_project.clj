@@ -98,6 +98,15 @@
              value))
        (project-xml/valid-text? value)))
 
+(defn- non-blank-single-line-xml-string?
+  [value]
+  (and (string? value)
+       (not (str/blank? value))
+       (not (re-find
+             #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
+             value))
+       (project-xml/valid-text? value)))
+
 (defn- windows-reserved-path-component?
   [component]
   (let [basename (first (str/split component #"\." 2))]
@@ -185,7 +194,7 @@
    (get-in configuration [:project :implicit-usings])
    "a boolean" boolean?)
   (doseq [key [:id :version :title :description :authors :tags
-               :project-url :repository-url :repository-type]]
+               :repository-type]]
     (let [value (get-in configuration [:package key])]
       (validation/check!
        (destination-context "Destination package metadata"
@@ -200,12 +209,14 @@
                           {:section :package :setting :authors})
      [:package :authors] authors
      "a non-blank single-line XML-compatible publisher identity"
-     #(and (string? %)
-           (not (str/blank? %))
-           (not (re-find
-                 #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
-                 %))
-           (project-xml/valid-text? %))))
+     non-blank-single-line-xml-string?))
+  (doseq [key [:project-url :repository-url]]
+    (validation/check!
+     (destination-context "Destination package metadata"
+                          {:section :package :setting key})
+     [:package key] (get-in configuration [:package key])
+     "a non-blank single-line XML-compatible URL"
+     non-blank-single-line-xml-string?))
   (when (contains? (:package configuration) :repository-commit)
     (let [commit (get-in configuration [:package :repository-commit])]
       (validation/check!
