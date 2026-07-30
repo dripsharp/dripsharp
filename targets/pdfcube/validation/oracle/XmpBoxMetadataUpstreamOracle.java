@@ -162,12 +162,12 @@ public final class XmpBoxMetadataUpstreamOracle {
         PropertiesDescription description = new PropertiesDescription();
         description.addNewProperty(
                 "field", TypeMapping.createPropertyType(Types.Text, Cardinality.Simple));
-        mapping.addToDefinedStructuredTypes("PdfCubeExtension", extensionNamespace, description);
+        mapping.addToDefinedStructuredTypes("PdfCartonExtension", extensionNamespace, description);
         observe(
                 "registry",
                 "defined-structured-extension",
                 join(
-                        mapping.isDefinedType("PdfCubeExtension"),
+                        mapping.isDefinedType("PdfCartonExtension"),
                         mapping.isDefinedTypeNamespace(extensionNamespace),
                         mapping.getDefinedDescriptionByNamespace(extensionNamespace, "field")
                                 .getPropertyType("field")

@@ -1,6 +1,6 @@
 (ns dripsharp.pdfcube.family-build
   "Clean, deterministic generation, compilation, and complete accessible
-  public-surface gate for the five-project PdfCube family."
+  public-surface gate for the five-project PdfCarton family."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.baseline :as baseline]
@@ -92,9 +92,9 @@
         duplicates (duplicate-values (map :profile emissions))
         by-profile (into {} (map (juxt :profile identity)) emissions)]
     (when (seq duplicates)
-      (fail! "PdfCube generated a project more than once"
+      (fail! "PdfCarton generated a project more than once"
              {:duplicates duplicates}))
-    (exact! "PdfCube generation emissions differ from the destination graph"
+    (exact! "PdfCarton generation emissions differ from the destination graph"
             :emission-profiles (set order) (set (keys by-profile)))
     (mapv by-profile order)))
 
@@ -106,17 +106,17 @@
         project-profiles (mapv :profile projects)
         dependencies (into {} (map (juxt :profile :dependency-profiles)) projects)
         positions (zipmap order (range))]
-    (exact! "PdfCube destination graph must contain exactly five profiles"
+    (exact! "PdfCarton destination graph must contain exactly five profiles"
             :profiles (:profiles contract) (set project-profiles))
-    (exact! "PdfCube destination graph order and project records differ"
+    (exact! "PdfCarton destination graph order and project records differ"
             :topological-project-order order project-profiles)
-    (exact! "PdfCube destination dependencies differ from the product contract"
+    (exact! "PdfCarton destination dependencies differ from the product contract"
             :dependencies (:dependencies contract) dependencies)
     (doseq [[profile required] dependencies
             dependency required]
       (when-not (< (get positions dependency -1)
                    (get positions profile -1))
-        (fail! "PdfCube destination graph is not topologically ordered"
+        (fail! "PdfCarton destination graph is not topologically ordered"
                {:profile profile
                 :dependency dependency
                 :topological-order order})))
@@ -131,16 +131,16 @@
         (mapv (:source-projects contract) order)
         expected-selectors
         (mapv (:selectors contract) order)]
-    (exact! "PdfCube must resolve its shared Maven reactor exactly once"
+    (exact! "PdfCarton must resolve its shared Maven reactor exactly once"
             :maven-discovery-invocations 1 (count invocations))
-    (exact! "PdfCube discovery must use the Maven backend"
+    (exact! "PdfCarton discovery must use the Maven backend"
             :discovery-build-tool :maven (:build-tool invocation))
-    (exact! "PdfCube Maven discovery profile order differs from the destination DAG"
+    (exact! "PdfCarton Maven discovery profile order differs from the destination DAG"
             :discovery-profiles order profiles)
-    (exact! "PdfCube Maven discovery selected the wrong reactor projects"
+    (exact! "PdfCarton Maven discovery selected the wrong reactor projects"
             :discovery-project-ids expected-project-ids
             (:project-ids invocation))
-    (exact! "PdfCube Maven discovery selected the wrong Maven modules"
+    (exact! "PdfCarton Maven discovery selected the wrong Maven modules"
             :maven-selectors expected-selectors
             (:selected-projects invocation))
     invocation))
@@ -152,12 +152,12 @@
          (:project-root emission)
          (get-in emission [:destination :output :manifest-file]))]
     (when-not (paths/regular-file? file)
-      (fail! "PdfCube generation manifest is missing"
+      (fail! "PdfCarton generation manifest is missing"
              {:profile (:profile emission) :path (str file)}))
     (try
       (util/read-single-edn-string! (slurp (str file)))
       (catch RuntimeException error
-        (fail! "PdfCube generation manifest is not exactly one EDN value"
+        (fail! "PdfCarton generation manifest is not exactly one EDN value"
                (merge
                 {:profile (:profile emission)
                  :path (str file)}
@@ -166,17 +166,17 @@
 (defn- validate-zero-counters!
   [profile summary]
   (doseq [counter zero-emission-counters]
-    (exact! "PdfCube emission contains a nonzero failure counter"
+    (exact! "PdfCarton emission contains a nonzero failure counter"
             [profile :emission counter] 0 (get summary counter)))
   (doseq [counter zero-coverage-counters]
-    (exact! "PdfCube executable coverage contains a nonzero failure counter"
+    (exact! "PdfCarton executable coverage contains a nonzero failure counter"
             [profile :coverage counter] 0
             (get-in summary [:executable-coverage counter])))
   (let [{:keys [semantic structural covered visited]}
         (:executable-coverage summary)]
-    (exact! "PdfCube executable coverage omitted visited elements"
+    (exact! "PdfCarton executable coverage omitted visited elements"
             [profile :coverage :visited] visited covered)
-    (exact! "PdfCube executable coverage totals are inconsistent"
+    (exact! "PdfCarton executable coverage totals are inconsistent"
             [profile :coverage :partition] covered (+ semantic structural))))
 
 (defn- validate-public-rows!
@@ -196,43 +196,43 @@
                 rows)
         adaptations (set (keep :systematic-adaptation rows))
         adaptation-docs (:systematic-adaptations metadata)]
-    (exact! "PdfCube public surface must use the complete reusable strategy"
+    (exact! "PdfCarton public surface must use the complete reusable strategy"
             [profile :public-surface-strategy]
             :complete-accessible-java-library (:strategy metadata))
-    (exact! "PdfCube public surface must derive from the resolved Spoon model"
+    (exact! "PdfCarton public surface must derive from the resolved Spoon model"
             [profile :surface-derivation]
             :resolved-spoon-model (:surface-derivation metadata))
     (when (contains? metadata :compiled-contract-file)
-      (fail! "PdfCube public surface must not use a retained API inventory"
+      (fail! "PdfCarton public surface must not use a retained API inventory"
              {:profile profile
               :compiled-contract-file (:compiled-contract-file metadata)}))
-    (exact! "PdfCube accessible declaration accounting is incomplete"
+    (exact! "PdfCarton accessible declaration accounting is incomplete"
             [profile :accessible-declarations]
             (:required-rows metadata) (count rows))
     (when-let [duplicates (seq (duplicate-values identities))]
-      (fail! "PdfCube accessible declarations were covered more than once"
+      (fail! "PdfCarton accessible declarations were covered more than once"
              {:profile profile :duplicates (vec duplicates)}))
     (when (seq invalid-mappings)
-      (fail! "PdfCube accessible declarations contain unsupported mappings"
+      (fail! "PdfCarton accessible declarations contain unsupported mappings"
              {:profile profile
               :declarations
               (mapv #(get-in % [:row :identity]) invalid-mappings)}))
     (when (seq invalid-implementations)
-      (fail! "PdfCube accessible declarations have unsupported implementation states"
+      (fail! "PdfCarton accessible declarations have unsupported implementation states"
              {:profile profile
               :implementations
               (mapv #(get-in % [:generated :implementation])
                     invalid-implementations)}))
-    (exact! "PdfCube generated public implementation stubs"
+    (exact! "PdfCarton generated public implementation stubs"
             [profile :public-stubs] 0 (count public-stubs))
-    (exact! "PdfCube systematic adaptations are not documented exactly"
+    (exact! "PdfCarton systematic adaptations are not documented exactly"
             [profile :systematic-adaptations]
             adaptations (set (keys adaptation-docs)))
     (doseq [[adaptation explanation] adaptation-docs]
       (when-not (and (keyword? adaptation)
                      (string? explanation)
                      (not (str/blank? explanation)))
-        (fail! "PdfCube systematic adaptation documentation is invalid"
+        (fail! "PdfCarton systematic adaptation documentation is invalid"
                {:profile profile :adaptation adaptation
                 :explanation explanation})))
     (doseq [row rows]
@@ -245,7 +245,7 @@
             namespace (:namespace destination)
             owner (:owner destination)]
         (when-not (and (string? identity) (not (str/blank? identity)))
-          (fail! "PdfCube accessible declaration lacks a stable Spoon identity"
+          (fail! "PdfCarton accessible declaration lacks a stable Spoon identity"
                  {:profile profile :row row}))
         (when-not (and (= assembly (:assembly destination))
                        (contains? source-member-kinds (:kind destination))
@@ -256,26 +256,26 @@
                        (string? namespace) (not (str/blank? namespace))
                        (string? owner)
                        (str/starts-with? owner (str namespace ".")))
-          (fail! "PdfCube generated declaration has an invalid assembly, namespace, owner, kind, overload, or visibility boundary"
+          (fail! "PdfCarton generated declaration has an invalid assembly, namespace, owner, kind, overload, or visibility boundary"
                  {:profile profile :source-declaration identity
                   :destination destination}))
         (when-not (and (string? (:file source-location))
                        (not (str/blank? (:file source-location)))
                        (pos-int? (:line source-location)))
-          (fail! "PdfCube generated declaration lacks exact Spoon source provenance"
+          (fail! "PdfCarton generated declaration lacks exact Spoon source provenance"
                  {:profile profile :source-declaration identity
                   :source-location source-location}))
         (case mapping
           :one-to-one
           (when adaptation
-            (fail! "One-to-one PdfCube source mapping carries an adaptation"
+            (fail! "One-to-one PdfCarton source mapping carries an adaptation"
                    {:profile profile :source-declaration identity
                     :adaptation adaptation}))
 
           :documented-systematic-adaptation
           (when-not (and (keyword? adaptation)
                          (contains? adaptation-docs adaptation))
-            (fail! "PdfCube systematic source mapping lacks documented adaptation evidence"
+            (fail! "PdfCarton systematic source mapping lacks documented adaptation evidence"
                    {:profile profile :source-declaration identity
                     :adaptation adaptation}))
 
@@ -312,23 +312,23 @@
         assembly (get-in destination [:project :assembly-name])
         public (validate-public-rows! profile assembly
                                       (:public-metadata emission))]
-    (exact! "PdfCube project input came from the wrong Maven reactor project"
+    (exact! "PdfCarton project input came from the wrong Maven reactor project"
             [profile :source-project-id]
             (get-in contract [:source-projects profile])
             (:project-id input))
-    (exact! "PdfCube project source revision differs from the synchronized family"
+    (exact! "PdfCarton project source revision differs from the synchronized family"
             [profile :source-revision]
             (:revision contract) (get-in emission [:source-project :revision]))
-    (exact! "PdfCube project targets the wrong framework"
+    (exact! "PdfCarton project targets the wrong framework"
             [profile :target-framework] "net10.0"
             (get-in destination [:project :target-framework]))
-    (exact! "PdfCube project must compile with warnings as errors"
+    (exact! "PdfCarton project must compile with warnings as errors"
             [profile :warnings-as-errors] true
             (get-in destination [:project :warnings-as-errors]))
-    (exact! "PdfCube package identity differs from the family contract"
+    (exact! "PdfCarton package identity differs from the family contract"
             [profile :package-id] (get-in contract [:packages profile])
             (get-in destination [:package :id]))
-    (exact! "PdfCube assembly identity differs from its package boundary"
+    (exact! "PdfCarton assembly identity differs from its package boundary"
             [profile :assembly-name] (get-in contract [:packages profile])
             assembly)
     (doseq [[subject values]
@@ -338,20 +338,20 @@
              [:manifest-sources manifest-sources]
              [:manifest-resources manifest-resources]]]
       (when-let [duplicates (seq (duplicate-values values))]
-        (fail! "PdfCube project contains duplicate production entries"
+        (fail! "PdfCarton project contains duplicate production entries"
                {:profile profile
                 :subject subject
                 :duplicates (vec duplicates)})))
-    (exact! "PdfCube generation did not cover every production source once"
+    (exact! "PdfCarton generation did not cover every production source once"
             [profile :production-sources]
             (set sources) (set manifest-sources))
-    (exact! "PdfCube production source count differs from compilation units"
+    (exact! "PdfCarton production source count differs from compilation units"
             [profile :compilation-units]
             (count sources) (:compilation-units summary))
-    (exact! "PdfCube generation did not cover every production resource once"
+    (exact! "PdfCarton generation did not cover every production resource once"
             [profile :production-resources]
             (set resources) (set manifest-resources))
-    (exact! "PdfCube production resource count differs from emission"
+    (exact! "PdfCarton production resource count differs from emission"
             [profile :resources]
             (count resources) (:resources summary))
     (validate-zero-counters! profile summary)
@@ -394,15 +394,15 @@
         translation-rules (:translation-rules audit)
         java-rows (reduce + 0 (map #(get translation-rules % 0)
                                    java-translation-rules))]
-    (exact! "PdfCube compiled surface audit has the wrong assembly"
+    (exact! "PdfCarton compiled surface audit has the wrong assembly"
             [profile :compiled :assembly] assembly (:assembly audit))
-    (exact! "PdfCube compiled surface audit points at the wrong assembly file"
+    (exact! "PdfCarton compiled surface audit points at the wrong assembly file"
             [profile :compiled :file] (str (paths/absolute expected-file))
             (str (paths/absolute (:file audit))))
     (when-not (paths/regular-file? expected-file)
-      (fail! "PdfCube compiled surface assembly is missing"
+      (fail! "PdfCarton compiled surface assembly is missing"
              {:profile profile :file (str expected-file)}))
-    (exact! "PdfCube compiled surface did not inspect every metadata dimension"
+    (exact! "PdfCarton compiled surface did not inspect every metadata dimension"
             [profile :compiled :metadata-columns]
             dotnet-surface/surface-columns (:metadata-columns audit))
     (doseq [[field value]
@@ -416,54 +416,54 @@
              [:generic-rows (:generic-rows audit)]
              [:overload-families (:overload-families audit)]]]
       (when-not (and (integer? value) (not (neg? value)))
-        (fail! "PdfCube compiled surface audit has an invalid count"
+        (fail! "PdfCarton compiled surface audit has an invalid count"
                {:profile profile :field field :actual value})))
     (when-not (and (pos? rows) (pos? types) (pos? members)
                    (pos? contract-members) (pos? (:owners audit)))
-      (fail! "PdfCube compiled surface audit is empty"
+      (fail! "PdfCarton compiled surface audit is empty"
              {:profile profile
               :counts (select-keys audit
                                    [:rows :types :members :contract-members
                                     :owners])}))
-    (exact! "PdfCube compiled surface type/member accounting is inconsistent"
+    (exact! "PdfCarton compiled surface type/member accounting is inconsistent"
             [profile :compiled :row-partition] rows (+ types members))
-    (exact! "PdfCube compiled surface contains incomplete metadata rows"
+    (exact! "PdfCarton compiled surface contains incomplete metadata rows"
             [profile :compiled :metadata-complete-rows]
             rows (:metadata-complete-rows audit))
-    (exact! "PdfCube compiled surface does not reconcile every Spoon declaration"
+    (exact! "PdfCarton compiled surface does not reconcile every Spoon declaration"
             [profile :compiled :contract-members]
             (:accessible-declarations project) contract-members)
     (when (< rows contract-members)
-      (fail! "PdfCube compiled surface has fewer CLR rows than Spoon declarations"
+      (fail! "PdfCarton compiled surface has fewer CLR rows than Spoon declarations"
              {:profile profile :compiled-rows rows
               :contract-members contract-members}))
     (when-not (and (map? kind-counts)
                    (= rows (reduce + 0 (vals kind-counts)))
                    (every? compiled-member-kinds (keys kind-counts)))
-      (fail! "PdfCube compiled surface contains invalid or unaccounted member kinds"
+      (fail! "PdfCarton compiled surface contains invalid or unaccounted member kinds"
              {:profile profile :rows rows :kind-counts kind-counts}))
     (when-not (and (map? visibility-counts)
                    (= rows (reduce + 0 (vals visibility-counts)))
                    (every? valid-compiled-visibility?
                            (keys visibility-counts)))
-      (fail! "PdfCube compiled surface contains invalid or unaccounted visibility"
+      (fail! "PdfCarton compiled surface contains invalid or unaccounted visibility"
              {:profile profile :rows rows
               :visibility-counts visibility-counts}))
-    (exact! "PdfCube compiled surface crossed its assembly/package boundary"
+    (exact! "PdfCarton compiled surface crossed its assembly/package boundary"
             [profile :compiled :assembly-row-counts]
             (sorted-map assembly rows) (:assembly-row-counts audit))
     (when-not (and (map? translation-rules)
                    (= rows (reduce + 0 (vals translation-rules)))
                    (every? compiled-translation-rules
                            (keys translation-rules)))
-      (fail! "PdfCube compiled surface contains an unsupported adaptation rule"
+      (fail! "PdfCarton compiled surface contains an unsupported adaptation rule"
              {:profile profile :rows rows
               :translation-rules translation-rules}))
-    (exact! "PdfCube compiled surface did not map every Spoon declaration once"
+    (exact! "PdfCarton compiled surface did not map every Spoon declaration once"
             [profile :compiled :java-translation-rows]
             contract-members java-rows)
     (when-not (re-matches #"[0-9a-f]{64}" (:surface-sha256 audit))
-      (fail! "PdfCube compiled surface fingerprint is invalid"
+      (fail! "PdfCarton compiled surface fingerprint is invalid"
              {:profile profile :surface-sha256 (:surface-sha256 audit)}))
     (assoc (select-keys audit
                         [:assembly :rows :types :members :contract-members
@@ -479,14 +479,14 @@
   (let [surface (:public-surface build)
         audits (:assemblies surface)
         build-configuration (:build-configuration build)]
-    (exact! "PdfCube clean build used the wrong public-surface strategy"
+    (exact! "PdfCarton clean build used the wrong public-surface strategy"
             :compiled-public-surface-strategy
             :complete-accessible-java-library (:strategy surface))
     (when-not (and (string? build-configuration)
                    (not (str/blank? build-configuration)))
-      (fail! "PdfCube clean build lacks its build configuration"
+      (fail! "PdfCarton clean build lacks its build configuration"
              {:build-configuration build-configuration}))
-    (exact! "PdfCube clean build did not audit exactly five assemblies"
+    (exact! "PdfCarton clean build did not audit exactly five assemblies"
             :compiled-surface-assembly-count
             (count emissions) (count audits))
     (let [validated
@@ -503,14 +503,14 @@
            :overload-families (reduce + (map :overload-families validated))}]
       (doseq [dimension [:inheritance-rows :generic-rows :overload-families]]
         (when-not (pos? (get totals dimension))
-          (fail! "PdfCube family compiled surface did not exercise a required metadata dimension"
+          (fail! "PdfCarton family compiled surface did not exercise a required metadata dimension"
                  {:dimension dimension :totals totals})))
       {:strategy (:strategy surface)
        :assemblies validated
        :totals totals})))
 
 (defn validate-build!
-  "Validates one clean PdfCube compiler result and returns bounded family
+  "Validates one clean PdfCarton compiler result and returns bounded family
   accounting evidence."
   [workspace-root build]
   (let [root (paths/absolute workspace-root)
@@ -538,21 +538,21 @@
              [:production-resources all-resources]
              [:accessible-declarations all-declarations]]]
       (when-let [duplicates (seq (duplicate-values values))]
-        (fail! "PdfCube family covered selected production input more than once"
+        (fail! "PdfCarton family covered selected production input more than once"
                {:subject subject :duplicates (vec duplicates)})))
-    (exact! "PdfCube clean build did not compile exactly five assemblies"
+    (exact! "PdfCarton clean build did not compile exactly five assemblies"
             :compiled-assemblies expected-assemblies assembly-names)
     (when-not (and (= source-member-kinds (set (keys source-kinds)))
                    (every? pos? (vals source-kinds)))
-      (fail! "PdfCube family source surface did not prove every declaration kind"
+      (fail! "PdfCarton family source surface did not prove every declaration kind"
              {:source-kinds source-kinds
               :required source-member-kinds}))
     (when-not (and (pos? (get source-mappings :one-to-one 0))
                    (pos? (get source-mappings
                               :documented-systematic-adaptation 0)))
-      (fail! "PdfCube family source surface did not prove both exact and adapted mappings"
+      (fail! "PdfCarton family source surface did not prove both exact and adapted mappings"
              {:source-mappings source-mappings}))
-    (exact! "PdfCube clean build retained compiler diagnostics"
+    (exact! "PdfCarton clean build retained compiler diagnostics"
             :compiler-diagnostics [] (:diagnostics build))
     {:profiles order
      :discovery discovery
@@ -576,7 +576,7 @@
       :public-stubs (reduce + (map :public-stubs projects))}}))
 
 (defn validate-baseline-public-counts!
-  "Checks live Spoon-derived source rows against the reviewed PdfCube target
+  "Checks live Spoon-derived source rows against the reviewed PdfCarton target
   record. Kept at the concrete family gate so synthetic structural validators
   can still exercise small fixtures."
   [workspace-root build]
@@ -587,7 +587,7 @@
                   expected
                   (:public-contract-rows
                    (baseline/profile-by-name root :pdfcube profile))]]
-      (exact! "PdfCube public-contract row count differs from the reviewed target baseline"
+      (exact! "PdfCarton public-contract row count differs from the reviewed target baseline"
               [profile :baseline-public-contract-rows]
               expected actual)))
   build)
@@ -606,7 +606,7 @@
   [workspace-root]
   (let [target (paths/resolve-path (paths/absolute workspace-root) "target")]
     (when-not (paths/directory? target)
-      (fail! "PdfCube clean generation output is missing"
+      (fail! "PdfCarton clean generation output is missing"
              {:path (str target)}))
     (with-open [entries (Files/walk target (make-array FileVisitOption 0))]
       (into
@@ -631,7 +631,7 @@
     (let [first-paths (set (keys first-snapshot))
           second-paths (set (keys second-snapshot))
           shared (set/intersection first-paths second-paths)]
-      (fail! "Repeated clean PdfCube generation was not deterministic"
+      (fail! "Repeated clean PdfCarton generation was not deterministic"
              {:removed (vec (sort (set/difference first-paths second-paths)))
               :added (vec (sort (set/difference second-paths first-paths)))
               :changed
@@ -663,10 +663,10 @@
          second-evidence (validate-build! root second-build)
          second-snapshot (generated-snapshot root)
          deterministic (assert-deterministic! first-snapshot second-snapshot)]
-     (exact! "Repeated clean PdfCube family accounting changed"
+     (exact! "Repeated clean PdfCarton family accounting changed"
              :family-accounting first-evidence second-evidence)
      (println
-      (str "Clean deterministic PdfCube family build passed: "
+      (str "Clean deterministic PdfCarton family build passed: "
            (count (:projects second-evidence)) " projects, "
            (get-in second-evidence [:totals :compilation-units])
            " production sources, "

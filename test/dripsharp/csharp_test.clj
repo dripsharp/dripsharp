@@ -102,9 +102,9 @@
         (csharp/transform-namespaces
          node
          {"Example.Source" "Example.Destination.With.More.Segments"
-          "DripSharp.Runtime" "PdfCube.FontBox.Compatibility"})
+          "DripSharp.Runtime" "DripSharp.PdfCarton.Fonts.Compatibility"})
         rendered (csharp/render transformed)
-        reference "global::PdfCube.FontBox.Compatibility.JavaCompat.Value"
+        reference "global::DripSharp.PdfCarton.Fonts.Compatibility.JavaCompat.Value"
         reference-start (.indexOf ^String (:text rendered) reference)
         mapping (some #(when (= source (:source %)) %)
                       (:mappings rendered))]
@@ -114,8 +114,8 @@
     (is (= {:start reference-start
             :end (+ reference-start (count reference))}
            (:destination mapping)))
-    (is (= "namespace PdfCube.PdfBox.Contentstream.@Operator;"
+    (is (= "namespace DripSharp.PdfCarton.Contentstream.@Operator;"
            (:text
             (csharp/render
              (csharp/file-scoped-namespace
-              "PdfCube.PdfBox.Contentstream.@Operator")))))))
+              "DripSharp.PdfCarton.Contentstream.@Operator")))))))

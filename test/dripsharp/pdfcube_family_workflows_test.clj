@@ -171,8 +171,8 @@
     (is (= 5
            (count
             (set (map #(str (:packages-root %)) (vals views))))))
-    (is (= #{"PdfCube.IO" "PdfCube.FontBox" "PdfCube.XmpBox"
-             "PdfCube.PdfBox" "PdfCube.Preflight"}
+    (is (= #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.Xmp"
+             "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
            (set
             (map #(get-in % [:identity :id]) (vals views)))))))
 
@@ -247,20 +247,20 @@
       fontbox []))))
 
 (deftest aggregate-accepts-established-package-summary-identities
-  (is (= {:id "PdfCube.IO"
+  (is (= {:id "DripSharp.PdfCarton.IO"
           :version family-workflows/package-version
           :sha256 "io-hash"}
          (#'family-workflows/summary-package-identity
           {:package
-           {:package-id "PdfCube.IO"
+           {:package-id "DripSharp.PdfCarton.IO"
             :version family-workflows/package-version
             :sha256 "io-hash"}})))
-  (is (= {:id "PdfCube.Preflight"
+  (is (= {:id "DripSharp.PdfCarton.Preflight"
           :version family-workflows/package-version
           :sha256 "preflight-hash"}
          (#'family-workflows/summary-package-identity
           {:package
-           {:id "PdfCube.Preflight"
+           {:id "DripSharp.PdfCarton.Preflight"
             :version family-workflows/package-version
             :sha256 "preflight-hash"}}))))
 
@@ -275,7 +275,7 @@
          (make-array FileAttribute 0))]
     (Files/writeString
      oracle
-     "slice\tio\tPdfCube.IO|resource-lifetime|2|7\n"
+     "slice\tio\tDripSharp.PdfCarton.IO|resource-lifetime|2|7\n"
      (make-array OpenOption 0))
     (let [comparison
           (family-workflows/prove-mismatch-detection!

@@ -45,7 +45,7 @@ The documentation is limited to durable product and architecture decisions:
   protects the fixed Pkl product scope.
 * [Pkl Port Scope](doc/targets/pkl/port-scope.md) records the user-approved .NET
   product surface and exclusions for Pkl.
-* [PdfCube Product Goal](doc/targets/pdfbox/product-goal.md) and
+* [PdfCarton Product Goal](doc/targets/pdfbox/product-goal.md) and
   [Port Scope](doc/targets/pdfbox/port-scope.md) define the synchronized,
   mechanically translated Apache PDFBox library family.
 * [Architecture](doc/architecture.md) defines the end-to-end system and
@@ -250,7 +250,7 @@ detected. Proof outputs are retained under
 `validation-output/differential-proof` even while later generation cleans the
 disposable `target` tree.
 
-`pdfcube-io-differential` performs two clean PdfCube.IO builds, proves
+`pdfcube-io-differential` performs two clean DripSharp.PdfCarton.IO builds, proves
 byte-identical packing, mirrors the complete external dependency closure into a
 local-only feed, and runs a package-reference-only consumer. It then compares
 25 normalized buffer, positioning, view, EOF, file, memory-map, scratch,
@@ -259,7 +259,7 @@ from the reviewed PDFBox baseline sources. The supported-host workflow applies t
 canonical CPU trace on Windows, Linux, and macOS on x64 and ARM64.
 
 `pdfcube-pdfbox-differential` performs one dependency-closed, twice-clean
-deterministic pack of `PdfCube.PdfBox`, `PdfCube.FontBox`, and `PdfCube.IO`,
+deterministic pack of `DripSharp.PdfCarton`, `DripSharp.PdfCarton.Fonts`, and `DripSharp.PdfCarton.IO`,
 then reuses the exact fresh package-reference-only consumer across
 representative create, load, parse, save, incremental-update, manipulation,
 extraction, rendering, form, security, signing, and print-layout workflows.
@@ -271,8 +271,8 @@ and smokes the retained package feed on Windows, Linux, and macOS on x64 and
 ARM64.
 
 `pdfcube-preflight-differential` performs one dependency-closed, twice-clean
-deterministic pack of `PdfCube.Preflight`, `PdfCube.PdfBox`,
-`PdfCube.XmpBox`, `PdfCube.FontBox`, and `PdfCube.IO`. A separate
+deterministic pack of `DripSharp.PdfCarton.Preflight`, `DripSharp.PdfCarton`,
+`DripSharp.PdfCarton.Xmp`, `DripSharp.PdfCarton.Fonts`, and `DripSharp.PdfCarton.IO`. A separate
 package-reference-only consumer exercises parser, context, configuration,
 validation, result, error, and lifecycle APIs from a fresh local feed and
 isolated cache. The gate requires exact package identity, dependencies,

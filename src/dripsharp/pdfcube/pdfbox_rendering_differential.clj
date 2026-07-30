@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-rendering-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox CPU rendering proof."
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton CPU rendering proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -374,7 +374,7 @@
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.PdfBox rendering differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton rendering differential passed:"
         (pr-str
          (select-keys summary
                       [:source :package :backend :comparison])))

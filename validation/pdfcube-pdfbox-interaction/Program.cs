@@ -4,19 +4,19 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
-using PdfCube.PdfBox;
-using PdfCube.PdfBox.Cos;
-using PdfCube.PdfBox.Pdfwriter.Compress;
-using PdfCube.PdfBox.Pdmodel;
-using PdfCube.PdfBox.Pdmodel.Common;
-using PdfCube.PdfBox.Pdmodel.Common.Filespecification;
-using PdfCube.PdfBox.Pdmodel.Fdf;
-using PdfCube.PdfBox.Pdmodel.Interactive.Action;
-using PdfCube.PdfBox.Pdmodel.Interactive.Annotation;
-using PdfCube.PdfBox.Pdmodel.Interactive.Documentnavigation.Destination;
-using PdfCube.PdfBox.Pdmodel.Interactive.Documentnavigation.Outline;
-using PdfCube.PdfBox.Pdmodel.Interactive.Form;
-using PdfCube.PdfBox.Pdmodel.Interactive.Pagenavigation;
+using DripSharp.PdfCarton;
+using DripSharp.PdfCarton.Cos;
+using DripSharp.PdfCarton.Pdfwriter.Compress;
+using DripSharp.PdfCarton.Pdmodel;
+using DripSharp.PdfCarton.Pdmodel.Common;
+using DripSharp.PdfCarton.Pdmodel.Common.Filespecification;
+using DripSharp.PdfCarton.Pdmodel.Fdf;
+using DripSharp.PdfCarton.Pdmodel.Interactive.Action;
+using DripSharp.PdfCarton.Pdmodel.Interactive.Annotation;
+using DripSharp.PdfCarton.Pdmodel.Interactive.Documentnavigation.Destination;
+using DripSharp.PdfCarton.Pdmodel.Interactive.Documentnavigation.Outline;
+using DripSharp.PdfCarton.Pdmodel.Interactive.Form;
+using DripSharp.PdfCarton.Pdmodel.Interactive.Pagenavigation;
 
 internal static class Program
 {
@@ -170,7 +170,7 @@ internal static class Program
             });
 
         var attachmentBytes =
-            Encoding.UTF8.GetBytes("PdfCube representative attachment\n");
+            Encoding.UTF8.GetBytes("PdfCarton representative attachment\n");
         var embedded =
             new PDEmbeddedFile(document, new MemoryStream(attachmentBytes));
         embedded.SetSubtype("text/plain");

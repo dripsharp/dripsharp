@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-security-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox encryption and
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton encryption and
   digital-signature proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
@@ -104,7 +104,7 @@
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail!
-       "Package-only PdfCube.PdfBox security behavior differs from pinned reviewed PDFBox baseline"
+       "Package-only DripSharp.PdfCarton security behavior differs from pinned reviewed PDFBox baseline"
        {:expected (str expected)
         :actual (str actual)
         :comparison comparison
@@ -280,7 +280,7 @@
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.PdfBox security differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton security differential passed:"
         (pr-str
          (select-keys summary
                       [:source :package :crypto-closure :trace])))

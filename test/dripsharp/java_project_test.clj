@@ -50,18 +50,18 @@
          "targets/pkl/destinations/core.edn"
          ["DripSharp.Brine" pkl-non-affiliation-disclaimer]
          "targets/pdfcube/destinations/io.edn"
-         ["PdfCube.IO" pdfbox-non-affiliation-disclaimer]
+         ["DripSharp.PdfCarton.IO" pdfbox-non-affiliation-disclaimer]
          "targets/pdfcube/destinations/fontbox.edn"
-         ["PdfCube.FontBox" pdfbox-non-affiliation-disclaimer]
+         ["DripSharp.PdfCarton.Fonts" pdfbox-non-affiliation-disclaimer]
          "targets/pdfcube/destinations/xmpbox.edn"
-         ["PdfCube.XmpBox" pdfbox-non-affiliation-disclaimer]
+         ["DripSharp.PdfCarton.Xmp" pdfbox-non-affiliation-disclaimer]
          "targets/pdfcube/destinations/pdfbox.edn"
-         ["PdfCube.PdfBox" pdfbox-non-affiliation-disclaimer]
+         ["DripSharp.PdfCarton" pdfbox-non-affiliation-disclaimer]
          "targets/pdfcube/destinations/preflight.edn"
-         ["PdfCube.Preflight" pdfbox-non-affiliation-disclaimer]}]
+         ["DripSharp.PdfCarton.Preflight" pdfbox-non-affiliation-disclaimer]}]
     (is (= #{"DripSharp.Brine.Parser" "DripSharp.Brine"
-             "PdfCube.IO" "PdfCube.FontBox" "PdfCube.XmpBox"
-             "PdfCube.PdfBox" "PdfCube.Preflight"}
+             "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.Xmp"
+             "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
            (set (map (comp first val) contracts))))
     (doseq [[path [package-id disclaimer]] contracts
             :let [configuration

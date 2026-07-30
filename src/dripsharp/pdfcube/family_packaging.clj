@@ -1,6 +1,6 @@
 (ns dripsharp.pdfcube.family-packaging
   "Deterministic NuGet, legal, native-asset, symbol, and fresh isolated
-  consumption gate for the complete five-package PdfCube family."
+  consumption gate for the complete five-package PdfCarton family."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.baseline :as baseline]
@@ -36,7 +36,7 @@
   (baseline/package-legal-files :pdfcube [:codecs]))
 
 (def ^:private package-contract
-  {"PdfCube.IO"
+  {"DripSharp.PdfCarton.IO"
    {:profile "pdfcube-io"
     :primary? false
     :assembly-dependencies []
@@ -45,19 +45,19 @@
     :resources 0
     :package-files common-legal-files}
 
-   "PdfCube.FontBox"
+   "DripSharp.PdfCarton.Fonts"
    {:profile "pdfcube-fontbox"
     :primary? false
-    :assembly-dependencies ["PdfCube.IO"]
+    :assembly-dependencies ["DripSharp.PdfCarton.IO"]
     :dependencies
-    [{:id "PdfCube.IO" :version (package-version "PdfCube.IO")}
+    [{:id "DripSharp.PdfCarton.IO" :version (package-version "DripSharp.PdfCarton.IO")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
     :resources 93
     :package-files common-legal-files}
 
-   "PdfCube.XmpBox"
+   "DripSharp.PdfCarton.Xmp"
    {:profile "pdfcube-xmpbox"
     :primary? false
     :assembly-dependencies []
@@ -66,27 +66,27 @@
     :resources 0
     :package-files common-legal-files}
 
-   "PdfCube.PdfBox"
+   "DripSharp.PdfCarton"
    {:profile "pdfcube-pdfbox"
     :primary? false
-    :assembly-dependencies ["PdfCube.FontBox" "PdfCube.IO"]
+    :assembly-dependencies ["DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.IO"]
     :dependencies
-    [{:id "PdfCube.FontBox" :version (package-version "PdfCube.FontBox")}
-     {:id "PdfCube.IO" :version (package-version "PdfCube.IO")}
+    [{:id "DripSharp.PdfCarton.Fonts" :version (package-version "DripSharp.PdfCarton.Fonts")}
+     {:id "DripSharp.PdfCarton.IO" :version (package-version "DripSharp.PdfCarton.IO")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}]
     :resources 22
     :package-files (into common-legal-files codec-legal-files)}
 
-   "PdfCube.Preflight"
+   "DripSharp.PdfCarton.Preflight"
    {:profile "pdfcube-preflight"
     :primary? true
     :assembly-dependencies
-    ["PdfCube.FontBox" "PdfCube.IO" "PdfCube.PdfBox" "PdfCube.XmpBox"]
+    ["DripSharp.PdfCarton" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp"]
     :dependencies
-    [{:id "PdfCube.PdfBox" :version (package-version "PdfCube.PdfBox")}
-     {:id "PdfCube.XmpBox" :version (package-version "PdfCube.XmpBox")}
+    [{:id "DripSharp.PdfCarton.Xmp" :version (package-version "DripSharp.PdfCarton.Xmp")}
+     {:id "DripSharp.PdfCarton" :version (package-version "DripSharp.PdfCarton")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}]
     :resources 0
@@ -103,34 +103,34 @@
     {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}})
 
 (def ^:private restored-closures
-  {"PdfCube.IO"
-   #{"PdfCube.IO"
+  {"DripSharp.PdfCarton.IO"
+   #{"DripSharp.PdfCarton.IO"
      "Microsoft.Extensions.DependencyInjection.Abstractions"
      "Microsoft.Extensions.Logging.Abstractions"}
 
-   "PdfCube.FontBox"
-   #{"PdfCube.IO" "PdfCube.FontBox"
+   "DripSharp.PdfCarton.Fonts"
+   #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"
      "Microsoft.Extensions.DependencyInjection.Abstractions"
      "Microsoft.Extensions.Logging.Abstractions"
      "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
      "SkiaSharp.NativeAssets.macOS" "SkiaSharp.NativeAssets.Win32"}
 
-   "PdfCube.XmpBox"
-   #{"PdfCube.XmpBox"
+   "DripSharp.PdfCarton.Xmp"
+   #{"DripSharp.PdfCarton.Xmp"
      "Microsoft.Extensions.DependencyInjection.Abstractions"
      "Microsoft.Extensions.Logging.Abstractions"}
 
-   "PdfCube.PdfBox"
-   #{"PdfCube.IO" "PdfCube.FontBox" "PdfCube.PdfBox"
+   "DripSharp.PdfCarton"
+   #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton"
      "Microsoft.Extensions.DependencyInjection.Abstractions"
      "Microsoft.Extensions.Logging.Abstractions"
      "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
      "SkiaSharp.NativeAssets.macOS" "SkiaSharp.NativeAssets.Win32"
      "System.Security.Cryptography.Pkcs"}
 
-   "PdfCube.Preflight"
-   #{"PdfCube.IO" "PdfCube.FontBox" "PdfCube.XmpBox"
-     "PdfCube.PdfBox" "PdfCube.Preflight"
+   "DripSharp.PdfCarton.Preflight"
+   #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.Xmp"
+     "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"
      "Microsoft.Extensions.DependencyInjection.Abstractions"
      "Microsoft.Extensions.Logging.Abstractions"
      "SkiaSharp" "SkiaSharp.NativeAssets.Linux"
@@ -139,11 +139,11 @@
 
 (def ^:private aggregate-consumer
   {:strategy :source-file
-   :project-file "PdfCube.Family.PackageConsumer.csproj"
+   :project-file "PdfCarton.Family.PackageConsumer.csproj"
    :source-path
-   "validation/pdfcube-family/PdfCube.Family.FocusedConsumer.cs"
+   "validation/pdfcube-family/PdfCarton.Family.FocusedConsumer.cs"
    :success-message
-   "Complete PdfCube package family runtime workflow passed."})
+   "Complete PdfCarton package family runtime workflow passed."})
 
 (def ^:private native-assets
   {"SkiaSharp.NativeAssets.Linux"
@@ -214,7 +214,7 @@
 
 (defn inspect-native-assets!
   "Requires the official SkiaSharp host packages and the x64/ARM64 payloads
-  needed by PdfCube's Windows, Linux, and macOS platform contract."
+  needed by PdfCarton's Windows, Linux, and macOS platform contract."
   [feed external-packages]
   (let [by-id (into {} (map (juxt :id identity)) external-packages)]
     (into
@@ -262,7 +262,7 @@
         actual-files
         (set (map #(str (.getFileName ^Path %)) (regular-files feed)))]
     (when-not (= expected-files actual-files)
-      (fail! "Fresh PdfCube local feed contains missing, leaked, or stale artifacts"
+      (fail! "Fresh PdfCarton local feed contains missing, leaked, or stale artifacts"
              {:expected (vec (sort expected-files))
               :actual (vec (sort actual-files))
               :missing (vec (sort (set/difference expected-files actual-files)))
@@ -272,7 +272,7 @@
             actual (when (paths/regular-file? artifact)
                      (sha256-file artifact))]
         (when-not (= sha256 actual)
-          (fail! "Fresh PdfCube feed artifact differs from its inspected identity"
+          (fail! "Fresh PdfCarton feed artifact differs from its inspected identity"
                  {:file file :expected sha256 :actual actual}))))
     {:artifacts (count identities)
      :files (vec (sort expected-files))}))
@@ -305,14 +305,14 @@
           :pdb-sha256 (:pdb-sha256 symbol-inspection)
           :dependencies (:dependencies symbol-inspection)}}]
     (when-not expected
-      (fail! "Packed an unapproved PdfCube package"
+      (fail! "Packed an unapproved PdfCarton package"
              {:id id :approved (vec (sort (keys package-contract)))}))
     (doseq [[subject value]
             [[:package-sha256 (get-in package [:identity :sha256])]
              [:symbol-sha256 (:sha256 symbol)]
              [:pdb-sha256 (:pdb-sha256 symbol-inspection)]]]
       (when-not (re-matches #"[0-9a-f]{64}" (or value ""))
-        (fail! "PdfCube package proof contains an invalid artifact fingerprint"
+        (fail! "PdfCarton package proof contains an invalid artifact fingerprint"
                {:id id :subject subject :actual value})))
     (let [expected
           {:profile (:profile expected)
@@ -342,7 +342,7 @@
             :pdb-sha256 (get-in actual [:symbol :pdb-sha256])
             :dependencies (:dependencies expected)}}]
       (when-not (= expected actual)
-        (fail! "Packed PdfCube artifact violates its exact package contract"
+        (fail! "Packed PdfCarton artifact violates its exact package contract"
                {:id id :expected expected :actual actual}))
       actual)))
 
@@ -356,21 +356,21 @@
         duplicates (->> package-ids frequencies
                         (filter #(< 1 (val %))) (map key) sort vec)
         _ (when (seq duplicates)
-            (fail! "PdfCube family package proof contains duplicate identities"
+            (fail! "PdfCarton family package proof contains duplicate identities"
                    {:duplicates duplicates}))
         actual-ids (set package-ids)
         expected-ids (set (keys package-contract))
         _ (when-not (= expected-ids actual-ids)
-            (fail! "PdfCube family package proof does not contain exactly five packages"
+            (fail! "PdfCarton family package proof does not contain exactly five packages"
                    {:expected (vec (sort expected-ids))
                     :actual (vec (sort actual-ids))}))
         _ (when-not (= 2 (get-in package-proof [:summary :clean-builds]))
-            (fail! "PdfCube package family was not packed from two clean builds"
+            (fail! "PdfCarton package family was not packed from two clean builds"
                    {:expected 2
                     :actual (get-in package-proof [:summary :clean-builds])}))
         _ (when-not (= source-revision
                        (get-in package-proof [:summary :repository-commit]))
-            (fail! "PdfCube packages do not identify the synchronized source revision"
+            (fail! "PdfCarton packages do not identify the synchronized source revision"
                    {:expected source-revision
                     :actual (get-in package-proof
                                     [:summary :repository-commit])}))
@@ -378,7 +378,7 @@
         (set (map #(select-keys % [:id :version])
                   (:external-packages package-proof)))
         _ (when-not (= external-package-contract external)
-            (fail! "PdfCube package family restored an unapproved external dependency closure"
+            (fail! "PdfCarton package family restored an unapproved external dependency closure"
                    {:expected (vec (sort-by :id external-package-contract))
                     :actual (vec (sort-by :id external))}))
         validated (mapv exact-package-contract packages)
@@ -399,7 +399,7 @@
    (fn [id]
      {:id id
       :version
-      (if (str/starts-with? id "PdfCube.")
+      (if (str/starts-with? id "DripSharp.PdfCarton")
         (package-version id)
         (:version
          (first (filter #(= id (:id %)) external-package-contract))))})
@@ -413,11 +413,11 @@
         actual-names (set names)
         roots (mapv #(str (:packages-root %)) consumer-proofs)]
     (when-not (= expected-names actual-names)
-      (fail! "PdfCube family consumption did not run every required fresh consumer"
+      (fail! "PdfCarton family consumption did not run every required fresh consumer"
              {:expected (vec (sort expected-names))
               :actual (vec (sort actual-names))}))
     (when-not (= (count roots) (count (set roots)))
-      (fail! "PdfCube package consumers reused an isolated package cache"
+      (fail! "PdfCarton package consumers reused an isolated package cache"
              {:package-caches roots}))
     (doseq [proof consumer-proofs
             :let [name (:consumer-name proof)
@@ -435,13 +435,13 @@
                                     [:dependency-proof :packages])))
                   expected-restored
                   (if complete?
-                    (get restored-closures "PdfCube.Preflight")
+                    (get restored-closures "DripSharp.PdfCarton.Preflight")
                     (get restored-closures name))]]
       (when-not (= expected-direct direct)
-        (fail! "Fresh PdfCube consumer has the wrong direct package references"
+        (fail! "Fresh PdfCarton consumer has the wrong direct package references"
                {:consumer name :expected expected-direct :actual direct}))
       (when-not (= expected-restored restored)
-        (fail! "Fresh PdfCube consumer restored the wrong package closure"
+        (fail! "Fresh PdfCarton consumer restored the wrong package closure"
                {:consumer name :expected expected-restored :actual restored})))
     {:consumers (count consumer-proofs)
      :package-caches roots
@@ -454,7 +454,7 @@
            consumer-proofs)}))
 
 (defn verify!
-  "Packs the five PdfCube projects twice, validates their exact artifact family,
+  "Packs the five PdfCarton projects twice, validates their exact artifact family,
   then runs five separate and one all-family fresh local-feed consumers."
   ([]
    (verify! {}))
@@ -498,7 +498,7 @@
            :selected-packages
            (identity-contract (set (keys package-contract)))
            :expected-packages
-           (identity-contract (get restored-closures "PdfCube.Preflight"))
+           (identity-contract (get restored-closures "DripSharp.PdfCarton.Preflight"))
            :target-framework target-framework
            :run-command! run-command!})
          consumption
@@ -513,7 +513,7 @@
           :native-hosts 6
           :consumers (:consumers consumption)
           :feed-artifacts (get-in package-evidence [:feed :artifacts])}]
-     (println "Deterministic isolated PdfCube package-family proof passed:"
+     (println "Deterministic isolated PdfCarton package-family proof passed:"
               (pr-str summary))
      {:summary summary
       :package-proof package-proof

@@ -259,7 +259,7 @@
         (is (not-any? #(str/includes? (str %) "/src/test/")
                       (project-input/production-source-files input)))
         (is (= input (project-input/validate! input)))))
-    (testing "the PdfCube.IO input resolves through the live Spoon frontend"
+    (testing "the DripSharp.PdfCarton.IO input resolves through the live Spoon frontend"
       (let [input (get selected "pdfbox-io")
             resolved (spoon/build-resolved-model! (:project-root input) input)]
         (is (= 18 (get-in resolved [:totals :compilation-units])))

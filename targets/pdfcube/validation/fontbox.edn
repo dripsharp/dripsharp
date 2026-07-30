@@ -5,5 +5,5 @@
  :baseline-profile :fontbox
  :runner dripsharp.pdfcube.fontbox-differential/verify!
  :oracle-sources ["validation/oracle/FontBoxUpstreamOracle.java"]
- :probe-sources ["validation/probe/PdfCube.FontBox.PackageProbe.cs"]
+ :probe-sources ["validation/probe/DripSharp.PdfCarton.Fonts.PackageProbe.cs"]
  :legal-sets [:upstream]}

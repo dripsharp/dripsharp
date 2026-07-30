@@ -65,14 +65,14 @@
     (is (= 2 (get-in comparison [:mismatch :line])))))
 
 (deftest package-contract-pins-preflight-and-its-restored-closure
-  (is (= "PdfCube.Preflight"
+  (is (= "DripSharp.PdfCarton.Preflight"
          (:package-id preflight-differential/expected-package-contract)))
-  (is (= ["PdfCube.FontBox" "PdfCube.IO"
-          "PdfCube.PdfBox" "PdfCube.XmpBox"]
+  (is (= ["DripSharp.PdfCarton" "DripSharp.PdfCarton.Fonts"
+          "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp"]
          (get-in preflight-differential/expected-package-contract
                  [:assembly :dependency-assemblies])))
-  (is (= [{:id "PdfCube.PdfBox" :version "3.0.8-dripsharp.0"}
-          {:id "PdfCube.XmpBox" :version "3.0.8-dripsharp.0"}
+  (is (= [{:id "DripSharp.PdfCarton.Xmp" :version "3.0.8-dripsharp.0"}
+          {:id "DripSharp.PdfCarton" :version "3.0.8-dripsharp.0"}
           {:id "Microsoft.Extensions.Logging.Abstractions"
            :version "10.0.0"}
           {:id "SkiaSharp" :version "4.150.1"}]

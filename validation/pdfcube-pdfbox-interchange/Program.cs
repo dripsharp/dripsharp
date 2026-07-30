@@ -6,19 +6,19 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
-using PdfCube.PdfBox;
-using PdfCube.PdfBox.Cos;
-using PdfCube.PdfBox.Pdmodel;
-using PdfCube.PdfBox.Pdmodel.Common;
-using PdfCube.PdfBox.Pdmodel.Common.Filespecification;
-using PdfCube.PdfBox.Pdmodel.Documentinterchange.Logicalstructure;
-using PdfCube.PdfBox.Pdmodel.Documentinterchange.Markedcontent;
-using PdfCube.PdfBox.Pdmodel.Documentinterchange.Taggedpdf;
-using PdfCube.PdfBox.Pdmodel.Fdf;
-using PdfCube.PdfBox.Pdmodel.Font;
-using PdfCube.PdfBox.Pdmodel.Graphics.Optionalcontent;
-using PdfCube.PdfBox.Rendering;
-using PdfCube.PdfBox.Text;
+using DripSharp.PdfCarton;
+using DripSharp.PdfCarton.Cos;
+using DripSharp.PdfCarton.Pdmodel;
+using DripSharp.PdfCarton.Pdmodel.Common;
+using DripSharp.PdfCarton.Pdmodel.Common.Filespecification;
+using DripSharp.PdfCarton.Pdmodel.Documentinterchange.Logicalstructure;
+using DripSharp.PdfCarton.Pdmodel.Documentinterchange.Markedcontent;
+using DripSharp.PdfCarton.Pdmodel.Documentinterchange.Taggedpdf;
+using DripSharp.PdfCarton.Pdmodel.Fdf;
+using DripSharp.PdfCarton.Pdmodel.Font;
+using DripSharp.PdfCarton.Pdmodel.Graphics.Optionalcontent;
+using DripSharp.PdfCarton.Rendering;
+using DripSharp.PdfCarton.Text;
 
 internal static class Program
 {
@@ -158,7 +158,7 @@ internal static class Program
         markedReference.SetMCID(1);
         section.AppendKid(markedReference);
 
-        var idTree = new PdfCube.PdfBox.Pdmodel.PDStructureElementNameTreeNode();
+        var idTree = new DripSharp.PdfCarton.Pdmodel.PDStructureElementNameTreeNode();
         idTree.SetNames(
             new Dictionary<string, PDStructureElement> { ["section-1"] = section });
         root.SetIDTree(idTree);

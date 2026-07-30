@@ -42,7 +42,7 @@
          {:configuration
           {:internal-capabilities #{:jbig2 :jpx}
            :runtime-sources
-           ["targets/pdfcube/runtime/PdfCube.ImageCodecs.cs"]}})
+           ["targets/pdfcube/runtime/DripSharp.PdfCarton.ImageCodecs.cs"]}})
         codec-assets
         (filterv
          #(contains? #{:pdfcube.pdfbox/jbig2-source
@@ -66,7 +66,7 @@
 
 (deftest compatibility-namespace-transform-shifts-source-map-ranges
   (let [source-token "global::DripSharp.Runtime"
-        destination-token "global::PdfCube.FB.Runtime"
+        destination-token "global::DripSharp.PdfCarton.Runtime.Fonts"
         whole-source {:identity :whole}
         first-source {:identity :first}
         second-source {:identity :second}
@@ -83,7 +83,7 @@
           whole-source)
         transformed
         (render-transformed
-         {:compatibility-namespace "PdfCube.FB.Runtime"}
+         {:compatibility-namespace "DripSharp.PdfCarton.Runtime.Fonts"}
          node)
         by-source
         (into {} (map (juxt :source :destination) (:mappings transformed)))
@@ -101,10 +101,10 @@
            (get by-source second-source)))))
 
 (deftest preflight-font-types-implement-erased-runtime-contracts
-  (let [configuration {:package {:id "PdfCube.Preflight"}}
+  (let [configuration {:package {:id "DripSharp.PdfCarton.Preflight"}}
         container
-        "global::PdfCube.Preflight.Font.Container.FontContainer"
-        font-like "global::PdfCube.PdfBox.Pdmodel.Font.PDFontLike"
+        "global::DripSharp.PdfCarton.Preflight.Font.Container.FontContainer"
+        font-like "global::DripSharp.PdfCarton.Pdmodel.Font.PDFontLike"
         container-result
         (render-transformed
          configuration
@@ -122,11 +122,11 @@
           [(csharp/raw "public abstract class FontValidator<T>")
            (csharp/raw
             (str " where T : "
-                 "global::PdfCube.Preflight.Font.Container.IFontContainer"))]
+                 "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer"))]
           [(csharp/raw
-            (str "private global::PdfCube.Preflight.Font.FontValidator<"
+            (str "private global::DripSharp.PdfCarton.Preflight.Font.FontValidator<"
                  container
-                 "<global::PdfCube.PdfBox.Pdmodel.Font.PDCIDFont>> value;"))]
+                 "<global::DripSharp.PdfCarton.Pdmodel.Font.PDCIDFont>> value;"))]
           true))]
     (is (not (str/includes? (:text container-result)
                             "public interface IFontContainer")))
@@ -138,10 +138,10 @@
     (is (str/includes?
          (:text validator-result)
          (str "public abstract class FontValidator<T> : IFontValidator where T : "
-              "global::PdfCube.Preflight.Font.Container.IFontContainer")))
+              "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer")))
     (is (str/includes?
          (:text validator-result)
-         (str "global::PdfCube.Preflight.Font.Container.IFontContainer "
+         (str "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer "
               "IFontValidator.GetFontContainer() => GetFontContainer();")))))
 
 (deftest preflight-position-lookup-erases-unused-method-type-parameter
@@ -183,7 +183,7 @@
           :source-name "getClosestPathElement"})
         transformed
         (render-transformed
-         {:package {:id "PdfCube.Preflight"}}
+         {:package {:id "DripSharp.PdfCarton.Preflight"}}
          (csharp/sequence-node [position-method path-method] "\n"))]
     (is (str/includes?
          (:text transformed)
@@ -196,7 +196,7 @@
                             "GetClosestTypePosition<object>")))))
 
 (deftest preflight-type3-widths-preserve-nullable-boxed-floats
-  (let [configuration {:package {:id "PdfCube.Preflight"}}
+  (let [configuration {:package {:id "DripSharp.PdfCarton.Preflight"}}
         result
         (render-transformed
          configuration
@@ -234,22 +234,22 @@
 
 (deftest pdfbox-security-handler-erasure-preserves-specialized-handlers
   (let [carrier
-        (str "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
-             "<global::PdfCube.PdfBox.Pdmodel.Encryption.ProtectionPolicy>")
+        (str "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler"
+             "<global::DripSharp.PdfCarton.Pdmodel.Encryption.ProtectionPolicy>")
         erased "global::DripSharp.Runtime.PdfBoxSecurityHandler"
         specialized
         (str "public sealed class StandardSecurityHandler : "
-             "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
-             "<global::PdfCube.PdfBox.Pdmodel.Encryption.StandardProtectionPolicy> {}")
+             "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler"
+             "<global::DripSharp.PdfCarton.Pdmodel.Encryption.StandardProtectionPolicy> {}")
         structured-carrier
         (csharp/declaration
          (csharp/sequence-node
           [(csharp/raw "public ")
            (csharp/generic-name
             (csharp/raw
-             "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler")
+             "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler")
             [(csharp/raw
-              "global::PdfCube.PdfBox.Pdmodel.Encryption.ProtectionPolicy")])
+              "global::DripSharp.PdfCarton.Pdmodel.Encryption.ProtectionPolicy")])
            (csharp/raw " Create() => default!")]))
         configuration {:internal-capabilities #{:security-handler-erasure}}]
     (is (= (str "public " erased " Create() => default!;")
@@ -452,7 +452,7 @@
                                (concat ["-d" (str classpath-root)]
                                        (map str dependency-files))))]
                (when-not (zero? exit)
-                 (throw (ex-info "PdfCube fixture dependency compilation failed"
+                 (throw (ex-info "PdfCarton fixture dependency compilation failed"
                                  {:kind :fixture-compilation-failed
                                   :exit exit})))))
          input
@@ -493,7 +493,7 @@
        :configuration destination
        :rule-bundle (pdfcube/rule-bundle)}))))
 
-(deftest five-configurations-match-the-approved-pdfcube-family
+(deftest five-configurations-match-the-approved-pdfcarton-family
   (let [workspace (paths/workspace-root)
         family (pdfcube/product-family)
         prepared (mapv read-profile-and-destination profile-names)
@@ -508,21 +508,21 @@
         (get-in (pdfcube/rule-bundle)
                 [:orchestration :validate-profile!])]
     (is (= 1 (:schema-version family)))
-    (is (= :pdfcube (:product-family family)))
+    (is (= :pdfcarton (:product-family family)))
     (is (= 5 (count (:products family)) (count destinations)))
-    (is (= #{"PdfCube.IO" "PdfCube.FontBox" "PdfCube.XmpBox"
-             "PdfCube.PdfBox" "PdfCube.Preflight"}
+    (is (= #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.Xmp"
+             "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
            (set packages)))
-    (is (= {"PdfCube.IO" []
-            "PdfCube.FontBox" ["PdfCube.IO"]
-            "PdfCube.XmpBox" []
-            "PdfCube.PdfBox" ["PdfCube.IO" "PdfCube.FontBox"]
-            "PdfCube.Preflight" ["PdfCube.PdfBox" "PdfCube.XmpBox"]}
+    (is (= {"DripSharp.PdfCarton.IO" []
+            "DripSharp.PdfCarton.Fonts" ["DripSharp.PdfCarton.IO"]
+            "DripSharp.PdfCarton.Xmp" []
+            "DripSharp.PdfCarton" ["DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"]
+            "DripSharp.PdfCarton.Preflight" ["DripSharp.PdfCarton" "DripSharp.PdfCarton.Xmp"]}
            dependency-graph))
     (is (= #{:java-bidi}
            (:bridge-capabilities
             (:destination (read-profile-and-destination "pdfcube-pdfbox")))))
-    (is (= "PdfCube.XMP.Runtime"
+    (is (= "DripSharp.PdfCarton.Runtime.Xmp"
            (:compatibility-namespace
             (:destination (read-profile-and-destination "pdfcube-xmpbox")))))
     (is (= #{}
@@ -533,16 +533,16 @@
             (:destination (read-profile-and-destination "pdfcube-preflight")))))
     (is (=
          {"org.apache.pdfbox.preflight.font.container.FontContainer"
-          "global::PdfCube.Preflight.Font.Container.IFontContainer"
+          "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer"
           "org.apache.pdfbox.preflight.font.FontValidator"
-          "global::PdfCube.Preflight.Font.IFontValidator"}
+          "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator"}
          (:generic-erasure-mappings
           (:destination
            (read-profile-and-destination "pdfcube-preflight")))))
-    (is (= #{"PdfCube.PdfBox" "PdfCube.Preflight"}
+    (is (= #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
            (:friend-assemblies
             (:destination (read-profile-and-destination "pdfcube-io")))))
-    (is (= #{"PdfCube.Preflight"}
+    (is (= #{"DripSharp.PdfCarton.Preflight"}
            (:friend-assemblies
             (:destination (read-profile-and-destination "pdfcube-pdfbox")))))
     (doseq [{:keys [profile destination]} prepared]
@@ -560,15 +560,15 @@
              (:name-policy destination)))
       (is (= {:strategy :embedded-resource-preserve-path}
              (:resource-policy destination)))
-      (is (= :pdfcube
+      (is (= :pdfcarton
              (:product-family
               (:contract
                (public-surface/resolve-strategy!
-                :pdfcube (:public-surface destination))))))
+                :pdfcarton (:public-surface destination))))))
       (is (= #{:strategy} (set (keys (:public-surface destination)))))
       (let [selection
             (public-surface/resolve-strategy!
-             :pdfcube (:public-surface destination))]
+             :pdfcarton (:public-surface destination))]
         (is (= :pdfcube-complete-accessible-library
                (get-in selection [:contract :id])))
         (is (= :resolved-spoon-model
@@ -685,7 +685,7 @@
         source (slurp
                 (str (paths/resolve-path
                       (:project-root emission)
-                      "src/PdfCube/IO/NamingFixture.cs")))
+                      "src/DripSharp/PdfCarton/IO/NamingFixture.cs")))
         declarations (:declarations emission)
         methods (filter #(= :method (:kind %)) declarations)
         fields (filter #(= :field (:kind %)) declarations)]
@@ -725,7 +725,7 @@
         (slurp
          (str (paths/resolve-path
                (:project-root emission)
-               (str "src/PdfCube/PdfBox/Pdmodel/Graphics/Image/"
+               (str "src/DripSharp/PdfCarton/Pdmodel/Graphics/Image/"
                     "ImageRegionFixture.cs"))))]
     (is (= :pdfcube (get-in emission [:mapping-report :target])))
     (is (empty? (get-in emission [:mapping-report :unmapped-symbols])))
@@ -760,16 +760,16 @@
         (slurp
          (str (paths/resolve-path
                (:project-root emission)
-               "src/PdfCube/IO/FieldCaseFixture.cs")))
+               "src/DripSharp/PdfCarton/IO/FieldCaseFixture.cs")))
         fields (filter #(= :field (:kind %)) (:declarations emission))]
     (is (str/includes? source "public const string OFF = \"OFF\";"))
     (is (str/includes? source "public const string Off = \"Off\";"))
     (is (str/includes?
          source
-         "return global::PdfCube.IO.FieldCaseFixture.OFF;"))
+         "return global::DripSharp.PdfCarton.IO.FieldCaseFixture.OFF;"))
     (is (str/includes?
          source
-         "return global::PdfCube.IO.FieldCaseFixture.Off;"))
+         "return global::DripSharp.PdfCarton.IO.FieldCaseFixture.Off;"))
     (is (= #{"OFF" "Off"} (set (map :name fields))))
     (is (zero? (get-in emission [:summary :collisions])))
     (is
@@ -799,11 +799,11 @@
         (slurp
          (str (paths/resolve-path
                (:project-root emission)
-               "src/PdfCube/FontBox/FontApi.cs")))]
+               "src/DripSharp/PdfCarton/Fonts/FontApi.cs")))]
     (is (str/includes?
          source
-         (str "public global::PdfCube.IO.RandomAccessRead Echo("
-              "global::PdfCube.IO.RandomAccessRead value)")))
+         (str "public global::DripSharp.PdfCarton.IO.RandomAccessRead Echo("
+              "global::DripSharp.PdfCarton.IO.RandomAccessRead value)")))
     (is (not (str/includes? source "org.apache.pdfbox.io")))))
 
 (deftest fontbox-standard-charset-fields-have-complete-batch-mappings
@@ -834,7 +834,7 @@
         (slurp
          (str (paths/resolve-path
                (:project-root emission)
-               "src/PdfCube/FontBox/StandardCharsetFixture.cs")))]
+               "src/DripSharp/PdfCarton/Fonts/StandardCharsetFixture.cs")))]
     (is (= :pdfcube (:target mapping-report)))
     (is (zero? (get-in mapping-report [:summary :unmapped-occurrences])))
     (is (empty? (:unmapped-symbols mapping-report)))
@@ -854,10 +854,10 @@
          (vals charset-mappings)))
     (is (str/includes?
          source
-         "global::PdfCube.FB.Runtime.JavaStandardCharsets.USASCII"))
+         "global::DripSharp.PdfCarton.Runtime.Fonts.JavaStandardCharsets.USASCII"))
     (is (str/includes?
          source
-         "global::PdfCube.FB.Runtime.JavaStandardCharsets.ISO88591"))))
+         "global::DripSharp.PdfCarton.Runtime.Fonts.JavaStandardCharsets.ISO88591"))))
 
 (deftest pdfbox-system-output-and-attributed-character-constructor-are-mapped
   (let [{destination :destination}
@@ -879,7 +879,7 @@
         (slurp
          (str (paths/resolve-path
                (:project-root emission)
-               "src/PdfCube/PdfBox/Pdmodel/JdkSymbolFixture.cs")))]
+               "src/DripSharp/PdfCarton/Pdmodel/JdkSymbolFixture.cs")))]
     (is (zero? (get-in mapping-report [:summary :unmapped-occurrences])))
     (is (empty? (:unmapped-symbols mapping-report)))
     (is (some
@@ -922,27 +922,28 @@
         (slurp
          (str (paths/resolve-path
                (:project-root emission)
-               "src/PdfCube/FontBox/Util/Autodetect/DiscoveryFixture.cs")))
+               (str "src/DripSharp/PdfCarton/Fonts/Util/Autodetect/"
+                    "DiscoveryFixture.cs"))))
         adapter-file
         (paths/resolve-path
          (:project-root emission)
-         "src/DripSharp/Runtime/PdfCubeFontDiscovery.cs")
+         "src/DripSharp/Runtime/PdfCartonFontDiscovery.cs")
         adapter (slurp (str adapter-file))]
     (is (paths/regular-file? adapter-file))
     (doseq [member ["FileExists" "FileCanRead" "FileIsDirectory"
                     "FileIsHidden" "FileListFiles" "FileToUri"]]
       (is (str/includes?
            source
-           (str "global::PdfCube.FB.Runtime.PdfCubeFontDiscovery."
+           (str "global::DripSharp.PdfCarton.Runtime.Fonts.PdfCartonFontDiscovery."
                 member "("))))
-    (is (str/includes? adapter "namespace PdfCube.FB.Runtime;"))
+    (is (str/includes? adapter "namespace DripSharp.PdfCarton.Runtime.Fonts;"))
     (is (str/includes? adapter
-                       "internal static class PdfCubeFontDiscovery"))
+                       "internal static class PdfCartonFontDiscovery"))
     (is (not (str/includes? adapter
-                            "public static class PdfCubeFontDiscovery")))
+                            "public static class PdfCartonFontDiscovery")))
     (is (str/includes?
          source
-         (str "global::PdfCube.FB.Runtime.JavaCompat."
+         (str "global::DripSharp.PdfCarton.Runtime.Fonts.JavaCompat."
               "NewSortedDictionary<string, sbyte[]>()")))))
 
 (deftest resolved-module-surface-is-complete-and-blocks-stubs

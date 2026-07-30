@@ -4,13 +4,13 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
-using PdfCube.IO;
-using PdfCube.PdfBox;
-using PdfCube.PdfBox.Cos;
-using PdfCube.PdfBox.Pdfwriter.Compress;
-using PdfCube.PdfBox.Pdmodel;
-using PdfCube.PdfBox.Pdmodel.Common;
-using PdfCube.PdfBox.Pdmodel.Graphics.State;
+using DripSharp.PdfCarton.IO;
+using DripSharp.PdfCarton;
+using DripSharp.PdfCarton.Cos;
+using DripSharp.PdfCarton.Pdfwriter.Compress;
+using DripSharp.PdfCarton.Pdmodel;
+using DripSharp.PdfCarton.Pdmodel.Common;
+using DripSharp.PdfCarton.Pdmodel.Graphics.State;
 
 internal static class Program
 {

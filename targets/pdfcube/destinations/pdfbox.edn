@@ -1,30 +1,30 @@
 {:schema-version 1
- :product-family :pdfcube
+ :product-family :pdfcarton
  :pdfcube-product :pdfbox
  :baseline-target :pdfcube
  :baseline-profile :pdfbox
  :baseline-legal-sets [:upstream :codecs]
  :destination-bundle dripsharp.pdfcube.java-project/rule-bundle
- :project {:assembly-name "PdfCube.PdfBox"
-           :root-namespace "PdfCube.PdfBox"
+ :project {:assembly-name "DripSharp.PdfCarton"
+           :root-namespace "DripSharp.PdfCarton"
            :target-framework "net10.0"
            :nullable "disable"
            :implicit-usings false
            :warnings-as-errors true}
- :package {:id "PdfCube.PdfBox"
-           :title "PdfCube PDFBox"
+ :package {:id "DripSharp.PdfCarton"
+           :title "PdfCarton"
            :description "Apache PDFBox document, parsing, rendering, and manipulation APIs for .NET, mechanically translated by DripSharp. This package is an independent translation and is not affiliated with, endorsed by, or sponsored by the Apache Software Foundation."
            :authors "Vibeformer"
            :copyright "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt."
            :symbols :snupkg
-           :tags "pdf pdfbox documents rendering parsing dotnet pdfcube"
+           :tags "pdf pdfbox documents rendering parsing dotnet pdfcarton"
            :project-url "https://pdfbox.apache.org/"
            :repository-url "https://github.com/apache/pdfbox.git"
            :repository-type "git"}
- :output {:project-directory "generated/pdfcube-pdfbox"
+ :output {:project-directory "generated/pdfcarton/src/DripSharp.PdfCarton"
           :source-directory "src"
           :resource-directory "resources"
-          :project-file "PdfCube.PdfBox.csproj"
+          :project-file "DripSharp.PdfCarton.csproj"
           :source-map-file "source-map.edn"
           :diagnostics-file "diagnostics.edn"
           :manifest-file "generation-manifest.edn"
@@ -32,27 +32,27 @@
           :annotation-decisions-file "annotation-decisions.edn"}
  :package-consumer
  {:strategy :compile-only
-  :project-file "PdfCube.PdfBox.PackageConsumer.csproj"
+  :project-file "DripSharp.PdfCarton.PackageConsumer.csproj"
   :compile-types
-  ["PdfCube.PdfBox.Cos.COSDocument"
-   "PdfCube.PdfBox.Pdmodel.PDDocument"]
-  :success-message "PdfCube.PdfBox package boundary passed."}
+  ["DripSharp.PdfCarton.Cos.COSDocument"
+   "DripSharp.PdfCarton.Pdmodel.PDDocument"]
+  :success-message "DripSharp.PdfCarton package boundary passed."}
  :name-policy {:public-identifiers :csharp
                :methods :methods
                :fields :fields
                :overloads :overloads}
  :namespaces {}
- :namespace-prefixes {"org.apache.pdfbox" "PdfCube.PdfBox"}
+ :namespace-prefixes {"org.apache.pdfbox" "DripSharp.PdfCarton"}
  :external-namespace-prefixes
- {"org.apache.fontbox" "PdfCube.FontBox"
-  "org.apache.pdfbox.io" "PdfCube.IO"}
+ {"org.apache.fontbox" "DripSharp.PdfCarton.Fonts"
+  "org.apache.pdfbox.io" "DripSharp.PdfCarton.IO"}
  :resources {}
  :resource-policy {:strategy :embedded-resource-preserve-path}
- :package-dependencies ["PdfCube.IO" "PdfCube.FontBox"]
+ :package-dependencies ["DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"]
  :project-references
- ["../pdfcube-io/PdfCube.IO.csproj"
-  "../pdfcube-fontbox/PdfCube.FontBox.csproj"]
- :friend-assemblies #{"PdfCube.Preflight"}
+ ["../DripSharp.PdfCarton.IO/DripSharp.PdfCarton.IO.csproj"
+  "../DripSharp.PdfCarton.Fonts/DripSharp.PdfCarton.Fonts.csproj"]
+ :friend-assemblies #{"DripSharp.PdfCarton.Preflight"}
  :external-dependencies
  {"commons-logging:commons-logging:jar:1.4.0"
   {:source-scope :compile-runtime
@@ -103,9 +103,9 @@
  :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
  :bridge-capabilities #{:java-bidi}
  :runtime-sources
- ["runtime/PdfCube.FontBox.Compat.cs"
-  "runtime/PdfCube.Icc.cs"
-  "runtime/PdfCube.ImageCodecs.cs"
-  "runtime/PdfCube.PdfBox.Compat.cs"]
+ ["runtime/DripSharp.PdfCarton.Fonts.Compat.cs"
+  "runtime/DripSharp.PdfCarton.Icc.cs"
+  "runtime/DripSharp.PdfCarton.ImageCodecs.cs"
+  "runtime/DripSharp.PdfCarton.Compat.cs"]
  :public-surface
  {:strategy dripsharp.pdfcube.java-project/public-surface-strategy}}

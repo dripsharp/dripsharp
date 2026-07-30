@@ -4,7 +4,7 @@
  :sources
  [{:id :pdfcube/fontbox-compat
    :kind :file
-   :provenance "targets/pdfcube/runtime/PdfCube.FontBox.Compat.cs"
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Fonts.Compat.cs"
    :include-pattern nil
    :charset nil
    :capability nil
@@ -12,14 +12,14 @@
    :max-source-lines 6111
    :max-emitted-lines 6111
    :source-inventory-sha256
-   "d74a7aaab15a468fa94e0ed7711a26ef0757f21cd7c2ac8a95403f9fe7dbdb6f"
+   "009138448258754a96c6a95922a4e6ed02248edbc1a70f63c5ee77b94054d957"
    :public-types
    {:count 58
     :sha256
-    "cc5775457e010c0f58a8c0359bf145f9d58dba7260ffd524d0a18f120bc02e02"}}
+    "98403122206a6e419688f3300cfd2f8f292fb3b7fb12c383e4a6972429ec0554"}}
   {:id :pdfcube/fontbox-discovery
    :kind :file
-   :provenance "targets/pdfcube/runtime/PdfCube.FontBox.Discovery.cs"
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Fonts.Discovery.cs"
    :include-pattern nil
    :charset nil
    :capability nil
@@ -27,14 +27,14 @@
    :max-source-lines 123
    :max-emitted-lines 123
    :source-inventory-sha256
-   "f6794d89a5290f828bd60432979e75266b7ef5ae143829363735c05e9f0d13b6"
+   "b79728edebff903c62787cb5aac70c60b59fd86b16815d17c472cd7109514411"
    :public-types
    {:count 0
     :sha256
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
   {:id :pdfcube/icc
    :kind :file
-   :provenance "targets/pdfcube/runtime/PdfCube.Icc.cs"
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Icc.cs"
    :include-pattern nil
    :charset nil
    :capability nil
@@ -42,14 +42,14 @@
    :max-source-lines 755
    :max-emitted-lines 755
    :source-inventory-sha256
-   "791904516ade546b35e485d39962d044c29e81dd44a5c89483abe769bdccb287"
+   "9c3bcfe351b949e0b878a8e5298fbaa09a085e018e91fabcab5ad0324c19108c"
    :public-types
    {:count 0
     :sha256
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
   {:id :pdfcube/image-codecs-unsupported
    :kind :file
-   :provenance "targets/pdfcube/runtime/PdfCube.ImageCodecs.Unsupported.cs"
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.ImageCodecs.Unsupported.cs"
    :include-pattern nil
    :charset nil
    :capability nil
@@ -57,14 +57,14 @@
    :max-source-lines 22
    :max-emitted-lines 22
    :source-inventory-sha256
-   "9e0a3bb3fc3e029d86ac713bfea3bc31feac775fc87726c1355801e6820379eb"
+   "cdf10d3b43d6461d19d3c60b433d61bad68d5faf3b97948fdb9442197304bf3f"
    :public-types
    {:count 0
     :sha256
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
   {:id :pdfcube/image-codecs
    :kind :file
-   :provenance "targets/pdfcube/runtime/PdfCube.ImageCodecs.cs"
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.ImageCodecs.cs"
    :include-pattern nil
    :charset nil
    :capability nil
@@ -72,14 +72,14 @@
    :max-source-lines 130
    :max-emitted-lines 130
    :source-inventory-sha256
-   "396f3d07a85f349ee7fa5b26a67b9cc7dd9749b74cb43056ec14198d48ac8df0"
+   "0b87b1437a6b64e9846c0b8f078909683682754893678d2d0aaaf1f70020ddd5"
    :public-types
    {:count 0
     :sha256
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
   {:id :pdfcube/pdfbox-compat
    :kind :file
-   :provenance "targets/pdfcube/runtime/PdfCube.PdfBox.Compat.cs"
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Compat.cs"
    :include-pattern nil
    :charset nil
    :capability nil
@@ -87,14 +87,14 @@
    :max-source-lines 65
    :max-emitted-lines 65
    :source-inventory-sha256
-   "304e899e18a0e15293bd67b3647a408af87535027528f370acb3e51725ba7461"
+   "b6cb60928472674c4d2740c4c7245967f4a6d7d0e5468c700eeff43343d88511"
    :public-types
    {:count 1
     :sha256
     "3cc685fe26a5c912f207b92c2fd93fbf4562d04074081b7f400df51b5567f300"}}
   {:id :pdfcube/preflight-compat
    :kind :file
-   :provenance "targets/pdfcube/runtime/PdfCube.Preflight.Compat.cs"
+   :provenance "targets/pdfcube/runtime/DripSharp.PdfCarton.Preflight.Compat.cs"
    :include-pattern nil
    :charset nil
    :capability nil
@@ -102,7 +102,7 @@
    :max-source-lines 47
    :max-emitted-lines 47
    :source-inventory-sha256
-   "78d975493b1ff693cf916bf2e99068a08fee61faa7a4afb479369851c20f15dc"
+   "edf05663a8c56884ff0ae6b94893d8beac88f3a7f3545885aeefaa3576349404"
    :public-types
    {:count 2
     :sha256

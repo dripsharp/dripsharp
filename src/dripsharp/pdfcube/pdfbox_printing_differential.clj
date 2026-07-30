@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-printing-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox printing proof."
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton printing proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -93,7 +93,7 @@
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail!
-       "Package-only PdfCube.PdfBox printing behavior differs from pinned reviewed PDFBox baseline"
+       "Package-only DripSharp.PdfCarton printing behavior differs from pinned reviewed PDFBox baseline"
        {:expected (str expected)
         :actual (str actual)
         :comparison comparison
@@ -241,6 +241,6 @@
         (paths/resolve-path proof-root "summary.edn")
         (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.PdfBox printing differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton printing differential passed:"
         (pr-str (select-keys summary [:source :package :trace :host])))
        summary))))

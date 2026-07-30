@@ -28,7 +28,7 @@
    :compile-timeout-ms 300000
    :run-timeout-ms 120000}
   :probe
-  {:source "validation/probe/PdfCube.FontBox.PackageProbe.cs"
+  {:source "validation/probe/DripSharp.PdfCarton.Fonts.PackageProbe.cs"
    :arguments [:packaged :resources :fonts :canonical]
    :build-timeout-ms 300000
    :run-timeout-ms 120000}
@@ -41,10 +41,10 @@
    {:os "macos" :architecture "arm64" :runner "macos-15"}]}
  :package-contract
  {:target-framework "net10.0"
-  :assembly-name "PdfCube.FontBox"
-  :assembly-dependencies ["PdfCube.IO"]
+  :assembly-name "DripSharp.PdfCarton.Fonts"
+  :assembly-dependencies ["DripSharp.PdfCarton.IO"]
   :dependencies
-  [{:id "PdfCube.IO" :version {:baseline-package "PdfCube.IO"}}
+  [{:id "DripSharp.PdfCarton.IO" :version {:baseline-package "DripSharp.PdfCarton.IO"}}
    {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
    {:id "SkiaSharp" :version "4.150.1"}
    {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]

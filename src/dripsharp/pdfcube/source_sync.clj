@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.source-sync
-  "Monotonic Apache PDFBox stable-release selection for PdfCube source sync.
+  "Monotonic Apache PDFBox stable-release selection for PdfCarton source sync.
 
   Release discovery intentionally uses Git's remote tag refs. It does not infer
   stability from publication dates, branches, Maven metadata, or release-page
@@ -99,7 +99,7 @@
         (release (:version baseline) (:revision baseline))]
     (when-not (and parsed-baseline
                    (re-matches #"[0-9a-f]{40}" (or baseline-revision "")))
-      (fail! "PdfCube's configured PDFBox baseline is not a stable tag commit"
+      (fail! "PdfCarton's configured PDFBox baseline is not a stable tag commit"
              {:baseline baseline}))
     (let [releases
           (->> discovered
@@ -110,12 +110,12 @@
           remote-baseline
           (some #(when (= baseline-version (:version %)) %) releases)]
       (when-not remote-baseline
-        (fail! "The configured PdfCube baseline tag is missing from the PDFBox remote"
+        (fail! "The configured PdfCarton baseline tag is missing from the PDFBox remote"
                {:kind :pdfbox-baseline-tag-missing
                 :baseline baseline
                 :discovered-versions (mapv :version releases)}))
       (when-not (= baseline-revision (:revision remote-baseline))
-        (fail! "The configured PdfCube baseline tag no longer names its pinned commit"
+        (fail! "The configured PdfCarton baseline tag no longer names its pinned commit"
                {:kind :pdfbox-baseline-tag-moved
                 :baseline baseline
                 :remote remote-baseline}))
@@ -141,7 +141,7 @@
      (parse-remote-tags (:output result)))))
 
 (defn select-remote-stable-release!
-  "Discovers and monotonically selects the current PdfCube PDFBox release."
+  "Discovers and monotonically selects the current PdfCarton PDFBox release."
   ([checkout baseline]
    (select-remote-stable-release! checkout baseline {}))
   ([checkout baseline options]

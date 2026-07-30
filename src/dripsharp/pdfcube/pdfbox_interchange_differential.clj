@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-interchange-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox logical-structure,
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton logical-structure,
   optional-content, FDF, and XFDF proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
@@ -86,7 +86,7 @@
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail!
-       "Package-only PdfCube.PdfBox interchange behavior differs from pinned reviewed PDFBox baseline"
+       "Package-only DripSharp.PdfCarton interchange behavior differs from pinned reviewed PDFBox baseline"
        {:expected (str expected)
         :actual (str actual)
         :comparison comparison
@@ -245,6 +245,6 @@
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.PdfBox interchange differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton interchange differential passed:"
         (pr-str (select-keys summary [:source :package :trace])))
        summary))))

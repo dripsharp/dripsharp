@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../targets/pdfcube/validation/probe/DripSharp.PdfCarton.Preflight.FocusedConsumer.cs" />
+    <PackageReference Include="DripSharp.PdfCarton.Preflight" Version="$(PdfCartonPreflightPackageVersion)" />
+  </ItemGroup>
+</Project>

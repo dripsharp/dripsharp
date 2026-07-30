@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-graphics-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox graphics proof."
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton graphics proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -83,7 +83,7 @@
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! "Package-only PdfCube.PdfBox graphics behavior differs from pinned reviewed PDFBox baseline"
+      (fail! "Package-only DripSharp.PdfCarton graphics behavior differs from pinned reviewed PDFBox baseline"
              {:expected (str expected)
               :actual (str actual)
               :comparison comparison
@@ -234,6 +234,6 @@
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.PdfBox graphics differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton graphics differential passed:"
         (pr-str (select-keys summary [:source :package :trace])))
        summary))))

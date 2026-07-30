@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="PdfCarton.Family.FocusedConsumer.cs" />
+    <PackageReference Include="DripSharp.PdfCarton.IO" Version="$(PdfCartonIOPackageVersion)" />
+    <PackageReference Include="DripSharp.PdfCarton.Fonts" Version="$(PdfCartonFontsPackageVersion)" />
+    <PackageReference Include="DripSharp.PdfCarton.Xmp" Version="$(PdfCartonXmpPackageVersion)" />
+    <PackageReference Include="DripSharp.PdfCarton" Version="$(PdfCartonPackageVersion)" />
+    <PackageReference Include="DripSharp.PdfCarton.Preflight" Version="$(PdfCartonPreflightPackageVersion)" />
+  </ItemGroup>
+</Project>

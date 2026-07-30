@@ -174,7 +174,7 @@
               (write-v5-manifest! root records))
              nil
              (catch clojure.lang.ExceptionInfo caught caught)))
-         [(conj base ["product-name" "PdfCube"])
+         [(conj base ["product-name" "PdfCarton"])
           (conj base ["project-dependency" "test" ":dependency"])
           (conj base ["external-artifact" "compile" "group:name:1"
                       "/missing/path.jar" "not-a-hash"])

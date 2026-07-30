@@ -17,27 +17,27 @@
 (def ^:private products
   {"pdfcube-io"
    {:project-id "org.apache.pdfbox:pdfbox-io:3.0.8"
-    :package-id "PdfCube.IO"
+    :package-id "DripSharp.PdfCarton.IO"
     :selector ":pdfbox-io"
     :dependencies []}
    "pdfcube-fontbox"
    {:project-id "org.apache.pdfbox:fontbox:3.0.8"
-    :package-id "PdfCube.FontBox"
+    :package-id "DripSharp.PdfCarton.Fonts"
     :selector ":fontbox"
     :dependencies ["pdfcube-io"]}
    "pdfcube-xmpbox"
    {:project-id "org.apache.pdfbox:xmpbox:3.0.8"
-    :package-id "PdfCube.XmpBox"
+    :package-id "DripSharp.PdfCarton.Xmp"
     :selector ":xmpbox"
     :dependencies []}
    "pdfcube-pdfbox"
    {:project-id "org.apache.pdfbox:pdfbox:3.0.8"
-    :package-id "PdfCube.PdfBox"
+    :package-id "DripSharp.PdfCarton"
     :selector ":pdfbox"
     :dependencies ["pdfcube-io" "pdfcube-fontbox"]}
    "pdfcube-preflight"
    {:project-id "org.apache.pdfbox:preflight:3.0.8"
-    :package-id "PdfCube.Preflight"
+    :package-id "DripSharp.PdfCarton.Preflight"
     :selector ":preflight"
     :dependencies ["pdfcube-pdfbox" "pdfcube-xmpbox"]}})
 
@@ -76,7 +76,9 @@
         (str "research/pdfbox/" module
              "/src/main/java/org/example/" module "/Fixture.java")
         source (write-file! root source-relative "public class Fixture {}")
-        project-root (paths/resolve-path root "target" "generated" profile)
+        project-root
+        (paths/resolve-path
+         root "target" "generated" "pdfcarton" "src" package-id)
         manifest-file (write-file!
                        project-root
                        "generation-manifest.edn"
@@ -288,7 +290,7 @@
                (:field (ex-data error))))))
     (testing "duplicate manifest coverage is blocking"
       (let [relative
-            "target/generated/pdfcube-io/generation-manifest.edn"
+            "target/generated/pdfcarton/src/DripSharp.PdfCarton.IO/generation-manifest.edn"
             manifest (edn/read-string
                       (slurp (str (paths/resolve-path root relative))))
             duplicate (first (:sources manifest))
@@ -311,7 +313,7 @@
            (str "pdfcube-family-" label "-manifest-")
            (make-array FileAttribute 0))
           build (clean-build root)
-          relative "target/generated/pdfcube-io/generation-manifest.edn"
+          relative "target/generated/pdfcarton/src/DripSharp.PdfCarton.IO/generation-manifest.edn"
           file (paths/resolve-path root relative)
           contents (if (= ::append-trailing contents)
                      (str (slurp (str file)) "\n{}")

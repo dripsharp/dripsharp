@@ -1,6 +1,6 @@
 (ns dripsharp.pdfcube.family-workflows
   "One-pack, package-only, pinned-Java workflow proof for the complete
-  five-package PdfCube family."
+  five-package PdfCarton family."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [dripsharp.baseline :as baseline]
@@ -26,14 +26,14 @@
   (baseline/upstream-revision :pdfcube))
 
 (def package-version
-  (baseline/package-version :pdfcube "PdfCube.IO"))
+  (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO"))
 
 (def package-profiles
-  {"pdfcube-io" "PdfCube.IO"
-   "pdfcube-fontbox" "PdfCube.FontBox"
-   "pdfcube-xmpbox" "PdfCube.XmpBox"
-   "pdfcube-pdfbox" "PdfCube.PdfBox"
-   "pdfcube-preflight" "PdfCube.Preflight"})
+  {"pdfcube-io" "DripSharp.PdfCarton.IO"
+   "pdfcube-fontbox" "DripSharp.PdfCarton.Fonts"
+   "pdfcube-xmpbox" "DripSharp.PdfCarton.Xmp"
+   "pdfcube-pdfbox" "DripSharp.PdfCarton"
+   "pdfcube-preflight" "DripSharp.PdfCarton.Preflight"})
 
 (def required-workflows
   #{:create :ordinary-load :malformed-load :encrypted-load :signed-load
@@ -101,7 +101,7 @@
         missing (vec (sort (set/difference required-workflows covered)))
         unexpected (vec (sort (set/difference covered required-workflows)))]
     (when (or (seq missing) (seq unexpected))
-      (fail! "PdfCube family workflow proof has incomplete coverage"
+      (fail! "PdfCarton family workflow proof has incomplete coverage"
              {:missing missing
               :unexpected unexpected
               :covered (vec (sort covered))}))
@@ -133,14 +133,14 @@
   [generation emissions-by-profile profile]
   (let [emission
         (or (get emissions-by-profile profile)
-            (fail! "Packed PdfCube family omitted a profile emission"
+            (fail! "Packed PdfCarton family omitted a profile emission"
                    {:profile profile
                     :available (vec (sort (keys emissions-by-profile)))}))
         dependencies
         (mapv
          (fn [dependency]
            (or (get emissions-by-profile dependency)
-               (fail! "Packed PdfCube family omitted a dependency emission"
+               (fail! "Packed PdfCarton family omitted a dependency emission"
                       {:profile profile :dependency dependency})))
          (:transitive-dependency-profiles emission))]
     (-> generation
@@ -462,7 +462,7 @@
               :actual (vec (sort selected))}))
     (when-not (str/includes?
                (or output "")
-               "Complete PdfCube package family runtime workflow passed.")
+               "Complete PdfCarton package family runtime workflow passed.")
       (fail! "Five-package runtime consumer did not execute its workflow"
              {:output output}))
     {:package-references (vec (sort selected))
@@ -543,7 +543,7 @@
      (write-text! (paths/resolve-path proof-root "summary.edn")
                   (str (pr-str (dissoc summary :proof-root)) "\n"))
      (println
-      "Pinned Java/package complete PdfCube family workflows passed:"
+      "Pinned Java/package complete PdfCarton family workflows passed:"
       (pr-str
        {:source (:source summary)
         :packages (keys (:packages summary))

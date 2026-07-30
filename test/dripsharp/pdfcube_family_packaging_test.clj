@@ -163,19 +163,19 @@
   (let [proof (package-proof)
         evidence (family-packaging/validate-package-family! proof)]
     (is (= 2 (:clean-builds evidence)))
-    (is (= #{"PdfCube.IO" "PdfCube.FontBox" "PdfCube.XmpBox"
-             "PdfCube.PdfBox" "PdfCube.Preflight"}
+    (is (= #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.Xmp"
+             "DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
            (set (keys (:packages evidence)))))
-    (is (= ["PdfCube.PdfBox" "PdfCube.XmpBox"]
+    (is (= ["DripSharp.PdfCarton.Xmp" "DripSharp.PdfCarton"]
            (->> (get-in @#'family-packaging/package-contract
-                        ["PdfCube.Preflight" :dependencies])
+                        ["DripSharp.PdfCarton.Preflight" :dependencies])
                 (map :id)
-                (filter #(.startsWith ^String % "PdfCube."))
+                (filter #(.startsWith ^String % "DripSharp.PdfCarton"))
                 vec)))
-    (is (= ["PdfCube.FontBox" "PdfCube.IO"
-            "PdfCube.PdfBox" "PdfCube.XmpBox"]
+    (is (= ["DripSharp.PdfCarton" "DripSharp.PdfCarton.Fonts"
+            "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp"]
            (get-in @#'family-packaging/package-contract
-                   ["PdfCube.Preflight" :assembly-dependencies])))
+                   ["DripSharp.PdfCarton.Preflight" :assembly-dependencies])))
     (is (= #{"Fixture Publisher"}
            (->> (:packages evidence)
                 vals
@@ -251,7 +251,7 @@
                  (consumer-proof id #{id} (get closures id) index))
                (range) ids)
          [(consumer-proof "complete-family" (set ids)
-                          (get closures "PdfCube.Preflight") 5)])
+                          (get closures "DripSharp.PdfCarton.Preflight") 5)])
         evidence (#'family-packaging/validate-consumers! proofs)]
     (is (= 6 (:consumers evidence)))
     (is (= 6 (count (:package-caches evidence))))
@@ -264,7 +264,7 @@
 (deftest all-family-consumer-executes-public-runtime-workflows
   (let [consumer @#'family-packaging/aggregate-consumer]
     (is (= :source-file (:strategy consumer)))
-    (is (= "validation/pdfcube-family/PdfCube.Family.FocusedConsumer.cs"
+    (is (= "validation/pdfcube-family/PdfCarton.Family.FocusedConsumer.cs"
            (:source-path consumer)))
-    (is (= "Complete PdfCube package family runtime workflow passed."
+    (is (= "Complete PdfCarton package family runtime workflow passed."
            (:success-message consumer)))))

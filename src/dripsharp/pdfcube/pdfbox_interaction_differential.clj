@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-interaction-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox forms and
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton forms and
   document-interaction proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
@@ -84,7 +84,7 @@
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! "Package-only PdfCube.PdfBox interactions differ from pinned reviewed PDFBox baseline"
+      (fail! "Package-only DripSharp.PdfCarton interactions differ from pinned reviewed PDFBox baseline"
              {:expected (str expected)
               :actual (str actual)
               :comparison comparison
@@ -243,6 +243,6 @@
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.PdfBox interaction differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton interaction differential passed:"
         (pr-str (select-keys summary [:source :package :trace])))
        summary))))

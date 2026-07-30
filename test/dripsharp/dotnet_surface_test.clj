@@ -204,7 +204,7 @@
   (let [workspace (paths/workspace-root)
         sources
         ["vendor/pdfcube/jpx/Color/ColorSpace.cs"
-         "targets/pdfcube/runtime/PdfCube.FontBox.Compat.cs"
+         "targets/pdfcube/runtime/DripSharp.PdfCarton.Fonts.Compat.cs"
          "vendor/pdfcube/jpx/Configuration/EncoderComponents.cs"
          "vendor/pdfcube/jpx/J2kImage.FastPath.cs"
          "vendor/pdfcube/jpx/J2kImage.cs"
@@ -234,7 +234,7 @@
                :parameter-count "0"
                :signature "enum MethodEnum"
                :nullability "type=oblivious"})
-         (row {:owner "PdfCube.FB.Runtime.JavaImageInputStream"
+         (row {:owner "DripSharp.PdfCarton.Runtime.Fonts.JavaImageInputStream"
                :kind "type"
                :name "JavaImageInputStream"
                :parameter-count "0"
@@ -245,7 +245,7 @@
          workspace rows
          {:required-rows 0
           :rows []
-          :compatibility-namespace "PdfCube.FB.Runtime"
+          :compatibility-namespace "DripSharp.PdfCarton.Runtime.Fonts"
           :compatibility-sources sources})]
     (is (= 5 (:rows result)))
     (is (= {"java-compatibility-type" 4

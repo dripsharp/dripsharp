@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.host-matrix
-  "Fail-closed required-host evidence gate for the complete PdfCube package
+  "Fail-closed required-host evidence gate for the complete PdfCarton package
   family."
   (:require [clojure.set :as set]
             [clojure.string :as str]
@@ -21,11 +21,11 @@
    {:os "macos" :architecture "arm64"}])
 
 (def package-ids
-  ["PdfCube.IO"
-   "PdfCube.FontBox"
-   "PdfCube.XmpBox"
-   "PdfCube.PdfBox"
-   "PdfCube.Preflight"])
+  ["DripSharp.PdfCarton.IO"
+   "DripSharp.PdfCarton.Fonts"
+   "DripSharp.PdfCarton.Xmp"
+   "DripSharp.PdfCarton"
+   "DripSharp.PdfCarton.Preflight"])
 
 (def capability-ids
   ["clean-restore"
@@ -85,20 +85,20 @@
   [^Path file]
   (let [lines (vec (Files/readAllLines file StandardCharsets/UTF_8))]
     (when-not (seq lines)
-      (fail! "PdfCube host evidence is empty"
+      (fail! "PdfCarton host evidence is empty"
              {:file (str file)}))
     (reduce
      (fn [rows [index line]]
        (let [fields (str/split line #"\t" 3)]
          (when-not (and (= 3 (count fields))
                         (every? (complement str/blank?) fields))
-           (fail! "PdfCube host evidence contains a malformed row"
+           (fail! "PdfCarton host evidence contains a malformed row"
                   {:file (str file)
                    :line (inc index)
                    :value line}))
          (let [identity (subvec fields 0 2)]
            (when (contains? rows identity)
-             (fail! "PdfCube host evidence contains a duplicate observation"
+             (fail! "PdfCarton host evidence contains a duplicate observation"
                     {:file (str file)
                      :line (inc index)
                      :identity identity}))
@@ -251,11 +251,11 @@
         output (paths/absolute (paths/path output-root))]
     (write-summary! output summary)
     (when-not (:complete summary)
-      (fail! "PdfCube required-host matrix has missing or failed evidence"
+      (fail! "PdfCarton required-host matrix has missing or failed evidence"
              {:summary summary
               :report (str (paths/resolve-path output "summary.edn"))}))
     (println
-     "Complete PdfCube required-host matrix passed:"
+     "Complete PdfCarton required-host matrix passed:"
      (pr-str
       {:hosts (:passed-hosts summary)
        :packages package-ids

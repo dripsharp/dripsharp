@@ -1,6 +1,6 @@
 {:schema-version 1
  :profile "pdfcube-xmpbox"
- :product-family :pdfcube
+ :product-family :pdfcarton
  :baseline-target :pdfcube
  :baseline-profile :xmpbox
  :project-root "research/pdfbox"

@@ -6,10 +6,10 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using DripSharp.Runtime;
-using PdfCube.PdfBox.Pdmodel;
-using PdfCube.PdfBox.Pdmodel.Common;
-using PdfCube.PdfBox.Printing;
-using PdfCube.PdfBox.Rendering;
+using DripSharp.PdfCarton.Pdmodel;
+using DripSharp.PdfCarton.Pdmodel.Common;
+using DripSharp.PdfCarton.Printing;
+using DripSharp.PdfCarton.Rendering;
 using SkiaSharp;
 
 internal static class Program
@@ -41,7 +41,7 @@ internal static class Program
             {
                 VerifyCanonical(args[0], args[1]);
                 Console.WriteLine(
-                    $"PdfCube.PdfBox printing host smoke passed: {args[2]}/{args[3]}");
+                    $"DripSharp.PdfCarton printing host smoke passed: {args[2]}/{args[3]}");
             }
             return 0;
         }
@@ -282,7 +282,7 @@ internal static class Program
             using var output =
                 new SKBitmap(new SKImageInfo(140, 140, SKColorType.Bgra8888));
             output.Erase(SKColors.White);
-            using (var graphics = new PdfCubeGraphics2D(output))
+            using (var graphics = new PdfCartonGraphics2D(output))
             {
                 var result = printable.Print(graphics, pageFormat, 0);
                 Observe(
@@ -314,7 +314,7 @@ internal static class Program
             new SKBitmap(new SKImageInfo(120, 120, SKColorType.Bgra8888));
         fixedOutput.Erase(SKColors.White);
         int fixedResult;
-        using (var fixedGraphics = new PdfCubeGraphics2D(fixedOutput))
+        using (var fixedGraphics = new PdfCartonGraphics2D(fixedOutput))
         {
             fixedResult =
                 fixedPrintable.Print(fixedGraphics, pageFormat, 0);
@@ -341,7 +341,7 @@ internal static class Program
             new SKBitmap(new SKImageInfo(120, 120, SKColorType.Bgra8888));
         borderOutput.Erase(SKColors.White);
         int borderResult;
-        using (var borderGraphics = new PdfCubeGraphics2D(borderOutput))
+        using (var borderGraphics = new PdfCartonGraphics2D(borderOutput))
         {
             borderResult = border.Print(borderGraphics, pageFormat, 0);
         }
@@ -364,7 +364,7 @@ internal static class Program
             new SKBitmap(new SKImageInfo(240, 240, SKColorType.Bgra8888));
         autoOutput.Erase(SKColors.White);
         int autoResult;
-        using (var autoGraphics = new PdfCubeGraphics2D(autoOutput))
+        using (var autoGraphics = new PdfCartonGraphics2D(autoOutput))
         {
             autoGraphics.Scale(2, 2);
             autoResult = automatic.Print(autoGraphics, pageFormat, 0);
@@ -391,7 +391,7 @@ internal static class Program
                 PDFPrintable.RasterizeOff,
                 false);
         int result;
-        using (var graphics = new PdfCubeGraphics2D(output))
+        using (var graphics = new PdfCartonGraphics2D(output))
         {
             result =
                 printable.Print(graphics, FullPageFormat(200, 100), 0);
@@ -420,7 +420,7 @@ internal static class Program
                 invalidRenderer);
         using var invalidImage =
             new SKBitmap(new SKImageInfo(100, 100, SKColorType.Bgra8888));
-        using (var invalidGraphics = new PdfCubeGraphics2D(invalidImage))
+        using (var invalidGraphics = new PdfCartonGraphics2D(invalidImage))
         {
             Observe(
                 "failure",
@@ -445,7 +445,7 @@ internal static class Program
         using var throwingImage =
             new SKBitmap(new SKImageInfo(100, 100, SKColorType.Bgra8888));
         var throwingFailure = "none";
-        using (var throwingGraphics = new PdfCubeGraphics2D(throwingImage))
+        using (var throwingGraphics = new PdfCartonGraphics2D(throwingImage))
         {
             try
             {
@@ -472,7 +472,7 @@ internal static class Program
         using var output =
             new SKBitmap(new SKImageInfo(160, 160, SKColorType.Bgra8888));
         output.Erase(SKColors.White);
-        using (var graphics = new PdfCubeGraphics2D(output))
+        using (var graphics = new PdfCartonGraphics2D(output))
         {
             graphics.Translate(7, 11);
             graphics.Scale(1.3, 1.3);
@@ -520,7 +520,7 @@ internal static class Program
                 0,
                 false);
         int canvasResult;
-        using (var graphics = new PdfCubeGraphics2D(surface.Canvas))
+        using (var graphics = new PdfCartonGraphics2D(surface.Canvas))
         {
             canvasResult =
                 printable.Print(
@@ -541,7 +541,7 @@ internal static class Program
 
         surface.Canvas.Clear(SKColors.White);
         int surfaceResult;
-        using (var graphics = new PdfCubeGraphics2D(surface))
+        using (var graphics = new PdfCartonGraphics2D(surface))
         {
             surfaceResult =
                 printable.Print(
@@ -775,7 +775,7 @@ internal static class Program
         internal NamedPrintable(string name) => this.name = name;
 
         public int Print(
-            PdfCubeGraphics2D graphics,
+            PdfCartonGraphics2D graphics,
             JavaPageFormat pageFormat,
             int pageIndex) =>
             JavaPrintable.PAGE_EXISTS;
@@ -799,7 +799,7 @@ internal static class Program
 
         public override void RenderPageToGraphics(
             int pageIndex,
-            PdfCubeGraphics2D graphics,
+            PdfCartonGraphics2D graphics,
             float scaleX,
             float scaleY,
             RenderDestination destination)

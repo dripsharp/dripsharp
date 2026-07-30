@@ -43,11 +43,11 @@
     (is (= 2 (get-in comparison [:mismatch :line])))))
 
 (deftest package-contract-pins-the-translated-closure
-  (is (= #{"PdfCube.IO" "PdfCube.FontBox" "PdfCube.PdfBox"}
+  (is (= #{"DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton"}
          (set (keys pdfbox-differential/expected-package-contract))))
-  (is (= {"PdfCube.IO" 177
-          "PdfCube.FontBox" 1440
-          "PdfCube.PdfBox" 7424}
+  (is (= {"DripSharp.PdfCarton.IO" 177
+          "DripSharp.PdfCarton.Fonts" 1440
+          "DripSharp.PdfCarton" 7424}
          (into {}
                (map (fn [[id contract]]
                       [id (:contract-members contract)]))

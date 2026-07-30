@@ -1,4 +1,4 @@
-name: Complete PdfCube family required macOS hosts
+name: Complete PdfCarton family required macOS hosts
 
 on:
   pull_request:
@@ -42,11 +42,11 @@ jobs:
           available_kib=$(awk '/MemAvailable/ { print $2 }' /proc/meminfo)
           available_cpu=$(getconf _NPROCESSORS_ONLN)
           if (( available_kib < 33554432 || available_cpu < 22 )); then
-            echo "Complete PdfCube package proof requires at least 32 GiB available RAM and 22 CPUs."
+            echo "Complete PdfCarton package proof requires at least 32 GiB available RAM and 22 CPUs."
             exit 1
           fi
 
-      - name: Run every required PdfCube proof ladder
+      - name: Run every required PdfCarton proof ladder
         run: clojure -J-Xmx28g -M:run proof pdfcube
 
       - name: Stage host fixtures and canonical observations

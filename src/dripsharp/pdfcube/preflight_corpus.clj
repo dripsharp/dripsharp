@@ -1,6 +1,6 @@
 (ns dripsharp.pdfcube.preflight-corpus
   "Checksum-pinned PDF/A corpus validation through synchronized PDFBox Java
-  and a fresh package-reference-only PdfCube.Preflight consumer."
+  and a fresh package-reference-only DripSharp.PdfCarton.Preflight consumer."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -20,13 +20,13 @@
   (baseline/upstream-revision :pdfcube))
 
 (def ^:private manifest-magic
-  "DRIPSHARP_PDFCUBE_PREFLIGHT_CORPUS_MANIFEST_V1")
+  "DRIPSHARP_PDFCARTON_PREFLIGHT_CORPUS_MANIFEST_V1")
 
 (def ^:private result-magic
-  "DRIPSHARP_PDFCUBE_PREFLIGHT_CORPUS_RESULTS_V1")
+  "DRIPSHARP_PDFCARTON_PREFLIGHT_CORPUS_RESULTS_V1")
 
 (def ^:private assembly-magic
-  "DRIPSHARP_PDFCUBE_PREFLIGHT_LOADED_ASSEMBLIES_V1")
+  "DRIPSHARP_PDFCARTON_PREFLIGHT_LOADED_ASSEMBLIES_V1")
 
 (def result-columns
   ["case-id" "origin" "format" "expected-outcome" "input-sha256"
@@ -506,7 +506,7 @@
 (defn require-conformant!
   [comparison]
   (when-not (zero? (:mismatched comparison))
-    (fail! "Packed PdfCube.Preflight corpus differs from synchronized PDFBox"
+    (fail! "Packed DripSharp.PdfCarton.Preflight corpus differs from synchronized PDFBox"
            {:kind :pdfcube-preflight-corpus-mismatch
             :mismatched (:mismatched comparison)
             :mismatches (:mismatches comparison)}))
@@ -802,17 +802,17 @@
 
 (defn- preflight-assembly-dependencies
   [assembly-name expected]
-  (if-not (= "PdfCube.Preflight" assembly-name)
+  (if-not (= "DripSharp.PdfCarton.Preflight" assembly-name)
     expected
     (->> (concat
           expected
-          [{:assembly-name "PdfCube.IO"
-            :package-id "PdfCube.IO"
-            :version (baseline/package-version :pdfcube "PdfCube.IO")
+          [{:assembly-name "DripSharp.PdfCarton.IO"
+            :package-id "DripSharp.PdfCarton.IO"
+            :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")
             :target-framework "net10.0"}
-           {:assembly-name "PdfCube.FontBox"
-            :package-id "PdfCube.FontBox"
-            :version (baseline/package-version :pdfcube "PdfCube.FontBox")
+           {:assembly-name "DripSharp.PdfCarton.Fonts"
+            :package-id "DripSharp.PdfCarton.Fonts"
+            :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")
             :target-framework "net10.0"}])
          (reduce
           (fn [by-assembly dependency]
@@ -856,8 +856,8 @@
   [run-command! ^Path root validated package-proof proof-root execution-manifest
    oracle-corpus case-timeout-ms process-timeout-ms]
   (let [identity (:identity package-proof)
-        _ (when-not (= "PdfCube.Preflight" (:id identity))
-            (fail! "Corpus pack proof did not select PdfCube.Preflight"
+        _ (when-not (= "DripSharp.PdfCarton.Preflight" (:id identity))
+            (fail! "Corpus pack proof did not select DripSharp.PdfCarton.Preflight"
                    {:kind :wrong-preflight-corpus-package
                     :actual identity}))
         consumer-root
@@ -865,13 +865,13 @@
           (Files/createDirectories (make-array FileAttribute 0)))
         project
         (paths/resolve-path
-         consumer-root "PdfCube.Preflight.CorpusRunner.csproj")
+         consumer-root "DripSharp.PdfCarton.Preflight.CorpusRunner.csproj")
         source (paths/resolve-path consumer-root "Program.cs")
         runner-source
         (paths/resolve-path
          root
          "validation" "pdfcube-preflight-corpus"
-         "PdfCubePreflightCorpusRunner.cs")
+         "PdfCartonPreflightCorpusRunner.cs")
         config (paths/resolve-path consumer-root "NuGet.Config")
         packages (doto (paths/resolve-path proof-root "nuget-packages")
                    (Files/createDirectories (make-array FileAttribute 0)))
@@ -981,7 +981,7 @@
           assembly-manifest second-loaded consumer-root)}))))
 
 (defn verify!
-  "Packs PdfCube.Preflight, executes the synchronized Java and isolated .NET
+  "Packs DripSharp.PdfCarton.Preflight, executes the synchronized Java and isolated .NET
   corpus sides twice, and requires deterministic exact conformance."
   ([] (verify! {}))
   ([{:keys [workspace-root manifest run-command! pack-fn

@@ -5,14 +5,14 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using PdfCube.IO;
-using PdfCube.PdfBox;
-using PdfCube.PdfBox.Cos;
-using PdfCube.PdfBox.Filter;
-using PdfCube.PdfBox.Pdfparser;
-using PdfCube.PdfBox.Pdfwriter.Compress;
-using PdfCube.PdfBox.Pdmodel;
-using PdfCube.PdfBox.Pdmodel.Encryption;
+using DripSharp.PdfCarton.IO;
+using DripSharp.PdfCarton;
+using DripSharp.PdfCarton.Cos;
+using DripSharp.PdfCarton.Filter;
+using DripSharp.PdfCarton.Pdfparser;
+using DripSharp.PdfCarton.Pdfwriter.Compress;
+using DripSharp.PdfCarton.Pdmodel;
+using DripSharp.PdfCarton.Pdmodel.Encryption;
 
 internal static class Program
 {
@@ -49,7 +49,7 @@ internal static class Program
 
             File.WriteAllLines(output, Observations, new UTF8Encoding(false));
             Console.WriteLine(
-                $"PdfCube.PdfBox low-level probe passed: {Observations.Count} observations.");
+                $"DripSharp.PdfCarton low-level probe passed: {Observations.Count} observations.");
             return 0;
         }
         catch (Exception error)

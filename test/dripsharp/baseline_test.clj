@@ -241,7 +241,7 @@
     (is (= (get-in pdf-record [:upstream :revision]) (:revision profile)))
     (is (= (get-in pdf-record [:profiles :pdfbox :source-project-id])
            (:maven-project-id profile)))
-    (is (= (get-in pdf-record [:packages "PdfCube.PdfBox" :version])
+    (is (= (get-in pdf-record [:packages "DripSharp.PdfCarton" :version])
            (get-in destination [:package :version])))
     (is (= (get-in pdf-record [:upstream :revision])
            (get-in destination [:package :repository-commit])))
@@ -286,10 +286,10 @@
                            root "validation" "Directory.Build.props")))
         family (slurp (str (paths/resolve-path
                             root "validation" "pdfcube-family"
-                            "PdfCube.Family.HostSmoke.csproj")))]
+                            "PdfCarton.Family.HostSmoke.csproj")))]
     (is (str/includes? props "targets\\pdfcube\\baseline.edn"))
-    (is (str/includes? family "$(PdfCubeIOPackageVersion)"))
-    (is (str/includes? family "$(PdfCubePreflightPackageVersion)"))
+    (is (str/includes? family "$(PdfCartonIOPackageVersion)"))
+    (is (str/includes? family "$(PdfCartonPreflightPackageVersion)"))
     (is (not (str/includes? family "3.0.8-dripsharp.0")))))
 
 (deftest configuration-files-contain-baseline-references-not-copied-pins

@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.xmpbox-metadata-differential
-  "Versioned, data-driven PDFBox baseline versus PdfCube.XmpBox package proof."
+  "Versioned, data-driven PDFBox baseline versus DripSharp.PdfCarton.Xmp package proof."
   (:require [dripsharp.baseline :as baseline]
             [dripsharp.differential :as differential]
             [dripsharp.target-execution :as target-execution]))

@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.io-differential
-  "Versioned, data-driven PDFBox baseline versus PdfCube.IO package proof."
+  "Versioned, data-driven PDFBox baseline versus DripSharp.PdfCarton.IO package proof."
   (:require [dripsharp.baseline :as baseline]
             [dripsharp.differential :as differential]
             [dripsharp.target-execution :as target-execution]))
@@ -17,13 +17,13 @@
   (set (get-in contract [:observation :required-families])))
 
 (defn trace-summary
-  "Validates one versioned PdfCube.IO trace and returns its coverage."
+  "Validates one versioned DripSharp.PdfCarton.IO trace and returns its coverage."
   [trace]
   (differential/trace-summary contract trace))
 
 (defn verify!
   "Runs clean deterministic packing, isolated consumption, and the complete
-  pinned Java/package differential for PdfCube.IO."
+  pinned Java/package differential for DripSharp.PdfCarton.IO."
   ([] (verify! {}))
   ([options]
    (differential/run!

@@ -225,7 +225,7 @@ public final class PdfBoxInteractionOracle {
       scripts.setNames(scriptNames);
 
       byte[] attachmentBytes =
-          "PdfCube representative attachment\n".getBytes(StandardCharsets.UTF_8);
+          "PdfCarton representative attachment\n".getBytes(StandardCharsets.UTF_8);
       PDEmbeddedFile embedded =
           new PDEmbeddedFile(document, new ByteArrayInputStream(attachmentBytes));
       embedded.setSubtype("text/plain");

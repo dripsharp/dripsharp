@@ -1,6 +1,6 @@
 (ns dripsharp.pdfcube.pdfbox-differential
-  "Aggregate package-only proof for PdfCube.PdfBox and its translated
-  PdfCube.IO and PdfCube.FontBox dependency closure."
+  "Aggregate package-only proof for DripSharp.PdfCarton and its translated
+  DripSharp.PdfCarton.IO and DripSharp.PdfCarton.Fonts dependency closure."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [dripsharp.differential :as differential]
@@ -72,16 +72,16 @@
   (baseline/package-legal-files :pdfcube [:upstream]))
 
 (def expected-package-contract
-  {"PdfCube.IO"
+  {"DripSharp.PdfCarton.IO"
    {:profile "pdfcube-io"
     :primary? false
     :project-id (:source-project-id io-contract)
     :revision pinned-revision
-    :version (baseline/package-version :pdfcube "PdfCube.IO")
+    :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")
     :target-framework "net10.0"
     :assembly
-    {:name "PdfCube.IO"
-     :version (baseline/assembly-version :pdfcube "PdfCube.IO")
+    {:name "DripSharp.PdfCarton.IO"
+     :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton.IO")
      :dependency-assemblies []}
     :dependencies
     [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]
@@ -89,20 +89,20 @@
     :package-files common-legal-files
     :contract-members (:public-contract-rows io-contract)}
 
-   "PdfCube.FontBox"
+   "DripSharp.PdfCarton.Fonts"
    {:profile "pdfcube-fontbox"
     :primary? false
     :project-id (:source-project-id fontbox-contract)
     :revision pinned-revision
-    :version (baseline/package-version :pdfcube "PdfCube.FontBox")
+    :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")
     :target-framework "net10.0"
     :assembly
-    {:name "PdfCube.FontBox"
-     :version (baseline/assembly-version :pdfcube "PdfCube.FontBox")
-     :dependency-assemblies ["PdfCube.IO"]}
+    {:name "DripSharp.PdfCarton.Fonts"
+     :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton.Fonts")
+     :dependency-assemblies ["DripSharp.PdfCarton.IO"]}
     :dependencies
-    [{:id "PdfCube.IO"
-      :version (baseline/package-version :pdfcube "PdfCube.IO")}
+    [{:id "DripSharp.PdfCarton.IO"
+      :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "SkiaSharp.NativeAssets.Linux" :version "4.150.1"}]
@@ -110,22 +110,22 @@
     :package-files common-legal-files
     :contract-members (:public-contract-rows fontbox-contract)}
 
-   "PdfCube.PdfBox"
+   "DripSharp.PdfCarton"
    {:profile "pdfcube-pdfbox"
     :primary? true
     :project-id (:source-project-id pdfbox-contract)
     :revision pinned-revision
-    :version (baseline/package-version :pdfcube "PdfCube.PdfBox")
+    :version (baseline/package-version :pdfcube "DripSharp.PdfCarton")
     :target-framework "net10.0"
     :assembly
-    {:name "PdfCube.PdfBox"
-     :version (baseline/assembly-version :pdfcube "PdfCube.PdfBox")
-     :dependency-assemblies ["PdfCube.FontBox" "PdfCube.IO"]}
+    {:name "DripSharp.PdfCarton"
+     :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton")
+     :dependency-assemblies ["DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.IO"]}
     :dependencies
-    [{:id "PdfCube.FontBox"
-      :version (baseline/package-version :pdfcube "PdfCube.FontBox")}
-     {:id "PdfCube.IO"
-      :version (baseline/package-version :pdfcube "PdfCube.IO")}
+    [{:id "DripSharp.PdfCarton.Fonts"
+      :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")}
+     {:id "DripSharp.PdfCarton.IO"
+      :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
      {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
      {:id "SkiaSharp" :version "4.150.1"}
      {:id "System.Security.Cryptography.Pkcs" :version "10.0.0"}]
@@ -134,12 +134,12 @@
     :contract-members (:public-contract-rows pdfbox-contract)}})
 
 (def expected-restored-closure
-  #{{:id "PdfCube.IO"
-     :version (baseline/package-version :pdfcube "PdfCube.IO")}
-    {:id "PdfCube.FontBox"
-     :version (baseline/package-version :pdfcube "PdfCube.FontBox")}
-    {:id "PdfCube.PdfBox"
-     :version (baseline/package-version :pdfcube "PdfCube.PdfBox")}
+  #{{:id "DripSharp.PdfCarton.IO"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
+    {:id "DripSharp.PdfCarton.Fonts"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")}
+    {:id "DripSharp.PdfCarton"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton")}
     {:id "Microsoft.Extensions.DependencyInjection.Abstractions"
      :version "10.0.0"}
     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
@@ -163,7 +163,7 @@
         missing (sort (set/difference required-workflows covered))
         unexpected (sort (set/difference covered required-workflows))]
     (when (or (seq missing) (seq unexpected))
-      (fail! "PdfCube.PdfBox package proof has incomplete workflow coverage"
+      (fail! "DripSharp.PdfCarton package proof has incomplete workflow coverage"
              {:missing missing :unexpected unexpected
               :covered (vec (sort covered))}))
     covered))
@@ -241,7 +241,7 @@
          :public-stubs 0}
         actual (actual-package-contract package-proof)]
     (when-not (= expected actual)
-      (fail! "Packed PdfCube.PdfBox dependency closure violates its exact contract"
+      (fail! "Packed DripSharp.PdfCarton dependency closure violates its exact contract"
              {:expected expected :actual actual}))
     actual))
 
@@ -265,7 +265,7 @@
      (into-array OpenOption [StandardOpenOption/APPEND]))
     (let [comparison (differential/compare-results oracle perturbed)]
       (when-not (:mismatch comparison)
-        (fail! "PdfCube.PdfBox aggregate comparator missed a deliberate mismatch"
+        (fail! "DripSharp.PdfCarton aggregate comparator missed a deliberate mismatch"
                {:oracle (str oracle) :perturbed (str perturbed)}))
       comparison)))
 
@@ -321,7 +321,7 @@
     destination))
 
 (defn verify!
-  "Packs PdfCube.PdfBox and its translated dependencies once, then reuses that
+  "Packs DripSharp.PdfCarton and its translated dependencies once, then reuses that
   exact fresh package-only consumer for every representative workflow proof."
   ([] (verify! {}))
   ([{:keys [workspace-root package-fn run-command! slices]
@@ -382,7 +382,7 @@
      (write-text! (paths/resolve-path proof-root "summary.edn")
                   (str (pr-str summary) "\n"))
      (println
-      "Pinned Java/package PdfCube.PdfBox aggregate differential passed:"
+      "Pinned Java/package DripSharp.PdfCarton aggregate differential passed:"
       (pr-str
        {:source (:source summary)
         :package (select-keys (:package summary) [:id :version :sha256])

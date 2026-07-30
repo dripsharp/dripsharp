@@ -5,8 +5,8 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using DripSharp.Runtime;
-using PdfCube.PdfBox;
-using PdfCube.PdfBox.Rendering;
+using DripSharp.PdfCarton;
+using DripSharp.PdfCarton.Rendering;
 using SkiaSharp;
 
 internal static class Program
@@ -74,11 +74,11 @@ internal static class Program
                 SKColorType.Bgra8888,
                 SKAlphaType.Unpremul));
         bitmap.Erase(SKColors.Transparent);
-        using (var graphics = new PdfCubeGraphics2D(bitmap))
+        using (var graphics = new PdfCartonGraphics2D(bitmap))
         {
             graphics.SetRenderingHint(
-                PdfCubeRenderingHints.KEY_ANTIALIASING,
-                PdfCubeRenderingHints.VALUE_ANTIALIAS_ON);
+                PdfCartonRenderingHints.KEY_ANTIALIASING,
+                PdfCartonRenderingHints.VALUE_ANTIALIAS_ON);
             graphics.SetColor(SKColors.White);
             graphics.FillRect(0, 0, 64, 64);
             graphics.SetColor(new SKColor(220, 30, 20, 255));

@@ -5,12 +5,12 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Xml;
-using PdfCube.IO;
-using PdfCube.PdfBox.Pdmodel;
-using PdfCube.Preflight;
-using PdfCube.Preflight.Exception;
-using PdfCube.Preflight.Parser;
-using PdfCube.Preflight.Process;
+using DripSharp.PdfCarton.IO;
+using DripSharp.PdfCarton.Pdmodel;
+using DripSharp.PdfCarton.Preflight;
+using DripSharp.PdfCarton.Preflight.Exception;
+using DripSharp.PdfCarton.Preflight.Parser;
+using DripSharp.PdfCarton.Preflight.Process;
 
 internal static class Program
 {

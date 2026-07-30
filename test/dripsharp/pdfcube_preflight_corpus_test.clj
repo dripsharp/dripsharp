@@ -68,7 +68,7 @@
                 (:cases validated)))
     (is (str/starts-with?
          (Files/readString execution StandardCharsets/UTF_8)
-         "DRIPSHARP_PDFCUBE_PREFLIGHT_CORPUS_MANIFEST_V1\n"))
+         "DRIPSHARP_PDFCARTON_PREFLIGHT_CORPUS_MANIFEST_V1\n"))
     (is (= "Apache-2.0"
            (get-in validated [:redistribution :license])))
     (is (not (str/blank?
@@ -145,7 +145,7 @@
         (Files/readString
          (paths/resolve-path
           root "validation" "pdfcube-preflight-corpus"
-          "PdfCubePreflightCorpusRunner.cs")
+          "PdfCartonPreflightCorpusRunner.cs")
          StandardCharsets/UTF_8)
         gate
         (Files/readString

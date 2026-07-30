@@ -6,16 +6,16 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using DripSharp.Runtime;
-using PdfCube.FontBox.Ttf.Gsub;
-using PdfCube.PdfBox;
-using PdfCube.PdfBox.Cos;
-using PdfCube.PdfBox.Pdfwriter.Compress;
-using PdfCube.PdfBox.Pdmodel;
-using PdfCube.PdfBox.Pdmodel.Common;
-using PdfCube.PdfBox.Pdmodel.Font;
-using PdfCube.PdfBox.Pdmodel.Font.Encoding;
-using PdfCube.PdfBox.Text;
-using PdfCube.PdfBox.Util;
+using DripSharp.PdfCarton.Fonts.Ttf.Gsub;
+using DripSharp.PdfCarton;
+using DripSharp.PdfCarton.Cos;
+using DripSharp.PdfCarton.Pdfwriter.Compress;
+using DripSharp.PdfCarton.Pdmodel;
+using DripSharp.PdfCarton.Pdmodel.Common;
+using DripSharp.PdfCarton.Pdmodel.Font;
+using DripSharp.PdfCarton.Pdmodel.Font.Encoding;
+using DripSharp.PdfCarton.Text;
+using DripSharp.PdfCarton.Util;
 using SkiaSharp;
 
 internal static class Program
@@ -376,7 +376,7 @@ internal static class Program
         var pdfCubeAssemblies = AppDomain.CurrentDomain.GetAssemblies()
             .Where(assembly =>
                 assembly.GetName().Name?.StartsWith(
-                    "PdfCube.", StringComparison.Ordinal) == true)
+                    "DripSharp.PdfCarton", StringComparison.Ordinal) == true)
             .ToList();
         var harfBuzzAssemblyReferences = pdfCubeAssemblies
             .SelectMany(assembly => assembly.GetReferencedAssemblies())

@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-low-level-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox low-level proof."
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton low-level proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -82,7 +82,7 @@
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! "Package-only PdfCube.PdfBox differs from pinned reviewed PDFBox baseline"
+      (fail! "Package-only DripSharp.PdfCarton differs from pinned reviewed PDFBox baseline"
              {:expected (str expected)
               :actual (str actual)
               :comparison comparison
@@ -183,7 +183,7 @@
 
 (defn verify!
   "Runs clean deterministic packaging, independent package consumption, and
-  normalized low-level Java/.NET differential validation for PdfCube.PdfBox."
+  normalized low-level Java/.NET differential validation for DripSharp.PdfCarton."
   ([] (verify! {}))
   ([{:keys [workspace-root package-fn run-command!]
      :or {package-fn packaging/verify-package-consumption!
@@ -231,6 +231,6 @@
             :proof-root proof-root}]
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
-       (println "Pinned Java/package PdfCube.PdfBox low-level differential passed:"
+       (println "Pinned Java/package DripSharp.PdfCarton low-level differential passed:"
                 (pr-str (select-keys summary [:source :package :trace])))
        summary))))

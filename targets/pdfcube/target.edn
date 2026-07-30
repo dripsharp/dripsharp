@@ -1,6 +1,6 @@
 {:schema-version 4
  :target :pdfcube
- :product-family :pdfcube
+ :product-family :pdfcarton
  :contracts
  {:product-goal "doc/targets/pdfbox/product-goal.md"
   :port-scope "doc/targets/pdfbox/port-scope.md"
@@ -105,25 +105,25 @@
  :mapping-overlays []
  :runtime-assets
  [{:id :pdfcube/fontbox-compat
-   :path "runtime/PdfCube.FontBox.Compat.cs"
+   :path "runtime/DripSharp.PdfCarton.Fonts.Compat.cs"
    :capabilities #{:skia-geometry}}
   {:id :pdfcube/fontbox-discovery
-   :path "runtime/PdfCube.FontBox.Discovery.cs"
+   :path "runtime/DripSharp.PdfCarton.Fonts.Discovery.cs"
    :capabilities #{:font-discovery}}
   {:id :pdfcube/icc
-   :path "runtime/PdfCube.Icc.cs"
+   :path "runtime/DripSharp.PdfCarton.Icc.cs"
    :capabilities #{:icc}}
   {:id :pdfcube/image-codecs-unsupported
-   :path "runtime/PdfCube.ImageCodecs.Unsupported.cs"
+   :path "runtime/DripSharp.PdfCarton.ImageCodecs.Unsupported.cs"
    :capabilities #{:skia-geometry}}
   {:id :pdfcube/image-codecs
-   :path "runtime/PdfCube.ImageCodecs.cs"
+   :path "runtime/DripSharp.PdfCarton.ImageCodecs.cs"
    :capabilities #{:jbig2 :jpx}}
   {:id :pdfcube/pdfbox-compat
-   :path "runtime/PdfCube.PdfBox.Compat.cs"
+   :path "runtime/DripSharp.PdfCarton.Compat.cs"
    :capabilities #{:managed-raster}}
   {:id :pdfcube/preflight-compat
-   :path "runtime/PdfCube.Preflight.Compat.cs"
+   :path "runtime/DripSharp.PdfCarton.Preflight.Compat.cs"
    :capabilities #{:preflight-font-erasure}}]
  :validation-contracts
  [{:id :pdfcube-io :kind :differential :path "validation/io.edn"}

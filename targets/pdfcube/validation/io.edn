@@ -20,14 +20,14 @@
   :required-directories []
   :canonical :canonical
   :oracle
-  {:source "validation/oracle/PdfCubeIoUpstreamOracle.java"
-   :main-class "PdfCubeIoUpstreamOracle"
+  {:source "validation/oracle/PdfCartonIoUpstreamOracle.java"
+   :main-class "PdfCartonIoUpstreamOracle"
    :arguments [:oracle]
    :include-resource-roots? false
    :compile-timeout-ms 300000
    :run-timeout-ms 120000}
   :probe
-  {:source "validation/probe/PdfCube.IO.PackageProbe.cs"
+  {:source "validation/probe/DripSharp.PdfCarton.IO.PackageProbe.cs"
    :arguments [:packaged :canonical]
    :build-timeout-ms 300000
    :run-timeout-ms 120000}
@@ -40,7 +40,7 @@
    {:os "macos" :architecture "arm64" :runner "macos-15"}]}
  :package-contract
  {:target-framework "net10.0"
-  :assembly-name "PdfCube.IO"
+  :assembly-name "DripSharp.PdfCarton.IO"
   :assembly-dependencies []
   :dependencies
   [{:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}]

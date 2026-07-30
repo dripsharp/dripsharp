@@ -324,7 +324,7 @@ public final class PdfBoxSecurityOracle {
       PDSignature signature = new PDSignature();
       signature.setFilter(PDSignature.FILTER_ADOBE_PPKLITE);
       signature.setSubFilter(PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED);
-      signature.setName("PdfCube differential signer");
+      signature.setName("PdfCarton differential signer");
       signature.setReason("Security differential");
       Calendar date =
           new GregorianCalendar(TimeZone.getTimeZone("UTC"), Locale.ROOT);

@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.preflight-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.Preflight proof."
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton.Preflight proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -31,16 +31,16 @@
    {:os "macos" :architecture "arm64" :runner "macos-15"}])
 
 (def expected-restored-closure
-  #{{:id "PdfCube.IO"
-     :version (baseline/package-version :pdfcube "PdfCube.IO")}
-    {:id "PdfCube.FontBox"
-     :version (baseline/package-version :pdfcube "PdfCube.FontBox")}
-    {:id "PdfCube.XmpBox"
-     :version (baseline/package-version :pdfcube "PdfCube.XmpBox")}
-    {:id "PdfCube.PdfBox"
-     :version (baseline/package-version :pdfcube "PdfCube.PdfBox")}
-    {:id "PdfCube.Preflight"
-     :version (baseline/package-version :pdfcube "PdfCube.Preflight")}
+  #{{:id "DripSharp.PdfCarton.IO"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")}
+    {:id "DripSharp.PdfCarton.Fonts"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Fonts")}
+    {:id "DripSharp.PdfCarton.Xmp"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Xmp")}
+    {:id "DripSharp.PdfCarton"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton")}
+    {:id "DripSharp.PdfCarton.Preflight"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Preflight")}
     {:id "Microsoft.Extensions.DependencyInjection.Abstractions"
      :version "10.0.0"}
     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
@@ -57,19 +57,19 @@
    :generated-production-sources
    (get-in preflight-contract [:source-counts :generated])
    :clean-builds 2
-   :package-id "PdfCube.Preflight"
-   :version (baseline/package-version :pdfcube "PdfCube.Preflight")
+   :package-id "DripSharp.PdfCarton.Preflight"
+   :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Preflight")
    :target-framework "net10.0"
    :assembly
-   {:name "PdfCube.Preflight"
-    :version (baseline/assembly-version :pdfcube "PdfCube.Preflight")
+   {:name "DripSharp.PdfCarton.Preflight"
+    :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton.Preflight")
     :dependency-assemblies
-    ["PdfCube.FontBox" "PdfCube.IO" "PdfCube.PdfBox" "PdfCube.XmpBox"]}
+    ["DripSharp.PdfCarton" "DripSharp.PdfCarton.Fonts" "DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Xmp"]}
    :dependencies
-   [{:id "PdfCube.PdfBox"
-     :version (baseline/package-version :pdfcube "PdfCube.PdfBox")}
-    {:id "PdfCube.XmpBox"
-     :version (baseline/package-version :pdfcube "PdfCube.XmpBox")}
+   [{:id "DripSharp.PdfCarton.Xmp"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton.Xmp")}
+    {:id "DripSharp.PdfCarton"
+     :version (baseline/package-version :pdfcube "DripSharp.PdfCarton")}
     {:id "Microsoft.Extensions.Logging.Abstractions" :version "10.0.0"}
     {:id "SkiaSharp" :version "4.150.1"}]
    :resource-count 0
@@ -125,7 +125,7 @@
         public-metadata (get-in generation [:emission :public-metadata])
         preflight-surface
         (first
-         (filter #(= "PdfCube.Preflight" (:assembly %))
+         (filter #(= "DripSharp.PdfCarton.Preflight" (:assembly %))
                  (:assemblies compiled-surface)))
         public-stubs
         (count
@@ -160,7 +160,7 @@
           :public-stubs public-stubs}
          :restored-closure restored}]
     (when-not (= expected actual)
-      (fail! "Packed PdfCube.Preflight violates its exact target contract"
+      (fail! "Packed DripSharp.PdfCarton.Preflight violates its exact target contract"
              {:expected expected :actual actual}))
     actual))
 
@@ -242,7 +242,7 @@
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail!
-       "Packed PdfCube.Preflight execution behavior differs from pinned reviewed PDFBox baseline"
+       "Packed DripSharp.PdfCarton.Preflight execution behavior differs from pinned reviewed PDFBox baseline"
        {:expected (str expected)
         :actual (str actual)
         :comparison comparison
@@ -407,7 +407,7 @@
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.Preflight differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton.Preflight differential passed:"
         (pr-str
          {:source (:source summary)
           :package (select-keys (:package summary) [:id :version :sha256])

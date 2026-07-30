@@ -8,11 +8,11 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
-using PdfCube.PdfBox;
-using PdfCube.PdfBox.Cos;
-using PdfCube.PdfBox.Pdmodel;
-using PdfCube.PdfBox.Pdmodel.Encryption;
-using PdfCube.PdfBox.Pdmodel.Interactive.Digitalsignature;
+using DripSharp.PdfCarton;
+using DripSharp.PdfCarton.Cos;
+using DripSharp.PdfCarton.Pdmodel;
+using DripSharp.PdfCarton.Pdmodel.Encryption;
+using DripSharp.PdfCarton.Pdmodel.Interactive.Digitalsignature;
 
 internal static class Program
 {
@@ -279,7 +279,7 @@ internal static class Program
             var signature = new PDSignature();
             signature.SetFilter(PDSignature.FilterAdobePpklite);
             signature.SetSubFilter(PDSignature.SubfilterAdbePkcs7Detached);
-            signature.SetName("PdfCube differential signer");
+            signature.SetName("PdfCarton differential signer");
             signature.SetReason("Security differential");
             signature.SetSignDate(
                 new DateTimeOffset(2024, 2, 3, 4, 5, 6, TimeSpan.Zero));
@@ -313,7 +313,7 @@ internal static class Program
         var signatures = signedDocument.GetSignatureDictionaries();
         var acroForm = signedDocument.GetDocumentCatalog().GetAcroForm(null);
         var fields = acroForm?.GetFields() ??
-            Array.Empty<PdfCube.PdfBox.Pdmodel.Interactive.Form.PDField>();
+            Array.Empty<DripSharp.PdfCarton.Pdmodel.Interactive.Form.PDField>();
         var rawFields = acroForm?.GetCOSObject().GetCOSArray(COSName.Fields);
         Add(rows, "external-signing", id + "-signature-discovery",
             "helpers=" + signatures.Count.ToString(CultureInfo.InvariantCulture) +

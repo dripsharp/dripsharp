@@ -78,7 +78,7 @@ function Restore-Build {
             Where-Object { $_.Name -match "HarfBuzz" }
     )
     if ($harfBuzzFiles.Count -ne 0) {
-        throw "HarfBuzz assets were restored even though the PdfCube baseline does not select them."
+        throw "HarfBuzz assets were restored even though the PdfCarton baseline does not select them."
     }
     Invoke-DotNet -Description "Build $Name without incremental state" `
         -Arguments @(
@@ -145,22 +145,22 @@ try {
     }
 
     $familyProject =
-        "validation/pdfcube-family/PdfCube.Family.HostSmoke.csproj"
+        "validation/pdfcube-family/PdfCarton.Family.HostSmoke.csproj"
     Restore-Build "family" $familyProject
     Run-Project "Run the complete five-package workflow" $familyProject @()
     Remove-RestoreBuild "family" $familyProject
     foreach ($package in @(
-        "PdfCube.IO",
-        "PdfCube.FontBox",
-        "PdfCube.XmpBox",
-        "PdfCube.PdfBox",
-        "PdfCube.Preflight"
+        "DripSharp.PdfCarton.IO",
+        "DripSharp.PdfCarton.Fonts",
+        "DripSharp.PdfCarton.Xmp",
+        "DripSharp.PdfCarton",
+        "DripSharp.PdfCarton.Preflight"
     )) {
         Add-Observation "package" $package "consumed"
     }
     Add-Observation "capability" "family-workflow" "passed"
 
-    $ioProject = "validation/pdfcube-io/PdfCube.IO.HostSmoke.csproj"
+    $ioProject = "validation/pdfcube-io/DripSharp.PdfCarton.IO.HostSmoke.csproj"
     Restore-Build "io" $ioProject
     Run-Project "Exercise file and memory-mapped IO" $ioProject @(
         (Join-Path $targetRoot "io.tsv"),
@@ -172,7 +172,7 @@ try {
     Add-Observation "capability" "file-memory-mapping" "passed"
 
     $fontBoxProject =
-        "validation/pdfcube-fontbox/PdfCube.FontBox.HostSmoke.csproj"
+        "validation/pdfcube-fontbox/DripSharp.PdfCarton.Fonts.HostSmoke.csproj"
     Restore-Build "fontbox" $fontBoxProject
     Run-Project "Exercise host font discovery and parsing" $fontBoxProject @(
         (Join-Path $targetRoot "fontbox.tsv"),
@@ -186,7 +186,7 @@ try {
     Add-Observation "capability" "font-discovery" "passed"
 
     $xmpBoxProject =
-        "validation/pdfcube-xmpbox/PdfCube.XmpBox.HostSmoke.csproj"
+        "validation/pdfcube-xmpbox/DripSharp.PdfCarton.Xmp.HostSmoke.csproj"
     Restore-Build "xmpbox" $xmpBoxProject
     Run-Project "Exercise XML parsing and serialization" $xmpBoxProject @(
         (Join-Path $targetRoot "xmpbox.tsv"),
@@ -199,7 +199,7 @@ try {
     Add-Observation "capability" "xml" "passed"
 
     $securityProject =
-        "validation/pdfcube-pdfbox-security/PdfCube.PdfBox.SecurityHostSmoke.csproj"
+        "validation/pdfcube-pdfbox-security/DripSharp.PdfCarton.SecurityHostSmoke.csproj"
     Restore-Build "security" $securityProject
     Run-Project "Exercise encryption, CMS, certificates, and signing" `
         $securityProject @(
@@ -212,7 +212,7 @@ try {
     Add-Observation "capability" "cryptography" "passed"
 
     $printingProject =
-        "validation/pdfcube-pdfbox-printing/PdfCube.PdfBox.PrintingHostSmoke.csproj"
+        "validation/pdfcube-pdfbox-printing/DripSharp.PdfCarton.PrintingHostSmoke.csproj"
     Restore-Build "printing" $printingProject
     Run-Project "Exercise CPU rendering and printable/pageable layout" `
         $printingProject @(
@@ -229,7 +229,7 @@ try {
     Add-Observation "normalization" "policy" "canonical-exact"
 
     $preflightProject =
-        "validation/pdfcube-preflight/PdfCube.Preflight.HostSmoke.csproj"
+        "validation/pdfcube-preflight/DripSharp.PdfCarton.Preflight.HostSmoke.csproj"
     Restore-Build "preflight" $preflightProject
     Run-Project "Exercise PDF/A validation host paths" $preflightProject @(
         $OperatingSystem,

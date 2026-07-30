@@ -127,7 +127,7 @@
          "targets/pdfcube/validation/io.edn")
         profile (baseline/profile root :pdfcube :io)
         revision (baseline/upstream-revision :pdfcube)
-        version (baseline/package-version :pdfcube "PdfCube.IO")
+        version (baseline/package-version :pdfcube "DripSharp.PdfCarton.IO")
         legal (baseline/package-legal-files :pdfcube [:upstream])
         rows (:public-contract-rows profile)
         counts (:source-counts profile)
@@ -147,8 +147,8 @@
           :public-surface
           {:strategy :complete-accessible-java-library
            :assemblies
-           [{:assembly "PdfCube.IO" :contract-members rows}]}}
-         :identity {:id "PdfCube.IO" :version version}
+           [{:assembly "DripSharp.PdfCarton.IO" :contract-members rows}]}}
+         :identity {:id "DripSharp.PdfCarton.IO" :version version}
          :inspection
          {:dependencies
           [{:id "Microsoft.Extensions.Logging.Abstractions"
@@ -158,8 +158,8 @@
          [{:primary? true
            :resource-proof
            {:assembly-identity
-            {:name "PdfCube.IO"
-             :version (baseline/assembly-version :pdfcube "PdfCube.IO")
+            {:name "DripSharp.PdfCarton.IO"
+             :version (baseline/assembly-version :pdfcube "DripSharp.PdfCarton.IO")
              :dependency-assemblies []}
             :resources 0}}]
          :packing-summary {:clean-builds 2}}

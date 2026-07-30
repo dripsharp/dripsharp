@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-document-lifecycle-differential
-  "Pinned reviewed PDFBox baseline versus package-only PdfCube.PdfBox document lifecycle proof."
+  "Pinned reviewed PDFBox baseline versus package-only DripSharp.PdfCarton document lifecycle proof."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -83,7 +83,7 @@
         actual-summary (trace-summary actual)
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
-      (fail! "Package-only PdfCube.PdfBox document lifecycle differs from pinned reviewed PDFBox baseline"
+      (fail! "Package-only DripSharp.PdfCarton document lifecycle differs from pinned reviewed PDFBox baseline"
              {:expected (str expected)
               :actual (str actual)
               :comparison comparison
@@ -228,6 +228,6 @@
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.PdfBox document lifecycle differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton document lifecycle differential passed:"
         (pr-str (select-keys summary [:source :package :trace])))
        summary))))

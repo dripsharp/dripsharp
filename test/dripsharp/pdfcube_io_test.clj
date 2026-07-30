@@ -119,7 +119,7 @@
                        (consumer-project packages package-id package-version))
         (write-string! (paths/resolve-path consumer "Program.cs")
                        (slurp
-                        "targets/pdfcube/validation/probe/PdfCube.IO.FocusedConsumer.cs"))
+                        "targets/pdfcube/validation/probe/DripSharp.PdfCarton.IO.FocusedConsumer.cs"))
         (process/run! {:directory consumer
                        :environment package-environment
                        :command ["dotnet" "restore" consumer-project-file
@@ -133,6 +133,6 @@
                                        "--configuration" "Release"
                                        "--no-restore" "-warnaserror"]})]
           (is (str/includes? (:output result)
-                             "PdfCube.IO focused behavior passed."))))
+                             "DripSharp.PdfCarton.IO focused behavior passed."))))
       (finally
         (delete-tree! root)))))

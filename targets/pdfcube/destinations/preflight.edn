@@ -1,30 +1,30 @@
 {:schema-version 1
- :product-family :pdfcube
+ :product-family :pdfcarton
  :pdfcube-product :preflight
  :baseline-target :pdfcube
  :baseline-profile :preflight
  :baseline-legal-sets [:upstream]
  :destination-bundle dripsharp.pdfcube.java-project/rule-bundle
- :project {:assembly-name "PdfCube.Preflight"
-           :root-namespace "PdfCube.Preflight"
+ :project {:assembly-name "DripSharp.PdfCarton.Preflight"
+           :root-namespace "DripSharp.PdfCarton.Preflight"
            :target-framework "net10.0"
            :nullable "disable"
            :implicit-usings false
            :warnings-as-errors true}
- :package {:id "PdfCube.Preflight"
-           :title "PdfCube Preflight"
+ :package {:id "DripSharp.PdfCarton.Preflight"
+           :title "PdfCarton Preflight"
            :description "Apache Preflight PDF/A validation APIs for .NET, mechanically translated by DripSharp. This package is an independent translation and is not affiliated with, endorsed by, or sponsored by the Apache Software Foundation."
            :authors "Vibeformer"
            :copyright "Portions Copyright The Apache Software Foundation and other upstream contributors; see NOTICE.txt."
            :symbols :snupkg
-           :tags "pdf pdfbox pdfa validation preflight dotnet pdfcube"
+           :tags "pdf pdfbox pdfa validation preflight dotnet pdfcarton"
            :project-url "https://pdfbox.apache.org/"
            :repository-url "https://github.com/apache/pdfbox.git"
            :repository-type "git"}
- :output {:project-directory "generated/pdfcube-preflight"
+ :output {:project-directory "generated/pdfcarton/src/DripSharp.PdfCarton.Preflight"
           :source-directory "src"
           :resource-directory "resources"
-          :project-file "PdfCube.Preflight.csproj"
+          :project-file "DripSharp.PdfCarton.Preflight.csproj"
           :source-map-file "source-map.edn"
           :diagnostics-file "diagnostics.edn"
           :manifest-file "generation-manifest.edn"
@@ -32,27 +32,27 @@
           :annotation-decisions-file "annotation-decisions.edn"}
  :package-consumer
  {:strategy :source-file
-  :project-file "PdfCube.Preflight.PackageConsumer.csproj"
+  :project-file "DripSharp.PdfCarton.Preflight.PackageConsumer.csproj"
   :source-path
-  "targets/pdfcube/validation/probe/PdfCube.Preflight.FocusedConsumer.cs"
-  :success-message "PdfCube.Preflight focused behavior passed."}
+  "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Preflight.FocusedConsumer.cs"
+  :success-message "DripSharp.PdfCarton.Preflight focused behavior passed."}
  :name-policy {:public-identifiers :csharp
                :methods :methods
                :fields :fields
                :overloads :overloads}
  :namespaces {}
- :namespace-prefixes {"org.apache.pdfbox.preflight" "PdfCube.Preflight"}
+ :namespace-prefixes {"org.apache.pdfbox.preflight" "DripSharp.PdfCarton.Preflight"}
  :external-namespace-prefixes
- {"org.apache.fontbox" "PdfCube.FontBox"
-  "org.apache.pdfbox.io" "PdfCube.IO"
-  "org.apache.pdfbox" "PdfCube.PdfBox"
-  "org.apache.xmpbox" "PdfCube.XmpBox"}
+ {"org.apache.fontbox" "DripSharp.PdfCarton.Fonts"
+  "org.apache.pdfbox.io" "DripSharp.PdfCarton.IO"
+  "org.apache.pdfbox" "DripSharp.PdfCarton"
+  "org.apache.xmpbox" "DripSharp.PdfCarton.Xmp"}
  :resources {}
  :resource-policy {:strategy :embedded-resource-preserve-path}
- :package-dependencies ["PdfCube.PdfBox" "PdfCube.XmpBox"]
+ :package-dependencies ["DripSharp.PdfCarton" "DripSharp.PdfCarton.Xmp"]
  :project-references
- ["../pdfcube-pdfbox/PdfCube.PdfBox.csproj"
-  "../pdfcube-xmpbox/PdfCube.XmpBox.csproj"]
+ ["../DripSharp.PdfCarton/DripSharp.PdfCarton.csproj"
+  "../DripSharp.PdfCarton.Xmp/DripSharp.PdfCarton.Xmp.csproj"]
  :external-dependencies
  {"commons-logging:commons-logging:jar:1.4.0"
   {:source-scope :compile-runtime
@@ -70,11 +70,11 @@
  :internal-capabilities #{:preflight-font-erasure}
  :generic-erasure-mappings
  {"org.apache.pdfbox.preflight.font.container.FontContainer"
-  "global::PdfCube.Preflight.Font.Container.IFontContainer"
+  "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer"
   "org.apache.pdfbox.preflight.font.FontValidator"
-  "global::PdfCube.Preflight.Font.IFontValidator"}
+  "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator"}
  :destination-capabilities #{:java-compat :java-regex-unicode}
  :bridge-capabilities #{}
- :runtime-sources ["runtime/PdfCube.Preflight.Compat.cs"]
+ :runtime-sources ["runtime/DripSharp.PdfCarton.Preflight.Compat.cs"]
  :public-surface
  {:strategy dripsharp.pdfcube.java-project/public-surface-strategy}}

@@ -532,7 +532,7 @@ public final class PdfBoxLowLevelOracle {
     if (!Files.isRegularFile(full)
         || !Files.isRegularFile(compressed)
         || !Files.isRegularFile(incremental)) {
-      throw new IOException("Missing cross-runtime PdfCube output");
+      throw new IOException("Missing cross-runtime PdfCarton output");
     }
     observe("cross-reopen", "other-full", inspectPdf(full));
     observe("cross-reopen", "other-compressed", inspectPdf(compressed));

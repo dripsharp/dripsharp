@@ -31,9 +31,9 @@ import org.apache.pdfbox.preflight.parser.PreflightParser;
 public final class PreflightCorpusOracle
 {
     private static final String MANIFEST_MAGIC =
-            "DRIPSHARP_PDFCUBE_PREFLIGHT_CORPUS_MANIFEST_V1";
+            "DRIPSHARP_PDFCARTON_PREFLIGHT_CORPUS_MANIFEST_V1";
     private static final String RESULT_MAGIC =
-            "DRIPSHARP_PDFCUBE_PREFLIGHT_CORPUS_RESULTS_V1";
+            "DRIPSHARP_PDFCARTON_PREFLIGHT_CORPUS_RESULTS_V1";
     private static final String[] RESULT_COLUMNS = {
         "case-id", "origin", "format", "expected-outcome", "input-sha256",
         "status", "valid", "error-count", "error-codes-base64",

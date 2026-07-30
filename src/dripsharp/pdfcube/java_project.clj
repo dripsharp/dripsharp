@@ -1,8 +1,8 @@
 (ns dripsharp.pdfcube.java-project
-  "PdfCube destination composition and fail-closed five-package policy.
+  "PdfCarton destination composition and fail-closed five-package policy.
 
   The reusable Java-library translator supplies structural Java translation.
-  This namespace owns only PdfCube's approved product identities, namespace and
+  This namespace owns only PdfCarton's approved product identities, namespace and
   public-name policy, source-to-destination dependency projections, legal
   inputs, resource policy, and deterministic project metadata."
   (:require [clojure.string :as str]
@@ -168,9 +168,9 @@
    "java.awt.Image"
    ["global::SkiaSharp.SKBitmap" :pdfcube.type/skia-bitmap]
    "java.awt.Graphics"
-   ["global::DripSharp.Runtime.PdfCubeGraphics2D" :pdfcube.type/graphics]
+   ["global::DripSharp.Runtime.PdfCartonGraphics2D" :pdfcube.type/graphics]
    "java.awt.Graphics2D"
-   ["global::DripSharp.Runtime.PdfCubeGraphics2D" :pdfcube.type/graphics]
+   ["global::DripSharp.Runtime.PdfCartonGraphics2D" :pdfcube.type/graphics]
    "java.awt.print.Printable"
    ["global::DripSharp.Runtime.JavaPrintable" :pdfcube.type/printable]
    "java.awt.print.Pageable"
@@ -213,9 +213,9 @@
    ["global::DripSharp.Runtime.JavaDisplayMode"
     :pdfcube.type/display-mode]
    "java.awt.RenderingHints"
-   ["global::DripSharp.Runtime.PdfCubeRenderingHints" :pdfcube.type/rendering-hints]
+   ["global::DripSharp.Runtime.PdfCartonRenderingHints" :pdfcube.type/rendering-hints]
    "java.awt.Transparency"
-   ["global::DripSharp.Runtime.PdfCubeTransparency" :pdfcube.type/transparency]
+   ["global::DripSharp.Runtime.PdfCartonTransparency" :pdfcube.type/transparency]
    "java.awt.RenderingHints$Key"
    ["object" :pdfcube.type/rendering-hint-key]
    "java.awt.color.ColorSpace"
@@ -249,7 +249,7 @@
    ["global::DripSharp.Runtime.JavaColorModel"
     :pdfcube.type/index-color-model]
    "java.awt.image.AffineTransformOp"
-   ["global::DripSharp.Runtime.PdfCubeAffineTransformOp" :pdfcube.type/affine-transform-op]
+   ["global::DripSharp.Runtime.PdfCartonAffineTransformOp" :pdfcube.type/affine-transform-op]
    "java.awt.image.ColorConvertOp"
    ["global::DripSharp.Runtime.JavaColorConvertOp" :pdfcube.type/color-convert-operation]
    "java.awt.image.LookupTable"
@@ -266,7 +266,7 @@
    "java.awt.image.ImagingOpException"
    ["global::System.InvalidOperationException" :pdfcube.type/imaging-operation-exception]
    "javax.imageio.ImageIO"
-   ["global::DripSharp.Runtime.PdfCubeImageIO" :pdfcube.type/image-io]
+   ["global::DripSharp.Runtime.PdfCartonImageIO" :pdfcube.type/image-io]
    "javax.imageio.ImageReader"
    ["global::DripSharp.Runtime.JavaImageReader" :pdfcube.type/image-reader]
    "javax.imageio.ImageReadParam"
@@ -379,19 +379,19 @@
 
 (defn- font-compat-call [member arguments]
   (sequence-node
-   [(raw (str "global::DripSharp.Runtime.PdfCubeFontCompat." member "("))
+   [(raw (str "global::DripSharp.Runtime.PdfCartonFontCompat." member "("))
     (csharp/sequence-node arguments ", ")
     (raw ")")]))
 
 (defn- font-discovery-call [member arguments]
   (sequence-node
-   [(raw (str "global::DripSharp.Runtime.PdfCubeFontDiscovery." member "("))
+   [(raw (str "global::DripSharp.Runtime.PdfCartonFontDiscovery." member "("))
     (csharp/sequence-node arguments ", ")
     (raw ")")]))
 
 (defn- crypto-call [member arguments]
   (sequence-node
-   [(raw (str "global::DripSharp.Runtime.PdfCubeCrypto." member "("))
+   [(raw (str "global::DripSharp.Runtime.PdfCartonCrypto." member "("))
     (csharp/sequence-node arguments ", ")
     (raw ")")]))
 
@@ -926,28 +926,28 @@
    "executable:javax.imageio.ImageIO#createImageInputStream(java.lang.Object)"
    (fn [_target arguments]
      (sequence-node
-      [(raw "global::DripSharp.Runtime.PdfCubeImageIO.CreateImageInputStream(")
+      [(raw "global::DripSharp.Runtime.PdfCartonImageIO.CreateImageInputStream(")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))
 
    "executable:javax.imageio.ImageIO#getImageReadersByFormatName(java.lang.String)"
    (fn [_target arguments]
      (sequence-node
-      [(raw "global::DripSharp.Runtime.PdfCubeImageIO.GetImageReadersByFormatName(")
+      [(raw "global::DripSharp.Runtime.PdfCartonImageIO.GetImageReadersByFormatName(")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))
 
    "executable:javax.imageio.ImageIO#createImageOutputStream(java.lang.Object)"
    (fn [_target arguments]
      (sequence-node
-      [(raw "global::DripSharp.Runtime.PdfCubeImageIO.CreateImageOutputStream(")
+      [(raw "global::DripSharp.Runtime.PdfCartonImageIO.CreateImageOutputStream(")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))
 
    "executable:javax.imageio.ImageIO#getImageWritersBySuffix(java.lang.String)"
    (fn [_target arguments]
      (sequence-node
-      [(raw "global::DripSharp.Runtime.PdfCubeImageIO.GetImageWritersBySuffix(")
+      [(raw "global::DripSharp.Runtime.PdfCartonImageIO.GetImageWritersBySuffix(")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))
 
@@ -1708,7 +1708,7 @@
    "executable:org.apache.pdfbox.io.RandomAccessRead#read(byte[])"
    (fn [target arguments]
      (sequence-node
-      [(raw "((global::PdfCube.IO.RandomAccessRead)")
+      [(raw "((global::DripSharp.PdfCarton.IO.RandomAccessRead)")
        target
        (raw ").Read(")
        (csharp/sequence-node arguments ", ")
@@ -1984,7 +1984,7 @@
 (def ^:private commons-constructor-adaptations
   {"executable:java.awt.Graphics2D#<init>()"
    (fn [_arguments]
-     (raw "new global::DripSharp.Runtime.PdfCubeGraphics2D()"))
+     (raw "new global::DripSharp.Runtime.PdfCartonGraphics2D()"))
 
    "executable:java.awt.print.Paper#<init>()"
    (fn [_arguments]
@@ -2061,7 +2061,7 @@
    "executable:java.awt.RenderingHints#<init>(java.util.Map)"
    (fn [arguments]
      (sequence-node
-      [(raw "new global::DripSharp.Runtime.PdfCubeRenderingHints(")
+      [(raw "new global::DripSharp.Runtime.PdfCartonRenderingHints(")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))
 
@@ -2378,7 +2378,7 @@
    "executable:java.awt.image.AffineTransformOp#<init>(java.awt.geom.AffineTransform,int)"
    (fn [arguments]
      (sequence-node
-      [(raw "new global::DripSharp.Runtime.PdfCubeAffineTransformOp(")
+      [(raw "new global::DripSharp.Runtime.PdfCartonAffineTransformOp(")
        (csharp/sequence-node arguments ", ")
        (raw ")")]))
 
@@ -2455,15 +2455,15 @@
 
    "field:java.awt.geom.AffineTransform#TYPE_TRANSLATION"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_TRANSLATION"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_TRANSLATION"))
 
    "field:java.awt.geom.AffineTransform#TYPE_FLIP"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_FLIP"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_FLIP"))
 
    "field:java.awt.geom.AffineTransform#TYPE_MASK_SCALE"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_MASK_SCALE"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_MASK_SCALE"))
 
    "field:java.awt.color.ICC_Profile#CLASS_DISPLAY"
    (fn [_target]
@@ -2523,7 +2523,7 @@
 
    "field:java.awt.Image#SCALE_SMOOTH"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.SCALE_SMOOTH"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.SCALE_SMOOTH"))
 
    "field:java.awt.Color#GRAY"
    (fn [_target]
@@ -2531,99 +2531,99 @@
 
    "field:java.awt.image.BufferedImage#TYPE_CUSTOM"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_CUSTOM"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_CUSTOM"))
 
    "field:java.awt.image.BufferedImage#TYPE_INT_RGB"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_INT_RGB"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_RGB"))
 
    "field:java.awt.image.BufferedImage#TYPE_INT_ARGB"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_INT_ARGB"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_ARGB"))
 
    "field:java.awt.image.BufferedImage#TYPE_INT_BGR"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_INT_BGR"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_INT_BGR"))
 
    "field:java.awt.image.BufferedImage#TYPE_3BYTE_BGR"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_3BYTE_BGR"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_3BYTE_BGR"))
 
    "field:java.awt.image.BufferedImage#TYPE_4BYTE_ABGR"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_4BYTE_ABGR"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_4BYTE_ABGR"))
 
    "field:java.awt.image.BufferedImage#TYPE_BYTE_GRAY"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_BYTE_GRAY"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_GRAY"))
 
    "field:java.awt.image.BufferedImage#TYPE_BYTE_BINARY"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.TYPE_BYTE_BINARY"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.TYPE_BYTE_BINARY"))
 
    "field:java.awt.image.DataBuffer#TYPE_BYTE"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.DATA_BUFFER_TYPE_BYTE"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.DATA_BUFFER_TYPE_BYTE"))
 
    "field:java.awt.image.DataBuffer#TYPE_USHORT"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.DATA_BUFFER_TYPE_USHORT"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.DATA_BUFFER_TYPE_USHORT"))
 
    "field:java.awt.image.DataBuffer#TYPE_SHORT"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.DATA_BUFFER_TYPE_SHORT"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.DATA_BUFFER_TYPE_SHORT"))
 
    "field:java.awt.image.DataBuffer#TYPE_INT"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeFontCompat.DATA_BUFFER_TYPE_INT"))
+     (raw "global::DripSharp.Runtime.PdfCartonFontCompat.DATA_BUFFER_TYPE_INT"))
 
    "field:java.awt.image.AffineTransformOp#TYPE_BILINEAR"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeAffineTransformOp.TYPE_BILINEAR"))
+     (raw "global::DripSharp.Runtime.PdfCartonAffineTransformOp.TYPE_BILINEAR"))
 
    "field:java.awt.image.AffineTransformOp#TYPE_BICUBIC"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeAffineTransformOp.TYPE_BICUBIC"))
+     (raw "global::DripSharp.Runtime.PdfCartonAffineTransformOp.TYPE_BICUBIC"))
 
    "field:java.awt.RenderingHints#KEY_INTERPOLATION"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.KEY_INTERPOLATION"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.KEY_INTERPOLATION"))
 
    "field:java.awt.RenderingHints#VALUE_INTERPOLATION_BILINEAR"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.VALUE_INTERPOLATION_BILINEAR"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.VALUE_INTERPOLATION_BILINEAR"))
 
    "field:java.awt.RenderingHints#VALUE_INTERPOLATION_BICUBIC"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.VALUE_INTERPOLATION_BICUBIC"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.VALUE_INTERPOLATION_BICUBIC"))
 
    "field:java.awt.RenderingHints#VALUE_INTERPOLATION_NEAREST_NEIGHBOR"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR"))
 
    "field:java.awt.RenderingHints#KEY_RENDERING"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.KEY_RENDERING"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.KEY_RENDERING"))
 
    "field:java.awt.RenderingHints#VALUE_RENDER_DEFAULT"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.VALUE_RENDER_DEFAULT"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.VALUE_RENDER_DEFAULT"))
 
    "field:java.awt.RenderingHints#VALUE_RENDER_QUALITY"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.VALUE_RENDER_QUALITY"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.VALUE_RENDER_QUALITY"))
 
    "field:java.awt.RenderingHints#KEY_ANTIALIASING"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.KEY_ANTIALIASING"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.KEY_ANTIALIASING"))
 
    "field:java.awt.RenderingHints#VALUE_ANTIALIAS_OFF"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.VALUE_ANTIALIAS_OFF"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.VALUE_ANTIALIAS_OFF"))
 
    "field:java.awt.RenderingHints#VALUE_ANTIALIAS_ON"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeRenderingHints.VALUE_ANTIALIAS_ON"))
+     (raw "global::DripSharp.Runtime.PdfCartonRenderingHints.VALUE_ANTIALIAS_ON"))
 
    "field:java.awt.BasicStroke#CAP_BUTT"
    (fn [_target]
@@ -2639,15 +2639,15 @@
 
    "field:java.awt.Transparency#OPAQUE"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeTransparency.OPAQUE"))
+     (raw "global::DripSharp.Runtime.PdfCartonTransparency.OPAQUE"))
 
    "field:java.awt.Transparency#BITMASK"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeTransparency.BITMASK"))
+     (raw "global::DripSharp.Runtime.PdfCartonTransparency.BITMASK"))
 
    "field:java.awt.Transparency#TRANSLUCENT"
    (fn [_target]
-     (raw "global::DripSharp.Runtime.PdfCubeTransparency.TRANSLUCENT"))
+     (raw "global::DripSharp.Runtime.PdfCartonTransparency.TRANSLUCENT"))
 
    "field:java.lang.Character#DIRECTIONALITY_LEFT_TO_RIGHT"
    (fn [_target]
@@ -2831,9 +2831,9 @@
 
 (def ^:private preflight-generic-erasure-mappings
   {"org.apache.pdfbox.preflight.font.container.FontContainer"
-   "global::PdfCube.Preflight.Font.Container.IFontContainer"
+   "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer"
    "org.apache.pdfbox.preflight.font.FontValidator"
-   "global::PdfCube.Preflight.Font.IFontValidator"})
+   "global::DripSharp.PdfCarton.Preflight.Font.IFontValidator"})
 
 (defn- baseline-profile
   [profile-key]
@@ -2846,8 +2846,8 @@
     :destination-config "destinations/io.edn"
     :maven-selector ":pdfbox-io"
     :source-project-id (:source-project-id (baseline-profile :io))
-    :package-id "PdfCube.IO"
-    :namespace-prefixes {"org.apache.pdfbox.io" "PdfCube.IO"}
+    :package-id "DripSharp.PdfCarton.IO"
+    :namespace-prefixes {"org.apache.pdfbox.io" "DripSharp.PdfCarton.IO"}
     :external-namespace-prefixes {}
     :dependency-profiles []
     :source-project-dependencies []
@@ -2855,11 +2855,11 @@
     :project-references []
     :package-consumer
     {:strategy :source-file
-     :project-file "PdfCube.IO.PackageConsumer.csproj"
+     :project-file "DripSharp.PdfCarton.IO.PackageConsumer.csproj"
      :source-path
-     "targets/pdfcube/validation/probe/PdfCube.IO.FocusedConsumer.cs"
-     :success-message "PdfCube.IO focused behavior passed."}
-    :friend-assemblies #{"PdfCube.PdfBox" "PdfCube.Preflight"}
+     "targets/pdfcube/validation/probe/DripSharp.PdfCarton.IO.FocusedConsumer.cs"
+     :success-message "DripSharp.PdfCarton.IO focused behavior passed."}
+    :friend-assemblies #{"DripSharp.PdfCarton" "DripSharp.PdfCarton.Preflight"}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package]
     :internal-capabilities #{:java-io :java-nio}
@@ -2870,33 +2870,34 @@
     :destination-config "destinations/fontbox.edn"
     :maven-selector ":fontbox"
     :source-project-id (:source-project-id (baseline-profile :fontbox))
-    :package-id "PdfCube.FontBox"
-    :namespace-prefixes {"org.apache.fontbox" "PdfCube.FontBox"}
-    :external-namespace-prefixes {"org.apache.pdfbox.io" "PdfCube.IO"}
+    :package-id "DripSharp.PdfCarton.Fonts"
+    :namespace-prefixes {"org.apache.fontbox" "DripSharp.PdfCarton.Fonts"}
+    :external-namespace-prefixes {"org.apache.pdfbox.io" "DripSharp.PdfCarton.IO"}
     :dependency-profiles ["pdfcube-io"]
     :source-project-dependencies
     (:source-project-dependencies (baseline-profile :fontbox))
-    :package-dependencies ["PdfCube.IO"]
-    :project-references ["../pdfcube-io/PdfCube.IO.csproj"]
+    :package-dependencies ["DripSharp.PdfCarton.IO"]
+    :project-references
+    ["../DripSharp.PdfCarton.IO/DripSharp.PdfCarton.IO.csproj"]
     :package-consumer
     {:strategy :source-file
-     :project-file "PdfCube.FontBox.PackageConsumer.csproj"
+     :project-file "DripSharp.PdfCarton.Fonts.PackageConsumer.csproj"
      :source-path
-     "targets/pdfcube/validation/probe/PdfCube.FontBox.FocusedConsumer.cs"
-     :success-message "PdfCube.FontBox focused behavior passed."}
+     "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Fonts.FocusedConsumer.cs"
+     :success-message "DripSharp.PdfCarton.Fonts focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package skia-linux-package]
     :internal-capabilities #{:font-discovery :icc :skia-geometry}
     :destination-capabilities #{:java-bidi :java-compat :java-regex-unicode}
-    :compatibility-namespace "PdfCube.FB.Runtime"}
+    :compatibility-namespace "DripSharp.PdfCarton.Runtime.Fonts"}
 
    :xmpbox
    {:profile "pdfcube-xmpbox"
     :destination-config "destinations/xmpbox.edn"
     :maven-selector ":xmpbox"
     :source-project-id (:source-project-id (baseline-profile :xmpbox))
-    :package-id "PdfCube.XmpBox"
-    :namespace-prefixes {"org.apache.xmpbox" "PdfCube.XmpBox"}
+    :package-id "DripSharp.PdfCarton.Xmp"
+    :namespace-prefixes {"org.apache.xmpbox" "DripSharp.PdfCarton.Xmp"}
     :external-namespace-prefixes {}
     :dependency-profiles []
     :source-project-dependencies []
@@ -2904,41 +2905,41 @@
     :project-references []
     :package-consumer
     {:strategy :source-file
-     :project-file "PdfCube.XmpBox.PackageConsumer.csproj"
+     :project-file "DripSharp.PdfCarton.Xmp.PackageConsumer.csproj"
      :source-path
-     "targets/pdfcube/validation/probe/PdfCube.XmpBox.FocusedConsumer.cs"
-     :success-message "PdfCube.XmpBox focused behavior passed."}
+     "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Xmp.FocusedConsumer.cs"
+     :success-message "DripSharp.PdfCarton.Xmp focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package]
     :internal-capabilities #{:xml}
     :destination-capabilities #{:java-compat :java-regex-unicode}
-    :compatibility-namespace "PdfCube.XMP.Runtime"}
+    :compatibility-namespace "DripSharp.PdfCarton.Runtime.Xmp"}
 
    :pdfbox
    {:profile "pdfcube-pdfbox"
     :destination-config "destinations/pdfbox.edn"
     :maven-selector ":pdfbox"
     :source-project-id (:source-project-id (baseline-profile :pdfbox))
-    :package-id "PdfCube.PdfBox"
-    :namespace-prefixes {"org.apache.pdfbox" "PdfCube.PdfBox"}
+    :package-id "DripSharp.PdfCarton"
+    :namespace-prefixes {"org.apache.pdfbox" "DripSharp.PdfCarton"}
     :external-namespace-prefixes
-    {"org.apache.fontbox" "PdfCube.FontBox"
-     "org.apache.pdfbox.io" "PdfCube.IO"}
+    {"org.apache.fontbox" "DripSharp.PdfCarton.Fonts"
+     "org.apache.pdfbox.io" "DripSharp.PdfCarton.IO"}
     :dependency-profiles ["pdfcube-io" "pdfcube-fontbox"]
     :source-project-dependencies
     (:source-project-dependencies (baseline-profile :pdfbox))
-    :package-dependencies ["PdfCube.IO" "PdfCube.FontBox"]
+    :package-dependencies ["DripSharp.PdfCarton.IO" "DripSharp.PdfCarton.Fonts"]
     :project-references
-    ["../pdfcube-io/PdfCube.IO.csproj"
-     "../pdfcube-fontbox/PdfCube.FontBox.csproj"]
-    :friend-assemblies #{"PdfCube.Preflight"}
+    ["../DripSharp.PdfCarton.IO/DripSharp.PdfCarton.IO.csproj"
+     "../DripSharp.PdfCarton.Fonts/DripSharp.PdfCarton.Fonts.csproj"]
+    :friend-assemblies #{"DripSharp.PdfCarton.Preflight"}
     :package-consumer
     {:strategy :compile-only
-     :project-file "PdfCube.PdfBox.PackageConsumer.csproj"
+     :project-file "DripSharp.PdfCarton.PackageConsumer.csproj"
      :compile-types
-     ["PdfCube.PdfBox.Cos.COSDocument"
-      "PdfCube.PdfBox.Pdmodel.PDDocument"]
-     :success-message "PdfCube.PdfBox package boundary passed."}
+     ["DripSharp.PdfCarton.Cos.COSDocument"
+      "DripSharp.PdfCarton.Pdmodel.PDDocument"]
+     :success-message "DripSharp.PdfCarton package boundary passed."}
     :external-dependencies
     (assoc bouncy-dependencies commons-coordinate commons-dependency)
     :runtime-packages [logging-package pkcs-package skia-package]
@@ -2954,26 +2955,26 @@
     :destination-config "destinations/preflight.edn"
     :maven-selector ":preflight"
     :source-project-id (:source-project-id (baseline-profile :preflight))
-    :package-id "PdfCube.Preflight"
-    :namespace-prefixes {"org.apache.pdfbox.preflight" "PdfCube.Preflight"}
+    :package-id "DripSharp.PdfCarton.Preflight"
+    :namespace-prefixes {"org.apache.pdfbox.preflight" "DripSharp.PdfCarton.Preflight"}
     :external-namespace-prefixes
-    {"org.apache.fontbox" "PdfCube.FontBox"
-     "org.apache.pdfbox.io" "PdfCube.IO"
-     "org.apache.pdfbox" "PdfCube.PdfBox"
-     "org.apache.xmpbox" "PdfCube.XmpBox"}
+    {"org.apache.fontbox" "DripSharp.PdfCarton.Fonts"
+     "org.apache.pdfbox.io" "DripSharp.PdfCarton.IO"
+     "org.apache.pdfbox" "DripSharp.PdfCarton"
+     "org.apache.xmpbox" "DripSharp.PdfCarton.Xmp"}
     :dependency-profiles ["pdfcube-pdfbox" "pdfcube-xmpbox"]
     :source-project-dependencies
     (:source-project-dependencies (baseline-profile :preflight))
-    :package-dependencies ["PdfCube.PdfBox" "PdfCube.XmpBox"]
+    :package-dependencies ["DripSharp.PdfCarton" "DripSharp.PdfCarton.Xmp"]
     :project-references
-    ["../pdfcube-pdfbox/PdfCube.PdfBox.csproj"
-     "../pdfcube-xmpbox/PdfCube.XmpBox.csproj"]
+    ["../DripSharp.PdfCarton/DripSharp.PdfCarton.csproj"
+     "../DripSharp.PdfCarton.Xmp/DripSharp.PdfCarton.Xmp.csproj"]
     :package-consumer
     {:strategy :source-file
-     :project-file "PdfCube.Preflight.PackageConsumer.csproj"
+     :project-file "DripSharp.PdfCarton.Preflight.PackageConsumer.csproj"
      :source-path
-     "targets/pdfcube/validation/probe/PdfCube.Preflight.FocusedConsumer.cs"
-     :success-message "PdfCube.Preflight focused behavior passed."}
+     "targets/pdfcube/validation/probe/DripSharp.PdfCarton.Preflight.FocusedConsumer.cs"
+     :success-message "DripSharp.PdfCarton.Preflight focused behavior passed."}
     :external-dependencies {commons-coordinate commons-dependency}
     :runtime-packages [logging-package skia-package]
     :internal-capabilities #{:preflight-font-erasure}
@@ -2982,10 +2983,10 @@
     :bridge-capabilities #{}}))
 
 (defn product-family
-  "Returns the deterministic five-package PdfCube configuration contract."
+  "Returns the deterministic five-package PdfCarton configuration contract."
   []
   {:schema-version 1
-   :product-family :pdfcube
+   :product-family :pdfcarton
    :source-version source-version
    :source-revision source-revision
    :products products})
@@ -2998,7 +2999,7 @@
   (let [key (:pdfcube-product configuration)
         product (get products key)]
     (when-not product
-      (fail! "PdfCube configuration does not select one of the five products"
+      (fail! "PdfCarton configuration does not select one of the five products"
              {:kind :unknown-pdfcube-product
               :pdfcube-product key
               :available (vec (keys products))}))
@@ -3019,7 +3020,7 @@
     (doseq [[coordinate {:keys [runtime-package destination]}] external]
       (when-not (and (map? destination)
                      (contains? allowed-projection-kinds (:kind destination)))
-        (fail! "PdfCube source dependency has no approved destination projection"
+        (fail! "PdfCarton source dependency has no approved destination projection"
                {:kind :unsupported-pdfcube-dependency-projection
                 :coordinate coordinate :destination destination}))
       (if runtime-package
@@ -3028,12 +3029,12 @@
           (when-not (and (contains? #{:microsoft-package :skia-sharp}
                                     (:kind destination))
                          (= version (:version runtime)))
-            (fail! "PdfCube runtime dependency projection is missing or inconsistent"
+            (fail! "PdfCarton runtime dependency projection is missing or inconsistent"
                    {:kind :unapproved-pdfcube-runtime-dependency
                     :coordinate coordinate :destination destination
                     :runtime-package runtime})))
         (when (contains? #{:microsoft-package :skia-sharp} (:kind destination))
-          (fail! "PdfCube package projection must be marked as a runtime package"
+          (fail! "PdfCarton package projection must be marked as a runtime package"
                  {:kind :invalid-pdfcube-runtime-projection
                   :coordinate coordinate :destination destination}))))
     (doseq [{:keys [id version projection] :as dependency} runtime-packages]
@@ -3042,7 +3043,7 @@
            (= pkcs-package dependency)
            (= skia-package dependency)
            (= skia-linux-package dependency))
-        (fail! "PdfCube destination requested an unapproved runtime package"
+        (fail! "PdfCarton destination requested an unapproved runtime package"
                {:kind :unapproved-pdfcube-runtime-dependency
                 :dependency dependency}))
       (when-not (case projection
@@ -3058,31 +3059,31 @@
                   (and (= "SkiaSharp.NativeAssets.Linux" id)
                        (= "4.150.1" version))
                   false)
-        (fail! "PdfCube runtime package version or provider is not approved"
+        (fail! "PdfCarton runtime package version or provider is not approved"
                {:kind :unapproved-pdfcube-runtime-dependency
                 :dependency dependency}))))
   configuration)
 
 (defn validate-configuration!
-  "Validates common project structure plus the exact selected PdfCube product."
+  "Validates common project structure plus the exact selected PdfCarton product."
   [configuration]
   (project-emission/validate-configuration! configuration)
   (let [product (product! configuration)
         package-id (:package-id product)]
     (validate-dependency-projections! configuration)
-    (exact! "PdfCube destination must target net10.0"
+    (exact! "PdfCarton destination must target net10.0"
             [:project :target-framework] "net10.0"
             (get-in configuration [:project :target-framework]))
-    (exact! "PdfCube destination must disable nullable reference types"
+    (exact! "PdfCarton destination must disable nullable reference types"
             [:project :nullable] "disable"
             (get-in configuration [:project :nullable]))
-    (exact! "PdfCube destination must treat warnings as errors"
+    (exact! "PdfCarton destination must treat warnings as errors"
             [:project :warnings-as-errors] true
             (get-in configuration [:project :warnings-as-errors]))
-    (exact! "PdfCube destination must use explicit usings"
+    (exact! "PdfCarton destination must use explicit usings"
             [:project :implicit-usings] false
             (get-in configuration [:project :implicit-usings]))
-    (exact! "PdfCube public names must use C# casing without changing member kinds"
+    (exact! "PdfCarton public names must use C# casing without changing member kinds"
             :name-policy
             {:public-identifiers :csharp
              :methods :methods
@@ -3130,7 +3131,7 @@
              [:resource-policy (:resource-policy configuration)]]]
       (let [expected
             (case field
-              :product-family :pdfcube
+              :product-family :pdfcarton
               :destination-bundle bundle-selector
               [:project :assembly-name] package-id
               [:project :root-namespace] package-id
@@ -3161,9 +3162,9 @@
               :compatibility-namespace (:compatibility-namespace product)
               :legal-files (or (:legal-files product) legal-files)
               :resource-policy {:strategy :embedded-resource-preserve-path})]
-        (exact! "PdfCube destination differs from its approved product contract"
+        (exact! "PdfCarton destination differs from its approved product contract"
                 field expected actual)))
-    (exact! "PdfCube public surface must be derived from its resolved Spoon module"
+    (exact! "PdfCarton public surface must be derived from its resolved Spoon module"
             :public-surface {:strategy surface-selector}
             (:public-surface configuration))
     configuration))
@@ -3174,12 +3175,12 @@
   (doseq [{:keys [kind source sha256]} (:legal-files configuration)]
     (let [file (paths/resolve-path (paths/absolute workspace-root) source)]
       (when-not (paths/regular-file? file)
-        (fail! "Configured PdfCube license or notice input is missing"
+        (fail! "Configured PdfCarton license or notice input is missing"
                {:kind :missing-pdfcube-legal-input
                 :legal-kind kind :path (str file)}))
       (let [actual (digest-file file)]
         (when-not (= sha256 actual)
-          (fail! "Configured PdfCube license or notice input changed"
+          (fail! "Configured PdfCarton license or notice input changed"
                  {:kind :pdfcube-legal-input-mismatch
                   :legal-kind kind :path (str file)
                   :expected sha256 :actual actual})))))
@@ -3191,7 +3192,7 @@
         expected
         {:schema-version 1
          :profile (:profile product)
-         :product-family :pdfcube
+         :product-family :pdfcarton
          :project-root "research/pdfbox"
          :revision source-revision
          :build-tool :maven
@@ -3207,7 +3208,7 @@
           (update :destination-config
                   #(subs % (count "targets/pdfcube/"))))]
     (when-not (= expected actual)
-      (fail! "PdfCube generation profile differs from the approved product contract"
+      (fail! "PdfCarton generation profile differs from the approved product contract"
              {:kind :invalid-pdfcube-profile
               :expected expected :actual actual}))
     (validate-legal-inputs! workspace-root configuration)))
@@ -3218,7 +3219,7 @@
         (get-in (java-library/rule-bundle)
                 [:orchestration :validate-project-input!])]
     (base-validator context)
-    (exact! "Maven selected the wrong PdfCube source project"
+    (exact! "Maven selected the wrong PdfCarton source project"
             :source-project-id (:source-project-id configuration)
             (:project-id project-input))
     (baseline/validate-project-input!
@@ -3343,8 +3344,8 @@
   (update-in declaration [:body :statements :statements] conj statement))
 
 (def ^:private security-handler-carrier
-  (str "global::PdfCube.PdfBox.Pdmodel.Encryption.SecurityHandler"
-       "<global::PdfCube.PdfBox.Pdmodel.Encryption.ProtectionPolicy>"))
+  (str "global::DripSharp.PdfCarton.Pdmodel.Encryption.SecurityHandler"
+       "<global::DripSharp.PdfCarton.Pdmodel.Encryption.ProtectionPolicy>"))
 
 (def ^:private erased-security-handler
   "global::DripSharp.Runtime.PdfBoxSecurityHandler")
@@ -3420,7 +3421,7 @@
              declaration))))))
 
 (def ^:private preflight-font-container-contract
-  "global::PdfCube.Preflight.Font.Container.IFontContainer")
+  "global::DripSharp.PdfCarton.Preflight.Font.Container.IFontContainer")
 
 (defn- replace-single-generic-argument
   [node targets source replacement]
@@ -3466,7 +3467,7 @@
 
 (defn- preserve-preflight-generic-contracts
   [configuration node]
-  (if-not (= "PdfCube.Preflight" (get-in configuration [:package :id]))
+  (if-not (= "DripSharp.PdfCarton.Preflight" (get-in configuration [:package :id]))
     node
     (-> node
         (update-declaration
@@ -3547,7 +3548,7 @@
            :destination destination
            :strategy (keyword "pdfcube.legal" (name kind))
            :missing-kind :missing-pdfcube-legal-input
-           :missing-message "Configured PdfCube license or notice input is missing"})
+           :missing-message "Configured PdfCarton license or notice input is missing"})
         (:legal-files configuration)))
 
 (defn- configured-runtime-source
@@ -3559,7 +3560,7 @@
         source))
     (:runtime-sources configuration))
    (throw
-    (ex-info "PdfCube capability has no selected target runtime asset"
+    (ex-info "PdfCarton capability has no selected target runtime asset"
              {:kind :missing-pdfcube-runtime-selection
               :asset file-name
               :selected (:runtime-sources configuration)}))))
@@ -3570,22 +3571,22 @@
     (conj
      {:source
       (configured-runtime-source configuration
-                                 "PdfCube.FontBox.Discovery.cs")
-      :destination "DripSharp/Runtime/PdfCubeFontDiscovery.cs"
+                                 "DripSharp.PdfCarton.Fonts.Discovery.cs")
+      :destination "DripSharp/Runtime/PdfCartonFontDiscovery.cs"
       :strategy :pdfcube.fontbox/font-discovery
       :missing-kind :missing-pdfcube-fontbox-discovery-source
-      :missing-message "PdfCube FontBox discovery source is missing"})
+      :missing-message "PdfCarton FontBox discovery source is missing"})
 
     (or (contains? (:internal-capabilities configuration) :skia-geometry)
         (contains? (:internal-capabilities configuration) :skia-graphics))
     (conj
      {:source
       (configured-runtime-source configuration
-                                 "PdfCube.FontBox.Compat.cs")
-      :destination "DripSharp/Runtime/PdfCubeFontBoxCompat.cs"
+                                 "DripSharp.PdfCarton.Fonts.Compat.cs")
+      :destination "DripSharp/Runtime/PdfCartonFontBoxCompat.cs"
       :strategy :pdfcube.fontbox/skia-geometry
       :missing-kind :missing-pdfcube-fontbox-compatibility-source
-      :missing-message "PdfCube FontBox compatibility source is missing"})
+      :missing-message "PdfCarton FontBox compatibility source is missing"})
 
     (and
      (contains? (:internal-capabilities configuration) :skia-geometry)
@@ -3593,30 +3594,34 @@
               (contains? (:internal-capabilities configuration) :jpx))))
     (conj
      {:source
-      (configured-runtime-source configuration
-                                 "PdfCube.ImageCodecs.Unsupported.cs")
-      :destination "DripSharp/Runtime/PdfCubeImageCodecs.cs"
+      (configured-runtime-source
+       configuration
+       "DripSharp.PdfCarton.ImageCodecs.Unsupported.cs")
+      :destination "DripSharp/Runtime/PdfCartonImageCodecs.cs"
       :strategy :pdfcube.fontbox/no-image-codecs
       :missing-kind :missing-pdfcube-fontbox-no-image-codecs-source
-      :missing-message "PdfCube FontBox no-codec adapter source is missing"})
+      :missing-message "PdfCarton FontBox no-codec adapter source is missing"})
 
     (contains? (:internal-capabilities configuration) :icc)
     (conj
-     {:source (configured-runtime-source configuration "PdfCube.Icc.cs")
-      :destination "DripSharp/Runtime/PdfCubeIcc.cs"
+     {:source
+      (configured-runtime-source configuration "DripSharp.PdfCarton.Icc.cs")
+      :destination "DripSharp/Runtime/PdfCartonIcc.cs"
       :strategy :pdfcube.pdfbox/icc
       :missing-kind :missing-pdfcube-icc-source
-      :missing-message "PdfCube ICC source is missing"})
+      :missing-message "PdfCarton ICC source is missing"})
 
     (or (contains? (:internal-capabilities configuration) :jbig2)
         (contains? (:internal-capabilities configuration) :jpx))
     (conj
      {:source
-      (configured-runtime-source configuration "PdfCube.ImageCodecs.cs")
-      :destination "DripSharp/Runtime/PdfCubeImageCodecs.cs"
+      (configured-runtime-source
+       configuration
+       "DripSharp.PdfCarton.ImageCodecs.cs")
+      :destination "DripSharp/Runtime/PdfCartonImageCodecs.cs"
       :strategy :pdfcube.pdfbox/image-codec-adapters
       :missing-kind :missing-pdfcube-image-codec-adapter
-      :missing-message "PdfCube image codec adapter source is missing"})
+      :missing-message "PdfCarton image codec adapter source is missing"})
 
     (contains? (:internal-capabilities configuration) :jbig2)
     (conj
@@ -3627,7 +3632,7 @@
       :authorship-class :vendored-third-party
       :strategy :pdfcube.pdfbox/jbig2-source
       :missing-kind :missing-pdfcube-jbig2-source
-      :missing-message "Pinned PdfCube JBIG2 source is missing"})
+      :missing-message "Pinned PdfCarton JBIG2 source is missing"})
 
     (contains? (:internal-capabilities configuration) :jpx)
     (conj
@@ -3639,31 +3644,31 @@
       :authorship-class :vendored-third-party
       :strategy :pdfcube.pdfbox/jpx-source
       :missing-kind :missing-pdfcube-jpx-source
-      :missing-message "Pinned PdfCube JPEG 2000 source is missing"})
+      :missing-message "Pinned PdfCarton JPEG 2000 source is missing"})
 
     (contains? (:internal-capabilities configuration)
                :security-handler-erasure)
     (conj
      {:source
-      (configured-runtime-source configuration "PdfCube.PdfBox.Compat.cs")
+      (configured-runtime-source configuration "DripSharp.PdfCarton.Compat.cs")
       :destination "DripSharp/Runtime/PdfBoxSecurityHandler.cs"
       :strategy :pdfcube.pdfbox/security-handler-erasure
       :missing-kind :missing-pdfcube-pdfbox-compatibility-source
-      :missing-message "PdfCube PDFBox compatibility source is missing"})
+      :missing-message "PdfCarton PDFBox compatibility source is missing"})
 
     (contains? (:internal-capabilities configuration)
                :preflight-font-erasure)
     (conj
      {:source
       (configured-runtime-source configuration
-                                 "PdfCube.Preflight.Compat.cs")
-      :destination "DripSharp/Runtime/PdfCubePreflightCompat.cs"
+                                 "DripSharp.PdfCarton.Preflight.Compat.cs")
+      :destination "DripSharp/Runtime/PdfCartonPreflightCompat.cs"
       :strategy :pdfcube.preflight/font-erasure
       :missing-kind :missing-pdfcube-preflight-compatibility-source
-      :missing-message "PdfCube Preflight compatibility source is missing"})))
+      :missing-message "PdfCarton Preflight compatibility source is missing"})))
 
 (defn rule-bundle
-  "Returns the PdfCube rule bundle composed over reusable Java-library rules."
+  "Returns the PdfCarton rule bundle composed over reusable Java-library rules."
   []
   (let [base (java-library/rule-bundle)
         base-assets (get-in base [:rules :destination-bridges :assets])
@@ -3671,7 +3676,7 @@
         (get-in base [:rules :structural-declarations :create-context])]
     (-> base
         (assoc :id :pdfcube
-               :product-family :pdfcube
+               :product-family :pdfcarton
                :orchestration
                {:validate-profile! validate-profile!
                 :validate-project-input! validate-project-input!})
@@ -3751,4 +3756,4 @@
   []
   (assoc (java-library/public-surface-strategy)
          :id :pdfcube-complete-accessible-library
-         :product-family :pdfcube))
+         :product-family :pdfcarton))

@@ -7851,7 +7851,7 @@
                     "global::SkiaSharp.SKRectI deviceBounds, "
                     "global::SkiaSharp.SKRect userBounds, "
                     "global::SkiaSharp.SKMatrix transform, "
-                    "global::DripSharp.Runtime.PdfCubeRenderingHints hints);")))
+                    "global::DripSharp.Runtime.PdfCartonRenderingHints hints);")))
                 (when (empty? (.getMethodsByName owner "getTransparency"))
                   (raw "public abstract int GetTransparency();"))])
 

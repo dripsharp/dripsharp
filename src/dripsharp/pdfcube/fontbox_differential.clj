@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.fontbox-differential
-  "Versioned, data-driven PDFBox baseline versus PdfCube.FontBox package proof."
+  "Versioned, data-driven PDFBox baseline versus DripSharp.PdfCarton.Fonts package proof."
   (:require [dripsharp.baseline :as baseline]
             [dripsharp.differential :as differential]
             [dripsharp.paths :as paths]

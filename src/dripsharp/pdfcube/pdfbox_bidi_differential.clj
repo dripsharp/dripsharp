@@ -1,5 +1,5 @@
 (ns dripsharp.pdfcube.pdfbox-bidi-differential
-  "Pinned java.text.Bidi and PDFBox extraction versus PdfCube.PdfBox."
+  "Pinned java.text.Bidi and PDFBox extraction versus DripSharp.PdfCarton."
   (:require [dripsharp.baseline :as baseline]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -88,7 +88,7 @@
         comparison (differential/compare-results expected actual)]
     (when-let [mismatch (:mismatch comparison)]
       (fail!
-       "PdfCube bidi behavior differs from the pinned Java/PDFBox oracle"
+       "PdfCarton bidi behavior differs from the pinned Java/PDFBox oracle"
        {:expected (str expected)
         :actual (str actual)
         :comparison comparison
@@ -178,7 +178,7 @@
   [run-command! ^Path root ^Path output ^Path mirroring]
   (let [project
         (paths/resolve-path root "validation" "pdfcube-pdfbox-bidi"
-                            "PdfCube.PdfBox.BidiProbe.csproj")]
+                            "DripSharp.PdfCarton.BidiProbe.csproj")]
     (run-command! {:command ["dotnet" "build" (str project)
                              "--nologo" "--configuration" "Release"
                              "--verbosity:minimal" "--no-incremental"
@@ -281,6 +281,6 @@
        (spit (str (paths/resolve-path proof-root "summary.edn"))
              (str (pr-str (dissoc summary :proof-root)) "\n"))
        (println
-        "Pinned Java/package PdfCube.PdfBox bidi differential passed:"
+        "Pinned Java/package DripSharp.PdfCarton bidi differential passed:"
         (pr-str (select-keys summary [:source :package :trace])))
        summary))))
