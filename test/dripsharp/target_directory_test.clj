@@ -128,9 +128,21 @@
     "Acme Core for .NET. This package is an independent translation and is not affiliated with UpstreamCo."
     :authors "DripSharp"}
    :output {:project-directory "generated/acme/src/Acme.Core"
+            :source-directory "src"
             :project-file "Acme.Core.csproj"}
    :destination-capabilities #{:java-compat}
    :runtime-sources ["runtime/Acme.Core.Runtime.cs"]})
+
+(defn- synthetic-project-emission!
+  [root destination]
+  (let [{:keys [project-directory source-directory]} (:output destination)
+        project-root (.resolve (.resolve ^Path root "target")
+                               project-directory)]
+    (doseq [{:keys [source destination]} (:legal-files destination)]
+      (write-text! project-root
+                   (str source-directory "/" destination)
+                   (slurp (str (.resolve ^Path root source)))))
+    {:project-root project-root}))
 
 (defn- mapping-overlay
   []
@@ -1237,9 +1249,15 @@
       :runner
       'dripsharp.target-directory-test/custom-package-proof-runner)
      (let [generate-fn
-           (fn [{:keys [profile read-profile-fn]}]
-             {:stage :generate
-              :profile (:profile (read-profile-fn root profile))})
+           (fn [{:keys [profile read-profile-fn read-destination-fn]}]
+             (let [profile-record (read-profile-fn root profile)
+                   destination
+                   (read-destination-fn
+                    root (:destination-config profile-record))]
+               {:stage :generate
+                :profile (:profile profile-record)
+                :emission
+                (synthetic-project-emission! root destination)}))
            verify-fn
            (fn [{:keys [generate-fn] :as options}]
              {:stage :verify
@@ -1298,7 +1316,10 @@
                        :runtime-sources (:runtime-sources destination)
                        :resource-notice-attribution
                        (:resource-notice-attribution destination)})
-               {:stage :generate :options options}))
+               {:stage :generate
+                :options options
+                :emission
+                (synthetic-project-emission! root destination)}))
            verify-fn
            (fn [{:keys [generate-fn] :as options}]
              {:stage :verify
