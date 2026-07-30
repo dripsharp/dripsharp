@@ -249,6 +249,10 @@
               (assoc-in configuration [:legal-files 0 :sha256] "ABC123")
               [:legal-files 0 :sha256]
               "a lowercase SHA-256 string"]
+             [:nil-source-sha256
+              (assoc-in configuration [:legal-files 0 :source-sha256] nil)
+              [:legal-files 0 :source-sha256]
+              "a lowercase SHA-256 string"]
              [:invalid-source-sha256
               (assoc-in configuration [:legal-files 0 :source-sha256] "ABC123")
               [:legal-files 0 :source-sha256]
@@ -267,6 +271,11 @@
                    (set (get-in (ex-data error)
                                 [:expected :required-keys]))))
             (is (str/includes? (:expected (ex-data error)) expected))))))
+    (let [without-source-digest
+          (update-in configuration [:legal-files 0] dissoc :source-sha256)]
+      (is (= without-source-digest
+             (project-emission/validate-configuration!
+              without-source-digest))))
     (let [supplementary (String. (Character/toChars 0x1F680))
           candidate
           (reduce (fn [result field]

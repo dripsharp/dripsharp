@@ -269,9 +269,9 @@
                              (:sha256 legal-file)
                              "a lowercase SHA-256 string"
                              sha256?)
-          (when-some [source-sha256 (:source-sha256 legal-file)]
+          (when (contains? legal-file :source-sha256)
             (validation/check! context [:legal-files index :source-sha256]
-                               source-sha256
+                               (:source-sha256 legal-file)
                                "a lowercase SHA-256 string"
                                sha256?)))
         (doseq [[field exact-expectation case-insensitive-expectation]

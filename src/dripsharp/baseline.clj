@@ -206,8 +206,9 @@
                                              (get entry %))
                                            [:source :destination :package-path])
                                    (sha256? (:sha256 entry))
-                                   (or (nil? (:source-sha256 entry))
-                                       (sha256? (:source-sha256 entry)))))
+                                   (or
+                                    (not (contains? entry :source-sha256))
+                                    (sha256? (:source-sha256 entry)))))
                             entries)))
                     (vals legal-sets)))
       (invalid! "Target baseline has invalid legal-file contracts"

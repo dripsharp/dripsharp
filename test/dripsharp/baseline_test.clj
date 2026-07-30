@@ -164,6 +164,23 @@
       (is (= candidate
              (baseline/validate-record! :rawhttp candidate))))))
 
+(deftest baseline-optional-source-digest-must-be-absent-or-valid
+  (let [record (baseline/read-baseline :rawhttp)
+        without-source-digest
+        (update-in record [:legal-sets :upstream 0] dissoc :source-sha256)
+        error
+        (try
+          (baseline/validate-record!
+           :rawhttp
+           (assoc-in record [:legal-sets :upstream 0 :source-sha256] nil))
+          nil
+          (catch clojure.lang.ExceptionInfo caught caught))]
+    (is (= record (baseline/validate-record! :rawhttp record)))
+    (is (= without-source-digest
+           (baseline/validate-record! :rawhttp without-source-digest)))
+    (is (= :invalid-target-baseline (:kind (ex-data error))))
+    (is (= :rawhttp (:target (ex-data error))))))
+
 (deftest rawhttp-license-input-and-package-file-are-pinned
   (let [workspace (paths/workspace-root)
         destination
