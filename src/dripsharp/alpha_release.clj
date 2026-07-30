@@ -54,7 +54,8 @@
   "https://api.nuget.org/v3/index.json")
 
 (def ^:private isolated-dotnet-environment
-  #{"AfterMicrosoftNETSdkTargets"
+  #{"AfterMicrosoftNetSdkProps"
+    "AfterMicrosoftNETSdkTargets"
     "AfterTargetFrameworkInferenceTargets"
     "AlternateCommonProps"
     "BeforeMicrosoftNETSdkTargets"

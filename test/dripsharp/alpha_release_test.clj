@@ -1108,6 +1108,8 @@
         requests (atom [])
         plugin-directory-states (atom [])
         restore-config-content (atom nil)
+        hostile-after-net-sdk-props
+        (paths/resolve-path workspace "hostile-after-net-sdk.props")
         hostile-after-net-sdk-targets
         (paths/resolve-path workspace "hostile-after-net-sdk.targets")
         hostile-after-target-framework-inference-targets
@@ -1173,7 +1175,9 @@
               request
               :environment
               (merge
-               {"AfterMicrosoftNETSdkTargets"
+               {"AfterMicrosoftNetSdkProps"
+                (str hostile-after-net-sdk-props)
+                "AfterMicrosoftNETSdkTargets"
                 (str hostile-after-net-sdk-targets)
                 "AfterTargetFrameworkInferenceTargets"
                 (str hostile-after-target-framework-inference-targets)
@@ -1248,6 +1252,11 @@
                   "/host-controlled/fallback-packages"})
                (:environment request))))))]
     (try
+      (write!
+       workspace "hostile-after-net-sdk.props"
+       (str "<Project><Target Name=\"RejectAmbientAfterNETSdkProps\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "AfterMicrosoftNetSdkProps was loaded\" /></Target></Project>\n"))
       (write!
        workspace "hostile-after-net-sdk.targets"
        (str "<Project><Target Name=\"RejectAmbientAfterNETSdkTargets\" "
@@ -1485,7 +1494,8 @@
         (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
                   restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"AfterMicrosoftNETSdkTargets"
+        (is (= #{"AfterMicrosoftNetSdkProps"
+                 "AfterMicrosoftNETSdkTargets"
                  "AfterTargetFrameworkInferenceTargets"
                  "AlternateCommonProps"
                  "BeforeMicrosoftNETSdkTargets"
@@ -1512,7 +1522,8 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
-        (is (= #{"AfterMicrosoftNETSdkTargets"
+        (is (= #{"AfterMicrosoftNetSdkProps"
+                 "AfterMicrosoftNETSdkTargets"
                  "AfterTargetFrameworkInferenceTargets"
                  "AlternateCommonProps"
                  "BeforeMicrosoftNETSdkTargets"
