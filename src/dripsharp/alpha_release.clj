@@ -54,7 +54,8 @@
   "https://api.nuget.org/v3/index.json")
 
 (def ^:private isolated-dotnet-environment
-  #{"CscToolExe"
+  #{"CodeAnalysisTargets"
+    "CscToolExe"
     "CscToolPath"
     "DOTNET_STARTUP_HOOKS"
     "CustomAfterMicrosoftCommonProps"

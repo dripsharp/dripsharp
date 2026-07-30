@@ -1112,6 +1112,8 @@
         (paths/resolve-path workspace "hostile-custom-import.props")
         hostile-custom-targets
         (paths/resolve-path workspace "hostile-custom-import.targets")
+        hostile-code-analysis-targets
+        (paths/resolve-path workspace "hostile-code-analysis.targets")
         hostile-user-extensions
         (paths/resolve-path workspace "hostile-user-extensions")
         hostile-extensions32
@@ -1157,7 +1159,9 @@
               request
               :environment
               (merge
-               {"CscToolExe" "false"
+               {"CodeAnalysisTargets"
+                (str hostile-code-analysis-targets)
+                "CscToolExe" "false"
                 "CscToolPath" "/usr/bin"
                 "CustomAfterMicrosoftCommonProps"
                 (str hostile-custom-props)
@@ -1214,6 +1218,11 @@
        (str "<Project><Target Name=\"RejectAmbientCustomImport\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient Microsoft.Common "
             "custom import was loaded\" /></Target></Project>\n"))
+      (write!
+       workspace "hostile-code-analysis.targets"
+       (str "<Project><Target Name=\"RejectAmbientCodeAnalysisTargets\" "
+            "AfterTargets=\"Build\"><Error Text=\"Ambient CodeAnalysisTargets "
+            "was loaded\" /></Target></Project>\n"))
       (write!
        hostile-user-extensions
        "Current/Microsoft.Common.targets/ImportBefore/RejectAmbientUserExtension.targets"
@@ -1401,7 +1410,8 @@
         (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
                   restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"CscToolExe"
+        (is (= #{"CodeAnalysisTargets"
+                 "CscToolExe"
                  "CscToolPath"
                  "DOTNET_STARTUP_HOOKS"
                  "CustomAfterMicrosoftCommonProps"
@@ -1414,7 +1424,8 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
-        (is (= #{"CscToolExe"
+        (is (= #{"CodeAnalysisTargets"
+                 "CscToolExe"
                  "CscToolPath"
                  "DOTNET_STARTUP_HOOKS"
                  "CustomAfterMicrosoftCommonProps"
