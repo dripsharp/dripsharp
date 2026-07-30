@@ -863,6 +863,17 @@
   (when (owned-output? ownership)
     (Files/deleteIfExists (:path ownership))))
 
+(defn- ensure-owned-outputs!
+  [ownerships]
+  (let [changed
+        (->> ownerships
+             (remove owned-output?)
+             (mapv #(str (:path %))))]
+    (when (seq changed)
+      (fail! "Prepared release assets changed before the release record was written"
+             {:reason :prepared-release-asset-changed
+              :paths changed}))))
+
 (defn- zip-records
   [artifact]
   (with-open [archive (ZipFile. (str artifact))]
@@ -1158,6 +1169,7 @@
                        {:reason :proved-state-changed
                         :before (:proved-source-sha256 initial-state)
                         :after (:proved-source-sha256 final-state)}))
+            _ (ensure-owned-outputs! @created-outputs)
             github-release
             {:repository
              (get-in target-contract [:publication :repository-slug])

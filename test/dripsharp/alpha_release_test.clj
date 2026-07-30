@@ -773,6 +773,34 @@
           (is (not (Files/exists
                     (.resolve output-root record-name)
                     (make-array LinkOption 0))))))
+      (testing "a changed earlier output prevents a successful record"
+        (let [output-root (paths/resolve-path workspace "changed-output")
+              changed-asset (.resolve output-root (first asset-names))
+              replacement "replacement owned by another actor\n"
+              calls (atom [])
+              build! (fake-build! calls)
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc
+                  options
+                  :output-root output-root
+                  :build-fn
+                  (fn [build]
+                    (let [result (build! build)]
+                      (when (= (second platform-ids)
+                               (get-in build [:platform :id]))
+                        (write! output-root (first asset-names) replacement))
+                      result)))))]
+          (is (= :prepared-release-asset-changed (:reason result)))
+          (is (= [(str changed-asset)] (:paths result)))
+          (is (= replacement (slurp (str changed-asset))))
+          (is (not (Files/exists
+                    (.resolve output-root (second asset-names))
+                    (make-array LinkOption 0))))
+          (is (not (Files/exists
+                    (.resolve output-root record-name)
+                    (make-array LinkOption 0))))))
       (testing "a final proved-state failure removes every completed ZIP"
         (let [output-root (paths/resolve-path workspace "failed-final-proof")
               managed-path (ffirst (generated-files inventory))
