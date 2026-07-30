@@ -422,7 +422,22 @@
   [workspace-root relative subject]
   (relative-path! subject relative)
   (let [root (paths/absolute workspace-root)
-        value (paths/absolute (paths/resolve-path root relative))]
+        value (paths/absolute (paths/resolve-path root relative))
+        linked-components
+        (when (.startsWith value root)
+          (->> (iterate #(.getParent ^Path %) value)
+               (take-while #(and % (not= root %)))
+               (filter #(Files/isSymbolicLink ^Path %))
+               (map #(util/portable-path root ^Path %))
+               reverse
+               vec))]
+    (when (seq linked-components)
+      (fail! (str subject " path contains symbolic links")
+             {:reason :symbolic-link-release-path
+              :subject subject
+              :root (str root)
+              :path relative
+              :symbolic-links linked-components}))
     (when-not (and (.startsWith value root)
                    (paths/real-contained? root value))
       (fail! (str subject " is missing or escaped")

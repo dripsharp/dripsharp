@@ -9,7 +9,7 @@
             [dripsharp.target-execution :as target-execution]
             [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file FileVisitOption Files OpenOption Path]
+           [java.nio.file CopyOption FileVisitOption Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
            [java.util Locale]
            [java.util.zip ZipEntry ZipOutputStream]))
@@ -791,6 +791,51 @@
                     :framework-assemblies #{"System.Runtime.dll"}})))))
         (finally
           (delete-tree! workspace))))))
+
+(deftest release-preparation-rejects-symbolic-links-at-proved-path-boundaries
+  (doseq [{:keys [subject path-key linked-path]}
+          [{:subject "Proved product staging"
+            :path-key :staging
+            :linked-path :leaf}
+           {:subject "Proved product staging"
+            :path-key :staging
+            :linked-path :parent}
+           {:subject "Product submodule"
+            :path-key :product
+            :linked-path :leaf}]]
+    (testing (str subject " " (name linked-path))
+      (let [[_ inventory] (actual-contract-and-inventory :pkl)
+            {:keys [workspace contract commit] :as fixture}
+            (release-fixture! inventory)
+            contracted-path (get fixture path-key)
+            link (if (= :parent linked-path)
+                   (.getParent contracted-path)
+                   contracted-path)
+            substitute
+            (paths/resolve-path
+             workspace
+             (str "substitute-" (name path-key) "-" (name linked-path)))]
+        (try
+          (Files/move link substitute (make-array CopyOption 0))
+          (Files/createSymbolicLink
+           link substitute (make-array FileAttribute 0))
+          (let [result
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit commit
+                    :output-root (paths/resolve-path workspace "release")
+                    :build-fn (fake-build! (atom []))
+                    :framework-assemblies #{"System.Runtime.dll"}}))]
+            (is (= :symbolic-link-release-path (:reason result)))
+            (is (= subject (:subject result)))
+            (is (= [(str (.relativize workspace link))]
+                   (:symbolic-links result))))
+          (finally
+            (delete-tree! workspace)))))))
 
 (deftest release-preparation-rejects-symbolic-links-in-build-output
   (let [[_ inventory] (actual-contract-and-inventory :pkl)
