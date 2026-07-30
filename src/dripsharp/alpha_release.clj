@@ -141,6 +141,15 @@
    (filter (fn [[_ entries]] (< 1 (count entries))))
    (group-by #(portable-lower-case (identity-fn %)) values)))
 
+(defn- case-insensitive-intersection
+  [values candidates]
+  (let [candidate-identities
+        (set (map portable-lower-case candidates))]
+    (set
+     (filter #(contains? candidate-identities
+                         (portable-lower-case %))
+             values))))
+
 (defn- forbidden-file?
   [value]
   (let [lower (portable-lower-case value)]
@@ -732,7 +741,8 @@
          (for [[file _] by-name
                :when (or (dll-file? file) (native-file? file))]
            file))
-        framework (set/intersection binaries framework-assemblies)
+        framework
+        (case-insensitive-intersection binaries framework-assemblies)
         missing (set/difference expected-all binaries)
         unexpected (set/difference binaries expected-all)]
     (when (seq collisions)
@@ -827,8 +837,9 @@
          records)
         forbidden (filterv forbidden-file? names)
         framework
-        (vec (sort (set/intersection (set names)
-                                     (set framework-assemblies))))
+        (vec
+         (sort
+          (case-insensitive-intersection names framework-assemblies)))
         expected (expected-files inventory platform)
         expected-all (apply set/union #{} (vals expected))
         actual (set names)

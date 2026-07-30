@@ -612,18 +612,20 @@
           (is (= ["libShadow.so"] (:unexpected-native result)))
           (is (= ["README.md"] (:unrelated result)))))
       (testing "framework assemblies fail even when they are otherwise unexpected"
-        (let [entries (assoc expected "System.Runtime.dll" "framework")
-              asset (zip! (.resolve root "framework.asset") entries)]
-          (is (= :framework-assembly
-                 (:reason
-                  (failure
-                   #(alpha-release/verify-asset!
-                     {:artifact asset
-                      :inventory inventory
-                      :platform platform
-                      :expected-hashes (hashes entries)
-                      :framework-assemblies
-                      #{"System.Runtime.dll"}})))))))
+        (doseq [file ["System.Runtime.dll" "system.runtime.dll"]]
+          (let [entries (assoc expected file "framework")
+                asset (zip! (.resolve root (str file ".asset")) entries)
+                result
+                (failure
+                 #(alpha-release/verify-asset!
+                   {:artifact asset
+                    :inventory inventory
+                    :platform platform
+                    :expected-hashes (hashes entries)
+                    :framework-assemblies
+                    #{"System.Runtime.dll"}}))]
+            (is (= :framework-assembly (:reason result)))
+            (is (= [file] (:entries result))))))
       (testing "typed inventory rejects dependency-name collisions"
         (let [colliding
               (update
@@ -655,7 +657,7 @@
                        (get-in
                         result
                         [:collisions "dripsharp.pdfcarton.dll"])))))))
-      (testing "case-insensitive collision checks do not depend on the JVM locale"
+      (testing "case-insensitive release checks do not depend on the JVM locale"
         (let [default-locale (Locale/getDefault)]
           (try
             (Locale/setDefault (Locale/forLanguageTag "tr-TR"))
@@ -681,6 +683,21 @@
                       :inventory inventory
                       :platform platform
                       :expected-hashes (hashes entries)
+                      :framework-assemblies #{"System.Runtime.dll"}}))
+                  framework-entries
+                  (assoc expected
+                         "SYSTEM.RUNTIME.DLL"
+                         "locale-sensitive framework assembly")
+                  framework-asset
+                  (zip! (.resolve root "locale-framework.asset")
+                        framework-entries)
+                  framework-result
+                  (failure
+                   #(alpha-release/verify-asset!
+                     {:artifact framework-asset
+                      :inventory inventory
+                      :platform platform
+                      :expected-hashes (hashes framework-entries)
                       :framework-assemblies #{"System.Runtime.dll"}}))]
               (is (= :dependency-name-collision
                      (:reason inventory-result)))
@@ -693,7 +710,11 @@
                      (:reason asset-result)))
               (is (= ["SKIASHARP.dll" "SkiaSharp.dll"]
                      (get-in asset-result
-                             [:collisions "skiasharp.dll"]))))
+                             [:collisions "skiasharp.dll"])))
+              (is (= :framework-assembly
+                     (:reason framework-result)))
+              (is (= ["SYSTEM.RUNTIME.DLL"]
+                     (:entries framework-result))))
             (finally
               (Locale/setDefault default-locale)))))
       (testing "typed inventory rejects Windows-illegal filenames"
@@ -829,6 +850,32 @@
                    (assoc base-options
                           :authorized-tag "v0.1.0-alpha.1"
                           :product-commit patched-commit)))))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest release-preparation-rejects-case-variant-framework-dependencies
+  (let [[_ base-inventory] (actual-contract-and-inventory :pkl)
+        inventory
+        (update base-inventory :managed-dependencies conj
+                {:file "system.runtime.dll"
+                 :package-id "system.runtime"
+                 :version "10.0.0"})
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)]
+    (try
+      (let [result
+            (failure
+             #(alpha-release/prepare!
+               {:workspace-root workspace
+                :target-contract contract
+                :inventory inventory
+                :authorized-tag "v0.1.0-alpha.1"
+                :product-commit commit
+                :output-root (paths/resolve-path workspace "release")
+                :build-fn (fake-build! (atom []))
+                :framework-assemblies #{"System.Runtime.dll"}}))]
+        (is (= :framework-assembly (:reason result)))
+        (is (= ["system.runtime.dll"] (:files result))))
       (finally
         (delete-tree! workspace)))))
 
