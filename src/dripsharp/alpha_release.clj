@@ -748,6 +748,10 @@
   duplicate, missing entry, unexpected entry, or byte mismatch fails."
   [{:keys [artifact inventory platform expected-hashes
            framework-assemblies]}]
+  (when (Files/isSymbolicLink ^Path artifact)
+    (fail! "Downloaded release asset is a symbolic link"
+           {:reason :symbolic-link-release-asset
+            :path (str artifact)}))
   (let [records (zip-records artifact)
         names (mapv :name records)
         name-collisions (case-insensitive-collisions names identity)

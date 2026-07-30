@@ -629,6 +629,30 @@
       (finally
         (delete-tree! root)))))
 
+(deftest release-verification-rejects-symbolic-link-substitution
+  (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
+        platform
+        (first (filter #(= "linux-x64" (:id %))
+                       (:platforms inventory)))
+        root (temp-directory)
+        expected (expected-entry-map inventory platform)
+        substitute (zip! (.resolve root "substitute.zip") expected)
+        artifact (.resolve root "downloaded.zip")]
+    (try
+      (Files/createSymbolicLink artifact (.getFileName substitute)
+                                (make-array FileAttribute 0))
+      (is (= :symbolic-link-release-asset
+             (:reason
+              (failure
+               #(alpha-release/verify-asset!
+                 {:artifact artifact
+                  :inventory inventory
+                  :platform platform
+                  :expected-hashes (hashes expected)
+                  :framework-assemblies #{"System.Runtime.dll"}})))))
+      (finally
+        (delete-tree! root)))))
+
 (deftest release-preparation-rejects-manual-product-patches-and-invalid-tags
   (let [[_ inventory] (actual-contract-and-inventory :pkl)
         {:keys [workspace contract product commit]}
