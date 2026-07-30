@@ -583,18 +583,35 @@
                     :directory product})}))
 
 (defn- direct-files
-  [directory]
+  [directory platform]
+  (when (Files/isSymbolicLink directory)
+    (fail! "Release build output directory is a symbolic link"
+           {:reason :symbolic-link-build-output
+            :platform (:id platform)
+            :entries ["."]}))
   (when-not (paths/directory? directory)
     (fail! "Release build did not create its isolated output directory"
            {:reason :missing-build-output
             :path (str directory)}))
   (with-open [stream (Files/list directory)]
-    (->> (.toArray stream)
-         (map #(cast Path %))
-         (filter #(Files/isRegularFile
-                   ^Path % (make-array LinkOption 0)))
-         (sort-by #(str (.getFileName ^Path %)))
-         vec)))
+    (let [entries (mapv #(cast Path %) (.toArray stream))
+          links
+          (->> entries
+               (filter #(Files/isSymbolicLink ^Path %))
+               (map #(str (.getFileName ^Path %)))
+               sort
+               vec)]
+      (when (seq links)
+        (fail! "Release build output contains symbolic links"
+               {:reason :symbolic-link-build-output
+                :platform (:id platform)
+                :entries links}))
+      (->> entries
+           (filter #(Files/isRegularFile
+                     ^Path %
+                     (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])))
+           (sort-by #(str (.getFileName ^Path %)))
+           vec))))
 
 (defn- expected-files
   [inventory platform]
@@ -608,7 +625,7 @@
         expected-all (apply set/union #{} (vals expected))
         by-name
         (group-by #(str (.getFileName ^Path %))
-                  (direct-files build-output))
+                  (direct-files build-output platform))
         collisions
         (into (sorted-map)
               (filter (fn [[_ entries]] (< 1 (count entries))))

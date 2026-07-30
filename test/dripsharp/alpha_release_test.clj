@@ -672,6 +672,45 @@
         (finally
           (delete-tree! workspace))))))
 
+(deftest release-preparation-rejects-symbolic-links-in-build-output
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)
+        substitute
+        (write! workspace "substitute-release-input.dll"
+                "external release input\n")
+        linked-file (:entry-assembly inventory)
+        build-fn
+        (fn [{:keys [inventory platform configuration build-output]}]
+          (doseq [file
+                  (concat (map :file (:product-assemblies inventory))
+                          (map :file (:managed-dependencies inventory))
+                          (map :file (:native-assets platform)))]
+            (if (= linked-file file)
+              (Files/createSymbolicLink (.resolve build-output file)
+                                        substitute
+                                        (make-array FileAttribute 0))
+              (write! build-output file
+                      (str (:product-family inventory) "\t"
+                           (:id platform) "\t" file "\n"))))
+          {:configuration configuration})]
+    (try
+      (let [result
+            (failure
+             #(alpha-release/prepare!
+               {:workspace-root workspace
+                :target-contract contract
+                :inventory inventory
+                :authorized-tag "v0.1.0-alpha.1"
+                :product-commit commit
+                :output-root (paths/resolve-path workspace "release")
+                :build-fn build-fn
+                :framework-assemblies #{"System.Runtime.dll"}}))]
+        (is (= :symbolic-link-build-output (:reason result)))
+        (is (= [linked-file] (:entries result))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest target-release-workflow-proves-before-local-dry-run-preparation
   (let [calls (atom [])
         result
