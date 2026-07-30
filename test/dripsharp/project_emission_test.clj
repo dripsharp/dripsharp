@@ -58,6 +58,7 @@
              :warnings-as-errors true}
    :package {:id "Example.Library"
              :version "1.0.0"
+             :license-expression "Apache-2.0"
              :title "Example library"
              :description "Minimal non-product Java destination."
              :authors "DripSharp"

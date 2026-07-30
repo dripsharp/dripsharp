@@ -92,6 +92,7 @@
                    :warnings-as-errors true}
          :package {:id "Example.Profile.Library"
                    :version "1.0.0"
+                   :license-expression "Apache-2.0"
                    :title "Example profile library"
                    :description "Independent product-neutral profile fixture."
                    :authors "DripSharp"

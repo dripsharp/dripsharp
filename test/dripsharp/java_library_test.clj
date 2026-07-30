@@ -177,6 +177,7 @@
               :warnings-as-errors true}
     :package {:id "Example.Java.Library"
               :version "1.0.0"
+              :license-expression "Apache-2.0"
               :title "Example Java library"
               :description "Reusable ordinary Java declaration fixture."
               :authors "DripSharp"

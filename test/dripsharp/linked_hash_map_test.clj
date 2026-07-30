@@ -57,6 +57,7 @@
              :warnings-as-errors true}
    :package {:id "DripSharp.LinkedHashMap.Fixture"
              :version "1.0.0-task"
+             :license-expression "Apache-2.0"
              :title "DripSharp LinkedHashMap Fixture"
              :description "Resolved Java compatibility fixture for LinkedHashMap."
              :authors "DripSharp"
