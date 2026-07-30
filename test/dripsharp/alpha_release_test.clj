@@ -1066,6 +1066,7 @@
         {:keys [workspace contract product commit]}
         (release-fixture! inventory)
         requests (atom [])
+        plugin-directory-states (atom [])
         restore-config-content (atom nil)
         hostile-custom-props
         (paths/resolve-path workspace "hostile-custom-import.props")
@@ -1078,7 +1079,24 @@
         run-command!
         (fn [request]
           (swap! requests conj request)
-          (let [restore?
+          (let [plugin-path-value
+                (get-in request
+                        [:environment "NUGET_NETCORE_PLUGIN_PATHS"])
+                _ (when plugin-path-value
+                    (let [plugin-path (paths/absolute plugin-path-value)
+                          plugin-directory?
+                          (Files/isDirectory
+                           plugin-path (make-array LinkOption 0))
+                          plugin-entries
+                          (when plugin-directory?
+                            (with-open [entries (Files/list plugin-path)]
+                              (vec (iterator-seq (.iterator entries)))))]
+                      (swap! plugin-directory-states
+                             conj
+                             {:path plugin-path
+                              :directory? plugin-directory?
+                              :entries plugin-entries})))
+                restore?
                 (= ["dotnet" "restore"]
                    (subvec (:command request)
                            0 (min 2 (count (:command request)))))]
@@ -1113,6 +1131,10 @@
                 "/host-controlled/nonexistent-msbuild-extensions64"
                 "MSBuildUserExtensionsPath"
                 (str hostile-user-extensions)
+                "NUGET_NETCORE_PLUGIN_PATHS"
+                "/host-controlled/netcore-nuget-plugin"
+                "NUGET_PLUGIN_PATHS"
+                "/host-controlled/general-nuget-plugin"
                 "RestoreAdditionalProjectFallbackFolders"
                 "/host-controlled/additional-fallback-packages"}
                (when restore?
@@ -1220,7 +1242,12 @@
             user-extensions-path
             (paths/absolute
              (subs user-extensions-option
-                   (count "-p:MSBuildUserExtensionsPath=")))]
+                   (count "-p:MSBuildUserExtensionsPath=")))
+            nuget-plugins-path
+            (paths/resolve-path build-directory "nuget-plugins")
+            nuget-plugin-environment
+            {"NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
+             "NUGET_PLUGIN_PATHS" (str nuget-plugins-path)}]
         (is (= #{"DripSharp.Brine.dll"
                  "DripSharp.Brine.Parser.dll"}
                (set (keys (:entries (first (:assets prepared)))))))
@@ -1241,6 +1268,15 @@
         (is (= "NuGet.Config" (str (.getFileName config-path))))
         (is (= "restore-config"
                (str (.getFileName (.getParent config-path)))))
+        (is (= nuget-plugin-environment (:environment restore-request)))
+        (is (= nuget-plugin-environment (:environment dotnet-request)))
+        (is (= [{:path nuget-plugins-path
+                 :directory? true
+                 :entries []}
+                {:path nuget-plugins-path
+                 :directory? true
+                 :entries []}]
+               @plugin-directory-states))
         (is (=
              (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
                   "<configuration>\n"

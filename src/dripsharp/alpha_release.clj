@@ -777,6 +777,8 @@
         (paths/resolve-path build-directory "artifacts")
         user-extensions-path
         (paths/resolve-path build-directory "user-extensions")
+        nuget-plugins-path
+        (paths/resolve-path build-directory "nuget-plugins")
         restore-config-directory
         (paths/resolve-path build-directory "restore-config")
         restore-config
@@ -785,10 +787,15 @@
            restore-config-directory (make-array FileAttribute 0))
         _ (Files/createDirectories
            user-extensions-path (make-array FileAttribute 0))
+        _ (Files/createDirectories
+           nuget-plugins-path (make-array FileAttribute 0))
         _ (Files/writeString
            restore-config isolated-nuget-config StandardCharsets/UTF_8
            (into-array OpenOption [StandardOpenOption/CREATE_NEW
                                    StandardOpenOption/WRITE]))
+        nuget-plugin-environment
+        {"NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
+         "NUGET_PLUGIN_PATHS" (str nuget-plugins-path)}
         restore-command
         (cond->
          ["dotnet" "restore" (str project-file)
@@ -811,6 +818,7 @@
         restore-result
         (run-command! {:command restore-command
                        :directory build-directory
+                       :environment nuget-plugin-environment
                        :unset-environment isolated-msbuild-environment})
         command
         (cond->
@@ -843,6 +851,7 @@
      :result
      (run-command! {:command command
                     :directory build-directory
+                    :environment nuget-plugin-environment
                     :unset-environment isolated-msbuild-environment})}))
 
 (defn- direct-files
