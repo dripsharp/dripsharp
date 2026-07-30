@@ -378,6 +378,9 @@
             second-sha
             (into {} (map (juxt :filename :sha256)) (:assets second))]
         (is (= first-sha second-sha))
+        (is (= (dissoc first :record-path)
+               (util/read-single-edn-string!
+                (slurp (:record-path first)))))
         (is (= 6 (count first-sha)))
         (is (= ["osx-x64" "osx-arm64"] (:platforms selected)))
         (is (= #{"DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-x64.zip"
@@ -486,6 +489,54 @@
               "  - `portable` (portable; no runtime identifier): "
               "`DripSharp.Brine-0.1.0-alpha.2-net10.0-portable.zip`\n")
              (get-in prepared [:github-release :notes]))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest release-preparation-does-not-overwrite-existing-records
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)
+        record-name
+        "DripSharp.Brine-0.1.0-alpha.1-release.edn"
+        build-calls (atom [])
+        options
+        {:workspace-root workspace
+         :target-contract contract
+         :inventory inventory
+         :authorized-tag "v0.1.0-alpha.1"
+         :product-commit commit
+         :build-fn (fake-build! build-calls)
+         :framework-assemblies #{"System.Runtime.dll"}}]
+    (try
+      (testing "a regular preparation record is preserved"
+        (let [output-root (paths/resolve-path workspace "regular-record")
+              record (write! output-root record-name "prior record\n")
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc options :output-root output-root)))]
+          (is (= :release-output-exists (:reason result)))
+          (is (= (str record) (:path result)))
+          (is (= "prior record\n" (slurp (str record))))
+          (is (empty? @build-calls))))
+      (testing "a symbolic-link preparation record is preserved"
+        (let [output-root (paths/resolve-path workspace "linked-record")
+              substitute (write! workspace "substitute-record.edn"
+                                 "external record\n")
+              record (paths/resolve-path output-root record-name)
+              _ (Files/createDirectories output-root
+                                         (make-array FileAttribute 0))
+              _ (Files/createSymbolicLink
+                 record substitute (make-array FileAttribute 0))
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc options :output-root output-root)))]
+          (is (= :release-output-exists (:reason result)))
+          (is (= (str record) (:path result)))
+          (is (Files/isSymbolicLink record))
+          (is (= "external record\n" (slurp (str substitute))))
+          (is (empty? @build-calls))))
       (finally
         (delete-tree! workspace)))))
 

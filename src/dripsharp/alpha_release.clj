@@ -11,7 +11,8 @@
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.util :as util])
-  (:import [java.nio.file FileVisitOption Files LinkOption OpenOption Path
+  (:import [java.nio.charset StandardCharsets]
+           [java.nio.file FileVisitOption Files LinkOption OpenOption Path
             StandardOpenOption]
            [java.nio.file.attribute FileAttribute FileTime]
            [java.util Locale]
@@ -938,6 +939,33 @@
     (sequential? value) (mapv canonical value)
     :else value))
 
+(defn- release-record-file
+  [output-root inventory version]
+  (paths/resolve-path
+   output-root
+   (str (:asset-prefix inventory) "-" version "-release.edn")))
+
+(defn- ensure-record-available!
+  [output]
+  (when (Files/exists output
+                      (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+    (fail! "Release preparation record already exists"
+           {:reason :release-output-exists
+            :path (str output)})))
+
+(defn- write-record!
+  [output record]
+  (ensure-record-available! output)
+  (Files/createDirectories (.getParent output)
+                           (make-array FileAttribute 0))
+  (Files/writeString
+   output
+   (str (pr-str (canonical record)) "\n")
+   StandardCharsets/UTF_8
+   (into-array OpenOption [StandardOpenOption/CREATE_NEW
+                           StandardOpenOption/WRITE]))
+  output)
+
 (defn- release-notes
   [inventory version product-commit assets]
   (str
@@ -988,6 +1016,8 @@
              (paths/resolve-path
               workspace-root "target/releases" version
               (name (:product-family inventory)))))
+        record-file (release-record-file output-root inventory version)
+        _ (ensure-record-available! record-file)
         framework-assemblies
         (set (or framework-assemblies
                  (framework-assembly-names! workspace-root run-command!)))
@@ -1076,13 +1106,8 @@
              :external-actions
              [:tag-or-release-creation-requires-authorization
               :asset-upload-requires-authorization
-              :push-requires-authorization]}
-            record-file
-            (paths/resolve-path
-             output-root
-             (str (:asset-prefix inventory) "-" version "-release.edn"))]
-        (util/write-text! record-file
-                          (str (pr-str (canonical record)) "\n"))
+              :push-requires-authorization]}]
+        (write-record! record-file record)
         (assoc record
                :record-path (str record-file)))
       (finally
