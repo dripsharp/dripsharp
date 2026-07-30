@@ -145,6 +145,31 @@
           (assoc-in configuration [:package :authors]
                     "Publisher \uD83D\uDE80"))))))
 
+(deftest destination-legal-file-paths-must-be-case-insensitively-distinct
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")]
+    (doseq [[field expected]
+            [[:destination
+              "entries with case-insensitively distinct :destination values"]
+             [:package-path
+              "entries with case-insensitively distinct :package-path values"]]]
+      (testing (name field)
+        (let [first-value (get-in configuration [:legal-files 0 field])
+              candidate
+              (assoc-in configuration [:legal-files 1 field]
+                        (str/lower-case first-value))
+              error
+              (try
+                (project-emission/validate-configuration! candidate)
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:legal-files] (:path (ex-data error))))
+          (is (= expected (:expected (ex-data error)))))))))
+
 (deftest mechanical-source-attribution-metadata-must-be-single-line
   (let [configuration
         (project-emission/read-configuration

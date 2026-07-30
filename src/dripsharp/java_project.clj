@@ -222,10 +222,23 @@
           (relative-path! (:package-path legal-file)
                           "legal file package path"
                           [:legal-files index :package-path]))
-        (when-not (= (count legal-files)
-                     (count (distinct (map :package-path legal-files))))
-          (validation/fail! context [:legal-files] legal-files
-                            "entries with distinct :package-path values"))
+        (doseq [[field exact-expectation case-insensitive-expectation]
+                [[:destination
+                  "entries with distinct :destination values"
+                  "entries with case-insensitively distinct :destination values"]
+                 [:package-path
+                  "entries with distinct :package-path values"
+                  "entries with case-insensitively distinct :package-path values"]]]
+          (when-not (= (count legal-files)
+                       (count (distinct (map field legal-files))))
+            (validation/fail! context [:legal-files] legal-files
+                              exact-expectation))
+          (when-not (= (count legal-files)
+                       (count
+                        (distinct
+                         (map (comp str/lower-case field) legal-files))))
+            (validation/fail! context [:legal-files] legal-files
+                              case-insensitive-expectation)))
         (when (< 1 (count (filter #(= :license (:kind %)) legal-files)))
           (validation/fail! context [:legal-files] legal-files
                             "at most one :license entry"))))
