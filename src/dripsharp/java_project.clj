@@ -89,6 +89,19 @@
         field-path value "a safe relative path"))
      value)))
 
+(defn- non-blank-single-line?
+  [value]
+  (and (string? value)
+       (not (str/blank? value))
+       (not (re-find
+             #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
+             value))))
+
+(defn- sha256?
+  [value]
+  (and (string? value)
+       (boolean (re-matches #"[0-9a-f]{64}" value))))
+
 (defn- project-reference!
   ([value]
    (project-reference! value [:project-references]))
@@ -204,24 +217,32 @@
         (doseq [[index legal-file] (map-indexed vector legal-files)]
           (validation/exact-keys!
            context [:legal-files index] legal-file
-           #{:kind :destination :package-path}
+           #{:kind :source :destination :package-path :sha256}
            #{:kind :source :destination :package-path :sha256 :source-sha256})
           (validation/check! context [:legal-files index :kind]
                              (:kind legal-file)
                              ":license or :notice"
                              #{:license :notice})
-          (validation/check! context [:legal-files index :destination]
-                             (:destination legal-file)
-                             "a string" string?)
-          (relative-path! (:destination legal-file)
-                          "legal file destination"
-                          [:legal-files index :destination])
-          (validation/check! context [:legal-files index :package-path]
-                             (:package-path legal-file)
-                             "a string" string?)
-          (relative-path! (:package-path legal-file)
-                          "legal file package path"
-                          [:legal-files index :package-path]))
+          (doseq [[field label]
+                  [[:source "legal file source"]
+                   [:destination "legal file destination"]
+                   [:package-path "legal file package path"]]]
+            (validation/check! context [:legal-files index field]
+                               (get legal-file field)
+                               "a non-blank single-line string"
+                               non-blank-single-line?)
+            (relative-path! (get legal-file field)
+                            label
+                            [:legal-files index field]))
+          (validation/check! context [:legal-files index :sha256]
+                             (:sha256 legal-file)
+                             "a lowercase SHA-256 string"
+                             sha256?)
+          (when-some [source-sha256 (:source-sha256 legal-file)]
+            (validation/check! context [:legal-files index :source-sha256]
+                               source-sha256
+                               "a lowercase SHA-256 string"
+                               sha256?)))
         (doseq [[field exact-expectation case-insensitive-expectation]
                 [[:destination
                   "entries with distinct :destination values"

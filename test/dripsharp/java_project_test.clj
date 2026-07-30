@@ -170,6 +170,62 @@
           (is (= [:legal-files] (:path (ex-data error))))
           (is (= expected (:expected (ex-data error)))))))))
 
+(deftest destination-legal-file-contract-requires-pinned-inputs
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")]
+    (doseq [[label candidate path expected]
+            [[:missing-source
+              (update-in configuration [:legal-files 0] dissoc :source)
+              [:legal-files 0]
+              :required]
+             [:missing-sha256
+              (update-in configuration [:legal-files 0] dissoc :sha256)
+              [:legal-files 0]
+              :required]
+             [:multiline-source
+              (assoc-in configuration [:legal-files 0 :source]
+                        "research/pkl/LICENSE\nforged")
+              [:legal-files 0 :source]
+              "a non-blank single-line string"]
+             [:multiline-destination
+              (assoc-in configuration [:legal-files 0 :destination]
+                        "LICENSE\nforged")
+              [:legal-files 0 :destination]
+              "a non-blank single-line string"]
+             [:multiline-package-path
+              (assoc-in configuration [:legal-files 0 :package-path]
+                        "LICENSE\nforged")
+              [:legal-files 0 :package-path]
+              "a non-blank single-line string"]
+             [:escaping-source
+              (assoc-in configuration [:legal-files 0 :source] "../LICENSE")
+              [:legal-files 0 :source]
+              "a safe relative path"]
+             [:invalid-sha256
+              (assoc-in configuration [:legal-files 0 :sha256] "ABC123")
+              [:legal-files 0 :sha256]
+              "a lowercase SHA-256 string"]
+             [:invalid-source-sha256
+              (assoc-in configuration [:legal-files 0 :source-sha256] "ABC123")
+              [:legal-files 0 :source-sha256]
+              "a lowercase SHA-256 string"]]]
+      (testing (name label)
+        (let [error
+              (try
+                (project-emission/validate-configuration! candidate)
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= path (:path (ex-data error))))
+          (if (= :required expected)
+            (is (= #{:kind :source :destination :package-path :sha256}
+                   (set (get-in (ex-data error)
+                                [:expected :required-keys]))))
+            (is (str/includes? (:expected (ex-data error)) expected))))))))
+
 (deftest mechanical-source-attribution-metadata-must-be-single-line
   (let [configuration
         (project-emission/read-configuration
