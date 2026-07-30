@@ -1143,6 +1143,7 @@
                         build-output inventory platform framework-assemblies)
                        filename (asset-filename inventory version platform)
                        artifact (get artifact-files (:id platform))
+                       _ (safe-output-root! workspace-root output-root)
                        _ (write-zip! artifact files)
                        _ (swap! created-outputs conj
                                 (output-ownership artifact))
@@ -1174,6 +1175,7 @@
                        {:reason :proved-state-changed
                         :before (:proved-source-sha256 initial-state)
                         :after (:proved-source-sha256 final-state)}))
+            _ (safe-output-root! workspace-root output-root)
             _ (ensure-owned-outputs! @created-outputs)
             github-release
             {:repository
@@ -1200,6 +1202,7 @@
              [:tag-or-release-creation-requires-authorization
               :asset-upload-requires-authorization
               :push-requires-authorization]}]
+        (safe-output-root! workspace-root output-root)
         (write-record! record-file record)
         (assoc record
                :record-path (str record-file)))

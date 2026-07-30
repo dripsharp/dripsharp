@@ -360,6 +360,96 @@
           (finally
             (delete-tree! workspace)))))))
 
+(deftest release-preparation-rejects-output-root-symlink-substitution
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)
+        substitute (temp-directory)
+        output-root (paths/resolve-path workspace "release-output")
+        build-calls (atom [])
+        build! (fake-build! build-calls)]
+    (try
+      (let [result
+            (failure
+             #(alpha-release/prepare!
+               {:workspace-root workspace
+                :target-contract contract
+                :inventory inventory
+                :authorized-tag "v0.1.0-alpha.1"
+                :product-commit commit
+                :platform-ids ["portable"]
+                :output-root output-root
+                :build-fn
+                (fn [build]
+                  (let [result (build! build)]
+                    (Files/createSymbolicLink
+                     output-root substitute (make-array FileAttribute 0))
+                    result))
+                :framework-assemblies #{"System.Runtime.dll"}}))]
+        (is (= :symbolic-link-release-output (:reason result)))
+        (is (Files/isSymbolicLink output-root))
+        (is (empty? (with-open [files (Files/list substitute)]
+                      (vec (.toArray files))))))
+      (finally
+        (delete-tree! workspace)
+        (delete-tree! substitute)))))
+
+(deftest release-preparation-rechecks-output-root-before-record
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)
+        substitute (temp-directory)
+        output-root (paths/resolve-path workspace "release-output")
+        displaced-root (paths/resolve-path workspace "displaced-output")
+        platform (first (:platforms inventory))
+        version "0.1.0-alpha.1"
+        artifact
+        (.resolve output-root
+                  (alpha-release/asset-filename inventory version platform))
+        record-name
+        (str (:asset-prefix inventory) "-" version "-release.edn")
+        substituted? (atom false)
+        build-calls (atom [])]
+    (try
+      (let [result
+            (failure
+             #(alpha-release/prepare!
+               {:workspace-root workspace
+                :target-contract contract
+                :inventory inventory
+                :authorized-tag (str "v" version)
+                :product-commit commit
+                :platform-ids [(:id platform)]
+                :output-root output-root
+                :run-command!
+                (fn [request]
+                  (when (and (Files/exists
+                              artifact
+                              (into-array LinkOption
+                                          [LinkOption/NOFOLLOW_LINKS]))
+                             (compare-and-set! substituted? false true))
+                    (Files/move output-root displaced-root
+                                (make-array CopyOption 0))
+                    (Files/createSymbolicLink
+                     output-root substitute (make-array FileAttribute 0)))
+                  (process/run! request))
+                :build-fn (fake-build! build-calls)
+                :framework-assemblies #{"System.Runtime.dll"}}))]
+        (is (= :symbolic-link-release-output (:reason result)))
+        (is @substituted?)
+        (is (Files/isSymbolicLink output-root))
+        (is (Files/exists
+             (.resolve displaced-root (.getFileName artifact))
+             (make-array LinkOption 0)))
+        (is (empty? (with-open [files (Files/list substitute)]
+                      (vec (.toArray files)))))
+        (is (not (Files/exists
+                  (.resolve substitute record-name)
+                  (make-array LinkOption 0)))))
+      (finally
+        (delete-tree! workspace)
+        (delete-tree! substitute)))))
+
 (deftest assembly-includes-managed-and-native-assets-and-repeats-deterministically
   (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
         {:keys [workspace contract commit]}
