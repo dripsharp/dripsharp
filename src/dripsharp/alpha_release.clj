@@ -802,6 +802,7 @@
           (str "-p:MSBuildUserExtensionsPath=" user-extensions-path)
           "-p:RestoreAdditionalProjectSources="
           "-p:RestoreFallbackFolders="
+          "-p:ImportDirectoryPackagesProps=false"
           "-p:ImportDirectoryBuildProps=false"
           "-p:ImportDirectoryBuildTargets=false"]
           runtime-identifier
@@ -824,6 +825,7 @@
           (str "-p:RestorePackagesPath=" packages-root)
           (str "-p:MSBuildUserExtensionsPath=" user-extensions-path)
           "-p:CopyLocalLockFileAssemblies=true"
+          "-p:ImportDirectoryPackagesProps=false"
           "-p:ImportDirectoryBuildProps=false"
           "-p:ImportDirectoryBuildTargets=false"
           "-p:DebugType=None"

@@ -1262,6 +1262,10 @@
         (is (some #{"-noAutoResponse"} dotnet-command))
         (is (some #{"-noAutoResponse"} restore-command))
         (is (some #{"--no-http-cache"} restore-command))
+        (is (some #{"-p:ImportDirectoryPackagesProps=false"}
+                  dotnet-command))
+        (is (some #{"-p:ImportDirectoryPackagesProps=false"}
+                  restore-command))
         (is (some #{"-p:ImportDirectoryBuildProps=false"} dotnet-command))
         (is (some #{"-p:ImportDirectoryBuildTargets=false"} dotnet-command))
         (is (some #{"-p:ImportDirectoryBuildProps=false"} restore-command))
