@@ -550,6 +550,60 @@
       (finally
         (delete-tree! workspace)))))
 
+(deftest release-preparation-rejects-committed-build-directories
+  (testing "an unproved committed file below bin is not ignored"
+    (let [[_ inventory] (actual-contract-and-inventory :pkl)
+          {:keys [workspace contract product]}
+          (release-fixture! inventory)
+          project (:project (first (:product-assemblies inventory)))
+          injected (str project "/bin/Injected.cs")]
+      (try
+        (write! product injected "namespace Unproved.Committed.File;\n")
+        (git! product "add" "--all")
+        (git! product "commit" "-m" "Add unproved committed build file")
+        (let [patched-commit (git-output product "rev-parse" "HEAD")
+              submodule-path
+              (get-in contract [:publication :submodule-path])]
+          (git! workspace "update-index" "--cacheinfo"
+                (str "160000," patched-commit "," submodule-path))
+          (git! workspace "commit" "-m" "Pin unproved product commit")
+          (let [result
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit patched-commit
+                    :output-root (paths/resolve-path workspace "release")
+                    :build-fn (fake-build! (atom []))
+                    :framework-assemblies #{"System.Runtime.dll"}}))]
+            (is (= :proved-state-mismatch (:reason result)))
+            (is (= [injected] (:unexpected result)))))
+        (finally
+          (delete-tree! workspace)))))
+  (testing "ephemeral staging build output remains excluded"
+    (let [[_ inventory] (actual-contract-and-inventory :pkl)
+          {:keys [workspace contract staging commit]}
+          (release-fixture! inventory)
+          project (:project (first (:product-assemblies inventory)))]
+      (try
+        (write! staging (str project "/obj/project.assets.json")
+                "ephemeral restore output\n")
+        (let [prepared
+              (alpha-release/prepare!
+               {:workspace-root workspace
+                :target-contract contract
+                :inventory inventory
+                :authorized-tag "v0.1.0-alpha.1"
+                :product-commit commit
+                :output-root (paths/resolve-path workspace "release")
+                :build-fn (fake-build! (atom []))
+                :framework-assemblies #{"System.Runtime.dll"}})]
+          (is (= ["portable"] (:platforms prepared))))
+        (finally
+          (delete-tree! workspace))))))
+
 (deftest release-preparation-does-not-overwrite-existing-records
   (let [[_ inventory] (actual-contract-and-inventory :pkl)
         {:keys [workspace contract commit]}

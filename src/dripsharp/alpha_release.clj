@@ -507,7 +507,7 @@
   (some #{"bin" "obj"} (relative-components relative)))
 
 (defn- managed-file-inventory
-  [root managed-paths]
+  [root managed-paths {:keys [ignore-build-components?]}]
   (let [root (paths/absolute root)]
     (into
      (sorted-map)
@@ -550,7 +550,8 @@
                                  :path relative}))
                        (Files/isRegularFile
                         entry (make-array LinkOption 0)))
-                     :when (not (ignored-build-component? relative))]
+                     :when (or (not ignore-build-components?)
+                               (not (ignored-build-component? relative)))]
                  [relative (util/sha256-file entry)])))
             [[managed (util/sha256-file managed-root)]])))
       managed-paths))))
@@ -621,8 +622,12 @@
                 :actual (second gitlink-match)
                 :git-entry gitlink-output}))
       (let [managed-paths (:managed-paths publication)
-            staged (managed-file-inventory staging managed-paths)
-            committed (managed-file-inventory product managed-paths)]
+            staged
+            (managed-file-inventory
+             staging managed-paths {:ignore-build-components? true})
+            committed
+            (managed-file-inventory
+             product managed-paths {:ignore-build-components? false})]
         (when-not (= staged committed)
           (fail! "Product commit differs from the exact proved generated state"
                  {:reason :proved-state-mismatch
