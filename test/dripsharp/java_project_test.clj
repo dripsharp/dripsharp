@@ -143,6 +143,38 @@
           (is (= "a non-blank XML-compatible string"
                  (:expected (ex-data error)))))))))
 
+(deftest destination-repository-commit-must-be-absent-or-valid
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")
+        valid-commit "0123456789abcdef0123456789abcdef01234567"]
+    (is (not (contains? (:package configuration) :repository-commit)))
+    (is (= configuration
+           (project-emission/validate-configuration! configuration)))
+    (is (= valid-commit
+           (get-in
+            (project-emission/validate-configuration!
+             (assoc-in configuration
+                       [:package :repository-commit]
+                       valid-commit))
+            [:package :repository-commit])))
+    (doseq [value [nil false]]
+      (testing (str "a key-present " (pr-str value)
+                    " repository commit is malformed")
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc-in configuration [:package :repository-commit] value))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:package :repository-commit]
+                 (:path (ex-data error))))
+          (is (= "a 40- or 64-character lowercase Git identity"
+                 (:expected (ex-data error)))))))))
+
 (deftest destination-authors-must-be-a-single-line-publisher
   (let [configuration
         (project-emission/read-configuration

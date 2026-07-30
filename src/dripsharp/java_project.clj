@@ -206,13 +206,14 @@
                  #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
                  %))
            (project-xml/valid-text? %))))
-  (when-let [commit (get-in configuration [:package :repository-commit])]
-    (validation/check!
-     (destination-context "Destination package repository commit")
-     [:package :repository-commit] commit
-     "a 40- or 64-character lowercase Git identity"
-     #(and (string? %)
-           (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" %)))))
+  (when (contains? (:package configuration) :repository-commit)
+    (let [commit (get-in configuration [:package :repository-commit])]
+      (validation/check!
+       (destination-context "Destination package repository commit")
+       [:package :repository-commit] commit
+       "a 40- or 64-character lowercase Git identity"
+       #(and (string? %)
+             (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" %))))))
   (when (contains? (:package configuration) :license-expression)
     (let [license (get-in configuration [:package :license-expression])]
       (validation/check!
