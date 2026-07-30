@@ -127,7 +127,22 @@
              "legal//LICENSE"
              "legal/"
              "C:/LICENSE"
-             "legal\\LICENSE"]]
+             "legal\\LICENSE"
+             "legal/LIC:ENSE"
+             "legal/LIC<ENSE"
+             "legal/LIC>ENSE"
+             "legal/LIC\"ENSE"
+             "legal/LIC|ENSE"
+             "legal/LIC?ENSE"
+             "legal/LIC*ENSE"
+             "legal/CON"
+             "legal/con.txt"
+             "legal/AuX.notice"
+             "legal/COM1"
+             "legal/lpt9.log"
+             "legal/COM¹.txt"
+             "legal/LICENSE."
+             "legal/LICENSE "]]
       (testing (str (name field) " rejects " (pr-str unsafe-path))
         (let [error
               (try

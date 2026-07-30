@@ -333,7 +333,25 @@
              [:empty-component "legal//LICENSE"]
              [:trailing-separator "legal/LICENSE/"]
              [:backslash "legal\\LICENSE"]
-             [:drive-style "C:LICENSE"]]]
+             [:drive-style "C:LICENSE"]
+             [:embedded-colon "legal/LIC:ENSE"]
+             [:less-than "legal/LIC<ENSE"]
+             [:greater-than "legal/LIC>ENSE"]
+             [:double-quote "legal/LIC\"ENSE"]
+             [:vertical-bar "legal/LIC|ENSE"]
+             [:question-mark "legal/LIC?ENSE"]
+             [:asterisk "legal/LIC*ENSE"]
+             [:reserved-name "legal/CON"]
+             [:case-insensitive-reserved-name-with-extension
+              "legal/con.txt"]
+             [:mixed-case-reserved-name-with-extension
+              "legal/AuX.notice"]
+             [:reserved-com-port "legal/COM1"]
+             [:reserved-lpt-port-with-extension "legal/lpt9.log"]
+             [:reserved-superscript-com-port-with-extension
+              "legal/COM¹.txt"]
+             [:trailing-dot "legal/LICENSE."]
+             [:trailing-space "legal/LICENSE "]]]
       (testing (str (name field) " rejects " (name label))
         (let [error
               (try

@@ -98,16 +98,29 @@
              value))
        (project-xml/valid-text? value)))
 
+(defn- windows-reserved-path-component?
+  [component]
+  (let [basename (first (str/split component #"\." 2))]
+    (boolean
+     (re-matches
+      #"(?i:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])"
+      basename))))
+
+(defn- portable-path-component?
+  [component]
+  (and (not (str/blank? component))
+       (not (contains? #{"." ".."} component))
+       (not (re-find #"[<>:\"|?*\u0000-\u001F]" component))
+       (not (re-find #"[. ]$" component))
+       (not (windows-reserved-path-component? component))))
+
 (defn- normalized-portable-relative-path?
   [value]
   (when (non-blank-single-line-xml-path? value)
     (let [components (str/split value #"/" -1)]
       (and (not (str/includes? value "\\"))
            (not (str/starts-with? value "/"))
-           (not (re-find #"^[A-Za-z]:" value))
-           (every? #(and (not (str/blank? %))
-                         (not (contains? #{"." ".."} %)))
-                   components)))))
+           (every? portable-path-component? components)))))
 
 (defn- sha256?
   [value]
