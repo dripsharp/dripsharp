@@ -22,7 +22,8 @@
             [dripsharp.spoon :as spoon]
             [dripsharp.util :as util]
             [dripsharp.validation :as validation])
-  (:import [java.nio.charset Charset MalformedInputException]
+  (:import [java.net URI URISyntaxException]
+           [java.nio.charset Charset MalformedInputException]
            [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
            [spoon.reflect.declaration CtElement CtEnum CtType]
@@ -106,6 +107,22 @@
              #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
              value))
        (project-xml/valid-text? value)))
+
+(defn- absolute-http-url?
+  [value]
+  (and
+   (non-blank-single-line-xml-string? value)
+   (try
+     (let [uri (URI. value)
+           scheme (.getScheme uri)
+           host (.getHost uri)]
+       (and (contains? #{"http" "https"}
+                       (some-> scheme str/lower-case))
+            (not (.isOpaque uri))
+            (string? host)
+            (not (str/blank? host))))
+     (catch URISyntaxException _
+       false))))
 
 (defn- windows-reserved-path-component?
   [component]
@@ -215,8 +232,8 @@
      (destination-context "Destination package metadata"
                           {:section :package :setting key})
      [:package key] (get-in configuration [:package key])
-     "a non-blank single-line XML-compatible URL"
-     non-blank-single-line-xml-string?))
+     "an absolute HTTP(S) URL with a host"
+     absolute-http-url?))
   (when (contains? (:package configuration) :repository-commit)
     (let [commit (get-in configuration [:package :repository-commit])]
       (validation/check!

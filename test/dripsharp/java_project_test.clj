@@ -226,16 +226,24 @@
           (assoc-in configuration [:package :authors]
                     "Publisher \uD83D\uDE80"))))))
 
-(deftest destination-package-urls-must-be-single-line
+(deftest destination-package-urls-must-be-absolute-http-urls
   (let [configuration
         (project-emission/read-configuration
          (paths/workspace-root)
          "targets/pkl/destinations/parser.edn")]
     (doseq [field [:project-url :repository-url]
-            separator ["\u0000" "\u000B" "\u000C" "\r" "\n"
-                       "\u0085" "\u2028" "\u2029"]]
-      (let [url (str "https://example.invalid/package" separator "spoof")
-            error
+            url (concat
+                 (map #(str "https://example.invalid/package" % "spoof")
+                      ["\u0000" "\u000B" "\u000C" "\r" "\n"
+                       "\u0085" "\u2028" "\u2029"])
+                 ["not a URL"
+                  "relative/path"
+                  "//example.invalid/package"
+                  "mailto:packages@example.invalid"
+                  "ftp://example.invalid/package"
+                  "https:/missing-host"
+                  "https://example.invalid/%zz"])]
+      (let [error
             (try
               (project-emission/validate-configuration!
                (assoc-in configuration [:package field] url))
@@ -246,13 +254,15 @@
         (is (= [:package field] (:path (ex-data error))))
         (is (= :package (:section (ex-data error))))
         (is (= field (:setting (ex-data error))))
-        (is (= "a non-blank single-line XML-compatible URL"
+        (is (= "an absolute HTTP(S) URL with a host"
                (:expected (ex-data error))))))
-    (doseq [field [:project-url :repository-url]]
+    (doseq [field [:project-url :repository-url]
+            url ["https://example.invalid/package-\uD83D\uDE80"
+                 "http://localhost:8080/package"
+                 "HTTPS://example.invalid/package?channel=alpha#readme"]]
       (is (map?
            (project-emission/validate-configuration!
-            (assoc-in configuration [:package field]
-                      "https://example.invalid/package-\uD83D\uDE80")))))))
+            (assoc-in configuration [:package field] url)))))))
 
 (deftest destination-legal-file-paths-must-be-case-insensitively-distinct
   (let [configuration
