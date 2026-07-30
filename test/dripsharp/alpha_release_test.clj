@@ -1108,6 +1108,8 @@
         requests (atom [])
         plugin-directory-states (atom [])
         restore-config-content (atom nil)
+        hostile-after-net-sdk-targets
+        (paths/resolve-path workspace "hostile-after-net-sdk.targets")
         hostile-custom-props
         (paths/resolve-path workspace "hostile-custom-import.props")
         hostile-alternate-common-props
@@ -1161,7 +1163,9 @@
               request
               :environment
               (merge
-               {"AlternateCommonProps"
+               {"AfterMicrosoftNETSdkTargets"
+                (str hostile-after-net-sdk-targets)
+                "AlternateCommonProps"
                 (str hostile-alternate-common-props)
                 "BeforeMicrosoftNETSdkTargets"
                 (str hostile-custom-targets)
@@ -1226,6 +1230,11 @@
                   "/host-controlled/fallback-packages"})
                (:environment request))))))]
     (try
+      (write!
+       workspace "hostile-after-net-sdk.targets"
+       (str "<Project><Target Name=\"RejectAmbientAfterNETSdkTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "AfterMicrosoftNETSdkTargets was loaded\" /></Target></Project>\n"))
       (write!
        workspace "hostile-alternate-common.props"
        (str "<Project><Target Name=\"RejectAmbientAlternateCommonProps\" "
@@ -1433,7 +1442,8 @@
         (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
                   restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"AlternateCommonProps"
+        (is (= #{"AfterMicrosoftNETSdkTargets"
+                 "AlternateCommonProps"
                  "BeforeMicrosoftNETSdkTargets"
                  "CodeAnalysisTargets"
                  "CscToolExe"
@@ -1455,7 +1465,8 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
-        (is (= #{"AlternateCommonProps"
+        (is (= #{"AfterMicrosoftNETSdkTargets"
+                 "AlternateCommonProps"
                  "BeforeMicrosoftNETSdkTargets"
                  "CodeAnalysisTargets"
                  "CscToolExe"
