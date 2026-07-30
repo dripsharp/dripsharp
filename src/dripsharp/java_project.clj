@@ -98,6 +98,17 @@
              value))
        (project-xml/valid-text? value)))
 
+(defn- normalized-portable-relative-path?
+  [value]
+  (when (non-blank-single-line-xml-path? value)
+    (let [components (str/split value #"/" -1)]
+      (and (not (str/includes? value "\\"))
+           (not (str/starts-with? value "/"))
+           (not (re-find #"^[A-Za-z]:" value))
+           (every? #(and (not (str/blank? %))
+                         (not (contains? #{"." ".."} %)))
+                   components)))))
+
 (defn- sha256?
   [value]
   (and (string? value)
@@ -234,7 +245,11 @@
                                non-blank-single-line-xml-path?)
             (relative-path! (get legal-file field)
                             label
-                            [:legal-files index field]))
+                            [:legal-files index field])
+            (validation/check! context [:legal-files index field]
+                               (get legal-file field)
+                               "a normalized portable relative path"
+                               normalized-portable-relative-path?))
           (validation/check! context [:legal-files index :sha256]
                              (:sha256 legal-file)
                              "a lowercase SHA-256 string"

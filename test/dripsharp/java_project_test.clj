@@ -265,6 +265,36 @@
       (is (= candidate
              (project-emission/validate-configuration! candidate))))))
 
+(deftest destination-legal-file-paths-must-be-normalized-and-portable
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")]
+    (doseq [field [:source :destination :package-path]
+            [label path]
+            [[:leading-separator "/LICENSE"]
+             [:dot-segment "./LICENSE"]
+             [:parent-segment "legal/../LICENSE"]
+             [:empty-component "legal//LICENSE"]
+             [:trailing-separator "legal/LICENSE/"]
+             [:backslash "legal\\LICENSE"]
+             [:drive-style "C:LICENSE"]]]
+      (testing (str (name field) " rejects " (name label))
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc-in configuration [:legal-files 0 field] path))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:legal-files 0 field]
+                 (:path (ex-data error))))
+          (is (or (= "a safe relative path"
+                     (:expected (ex-data error)))
+                  (= "a normalized portable relative path"
+                     (:expected (ex-data error))))))))))
+
 (deftest mechanical-source-attribution-metadata-must-be-single-line
   (let [configuration
         (project-emission/read-configuration
