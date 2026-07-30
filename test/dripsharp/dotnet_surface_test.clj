@@ -251,3 +251,39 @@
     (is (= {"java-compatibility-type" 4
             "java-compatibility-member" 1}
            (:translation-rules result)))))
+
+(deftest internal-namespace-policy-rejects-exported-types-and-signatures
+  (let [workspace (paths/workspace-root)
+        metadata
+        {:required-rows 0
+         :rows []
+         :compatibility-sources []
+         :internal-namespace-prefixes
+         ["CoreJ2K" "JBig2Decoder.NETStandard"]}]
+    (doseq [[label leaked-row]
+            [[:exported-owner
+              (row {:owner "CoreJ2K.J2kImage"
+                    :kind "type"
+                    :name "J2kImage"
+                    :parameter-count "0"
+                    :signature "class J2kImage"
+                    :nullability "type=oblivious"})]
+             [:exported-signature
+              (row {:signature
+                    "CoreJ2K.J2kImage Decode(System.Byte[] encoded)"})]
+             [:nested-exported-owner
+              (row {:owner
+                    "JBig2Decoder.NETStandard.Decoders.HuffmanDecoder$Table"
+                    :kind "type"
+                    :name "Table"
+                    :parameter-count "0"
+                    :signature "class Table"
+                    :nullability "type=oblivious"})]]]
+      (testing (name label)
+        (let [error
+              (caught
+               #(surface/verify-generated-rows!
+                 workspace [leaked-row] metadata))]
+          (is (= :internal-namespace-public-surface
+                 (:kind (ex-data error))))
+          (is (= 1 (:leak-count (ex-data error)))))))))

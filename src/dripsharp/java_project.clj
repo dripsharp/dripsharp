@@ -1058,7 +1058,7 @@
     (mapv
      (fn [{:keys [source destination strategy missing-kind missing-message
                   text-charset-fallback text-prefix text-suffix
-                  text-replacements authorship-class]}]
+                  text-replacements text-transform authorship-class]}]
        (let [source (absolute-asset-source root source)
              relative (relative-path! destination "destination asset")
              destination (paths/resolve-path source-root relative)]
@@ -1070,9 +1070,9 @@
                             :bundle (:id rule-bundle)})))
          (Files/createDirectories (.getParent destination)
                                   (make-array java.nio.file.attribute.FileAttribute 0))
-         (if (or (seq text-replacements) text-prefix text-suffix)
+         (if (or (seq text-replacements) text-transform text-prefix text-suffix)
            (let [text (read-asset-text source text-charset-fallback)
-                 transformed
+                 replaced
                  (reduce-kv
                   (fn [value from to]
                     (when-not (and (string? from) (not (str/blank? from))
@@ -1084,7 +1084,25 @@
                                  :from from :to to})))
                     (str/replace value from to))
                   text
-                  (or text-replacements {}))]
+                  (or text-replacements {}))
+                 transformed
+                 (if text-transform
+                   (do
+                     (when-not (ifn? text-transform)
+                       (throw
+                        (ex-info "Destination asset text transform is invalid"
+                                 {:kind :invalid-destination-asset-transform
+                                  :source (portable root source)})))
+                     (let [result (text-transform replaced)]
+                       (when-not (string? result)
+                         (throw
+                          (ex-info
+                           "Destination asset text transform returned non-text"
+                           {:kind :invalid-destination-asset-transform-result
+                            :source (portable root source)
+                            :result-type (some-> result class str)})))
+                       result))
+                   replaced)]
              (when-not (and (or (nil? text-prefix) (string? text-prefix))
                             (or (nil? text-suffix) (string? text-suffix)))
                (throw

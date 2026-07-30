@@ -376,6 +376,46 @@
     "clr-special-accessor"
     :else "java-compatibility-member"))
 
+(defn- internal-namespace-reference?
+  [prefix value]
+  (and
+   (string? prefix)
+   (not (str/blank? prefix))
+   (string? value)
+   (boolean
+    (re-find
+     (re-pattern
+      (str "(?:^|[^A-Za-z0-9_])"
+           (java.util.regex.Pattern/quote prefix)
+           "(?:[.$]|$)"))
+     value))))
+
+(defn- reject-internal-namespace-surface!
+  [reflected-rows public-metadata]
+  (let [prefixes (:internal-namespace-prefixes public-metadata)
+        invalid-prefixes
+        (remove #(and (string? %) (not (str/blank? %))) prefixes)
+        leaks
+        (filterv
+         (fn [row]
+           (some
+            (fn [prefix]
+              (or (internal-namespace-reference? prefix (:owner row))
+                  (internal-namespace-reference? prefix (:signature row))))
+            prefixes))
+         reflected-rows)]
+    (when (seq invalid-prefixes)
+      (fail! "Internal namespace public-surface policy is invalid"
+             {:kind :invalid-internal-namespace-surface-policy
+              :prefixes prefixes
+              :invalid-prefixes (vec invalid-prefixes)}))
+    (when (seq leaks)
+      (fail! "Compiled public surface exports an internal implementation namespace"
+             {:kind :internal-namespace-public-surface
+              :prefixes prefixes
+              :leaks (vec (take 30 leaks))
+              :leak-count (count leaks)}))))
+
 (defn- closeable-disposable-row
   [workspace row type-metadata]
   (when (and (= "method" (:kind row))
@@ -443,6 +483,7 @@
   "Joins every reflected row either to one exact selected Java declaration or
   to an explicitly public reusable compatibility declaration/CLR accessor."
   [workspace reflected-rows public-metadata]
+  (reject-internal-namespace-surface! reflected-rows public-metadata)
   (let [metadata-rows (:rows public-metadata)
         compatibility-namespace
         (or (:compatibility-namespace public-metadata)

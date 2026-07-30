@@ -16,7 +16,11 @@
    :public-types
    {:count 34
     :sha256
-    "46b28445a12356c467f6a7e60f8a01ba45c69f9761bb2526774059200424c90b"}}
+    "46b28445a12356c467f6a7e60f8a01ba45c69f9761bb2526774059200424c90b"}
+   :emitted-public-types
+   {:count 0
+    :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}
   {:id :pdfcube/jpx
    :kind :tree
    :provenance "vendor/pdfcube/jpx"
@@ -31,4 +35,8 @@
    :public-types
    {:count 371
     :sha256
-    "0859675308ae1698d7c8dc61534f7da0423cf9da0a40e932029b9c58e9de6e8e"}}]}
+    "0859675308ae1698d7c8dc61534f7da0423cf9da0a40e932029b9c58e9de6e8e"}
+   :emitted-public-types
+   {:count 0
+    :sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}]}

@@ -35,7 +35,7 @@
   [configuration node]
   (csharp/render (transform-node configuration node)))
 
-(deftest vendored-codec-assets-retain-third-party-authorship-class
+(deftest vendored-codec-assets-are-internalized-without-losing-authorship
   (let [assets
         ((ns-resolve 'dripsharp.pdfcube.java-project
                      'internal-capability-assets)
@@ -48,9 +48,32 @@
          #(contains? #{:pdfcube.pdfbox/jbig2-source
                        :pdfcube.pdfbox/jpx-source}
                      (:strategy %))
-         assets)]
+         assets)
+        source
+        (str "namespace Vendor.Codec\n{\n"
+             "    public sealed partial class Decoder\n"
+             "    {\n"
+             "        public Decoder Decode() => this;\n"
+             "        public enum Mode { Default }\n"
+             "    }\n"
+             "}\n")
+        expected
+        (str "namespace Vendor.Codec\n{\n"
+             "    internal sealed partial class Decoder\n"
+             "    {\n"
+             "        public Decoder Decode() => this;\n"
+             "        internal enum Mode { Default }\n"
+             "    }\n"
+             "}\n")]
     (is (= 2 (count codec-assets)))
     (is (every? #(= :vendored-third-party (:authorship-class %))
+                codec-assets))
+    (is (every? ifn? (map :text-transform codec-assets)))
+    (is (every? #(= expected ((:text-transform %) source))
+                codec-assets))
+    (is (every? #(= expected
+                     ((:text-transform %)
+                      ((:text-transform %) source)))
                 codec-assets))))
 
 (defn- structured-type

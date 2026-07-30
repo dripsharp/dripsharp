@@ -268,6 +268,12 @@ group also names the capability that selects it. File count, portable path
 inventory, source line ceiling, emitted line ceiling, and public declaration
 fingerprint are frozen reviewed facts. Drift fails target preflight and is
 recomputed again from live inputs during emission and package inspection.
+When generation deliberately projects vendored implementation declarations to
+lower accessibility, that vendored group also records
+`:emitted-public-types {:count … :sha256 …}`. `:public-types` continues to pin
+the unchanged source snapshot, while `:emitted-public-types` pins the generated
+compile inputs; the emitted count may not exceed the source count. Authored
+source groups cannot use this projection.
 Every declared target or third-party group must be selected by at least one
 profile, and every selected runtime asset must belong to a selected authored
 target group.

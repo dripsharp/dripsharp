@@ -316,6 +316,8 @@
     :max-source-lines :max-emitted-lines :source-inventory-sha256
     :public-types})
 
+(def ^:private emitted-public-types-key :emitted-public-types)
+
 (def ^:private public-type-proof-keys
   #{:count :sha256})
 
@@ -536,9 +538,15 @@
            (fn [{:keys [id kind provenance include-pattern charset capability
                         source-files
                         max-source-lines max-emitted-lines
-                        source-inventory-sha256 public-types]
+                        source-inventory-sha256 public-types
+                        emitted-public-types]
                  :as group}]
-             (exact-keys! group source-group-keys id)
+             (exact-keys!
+              group
+              (cond-> source-group-keys
+                (contains? group emitted-public-types-key)
+                (conj emitted-public-types-key))
+              id)
              (when-not (and (contains? #{:file :tree} kind)
                             (normalized-relative-path? provenance)
                             (or (= :tree kind)
@@ -572,6 +580,21 @@
                             (valid-sha256? (:sha256 public-types)))
                (fail! "Contracted public-type fingerprint is invalid"
                       {:source id :public-types public-types}))
+             (when emitted-public-types
+               (exact-keys! emitted-public-types public-type-proof-keys
+                            [id :emitted-public-types])
+               (when-not
+                (and (= :vendored-third-party expected-class)
+                     (nat-int? (:count emitted-public-types))
+                     (<= (:count emitted-public-types)
+                         (:count public-types))
+                     (valid-sha256? (:sha256 emitted-public-types)))
+                 (fail!
+                  "Contracted emitted public-type fingerprint is invalid"
+                  {:source id
+                   :class expected-class
+                   :source-public-types public-types
+                   :emitted-public-types emitted-public-types})))
              (let [source-path
                    (paths/absolute
                     (paths/resolve-path workspace-root provenance))
@@ -625,8 +648,6 @@
         groups (concat (vals compatibility-sources)
                        (vals destination-sources)
                        (vals third-party-sources))
-        normalized-source-group-keys
-        (conj source-group-keys :class :paths)
         _ (when-not (and (map? compatibility-sources)
                          (map? destination-sources)
                          (map? third-party-sources))
@@ -637,7 +658,12 @@
         _ (doseq [[id group]
                   (concat compatibility-sources destination-sources
                           third-party-sources)]
-            (exact-keys! group normalized-source-group-keys id))
+            (exact-keys!
+             group
+             (cond-> (conj source-group-keys :class :paths)
+               (contains? group emitted-public-types-key)
+               (conj emitted-public-types-key))
+             id))
         identified-groups?
         (and
          (every? (fn [[id group]] (= id (:id group)))
@@ -676,9 +702,9 @@
              (every? #(= :vendored-third-party (:class %))
                      (vals third-party-sources))
              (every?
-              (fn [{:keys [paths source-files max-source-lines
+              (fn [{:keys [class paths source-files max-source-lines
                            max-emitted-lines source-inventory-sha256
-                           public-types]}]
+                           public-types emitted-public-types]}]
                 (and (vector? paths)
                      (= source-files (count paths))
                      (= (count paths) (count (distinct paths)))
@@ -692,7 +718,18 @@
                      (= public-type-proof-keys
                         (set (keys public-types)))
                      (nat-int? (:count public-types))
-                     (valid-sha256? (:sha256 public-types))))
+                     (valid-sha256? (:sha256 public-types))
+                     (or
+                      (nil? emitted-public-types)
+                      (and
+                       (= :vendored-third-party class)
+                       (= public-type-proof-keys
+                          (set (keys emitted-public-types)))
+                       (nat-int? (:count emitted-public-types))
+                       (<= (:count emitted-public-types)
+                           (:count public-types))
+                       (valid-sha256?
+                        (:sha256 emitted-public-types))))))
               groups)
              (nat-int? (:authored-lines budget))
              (pos-int? (:total-lines budget))
@@ -798,9 +835,13 @@
                  (fail! "Contracted source grew beyond its reviewed line budget"
                         {:source id :expected-at-most max-emitted-lines
                          :actual emitted-lines}))
-               (when-not (= public-types emitted-public-types)
+               (when-not (= (or (:emitted-public-types group)
+                                public-types)
+                            emitted-public-types)
                  (fail! "Contracted public type surface differs from its reviewed evidence contract"
-                        {:source id :expected public-types
+                        {:source id
+                         :expected (or (:emitted-public-types group)
+                                       public-types)
                          :actual emitted-public-types}))
                {:id id
                 :class class

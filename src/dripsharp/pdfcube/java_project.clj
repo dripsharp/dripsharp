@@ -3565,6 +3565,13 @@
               :asset file-name
               :selected (:runtime-sources configuration)}))))
 
+(def ^:private vendored-codec-public-type-pattern
+  #"(?m)\bpublic(?=\s+(?:(?:new|unsafe|abstract|sealed|static|partial|readonly|ref)\s+)*(?:class|interface|struct|enum|record(?:\s+(?:class|struct))?|delegate)\b)")
+
+(defn- internalize-vendored-codec-source
+  [text]
+  (str/replace text vendored-codec-public-type-pattern "internal"))
+
 (defn- internal-capability-assets [{:keys [configuration]}]
   (cond-> []
     (contains? (:internal-capabilities configuration) :font-discovery)
@@ -3629,6 +3636,7 @@
       :destination-tree "DripSharp/Runtime/Codecs/Jbig2"
       :include-pattern "\\.cs$"
       :text-prefix "#nullable disable\n#pragma warning disable\n"
+      :text-transform internalize-vendored-codec-source
       :authorship-class :vendored-third-party
       :strategy :pdfcube.pdfbox/jbig2-source
       :missing-kind :missing-pdfcube-jbig2-source
@@ -3641,6 +3649,7 @@
       :include-pattern "\\.cs$"
       :text-charset-fallback "ISO-8859-1"
       :text-prefix "#nullable disable\n#pragma warning disable\n"
+      :text-transform internalize-vendored-codec-source
       :authorship-class :vendored-third-party
       :strategy :pdfcube.pdfbox/jpx-source
       :missing-kind :missing-pdfcube-jpx-source
@@ -3754,6 +3763,13 @@
 (defn public-surface-strategy
   "Provides the target-family wrapper used by the five configurations."
   []
-  (assoc (java-library/public-surface-strategy)
-         :id :pdfcube-complete-accessible-library
-         :product-family :pdfcarton))
+  (let [base (java-library/public-surface-strategy)
+        validate-generated! (:validate-generated! base)]
+    (assoc base
+           :id :pdfcube-complete-accessible-library
+           :product-family :pdfcarton
+           :validate-generated!
+           (fn [surface emission]
+             (assoc (validate-generated! surface emission)
+                    :internal-namespace-prefixes
+                    ["CoreJ2K" "JBig2Decoder.NETStandard"])))))

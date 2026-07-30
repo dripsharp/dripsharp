@@ -1166,3 +1166,52 @@
                (:actual (ex-data misclassified)))))
       (finally
         (delete-tree! root)))))
+
+(deftest vendored-public-types-can-have-a-reviewed-emitted-accessibility-projection
+  (let [root (Files/createTempDirectory
+              "dripsharp-third-party-accessibility-"
+              (make-array FileAttribute 0))]
+    (try
+      (let [source-text "public sealed class VendorType { }\n"
+            emitted-text "internal sealed class VendorType { }\n"
+            _ (write-text! root "vendor/Library.cs" source-text)
+            output (write-text! root "generated/src/Library.cs" emitted-text)
+            group
+            (assoc
+             (source-group root :fixture/vendor
+                           "vendor/Library.cs" nil 1)
+             :emitted-public-types
+             (authorship/public-type-proof [emitted-text]))
+            third-party-sources
+            (normalized-groups
+             root :vendored-third-party :fixture [group])
+            contract
+            (assoc
+             (policy (sorted-map)
+                     {:authored-lines 0 :total-lines 1})
+             :third-party-sources third-party-sources)
+            artifact
+            {:file "src/Library.cs"
+             :source {:file "vendor/Library.cs"}
+             :authorship-class :vendored-third-party}
+            ledger (create-ledger! root [artifact] contract)]
+        (is (= {:count 1
+                :sha256
+                "ba5640ad0bfa9475e298329b69085f55261055c23ca8061db443579e401e0086"}
+               (get-in third-party-sources
+                       [:fixture/vendor :public-types])))
+        (is (= {:count 0
+                :sha256
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+               (get-in ledger [:policy :sources 0 :public-types])))
+        (Files/writeString output source-text (make-array OpenOption 0))
+        (let [leak (caught #(create-ledger! root [artifact] contract))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data leak))))
+          (is (= {:count 0
+                  :sha256
+                  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+                 (:expected (ex-data leak))))
+          (is (= 1 (get-in (ex-data leak) [:actual :count])))))
+      (finally
+        (delete-tree! root)))))
