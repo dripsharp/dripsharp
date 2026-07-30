@@ -54,7 +54,7 @@
   "https://api.nuget.org/v3/index.json")
 
 (def ^:private isolated-msbuild-environment
-  #{"MSBuildSDKsPath"})
+  #{"MSBuildExtensionsPath" "MSBuildSDKsPath"})
 
 (def ^:private isolated-nuget-config
   (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"

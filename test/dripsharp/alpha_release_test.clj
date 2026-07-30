@@ -1088,7 +1088,9 @@
               :environment
               (merge
                {"MSBuildSDKsPath"
-                "/host-controlled/nonexistent-msbuild-sdks"}
+                "/host-controlled/nonexistent-msbuild-sdks"
+                "MSBuildExtensionsPath"
+                "/host-controlled/nonexistent-msbuild-extensions"}
                (when restore?
                  {"RestoreSources"
                   "/host-controlled/alternate-package-source"
@@ -1200,8 +1202,10 @@
                   restore-command))
         (is (some #{"-p:RestoreAdditionalProjectSources="} restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"MSBuildSDKsPath"} (:unset-environment restore-request)))
-        (is (= #{"MSBuildSDKsPath"} (:unset-environment dotnet-request)))
+        (is (= #{"MSBuildExtensionsPath" "MSBuildSDKsPath"}
+               (:unset-environment restore-request)))
+        (is (= #{"MSBuildExtensionsPath" "MSBuildSDKsPath"}
+               (:unset-environment dotnet-request)))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
                          "--untracked-files=all"))))
