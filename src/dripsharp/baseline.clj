@@ -171,7 +171,7 @@
                                                 legal-entry-required-keys
                                                 legal-entry-allowed-keys)
                                    (contains? #{:license :notice} (:kind entry))
-                                   (every? #(non-blank-string? (get entry %))
+                                   (every? #(non-blank-single-line? (get entry %))
                                            [:source :destination :package-path])
                                    (sha256? (:sha256 entry))
                                    (or (nil? (:source-sha256 entry))
