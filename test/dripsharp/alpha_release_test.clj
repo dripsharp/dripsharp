@@ -1126,6 +1126,8 @@
         (paths/resolve-path workspace "hostile-code-analysis.targets")
         hostile-language-targets
         (paths/resolve-path workspace "hostile-language.targets")
+        hostile-net-build-extension-targets
+        (paths/resolve-path workspace "hostile-net-build-extension.targets")
         hostile-user-extensions
         (paths/resolve-path workspace "hostile-user-extensions")
         hostile-extensions32
@@ -1209,6 +1211,8 @@
                 (str hostile-custom-targets)
                 "LanguageTargets"
                 (str hostile-language-targets)
+                "MicrosoftNETBuildExtensionsTargets"
+                (str hostile-net-build-extension-targets)
                 "MSBuildSDKsPath"
                 "/host-controlled/nonexistent-msbuild-sdks"
                 "MSBuildExtensionsPath"
@@ -1288,6 +1292,12 @@
        (str "<Project><Target Name=\"RejectAmbientLanguageTargets\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient LanguageTargets "
             "was loaded\" /></Target></Project>\n"))
+      (write!
+       workspace "hostile-net-build-extension.targets"
+       (str "<Project><Target Name=\"RejectAmbientNETBuildExtensionTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "MicrosoftNETBuildExtensionsTargets was loaded\" />"
+            "</Target></Project>\n"))
       (write!
        hostile-user-extensions
        "Current/Microsoft.Common.targets/ImportBefore/RejectAmbientUserExtension.targets"
@@ -1495,6 +1505,7 @@
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "LanguageTargets"
+                 "MicrosoftNETBuildExtensionsTargets"
                  "MSBuildExtensionsPath"
                  "MSBuildExtensionsPath32"
                  "MSBuildExtensionsPath64"
@@ -1521,6 +1532,7 @@
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "LanguageTargets"
+                 "MicrosoftNETBuildExtensionsTargets"
                  "MSBuildExtensionsPath"
                  "MSBuildExtensionsPath32"
                  "MSBuildExtensionsPath64"

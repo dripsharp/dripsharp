@@ -74,6 +74,7 @@
     "CustomBeforeMicrosoftCommonProps"
     "CustomBeforeMicrosoftCommonTargets"
     "LanguageTargets"
+    "MicrosoftNETBuildExtensionsTargets"
     "MSBuildExtensionsPath"
     "MSBuildExtensionsPath32"
     "MSBuildExtensionsPath64"
