@@ -84,7 +84,8 @@
     "MSBuildSDKsPath"
     "MSBuildUserExtensionsPath"
     "MsTestToolsTargets"
-    "ReportingServicesTargets"})
+    "ReportingServicesTargets"
+    "VSTestTargets"})
 
 (def ^:private isolated-nuget-config
   (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"

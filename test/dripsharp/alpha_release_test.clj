@@ -1138,6 +1138,8 @@
         (paths/resolve-path workspace "hostile-ms-test-tools.targets")
         hostile-reporting-services-targets
         (paths/resolve-path workspace "hostile-reporting-services.targets")
+        hostile-vs-test-targets
+        (paths/resolve-path workspace "hostile-vs-test.targets")
         hostile-user-extensions
         (paths/resolve-path workspace "hostile-user-extensions")
         hostile-extensions32
@@ -1233,6 +1235,8 @@
                 (str hostile-ms-test-tools-targets)
                 "ReportingServicesTargets"
                 (str hostile-reporting-services-targets)
+                "VSTestTargets"
+                (str hostile-vs-test-targets)
                 "MSBuildSDKsPath"
                 "/host-controlled/nonexistent-msbuild-sdks"
                 "MSBuildExtensionsPath"
@@ -1343,6 +1347,11 @@
        (str "<Project><Target Name=\"RejectAmbientReportingServicesTargets\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient "
             "ReportingServicesTargets was loaded\" /></Target></Project>\n"))
+      (write!
+       workspace "hostile-vs-test.targets"
+       (str "<Project><Target Name=\"RejectAmbientVSTestTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "VSTestTargets was loaded\" /></Target></Project>\n"))
       (write!
        hostile-user-extensions
        "Current/Microsoft.Common.targets/ImportBefore/RejectAmbientUserExtension.targets"
@@ -1560,7 +1569,8 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"
                  "MsTestToolsTargets"
-                 "ReportingServicesTargets"}
+                 "ReportingServicesTargets"
+                 "VSTestTargets"}
                (:unset-environment restore-request)))
         (is (= #{"AfterMicrosoftNetSdkProps"
                  "AfterMicrosoftNETSdkTargets"
@@ -1592,7 +1602,8 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"
                  "MsTestToolsTargets"
-                 "ReportingServicesTargets"}
+                 "ReportingServicesTargets"
+                 "VSTestTargets"}
                (:unset-environment dotnet-request)))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
