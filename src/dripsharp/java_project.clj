@@ -224,16 +224,17 @@
        #(and (string? %)
              (not (str/blank? %))
              (project-xml/valid-text? %)))))
-  (when-let [copyright (get-in configuration [:package :copyright])]
-    (validation/check!
-     (destination-context "Destination package copyright"
-                          {:section :package
-                           :setting :copyright})
-     [:package :copyright] copyright
-     "a non-blank XML-compatible string"
-     #(and (string? %)
-           (not (str/blank? %))
-           (project-xml/valid-text? %))))
+  (when (contains? (:package configuration) :copyright)
+    (let [copyright (get-in configuration [:package :copyright])]
+      (validation/check!
+       (destination-context "Destination package copyright"
+                            {:section :package
+                             :setting :copyright})
+       [:package :copyright] copyright
+       "a non-blank XML-compatible string"
+       #(and (string? %)
+             (not (str/blank? %))
+             (project-xml/valid-text? %)))))
   (let [legal-files (:legal-files configuration)
         license-expression (get-in configuration [:package :license-expression])]
     (when (contains? configuration :legal-files)

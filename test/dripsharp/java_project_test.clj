@@ -121,6 +121,28 @@
           (is (= :package (:section (ex-data error))))
           (is (= setting (:setting (ex-data error)))))))))
 
+(deftest destination-copyright-must-be-absent-or-valid
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")]
+    (is (= configuration
+           (project-emission/validate-configuration! configuration)))
+    (doseq [value [nil false]]
+      (testing (str "a key-present " (pr-str value)
+                    " copyright value is malformed")
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc-in configuration [:package :copyright] value))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:package :copyright] (:path (ex-data error))))
+          (is (= "a non-blank XML-compatible string"
+                 (:expected (ex-data error)))))))))
+
 (deftest destination-authors-must-be-a-single-line-publisher
   (let [configuration
         (project-emission/read-configuration
