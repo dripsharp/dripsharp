@@ -10,6 +10,7 @@
             [dripsharp.java-project :as java-project]
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
+            [dripsharp.product-repository :as product-repository]
             [dripsharp.target-directory :as target-directory]))
 
 (defn- fail!
@@ -163,7 +164,8 @@
   (dissoc options
           :target :validation :read-target-fn
           :generate-fn :verify-fn :pack-fn :package-fn
-          :differential-fn))
+          :differential-fn :proof-fn :synchronize-fn :prepare-fn
+          :branch :commit-message :pull-request-title :pull-request-body))
 
 (defn- generate-loaded!
   [execution options generate-fn]
@@ -344,13 +346,9 @@
                               :validation-contracts]))))]
     (mapv #(run-validation! execution options %) selected)))
 
-(defn proof!
-  "Runs every required proof ladder declared by one preflighted target.
-  Ladders are mandatory, exhaustive over target profiles and validations, and
-  carry their CI resource class in the target contract."
-  [options]
-  (let [execution (plan (assoc options :profile nil))
-        validations (get-in execution [:contract :validation-contracts])
+(defn- proof-loaded!
+  [execution options]
+  (let [validations (get-in execution [:contract :validation-contracts])
         ladders (get-in execution [:contract :proof :ladders])]
     (mapv
      (fn [{:keys [id kind validation-contracts resource-class runner]}]
@@ -388,6 +386,71 @@
                  {:target (:target execution) :ladder id :kind kind}))})
      ladders)))
 
+(defn proof!
+  "Runs every required proof ladder declared by one preflighted target.
+  Ladders are mandatory, exhaustive over target profiles and validations, and
+  carry their CI resource class in the target contract."
+  [options]
+  (proof-loaded! (plan (assoc options :profile nil)) options))
+
+(defn- generated-publication!
+  [execution]
+  (let [publication (get-in execution [:contract :publication])]
+    (when-not (= :generated-repository (:kind publication))
+      (fail! "Target is conformance-only and cannot be synchronized"
+             {:target (:target execution)
+              :reason :conformance-only-target
+              :publication-kind (:kind publication)}))
+    publication))
+
+(defn- publication-proof!
+  [execution options]
+  (if-let [proof-fn (:proof-fn options)]
+    (proof-fn {:workspace-root (:workspace-root execution)
+               :target (:target execution)})
+    (proof-loaded! execution options)))
+
+(defn synchronize!
+  "Runs the target's complete required proof in disposable staging, then copies
+  only declared managed paths into its clean product submodule."
+  [options]
+  (let [execution (plan (assoc options :profile nil))
+        _ (generated-publication! execution)
+        proof (publication-proof! execution options)
+        synchronize-fn
+        (or (:synchronize-fn options) product-repository/synchronize!)
+        synchronization
+        (synchronize-fn
+         (cond-> {:workspace-root (:workspace-root execution)
+                  :target-contract (:contract execution)}
+           (:run-command! options)
+           (assoc :run-command! (:run-command! options))))]
+    {:target (:target execution)
+     :proof proof
+     :synchronization synchronization}))
+
+(defn prepare-publication!
+  "Runs complete target proof and prepares a local product branch/commit, pull
+  request metadata, and staged parent gitlink. No push or PR is performed."
+  [options]
+  (let [execution (plan (assoc options :profile nil))
+        _ (generated-publication! execution)
+        proof (publication-proof! execution options)
+        prepare-fn (or (:prepare-fn options) product-repository/prepare!)
+        preparation
+        (prepare-fn
+         (cond-> {:workspace-root (:workspace-root execution)
+                  :target-contract (:contract execution)
+                  :branch (:branch options)
+                  :commit-message (:commit-message options)
+                  :pull-request-title (:pull-request-title options)
+                  :pull-request-body (:pull-request-body options)}
+           (:run-command! options)
+           (assoc :run-command! (:run-command! options))))]
+    {:target (:target execution)
+     :proof proof
+     :preparation preparation}))
+
 (defn run!
   [command options]
   (case command
@@ -397,4 +460,6 @@
     :package (package! options)
     :differential (differential! options)
     :proof (proof! options)
+    :synchronize (synchronize! options)
+    :prepare-publication (prepare-publication! options)
     (fail! "Unknown target execution command" {:command command})))

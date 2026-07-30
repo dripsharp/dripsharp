@@ -126,7 +126,7 @@
     :description
     "Acme Core for .NET. This package is an independent translation and is not affiliated with UpstreamCo."
     :authors "DripSharp"}
-   :output {:project-directory "generated/acme-core"
+   :output {:project-directory "generated/acme/src/Acme.Core"
             :project-file "Acme.Core.csproj"}
    :destination-capabilities #{:java-compat}
    :runtime-sources ["runtime/Acme.Core.Runtime.cs"]})
@@ -194,7 +194,7 @@
 
 (defn- target-manifest
   []
-  {:schema-version 4
+  {:schema-version 5
    :target :acme
    :product-family :acme
    :contracts
@@ -236,6 +236,16 @@
    [{:id :acme-core
      :kind :differential
      :path "validation/contract.edn"}]
+   :publication
+   {:kind :generated-repository
+    :repository-slug "dripsharp/acme"
+    :repository-url "https://github.com/dripsharp/acme.git"
+    :default-branch "master"
+    :submodule-path "products/acme"
+    :staging-path "target/generated/acme"
+    :profile-projects {"acme-core" "src/Acme.Core"}
+    :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+    :publication-mode :pull-request}
    :proof
    {:role :product
     :ladders
@@ -395,6 +405,57 @@
               (:id
                (mapping-registry/registry-entry
                 registry "executable:java.lang.String#length()"))))))))
+
+(deftest publication-variants-and-project-mappings-fail-closed
+  (in-target-workspace
+   (fn [root]
+     (create-target-workspace! root)
+     (testing "generated repositories require every exact canonical identity"
+       (doseq [[field invalid]
+               [[:repository-slug "other/acme"]
+                [:repository-url "https://github.com/dripsharp/acme"]
+                [:default-branch "main"]
+                [:submodule-path "products/other"]
+                [:staging-path "target/generated/other"]
+                [:publication-mode :direct]]]
+         (write-edn! root "targets/acme/target.edn" (target-manifest))
+         (update-edn! root "targets/acme/target.edn"
+                      assoc-in [:publication field] invalid)
+         (let [result
+               (failure-data #(target-directory/read-target root :acme))]
+           (is (= :invalid-target-directory (:kind result)))
+           (is (= [:publication field] (:path result))))))
+     (testing "profile projects must agree exactly with generated destinations"
+       (write-edn! root "targets/acme/target.edn" (target-manifest))
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in [:publication :profile-projects "acme-core"]
+                    "src/Acme.Other")
+       (let [result
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= [:publication :profile-projects "acme-core"]
+                (:path result)))
+         (is (= "generated/acme/src/Acme.Other" (:value result)))
+         (is (= "generated/acme/src/Acme.Core"
+                (:expected-value result)))))
+     (testing "managed paths reject escapes and nesting"
+       (doseq [managed-path ["../outside" "src/nested"]]
+         (write-edn! root "targets/acme/target.edn" (target-manifest))
+         (update-edn! root "targets/acme/target.edn"
+                      assoc-in [:publication :managed-paths 0]
+                      managed-path)
+         (is (= :invalid-target-directory
+                (:kind
+                 (failure-data
+                  #(target-directory/read-target root :acme)))))))
+     (testing "publication variants reject undeclared fields"
+       (write-edn! root "targets/acme/target.edn" (target-manifest))
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in [:publication :implicit-create?]
+                    true)
+       (is (= :invalid-target-directory
+              (:kind
+               (failure-data
+                #(target-directory/read-target root :acme)))))))))
 
 (deftest target-contract-edn-files-require-exactly-one-form
   (in-target-workspace

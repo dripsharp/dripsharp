@@ -29,6 +29,14 @@
                   (fn [options]
                     (swap! calls conj [:proof options])
                     :ok)
+                  target-execution/synchronize!
+                  (fn [options]
+                    (swap! calls conj [:product-sync options])
+                    :ok)
+                  target-execution/prepare-publication!
+                  (fn [options]
+                    (swap! calls conj [:product-prepare options])
+                    :ok)
                   java-compat-differential/verify!
                   (fn []
                     (swap! calls conj [:java-compat-differential])
@@ -52,6 +60,12 @@
       (is (= :ok
              (main/dispatch! ["proof" "acme"])))
       (is (= :ok
+             (main/dispatch! ["product-sync" "acme"])))
+      (is (= :ok
+             (main/dispatch!
+              ["product-prepare" "acme" "generated/acme"
+               "Publish Acme"])))
+      (is (= :ok
              (main/dispatch! ["java-compat-differential"])))
       (is (= :ok
              (main/dispatch!
@@ -62,6 +76,11 @@
               [:differential
                {:target "acme" :validation "acme-contract"}]
               [:proof {:target "acme"}]
+              [:product-sync {:target "acme"}]
+              [:product-prepare
+               {:target "acme"
+                :branch "generated/acme"
+                :commit-message "Publish Acme"}]
               [:java-compat-differential]
               [:pdfcube-family-host-matrix "evidence" "output"]
               [:rebaseline
@@ -75,6 +94,11 @@
                 ["differential"]
                 ["proof"]
                 ["proof" "pkl" "extra"]
+                ["product-sync"]
+                ["product-sync" "pkl" "extra"]
+                ["product-prepare" "pkl"]
+                ["product-prepare" "pkl" "generated/pkl"]
+                ["product-prepare" "pkl" "generated/pkl" "message" "extra"]
                 ["java-compat-differential" "pkl"]
                 ["pdfcube-family-host-matrix"]
                 ["pdfcube-family-host-matrix" "evidence"]

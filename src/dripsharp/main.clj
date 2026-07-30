@@ -13,6 +13,8 @@
    "generate|verify|pack|package <target> <profile>"
    "|differential <target> [validation-id]"
    "|proof <target>"
+   "|product-sync <target>"
+   "|product-prepare <target> <branch> <commit-message>"
    "|java-compat-differential"
    "|pdfcube-family-host-matrix <evidence-root> <output-root>"
    "|rebaseline <pkl|pdfcube|rawhttp> [--approve <token>]"))
@@ -46,6 +48,21 @@
            (nil? selector)
            (empty? extra))
       (target-execution/proof! {:target target})
+
+      (and (= "product-sync" command)
+           target
+           (nil? selector)
+           (empty? extra))
+      (target-execution/synchronize! {:target target})
+
+      (and (= "product-prepare" command)
+           target
+           selector
+           (= 1 (count extra)))
+      (target-execution/prepare-publication!
+       {:target target
+        :branch selector
+        :commit-message (first extra)})
 
       (and (= "java-compat-differential" command)
            (nil? target)

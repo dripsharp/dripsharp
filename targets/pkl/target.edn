@@ -1,4 +1,4 @@
-{:schema-version 4
+{:schema-version 5
  :target :pkl
  :product-family :brine
  :contracts
@@ -68,6 +68,18 @@
  [{:id :pkl-differential
    :kind :custom
    :path "validation/differential.edn"}]
+ :publication
+ {:kind :generated-repository
+  :repository-slug "dripsharp/brine"
+  :repository-url "https://github.com/dripsharp/brine.git"
+  :default-branch "master"
+  :submodule-path "products/brine"
+  :staging-path "target/generated/brine"
+  :profile-projects
+  {"pkl-parser" "src/DripSharp.Brine.Parser"
+   "pkl-core-value-model" "src/DripSharp.Brine"}
+  :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+  :publication-mode :pull-request}
  :proof
  {:role :product
   :ladders

@@ -14,11 +14,11 @@ to the product-neutral directory loader.
 
 ## Manifest
 
-`targets/<target-id>/target.edn` uses schema version 4 and has exactly these
+`targets/<target-id>/target.edn` uses schema version 5 and has exactly these
 keys:
 
 ```clojure
-{:schema-version 4
+{:schema-version 5
  :target :example
  :product-family :example
 
@@ -76,6 +76,17 @@ keys:
    :kind :differential
    :path "validation/core.edn"}]
 
+ :publication
+ {:kind :generated-repository
+  :repository-slug "dripsharp/example"
+  :repository-url "https://github.com/dripsharp/example.git"
+  :default-branch "master"
+  :submodule-path "products/example"
+  :staging-path "target/generated/example"
+  :profile-projects {"example-core" "src/Example.Core"}
+  :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+  :publication-mode :pull-request}
+
  :proof
  {:role :product
   :ladders
@@ -96,6 +107,37 @@ must be selected by at least one profile. Every selected id must exist.
 Declared capabilities must exactly equal the union provided by destinations,
 mapping overlays, and runtime assets; a profile's required capabilities must
 be available from its selected inputs.
+
+## Publication contract
+
+Every target declares exactly one publication variant. A generated product
+family uses `:generated-repository` with the exact keys shown above. Its
+repository slug and canonical Git URL are `dripsharp/<product-family>` and
+`https://github.com/dripsharp/<product-family>.git`; its default branch is
+`master`; its durable checkout and disposable staging roots are
+`products/<product-family>` and `target/generated/<product-family>`; and its
+publication mode is `:pull-request`.
+
+`:profile-projects` maps every target profile exactly once to a distinct
+portable project path below a declared managed path. Each mapped path must
+agree with the profile destination's generated project directory after the
+`target/` staging prefix is removed. `:managed-paths` is a nonempty,
+non-overlapping vector of top-level repository paths. This keeps generated
+and proved output outside the product checkout and gives synchronization an
+exact copy boundary.
+
+A target that exists only as permanent translator conformance instead uses
+the exact variant:
+
+```clojure
+{:publication {:kind :conformance-only}}
+```
+
+That variant permits no repository, staging, project, managed-path, or mode
+fields and requires the `:reusable-translator-conformance` proof role.
+Conversely, `:generated-repository` requires the `:product` proof role.
+Ordinary generation, proof, and synchronization do not create product
+repositories, push branches, or open pull requests.
 
 ## Owned file contracts
 

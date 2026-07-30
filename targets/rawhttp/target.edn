@@ -1,4 +1,4 @@
-{:schema-version 4
+{:schema-version 5
  :target :rawhttp
  :product-family :java-library
  :contracts
@@ -36,6 +36,7 @@
  [{:id :rawhttp-package-equivalence
    :kind :custom
    :path "validation/package-equivalence.edn"}]
+ :publication {:kind :conformance-only}
  :proof
  {:role :reusable-translator-conformance
   :ladders

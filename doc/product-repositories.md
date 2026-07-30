@@ -59,6 +59,13 @@ Publication follows this order:
 5. Update the parent repository's submodule gitlink only after the product
    repository commit exists.
 
+`product-sync <target>` runs the target's complete required proof before the
+managed-path copy. `product-prepare <target> <branch> <commit-message>` adds a
+local product branch and commit, pull-request metadata, and a staged parent
+gitlink update. Neither command creates a repository, pushes a branch, or
+opens a pull request; those external actions remain separately authorized
+owner operations.
+
 Synchronization must fail closed when the product submodule contains unrelated
 changes, when a managed path escapes the declared product root, or when another
 product submodule would be modified. Manual patches to generated C# are not a

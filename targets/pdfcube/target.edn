@@ -1,4 +1,4 @@
-{:schema-version 4
+{:schema-version 5
  :target :pdfcube
  :product-family :pdfcarton
  :contracts
@@ -133,6 +133,21 @@
   {:id :pdfcube-xmpbox-metadata
    :kind :differential
    :path "validation/xmpbox.edn"}]
+ :publication
+ {:kind :generated-repository
+  :repository-slug "dripsharp/pdfcarton"
+  :repository-url "https://github.com/dripsharp/pdfcarton.git"
+  :default-branch "master"
+  :submodule-path "products/pdfcarton"
+  :staging-path "target/generated/pdfcarton"
+  :profile-projects
+  {"pdfcube-io" "src/DripSharp.PdfCarton.IO"
+   "pdfcube-fontbox" "src/DripSharp.PdfCarton.Fonts"
+   "pdfcube-xmpbox" "src/DripSharp.PdfCarton.Xmp"
+   "pdfcube-pdfbox" "src/DripSharp.PdfCarton"
+   "pdfcube-preflight" "src/DripSharp.PdfCarton.Preflight"}
+  :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+  :publication-mode :pull-request}
  :proof
  {:role :product
   :ladders

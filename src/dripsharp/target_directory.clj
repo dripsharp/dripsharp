@@ -18,14 +18,14 @@
   (:import [java.io PushbackReader StringReader]
            [java.nio.file Files LinkOption]))
 
-(def schema-version 4)
+(def schema-version 5)
 (def legal-policy-schema-version 4)
 (def mapping-overlay-schema-version 1)
 
 (def ^:private manifest-keys
   #{:schema-version :target :product-family :contracts :baseline :legal-policy
     :java :capabilities :profiles :destinations :mapping-overlays
-    :runtime-assets :validation-contracts :authorship :proof})
+    :runtime-assets :validation-contracts :authorship :proof :publication})
 
 (def ^:private document-keys
   #{:product-goal :port-scope :dependencies})
@@ -85,6 +85,14 @@
 
 (def ^:private proof-resource-classes
   #{:conformance :high-memory})
+
+(def ^:private generated-publication-keys
+  #{:kind :repository-slug :repository-url :default-branch
+    :submodule-path :staging-path :profile-projects :managed-paths
+    :publication-mode})
+
+(def ^:private conformance-publication-keys
+  #{:kind})
 
 (defn- fail!
   [message data]
@@ -1429,6 +1437,119 @@
                 (contains? (set (:profiles ladder)) profile-id))))))
     profiles))
 
+(defn- path-contained-by?
+  [parent child]
+  (starts-with-components? child (relative-components parent)))
+
+(defn- load-publication!
+  [target family publication profiles proof]
+  (let [context (validation-context "Target publication contract"
+                                    {:target target})
+        kind (:kind publication)]
+    (case kind
+      :conformance-only
+      (do
+        (exact-keys! "Target conformance-only publication contract"
+                     [:publication] conformance-publication-keys publication)
+        (when-not (= :reusable-translator-conformance (:role proof))
+          (fail!
+           "Conformance-only publication requires a reusable-translator conformance proof"
+           {:target target
+            :publication-kind kind
+            :proof-role (:role proof)}))
+        {:kind kind})
+
+      :generated-repository
+      (do
+        (exact-keys! "Target generated-repository publication contract"
+                     [:publication] generated-publication-keys publication)
+        (when-not (= :product (:role proof))
+          (fail! "Generated-repository publication requires a product proof"
+                 {:target target
+                  :publication-kind kind
+                  :proof-role (:role proof)}))
+        (let [product-id (name family)
+              expected-slug (str "dripsharp/" product-id)
+              expected-url (str "https://github.com/" expected-slug ".git")
+              expected-submodule (str "products/" product-id)
+              expected-staging (str "target/generated/" product-id)
+              repository-slug (:repository-slug publication)
+              repository-url (:repository-url publication)
+              default-branch (:default-branch publication)
+              submodule-path (:submodule-path publication)
+              staging-path (:staging-path publication)
+              profile-projects (:profile-projects publication)
+              managed-paths (:managed-paths publication)
+              publication-mode (:publication-mode publication)
+              profile-ids (set (keys profiles))]
+          (validation/check! context [:publication :repository-slug]
+                             repository-slug expected-slug #{expected-slug})
+          (validation/check! context [:publication :repository-url]
+                             repository-url expected-url #{expected-url})
+          (validation/check! context [:publication :default-branch]
+                             default-branch "master" #{"master"})
+          (validation/check! context [:publication :submodule-path]
+                             submodule-path expected-submodule
+                             #{expected-submodule})
+          (validation/check! context [:publication :staging-path]
+                             staging-path expected-staging #{expected-staging})
+          (validation/check! context [:publication :publication-mode]
+                             publication-mode ":pull-request"
+                             #{:pull-request})
+          (relative-path! "Product submodule path" submodule-path)
+          (relative-path! "Product staging path" staging-path)
+          (validation/check!
+           context [:publication :managed-paths] managed-paths
+           "a nonempty vector of distinct top-level repository paths"
+           #(and (vector? %)
+                 (seq %)
+                 (= (count %) (count (distinct %)))))
+          (doseq [[index managed-path] (map-indexed vector managed-paths)]
+            (relative-path! "Managed publication path" managed-path)
+            (validation/check!
+             context [:publication :managed-paths index] managed-path
+             "a top-level repository path"
+             #(= 1 (count (relative-components %)))))
+          (validation/check!
+           context [:publication :profile-projects] profile-projects
+           "a map from every target profile id to one distinct project path"
+           #(and (map? %)
+                 (= profile-ids (set (keys %)))
+                 (= (count %) (count (distinct (vals %))))))
+          (doseq [[profile-id project-path] profile-projects]
+            (relative-path! "Published profile project path" project-path)
+            (validation/check!
+             context [:publication :profile-projects profile-id]
+             project-path "a path below a declared managed path"
+             #(some (fn [managed] (path-contained-by? managed %))
+                    managed-paths)))
+          (doseq [[left-index left] (map-indexed vector managed-paths)
+                  [right-index right] (map-indexed vector managed-paths)
+                  :when (< left-index right-index)]
+            (when (or (path-contained-by? left right)
+                      (path-contained-by? right left))
+              (fail! "Managed publication paths must not overlap"
+                     {:target target
+                      :left left
+                      :right right})))
+          (let [staging-under-target
+                (str/join "/" (rest (relative-components staging-path)))]
+            (doseq [[profile-id project-path] profile-projects]
+              (validation/agree!
+               context
+               [:profiles profile-id :destination :output :project-directory]
+               (get-in profiles
+                       [profile-id :destination :configuration
+                        :output :project-directory])
+               [:publication :profile-projects profile-id]
+               (str staging-under-target "/" project-path))))
+          publication))
+
+      (fail! "Target publication contract has an unsupported kind"
+             {:target target
+              :publication-kind kind
+              :allowed [:conformance-only :generated-repository]}))))
+
 (defn- load-differential-validation!
   [workspace-root target-root target baseline-record legal-policy
    descriptor file contract profiles]
@@ -1751,6 +1872,9 @@
                  (load-proof! target family (:proof manifest)
                               profiles validations)
                  _ (validate-authorship-evidence! target profiles proof)
+                 publication
+                 (load-publication! target family (:publication manifest)
+                                    profiles proof)
                  selected-destinations
                  (set (map #(get-in % [:descriptor :destination])
                            (vals profiles)))
@@ -1822,4 +1946,5 @@
               :runtime-assets runtime-assets
               :authorship authorship-contracts
               :validation-contracts validations
-              :proof proof})))))))
+              :proof proof
+              :publication publication})))))))

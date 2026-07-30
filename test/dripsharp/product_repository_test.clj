@@ -1,0 +1,347 @@
+(ns dripsharp.product-repository-test
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [dripsharp.paths :as paths]
+            [dripsharp.process :as process]
+            [dripsharp.product-repository :as product-repository]
+            [dripsharp.target-directory :as target-directory]
+            [dripsharp.target-execution :as target-execution])
+  (:import [java.nio.file FileVisitOption Files OpenOption Path]
+           [java.nio.file.attribute FileAttribute]))
+
+(defn- temp-directory
+  []
+  (Files/createTempDirectory "dripsharp-product-repository-"
+                             (make-array FileAttribute 0)))
+
+(defn- delete-tree!
+  [^Path root]
+  (when (Files/exists root (make-array java.nio.file.LinkOption 0))
+    (with-open [entries (Files/walk root (make-array FileVisitOption 0))]
+      (doseq [^Path entry
+              (->> (.toArray entries)
+                   (map #(cast Path %))
+                   (sort-by #(.getNameCount ^Path %) >))]
+        (Files/delete entry)))))
+
+(defn- write!
+  [^Path root relative content]
+  (let [file (.resolve root relative)]
+    (Files/createDirectories (.getParent file)
+                             (make-array FileAttribute 0))
+    (Files/writeString file content (make-array OpenOption 0))
+    file))
+
+(defn- git!
+  [directory & command]
+  (process/run! {:command (into ["git"] command)
+                 :directory directory}))
+
+(defn- git-output
+  [directory & command]
+  (str/trim (:output (apply git! directory command))))
+
+(defn- configure-git!
+  [directory]
+  (git! directory "config" "user.name" "DripSharp Test")
+  (git! directory "config" "user.email" "dripsharp@example.invalid"))
+
+(defn- init-repository!
+  [directory remote initial-files]
+  (Files/createDirectories directory (make-array FileAttribute 0))
+  (git! directory "init" "-b" "master")
+  (configure-git! directory)
+  (git! directory "remote" "add" "origin" remote)
+  (doseq [[path content] initial-files]
+    (write! directory path content))
+  (git! directory "add" "--all")
+  (git! directory "commit" "-m" "Initial product state")
+  (git-output directory "rev-parse" "HEAD"))
+
+(defn- publication
+  []
+  {:kind :generated-repository
+   :repository-slug "dripsharp/brine"
+   :repository-url "https://github.com/dripsharp/brine.git"
+   :default-branch "master"
+   :submodule-path "products/brine"
+   :staging-path "target/generated/brine"
+   :profile-projects {"pkl-core" "src/DripSharp.Brine"}
+   :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+   :publication-mode :pull-request})
+
+(defn- target-contract
+  []
+  {:target :pkl
+   :product-family :brine
+   :publication (publication)})
+
+(defn- add-gitlink!
+  [workspace path remote commit]
+  (spit (str (.resolve ^Path workspace ".gitmodules"))
+        (str (when (Files/exists (.resolve ^Path workspace ".gitmodules")
+                                 (make-array java.nio.file.LinkOption 0))
+               (slurp (str (.resolve ^Path workspace ".gitmodules"))))
+             "[submodule \"" path "\"]\n"
+             "\tpath = " path "\n"
+             "\turl = " remote "\n"))
+  (git! workspace "add" ".gitmodules")
+  (git! workspace "update-index" "--add" "--cacheinfo"
+        (str "160000," commit "," path)))
+
+(defn- fixture!
+  []
+  (let [workspace (temp-directory)
+        brine (.resolve workspace "products/brine")
+        pdfcarton (.resolve workspace "products/pdfcarton")
+        _ (git! workspace "init" "-b" "master")
+        _ (configure-git! workspace)
+        _ (write! workspace ".gitignore" "target/\n")
+        brine-commit
+        (init-repository!
+         brine "https://github.com/dripsharp/brine.git"
+         [["README.md" "old readme\n"]
+          ["CONTRIBUTING.md" "preserve me\n"]])
+        pdfcarton-commit
+        (init-repository!
+         pdfcarton "https://github.com/dripsharp/pdfcarton.git"
+         [["README.md" "other product\n"]])
+        _ (add-gitlink! workspace "products/brine"
+                        "https://github.com/dripsharp/brine.git"
+                        brine-commit)
+        _ (add-gitlink! workspace "products/pdfcarton"
+                        "https://github.com/dripsharp/pdfcarton.git"
+                        pdfcarton-commit)
+        _ (git! workspace "add" ".gitignore")
+        _ (git! workspace "commit" "-m" "Adopt product submodules")
+        _ (write! workspace
+                  "target/generated/brine/src/DripSharp.Brine/Generated.cs"
+                  "namespace DripSharp.Brine;\n")
+        _ (write! workspace "target/generated/brine/LICENSE"
+                  "Apache License\n")
+        _ (write! workspace "target/generated/brine/NOTICE"
+                  "Brine notice\n")
+        _ (write! workspace "target/generated/brine/README.md"
+                  "# Brine\n")
+        _ (write! workspace "target/generated/brine/proof-only.txt"
+                  "not published\n")]
+    {:workspace workspace
+     :brine brine
+     :pdfcarton pdfcarton
+     :contract (target-contract)}))
+
+(defn- failure
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
+(defn- commit-synchronization!
+  [{:keys [workspace brine]}]
+  (git! brine "add" "--all")
+  (git! brine "commit" "-m" "Publish generated state")
+  (git! workspace "add" "products/brine")
+  (git! workspace "commit" "-m" "Advance Brine gitlink"))
+
+(deftest target-publication-variants-map-products-exactly
+  (let [brine (:publication (target-directory/read-target :pkl))
+        pdfcarton (:publication (target-directory/read-target :pdfcube))
+        rawhttp (:publication (target-directory/read-target :rawhttp))]
+    (is (= {:kind :generated-repository
+            :repository-slug "dripsharp/brine"
+            :repository-url "https://github.com/dripsharp/brine.git"
+            :default-branch "master"
+            :submodule-path "products/brine"
+            :staging-path "target/generated/brine"
+            :profile-projects
+            {"pkl-parser" "src/DripSharp.Brine.Parser"
+             "pkl-core-value-model" "src/DripSharp.Brine"}
+            :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+            :publication-mode :pull-request}
+           brine))
+    (is (= "target/generated/pdfcarton" (:staging-path pdfcarton)))
+    (is (= "products/pdfcarton" (:submodule-path pdfcarton)))
+    (is (= #{"src/DripSharp.PdfCarton"
+             "src/DripSharp.PdfCarton.IO"
+             "src/DripSharp.PdfCarton.Fonts"
+             "src/DripSharp.PdfCarton.Xmp"
+             "src/DripSharp.PdfCarton.Preflight"}
+           (set (vals (:profile-projects pdfcarton)))))
+    (is (= {:kind :conformance-only} rawhttp))))
+
+(deftest synchronization-copies-only-managed-paths-and-repeats-deterministically
+  (let [{:keys [workspace brine pdfcarton contract] :as fixture} (fixture!)]
+    (try
+      (let [other-head (git-output pdfcarton "rev-parse" "HEAD")
+            first
+            (product-repository/synchronize!
+             {:workspace-root workspace :target-contract contract})]
+        (is (= ["LICENSE" "NOTICE" "README.md"
+                "src/DripSharp.Brine/Generated.cs"]
+               (:changes first)))
+        (is (= "namespace DripSharp.Brine;\n"
+               (slurp (str (.resolve brine
+                                     "src/DripSharp.Brine/Generated.cs")))))
+        (is (= "preserve me\n"
+               (slurp (str (.resolve brine "CONTRIBUTING.md")))))
+        (is (not (Files/exists (.resolve brine "proof-only.txt")
+                               (make-array java.nio.file.LinkOption 0))))
+        (is (= other-head (git-output pdfcarton "rev-parse" "HEAD")))
+        (is (= [] (:external-actions first)))
+        (commit-synchronization! fixture)
+        (let [second
+              (product-repository/synchronize!
+               {:workspace-root workspace :target-contract contract})]
+          (is (empty? (:changes second)))
+          (is (= (:source-sha256 first) (:source-sha256 second)))
+          (is (= (:inventory first) (:inventory second)))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest synchronization-rejects-dirty-and-cross-product-checkouts-before-copy
+  (testing "unrelated changes in the intended product are rejected"
+    (let [{:keys [workspace brine contract]} (fixture!)]
+      (try
+        (write! brine "manual.txt" "manual\n")
+        (let [result
+              (failure
+               #(product-repository/synchronize!
+                 {:workspace-root workspace :target-contract contract}))]
+          (is (= :dirty-checkout (:reason result)))
+          (is (= "old readme\n"
+                 (slurp (str (.resolve brine "README.md"))))))
+        (finally
+          (delete-tree! workspace)))))
+  (testing "changes in another generated product are rejected"
+    (let [{:keys [workspace brine pdfcarton contract]} (fixture!)]
+      (try
+        (write! pdfcarton "manual.txt" "cross-product\n")
+        (let [result
+              (failure
+               #(product-repository/synchronize!
+                 {:workspace-root workspace :target-contract contract}))]
+          (is (= :cross-product-changes (:reason result)))
+          (is (= "old readme\n"
+                 (slurp (str (.resolve brine "README.md"))))))
+        (finally
+          (delete-tree! workspace))))))
+
+(deftest synchronization-rejects-path-escapes-and-conformance-only-targets
+  (let [{:keys [workspace contract]} (fixture!)]
+    (try
+      (let [escaped
+            (assoc-in contract [:publication :managed-paths]
+                      ["../outside"])
+            result
+            (failure
+             #(product-repository/synchronize!
+               {:workspace-root workspace :target-contract escaped}))]
+        (is (= :invalid-relative-path (:reason result))))
+      (let [result
+            (failure
+             #(product-repository/synchronize!
+               {:workspace-root workspace
+                :target-contract
+                {:target :rawhttp
+                 :product-family :java-library
+                 :publication {:kind :conformance-only}}}))]
+        (is (= :conformance-only-target (:reason result))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest staging-cleanup-never-removes-product-content
+  (let [{:keys [workspace brine contract]} (fixture!)]
+    (try
+      (product-repository/clean-staging!
+       {:workspace-root workspace :target-contract contract})
+      (is (Files/isDirectory
+           (.resolve workspace "target/generated/brine")
+           (make-array java.nio.file.LinkOption 0)))
+      (is (empty?
+           (with-open [entries
+                       (Files/list
+                        (.resolve workspace "target/generated/brine"))]
+             (vec (.toArray entries)))))
+      (is (= "preserve me\n"
+             (slurp (str (.resolve brine "CONTRIBUTING.md")))))
+      (is (= "old readme\n"
+             (slurp (str (.resolve brine "README.md")))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest preparation-is-local-and-leaves-external-actions-explicit
+  (let [{:keys [workspace brine contract]} (fixture!)
+        commands (atom [])
+        run-command!
+        (fn [request]
+          (swap! commands conj (:command request))
+          (process/run! request))]
+    (try
+      (let [prepared
+            (product-repository/prepare!
+             {:workspace-root workspace
+              :target-contract contract
+              :branch "generated/brine-test"
+              :commit-message "Publish generated Brine"
+              :run-command! run-command!})]
+        (is (= "generated/brine-test"
+               (git-output brine "branch" "--show-current")))
+        (is (= (:product-commit prepared)
+               (git-output brine "rev-parse" "HEAD")))
+        (is (= {:repository "dripsharp/brine"
+                :base "master"
+                :head "generated/brine-test"
+                :title "Publish generated Brine"
+                :body
+                (str "Prepared from proved DripSharp staging "
+                     (:source-sha256 prepared) ".")
+                :requires-push true
+                :requires-creation true}
+               (:pull-request prepared)))
+        (is (= [:push-required :pull-request-creation-required]
+               (:external-actions prepared)))
+        (is (= ["products/brine"]
+               (-> (git! workspace "diff" "--cached" "--name-only" "-z")
+                   :output
+                   (str/split #"\u0000")
+                   vec)))
+        (is (not-any? #(or (some #{"push"} %)
+                           (= "gh" (first %))
+                           (some #{"repo" "create" "pr"} %))
+                      @commands)))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest target-workflow-proves-before-sync-and-rejects-conformance-early
+  (let [calls (atom [])
+        result
+        (target-execution/synchronize!
+         {:target :pkl
+          :proof-fn
+          (fn [options]
+            (swap! calls conj [:proof options])
+            :proved)
+          :synchronize-fn
+          (fn [options]
+            (swap! calls conj
+                   [:sync (get-in options
+                                  [:target-contract :publication
+                                   :staging-path])])
+            :synchronized)})]
+    (is (= [[:proof {:workspace-root (paths/workspace-root)
+                     :target :pkl}]
+            [:sync "target/generated/brine"]]
+           @calls))
+    (is (= :proved (:proof result)))
+    (is (= :synchronized (:synchronization result))))
+  (let [called? (atom false)
+        result
+        (failure
+         #(target-execution/synchronize!
+           {:target :rawhttp
+            :proof-fn (fn [_] (reset! called? true))
+            :synchronize-fn (fn [_] (reset! called? true))}))]
+    (is (= :conformance-only-target (:reason result)))
+    (is (false? @called?))))
