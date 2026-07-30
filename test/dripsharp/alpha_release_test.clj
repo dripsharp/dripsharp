@@ -11,6 +11,7 @@
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file FileVisitOption Files OpenOption Path]
            [java.nio.file.attribute FileAttribute]
+           [java.util Locale]
            [java.util.zip ZipEntry ZipOutputStream]))
 
 (defn- temp-directory
@@ -563,6 +564,47 @@
                        (get-in
                         result
                         [:collisions "dripsharp.pdfcarton.dll"])))))))
+      (testing "case-insensitive collision checks do not depend on the JVM locale"
+        (let [default-locale (Locale/getDefault)]
+          (try
+            (Locale/setDefault (Locale/forLanguageTag "tr-TR"))
+            (let [colliding
+                  (update
+                   inventory :managed-dependencies conj
+                   {:file "SKIASHARP.dll"
+                    :package-id "SKIASHARP"
+                    :version "1.0.0"})
+                  inventory-result
+                  (failure
+                   #(alpha-release/validate-inventory!
+                     contract colliding))
+                  entries (assoc expected
+                                 "SKIASHARP.dll"
+                                 "locale-sensitive collision")
+                  asset (zip! (.resolve root "locale-collision.asset")
+                              entries)
+                  asset-result
+                  (failure
+                   #(alpha-release/verify-asset!
+                     {:artifact asset
+                      :inventory inventory
+                      :platform platform
+                      :expected-hashes (hashes entries)
+                      :framework-assemblies #{"System.Runtime.dll"}}))]
+              (is (= :dependency-name-collision
+                     (:reason inventory-result)))
+              (is (= #{"SKIASHARP.dll" "SkiaSharp.dll"}
+                     (set
+                      (map :file
+                           (get-in inventory-result
+                                   [:collisions "skiasharp.dll"])))))
+              (is (= :dependency-name-collision
+                     (:reason asset-result)))
+              (is (= ["SKIASHARP.dll" "SkiaSharp.dll"]
+                     (get-in asset-result
+                             [:collisions "skiasharp.dll"]))))
+            (finally
+              (Locale/setDefault default-locale)))))
       (testing "typed inventory rejects Windows-illegal filenames"
         (doseq [file ["CON.dll" "nul.DLL" "COM1.dll" "lpt9.dll"]]
           (let [package-id (subs file 0 (- (count file) 4))

@@ -14,6 +14,7 @@
   (:import [java.nio.file FileVisitOption Files LinkOption OpenOption Path
             StandardOpenOption]
            [java.nio.file.attribute FileAttribute FileTime]
+           [java.util Locale]
            [java.util.zip Deflater ZipEntry ZipFile ZipOutputStream]))
 
 (def schema-version 1)
@@ -128,28 +129,32 @@
             :value value}))
   value)
 
+(defn- portable-lower-case
+  [value]
+  (.toLowerCase ^String value Locale/ROOT))
+
 (defn- case-insensitive-collisions
   [values identity-fn]
   (into
    (sorted-map)
    (filter (fn [[_ entries]] (< 1 (count entries))))
-   (group-by #(str/lower-case (identity-fn %)) values)))
+   (group-by #(portable-lower-case (identity-fn %)) values)))
 
 (defn- forbidden-file?
   [value]
-  (let [lower (str/lower-case value)]
+  (let [lower (portable-lower-case value)]
     (some #(str/ends-with? lower %) forbidden-suffixes)))
 
 (defn- native-file?
   [value]
-  (let [lower (str/lower-case value)]
+  (let [lower (portable-lower-case value)]
     (or (some #(str/ends-with? lower %) native-suffixes)
         (and (str/ends-with? lower ".dll")
              (str/starts-with? lower "lib")))))
 
 (defn- dll-file?
   [value]
-  (str/ends-with? (str/lower-case value) ".dll"))
+  (str/ends-with? (portable-lower-case value) ".dll"))
 
 (defn- semver-version!
   [authorized-tag]
