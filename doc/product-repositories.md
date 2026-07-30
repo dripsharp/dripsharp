@@ -72,6 +72,36 @@ product submodule would be modified. Manual patches to generated C# are not a
 durable fix: the corresponding translator, mapping, runtime input, or target
 contract must change in `dripsharp/dripsharp`, followed by regeneration.
 
+## GitHub Alpha-Release Assets
+
+Early GitHub distribution is a DLL-focused prerelease workflow, separate from
+NuGet package creation and publication. Each generated product target owns a
+typed `targets/<target>/release.edn` inventory. The inventory names every
+DripSharp product assembly, every required non-framework managed dependency,
+and each supported platform's required native runtime assets.
+
+`alpha-release-prepare <target> <authorized-alpha-tag> <product-commit>` runs
+the target's complete proof and then requires all of the following before
+assembling assets:
+
+* The product submodule is clean and its `HEAD` and parent gitlink both equal
+  the supplied full product commit.
+* The product repository's managed source state exactly matches the freshly
+  proved generated staging state.
+* Every build uses `Release` configuration.
+* The managed and native binary output matches the target-owned inventory
+  exactly and contains no framework assemblies or dependency-name collisions.
+
+Assembly produces one deterministic, versioned target-framework/platform ZIP
+for each declared platform variant. ZIP verification rejects package files,
+symbols, XML documentation, source archives, unsafe paths, and unrelated
+files. A preparation record contains dry-run GitHub release metadata with an
+exact target commit, `prerelease` set to true, and `latest` set to false.
+
+Preparation does not create a tag or release and does not upload an asset or
+push a ref. Those external mutations require explicit owner authorization in
+the current conversation.
+
 ## Brine Mapping
 
 The Pkl product family uses this mapping:

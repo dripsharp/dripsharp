@@ -1,0 +1,73 @@
+{:schema-version 1
+ :kind :github-alpha-zip
+ :product-family :pdfcarton
+ :asset-prefix "DripSharp.PdfCarton"
+ :target-framework "net10.0"
+ :entry-assembly "DripSharp.PdfCarton.Preflight.dll"
+ :product-assemblies
+ [{:file "DripSharp.PdfCarton.dll"
+   :project "src/DripSharp.PdfCarton"}
+  {:file "DripSharp.PdfCarton.IO.dll"
+   :project "src/DripSharp.PdfCarton.IO"}
+  {:file "DripSharp.PdfCarton.Fonts.dll"
+   :project "src/DripSharp.PdfCarton.Fonts"}
+  {:file "DripSharp.PdfCarton.Xmp.dll"
+   :project "src/DripSharp.PdfCarton.Xmp"}
+  {:file "DripSharp.PdfCarton.Preflight.dll"
+   :project "src/DripSharp.PdfCarton.Preflight"}]
+ :managed-dependencies
+ [{:file "Microsoft.Extensions.DependencyInjection.Abstractions.dll"
+   :package-id "Microsoft.Extensions.DependencyInjection.Abstractions"
+   :version "10.0.0"}
+  {:file "Microsoft.Extensions.Logging.Abstractions.dll"
+   :package-id "Microsoft.Extensions.Logging.Abstractions"
+   :version "10.0.0"}
+  {:file "SkiaSharp.dll"
+   :package-id "SkiaSharp"
+   :version "4.150.1"}
+  {:file "System.Security.Cryptography.Pkcs.dll"
+   :package-id "System.Security.Cryptography.Pkcs"
+   :version "10.0.0"}]
+ :platforms
+ [{:id "win-x64"
+   :runtime-identifier "win-x64"
+   :native-assets
+   [{:file "libSkiaSharp.dll"
+     :package-id "SkiaSharp.NativeAssets.Win32"
+     :version "4.150.1"
+     :package-path "runtimes/win-x64/native/libSkiaSharp.dll"}]}
+  {:id "win-arm64"
+   :runtime-identifier "win-arm64"
+   :native-assets
+   [{:file "libSkiaSharp.dll"
+     :package-id "SkiaSharp.NativeAssets.Win32"
+     :version "4.150.1"
+     :package-path "runtimes/win-arm64/native/libSkiaSharp.dll"}]}
+  {:id "linux-x64"
+   :runtime-identifier "linux-x64"
+   :native-assets
+   [{:file "libSkiaSharp.so"
+     :package-id "SkiaSharp.NativeAssets.Linux"
+     :version "4.150.1"
+     :package-path "runtimes/linux-x64/native/libSkiaSharp.so"}]}
+  {:id "linux-arm64"
+   :runtime-identifier "linux-arm64"
+   :native-assets
+   [{:file "libSkiaSharp.so"
+     :package-id "SkiaSharp.NativeAssets.Linux"
+     :version "4.150.1"
+     :package-path "runtimes/linux-arm64/native/libSkiaSharp.so"}]}
+  {:id "osx-x64"
+   :runtime-identifier "osx-x64"
+   :native-assets
+   [{:file "libSkiaSharp.dylib"
+     :package-id "SkiaSharp.NativeAssets.macOS"
+     :version "4.150.1"
+     :package-path "runtimes/osx/native/libSkiaSharp.dylib"}]}
+  {:id "osx-arm64"
+   :runtime-identifier "osx-arm64"
+   :native-assets
+   [{:file "libSkiaSharp.dylib"
+     :package-id "SkiaSharp.NativeAssets.macOS"
+     :version "4.150.1"
+     :package-path "runtimes/osx/native/libSkiaSharp.dylib"}]}]}

@@ -1,0 +1,927 @@
+(ns dripsharp.alpha-release
+  "Fail-closed local assembly of DLL-focused GitHub alpha-release assets.
+
+  Release inventory is target-owned. Assembly requires a clean product
+  submodule at an exact parent gitlink, byte-for-byte agreement with the proved
+  generated staging state, and Release builds whose managed and native output
+  matches the inventory exactly. This namespace never creates tags or GitHub
+  releases and never uploads or pushes anything."
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
+            [dripsharp.paths :as paths]
+            [dripsharp.process :as process]
+            [dripsharp.util :as util])
+  (:import [java.nio.file FileVisitOption Files LinkOption OpenOption Path
+            StandardOpenOption]
+           [java.nio.file.attribute FileAttribute FileTime]
+           [java.util.zip Deflater ZipEntry ZipFile ZipOutputStream]))
+
+(def schema-version 1)
+
+(def ^:private inventory-keys
+  #{:schema-version :kind :product-family :asset-prefix :target-framework
+    :entry-assembly :product-assemblies :managed-dependencies :platforms})
+
+(def ^:private product-assembly-keys
+  #{:file :project})
+
+(def ^:private managed-dependency-keys
+  #{:file :package-id :version})
+
+(def ^:private platform-keys
+  #{:id :runtime-identifier :native-assets})
+
+(def ^:private native-asset-keys
+  #{:file :package-id :version :package-path})
+
+(def ^:private forbidden-suffixes
+  [".nupkg" ".snupkg" ".pdb" ".xml" ".zip" ".tar" ".tgz" ".tar.gz"
+   ".gz" ".bz2" ".xz" ".7z"])
+
+(def ^:private native-suffixes
+  [".so" ".dylib"])
+
+(def ^:private fixed-zip-time
+  (FileTime/fromMillis 315532800000))
+
+(defn- fail!
+  [message data]
+  (throw (ex-info message (assoc data :kind :alpha-release-failed))))
+
+(defn- exact-keys!
+  [subject expected value]
+  (when-not (and (map? value) (= expected (set (keys value))))
+    (fail! (str subject " must use its exact typed fields")
+           {:reason :invalid-release-inventory
+            :subject subject
+            :expected (vec (sort expected))
+            :actual (if (map? value)
+                      (vec (sort (keys value)))
+                      value)}))
+  value)
+
+(defn- non-blank-string?
+  [value]
+  (and (string? value)
+       (not (str/blank? value))
+       (not (re-find #"[\u0000\r\n]" value))))
+
+(defn- simple-file!
+  [subject value]
+  (when-not (and (non-blank-string? value)
+                 (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]*" value)
+                 (not (str/includes? value "/"))
+                 (not (str/includes? value "\\")))
+    (fail! (str subject " must be one portable file name")
+           {:reason :invalid-release-inventory
+            :subject subject
+            :file value}))
+  value)
+
+(defn- relative-components
+  [value]
+  (when (and (non-blank-string? value)
+             (not (str/includes? value "\\"))
+             (not (str/starts-with? value "/"))
+             (not (re-find #"^[A-Za-z]:" value)))
+    (let [components (str/split value #"/" -1)]
+      (when (every? #(and (non-blank-string? %)
+                          (not (contains? #{"." ".."} %)))
+                    components)
+        components))))
+
+(defn- relative-path!
+  [subject value]
+  (when-not (relative-components value)
+    (fail! (str subject " must be a normalized portable relative path")
+           {:reason :invalid-release-inventory
+            :subject subject
+            :path value}))
+  value)
+
+(defn- distinct-vector!
+  [subject value identity-fn]
+  (when-not (and (vector? value)
+                 (= (count value)
+                    (count (distinct (map identity-fn value)))))
+    (fail! (str subject " must be a vector without duplicate identities")
+           {:reason :invalid-release-inventory
+            :subject subject
+            :value value}))
+  value)
+
+(defn- forbidden-file?
+  [value]
+  (let [lower (str/lower-case value)]
+    (some #(str/ends-with? lower %) forbidden-suffixes)))
+
+(defn- native-file?
+  [value]
+  (let [lower (str/lower-case value)]
+    (or (some #(str/ends-with? lower %) native-suffixes)
+        (and (str/ends-with? lower ".dll")
+             (str/starts-with? lower "lib")))))
+
+(defn- dll-file?
+  [value]
+  (str/ends-with? (str/lower-case value) ".dll"))
+
+(defn- semver-version!
+  [authorized-tag]
+  (let [match
+        (when (string? authorized-tag)
+          (re-matches
+           #"^v?((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-alpha(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)$"
+           authorized-tag))]
+    (when-not match
+      (fail! "Authorized release tag must be an exact SemVer alpha tag"
+             {:reason :invalid-alpha-tag
+              :authorized-tag authorized-tag
+              :example "v0.1.0-alpha.1"}))
+    (second match)))
+
+(defn- exact-commit!
+  [commit]
+  (when-not (and (string? commit)
+                 (re-matches #"[0-9a-f]{40,64}" commit))
+    (fail! "Release target must be one exact lowercase product commit"
+           {:reason :invalid-product-commit
+            :product-commit commit}))
+  commit)
+
+(defn- product-projects
+  [target-contract]
+  (into
+   {}
+   (for [[profile-id profile] (:profiles target-contract)]
+     [(get-in profile [:destination :configuration :project :assembly-name])
+      {:profile profile-id
+       :project (get-in target-contract
+                        [:publication :profile-projects profile-id])
+       :target-framework
+       (get-in profile
+               [:destination :configuration :project :target-framework])}])))
+
+(defn validate-inventory!
+  "Validates one target-owned release inventory against its normalized target
+  contract and returns the inventory unchanged."
+  [target-contract inventory]
+  (exact-keys! "Release inventory" inventory-keys inventory)
+  (when-not (= schema-version (:schema-version inventory))
+    (fail! "Release inventory has an unsupported schema version"
+           {:reason :invalid-release-inventory
+            :expected schema-version
+            :actual (:schema-version inventory)}))
+  (when-not (= :github-alpha-zip (:kind inventory))
+    (fail! "Release inventory has an unsupported release kind"
+           {:reason :invalid-release-inventory
+            :actual (:kind inventory)}))
+  (when-not (= (:product-family target-contract)
+               (:product-family inventory))
+    (fail! "Release inventory identifies the wrong product family"
+           {:reason :invalid-release-inventory
+            :expected (:product-family target-contract)
+            :actual (:product-family inventory)}))
+  (when-not (= :generated-repository
+               (get-in target-contract [:publication :kind]))
+    (fail! "Only generated product repositories can assemble alpha releases"
+           {:reason :conformance-only-target
+            :target (:target target-contract)}))
+  (when-not (and (non-blank-string? (:asset-prefix inventory))
+                 (re-matches #"[A-Za-z0-9][A-Za-z0-9.-]*"
+                             (:asset-prefix inventory)))
+    (fail! "Release asset prefix is invalid"
+           {:reason :invalid-release-inventory
+            :asset-prefix (:asset-prefix inventory)}))
+  (when-not (and (string? (:target-framework inventory))
+                 (re-matches #"net[1-9][0-9]*\.0"
+                             (:target-framework inventory)))
+    (fail! "Release target framework is invalid"
+           {:reason :invalid-release-inventory
+            :target-framework (:target-framework inventory)}))
+  (simple-file! "Release entry assembly" (:entry-assembly inventory))
+  (let [assemblies
+        (distinct-vector! "Release product assemblies"
+                          (:product-assemblies inventory) :file)
+        managed
+        (distinct-vector! "Release managed dependencies"
+                          (:managed-dependencies inventory) :file)
+        platforms
+        (distinct-vector! "Release platforms" (:platforms inventory) :id)
+        expected-projects (product-projects target-contract)
+        actual-projects
+        (into {}
+              (map
+               (fn [assembly]
+                 (exact-keys! "Release product assembly"
+                              product-assembly-keys assembly)
+                 (let [file (simple-file! "Product assembly file"
+                                          (:file assembly))
+                       project (relative-path! "Product assembly project"
+                                               (:project assembly))]
+                   (when-not (dll-file? file)
+                     (fail! "Product release assemblies must be DLL files"
+                            {:reason :invalid-release-inventory
+                             :file file}))
+                   [(subs file 0 (- (count file) 4))
+                    {:project project}]))
+               assemblies))
+        expected-project-view
+        (into {}
+              (map (fn [[assembly {:keys [project]}]]
+                     [assembly {:project project}]))
+              expected-projects)]
+    (when-not (seq assemblies)
+      (fail! "Release inventory has no product assemblies"
+             {:reason :invalid-release-inventory}))
+    (when-not (= expected-project-view actual-projects)
+      (fail! "Release product assemblies do not match every generated product project"
+             {:reason :invalid-release-inventory
+              :expected expected-project-view
+              :actual actual-projects}))
+    (when-not (contains? (set (map :file assemblies))
+                         (:entry-assembly inventory))
+      (fail! "Release entry assembly is not a product assembly"
+             {:reason :invalid-release-inventory
+              :entry-assembly (:entry-assembly inventory)}))
+    (let [frameworks (set (map :target-framework (vals expected-projects)))]
+      (when-not (= #{(:target-framework inventory)} frameworks)
+        (fail! "Release target framework differs from generated product projects"
+               {:reason :invalid-release-inventory
+                :expected frameworks
+                :actual (:target-framework inventory)})))
+    (doseq [dependency managed]
+      (exact-keys! "Release managed dependency"
+                   managed-dependency-keys dependency)
+      (let [{:keys [file package-id version]} dependency]
+        (simple-file! "Managed dependency file" file)
+        (when-not (and (dll-file? file)
+                       (= file (str package-id ".dll"))
+                       (non-blank-string? version))
+          (fail! "Managed dependency must name its exact non-framework package DLL"
+                 {:reason :invalid-release-inventory
+                  :dependency dependency}))))
+    (when-not (seq platforms)
+      (fail! "Release inventory has no platform assets"
+             {:reason :invalid-release-inventory}))
+    (doseq [platform platforms]
+      (exact-keys! "Release platform" platform-keys platform)
+      (let [{:keys [id runtime-identifier native-assets]} platform]
+        (when-not (and (non-blank-string? id)
+                       (re-matches #"[a-z0-9][a-z0-9-]*" id))
+          (fail! "Release platform id is invalid"
+                 {:reason :invalid-release-inventory :platform id}))
+        (when-not (or (nil? runtime-identifier)
+                      (and (non-blank-string? runtime-identifier)
+                           (= id runtime-identifier)))
+          (fail! "Release runtime identifier must equal its platform id"
+                 {:reason :invalid-release-inventory
+                  :platform id
+                  :runtime-identifier runtime-identifier}))
+        (distinct-vector! "Release native assets" native-assets :file)
+        (when-not (= (nil? runtime-identifier) (empty? native-assets))
+          (fail! "Portable releases must have no native assets and native releases must select a runtime"
+                 {:reason :invalid-release-inventory
+                  :platform id
+                  :runtime-identifier runtime-identifier
+                  :native-assets native-assets}))
+        (doseq [asset native-assets]
+          (exact-keys! "Release native asset" native-asset-keys asset)
+          (let [{:keys [file package-id version package-path]} asset]
+            (simple-file! "Native release file" file)
+            (relative-path! "Native dependency package path" package-path)
+            (when-not (and (native-file? file)
+                           (= file (last (relative-components package-path)))
+                           (non-blank-string? package-id)
+                           (non-blank-string? version))
+              (fail! "Native asset must identify one exact package runtime file"
+                     {:reason :invalid-release-inventory
+                      :asset asset}))))
+        (let [file-groups
+              (group-by
+               :file
+               (concat
+                (map #(assoc % :inventory-kind :product)
+                     assemblies)
+                (map #(assoc % :inventory-kind :managed)
+                     managed)
+                (map #(assoc % :inventory-kind :native)
+                     native-assets)))
+              collisions
+              (into (sorted-map)
+                    (filter (fn [[_ entries]] (< 1 (count entries))))
+                    file-groups)]
+          (when (seq collisions)
+            (fail! "Release dependency file names collide"
+                   {:reason :dependency-name-collision
+                    :platform id
+                    :collisions collisions})))))
+    inventory))
+
+(defn read-inventory!
+  "Reads and validates the canonical targets/<target>/release.edn contract."
+  [target-contract]
+  (let [target-root (:target-directory target-contract)
+        file (paths/resolve-path target-root "release.edn")]
+    (when-not (and (paths/regular-file? file)
+                   (paths/real-contained? target-root file))
+      (fail! "Target release inventory is missing or escaped"
+             {:reason :missing-release-inventory
+              :target (:target target-contract)
+              :path (str file)}))
+    (let [inventory
+          (try
+            (util/read-single-edn-string! (slurp (str file)))
+            (catch RuntimeException error
+              (throw
+               (ex-info "Target release inventory is not exact EDN"
+                        {:kind :alpha-release-failed
+                         :reason :invalid-release-inventory
+                         :path (str file)}
+                        error))))]
+      (validate-inventory! target-contract inventory))))
+
+(defn asset-filename
+  [inventory version platform]
+  (str (:asset-prefix inventory) "-" version "-"
+       (:target-framework inventory) "-" (:id platform) ".zip"))
+
+(defn validate-request!
+  "Validates the explicitly authorized alpha tag and full product commit before
+  a caller starts an expensive proof ladder."
+  [authorized-tag product-commit]
+  {:authorized-tag authorized-tag
+   :version (semver-version! authorized-tag)
+   :product-commit (exact-commit! product-commit)})
+
+(defn- command-output
+  [run-command! directory command]
+  (-> (run-command! {:command command :directory directory})
+      :output
+      str/trim))
+
+(defn- safe-workspace-path!
+  [workspace-root relative subject]
+  (relative-path! subject relative)
+  (let [root (paths/absolute workspace-root)
+        value (paths/absolute (paths/resolve-path root relative))]
+    (when-not (and (.startsWith value root)
+                   (paths/real-contained? root value))
+      (fail! (str subject " is missing or escaped")
+             {:reason :release-path-escape
+              :subject subject
+              :root (str root)
+              :path relative}))
+    value))
+
+(defn- git-clean!
+  [run-command! product]
+  (let [status
+        (command-output run-command! product
+                        ["git" "status" "--porcelain=v1"
+                         "--untracked-files=all"])]
+    (when-not (str/blank? status)
+      (fail! "Product repository contains local generated or manual changes"
+             {:reason :dirty-product-repository
+              :path (str product)
+              :status status}))))
+
+(defn- ignored-build-component?
+  [relative]
+  (some #{"bin" "obj"} (relative-components relative)))
+
+(defn- managed-file-inventory
+  [root managed-paths]
+  (into
+   (sorted-map)
+   (mapcat
+    (fn [managed]
+      (let [managed-root (paths/resolve-path root managed)]
+        (when-not (Files/exists managed-root (make-array LinkOption 0))
+          (fail! "Proved product managed path is missing"
+                 {:reason :proved-state-mismatch
+                  :root (str root)
+                  :path managed}))
+        (if (Files/isDirectory managed-root (make-array LinkOption 0))
+          (with-open [stream
+                      (Files/walk managed-root
+                                  (make-array FileVisitOption 0))]
+            (doall
+             (for [entry (.toArray stream)
+                   :let [^Path entry (cast Path entry)
+                         relative
+                         (util/portable-path
+                          (paths/absolute root) entry)]
+                   :when (Files/isRegularFile
+                          entry (make-array LinkOption 0))
+                   :when (not (ignored-build-component? relative))]
+               (do
+                 (when (Files/isSymbolicLink entry)
+                   (fail! "Proved product state contains a symbolic link"
+                          {:reason :proved-state-mismatch
+                           :path relative}))
+                 [relative (util/sha256-file entry)]))))
+          [[managed (util/sha256-file managed-root)]])))
+    managed-paths)))
+
+(defn- inventory-sha256
+  [inventory]
+  (util/sha256-text
+   (str/join "\n" (map (fn [[path digest]]
+                         (str path "\t" digest))
+                       inventory))))
+
+(defn- exact-product-state!
+  [workspace-root target-contract product-commit run-command!]
+  (let [publication (:publication target-contract)
+        product
+        (safe-workspace-path! workspace-root (:submodule-path publication)
+                              "Product submodule")
+        staging
+        (safe-workspace-path! workspace-root (:staging-path publication)
+                              "Proved product staging")
+        git-marker (paths/resolve-path product ".git")]
+    (when-not (Files/exists git-marker (make-array LinkOption 0))
+      (fail! "Product repository is not an initialized submodule"
+             {:reason :uninitialized-product-submodule
+              :path (str product)}))
+    (git-clean! run-command! product)
+    (let [head
+          (command-output run-command! product ["git" "rev-parse" "HEAD"])
+          top-level
+          (paths/absolute
+           (command-output run-command! product
+                           ["git" "rev-parse" "--show-toplevel"]))
+          origin
+          (command-output run-command! product
+                          ["git" "remote" "get-url" "origin"])
+          gitlink-output
+          (command-output
+           run-command! workspace-root
+           ["git" "ls-files" "--stage" "--"
+            (:submodule-path publication)])
+          gitlink-match
+          (re-matches
+           (re-pattern
+            (str "160000 ([0-9a-f]{40,64}) 0\\t"
+                 (java.util.regex.Pattern/quote
+                  (:submodule-path publication))))
+           gitlink-output)]
+      (when-not (= product-commit head)
+        (fail! "Product repository HEAD differs from the authorized product commit"
+               {:reason :product-commit-mismatch
+                :expected product-commit
+                :actual head}))
+      (when-not (= (.toRealPath product (make-array LinkOption 0))
+                   (.toRealPath top-level (make-array LinkOption 0)))
+        (fail! "Product repository resolves to a different Git worktree"
+               {:reason :wrong-product-worktree
+                :expected (str product)
+                :actual (str top-level)}))
+      (when-not (= (:repository-url publication) origin)
+        (fail! "Product repository origin differs from its publication contract"
+               {:reason :product-origin-mismatch
+                :expected (:repository-url publication)
+                :actual origin}))
+      (when-not (= product-commit (second gitlink-match))
+        (fail! "Parent gitlink does not target the authorized product commit"
+               {:reason :gitlink-commit-mismatch
+                :expected product-commit
+                :actual (second gitlink-match)
+                :git-entry gitlink-output}))
+      (let [managed-paths (:managed-paths publication)
+            staged (managed-file-inventory staging managed-paths)
+            committed (managed-file-inventory product managed-paths)]
+        (when-not (= staged committed)
+          (fail! "Product commit differs from the exact proved generated state"
+                 {:reason :proved-state-mismatch
+                  :staging-sha256 (inventory-sha256 staged)
+                  :product-sha256 (inventory-sha256 committed)
+                  :missing (vec (sort (set/difference
+                                       (set (keys staged))
+                                       (set (keys committed)))))
+                  :unexpected (vec (sort (set/difference
+                                          (set (keys committed))
+                                          (set (keys staged)))))
+                  :changed
+                  (vec
+                   (sort
+                    (for [[path digest] staged
+                          :when (and (contains? committed path)
+                                     (not= digest (get committed path)))]
+                      path)))}))
+        {:product product
+         :staging staging
+         :product-commit product-commit
+         :proved-source-sha256 (inventory-sha256 staged)
+         :inventory staged}))))
+
+(defn- entry-project
+  [product inventory]
+  (let [entry (:entry-assembly inventory)
+        project
+        (:project
+         (first (filter #(= entry (:file %))
+                        (:product-assemblies inventory))))
+        assembly (subs entry 0 (- (count entry) 4))]
+    (paths/resolve-path product project (str assembly ".csproj"))))
+
+(defn- default-build!
+  [{:keys [product inventory platform build-output run-command!]}]
+  (let [project-file (entry-project product inventory)
+        runtime-identifier (:runtime-identifier platform)
+        command
+        (cond->
+         ["dotnet" "build" (str project-file)
+          "--nologo"
+          "--configuration" "Release"
+          "--verbosity:minimal"
+          "--no-incremental"
+          "--output" (str build-output)
+          "-p:RestoreIgnoreFailedSources=true"
+          "-p:CopyLocalLockFileAssemblies=true"
+          "-p:DebugType=None"
+          "-p:DebugSymbols=false"
+          "-p:GenerateDocumentationFile=false"
+          "-warnaserror"]
+          runtime-identifier
+          (into ["--runtime" runtime-identifier
+                 "--self-contained" "false"]))]
+    (when-not (paths/regular-file? project-file)
+      (fail! "Release entry project is missing from the product commit"
+             {:reason :missing-entry-project
+              :path (str project-file)}))
+    {:configuration "Release"
+     :runtime-identifier runtime-identifier
+     :result
+     (run-command! {:command command
+                    :directory product})}))
+
+(defn- direct-files
+  [directory]
+  (when-not (paths/directory? directory)
+    (fail! "Release build did not create its isolated output directory"
+           {:reason :missing-build-output
+            :path (str directory)}))
+  (with-open [stream (Files/list directory)]
+    (->> (.toArray stream)
+         (map #(cast Path %))
+         (filter #(Files/isRegularFile
+                   ^Path % (make-array LinkOption 0)))
+         (sort-by #(str (.getFileName ^Path %)))
+         vec)))
+
+(defn- expected-files
+  [inventory platform]
+  {:product (set (map :file (:product-assemblies inventory)))
+   :managed (set (map :file (:managed-dependencies inventory)))
+   :native (set (map :file (:native-assets platform)))})
+
+(defn- inspect-build-output!
+  [build-output inventory platform framework-assemblies]
+  (let [expected (expected-files inventory platform)
+        expected-all (apply set/union #{} (vals expected))
+        by-name
+        (group-by #(str (.getFileName ^Path %))
+                  (direct-files build-output))
+        collisions
+        (into (sorted-map)
+              (filter (fn [[_ entries]] (< 1 (count entries))))
+              by-name)
+        binaries
+        (set
+         (for [[file _] by-name
+               :when (or (dll-file? file) (native-file? file))]
+           file))
+        framework (set/intersection binaries framework-assemblies)
+        missing (set/difference expected-all binaries)
+        unexpected (set/difference binaries expected-all)]
+    (when (seq collisions)
+      (fail! "Release build output has dependency-name collisions"
+             {:reason :dependency-name-collision
+              :platform (:id platform)
+              :collisions (into (sorted-map)
+                                (map (fn [[file entries]]
+                                       [file (mapv str entries)]))
+                                collisions)}))
+    (when (seq framework)
+      (fail! "Release build output contains framework assemblies"
+             {:reason :framework-assembly
+              :platform (:id platform)
+              :files (vec (sort framework))}))
+    (when (or (seq missing) (seq unexpected))
+      (fail! "Release build output differs from its exact binary inventory"
+             {:reason :build-output-mismatch
+              :platform (:id platform)
+              :missing (vec (sort missing))
+              :unexpected (vec (sort unexpected))
+              :actual (vec (sort binaries))}))
+    (into
+     (sorted-map)
+     (for [file (sort expected-all)
+           :let [source (first (get by-name file))]]
+       [file {:source source
+              :sha256 (util/sha256-file source)
+              :kind
+              (cond
+                (contains? (:product expected) file) :product
+                (contains? (:managed expected) file) :managed
+                :else :native)}]))))
+
+(defn- write-zip!
+  [output files]
+  (when (Files/exists output (make-array LinkOption 0))
+    (fail! "Release asset already exists"
+           {:reason :release-output-exists
+            :path (str output)}))
+  (Files/createDirectories (.getParent output)
+                           (make-array FileAttribute 0))
+  (with-open [raw
+              (Files/newOutputStream
+               output
+               (into-array
+                OpenOption [StandardOpenOption/CREATE_NEW
+                            StandardOpenOption/WRITE]))
+              archive (doto (ZipOutputStream. raw)
+                        (.setLevel Deflater/BEST_COMPRESSION))]
+    (doseq [[file {:keys [source]}] files]
+      (let [entry (doto (ZipEntry. file)
+                    (.setLastModifiedTime fixed-zip-time)
+                    (.setLastAccessTime fixed-zip-time)
+                    (.setCreationTime fixed-zip-time))]
+        (.putNextEntry archive entry)
+        (Files/copy ^Path source archive)
+        (.closeEntry archive))))
+  output)
+
+(defn- zip-records
+  [artifact]
+  (with-open [archive (ZipFile. (str artifact))]
+    (mapv
+     (fn [^ZipEntry entry]
+       {:name (.getName entry)
+        :directory? (.isDirectory entry)
+        :sha256
+        (when-not (.isDirectory entry)
+          (with-open [input (.getInputStream archive entry)]
+            (util/digest-input "SHA-256" input)))})
+     (enumeration-seq (.entries archive)))))
+
+(defn verify-asset!
+  "Verifies that a ZIP is exactly the product, managed dependency, and
+  platform-native inventory. Any framework assembly, forbidden artifact, path,
+  duplicate, missing entry, unexpected entry, or byte mismatch fails."
+  [{:keys [artifact inventory platform expected-hashes
+           framework-assemblies]}]
+  (let [records (zip-records artifact)
+        names (mapv :name records)
+        duplicate-names
+        (->> names frequencies
+             (filter (fn [[_ count]] (< 1 count)))
+             (map key)
+             sort
+             vec)
+        unsafe
+        (filterv
+         #(or (:directory? %)
+              (nil? (relative-components (:name %)))
+              (not= 1 (count (relative-components (:name %)))))
+         records)
+        forbidden (filterv forbidden-file? names)
+        framework
+        (vec (sort (set/intersection (set names)
+                                     (set framework-assemblies))))
+        expected (expected-files inventory platform)
+        expected-all (apply set/union #{} (vals expected))
+        actual (set names)
+        missing (set/difference expected-all actual)
+        unexpected (set/difference actual expected-all)]
+    (when (seq duplicate-names)
+      (fail! "Release asset contains duplicate entries"
+             {:reason :dependency-name-collision
+              :entries duplicate-names}))
+    (when (seq unsafe)
+      (fail! "Release asset contains directories or unsafe paths"
+             {:reason :unsafe-release-path
+              :entries (mapv :name unsafe)}))
+    (when (seq forbidden)
+      (fail! "Release asset contains forbidden package, symbols, documentation, or source archives"
+             {:reason :forbidden-release-file
+              :entries forbidden}))
+    (when (seq framework)
+      (fail! "Release asset contains framework assemblies"
+             {:reason :framework-assembly
+              :entries framework}))
+    (when (or (seq missing) (seq unexpected))
+      (fail! "Release asset differs from its exact inventory"
+             {:reason :release-asset-mismatch
+              :missing-product
+              (vec (sort (set/intersection missing (:product expected))))
+              :missing-managed
+              (vec (sort (set/intersection missing (:managed expected))))
+              :missing-native
+              (vec (sort (set/intersection missing (:native expected))))
+              :unexpected-managed
+              (vec (sort (filter dll-file? unexpected)))
+              :unexpected-native
+              (vec (sort (filter native-file? unexpected)))
+              :unrelated
+              (vec
+               (sort
+                (remove #(or (dll-file? %) (native-file? %))
+                        unexpected)))}))
+    (doseq [{:keys [name sha256]} records]
+      (when-not (= (get expected-hashes name) sha256)
+        (fail! "Release asset entry differs from the proved Release build"
+               {:reason :release-entry-digest-mismatch
+                :entry name
+                :expected (get expected-hashes name)
+                :actual sha256})))
+    {:path (str artifact)
+     :sha256 (util/sha256-file artifact)
+     :entries
+     (into (sorted-map)
+           (map (juxt :name :sha256))
+           records)}))
+
+(defn- framework-assembly-names!
+  [workspace-root run-command!]
+  (let [output
+        (command-output run-command! workspace-root
+                        ["dotnet" "--list-runtimes"])
+        directories
+        (for [line (str/split-lines output)
+              :let [match
+                    (re-matches
+                     #"Microsoft\.NETCore\.App ([^ ]+) \[(.+)\]"
+                     line)]
+              :when match]
+          (paths/resolve-path (nth match 2) (second match)))
+        names
+        (into
+         #{}
+         (mapcat
+          (fn [directory]
+            (when (paths/directory? directory)
+              (with-open [stream (Files/list directory)]
+                (doall
+                 (for [entry (.toArray stream)
+                       :let [^Path entry (cast Path entry)
+                             file (str (.getFileName entry))]
+                       :when (and (paths/regular-file? entry)
+                                  (dll-file? file))]
+                   file)))))
+          directories))]
+    (when (empty? names)
+      (fail! "Could not resolve Microsoft.NETCore.App framework assemblies"
+             {:reason :missing-framework-inventory
+              :runtime-output output}))
+    names))
+
+(defn- delete-temp-tree!
+  [root]
+  (when (and root (Files/exists root (make-array LinkOption 0)))
+    (with-open [stream (Files/walk root (make-array FileVisitOption 0))]
+      (doseq [entry
+              (->> (.toArray stream)
+                   (map #(cast Path %))
+                   (sort-by #(.getNameCount ^Path %) >))]
+        (Files/delete entry)))))
+
+(defn- canonical
+  [value]
+  (cond
+    (map? value)
+    (into (sorted-map-by #(compare (str %1) (str %2)))
+          (map (fn [[key item]] [key (canonical item)]))
+          value)
+
+    (set? value) (vec (sort-by str (map canonical value)))
+    (vector? value) (mapv canonical value)
+    (sequential? value) (mapv canonical value)
+    :else value))
+
+(defn prepare!
+  "Builds and verifies every declared platform asset, then writes dry-run
+  GitHub release metadata. The caller must first run the target's complete
+  proof. This function checks that proved staging and the exact clean product
+  commit still agree before and after all Release builds."
+  [{:keys [workspace-root target-contract inventory authorized-tag
+           product-commit output-root run-command! build-fn
+           framework-assemblies]
+    :or {run-command! process/run!
+         build-fn default-build!}}]
+  (let [workspace-root
+        (paths/absolute (or workspace-root (paths/workspace-root)))
+        inventory
+        (validate-inventory! target-contract
+                             (or inventory
+                                 (read-inventory! target-contract)))
+        {:keys [version product-commit]}
+        (validate-request! authorized-tag product-commit)
+        initial-state
+        (exact-product-state! workspace-root target-contract product-commit
+                              run-command!)
+        output-root
+        (paths/absolute
+         (or output-root
+             (paths/resolve-path
+              workspace-root "target/releases" version
+              (name (:product-family inventory)))))
+        framework-assemblies
+        (set (or framework-assemblies
+                 (framework-assembly-names! workspace-root run-command!)))
+        temp-root
+        (Files/createTempDirectory
+         (str "dripsharp-" (name (:product-family inventory)) "-alpha-")
+         (make-array FileAttribute 0))]
+    (try
+      (let [assets
+            (mapv
+             (fn [platform]
+               (let [build-output
+                     (paths/resolve-path temp-root (:id platform) "output")
+                     _ (Files/createDirectories
+                        build-output (make-array FileAttribute 0))
+                     build
+                     (build-fn
+                      {:workspace-root workspace-root
+                       :product (:product initial-state)
+                       :target-contract target-contract
+                       :inventory inventory
+                       :platform platform
+                       :configuration "Release"
+                       :build-output build-output
+                       :run-command! run-command!})]
+                 (when-not (= "Release" (:configuration build))
+                   (fail! "Alpha-release build did not use Release configuration"
+                          {:reason :wrong-build-configuration
+                           :platform (:id platform)
+                           :actual (:configuration build)}))
+                 (let [files
+                       (inspect-build-output!
+                        build-output inventory platform framework-assemblies)
+                       filename (asset-filename inventory version platform)
+                       artifact (paths/resolve-path output-root filename)
+                       _ (write-zip! artifact files)
+                       verification
+                       (verify-asset!
+                        {:artifact artifact
+                         :inventory inventory
+                         :platform platform
+                         :expected-hashes
+                         (into {}
+                               (map (fn [[file record]]
+                                      [file (:sha256 record)]))
+                               files)
+                         :framework-assemblies framework-assemblies})]
+                   {:platform (:id platform)
+                    :runtime-identifier (:runtime-identifier platform)
+                    :filename filename
+                    :path (str artifact)
+                    :sha256 (:sha256 verification)
+                    :entries (:entries verification)
+                    :build-configuration "Release"})))
+             (:platforms inventory))
+            final-state
+            (exact-product-state! workspace-root target-contract product-commit
+                                  run-command!)
+            _ (when-not (= (:proved-source-sha256 initial-state)
+                           (:proved-source-sha256 final-state))
+                (fail! "Proved product state changed during release assembly"
+                       {:reason :proved-state-changed
+                        :before (:proved-source-sha256 initial-state)
+                        :after (:proved-source-sha256 final-state)}))
+            github-release
+            {:repository
+             (get-in target-contract [:publication :repository-slug])
+             :authorized-tag authorized-tag
+             :target-commitish product-commit
+             :prerelease true
+             :latest false
+             :assets
+             (mapv #(select-keys % [:filename :sha256]) assets)}
+            record
+            {:schema-version schema-version
+             :kind :github-alpha-release-preparation
+             :product-family (:product-family inventory)
+             :version version
+             :target-framework (:target-framework inventory)
+             :product-commit product-commit
+             :proved-source-sha256 (:proved-source-sha256 final-state)
+             :assets assets
+             :github-release github-release
+             :external-actions
+             [:tag-or-release-creation-requires-authorization
+              :asset-upload-requires-authorization
+              :push-requires-authorization]}
+            record-file
+            (paths/resolve-path
+             output-root
+             (str (:asset-prefix inventory) "-" version "-release.edn"))]
+        (util/write-text! record-file
+                          (str (pr-str (canonical record)) "\n"))
+        (assoc record
+               :record-path (str record-file)))
+      (finally
+        (delete-temp-tree! temp-root)))))

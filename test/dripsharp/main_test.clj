@@ -37,6 +37,10 @@
                   (fn [options]
                     (swap! calls conj [:product-prepare options])
                     :ok)
+                  target-execution/prepare-alpha-release!
+                  (fn [options]
+                    (swap! calls conj [:alpha-release-prepare options])
+                    :ok)
                   java-compat-differential/verify!
                   (fn []
                     (swap! calls conj [:java-compat-differential])
@@ -66,6 +70,11 @@
               ["product-prepare" "acme" "generated/acme"
                "Publish Acme"])))
       (is (= :ok
+             (main/dispatch!
+              ["alpha-release-prepare" "acme"
+               "v0.1.0-alpha.1"
+               "0123456789abcdef0123456789abcdef01234567"])))
+      (is (= :ok
              (main/dispatch! ["java-compat-differential"])))
       (is (= :ok
              (main/dispatch!
@@ -81,6 +90,11 @@
                {:target "acme"
                 :branch "generated/acme"
                 :commit-message "Publish Acme"}]
+              [:alpha-release-prepare
+               {:target "acme"
+                :authorized-tag "v0.1.0-alpha.1"
+                :product-commit
+                "0123456789abcdef0123456789abcdef01234567"}]
               [:java-compat-differential]
               [:pdfcube-family-host-matrix "evidence" "output"]
               [:rebaseline
@@ -99,6 +113,11 @@
                 ["product-prepare" "pkl"]
                 ["product-prepare" "pkl" "generated/pkl"]
                 ["product-prepare" "pkl" "generated/pkl" "message" "extra"]
+                ["alpha-release-prepare"]
+                ["alpha-release-prepare" "pkl"]
+                ["alpha-release-prepare" "pkl" "v0.1.0-alpha.1"]
+                ["alpha-release-prepare" "pkl" "v0.1.0-alpha.1"
+                 "0123456789abcdef0123456789abcdef01234567" "extra"]
                 ["java-compat-differential" "pkl"]
                 ["pdfcube-family-host-matrix"]
                 ["pdfcube-family-host-matrix" "evidence"]

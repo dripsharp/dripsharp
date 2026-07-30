@@ -3,6 +3,7 @@
   (:refer-clojure :exclude [run!])
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [dripsharp.alpha-release :as alpha-release]
             [dripsharp.baseline :as baseline]
             [dripsharp.compiler :as compiler]
             [dripsharp.differential :as differential]
@@ -165,7 +166,9 @@
           :target :validation :read-target-fn
           :generate-fn :verify-fn :pack-fn :package-fn
           :differential-fn :proof-fn :synchronize-fn :prepare-fn
-          :branch :commit-message :pull-request-title :pull-request-body))
+          :release-fn :build-fn :framework-assemblies :inventory
+          :branch :commit-message :pull-request-title :pull-request-body
+          :authorized-tag :product-commit :output-root))
 
 (defn- generate-loaded!
   [execution options generate-fn]
@@ -451,6 +454,43 @@
      :proof proof
      :preparation preparation}))
 
+(defn prepare-alpha-release!
+  "Runs the complete target proof, then assembles local deterministic alpha ZIPs
+  from the exact clean product commit that matches proved staging. No tag,
+  release, upload, or push is performed."
+  [options]
+  (let [execution (plan (assoc options :profile nil))
+        _ (generated-publication! execution)
+        inventory
+        (or (:inventory options)
+            (alpha-release/read-inventory! (:contract execution)))
+        _ (alpha-release/validate-inventory!
+           (:contract execution) inventory)
+        _ (alpha-release/validate-request!
+           (:authorized-tag options) (:product-commit options))
+        proof (publication-proof! execution options)
+        release-fn (or (:release-fn options) alpha-release/prepare!)
+        preparation
+        (release-fn
+         (cond->
+          {:workspace-root (:workspace-root execution)
+           :target-contract (:contract execution)
+           :inventory inventory
+           :authorized-tag (:authorized-tag options)
+           :product-commit (:product-commit options)}
+           (:output-root options)
+           (assoc :output-root (:output-root options))
+           (:run-command! options)
+           (assoc :run-command! (:run-command! options))
+           (:build-fn options)
+           (assoc :build-fn (:build-fn options))
+           (:framework-assemblies options)
+           (assoc :framework-assemblies
+                  (:framework-assemblies options))))]
+    {:target (:target execution)
+     :proof proof
+     :preparation preparation}))
+
 (defn run!
   [command options]
   (case command
@@ -462,4 +502,5 @@
     :proof (proof! options)
     :synchronize (synchronize! options)
     :prepare-publication (prepare-publication! options)
+    :prepare-alpha-release (prepare-alpha-release! options)
     (fail! "Unknown target execution command" {:command command})))
