@@ -55,8 +55,10 @@
 
 (def ^:private isolated-dotnet-environment
   #{"AfterMicrosoftNETSdkTargets"
+    "AfterTargetFrameworkInferenceTargets"
     "AlternateCommonProps"
     "BeforeMicrosoftNETSdkTargets"
+    "BeforeTargetFrameworkInferenceTargets"
     "CodeAnalysisTargets"
     "CscToolExe"
     "CscToolPath"

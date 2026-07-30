@@ -1110,10 +1110,16 @@
         restore-config-content (atom nil)
         hostile-after-net-sdk-targets
         (paths/resolve-path workspace "hostile-after-net-sdk.targets")
+        hostile-after-target-framework-inference-targets
+        (paths/resolve-path
+         workspace "hostile-after-target-framework-inference.targets")
         hostile-custom-props
         (paths/resolve-path workspace "hostile-custom-import.props")
         hostile-alternate-common-props
         (paths/resolve-path workspace "hostile-alternate-common.props")
+        hostile-before-target-framework-inference-targets
+        (paths/resolve-path
+         workspace "hostile-before-target-framework-inference.targets")
         hostile-custom-targets
         (paths/resolve-path workspace "hostile-custom-import.targets")
         hostile-code-analysis-targets
@@ -1165,10 +1171,14 @@
               (merge
                {"AfterMicrosoftNETSdkTargets"
                 (str hostile-after-net-sdk-targets)
+                "AfterTargetFrameworkInferenceTargets"
+                (str hostile-after-target-framework-inference-targets)
                 "AlternateCommonProps"
                 (str hostile-alternate-common-props)
                 "BeforeMicrosoftNETSdkTargets"
                 (str hostile-custom-targets)
+                "BeforeTargetFrameworkInferenceTargets"
+                (str hostile-before-target-framework-inference-targets)
                 "CodeAnalysisTargets"
                 (str hostile-code-analysis-targets)
                 "CscToolExe" "false"
@@ -1236,10 +1246,24 @@
             "BeforeTargets=\"Build\"><Error Text=\"Ambient "
             "AfterMicrosoftNETSdkTargets was loaded\" /></Target></Project>\n"))
       (write!
+       workspace "hostile-after-target-framework-inference.targets"
+       (str "<Project><Target "
+            "Name=\"RejectAmbientAfterTargetFrameworkInferenceTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "AfterTargetFrameworkInferenceTargets was loaded\" />"
+            "</Target></Project>\n"))
+      (write!
        workspace "hostile-alternate-common.props"
        (str "<Project><Target Name=\"RejectAmbientAlternateCommonProps\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient "
             "AlternateCommonProps was loaded\" /></Target></Project>\n"))
+      (write!
+       workspace "hostile-before-target-framework-inference.targets"
+       (str "<Project><Target "
+            "Name=\"RejectAmbientBeforeTargetFrameworkInferenceTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "BeforeTargetFrameworkInferenceTargets was loaded\" />"
+            "</Target></Project>\n"))
       (write!
        workspace "hostile-custom-import.props"
        (str "<Project><Import "
@@ -1443,8 +1467,10 @@
                   restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
         (is (= #{"AfterMicrosoftNETSdkTargets"
+                 "AfterTargetFrameworkInferenceTargets"
                  "AlternateCommonProps"
                  "BeforeMicrosoftNETSdkTargets"
+                 "BeforeTargetFrameworkInferenceTargets"
                  "CodeAnalysisTargets"
                  "CscToolExe"
                  "CscToolPath"
@@ -1466,8 +1492,10 @@
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
         (is (= #{"AfterMicrosoftNETSdkTargets"
+                 "AfterTargetFrameworkInferenceTargets"
                  "AlternateCommonProps"
                  "BeforeMicrosoftNETSdkTargets"
+                 "BeforeTargetFrameworkInferenceTargets"
                  "CodeAnalysisTargets"
                  "CscToolExe"
                  "CscToolPath"
