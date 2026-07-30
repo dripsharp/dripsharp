@@ -1,5 +1,6 @@
 {:paths ["src"]
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
+        com.fasterxml.jackson.core/jackson-databind {:mvn/version "2.22.0"}
         fr.inria.gforge.spoon/spoon-core {:mvn/version "11.4.0"}}
  :aliases
  {:run

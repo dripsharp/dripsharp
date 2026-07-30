@@ -8,12 +8,16 @@
             [dripsharp.target-directory :as target-directory]
             [dripsharp.target-execution :as target-execution]
             [dripsharp.util :as util])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [com.fasterxml.jackson.databind ObjectMapper]
+           [java.nio.charset StandardCharsets]
            [java.nio.file CopyOption FileVisitOption Files LinkOption OpenOption
             Path]
            [java.nio.file.attribute FileAttribute]
            [java.util Locale]
            [java.util.zip ZipEntry ZipOutputStream]))
+
+(def ^:private json-mapper
+  (ObjectMapper.))
 
 (defn- temp-directory
   []
@@ -209,6 +213,40 @@
     (write! build-output "ignored.pdb" "symbols\n")
     (write! build-output "ignored.xml" "documentation\n")
     (write! build-output "ignored.nupkg" "package\n")
+    (let [target-name
+          (str ".NETCoreApp,Version=v"
+               (subs (:target-framework inventory) 3)
+               (when-let [runtime-identifier
+                          (:runtime-identifier platform)]
+                 (str "/" runtime-identifier)))
+          managed
+          (for [{:keys [file package-id version]}
+                (:managed-dependencies inventory)]
+            [(str package-id "/" version)
+             {"runtime" {(str "lib/" (:target-framework inventory) "/"
+                              file)
+                         {}}}])
+          native
+          (for [{:keys [package-id version package-path]}
+                (:native-assets platform)]
+            [(str package-id "/" version)
+             {"native" {package-path {}}}])
+          packages (concat managed native)
+          dependency-file
+          (str (subs (:entry-assembly inventory)
+                     0 (- (count (:entry-assembly inventory)) 4))
+               ".deps.json")]
+      (write!
+       build-output dependency-file
+       (.writeValueAsString
+        json-mapper
+        {"runtimeTarget" {"name" target-name}
+         "targets" {target-name (into {} packages)}
+         "libraries"
+         (into {}
+               (map (fn [[coordinate _]]
+                      [coordinate {"type" "package"}]))
+               packages)})))
     {:configuration configuration}))
 
 (defn- zip!
@@ -633,6 +671,84 @@
                 :asset-upload-requires-authorization
                 :push-requires-authorization]
                (:external-actions first))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest release-preparation-binds-exact-restored-dependency-evidence
+  (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)
+        platform (first (filter #(= "osx-arm64" (:id %))
+                                (:platforms inventory)))
+        dependency-file
+        (str (subs (:entry-assembly inventory)
+                   0 (- (count (:entry-assembly inventory)) 4))
+             ".deps.json")
+        base-build! (fake-build! (atom []))
+        cases
+        [{:name :missing
+          :reason :missing-release-dependency-evidence
+          :mutate!
+          #(Files/delete
+            (paths/resolve-path % dependency-file))}
+         {:name :malformed
+          :reason :invalid-release-dependency-evidence
+          :mutate!
+          #(write! % dependency-file "{not-json")}
+         {:name :version
+          :reason :release-dependency-evidence-mismatch
+          :mutate!
+          (fn [build-output]
+            (let [file (paths/resolve-path build-output dependency-file)]
+              (Files/writeString
+               file
+               (str/replace (Files/readString file)
+                            "SkiaSharp/4.150.1"
+                            "SkiaSharp/4.151.0")
+               StandardCharsets/UTF_8
+               (make-array OpenOption 0))))}
+         {:name :native-path
+          :reason :release-dependency-evidence-mismatch
+          :mutate!
+          (fn [build-output]
+            (let [file (paths/resolve-path build-output dependency-file)]
+              (Files/writeString
+               file
+               (str/replace (Files/readString file)
+                            "runtimes/osx/native/libSkiaSharp.dylib"
+                            "runtimes/osx-arm64/native/libSkiaSharp.dylib")
+               StandardCharsets/UTF_8
+               (make-array OpenOption 0))))}]]
+    (try
+      (doseq [{:keys [name reason mutate!]} cases]
+        (testing (clojure.core/name name)
+          (let [output-root
+                (paths/resolve-path workspace
+                                    (str "dependency-evidence-"
+                                         (clojure.core/name name)))
+                result
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit commit
+                    :platform-ids [(:id platform)]
+                    :output-root output-root
+                    :build-fn
+                    (fn [build]
+                      (let [result (base-build! build)]
+                        (mutate! (:build-output build))
+                        result))
+                    :framework-assemblies #{"System.Runtime.dll"}}))]
+            (is (= reason (:reason result)))
+            (is (not (Files/exists
+                      (paths/resolve-path
+                       output-root
+                       (alpha-release/asset-filename
+                        inventory "0.1.0-alpha.1" platform))
+                      (make-array LinkOption 0)))))))
       (finally
         (delete-tree! workspace)))))
 

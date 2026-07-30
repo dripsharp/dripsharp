@@ -104,6 +104,9 @@ following before assembling assets:
 * Every build uses `Release` configuration.
 * The managed and native binary output matches the target-owned inventory
   exactly and contains no framework assemblies or dependency-name collisions.
+* The entry assembly dependency file selects the declared runtime target and
+  binds every managed DLL and native asset to its exact package ID, version,
+  and runtime or package path.
 
 Without the optional platform list, assembly produces one deterministic,
 versioned target-framework/platform ZIP for every declared platform variant.

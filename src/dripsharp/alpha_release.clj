@@ -11,7 +11,8 @@
             [dripsharp.paths :as paths]
             [dripsharp.process :as process]
             [dripsharp.util :as util])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [com.fasterxml.jackson.databind ObjectMapper]
+           [java.nio.charset StandardCharsets]
            [java.nio.file CopyOption FileAlreadyExistsException FileVisitOption
             Files LinkOption OpenOption Path StandardOpenOption]
            [java.nio.file.attribute BasicFileAttributes FileAttribute FileTime]
@@ -45,6 +46,9 @@
 
 (def ^:private fixed-zip-time
   (FileTime/fromMillis 315532800000))
+
+(def ^:private json-mapper
+  (ObjectMapper.))
 
 (defn- fail!
   [message data]
@@ -769,13 +773,110 @@
    :managed (set (map :file (:managed-dependencies inventory)))
    :native (set (map :file (:native-assets platform)))})
 
+(defn- dependency-file-name
+  [inventory]
+  (str (subs (:entry-assembly inventory)
+             0 (- (count (:entry-assembly inventory)) 4))
+       ".deps.json"))
+
+(defn- runtime-target-name
+  [inventory platform]
+  (str ".NETCoreApp,Version=v"
+       (subs (:target-framework inventory) 3)
+       (when-let [runtime-identifier (:runtime-identifier platform)]
+         (str "/" runtime-identifier))))
+
+(defn- dependency-coordinate
+  [{:keys [package-id version]}]
+  (str package-id "/" version))
+
+(defn- read-dependency-file!
+  [file platform]
+  (try
+    (.readValue json-mapper (.toFile ^Path file) java.util.Map)
+    (catch Exception error
+      (throw
+       (ex-info
+        "Release build dependency evidence is not valid JSON"
+        {:kind :alpha-release-failed
+         :reason :invalid-release-dependency-evidence
+         :platform (:id platform)
+         :path (str file)}
+        error)))))
+
+(defn- package-evidence!
+  [target libraries platform dependency asset-kind]
+  (let [{:keys [file package-id version package-path]} dependency
+        coordinate (dependency-coordinate dependency)
+        library (get libraries coordinate)
+        section (case asset-kind
+                  :managed "runtime"
+                  :native "native")
+        paths (vec (sort (keys (get (get target coordinate) section))))
+        expected-path
+        (case asset-kind
+          :managed
+          (first
+           (filter #(= file (last (relative-components %))) paths))
+          :native package-path)]
+    (when-not (and (= "package" (get library "type"))
+                   (some #{expected-path} paths))
+      (fail! "Release dependency differs from its exact restored package evidence"
+             {:reason :release-dependency-evidence-mismatch
+              :platform (:id platform)
+              :asset-kind asset-kind
+              :dependency dependency
+              :coordinate coordinate
+              :expected-path (or package-path file)
+              :actual-paths paths
+              :library-type (get library "type")}))
+    (cond-> {:file file
+             :package-id package-id
+             :version version}
+      (= :managed asset-kind) (assoc :runtime-path expected-path)
+      (= :native asset-kind) (assoc :package-path expected-path))))
+
+(defn- dependency-evidence!
+  [files inventory platform]
+  (let [filename (dependency-file-name inventory)
+        dependency-files (get files filename)]
+    (when-not (= 1 (count dependency-files))
+      (fail! "Release build is missing the entry assembly dependency evidence"
+             {:reason :missing-release-dependency-evidence
+              :platform (:id platform)
+              :filename filename
+              :actual (count dependency-files)}))
+    (let [document (read-dependency-file! (first dependency-files) platform)
+          target-name (runtime-target-name inventory platform)
+          actual-target-name (get-in document ["runtimeTarget" "name"])
+          target (get (get document "targets") target-name)
+          libraries (get document "libraries")]
+      (when-not (and (= target-name actual-target-name)
+                     (instance? java.util.Map target)
+                     (instance? java.util.Map libraries))
+        (fail! "Release dependency evidence is missing its exact runtime target"
+               {:reason :invalid-release-dependency-evidence
+                :platform (:id platform)
+                :filename filename
+                :expected-runtime-target target-name
+                :actual-runtime-target actual-target-name}))
+      {:filename filename
+       :runtime-target target-name
+       :managed
+       (mapv #(package-evidence! target libraries platform % :managed)
+             (:managed-dependencies inventory))
+       :native
+       (mapv #(package-evidence! target libraries platform % :native)
+             (:native-assets platform))})))
+
 (defn- inspect-build-output!
   [build-root build-output inventory platform framework-assemblies]
   (let [expected (expected-files inventory platform)
         expected-all (apply set/union #{} (vals expected))
+        direct (direct-files build-root build-output platform)
         by-name
         (group-by #(str (.getFileName ^Path %))
-                  (direct-files build-root build-output platform))
+                  direct)
         collisions
         (into (sorted-map)
               (filter (fn [[_ entries]] (< 1 (count entries))))
@@ -809,17 +910,20 @@
               :missing (vec (sort missing))
               :unexpected (vec (sort unexpected))
               :actual (vec (sort binaries))}))
-    (into
-     (sorted-map)
-     (for [file (sort expected-all)
-           :let [source (first (get by-name file))]]
-       [file {:source source
-              :sha256 (util/sha256-file source)
-              :kind
-              (cond
-                (contains? (:product expected) file) :product
-                (contains? (:managed expected) file) :managed
-                :else :native)}]))))
+    {:files
+     (into
+      (sorted-map)
+      (for [file (sort expected-all)
+            :let [source (first (get by-name file))]]
+        [file {:source source
+               :sha256 (util/sha256-file source)
+               :kind
+               (cond
+                 (contains? (:product expected) file) :product
+                 (contains? (:managed expected) file) :managed
+                 :else :native)}]))
+     :dependency-evidence
+     (dependency-evidence! by-name inventory platform)}))
 
 (defn- ensure-output-available!
   [output]
@@ -1196,7 +1300,7 @@
                           {:reason :wrong-build-configuration
                            :platform (:id platform)
                            :actual (:configuration build)}))
-                 (let [files
+                 (let [{:keys [files dependency-evidence]}
                        (inspect-build-output!
                         temp-root build-output inventory platform
                         framework-assemblies)
@@ -1224,6 +1328,7 @@
                     :path (str artifact)
                     :sha256 (:sha256 verification)
                     :entries (:entries verification)
+                    :dependency-evidence dependency-evidence
                     :build-configuration "Release"})))
              platforms)
             final-state
