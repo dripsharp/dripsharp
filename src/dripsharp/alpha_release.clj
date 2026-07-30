@@ -498,42 +498,52 @@
 
 (defn- managed-file-inventory
   [root managed-paths]
-  (into
-   (sorted-map)
-   (mapcat
-    (fn [managed]
-      (let [managed-root (paths/resolve-path root managed)]
-        (when (Files/isSymbolicLink managed-root)
-          (fail! "Proved product state contains a symbolic link"
-                 {:reason :proved-state-mismatch
-                  :path managed}))
-        (when-not (Files/exists managed-root (make-array LinkOption 0))
-          (fail! "Proved product managed path is missing"
-                 {:reason :proved-state-mismatch
-                  :root (str root)
-                  :path managed}))
-        (if (Files/isDirectory managed-root (make-array LinkOption 0))
-          (with-open [stream
-                      (Files/walk managed-root
-                                  (make-array FileVisitOption 0))]
-            (doall
-             (for [entry (.toArray stream)
-                   :let [^Path entry (cast Path entry)
-                         relative
-                         (util/portable-path
-                          (paths/absolute root) entry)]
-                   :when
-                   (do
-                     (when (Files/isSymbolicLink entry)
-                       (fail! "Proved product state contains a symbolic link"
-                              {:reason :proved-state-mismatch
-                               :path relative}))
-                     (Files/isRegularFile
-                      entry (make-array LinkOption 0)))
-                   :when (not (ignored-build-component? relative))]
-               [relative (util/sha256-file entry)])))
-          [[managed (util/sha256-file managed-root)]])))
-    managed-paths)))
+  (let [root (paths/absolute root)]
+    (into
+     (sorted-map)
+     (mapcat
+      (fn [managed]
+        (let [managed-root (paths/absolute
+                            (paths/resolve-path root managed))
+              linked-components
+              (when (.startsWith managed-root root)
+                (->> (iterate #(.getParent ^Path %) managed-root)
+                     (take-while #(and % (not= root %)))
+                     (filter #(Files/isSymbolicLink ^Path %))
+                     (map #(util/portable-path root ^Path %))
+                     reverse
+                     vec))]
+          (when (seq linked-components)
+            (fail! "Proved product managed path contains symbolic links"
+                   {:reason :proved-state-mismatch
+                    :root (str root)
+                    :path managed
+                    :symbolic-links linked-components}))
+          (when-not (Files/exists managed-root (make-array LinkOption 0))
+            (fail! "Proved product managed path is missing"
+                   {:reason :proved-state-mismatch
+                    :root (str root)
+                    :path managed}))
+          (if (Files/isDirectory managed-root (make-array LinkOption 0))
+            (with-open [stream
+                        (Files/walk managed-root
+                                    (make-array FileVisitOption 0))]
+              (doall
+               (for [entry (.toArray stream)
+                     :let [^Path entry (cast Path entry)
+                           relative (util/portable-path root entry)]
+                     :when
+                     (do
+                       (when (Files/isSymbolicLink entry)
+                         (fail! "Proved product state contains a symbolic link"
+                                {:reason :proved-state-mismatch
+                                 :path relative}))
+                       (Files/isRegularFile
+                        entry (make-array LinkOption 0)))
+                     :when (not (ignored-build-component? relative))]
+                 [relative (util/sha256-file entry)])))
+            [[managed (util/sha256-file managed-root)]])))
+      managed-paths))))
 
 (defn- inventory-sha256
   [inventory]

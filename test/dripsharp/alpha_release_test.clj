@@ -832,6 +832,58 @@
         (finally
           (delete-tree! workspace))))))
 
+(deftest release-preparation-rejects-symbolic-link-ancestors-of-managed-paths
+  (doseq [path-key [:staging :product]]
+    (testing (name path-key)
+      (let [[_ inventory] (actual-contract-and-inventory :pkl)
+            {:keys [workspace contract product] :as fixture}
+            (release-fixture! inventory)
+            managed-path (:project (first (:product-assemblies inventory)))
+            managed-root (get fixture path-key)
+            linked-ancestor (.getParent
+                             (paths/resolve-path managed-root managed-path))
+            substitute
+            (paths/resolve-path workspace
+                                (str "substitute-managed-" (name path-key)))]
+        (try
+          (Files/move linked-ancestor substitute (make-array CopyOption 0))
+          (Files/createSymbolicLink linked-ancestor substitute
+                                    (make-array FileAttribute 0))
+          (let [product-commit
+                (if (= :product path-key)
+                  (do
+                    (git! product "add" "--all")
+                    (git! product "commit" "-m"
+                          "Substitute managed path ancestor")
+                    (let [commit (git-output product "rev-parse" "HEAD")
+                          submodule-path
+                          (get-in contract [:publication :submodule-path])]
+                      (git! workspace "update-index" "--cacheinfo"
+                            (str "160000," commit "," submodule-path))
+                      (git! workspace "commit" "-m"
+                            "Pin substituted managed path")
+                      commit))
+                  (:commit fixture))
+                result
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract
+                    (assoc-in contract [:publication :managed-paths]
+                              [managed-path])
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit product-commit
+                    :output-root (paths/resolve-path workspace "release")
+                    :build-fn (fake-build! (atom []))
+                    :framework-assemblies #{"System.Runtime.dll"}}))]
+            (is (= :proved-state-mismatch (:reason result)))
+            (is (= managed-path (:path result)))
+            (is (= [(str (.relativize managed-root linked-ancestor))]
+                   (:symbolic-links result))))
+          (finally
+            (delete-tree! workspace)))))))
+
 (deftest release-preparation-rejects-symbolic-links-at-proved-path-boundaries
   (doseq [{:keys [subject path-key linked-path]}
           [{:subject "Proved product staging"
