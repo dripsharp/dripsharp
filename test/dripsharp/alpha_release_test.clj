@@ -1544,6 +1544,49 @@
       (finally
         (delete-tree! workspace)))))
 
+(deftest release-preparation-rejects-symbolic-link-build-output-ancestors
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)
+        substitute-root
+        (paths/resolve-path workspace "substitute-platform-build")
+        build-fn
+        (fn [{:keys [inventory platform configuration build-output]}]
+          (let [platform-root (.getParent ^Path build-output)
+                substitute-output
+                (paths/resolve-path substitute-root "output")]
+            (Files/delete build-output)
+            (Files/delete platform-root)
+            (Files/createDirectories
+             substitute-output (make-array FileAttribute 0))
+            (Files/createSymbolicLink
+             platform-root substitute-root (make-array FileAttribute 0))
+            (doseq [file
+                    (concat (map :file (:product-assemblies inventory))
+                            (map :file (:managed-dependencies inventory))
+                            (map :file (:native-assets platform)))]
+              (write! build-output file
+                      (str (:product-family inventory) "\t"
+                           (:id platform) "\t" file "\n")))
+            {:configuration configuration}))]
+    (try
+      (let [result
+            (failure
+             #(alpha-release/prepare!
+               {:workspace-root workspace
+                :target-contract contract
+                :inventory inventory
+                :authorized-tag "v0.1.0-alpha.1"
+                :product-commit commit
+                :output-root (paths/resolve-path workspace "release")
+                :build-fn build-fn
+                :framework-assemblies #{"System.Runtime.dll"}}))]
+        (is (= :symbolic-link-build-output (:reason result)))
+        (is (= "portable" (:platform result)))
+        (is (= ["portable"] (:symbolic-links result))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest target-release-workflow-proves-before-local-dry-run-preparation
   (let [calls (atom [])
         result

@@ -697,12 +697,29 @@
                     :directory product})}))
 
 (defn- direct-files
-  [directory platform]
+  [build-root directory platform]
   (when (Files/isSymbolicLink directory)
     (fail! "Release build output directory is a symbolic link"
            {:reason :symbolic-link-build-output
             :platform (:id platform)
             :entries ["."]}))
+  (let [root (paths/absolute build-root)
+        directory (paths/absolute directory)
+        linked-ancestors
+        (when (.startsWith directory root)
+          (->> (iterate #(.getParent ^Path %) (.getParent directory))
+               (take-while #(and % (.startsWith ^Path % root)))
+               (filter #(Files/isSymbolicLink ^Path %))
+               (map #(if (= root %)
+                       "."
+                       (util/portable-path root ^Path %)))
+               reverse
+               vec))]
+    (when (seq linked-ancestors)
+      (fail! "Release build output path contains symbolic-link ancestors"
+             {:reason :symbolic-link-build-output
+              :platform (:id platform)
+              :symbolic-links linked-ancestors})))
   (when-not (paths/directory? directory)
     (fail! "Release build did not create its isolated output directory"
            {:reason :missing-build-output
@@ -734,12 +751,12 @@
    :native (set (map :file (:native-assets platform)))})
 
 (defn- inspect-build-output!
-  [build-output inventory platform framework-assemblies]
+  [build-root build-output inventory platform framework-assemblies]
   (let [expected (expected-files inventory platform)
         expected-all (apply set/union #{} (vals expected))
         by-name
         (group-by #(str (.getFileName ^Path %))
-                  (direct-files build-output platform))
+                  (direct-files build-root build-output platform))
         collisions
         (into (sorted-map)
               (filter (fn [[_ entries]] (< 1 (count entries))))
@@ -1162,7 +1179,8 @@
                            :actual (:configuration build)}))
                  (let [files
                        (inspect-build-output!
-                        build-output inventory platform framework-assemblies)
+                        temp-root build-output inventory platform
+                        framework-assemblies)
                        filename (asset-filename inventory version platform)
                        artifact (get artifact-files (:id platform))
                        _ (safe-output-root! workspace-root output-root)
