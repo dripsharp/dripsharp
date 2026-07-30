@@ -245,7 +245,19 @@
                  :path relative
                  :staging-path (str staging)}))
        (if (directory-no-follow? source)
-         (walk-entries source "Managed staging directory")
+         (let [entries (walk-entries source "Managed staging directory")
+               transient
+               (->> entries
+                    (filter directory-no-follow?)
+                    (filter
+                     #(contains? #{"bin" "obj"}
+                                 (str (.getFileName ^Path %))))
+                    (mapv #(portable (.relativize staging ^Path %))))]
+           (when (seq transient)
+             (fail! "Managed staging contains transient build directories"
+                    {:reason :transient-build-artifacts
+                     :paths transient}))
+           entries)
          (do
            (when (symbolic-link? source)
              (fail! "Managed staging file must not be a symbolic link"

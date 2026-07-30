@@ -13,11 +13,12 @@
             [dripsharp.project-input :as project-input]
             [dripsharp.pkl.public-api-contract :as public-api-contract]
             [dripsharp.util :as util])
-  (:import [java.io File]
+  (:import [java.io ByteArrayInputStream File]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files OpenOption Path StandardCopyOption StandardOpenOption]
            [java.nio.file.attribute FileAttribute]
-           [java.util Base64]))
+           [java.util Base64]
+           [java.util.zip GZIPInputStream]))
 
 (def ^:private inline-cases
   [["edge/lexer-single-backtick" "`"]
@@ -1440,6 +1441,29 @@
       {:summary summary :manifest manifest :oracle-output oracle-first
        :package-output package-first :perturbed-output perturbed})))
 
+(defn- read-regex-unicode-source!
+  [source]
+  (let [source (paths/path source)
+        chunks
+        (mapv second
+              (re-seq #"(?m)^\s*\"([A-Za-z0-9+/=]+)\",\s*$"
+                      (Files/readString source StandardCharsets/UTF_8)))]
+    (when-not (seq chunks)
+      (fail! "Committed Java regex Unicode data has no encoded payload"
+             {:source (str source)}))
+    (try
+      (with-open [input
+                  (GZIPInputStream.
+                   (ByteArrayInputStream.
+                    (.decode (Base64/getDecoder) (str/join chunks))))]
+        (slurp input :encoding "UTF-8"))
+      (catch Exception error
+        (throw
+         (ex-info "Committed Java regex Unicode data payload is invalid"
+                  {:kind :invalid-regex-unicode-data
+                   :source (str source)}
+                  error))))))
+
 (defn- verify-regex-compatibility!
   [{:keys [root package-proof run-command! java-release java-home]}]
   (let [proof-root (harness/clean-directory!
@@ -1458,6 +1482,10 @@
         (paths/resolve-path root "runtime" "DripSharp.JavaRegexUnicodeData.cs")
         generated-unicode-tsv (paths/resolve-path proof-root "unicode-data.tsv")
         generated-unicode-source (paths/resolve-path proof-root "JavaRegexUnicodeData.cs")
+        committed-unicode-tsv
+        (paths/resolve-path proof-root "committed-unicode-data.tsv")
+        generated-source-unicode-tsv
+        (paths/resolve-path proof-root "generated-source-unicode-data.tsv")
         oracle-first (paths/resolve-path proof-root "upstream-first.tsv")
         oracle-second (paths/resolve-path proof-root "upstream-second.tsv")
         package-first (paths/resolve-path proof-root "package-first.tsv")
@@ -1492,8 +1520,14 @@
                              "-cp" (str oracle-classes) "GenerateRegexUnicodeData"
                              (str generated-unicode-tsv) (str generated-unicode-source)]
                    :directory root})
+    (write-text! committed-unicode-tsv
+                 (read-regex-unicode-source! committed-unicode-source))
+    (write-text! generated-source-unicode-tsv
+                 (read-regex-unicode-source! generated-unicode-source))
+    (assert-pinned! "Generated Java regex Unicode C# payload"
+                    generated-unicode-tsv generated-source-unicode-tsv)
     (assert-pinned! "JDK-derived Java regex Unicode data"
-                    committed-unicode-source generated-unicode-source)
+                    committed-unicode-tsv generated-unicode-tsv)
     (let [unicode-counts
           (->> (str/split-lines (Files/readString generated-unicode-tsv StandardCharsets/UTF_8))
                (map #(first (str/split % #"\t" 2)))

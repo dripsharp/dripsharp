@@ -4,8 +4,12 @@
             [dripsharp.package-provenance :as provenance]
             [dripsharp.pkl.differential :as differential]
             [dripsharp.paths :as paths])
-  (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+  (:import [java.io ByteArrayOutputStream]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files OpenOption]
+           [java.nio.file.attribute FileAttribute]
+           [java.util Base64]
+           [java.util.zip GZIPOutputStream]))
 
 (deftest independent-probes-overlap-and-retain-command-context
   (let [threads (atom #{})
@@ -123,6 +127,37 @@
                     "regex/split/captures-not-returned"
                     "regex/replace/missing-group"]]
       (is (some #{family} ids)))))
+
+(defn- encoded-unicode-source
+  [text marker]
+  (let [bytes
+        (with-open [output (ByteArrayOutputStream.)
+                    gzip (GZIPOutputStream. output)]
+          (.write gzip (.getBytes text StandardCharsets/UTF_8))
+          (.finish gzip)
+          (.toByteArray output))]
+    (aset-byte bytes 4 (byte marker))
+    (str "internal static readonly string GzipBase64 = "
+         "string.Concat(new string[]\n{\n\""
+         (.encodeToString (Base64/getEncoder) bytes)
+         "\",\n});\n")))
+
+(deftest regex-unicode-audit-compares-decompressed-data
+  (let [data "V\t25.0.2+10-LTS\nB\tbasiclatin\t0-7f\n"
+        first-source
+        (Files/createTempFile "dripsharp-regex-unicode-first" ".cs"
+                              (make-array FileAttribute 0))
+        second-source
+        (Files/createTempFile "dripsharp-regex-unicode-second" ".cs"
+                              (make-array FileAttribute 0))]
+    (Files/writeString first-source (encoded-unicode-source data 0)
+                       (make-array OpenOption 0))
+    (Files/writeString second-source (encoded-unicode-source data 1)
+                       (make-array OpenOption 0))
+    (is (not= (Files/readString first-source)
+              (Files/readString second-source)))
+    (is (= data (#'differential/read-regex-unicode-source! first-source)))
+    (is (= data (#'differential/read-regex-unicode-source! second-source)))))
 
 (deftest quantified-astral-regex-contract-pins-captures-and-every-replacement-mode
   (let [cases (var-get #'differential/astral-regex-capture-cases)

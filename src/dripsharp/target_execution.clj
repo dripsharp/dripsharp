@@ -13,6 +13,7 @@
             [dripsharp.packaging :as packaging]
             [dripsharp.paths :as paths]
             [dripsharp.product-repository :as product-repository]
+            [dripsharp.product-staging :as product-staging]
             [dripsharp.target-directory :as target-directory]))
 
 (defn- fail!
@@ -167,7 +168,7 @@
           :target :validation :read-target-fn
           :generate-fn :verify-fn :pack-fn :package-fn
           :differential-fn :proof-fn :synchronize-fn :prepare-fn
-          :consumer-tests-fn
+          :consumer-tests-fn :staging-cleanup-fn
           :release-fn :build-fn :framework-assemblies :inventory
           :branch :commit-message :pull-request-title :pull-request-body
           :authorized-tag :product-commit :output-root))
@@ -199,11 +200,18 @@
               {:emit-project-fn emit-project-fn}))]
         (if (= :generated-repository
                (get-in execution [:contract :publication :kind]))
-          (assoc generation
-                 :consumer-tests
-                 (consumer-tests/emit!
-                  {:workspace-root (:workspace-root execution)
-                   :target-contract (:contract execution)}))
+          (let [staging
+                (product-staging/emit!
+                 {:workspace-root (:workspace-root execution)
+                  :target-contract (:contract execution)
+                  :generation generation})
+                consumer-tests
+                (consumer-tests/emit!
+                 {:workspace-root (:workspace-root execution)
+                  :target-contract (:contract execution)})]
+            (assoc generation
+                   :product-staging staging
+                   :consumer-tests consumer-tests))
           generation)))))
 
 (defn generate!
@@ -436,6 +444,11 @@
          {:workspace-root (:workspace-root execution)
           :target-contract (:contract execution)
           :run-command! (:run-command! options)})
+        staging-cleanup
+        ((or (:staging-cleanup-fn options)
+             product-staging/clean-build-artifacts!)
+         {:workspace-root (:workspace-root execution)
+          :target-contract (:contract execution)})
         synchronize-fn
         (or (:synchronize-fn options) product-repository/synchronize!)
         synchronization
@@ -447,6 +460,7 @@
     {:target (:target execution)
      :proof proof
      :consumer-tests consumer-test-verification
+     :staging-cleanup staging-cleanup
      :synchronization synchronization}))
 
 (defn prepare-publication!
@@ -461,6 +475,11 @@
          {:workspace-root (:workspace-root execution)
           :target-contract (:contract execution)
           :run-command! (:run-command! options)})
+        staging-cleanup
+        ((or (:staging-cleanup-fn options)
+             product-staging/clean-build-artifacts!)
+         {:workspace-root (:workspace-root execution)
+          :target-contract (:contract execution)})
         prepare-fn (or (:prepare-fn options) product-repository/prepare!)
         preparation
         (prepare-fn
@@ -475,6 +494,7 @@
     {:target (:target execution)
      :proof proof
      :consumer-tests consumer-test-verification
+     :staging-cleanup staging-cleanup
      :preparation preparation}))
 
 (defn prepare-alpha-release!

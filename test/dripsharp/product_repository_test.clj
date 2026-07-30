@@ -245,6 +245,21 @@
           (is (= "old readme\n"
                  (slurp (str (.resolve brine "README.md"))))))
         (finally
+          (delete-tree! workspace)))))
+  (testing "transient build outputs in managed staging are rejected"
+    (let [{:keys [workspace contract]} (fixture!)]
+      (try
+        (write! workspace
+                "target/generated/brine/src/DripSharp.Brine/obj/cache.bin"
+                "derived\n")
+        (let [result
+              (failure
+               #(product-repository/synchronize!
+                 {:workspace-root workspace
+                  :target-contract contract}))]
+          (is (= :transient-build-artifacts (:reason result)))
+          (is (= ["src/DripSharp.Brine/obj"] (:paths result))))
+        (finally
           (delete-tree! workspace))))))
 
 (deftest synchronization-rejects-path-escapes-and-conformance-only-targets
@@ -350,6 +365,13 @@
                             [:target-contract :publication
                              :consumer-tests :project :assembly-name])])
             :consumer-tests-passed)
+          :staging-cleanup-fn
+          (fn [options]
+            (swap! calls conj
+                   [:staging-cleanup
+                    (get-in options
+                            [:target-contract :publication :staging-path])])
+            :staging-cleaned)
           :synchronize-fn
           (fn [options]
             (swap! calls conj
@@ -360,10 +382,12 @@
     (is (= [[:proof {:workspace-root (paths/workspace-root)
                      :target :pkl}]
             [:consumer-tests "DripSharp.Brine.Tests"]
+            [:staging-cleanup "target/generated/brine"]
             [:sync "target/generated/brine"]]
            @calls))
     (is (= :proved (:proof result)))
     (is (= :consumer-tests-passed (:consumer-tests result)))
+    (is (= :staging-cleaned (:staging-cleanup result)))
     (is (= :synchronized (:synchronization result))))
   (let [called? (atom false)
         result
