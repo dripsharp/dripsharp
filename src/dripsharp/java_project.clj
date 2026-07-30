@@ -221,11 +221,12 @@
            (not (str/blank? %))
            (project-xml/valid-text? %))))
   (let [legal-files (:legal-files configuration)]
-    (when legal-files
+    (when (contains? configuration :legal-files)
       (let [context
             (destination-context "Destination legal-file packaging contract")]
         (validation/check! context [:legal-files] legal-files
-                           "a vector" vector?)
+                           "a nonempty vector"
+                           #(and (vector? %) (seq %)))
         (doseq [[index legal-file] (map-indexed vector legal-files)]
           (validation/exact-keys!
            context [:legal-files index] legal-file

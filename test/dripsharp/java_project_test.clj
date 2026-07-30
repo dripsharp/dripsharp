@@ -176,7 +176,19 @@
          (paths/workspace-root)
          "targets/pkl/destinations/parser.edn")]
     (doseq [[label candidate path expected]
-            [[:missing-source
+            [[:nil-legal-files
+              (assoc configuration :legal-files nil)
+              [:legal-files]
+              "a nonempty vector"]
+             [:false-legal-files
+              (assoc configuration :legal-files false)
+              [:legal-files]
+              "a nonempty vector"]
+             [:empty-legal-files
+              (assoc configuration :legal-files [])
+              [:legal-files]
+              "a nonempty vector"]
+             [:missing-source
               (update-in configuration [:legal-files 0] dissoc :source)
               [:legal-files 0]
               :required]
