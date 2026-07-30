@@ -986,6 +986,16 @@
           (swap! commands conj (:command request))
           (process/run! request))]
     (try
+      (write!
+       workspace "Directory.Build.props"
+       (str "<Project><Target Name=\"RejectUnprovedAncestorProps\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Unproved ancestor "
+            "Directory.Build.props was imported\" /></Target></Project>\n"))
+      (write!
+       workspace "Directory.Build.targets"
+       (str "<Project><Target Name=\"RejectUnprovedAncestorTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Unproved ancestor "
+            "Directory.Build.targets was imported\" /></Target></Project>\n"))
       (let [prepared
             (alpha-release/prepare!
              {:workspace-root workspace
@@ -1017,6 +1027,8 @@
         (is (not (neg? artifacts-index)))
         (is (not (.startsWith artifacts-path (paths/absolute product))))
         (is (not (.startsWith packages-path (paths/absolute product))))
+        (is (some #{"-p:ImportDirectoryBuildProps=false"} dotnet-command))
+        (is (some #{"-p:ImportDirectoryBuildTargets=false"} dotnet-command))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
                          "--untracked-files=all"))))

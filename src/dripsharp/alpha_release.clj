@@ -724,6 +724,8 @@
           (str "-p:RestorePackagesPath=" packages-root)
           "-p:RestoreIgnoreFailedSources=true"
           "-p:CopyLocalLockFileAssemblies=true"
+          "-p:ImportDirectoryBuildProps=false"
+          "-p:ImportDirectoryBuildTargets=false"
           "-p:DebugType=None"
           "-p:DebugSymbols=false"
           "-p:GenerateDocumentationFile=false"
