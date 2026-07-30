@@ -145,6 +145,28 @@
           (assoc-in configuration [:package :authors]
                     "Publisher \uD83D\uDE80"))))))
 
+(deftest mechanical-source-attribution-metadata-must-be-single-line
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/rawhttp/destinations/core.edn")]
+    (doseq [field [:repository :notice-reference]
+            separator
+            ["\u0000" "\u000B" "\u000C" "\r" "\n"
+             "\u0085" "\u2028" "\u2029"]]
+      (testing (str (name field) " rejects " (pr-str separator))
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc-in configuration [:mechanical-source field]
+                           (str "Upstream" separator "forged")))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:mechanical-source field]
+                 (:path (ex-data error)))))))))
+
 (deftest destination-files-require-exactly-one-edn-value
   (let [root (temp-directory)
         relative "targets/rawhttp/destinations/core.edn"

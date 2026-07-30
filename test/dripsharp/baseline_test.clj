@@ -55,6 +55,24 @@
                       (set (keys (:source-counts %))))
                   (vals (:profiles record)))))))
 
+(deftest baseline-upstream-attribution-metadata-must-be-single-line
+  (let [record (baseline/read-baseline :rawhttp)]
+    (doseq [field [:name :version :repository :license :notice-reference]
+            separator
+            ["\u0000" "\u000B" "\u000C" "\r" "\n"
+             "\u0085" "\u2028" "\u2029"]]
+      (testing (str (name field) " rejects " (pr-str separator))
+        (let [error
+              (try
+                (baseline/validate-record!
+                 :rawhttp
+                 (assoc-in record [:upstream field]
+                           (str "Upstream" separator "forged")))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-target-baseline (:kind (ex-data error))))
+          (is (= :rawhttp (:target (ex-data error)))))))))
+
 (deftest rawhttp-license-input-and-package-file-are-pinned
   (let [workspace (paths/workspace-root)
         destination

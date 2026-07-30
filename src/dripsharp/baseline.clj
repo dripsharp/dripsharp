@@ -43,6 +43,14 @@
   [value]
   (and (string? value) (not (str/blank? value))))
 
+(defn- non-blank-single-line?
+  [value]
+  (and (non-blank-string? value)
+       (not
+        (re-find
+         #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
+         value))))
+
 (defn- sha256?
   [value]
   (and (string? value) (boolean (re-matches #"[0-9a-f]{64}" value))))
@@ -104,13 +112,14 @@
       (invalid! "Target baseline identifies the wrong target"
                 {:expected expected-target :actual (:target record)}))
     (when-not (and (map? upstream)
-                   (every? #(non-blank-string? (get upstream %))
+                   (every? #(non-blank-single-line? (get upstream %))
                            [:name :version :repository :revision :license])
                    (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}"
                                (:revision upstream))
                    (pos-int? (:java-language-version upstream))
                    (or (nil? (:notice-reference upstream))
-                       (non-blank-string? (:notice-reference upstream))))
+                       (non-blank-single-line?
+                        (:notice-reference upstream))))
       (invalid! "Target baseline has invalid upstream identity metadata"
                 {:target expected-target :upstream upstream}))
     (when-not (and (map? artifacts)

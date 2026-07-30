@@ -431,7 +431,10 @@
         context (destination-context "Destination mechanical-source provenance")
         single-line? #(and (string? %)
                            (not (str/blank? %))
-                           (not (re-find #"[\r\n]" %)))]
+                           (not
+                            (re-find
+                             #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
+                             %)))]
     (validation/exact-keys! context [:mechanical-source] mechanical-source
                             mechanical-source-keys mechanical-source-keys)
     (validation/check! context [:mechanical-source :repository]
