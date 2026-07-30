@@ -12,6 +12,11 @@ The Pkl product boundary is defined by its
 contracts under [`targets/`](targets/). Temporary sequencing and status belong
 in Beads, not in this document.
 
+Generated product publication is governed by the
+[Product Repository Contract](product-repositories.md). DripSharp is the
+authoritative source; product-family repositories are generated publication
+repositories linked under `products/`.
+
 ## Code-Derived System Views
 
 These views follow the executable call paths and data structures in the
@@ -247,7 +252,10 @@ than through a Kotlin frontend.
 
 ## Durable Assets
 
-Generated C# is disposable. Durable assets are:
+Generated C# is reproducible output rather than authoritative implementation
+source. Its staging copies are disposable. A generated product repository may
+commit a reviewed publication copy, but durable fixes still belong in the
+inputs below and must be regenerated:
 
 1. Original Java source used for translation and any upstream sources or tests
    used as behavior references.

@@ -16,6 +16,8 @@ These documents apply to every Java-to-C# target:
 * [Target Directory Contract](target-directory-contract.md) defines the
   product-neutral, fail-closed operational manifest used to compose target
   profiles, mappings, runtime assets, baselines, and validation evidence.
+* [Product Repository Contract](product-repositories.md) defines the GitHub
+  repository, Git submodule, staging, and generated-publication model.
 * [Conversion Concerns](conversion-concerns.md) records Java-to-.NET semantic
   differences that every target must address deliberately.
 
@@ -27,8 +29,8 @@ runtime semantics, or exclusions of a particular product target.
 Target-specific goals, scope, exclusions, runtime behavior, and evidence policy
 live under [`targets/`](targets/):
 
-* [Pkl](targets/pkl/) — a .NET library providing the approved Pkl product
-  behavior.
+* [Brine — Pkl for .NET](targets/pkl/) — a .NET library providing the approved
+  Pkl product behavior.
 * [PdfCube](targets/pdfbox/) — mechanically translated .NET libraries tracking
   the latest stable Apache PDFBox release.
 

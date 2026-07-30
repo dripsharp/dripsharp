@@ -28,6 +28,17 @@ the user-approved exclusion list below.
 The first product target is a .NET library, not a full replacement for the Pkl
 JVM distribution.
 
+The approved product identity is **Brine — Pkl for .NET**. Its generated
+publication repository is `dripsharp/brine`. The main assembly, package, and
+root namespace are `DripSharp.Brine`; the parser assembly, package, and root
+namespace are `DripSharp.Brine.Parser`. Parser syntax namespaces are
+`DripSharp.Brine.Parser.Syntax` and
+`DripSharp.Brine.Parser.Syntax.Generic`.
+
+Pkl remains the language and upstream identity in public terminology, type
+names where appropriate, descriptions, provenance, attribution, and
+non-affiliation material. It is not the top-level namespace or repository name.
+
 DripSharp remains a reusable Java-to-C# source translator. Pkl is its first
 product target and requirements driver, not the definition of the translator.
 The recursive Java translator, resolved-symbol mappings, and general
