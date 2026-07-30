@@ -793,6 +793,7 @@
         (cond->
          ["dotnet" "restore" (str project-file)
           "-noAutoResponse"
+          "--no-http-cache"
           "--verbosity" "minimal"
           "--configfile" (str restore-config)
           "--packages" (str packages-root)
