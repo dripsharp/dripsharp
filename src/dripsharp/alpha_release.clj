@@ -397,6 +397,10 @@
    (mapcat
     (fn [managed]
       (let [managed-root (paths/resolve-path root managed)]
+        (when (Files/isSymbolicLink managed-root)
+          (fail! "Proved product state contains a symbolic link"
+                 {:reason :proved-state-mismatch
+                  :path managed}))
         (when-not (Files/exists managed-root (make-array LinkOption 0))
           (fail! "Proved product managed path is missing"
                  {:reason :proved-state-mismatch
@@ -412,15 +416,16 @@
                          relative
                          (util/portable-path
                           (paths/absolute root) entry)]
-                   :when (Files/isRegularFile
-                          entry (make-array LinkOption 0))
+                   :when
+                   (do
+                     (when (Files/isSymbolicLink entry)
+                       (fail! "Proved product state contains a symbolic link"
+                              {:reason :proved-state-mismatch
+                               :path relative}))
+                     (Files/isRegularFile
+                      entry (make-array LinkOption 0)))
                    :when (not (ignored-build-component? relative))]
-               (do
-                 (when (Files/isSymbolicLink entry)
-                   (fail! "Proved product state contains a symbolic link"
-                          {:reason :proved-state-mismatch
-                           :path relative}))
-                 [relative (util/sha256-file entry)]))))
+               [relative (util/sha256-file entry)])))
           [[managed (util/sha256-file managed-root)]])))
     managed-paths)))
 

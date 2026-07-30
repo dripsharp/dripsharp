@@ -539,6 +539,57 @@
       (finally
         (delete-tree! workspace)))))
 
+(deftest release-preparation-rejects-symbolic-links-in-proved-state
+  (testing "a managed root file cannot redirect hashing"
+    (let [[_ inventory] (actual-contract-and-inventory :pkl)
+          {:keys [workspace contract staging commit]}
+          (release-fixture! inventory)
+          staged-readme (paths/resolve-path staging "README.md")
+          substitute (write! workspace "substitute-readme.md"
+                             "# Generated product\n")]
+      (try
+        (Files/delete staged-readme)
+        (Files/createSymbolicLink staged-readme substitute
+                                  (make-array FileAttribute 0))
+        (is (= :proved-state-mismatch
+               (:reason
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit commit
+                    :output-root (paths/resolve-path workspace "release")
+                    :build-fn (fake-build! (atom []))
+                    :framework-assemblies #{"System.Runtime.dll"}})))))
+        (finally
+          (delete-tree! workspace)))))
+  (testing "a nested directory link cannot disappear from inventory"
+    (let [[_ inventory] (actual-contract-and-inventory :pkl)
+          {:keys [workspace contract staging commit]}
+          (release-fixture! inventory)
+          substitute (paths/resolve-path workspace "substitute-source")
+          _ (write! substitute "Hidden.cs" "namespace Hidden;\n")
+          link (paths/resolve-path staging "src/substituted")]
+      (try
+        (Files/createSymbolicLink link substitute
+                                  (make-array FileAttribute 0))
+        (is (= :proved-state-mismatch
+               (:reason
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit commit
+                    :output-root (paths/resolve-path workspace "release")
+                    :build-fn (fake-build! (atom []))
+                    :framework-assemblies #{"System.Runtime.dll"}})))))
+        (finally
+          (delete-tree! workspace))))))
+
 (deftest target-release-workflow-proves-before-local-dry-run-preparation
   (let [calls (atom [])
         result
