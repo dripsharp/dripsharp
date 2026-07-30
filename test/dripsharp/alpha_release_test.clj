@@ -1299,6 +1299,8 @@
         (is (some #{"--no-restore"} dotnet-command))
         (is (some #{"-noAutoResponse"} dotnet-command))
         (is (some #{"-noAutoResponse"} restore-command))
+        (is (some #{"--disable-build-servers"} dotnet-command))
+        (is (some #{"--disable-build-servers"} restore-command))
         (is (some #{"--no-http-cache"} restore-command))
         (is (some #{"-p:ImportDirectoryPackagesProps=false"}
                   dotnet-command))

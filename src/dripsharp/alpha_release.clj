@@ -800,6 +800,7 @@
         (cond->
          ["dotnet" "restore" (str project-file)
           "-noAutoResponse"
+          "--disable-build-servers"
           "--no-http-cache"
           "--verbosity" "minimal"
           "--configfile" (str restore-config)
@@ -824,6 +825,7 @@
         (cond->
          ["dotnet" "build" (str project-file)
           "-noAutoResponse"
+          "--disable-build-servers"
           "--nologo"
           "--configuration" "Release"
           "--verbosity:minimal"
