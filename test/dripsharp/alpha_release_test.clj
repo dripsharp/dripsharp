@@ -1110,6 +1110,8 @@
         restore-config-content (atom nil)
         hostile-custom-props
         (paths/resolve-path workspace "hostile-custom-import.props")
+        hostile-alternate-common-props
+        (paths/resolve-path workspace "hostile-alternate-common.props")
         hostile-custom-targets
         (paths/resolve-path workspace "hostile-custom-import.targets")
         hostile-code-analysis-targets
@@ -1159,7 +1161,9 @@
               request
               :environment
               (merge
-               {"BeforeMicrosoftNETSdkTargets"
+               {"AlternateCommonProps"
+                (str hostile-alternate-common-props)
+                "BeforeMicrosoftNETSdkTargets"
                 (str hostile-custom-targets)
                 "CodeAnalysisTargets"
                 (str hostile-code-analysis-targets)
@@ -1222,6 +1226,11 @@
                   "/host-controlled/fallback-packages"})
                (:environment request))))))]
     (try
+      (write!
+       workspace "hostile-alternate-common.props"
+       (str "<Project><Target Name=\"RejectAmbientAlternateCommonProps\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "AlternateCommonProps was loaded\" /></Target></Project>\n"))
       (write!
        workspace "hostile-custom-import.props"
        (str "<Project><Import "
@@ -1424,7 +1433,8 @@
         (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
                   restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"BeforeMicrosoftNETSdkTargets"
+        (is (= #{"AlternateCommonProps"
+                 "BeforeMicrosoftNETSdkTargets"
                  "CodeAnalysisTargets"
                  "CscToolExe"
                  "CscToolPath"
@@ -1445,7 +1455,8 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
-        (is (= #{"BeforeMicrosoftNETSdkTargets"
+        (is (= #{"AlternateCommonProps"
+                 "BeforeMicrosoftNETSdkTargets"
                  "CodeAnalysisTargets"
                  "CscToolExe"
                  "CscToolPath"
