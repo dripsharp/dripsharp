@@ -1167,6 +1167,8 @@
                 (str hostile-custom-props)
                 "CustomAfterDirectoryBuildTargets"
                 (str hostile-custom-targets)
+                "CustomAfterMicrosoftCSharpTargets"
+                (str hostile-custom-targets)
                 "CustomAfterMicrosoftCommonProps"
                 (str hostile-custom-props)
                 "DOTNET_STARTUP_HOOKS"
@@ -1176,6 +1178,8 @@
                 "CustomBeforeDirectoryBuildProps"
                 (str hostile-custom-props)
                 "CustomBeforeDirectoryBuildTargets"
+                (str hostile-custom-targets)
+                "CustomBeforeMicrosoftCSharpTargets"
                 (str hostile-custom-targets)
                 "CustomBeforeMicrosoftCommonProps"
                 (str hostile-custom-props)
@@ -1424,10 +1428,12 @@
                  "DOTNET_STARTUP_HOOKS"
                  "CustomAfterDirectoryBuildProps"
                  "CustomAfterDirectoryBuildTargets"
+                 "CustomAfterMicrosoftCSharpTargets"
                  "CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
                  "CustomBeforeDirectoryBuildProps"
                  "CustomBeforeDirectoryBuildTargets"
+                 "CustomBeforeMicrosoftCSharpTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "MSBuildExtensionsPath"
@@ -1442,10 +1448,12 @@
                  "DOTNET_STARTUP_HOOKS"
                  "CustomAfterDirectoryBuildProps"
                  "CustomAfterDirectoryBuildTargets"
+                 "CustomAfterMicrosoftCSharpTargets"
                  "CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
                  "CustomBeforeDirectoryBuildProps"
                  "CustomBeforeDirectoryBuildTargets"
+                 "CustomBeforeMicrosoftCSharpTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "MSBuildExtensionsPath"
