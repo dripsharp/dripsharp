@@ -1119,6 +1119,8 @@
               (merge
                {"CustomAfterMicrosoftCommonProps"
                 (str hostile-custom-props)
+                "DOTNET_STARTUP_HOOKS"
+                "/host-controlled/nonexistent-startup-hook.dll"
                 "CustomAfterMicrosoftCommonTargets"
                 (str hostile-custom-targets)
                 "CustomBeforeMicrosoftCommonProps"
@@ -1357,7 +1359,8 @@
         (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
                   restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"CustomAfterMicrosoftCommonProps"
+        (is (= #{"DOTNET_STARTUP_HOOKS"
+                 "CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
@@ -1367,7 +1370,8 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
-        (is (= #{"CustomAfterMicrosoftCommonProps"
+        (is (= #{"DOTNET_STARTUP_HOOKS"
+                 "CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"

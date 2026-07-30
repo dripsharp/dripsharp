@@ -53,8 +53,9 @@
 (def ^:private nuget-org-v3-source
   "https://api.nuget.org/v3/index.json")
 
-(def ^:private isolated-msbuild-environment
-  #{"CustomAfterMicrosoftCommonProps"
+(def ^:private isolated-dotnet-environment
+  #{"DOTNET_STARTUP_HOOKS"
+    "CustomAfterMicrosoftCommonProps"
     "CustomAfterMicrosoftCommonTargets"
     "CustomBeforeMicrosoftCommonProps"
     "CustomBeforeMicrosoftCommonTargets"
@@ -833,7 +834,7 @@
         (run-command! {:command restore-command
                        :directory build-directory
                        :environment isolated-environment
-                       :unset-environment isolated-msbuild-environment})
+                       :unset-environment isolated-dotnet-environment})
         command
         (cond->
          ["dotnet" "build" (str project-file)
@@ -867,7 +868,7 @@
      (run-command! {:command command
                     :directory build-directory
                     :environment isolated-environment
-                    :unset-environment isolated-msbuild-environment})}))
+                    :unset-environment isolated-dotnet-environment})}))
 
 (defn- direct-files
   [build-root directory platform]
