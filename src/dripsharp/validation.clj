@@ -1,7 +1,8 @@
 (ns dripsharp.validation
   "Small product-neutral helpers for actionable configuration diagnostics."
   (:require [clojure.set :as set]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [java.net URI URISyntaxException]))
 
 (defn- path-text
   [path]
@@ -47,6 +48,24 @@
   (when-not (predicate value)
     (fail! context path value expected))
   value)
+
+(defn absolute-http-url?
+  "Returns true for a syntactically valid hierarchical HTTP(S) URI with a host.
+  Text-format constraints such as XML compatibility remain the caller's policy."
+  [value]
+  (and
+   (string? value)
+   (try
+     (let [uri (URI. value)
+           scheme (.getScheme uri)
+           host (.getHost uri)]
+       (and (contains? #{"http" "https"}
+                       (some-> scheme str/lower-case))
+            (not (.isOpaque uri))
+            (string? host)
+            (not (str/blank? host))))
+     (catch URISyntaxException _
+       false))))
 
 (defn exact-keys!
   "Validates a map's required and allowed keys.

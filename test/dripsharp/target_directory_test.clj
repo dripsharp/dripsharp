@@ -126,7 +126,9 @@
     :title "Acme Core"
     :description
     "Acme Core for .NET. This package is an independent translation and is not affiliated with UpstreamCo."
-    :authors "DripSharp"}
+    :authors "DripSharp"
+    :project-url "https://example.invalid/acme"
+    :repository-url "https://example.invalid/acme.git"}
    :output {:project-directory "generated/acme/src/Acme.Core"
             :source-directory "src"
             :project-file "Acme.Core.csproj"}
@@ -871,6 +873,24 @@
            (is (= :invalid-target-directory (:kind failure)))
            (is (= [:destinations :core :package :description]
                   (:path failure))))))
+     (testing "package URLs must be absolute HTTP(S) URLs with a host"
+       (doseq [field [:project-url :repository-url]
+               value ["not a URL"
+                      "relative/path"
+                      "//example.invalid/acme"
+                      "ftp://example.invalid/acme"
+                      "https:/missing-host"
+                      "https://example.invalid/acme\nspoof"]]
+         (write-edn! root "targets/acme/destinations/core.edn" (destination))
+         (update-edn! root "targets/acme/destinations/core.edn"
+                      assoc-in [:package field] value)
+         (let [failure
+               (failure-data #(target-directory/read-target root :acme))]
+           (is (= :invalid-target-directory (:kind failure)))
+           (is (= [:destinations :core :package field]
+                  (:path failure)))
+           (is (= "an absolute HTTP(S) URL with a host"
+                  (:expected failure))))))
      (testing "upstream-owner marks cannot become publisher identities"
        (write-edn! root "targets/acme/destinations/core.edn" (destination))
        (update-edn! root "targets/acme/destinations/core.edn"

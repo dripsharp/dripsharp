@@ -22,8 +22,7 @@
             [dripsharp.spoon :as spoon]
             [dripsharp.util :as util]
             [dripsharp.validation :as validation])
-  (:import [java.net URI URISyntaxException]
-           [java.nio.charset Charset MalformedInputException]
+  (:import [java.nio.charset Charset MalformedInputException]
            [java.nio.file Files Path StandardCopyOption]
            [java.util IdentityHashMap]
            [spoon.reflect.declaration CtElement CtEnum CtType]
@@ -110,19 +109,8 @@
 
 (defn- absolute-http-url?
   [value]
-  (and
-   (non-blank-single-line-xml-string? value)
-   (try
-     (let [uri (URI. value)
-           scheme (.getScheme uri)
-           host (.getHost uri)]
-       (and (contains? #{"http" "https"}
-                       (some-> scheme str/lower-case))
-            (not (.isOpaque uri))
-            (string? host)
-            (not (str/blank? host))))
-     (catch URISyntaxException _
-       false))))
+  (and (non-blank-single-line-xml-string? value)
+       (validation/absolute-http-url? value)))
 
 (defn- windows-reserved-path-component?
   [component]

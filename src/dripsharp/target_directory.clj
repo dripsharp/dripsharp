@@ -141,6 +141,11 @@
   (and (non-blank-string? value)
        (project-xml/valid-text? value)))
 
+(defn- absolute-package-url?
+  [value]
+  (and (non-blank-single-line-xml-text? value)
+       (validation/absolute-http-url? value)))
+
 (defn- exact-keys!
   ([subject expected value]
    (exact-keys! subject [] expected value))
@@ -936,7 +941,14 @@
        [:destinations destination-id :package :description]
        description
        "non-blank text without NUL characters"
-       non-blank-text?))
+       non-blank-text?)
+      (doseq [field [:project-url :repository-url]]
+        (validation/check!
+         context
+         [:destinations destination-id :package field]
+         (get package field)
+         "an absolute HTTP(S) URL with a host"
+         absolute-package-url?)))
     (doseq [fragment required-fragments]
       (when-not (and (non-blank-string? description)
                      (str/includes? description fragment))
