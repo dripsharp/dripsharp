@@ -119,10 +119,11 @@ duplicate selections fail before the proof ladder. The preparation record,
 dry-run GitHub release notes, and asset metadata contain only the selected
 platforms and ZIPs.
 
-ZIP verification rejects package files, symbols, XML documentation, source
-archives, unsafe paths, and unrelated files. A preparation record contains
-dry-run GitHub release metadata with an exact target commit, `prerelease` set
-to true, and `latest` set to false.
+Downloaded ZIP verification first requires the exact prepared archive SHA-256,
+then rejects package files, symbols, XML documentation, source archives, unsafe
+paths, unrelated files, and entry-byte mismatches. A preparation record
+contains that archive checksum plus dry-run GitHub release metadata with an
+exact target commit, `prerelease` set to true, and `latest` set to false.
 
 Preparation does not create a tag or release and does not upload an asset or
 push a ref. Those external mutations require explicit owner authorization in

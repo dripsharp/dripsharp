@@ -1375,10 +1375,48 @@
                     (alpha-release/verify-asset!
                      {:artifact-root root
                       :artifact asset
+                      :expected-artifact-sha256 (util/sha256-file asset)
                       :inventory inventory
                       :platform platform
                       :expected-hashes (hashes expected)
                       :framework-assemblies #{"System.Runtime.dll"}}))))))))
+      (testing "downloaded ZIPs must match the prepared archive checksum"
+        (let [prepared
+              (zip! (.resolve root "prepared-checksum.zip") expected)
+              downloaded
+              (zip! (.resolve root "downloaded-checksum.zip")
+                    (reverse (seq expected)))
+              prepared-sha256 (util/sha256-file prepared)
+              downloaded-sha256 (util/sha256-file downloaded)
+              result
+              (failure
+               #(alpha-release/verify-asset!
+                 {:artifact-root root
+                  :artifact downloaded
+                  :expected-artifact-sha256 prepared-sha256
+                  :inventory inventory
+                  :platform platform
+                  :expected-hashes (hashes expected)
+                  :framework-assemblies #{"System.Runtime.dll"}}))]
+          (is (not= prepared-sha256 downloaded-sha256))
+          (is (= :release-artifact-digest-mismatch (:reason result)))
+          (is (= prepared-sha256 (:expected result)))
+          (is (= downloaded-sha256 (:actual result)))))
+      (testing "downloaded verification requires an exact prepared checksum"
+        (let [asset (zip! (.resolve root "missing-checksum.zip") expected)]
+          (doseq [digest [nil "ABC"]]
+            (let [result
+                  (failure
+                   #(alpha-release/verify-asset!
+                     {:artifact-root root
+                      :artifact asset
+                      :expected-artifact-sha256 digest
+                      :inventory inventory
+                      :platform platform
+                      :expected-hashes (hashes expected)
+                      :framework-assemblies #{"System.Runtime.dll"}}))]
+              (is (= :invalid-release-artifact-digest (:reason result)))
+              (is (= digest (:expected-artifact-sha256 result)))))))
       (testing "forbidden release payloads fail before unrelated-file handling"
         (doseq [file ["leaked.nupkg" "leaked.pdb" "leaked.xml"
                       "source.zip" "source.tar.gz"]]
@@ -1390,6 +1428,7 @@
                      #(alpha-release/verify-asset!
                        {:artifact-root root
                         :artifact asset
+                        :expected-artifact-sha256 (util/sha256-file asset)
                         :inventory inventory
                         :platform platform
                         :expected-hashes (hashes entries)
@@ -1406,6 +1445,7 @@
                #(alpha-release/verify-asset!
                  {:artifact-root root
                   :artifact asset
+                  :expected-artifact-sha256 (util/sha256-file asset)
                   :inventory inventory
                   :platform platform
                   :expected-hashes (hashes entries)
@@ -1425,6 +1465,7 @@
                #(alpha-release/verify-asset!
                  {:artifact-root root
                   :artifact asset
+                  :expected-artifact-sha256 (util/sha256-file asset)
                   :inventory inventory
                   :platform platform
                   :expected-hashes (hashes entries)
@@ -1442,6 +1483,7 @@
                  #(alpha-release/verify-asset!
                    {:artifact-root root
                     :artifact asset
+                    :expected-artifact-sha256 (util/sha256-file asset)
                     :inventory inventory
                     :platform platform
                     :expected-hashes (hashes entries)
@@ -1504,6 +1546,7 @@
                    #(alpha-release/verify-asset!
                      {:artifact-root root
                       :artifact asset
+                      :expected-artifact-sha256 (util/sha256-file asset)
                       :inventory inventory
                       :platform platform
                       :expected-hashes (hashes entries)
@@ -1520,6 +1563,8 @@
                    #(alpha-release/verify-asset!
                      {:artifact-root root
                       :artifact framework-asset
+                      :expected-artifact-sha256
+                      (util/sha256-file framework-asset)
                       :inventory inventory
                       :platform platform
                       :expected-hashes (hashes framework-entries)
@@ -1596,6 +1641,7 @@
                #(alpha-release/verify-asset!
                  {:artifact-root root
                   :artifact asset
+                  :expected-artifact-sha256 (util/sha256-file asset)
                   :inventory inventory
                   :platform platform
                   :expected-hashes (hashes entries)
@@ -1635,6 +1681,7 @@
                #(alpha-release/verify-asset!
                  {:artifact-root root
                   :artifact candidate
+                  :expected-artifact-sha256 (util/sha256-file substitute)
                   :inventory inventory
                   :platform platform
                   :expected-hashes (hashes expected)

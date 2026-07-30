@@ -188,6 +188,11 @@
   [value]
   (str/ends-with? (portable-lower-case value) ".dll"))
 
+(defn- sha256?
+  [value]
+  (and (string? value)
+       (boolean (re-matches #"[0-9a-f]{64}" value))))
+
 (defn- semver-version!
   [authorized-tag]
   (let [match
@@ -1154,10 +1159,22 @@
 (defn verify-asset!
   "Verifies that a ZIP is exactly the product, managed dependency, and
   platform-native inventory. Any framework assembly, forbidden artifact, path,
-  duplicate, missing entry, unexpected entry, or byte mismatch fails."
+  duplicate, missing entry, unexpected entry, archive mismatch, or entry byte
+  mismatch fails."
   [{:keys [artifact-root artifact inventory platform expected-hashes
-           framework-assemblies]}]
+           expected-artifact-sha256 framework-assemblies]}]
+  (when-not (sha256? expected-artifact-sha256)
+    (fail! "Prepared release asset SHA-256 must be one lowercase digest"
+           {:reason :invalid-release-artifact-digest
+            :expected-artifact-sha256 expected-artifact-sha256}))
   (let [artifact (safe-artifact-path! artifact-root artifact)
+        artifact-sha256 (util/sha256-file artifact)
+        _ (when-not (= expected-artifact-sha256 artifact-sha256)
+            (fail! "Downloaded release asset differs from the prepared ZIP"
+                   {:reason :release-artifact-digest-mismatch
+                    :path (str artifact)
+                    :expected expected-artifact-sha256
+                    :actual artifact-sha256}))
         records (zip-records artifact)
         names (mapv :name records)
         name-collisions (case-insensitive-collisions names identity)
@@ -1219,7 +1236,7 @@
                 :expected (get expected-hashes name)
                 :actual sha256})))
     {:path (str artifact)
-     :sha256 (util/sha256-file artifact)
+     :sha256 artifact-sha256
      :entries
      (into (sorted-map)
            (map (juxt :name :sha256))
@@ -1405,12 +1422,13 @@
                        artifact (get artifact-files (:id platform))
                        _ (safe-output-root! workspace-root output-root)
                        _ (write-zip! artifact files)
-                       _ (swap! created-outputs conj
-                                (output-ownership artifact))
+                       ownership (output-ownership artifact)
+                       _ (swap! created-outputs conj ownership)
                        verification
                        (verify-asset!
                         {:artifact-root output-root
                          :artifact artifact
+                         :expected-artifact-sha256 (:sha256 ownership)
                          :inventory inventory
                          :platform platform
                          :expected-hashes
