@@ -707,6 +707,25 @@
                             "SkiaSharp/4.151.0")
                StandardCharsets/UTF_8
                (make-array OpenOption 0))))}
+         {:name :ambiguous-managed-path
+          :reason :release-dependency-evidence-mismatch
+          :actual-paths
+          ["alternate/net10.0/SkiaSharp.dll"
+           "lib/net10.0/SkiaSharp.dll"]
+          :mutate!
+          (fn [build-output]
+            (let [file (paths/resolve-path build-output dependency-file)
+                  document
+                  (.readValue json-mapper (.toFile file) java.util.Map)
+                  target-name (get-in document ["runtimeTarget" "name"])
+                  runtime
+                  (get-in document
+                          ["targets" target-name
+                           "SkiaSharp/4.150.1" "runtime"])]
+              (.put ^java.util.Map runtime
+                    "alternate/net10.0/SkiaSharp.dll"
+                    (java.util.HashMap.))
+              (.writeValue json-mapper (.toFile file) document)))}
          {:name :native-path
           :reason :release-dependency-evidence-mismatch
           :mutate!
@@ -720,7 +739,7 @@
                StandardCharsets/UTF_8
                (make-array OpenOption 0))))}]]
     (try
-      (doseq [{:keys [name reason mutate!]} cases]
+      (doseq [{:keys [name reason actual-paths mutate!]} cases]
         (testing (clojure.core/name name)
           (let [output-root
                 (paths/resolve-path workspace
@@ -743,6 +762,8 @@
                         result))
                     :framework-assemblies #{"System.Runtime.dll"}}))]
             (is (= reason (:reason result)))
+            (when actual-paths
+              (is (= actual-paths (:actual-paths result))))
             (is (not (Files/exists
                       (paths/resolve-path
                        output-root

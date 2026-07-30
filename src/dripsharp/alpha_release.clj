@@ -813,11 +813,14 @@
                   :managed "runtime"
                   :native "native")
         paths (vec (sort (keys (get (get target coordinate) section))))
+        matching-paths
+        (when (= :managed asset-kind)
+          (filterv #(= file (last (relative-components %))) paths))
         expected-path
         (case asset-kind
           :managed
-          (first
-           (filter #(= file (last (relative-components %))) paths))
+          (when (= 1 (count matching-paths))
+            (first matching-paths))
           :native package-path)]
     (when-not (and (= "package" (get library "type"))
                    (some #{expected-path} paths))
