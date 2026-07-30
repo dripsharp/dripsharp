@@ -284,18 +284,18 @@
 
 (deftest package-runner-source-is-confined-to-public-package-consumption
   (let [root (temp-directory)
-        project (write! (.resolve root "Pkl.Core.PackageConsumer.csproj")
+        project (write! (.resolve root "DripSharp.Brine.PackageConsumer.csproj")
                         (str "<Project><ItemGroup>"
-                             "<PackageReference Include=\"Pkl.Core\" Version=\"1.0.0\" />"
+                             "<PackageReference Include=\"DripSharp.Brine\" Version=\"1.0.0\" />"
                              "</ItemGroup></Project>"))
         source (write! (.resolve root "Program.cs")
-                       "using Pkl.Core; using Pkl.Parser; static class Program { }")]
+                       "using DripSharp.Brine; using DripSharp.Brine.Parser; static class Program { }")]
     (is (= [] (:forbidden (#'runner/verify-package-source-isolation!
                            root project source))))
     (doseq [[name forbidden]
             [["project" "<ProjectReference Include=\"outside.csproj\" />"]
-             ["runtime" "using Pkl.Core.Runtime;"]
-             ["yaml" "using Pkl.Core.Yaml;"]
+             ["runtime" "using DripSharp.Brine.Runtime;"]
+             ["yaml" "using DripSharp.Brine.Yaml;"]
              ["generated" "const string path = \"target/generated\";"]]]
       (let [bad (write! (.resolve root (str name ".cs")) forbidden)]
         (is (= :pkl-core-corpus-source-isolation

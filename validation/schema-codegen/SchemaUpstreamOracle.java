@@ -325,11 +325,11 @@ public final class SchemaUpstreamOracle {
           "System.Collections.Generic.IReadOnlySet" + clrTypeArguments(arguments);
       case "pkl.base#Map", "pkl.base#Mapping" ->
           "System.Collections.Generic.IReadOnlyDictionary" + clrTypeArguments(arguments);
-      case "pkl.base#Pair" -> "Pkl.Core.Pair" + clrTypeArguments(arguments);
+      case "pkl.base#Pair" -> "DripSharp.Brine.Pair" + clrTypeArguments(arguments);
       case "pkl.base#Bytes" -> "System.Byte[]";
       case "pkl.base#Regex" -> "System.Text.RegularExpressions.Regex";
-      case "pkl.base#Duration" -> "Pkl.Core.Duration";
-      case "pkl.base#DataSize" -> "Pkl.Core.DataSize";
+      case "pkl.base#Duration" -> "DripSharp.Brine.Duration";
+      case "pkl.base#DataSize" -> "DripSharp.Brine.DataSize";
       default -> qualifiedName.startsWith("pkl.base#")
           ? "System.Object" : clrClassName(clazz.getPClass()) + clrTypeArguments(arguments);
     };

@@ -84,7 +84,7 @@
              {:node (child-node children (.getAccessedType element))})}
     {:id :java.reference/package
      :class CtPackageReference
-     :emit (fn [_] {:node (csharp/raw "Pkl.Parser")})}]))
+     :emit (fn [_] {:node (csharp/raw "DripSharp.Brine.Parser")})}]))
 
 (def ^:private parser-mappings
   (java/mapping-registries
@@ -97,7 +97,7 @@
      {:id :dotnet.type/span
       :emit (fn [_]
               {:node (csharp/raw "Span")
-               :required-usings #{"Pkl.Parser"}})}}
+               :required-usings #{"DripSharp.Brine.Parser"}})}}
     :fields
     {"field:org.pkl.parser.Span#charIndex"
      {:id :dotnet.field/span-char-index
@@ -162,7 +162,7 @@
                           :dotnet.field/span-length]))
     (is (every? mapped-sources [:dotnet.field/span-char-index
                                 :dotnet.field/span-length]))
-    (is (= #{"Pkl.Parser"} (:required-usings accepted)))
+    (is (= #{"DripSharp.Brine.Parser"} (:required-usings accepted)))
     (is (= #{:record-component-property} (:required-helpers accepted)))
     (is (some #(= (get-in % [:source :location :line])
                   (get-in accepted [:source-location :line]))

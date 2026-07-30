@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Text;
-using Pkl.Parser;
-using Pkl.Parser.Syntax;
-using Pkl.Parser.Syntax.Generic;
-using GenericNode = Pkl.Parser.Syntax.Generic.Node;
-using SyntaxNode = Pkl.Parser.Syntax.Node;
+using DripSharp.Brine.Parser;
+using DripSharp.Brine.Parser.Syntax;
+using DripSharp.Brine.Parser.Syntax.Generic;
+using GenericNode = DripSharp.Brine.Parser.Syntax.Generic.Node;
+using SyntaxNode = DripSharp.Brine.Parser.Syntax.Node;
 
 static class PackageProbe
 {

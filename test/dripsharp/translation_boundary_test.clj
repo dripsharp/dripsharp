@@ -388,7 +388,7 @@
     (is (str/includes?
          pkl-core
          ":no-warn [\"CS0108\" \"CS0109\" \"CS0414\" \"CS0436\"")
-        "Pkl.Core alone suppresses the intentional duplicate internal JavaCompat types")
+        "DripSharp.Brine alone suppresses the intentional duplicate internal JavaCompat types")
     (is (not (str/includes? rawhttp "DRIPSHARP_INTERNAL_JAVA_COMPAT")))))
 
 (deftest pkl-rules-depend-inward-on-the-reusable-kernel
@@ -410,11 +410,11 @@
   (let [generic-rules (source "java_library")
         body-rules (source "pkl/java_body")
         project-rules (source "pkl/java_project")
-        bridge (slurp "targets/pkl/runtime/Pkl.Core.RuntimeBridge.cs")]
+        bridge (slurp "targets/pkl/runtime/DripSharp.Brine.RuntimeBridge.cs")]
     (is (str/includes? body-rules
                        "(pkl-runtime-call \"IsRrbTreeLeaf\""))
     (is (str/includes? body-rules "MapOfEntriesLoose"))
-    (is (not (str/includes? generic-rules "Pkl.Core.Runtime.PklRuntimeBridge")))
+    (is (not (str/includes? generic-rules "DripSharp.Brine.Runtime.PklRuntimeBridge")))
     (is (str/includes? bridge "internal static bool IsRrbTreeLeaf(object? value)"))
     (is (str/includes? bridge "PClassInfoEquals<T>"))
     (is (str/includes? bridge "PClassInfoAsObject<T>"))
@@ -424,7 +424,7 @@
     (is (not (str/includes? bridge "target.Add(value)")))
     (is (str/includes? project-rules
                        "PklRuntimeBridge.PClassInfoEquals(this, obj)"))
-    (is (str/includes? bridge "Pkl.Core.Util.Paguro"))))
+    (is (str/includes? bridge "DripSharp.Brine.Util.Paguro"))))
 
 (deftest java-uri-component-mappings-retain-decoded-and-raw-api-pairs
   (let [body-rules (source "java_library")

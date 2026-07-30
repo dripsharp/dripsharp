@@ -27,7 +27,7 @@
   "MessagePack is excluded from the DripSharp product target.")
 
 (def ^:private excluded-messagepack-bug-prefix
-  "Pkl.Core.PklBugException: An unexpected error has occurred.")
+  "DripSharp.Brine.PklBugException: An unexpected error has occurred.")
 
 (def ^:private excluded-messagepack-final-frame
   #"^\s+at Program[.]EvaluateCase[(].*[)](?: in .+:line [0-9]+)?$")
@@ -174,7 +174,7 @@
         exception-lines (filterv #(str/includes? % "Exception:") lines)
         boundary-exceptions
         [(str "System.NotSupportedException: " excluded-messagepack-boundary)
-         (str " ---> Pkl.Core.Runtime.VmBugException: " excluded-messagepack-boundary)
+         (str " ---> DripSharp.Brine.Runtime.VmBugException: " excluded-messagepack-boundary)
          (str " ---> System.NotSupportedException: " excluded-messagepack-boundary)]]
     (and (= mixed-excluded-surface (:product-scope case-data))
          (execution-requirement? case-data messagepack-debug-requirement)
@@ -404,10 +404,10 @@
 
 (defn- consumer-project-file
   [consumer-root]
-  (paths/resolve-path consumer-root "Pkl.Core.PackageConsumer.csproj"))
+  (paths/resolve-path consumer-root "DripSharp.Brine.PackageConsumer.csproj"))
 
 (defn verify-package-runner!
-  "Packs Pkl.Core, builds a fresh package-reference-only runner, executes every
+  "Packs DripSharp.Brine, builds a fresh package-reference-only runner, executes every
   manifest row twice, and retains a deterministic conformance baseline. Product
   mismatches are returned as implementation evidence instead of exclusions."
   ([] (verify-package-runner! {}))

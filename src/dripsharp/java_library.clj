@@ -1941,6 +1941,10 @@
         else-reference (some-> expression .getElseExpression .getType)]
     (and result-reference
          (not (.isPrimitive result-reference))
+         ;; java.lang.Class<?> erases to the non-generic System.Type. Its
+         ;; conditional branches must retain that mapped type instead of the
+         ;; object convergence required by heterogeneous generic interfaces.
+         (not= "java.lang.Class" (.getQualifiedName result-reference))
          (some #(instance? CtWildcardReference %)
                (.getActualTypeArguments result-reference))
          (not= (some-> then-reference .getQualifiedName)

@@ -1,8 +1,8 @@
 using System;
 using System.Linq;
-using Pkl.Parser;
-using Pkl.Parser.Syntax;
-using GenericNode = Pkl.Parser.Syntax.Generic.Node;
+using DripSharp.Brine.Parser;
+using DripSharp.Brine.Parser.Syntax;
+using GenericNode = DripSharp.Brine.Parser.Syntax.Generic.Node;
 
 static class Check
 {
@@ -43,9 +43,9 @@ static class PackageConsumer
         Check.That(span.Grow(2) == new Span(2, 5), "span growth");
 
         var parser = new Parser();
-        Pkl.Parser.Syntax.Module module = parser.ParseModule(source);
-        Pkl.Parser.Syntax.Module equivalentModule = new Parser().ParseModule(source);
-        Pkl.Parser.Syntax.Module differentModule = new Parser().ParseModule("other = 420\n");
+        DripSharp.Brine.Parser.Syntax.Module module = parser.ParseModule(source);
+        DripSharp.Brine.Parser.Syntax.Module equivalentModule = new Parser().ParseModule(source);
+        DripSharp.Brine.Parser.Syntax.Module differentModule = new Parser().ParseModule("other = 420\n");
         Check.That(module.Equals(equivalentModule), "independent typed tree structural equality");
         Check.That(module.GetHashCode() == equivalentModule.GetHashCode(), "typed equality/hash consistency");
         Check.That(!module.Equals(differentModule), "different typed trees compare unequal");
@@ -78,6 +78,6 @@ static class PackageConsumer
             Check.That(error.Span().CharIndex >= 0, "parser error span");
         }
 
-        Console.WriteLine("Independent Pkl.Parser package consumer passed.");
+        Console.WriteLine("Independent Brine Pkl parser package consumer passed.");
     }
 }

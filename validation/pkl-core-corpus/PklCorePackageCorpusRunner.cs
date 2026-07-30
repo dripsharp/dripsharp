@@ -17,17 +17,17 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Pkl.Core;
-using Pkl.Core.EvaluatorSettings;
-using Pkl.Core.Externalreader;
-using Pkl.Core.Module;
-using Pkl.Core.Packages;
-using Pkl.Core.Project;
-using Pkl.Core.Resource;
-using Pkl.Core.Settings;
-using Pkl.Parser;
-using PklHttpClient = Pkl.Core.Http.HttpClient;
-using Version = Pkl.Core.Version;
+using DripSharp.Brine;
+using DripSharp.Brine.EvaluatorSettings;
+using DripSharp.Brine.Externalreader;
+using DripSharp.Brine.Module;
+using DripSharp.Brine.Packages;
+using DripSharp.Brine.Project;
+using DripSharp.Brine.Resource;
+using DripSharp.Brine.Settings;
+using DripSharp.Brine.Parser;
+using PklHttpClient = DripSharp.Brine.Http.HttpClient;
+using Version = DripSharp.Brine.Version;
 
 static class Program
 {
@@ -424,7 +424,7 @@ static class Program
             case "sets evaluator settings from project":
             {
                 string projectPath = WriteProjectFixture(fixture.Root, includeLocalDependency: false);
-                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectPath);
+                DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.LoadFromPath(projectPath);
                 EvaluatorBuilder builder = EvaluatorBuilder.Unconfigured();
                 int factoryCount = builder.GetModuleKeyFactories().Count;
                 builder.ApplyFromProject(project);
@@ -1263,7 +1263,7 @@ static class Program
                 $"uri = \"package://127.0.0.1:{server.Port}/birds@0.5.0\"; " +
                 $"checksums {{ sha256 = \"{checksum}\" }} }} }}\n",
                 new UTF8Encoding(false));
-            Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+            DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.LoadFromPath(projectFile);
             using PklHttpClient client = server.CreateClient();
             using PackageResolver resolver = PackageResolver.GetInstance(
                 SecurityManagers.DefaultManager, client, null);
@@ -1299,7 +1299,7 @@ static class Program
                 case "loadFromPath":
                 {
                     string path = WriteProjectFixture(fixture.Root, includeLocalDependency: false);
-                    Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(path);
+                    DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.LoadFromPath(path);
                     Require(project.PackageMetadata?.Name == "hawk" &&
                         project.PackageMetadata.Version.Equals(Version.Parse("0.5.0")) &&
                         project.ResolvedEvaluatorConfiguration.Environment?["one"] == "1" &&
@@ -1319,7 +1319,7 @@ static class Program
                         "evaluatorSettings { rootDir = \".\"; moduleCacheDir = \"cache/\"; " +
                         "modulePath { \"modulepath1/\"; \"modulepath2/\" } }\n",
                         new UTF8Encoding(false));
-                    PklEvaluatorSettings settings = Pkl.Core.Project.Project.LoadFromPath(path)
+                    PklEvaluatorSettings settings = DripSharp.Brine.Project.Project.LoadFromPath(path)
                         .ResolvedEvaluatorConfiguration;
                     Require(Path.GetFullPath(settings.RootDir!) == Path.GetFullPath(directory) &&
                         Path.GetFullPath(settings.ModuleCacheDir!) ==
@@ -1335,7 +1335,7 @@ static class Program
                     string path = Path.Combine(fixture.Root, "wrong-project.pkl");
                     File.WriteAllText(path, "module com.example.Foo\nfoo = 1", new UTF8Encoding(false));
                     PklException error = Throws<PklException>(() =>
-                        Pkl.Core.Project.Project.LoadFromPath(path));
+                        DripSharp.Brine.Project.Project.LoadFromPath(path));
                     Require(error.Message.Contains("pkl.Project", StringComparison.Ordinal) &&
                         error.Message.Contains("com.example.Foo", StringComparison.Ordinal),
                         "wrong project type diagnostic");
@@ -1352,7 +1352,7 @@ static class Program
                     break;
                 case "external readers -- executable path is relative to project dir":
                 {
-                    Pkl.Core.Project.Project project = LoadExternalReaderProject(
+                    DripSharp.Brine.Project.Project project = LoadExternalReaderProject(
                         fixture.Root, "foo/bar/baz");
                     string executable = project.ResolvedEvaluatorConfiguration
                         .ExternalModuleReadersReadOnly!["foo"].Executable;
@@ -1363,7 +1363,7 @@ static class Program
                 }
                 case "external readers -- executable is unmodified simple name":
                 {
-                    Pkl.Core.Project.Project project = LoadExternalReaderProject(
+                    DripSharp.Brine.Project.Project project = LoadExternalReaderProject(
                         fixture.Root, "my-command");
                     Require(project.EvaluatorConfiguration.ExternalModuleReadersReadOnly!["foo"]
                         .Executable == "my-command", "simple external reader executable");
@@ -1601,7 +1601,7 @@ static class Program
                 {
                     string certificate = Path.Combine(fixture.Root, "empty.pem");
                     File.WriteAllBytes(certificate, Array.Empty<byte>());
-                    _ = Throws<Pkl.Core.Http.HttpClientException>(() =>
+                    _ = Throws<DripSharp.Brine.Http.HttpClientException>(() =>
                         PklHttpClient.CreateBuilder().AddCertificate(certificate).Build());
                     break;
                 }
@@ -3760,7 +3760,7 @@ static class Program
                     .SetAllowedResources(Array.Empty<Regex>())
                     .AddModuleKeyFactory(ModuleKeyFactories.StandardLibraryFactory)
                     .AddModuleKeyFactory(factory).Build();
-                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.Load(
+                DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.Load(
                     projectEvaluator, ModuleSource.FromUri("nonhier:foo/PklProject"));
                 using Evaluator evaluator = EvaluatorBuilder.Unconfigured()
                     .SetStackFrameTransformer(StackFrameTransformers.DefaultTransformer)
@@ -3813,7 +3813,7 @@ static class Program
                 builder.SetModuleKeyFactories(new[] { factory }
                     .Concat(builder.GetModuleKeyFactories()).ToArray());
                 using Evaluator projectEvaluator = builder.Build();
-                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.Load(
+                DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.Load(
                     projectEvaluator, ModuleSource.FromModulePath("project6/PklProject"));
                 using Evaluator evaluator = builder.SetProjectDependencies(
                     project.DeclaredDependencies).Build();
@@ -3861,12 +3861,12 @@ static class Program
             StackFrameTransformers.DefaultTransformer,
             false,
             SecurityManagers.DefaultManager,
-            new[] { Pkl.Core.Module.ModuleKeyFactories.file,
-                Pkl.Core.Module.ModuleKeyFactories.standardLibrary },
+            new[] { DripSharp.Brine.Module.ModuleKeyFactories.file,
+                DripSharp.Brine.Module.ModuleKeyFactories.standardLibrary },
             null,
             null,
-            Pkl.Core.Http.HttpClient.DummyClient(),
-            Pkl.Core.EvaluatorSettings.TraceMode.COMPACT);
+            DripSharp.Brine.Http.HttpClient.DummyClient(),
+            DripSharp.Brine.EvaluatorSettings.TraceMode.COMPACT);
         switch (row.SourceMethod)
         {
             case "simple case":
@@ -3958,7 +3958,7 @@ static class Program
             {
                 using var server = new CorpusPackageServer();
                 string projectFile = WriteRemoteProjectFixture(fixture.Root, server);
-                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+                DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.LoadFromPath(projectFile);
                 using PklHttpClient client = server.CreateClient();
                 string cache = Path.Combine(fixture.Root, "project-analyzer-cache");
                 PopulatePackageCache(server, client, cache);
@@ -3985,7 +3985,7 @@ static class Program
             {
                 (string projectFile, string main, Uri expected) =
                     WriteLocalDependencyProject(fixture.Root);
-                Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+                DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.LoadFromPath(projectFile);
                 var localAnalyzer = new Analyzer(
                     StackFrameTransformers.DefaultTransformer, false,
                     SecurityManagers.DefaultManager,
@@ -4010,12 +4010,12 @@ static class Program
     static ChildResult ExecuteStackFrameTransformerTest(ContractRow row)
     {
         if (row.SourceMethod != "replacePackageUriWithSourceCodeUrl") return Pending(row);
-        var frame = new Pkl.Core.StackFrame("file:/module.pkl", "module#value",
+        var frame = new DripSharp.Brine.StackFrame("file:/module.pkl", "module#value",
             new[] { "value = 1" }, 1, 1, 1, 9);
-        Pkl.Core.StackFrame unchanged =
+        DripSharp.Brine.StackFrame unchanged =
             StackFrameTransformers.ReplacePackageUriWithSourceCodeUrl(frame);
         Require(ReferenceEquals(frame, unchanged), "non-package stack frame transformer identity");
-        var equalFrame = new Pkl.Core.StackFrame("file:/module.pkl", "module#value",
+        var equalFrame = new DripSharp.Brine.StackFrame("file:/module.pkl", "module#value",
             new[] { "value = 1" }, 1, 1, 1, 9);
         Require(frame.Equals(equalFrame), "stack frame value equality");
         Require(frame.GetHashCode() == equalFrame.GetHashCode(),
@@ -4583,7 +4583,7 @@ static class Program
             new Uri("projectpackage://example.test/birds@1.0.0#/bird.pkl"));
     }
 
-    static Pkl.Core.Project.Project LoadExternalReaderProject(string root, string executable)
+    static DripSharp.Brine.Project.Project LoadExternalReaderProject(string root, string executable)
     {
         string directory = Path.Combine(root, "external-reader-project-" +
             Guid.NewGuid().ToString("N"));
@@ -4593,7 +4593,7 @@ static class Program
             "amends \"pkl:Project\"\nevaluatorSettings { externalModuleReaders { " +
             $"[\"foo\"] {{ executable = \"{executable.Replace("\\", "\\\\", StringComparison.Ordinal)}\" }} }} }}\n",
             new UTF8Encoding(false));
-        return Pkl.Core.Project.Project.LoadFromPath(project);
+        return DripSharp.Brine.Project.Project.LoadFromPath(project);
     }
 
     static void VerifyProjectCycles(string root, bool multiple)
@@ -4622,7 +4622,7 @@ static class Program
             new UTF8Encoding(false));
         string entry = Path.Combine(directories[multiple ? 3 : 0], "PklProject");
         PklException error = Throws<PklException>(() =>
-            Pkl.Core.Project.Project.LoadFromPath(entry));
+            DripSharp.Brine.Project.Project.LoadFromPath(entry));
         Require(error.Message.Contains("circular", StringComparison.OrdinalIgnoreCase) &&
             (!multiple || error.Message.Contains("Cycle", StringComparison.Ordinal)),
             "project dependency cycle diagnostic: " + error.Message);
@@ -4631,7 +4631,7 @@ static class Program
     static void VerifyEvaluatorLocalProject(string adaptation, string root)
     {
         (string projectFile, _, _) = WriteLocalDependencyProject(root);
-        Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+        DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.LoadFromPath(projectFile);
         EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured().ApplyFromProject(project);
         if (adaptation.Contains("custom", StringComparison.Ordinal))
         {
@@ -5104,7 +5104,7 @@ static class Program
         string module = Path.Combine(directory, "main.pkl");
         File.WriteAllText(module, "import \"@fruit/Fruit.pkl\"\nres = Fruit\n",
             new UTF8Encoding(false));
-        Pkl.Core.Project.Project project = Pkl.Core.Project.Project.LoadFromPath(projectFile);
+        DripSharp.Brine.Project.Project project = DripSharp.Brine.Project.Project.LoadFromPath(projectFile);
         using PklHttpClient client = server.CreateClient();
         using Evaluator evaluator = EvaluatorBuilder.Preconfigured().ApplyFromProject(project)
             .SetModuleCacheDir(Path.Combine(root, "bad-project-cache")).SetHttpClient(client).Build();
@@ -5579,7 +5579,7 @@ static class Program
         {
             string[] lines = File.ReadAllLines(path, Encoding.UTF8);
             if (lines.Length == 0 || lines[0] != "DRIPSHARP_PKL_CORE_TEST_CONTRACT_V1")
-                throw new InvalidOperationException("Pkl.Core contract has the wrong schema marker");
+                throw new InvalidOperationException("DripSharp.Brine contract has the wrong schema marker");
             string? revision = null;
             string[]? columns = null;
             var cases = new List<ContractRow>();
@@ -5593,7 +5593,7 @@ static class Program
                 else if (fields[0] == "case")
                 {
                     if (columns is null || fields.Length != columns.Length + 1)
-                        throw new InvalidOperationException("Malformed Pkl.Core contract case row");
+                        throw new InvalidOperationException("Malformed DripSharp.Brine contract case row");
                     var row = columns.Select((column, index) => (column, value: fields[index + 1]))
                         .ToDictionary(item => item.column, item => item.value, StringComparer.Ordinal);
                     cases.Add(new ContractRow(
@@ -5608,7 +5608,7 @@ static class Program
                 }
             }
             if (revision is null || cases.Count == 0)
-                throw new InvalidOperationException("Pkl.Core contract is missing provenance or cases");
+                throw new InvalidOperationException("DripSharp.Brine contract is missing provenance or cases");
             return new ContractManifest(revision, cases);
         }
 
@@ -5925,21 +5925,21 @@ static class PklCoreInternals
 static class PklPath
 {
     public static string ResolvePosix(Uri baseUri, string path) =>
-        PklCoreInternals.InvokeStatic<string>("Pkl.Core.PklPath", "ResolvePosix", baseUri, path);
+        PklCoreInternals.InvokeStatic<string>("DripSharp.Brine.PklPath", "ResolvePosix", baseUri, path);
 
     public static string ResolveWindows(Uri baseUri, string path) =>
-        PklCoreInternals.InvokeStatic<string>("Pkl.Core.PklPath", "ResolveWindows", baseUri, path);
+        PklCoreInternals.InvokeStatic<string>("DripSharp.Brine.PklPath", "ResolveWindows", baseUri, path);
 }
 
 static class PklGlob
 {
     public static Regex Compile(string pattern) =>
-        PklCoreInternals.InvokeStatic<Regex>("Pkl.Core.PklGlob", "Compile", pattern);
+        PklCoreInternals.InvokeStatic<Regex>("DripSharp.Brine.PklGlob", "Compile", pattern);
 }
 
 static class PklUris
 {
-    const string Owner = "Pkl.Core.PklUris";
+    const string Owner = "DripSharp.Brine.PklUris";
 
     public static Uri EnsurePathEndsWithSlash(Uri uri) =>
         PklCoreInternals.InvokeStatic<Uri>(Owner, "EnsurePathEndsWithSlash", uri);
@@ -5986,10 +5986,10 @@ enum PklAnsiCode
 sealed class PklAnsiBuilder
 {
     readonly object instance;
-    static readonly Type CodeType = PklCoreInternals.Type("Pkl.Core.PklAnsiCode");
+    static readonly Type CodeType = PklCoreInternals.Type("DripSharp.Brine.PklAnsiCode");
 
     public PklAnsiBuilder(bool enabled) =>
-        instance = PklCoreInternals.Create("Pkl.Core.PklAnsiBuilder", enabled);
+        instance = PklCoreInternals.Create("DripSharp.Brine.PklAnsiBuilder", enabled);
 
     public PklAnsiBuilder Append(string text)
     {
@@ -6021,7 +6021,7 @@ sealed class PklAnsiBuilder
 
 static class PklValueRenderer
 {
-    const string Owner = "Pkl.Core.PklValueRenderer";
+    const string Owner = "DripSharp.Brine.PklValueRenderer";
 
     public static string RenderNull(int lengthLimit = 80) =>
         PklCoreInternals.InvokeStatic<string>(Owner, "RenderNull", lengthLimit);
@@ -6031,7 +6031,7 @@ static class PklValueRenderer
 
 static class PklExceptions
 {
-    const string Owner = "Pkl.Core.PklExceptions";
+    const string Owner = "DripSharp.Brine.PklExceptions";
 
     public static Exception RootCause(Exception value) =>
         PklCoreInternals.InvokeStatic<Exception>(Owner, "RootCause", value);
@@ -6046,7 +6046,7 @@ sealed class PklTextEscaper
     PklTextEscaper(object instance) => this.instance = instance;
 
     public static Builder CreateBuilder() => new(
-        PklCoreInternals.InvokeStatic<object>("Pkl.Core.PklTextEscaper", "CreateBuilder"));
+        PklCoreInternals.InvokeStatic<object>("DripSharp.Brine.PklTextEscaper", "CreateBuilder"));
 
     public string Escape(string value) =>
         PklCoreInternals.InvokeInstance<string>(instance, "Escape", value);
@@ -6071,7 +6071,7 @@ sealed class PklTextEscaper
 
 static class PklHttp
 {
-    const string Owner = "Pkl.Core.PklHttp";
+    const string Owner = "DripSharp.Brine.PklHttp";
 
     public static bool IsHttpUrl(Uri uri) =>
         PklCoreInternals.InvokeStatic<bool>(Owner, "IsHttpUrl", uri);
@@ -6083,7 +6083,7 @@ static class PklHttp
 
 static class PklStrings
 {
-    const string Owner = "Pkl.Core.PklStrings";
+    const string Owner = "DripSharp.Brine.PklStrings";
 
     public static int CodePointOffsetToUtf16Offset(
         string value, int codePointOffset, int startIndex = 0) =>
@@ -6098,21 +6098,21 @@ static class PklClassInfos
 {
     public static bool IsExactTypeOf(PClassInfo<object> classInfo, object value) =>
         PklCoreInternals.InvokeStatic<bool>(
-            "Pkl.Core.PklClassInfos", "IsExactTypeOf", classInfo, value);
+            "DripSharp.Brine.PklClassInfos", "IsExactTypeOf", classInfo, value);
 }
 
 static class PklParserUtilities
 {
     public static IReadOnlyList<string> FindImportsAndReads(string source) =>
         PklCoreInternals.InvokeStatic<IReadOnlyList<string>>(
-            "Pkl.Core.PklParserUtilities", "FindImportsAndReads", source);
+            "DripSharp.Brine.PklParserUtilities", "FindImportsAndReads", source);
 }
 
 static class PklImportGraphs
 {
     public static IReadOnlyList<IReadOnlyList<Uri>> FindCycles(ImportGraph graph) =>
         PklCoreInternals.InvokeStatic<IReadOnlyList<IReadOnlyList<Uri>>>(
-            "Pkl.Core.PklImportGraphs", "FindCycles", graph);
+            "DripSharp.Brine.PklImportGraphs", "FindCycles", graph);
 }
 
 enum PklValuePathPartKind
@@ -6126,8 +6126,8 @@ enum PklValuePathPartKind
 
 sealed class PklValuePathPart : IEquatable<PklValuePathPart>
 {
-    static readonly Type PartType = PklCoreInternals.Type("Pkl.Core.PklValuePathPart");
-    static readonly Type KindType = PklCoreInternals.Type("Pkl.Core.PklValuePathPartKind");
+    static readonly Type PartType = PklCoreInternals.Type("DripSharp.Brine.PklValuePathPart");
+    static readonly Type KindType = PklCoreInternals.Type("DripSharp.Brine.PklValuePathPartKind");
 
     internal object InternalValue { get; }
     public PklValuePathPartKind Kind { get; }
@@ -6161,7 +6161,7 @@ sealed class PklValuePathPart : IEquatable<PklValuePathPart>
     {
         object internalKind = Enum.Parse(KindType, kind.ToString());
         object internalValue = PklCoreInternals.Create(
-            "Pkl.Core.PklValuePathPart", internalKind, value);
+            "DripSharp.Brine.PklValuePathPart", internalKind, value);
         return new PklValuePathPart(kind, value, internalValue);
     }
 
@@ -6173,8 +6173,8 @@ sealed class PklValuePathPart : IEquatable<PklValuePathPart>
 
 static class PklValuePaths
 {
-    const string Owner = "Pkl.Core.PklValuePaths";
-    static readonly Type PartType = PklCoreInternals.Type("Pkl.Core.PklValuePathPart");
+    const string Owner = "DripSharp.Brine.PklValuePaths";
+    static readonly Type PartType = PklCoreInternals.Type("DripSharp.Brine.PklValuePathPart");
 
     public static IReadOnlyList<PklValuePathPart> Parse(string pathSpec)
     {

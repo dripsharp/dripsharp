@@ -188,7 +188,7 @@ destination configuration rather than a profile-name switch.
 `pkl-parser`
 exercises the public parser package; `pkl-core-value-model`
 exercises the packed evaluator and value-model surface plus its exact package
-dependency on `Pkl.Parser`.
+dependency on `DripSharp.Brine.Parser`.
 
 `differential <target> [validation-id]` dispatches the target manifest's
 validation contracts. The Pkl validation performs both complete package gates.
@@ -200,7 +200,7 @@ runs the pinned upstream JVM parser as an oracle, then runs a package-only .NET
 probe over the baseline-recorded LanguageSnippetTests inputs and the upstream lexer/span edge
 cases (956 cases and 2,871 normalized observations in total). It retains that
 complete parser proof, then independently compares the
-packaged Pkl.Core evaluator and value model with a separate JVM oracle across
+packaged DripSharp.Brine evaluator and value model with a separate JVM oracle across
 107 normalized observations: module and nested-object export; object, path, and
 string expression evaluation; text, JSON, bytes, and multi-file output;
 untyped and typed output-value export; local and standard-library imports;
@@ -292,7 +292,7 @@ repetition, and deliberately perturbs the oracle to prove mismatch detection.
 This is evaluator behavior evidence; it does not change product scope or make
 the excluded YAML or Pkl-binary product surfaces part of the .NET package.
 
-`language-snippet-package` performs a fresh deterministic `Pkl.Core`/`Pkl.Parser`
+`language-snippet-package` performs a fresh deterministic `DripSharp.Brine`/`DripSharp.Brine.Parser`
 pack and restores a package-reference-only runner into an isolated NuGet cache.
 The runner verifies the exact loaded assembly hashes, reproduces the upstream
 environment, properties, logger, project, power-assertion, no-cache, TLS, and
@@ -304,7 +304,7 @@ family baseline, and every oracle mismatch are retained under
 `validation-output/language-snippet-package`; mismatches remain pending product
 implementation rather than accepted results or new exclusions.
 
-`pkl-core-corpus` executes every row of the pinned non-language Pkl.Core test
+`pkl-core-corpus` executes every row of the pinned non-language Pkl Core test
 contract twice through independent bounded JVM children, then performs a fresh
 deterministic package gate and executes the same ordered rows twice from a
 package-reference-only .NET consumer. The consumer recreates temporary-file,

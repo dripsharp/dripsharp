@@ -2121,6 +2121,40 @@
                                          "--nologo" "--configuration" "Release"
                                          "--verbosity:quiet" "-warnaserror"]}))))))
 
+(deftest wildcard-class-conditionals-retain-the-system-type-result
+  (let [fixture
+        (model!
+         {"example/ConditionalClass.java"
+          (str "package example; public final class ConditionalClass { "
+               "public static Class<? extends Number> type("
+               "boolean present, Number value) { "
+               "return present ? value.getClass() : null; } }")})
+        capabilities #{:java-compat :java-regex-unicode}
+        emission
+        (emit! fixture
+               2
+               capabilities
+               (assoc-in (configuration capabilities)
+                         [:package :license-expression]
+                         "Apache-2.0"))
+        source
+        (slurp (str (paths/resolve-path
+                     (:project-root emission)
+                     "src/Example/Java/Library/ConditionalClass.cs")))]
+    (is (str/includes?
+         source
+         (str "return (present ? ((object)(value)).GetType() "
+              ": (global::System.Type)(default!));")))
+    (is (not (str/includes?
+              source
+              "(object)(((object)(value)).GetType())")))
+    (is (zero? (get-in emission [:summary :executable-coverage :blocked])))
+    (is (zero? (:exit
+                (process/run! {:directory (:project-root emission)
+                               :command ["dotnet" "build" (:project-file emission)
+                                         "--nologo" "--configuration" "Release"
+                                         "--verbosity:quiet" "-warnaserror"]}))))))
+
 (deftest neutral-string-encoding-and-output-stream-writes-preserve-java-bytes
   (let [fixture
         (model! {"example/Wire.java"

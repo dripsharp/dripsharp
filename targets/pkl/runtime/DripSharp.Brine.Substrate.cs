@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Focused .NET substrate for the Truffle and Graal collection contracts used
-// by the generated Pkl.Core product. This is product runtime code, not a
+// by the generated Brine Pkl product. This is product runtime code, not a
 // reconstructed frontend model.
 #nullable enable
 
@@ -12,7 +12,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
-namespace Pkl.Core.Runtime
+namespace DripSharp.Brine.Runtime
 {
     internal readonly struct JavaAppendable
     {
@@ -39,8 +39,8 @@ namespace Pkl.Core.Runtime
     }
     internal sealed partial class VmSet
     {
-        internal static VmSet Create(ISet<object> values, global::Pkl.Core.Util.Paguro.RrbTree<object> order) =>
-            Create(values, (global::Pkl.Core.Util.Paguro.RrbTree<object>.ImRrbt<object>)(object)order);
+        internal static VmSet Create(ISet<object> values, global::DripSharp.Brine.Util.Paguro.RrbTree<object> order) =>
+            Create(values, (global::DripSharp.Brine.Util.Paguro.RrbTree<object>.ImRrbt<object>)(object)order);
     }
     internal static class ExcludedMessagePack
     {
@@ -1145,7 +1145,7 @@ namespace Pkl.Core.Runtime
     }
 }
 
-namespace Pkl.Core.Runtime.Polyglot
+namespace DripSharp.Brine.Runtime.Polyglot
 {
     internal sealed class PolyglotException : Exception
     {
@@ -1172,7 +1172,7 @@ namespace Pkl.Core.Runtime.Polyglot
         private readonly System.Threading.CancellationTokenSource cancellation = new();
         private readonly Dictionary<System.Threading.Thread, int> executingThreads = new();
         private readonly System.Threading.ManualResetEventSlim noExecutions = new(true);
-        private global::Pkl.Core.Runtime.VmContext? vmContext;
+        private global::DripSharp.Brine.Runtime.VmContext? vmContext;
         private bool initialized;
         private bool closed;
         public static Builder NewBuilder(params string[] languages) => new();
@@ -1182,15 +1182,15 @@ namespace Pkl.Core.Runtime.Polyglot
             {
                 ObjectDisposedException.ThrowIf(closed, this);
                 if (language != "pkl" || initialized) return;
-                var vmLanguage = new global::Pkl.Core.Runtime.VmLanguage();
+                var vmLanguage = new global::DripSharp.Brine.Runtime.VmLanguage();
                 vmContext = vmLanguage.CreateContext(
-                    new global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.Env());
+                    new global::DripSharp.Brine.Runtime.Truffle.api.TruffleLanguage.Env());
                 initialized = true;
             }
         }
         public void Enter()
         {
-            global::Pkl.Core.Runtime.VmContext context;
+            global::DripSharp.Brine.Runtime.VmContext context;
             var thread = System.Threading.Thread.CurrentThread;
             var cancellationPushed = false;
             lock (lifecycleLock)
@@ -1207,8 +1207,8 @@ namespace Pkl.Core.Runtime.Polyglot
             {
                 global::DripSharp.Runtime.JavaCancellation.Push(this, cancellation.Token);
                 cancellationPushed = true;
-                global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.InstallContext(
-                    typeof(global::Pkl.Core.Runtime.VmLanguage), context, this);
+                global::DripSharp.Brine.Runtime.Truffle.api.TruffleLanguage.InstallContext(
+                    typeof(global::DripSharp.Brine.Runtime.VmLanguage), context, this);
             }
             catch
             {
@@ -1222,8 +1222,8 @@ namespace Pkl.Core.Runtime.Polyglot
         {
             try
             {
-                global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
-                    typeof(global::Pkl.Core.Runtime.VmLanguage), this);
+                global::DripSharp.Brine.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
+                    typeof(global::DripSharp.Brine.Runtime.VmLanguage), this);
             }
             finally
             {
@@ -1254,8 +1254,8 @@ namespace Pkl.Core.Runtime.Polyglot
                 catch (System.Threading.ThreadStateException) { }
             }
             if (cancelIfExecuting && !activeThreads.Contains(currentThread)) noExecutions.Wait();
-            global::Pkl.Core.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
-                typeof(global::Pkl.Core.Runtime.VmLanguage), this, removeAll: true);
+            global::DripSharp.Brine.Runtime.Truffle.api.TruffleLanguage.RemoveContext(
+                typeof(global::DripSharp.Brine.Runtime.VmLanguage), this, removeAll: true);
         }
         internal bool IsClosed
         {
@@ -1283,7 +1283,7 @@ namespace Pkl.Core.Runtime.Polyglot
     }
 }
 
-namespace Pkl.Core.Runtime.GraalCollections
+namespace DripSharp.Brine.Runtime.GraalCollections
 {
     internal class UnmodifiableEconomicMap<K, V> :
         global::DripSharp.Runtime.IJavaEconomicMap<K, V> where K : notnull
@@ -1403,7 +1403,7 @@ namespace Pkl.Core.Runtime.GraalCollections
     }
 }
 
-namespace Pkl.Core.Runtime.Truffle.api.source
+namespace DripSharp.Brine.Runtime.Truffle.api.source
 {
     internal sealed class Source
     {
@@ -1512,7 +1512,7 @@ namespace Pkl.Core.Runtime.Truffle.api.source
     }
 }
 
-namespace Pkl.Core.Runtime.Truffle.api.frame
+namespace DripSharp.Brine.Runtime.Truffle.api.frame
 {
     internal enum FrameSlotKind { Illegal, Object, Long, Double, Boolean }
 
@@ -1617,10 +1617,10 @@ namespace Pkl.Core.Runtime.Truffle.api.frame
     }
 }
 
-namespace Pkl.Core.Runtime.Truffle.api.nodes
+namespace DripSharp.Brine.Runtime.Truffle.api.nodes
 {
-    using Pkl.Core.Runtime.Truffle.api.frame;
-    using Pkl.Core.Runtime.Truffle.api.source;
+    using DripSharp.Brine.Runtime.Truffle.api.frame;
+    using DripSharp.Brine.Runtime.Truffle.api.source;
 
     internal class Node
     {
@@ -1829,26 +1829,26 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     internal abstract class RootNode : Node
     {
         private readonly FrameDescriptor descriptor;
-        private Pkl.Core.Runtime.Truffle.api.RootCallTarget? callTarget;
+        private DripSharp.Brine.Runtime.Truffle.api.RootCallTarget? callTarget;
         protected RootNode(object? language, FrameDescriptor descriptor) => this.descriptor = descriptor;
         public virtual object? Execute(VirtualFrame frame) => null;
         public virtual string GetName() => GetType().Name;
         public virtual bool IsInternal() => false;
         internal FrameDescriptor GetFrameDescriptor() => descriptor;
-        internal Pkl.Core.Runtime.Truffle.api.RootCallTarget GetCallTarget()
+        internal DripSharp.Brine.Runtime.Truffle.api.RootCallTarget GetCallTarget()
         {
             lock (this)
             {
-                return callTarget ??= new Pkl.Core.Runtime.Truffle.api.RootCallTarget(this);
+                return callTarget ??= new DripSharp.Brine.Runtime.Truffle.api.RootCallTarget(this);
             }
         }
     }
 
     internal sealed class DirectCallNode : Node
     {
-        private readonly Pkl.Core.Runtime.Truffle.api.CallTarget target;
-        private DirectCallNode(Pkl.Core.Runtime.Truffle.api.CallTarget target) => this.target = target;
-        internal static DirectCallNode Create(Pkl.Core.Runtime.Truffle.api.CallTarget target) => new(target);
+        private readonly DripSharp.Brine.Runtime.Truffle.api.CallTarget target;
+        private DirectCallNode(DripSharp.Brine.Runtime.Truffle.api.CallTarget target) => this.target = target;
+        internal static DirectCallNode Create(DripSharp.Brine.Runtime.Truffle.api.CallTarget target) => new(target);
         internal object? Call(params object?[] arguments) => target.CallFrom(this, arguments);
     }
 
@@ -1856,15 +1856,15 @@ namespace Pkl.Core.Runtime.Truffle.api.nodes
     {
         internal static IndirectCallNode Create() => new();
         internal static IndirectCallNode GetUncached() => new();
-        internal object? Call(Pkl.Core.Runtime.Truffle.api.CallTarget target, params object?[] arguments) =>
+        internal object? Call(DripSharp.Brine.Runtime.Truffle.api.CallTarget target, params object?[] arguments) =>
             target.CallFrom(this, arguments);
     }
 }
 
-namespace Pkl.Core.Runtime.Truffle.api.instrumentation
+namespace DripSharp.Brine.Runtime.Truffle.api.instrumentation
 {
-    using Pkl.Core.Runtime.Truffle.api.frame;
-    using Pkl.Core.Runtime.Truffle.api.nodes;
+    using DripSharp.Brine.Runtime.Truffle.api.frame;
+    using DripSharp.Brine.Runtime.Truffle.api.nodes;
 
     internal interface InstrumentableNode
     {
@@ -1978,7 +1978,7 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
                 }
                 registrations.Add(registration);
             }
-            InstrumentTree(Pkl.Core.Runtime.Truffle.api.CallTarget.GetCurrentRoot());
+            InstrumentTree(DripSharp.Brine.Runtime.Truffle.api.CallTarget.GetCurrentRoot());
             return new EventBinding<ExecutionEventNodeFactory>(() =>
             {
                 lock (registrations)
@@ -2095,9 +2095,9 @@ namespace Pkl.Core.Runtime.Truffle.api.instrumentation
     internal class Tag { }
 }
 
-namespace Pkl.Core.Runtime.Truffle.api.dsl
+namespace DripSharp.Brine.Runtime.Truffle.api.dsl
 {
-    using Pkl.Core.Runtime.Truffle.api.nodes;
+    using DripSharp.Brine.Runtime.Truffle.api.nodes;
 
     internal static class DSLSupport
     {
@@ -2166,32 +2166,32 @@ namespace Pkl.Core.Runtime.Truffle.api.dsl
     }
 }
 
-namespace Pkl.Core.Runtime.Truffle.api.exception
+namespace DripSharp.Brine.Runtime.Truffle.api.exception
 {
-    using Pkl.Core.Runtime.Truffle.api.nodes;
+    using DripSharp.Brine.Runtime.Truffle.api.nodes;
 
     internal class AbstractTruffleException : Exception
     {
         internal const int UNLIMITED_STACK_TRACE = -1;
         private readonly Node? location;
-        private readonly List<Pkl.Core.Runtime.Truffle.api.TruffleStackTraceElement> truffleStackTrace = new();
+        private readonly List<DripSharp.Brine.Runtime.Truffle.api.TruffleStackTraceElement> truffleStackTrace = new();
         protected AbstractTruffleException(string? message, Exception? cause, int stackTraceLimit, Node? location)
             : base(message, cause) => this.location = location;
 
         internal Node? GetLocation() => location;
-        internal void AddTruffleStackFrame(Pkl.Core.Runtime.Truffle.api.TruffleStackTraceElement frame) =>
+        internal void AddTruffleStackFrame(DripSharp.Brine.Runtime.Truffle.api.TruffleStackTraceElement frame) =>
             truffleStackTrace.Add(frame);
-        internal IReadOnlyList<Pkl.Core.Runtime.Truffle.api.TruffleStackTraceElement> GetTruffleStackTrace() =>
+        internal IReadOnlyList<DripSharp.Brine.Runtime.Truffle.api.TruffleStackTraceElement> GetTruffleStackTrace() =>
             truffleStackTrace;
     }
 }
 
-namespace Pkl.Core.Runtime.Truffle.api
+namespace DripSharp.Brine.Runtime.Truffle.api
 {
-    using Pkl.Core.Runtime.Truffle.api.exception;
-    using Pkl.Core.Runtime.Truffle.api.frame;
-    using Pkl.Core.Runtime.Truffle.api.nodes;
-    using Pkl.Core.Runtime.Truffle.api.source;
+    using DripSharp.Brine.Runtime.Truffle.api.exception;
+    using DripSharp.Brine.Runtime.Truffle.api.frame;
+    using DripSharp.Brine.Runtime.Truffle.api.nodes;
+    using DripSharp.Brine.Runtime.Truffle.api.source;
 
     internal class CallTarget
     {
@@ -2210,21 +2210,21 @@ namespace Pkl.Core.Runtime.Truffle.api
         internal virtual object? Call(params object?[] arguments) => CallFrom(null, arguments);
 
         private static bool IsExternalMemberRoot(RootNode? root) =>
-            root is global::Pkl.Core.Ast.MemberNode member &&
-            member.GetBodyNode() is global::Pkl.Core.Stdlib.ExternalMemberNode;
+            root is global::DripSharp.Brine.Ast.MemberNode member &&
+            member.GetBodyNode() is global::DripSharp.Brine.Stdlib.ExternalMemberNode;
 
         internal object? CallFrom(Node? location, params object?[] arguments)
         {
             global::DripSharp.Runtime.JavaCancellation.ThrowIfCancellationRequested();
             if (callDepth >= MaxPklCallDepth)
-                throw new global::Pkl.Core.Runtime.VmStackOverflowException(
+                throw new global::DripSharp.Brine.Runtime.VmStackOverflowException(
                     new StackOverflowException("Maximum Pkl call depth exceeded."));
             var caller = current;
             current = this;
             callDepth++;
             try
             {
-                Pkl.Core.Runtime.Truffle.api.instrumentation.Instrumenter.InstrumentActive(root);
+                DripSharp.Brine.Runtime.Truffle.api.instrumentation.Instrumenter.InstrumentActive(root);
                 return root?.Execute(new VirtualFrame(arguments, root.GetFrameDescriptor()));
             }
             catch (AbstractTruffleException exception)
@@ -2238,7 +2238,7 @@ namespace Pkl.Core.Runtime.Truffle.api
                     if (caller is not null && location is not null &&
                         exception.GetLocation() is null &&
                         IsExternalMemberRoot(root) &&
-                        exception is global::Pkl.Core.Runtime.VmException vmException &&
+                        exception is global::DripSharp.Brine.Runtime.VmException vmException &&
                         vmException.GetSourceSection() is null)
                         exception.AddTruffleStackFrame(
                             new TruffleStackTraceElement(location, caller));
@@ -2333,13 +2333,13 @@ namespace Pkl.Core.Runtime.Truffle.api
 
     internal static class TruffleLanguage
     {
-        private sealed record InstalledContext(object Value, global::Pkl.Core.Runtime.Polyglot.Context Owner);
+        private sealed record InstalledContext(object Value, global::DripSharp.Brine.Runtime.Polyglot.Context Owner);
 
         private static readonly System.Threading.AsyncLocal<Dictionary<Type, IReadOnlyList<InstalledContext>>?> Contexts = new();
         internal static void InstallContext(
             Type languageType,
             object context,
-            global::Pkl.Core.Runtime.Polyglot.Context owner)
+            global::DripSharp.Brine.Runtime.Polyglot.Context owner)
         {
             var contexts = Contexts.Value is { } existing
                 ? new Dictionary<Type, IReadOnlyList<InstalledContext>>(existing)
@@ -2353,7 +2353,7 @@ namespace Pkl.Core.Runtime.Truffle.api
         }
         internal static void RemoveContext(
             Type languageType,
-            global::Pkl.Core.Runtime.Polyglot.Context owner,
+            global::DripSharp.Brine.Runtime.Polyglot.Context owner,
             bool removeAll = false)
         {
             if (Contexts.Value is not { } existing) return;
@@ -2438,10 +2438,10 @@ namespace Pkl.Core.Runtime.Truffle.api
 // SnakeYAML Engine contracts reached by the evaluator's YAML parser closure.
 // The generated Pkl classes retain ownership of Pkl conversion and value-model
 // behavior; these types provide the external library surface resolved by Spoon.
-namespace Pkl.Core.Runtime.SnakeYaml.api
+namespace DripSharp.Brine.Runtime.SnakeYaml.api
 {
-    using Pkl.Core.Runtime.SnakeYaml.constructor;
-    using Pkl.Core.Runtime.SnakeYaml.nodes;
+    using DripSharp.Brine.Runtime.SnakeYaml.constructor;
+    using DripSharp.Brine.Runtime.SnakeYaml.nodes;
 
     internal interface ConstructNode
     {
@@ -2475,10 +2475,10 @@ namespace Pkl.Core.Runtime.SnakeYaml.api
     }
 }
 
-namespace Pkl.Core.Runtime.SnakeYaml.constructor
+namespace DripSharp.Brine.Runtime.SnakeYaml.constructor
 {
-    using Pkl.Core.Runtime.SnakeYaml.api;
-    using Pkl.Core.Runtime.SnakeYaml.nodes;
+    using DripSharp.Brine.Runtime.SnakeYaml.api;
+    using DripSharp.Brine.Runtime.SnakeYaml.nodes;
 
     internal class BaseConstructor
     {
@@ -2494,7 +2494,7 @@ namespace Pkl.Core.Runtime.SnakeYaml.constructor
     }
 }
 
-namespace Pkl.Core.Runtime.SnakeYaml.exceptions
+namespace DripSharp.Brine.Runtime.SnakeYaml.exceptions
 {
     internal sealed class Mark { }
 
@@ -2504,9 +2504,9 @@ namespace Pkl.Core.Runtime.SnakeYaml.exceptions
     }
 }
 
-namespace Pkl.Core.Runtime.SnakeYaml.nodes
+namespace DripSharp.Brine.Runtime.SnakeYaml.nodes
 {
-    using Pkl.Core.Runtime.SnakeYaml.exceptions;
+    using DripSharp.Brine.Runtime.SnakeYaml.exceptions;
 
     internal class Tag : IEquatable<Tag>
     {
@@ -2571,9 +2571,9 @@ namespace Pkl.Core.Runtime.SnakeYaml.nodes
     }
 }
 
-namespace Pkl.Core.Runtime.SnakeYaml.resolver
+namespace DripSharp.Brine.Runtime.SnakeYaml.resolver
 {
-    using Pkl.Core.Runtime.SnakeYaml.nodes;
+    using DripSharp.Brine.Runtime.SnakeYaml.nodes;
 
     internal interface ScalarResolver
     {
@@ -2581,11 +2581,11 @@ namespace Pkl.Core.Runtime.SnakeYaml.resolver
     }
 }
 
-namespace Pkl.Core.Runtime.SnakeYaml.schema
+namespace DripSharp.Brine.Runtime.SnakeYaml.schema
 {
-    using Pkl.Core.Runtime.SnakeYaml.api;
-    using Pkl.Core.Runtime.SnakeYaml.nodes;
-    using Pkl.Core.Runtime.SnakeYaml.resolver;
+    using DripSharp.Brine.Runtime.SnakeYaml.api;
+    using DripSharp.Brine.Runtime.SnakeYaml.nodes;
+    using DripSharp.Brine.Runtime.SnakeYaml.resolver;
 
     internal abstract class Schema
     {
@@ -2594,11 +2594,11 @@ namespace Pkl.Core.Runtime.SnakeYaml.schema
     }
 }
 
-namespace Pkl.Core.Util
+namespace DripSharp.Brine.Util
 {
     internal sealed partial class HttpUtils
     {
-        public static void CheckHasStatusCode200<T>(global::Pkl.Core.Runtime.JavaHttpResponse<T> response)
+        public static void CheckHasStatusCode200<T>(global::DripSharp.Brine.Runtime.JavaHttpResponse<T> response)
         {
             if (response.StatusCode() == 200) return;
             if (response.Body() is IDisposable disposable) disposable.Dispose();
@@ -2607,7 +2607,7 @@ namespace Pkl.Core.Util
     }
 }
 
-namespace Pkl.Core
+namespace DripSharp.Brine
 {
     public sealed partial class PClassInfo<T>
     {
@@ -2638,7 +2638,7 @@ namespace Pkl.Core
     }
 }
 
-namespace Pkl.Core.Util
+namespace DripSharp.Brine.Util
 {
     internal sealed partial class ByteArrayUtils
     {
@@ -2647,7 +2647,7 @@ namespace Pkl.Core.Util
     }
 }
 
-namespace Pkl.Core.Service
+namespace DripSharp.Brine.Service
 {
     // Product-owned .NET representation of the versioned executor SPI used by
     // the upstream service implementation. It avoids exposing ServiceLoader or
@@ -2800,7 +2800,7 @@ namespace Pkl.Core.Service
     }
 }
 
-namespace Pkl.Core.Messaging
+namespace DripSharp.Brine.Messaging
 {
     internal partial interface MessageTransport
     {
@@ -2907,15 +2907,15 @@ namespace Pkl.Core.Messaging
     }
 }
 
-namespace Pkl.Core.Externalreader
+namespace DripSharp.Brine.Externalreader
 {
     internal sealed partial class ExternalReaderProcessImpl
     {
-        private Pkl.Core.Runtime.JavaThread? destinationReaderThread;
+        private DripSharp.Brine.Runtime.JavaThread? destinationReaderThread;
 
-        private void StartDestinationTransportThread(Pkl.Core.Messaging.MessageTransport selectedTransport)
+        private void StartDestinationTransportThread(DripSharp.Brine.Messaging.MessageTransport selectedTransport)
         {
-            var thread = new Pkl.Core.Runtime.JavaThread(
+            var thread = new DripSharp.Brine.Runtime.JavaThread(
                 () => RunTransport(selectedTransport),
                 "ExternalReaderProcessImpl rxThread for " + spec);
             thread.SetDaemon(true);
@@ -2924,7 +2924,7 @@ namespace Pkl.Core.Externalreader
         }
 
         private void FinishDestinationTransport(
-            Pkl.Core.Messaging.MessageTransport selectedTransport,
+            DripSharp.Brine.Messaging.MessageTransport selectedTransport,
             System.Exception failure)
         {
             selectedTransport.Fail(failure);
@@ -2938,8 +2938,8 @@ namespace Pkl.Core.Externalreader
         private void CloseDestinationProcess()
         {
             global::DripSharp.Runtime.JavaProcess? ownedProcess;
-            Pkl.Core.Messaging.MessageTransport? ownedTransport;
-            Pkl.Core.Runtime.JavaThread? readerThread;
+            DripSharp.Brine.Messaging.MessageTransport? ownedTransport;
+            DripSharp.Brine.Runtime.JavaThread? readerThread;
             lock (@lock)
             {
                 if (closed) return;

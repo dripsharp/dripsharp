@@ -509,7 +509,7 @@
         classpath (str/join File/pathSeparator
                             (map str [oracle-classes upstream-main upstream-resources]))
         consumer-root (:consumer-root package-proof)
-        consumer-project (paths/resolve-path consumer-root "Pkl.Parser.PackageConsumer.csproj")
+        consumer-project (paths/resolve-path consumer-root "DripSharp.Brine.Parser.PackageConsumer.csproj")
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "targets" "pkl" "validation" "probe"
                                          "PackageProbe.cs")]
@@ -959,7 +959,7 @@
                    (Files/createDirectories (make-array FileAttribute 0)))
         source-package-config (paths/resolve-path (:consumer-root package-proof) "NuGet.Config")
         installed-consumer-project
-        (paths/resolve-path (:consumer-root package-proof) "Pkl.Core.PackageConsumer.csproj")
+        (paths/resolve-path (:consumer-root package-proof) "DripSharp.Brine.PackageConsumer.csproj")
         target-match (re-find #"<TargetFramework>(net\d+\.\d+)</TargetFramework>"
                               (Files/readString installed-consumer-project))
         target-framework (second target-match)
@@ -1092,7 +1092,7 @@
         source-package-config
         (paths/resolve-path (:consumer-root package-proof) "NuGet.Config")
         installed-consumer-project
-        (paths/resolve-path (:consumer-root package-proof) "Pkl.Core.PackageConsumer.csproj")
+        (paths/resolve-path (:consumer-root package-proof) "DripSharp.Brine.PackageConsumer.csproj")
         consumer-framework
         (second (re-find #"<TargetFramework>(net\d+[.]\d+)</TargetFramework>"
                          (Files/readString installed-consumer-project)))
@@ -1225,7 +1225,7 @@
         (when-not (and (= java-release (:release config-toolchain))
                        (= (paths/absolute java-home)
                           (paths/absolute (:home config-toolchain))))
-          (fail! "Pkl.Core and pkl-config-java oracle toolchains differ"
+          (fail! "DripSharp.Brine and pkl-config-java oracle toolchains differ"
                  {:core {:java-release java-release :java-home (str java-home)}
                   :config {:java-release (:release config-toolchain)
                            :java-home (str (:home config-toolchain))}}))
@@ -1253,7 +1253,7 @@
         identities (get-in package-proof [:dependency-proof :packages])
         {:keys [id version]} (:identity package-proof)
         installed-consumer-project
-        (paths/resolve-path (:consumer-root package-proof) "Pkl.Core.PackageConsumer.csproj")
+        (paths/resolve-path (:consumer-root package-proof) "DripSharp.Brine.PackageConsumer.csproj")
         target-match (re-find #"<TargetFramework>(net\d+\.\d+)</TargetFramework>"
                               (Files/readString installed-consumer-project))
         target-framework (second target-match)
@@ -1466,7 +1466,7 @@
         javac (paths/resolve-path java-home "bin" "javac")
         java (paths/resolve-path java-home "bin" "java")
         consumer-root (:consumer-root package-proof)
-        consumer-project (paths/resolve-path consumer-root "Pkl.Core.PackageConsumer.csproj")
+        consumer-project (paths/resolve-path consumer-root "DripSharp.Brine.PackageConsumer.csproj")
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "validation" "regex-compat"
                                          "RegexCompatPackageProbe.cs")
@@ -1587,7 +1587,7 @@
         javac (paths/resolve-path java-home "bin" "javac")
         java (paths/resolve-path java-home "bin" "java")
         consumer-root (:consumer-root package-proof)
-        consumer-project (paths/resolve-path consumer-root "Pkl.Core.PackageConsumer.csproj")
+        consumer-project (paths/resolve-path consumer-root "DripSharp.Brine.PackageConsumer.csproj")
         consumer-source (paths/resolve-path consumer-root "Program.cs")
         probe-source (paths/resolve-path root "targets" "pkl" "validation" "probe"
                                          "CorePackageProbe.cs")]
@@ -1597,7 +1597,7 @@
                    (= (set (range 21)) (set (map :digits float-fraction-digit-cases)))
                    (= (set (range 21)) (set (map :digits integer-fraction-digit-cases)))
                    (= (count to-fixed-cases) (count (set (map :id to-fixed-cases)))))
-      (fail! "The pinned Pkl.Core or toFixed differential contract changed; review the oracle selection"
+      (fail! "The pinned DripSharp.Brine or toFixed differential contract changed; review the oracle selection"
              {:base-core-cases (count base-core-cases)
               :to-fixed-cases (count to-fixed-cases)
               :core-cases (count core-cases)
@@ -1639,12 +1639,12 @@
           schema-proof (verify-schema-codegen-binding!
                         {:root root :package-proof package-proof :run-command! run-command!
                          :java-release java-release :java-home java-home :entries entries})
-          comparison (assert-equal! "Pkl.Core" oracle-output package-output)
+          comparison (assert-equal! "DripSharp.Brine" oracle-output package-output)
           perturbation (prove-perturbation! oracle-output perturbed-output)
           to-fixed-upstream-comparison
           (assert-pinned! "Upstream JVM toFixed" to-fixed-expected to-fixed-upstream)
           to-fixed-package-comparison
-          (assert-pinned! "Fresh package-only Pkl.Core toFixed"
+          (assert-pinned! "Fresh package-only DripSharp.Brine toFixed"
                           to-fixed-expected to-fixed-package)
           to-fixed-perturbation
           (prove-perturbation! to-fixed-expected to-fixed-perturbed)
@@ -1672,7 +1672,7 @@
                    :loading-policy-configuration-contract (:summary loading-contract)
                    :schema-codegen-binding (:summary schema-proof)
                    :perturbation-detected-at (get-in perturbation [:mismatch :line])}]
-      (println "Independent upstream/package Pkl.Core differential passed:" (pr-str summary))
+      (println "Independent upstream/package DripSharp.Brine differential passed:" (pr-str summary))
       {:package-proof package-proof
        :public-contract public-contract
        :java-pattern-regex regex-compat
@@ -1687,7 +1687,7 @@
        :to-fixed-package to-fixed-package})))
 
 (defn- verify-differential-with-executor!
-  "Runs the complete parser proof, then the representative packaged Pkl.Core proof."
+  "Runs the complete parser proof, then the representative packaged DripSharp.Brine proof."
   [options]
   (let [command-timeout-ms (or (:command-timeout-ms options) 1200000)
         delegate (or (:run-command! options) process/run!)
@@ -1701,7 +1701,7 @@
 
 (defn verify-differential!
   "Regenerates, packs, consumes, and independently compares the complete parser
-  corpus plus representative Pkl.Core evaluator/value-model behavior."
+  corpus plus representative DripSharp.Brine evaluator/value-model behavior."
   ([] (verify-differential! {}))
   ([options]
    (concurrency/call-with-executor

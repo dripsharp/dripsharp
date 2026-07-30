@@ -315,14 +315,14 @@
            target-wildcard?)
       (invoke
        (raw
-        "global::Pkl.Core.Runtime.PklRuntimeBridge.PClassInfoAsObject")
+        "global::DripSharp.Brine.Runtime.PklRuntimeBridge.PClassInfoAsObject")
        [node])
 
       (and (= "org.pkl.core.Pair" source-type)
            (= source-type target-type)
            target-wildcard?)
       (invoke
-       (raw "global::Pkl.Core.Runtime.PklRuntimeBridge.ObjectPair")
+       (raw "global::DripSharp.Brine.Runtime.PklRuntimeBridge.ObjectPair")
        [node])
 
       (and (instance? CtMethod target)
@@ -343,7 +343,7 @@
 
 (defn- pkl-runtime-call [name arguments]
   (invoke
-   (raw (str "global::Pkl.Core.Runtime.PklRuntimeBridge." name))
+   (raw (str "global::DripSharp.Brine.Runtime.PklRuntimeBridge." name))
    arguments))
 
 (defn- generic-call
@@ -537,33 +537,33 @@
   {"field:java.net.Proxy#NO_PROXY"
    (fn [_] (raw "new global::System.Net.WebProxy()"))
    "field:java.net.Proxy$Type#DIRECT"
-   (fn [_] (raw "global::Pkl.Core.Runtime.JavaProxyType.DIRECT"))
+   (fn [_] (raw "global::DripSharp.Brine.Runtime.JavaProxyType.DIRECT"))
    "field:java.net.Proxy$Type#HTTP"
-   (fn [_] (raw "global::Pkl.Core.Runtime.JavaProxyType.HTTP"))
+   (fn [_] (raw "global::DripSharp.Brine.Runtime.JavaProxyType.HTTP"))
    "field:java.net.Proxy$Type#SOCKS"
-   (fn [_] (raw "global::Pkl.Core.Runtime.JavaProxyType.SOCKS"))
+   (fn [_] (raw "global::DripSharp.Brine.Runtime.JavaProxyType.SOCKS"))
    "field:java.net.http.HttpClient$Redirect#NEVER"
-   (fn [_] (raw "global::Pkl.Core.Runtime.JavaHttpRedirect.NEVER"))
+   (fn [_] (raw "global::DripSharp.Brine.Runtime.JavaHttpRedirect.NEVER"))
    "field:java.net.http.HttpClient$Redirect#NORMAL"
-   (fn [_] (raw "global::Pkl.Core.Runtime.JavaHttpRedirect.NORMAL"))
+   (fn [_] (raw "global::DripSharp.Brine.Runtime.JavaHttpRedirect.NORMAL"))
    "field:java.net.http.HttpClient$Redirect#ALWAYS"
-   (fn [_] (raw "global::Pkl.Core.Runtime.JavaHttpRedirect.ALWAYS"))
+   (fn [_] (raw "global::DripSharp.Brine.Runtime.JavaHttpRedirect.ALWAYS"))
    "field:java.net.http.HttpClient$Version#HTTP_1_1"
-   (fn [_] (raw "global::Pkl.Core.Runtime.JavaHttpVersion.HTTP_1_1"))
+   (fn [_] (raw "global::DripSharp.Brine.Runtime.JavaHttpVersion.HTTP_1_1"))
    "field:java.net.http.HttpClient$Version#HTTP_2"
-   (fn [_] (raw "global::Pkl.Core.Runtime.JavaHttpVersion.HTTP_2"))
+   (fn [_] (raw "global::DripSharp.Brine.Runtime.JavaHttpVersion.HTTP_2"))
    "field:org.pkl.core.runtime.VmValueConverter#WILDCARD_PROPERTY"
    (fn [_]
      (raw
-      "global::Pkl.Core.Runtime.VmValueConverter<object>.WILDCARD_PROPERTY"))
+      "global::DripSharp.Brine.Runtime.VmValueConverter<object>.WILDCARD_PROPERTY"))
    "field:org.pkl.core.runtime.VmValueConverter#WILDCARD_ELEMENT"
    (fn [_]
      (raw
-      "global::Pkl.Core.Runtime.VmValueConverter<object>.WILDCARD_ELEMENT"))
+      "global::DripSharp.Brine.Runtime.VmValueConverter<object>.WILDCARD_ELEMENT"))
    "field:org.pkl.core.runtime.VmValueConverter#TOP_LEVEL_VALUE"
    (fn [_]
      (raw
-      "global::Pkl.Core.Runtime.VmValueConverter<object>.TOP_LEVEL_VALUE"))})
+      "global::DripSharp.Brine.Runtime.VmValueConverter<object>.TOP_LEVEL_VALUE"))})
 
 (defn adapted-constructor-key?
   "True only for resolved constructors owned by the Pkl destination adapter."
@@ -615,10 +615,10 @@
                     (some-> ^CtTypeReference handler-reference
                             .getActualTypeArguments)))]
        (sequence-node
-        [(raw "new global::Pkl.Core.Util.Json.JsonParser(")
+        [(raw "new global::DripSharp.Brine.Util.Json.JsonParser(")
          (generic-call
           destination-context
-          (raw "global::Pkl.Core.Util.Json.JsonHandlerBridge.Erase")
+          (raw "global::DripSharp.Brine.Util.Json.JsonHandlerBridge.Erase")
           handler-arguments
           arguments)
          (raw ")")])))
@@ -757,12 +757,12 @@
        arguments)
 
       (= key "executable:javax.net.ssl.SSLContext#getDefault()")
-      (raw "global::Pkl.Core.Runtime.JavaSslContext.GetDefault()")
+      (raw "global::DripSharp.Brine.Runtime.JavaSslContext.GetDefault()")
 
       (= key
          "executable:javax.net.ssl.SSLContext#getInstance(java.lang.String)")
       (invoke
-       (raw "global::Pkl.Core.Runtime.JavaSslContext.GetInstance")
+       (raw "global::DripSharp.Brine.Runtime.JavaSslContext.GetInstance")
        arguments)
 
       (and
@@ -774,7 +774,7 @@
             (first (.getActualTypeArguments (.getType element)))]
         (generic-call
          destination-context
-         (raw "global::Pkl.Core.Http.HttpClientCompatibility.Send")
+         (raw "global::DripSharp.Brine.Http.HttpClientCompatibility.Send")
          [result-reference]
          (into [target-node] arguments)))
 
@@ -808,7 +808,7 @@
 
       (= key "executable:java.net.URL#openConnection()")
       (invoke
-       (raw "new global::Pkl.Core.Runtime.JavaUrlConnection")
+       (raw "new global::DripSharp.Brine.Runtime.JavaUrlConnection")
        [target-node])
 
       (= key "executable:java.io.File#toPath()")
@@ -841,7 +841,7 @@
       (result-generic-call
        destination-context
        element
-       "global::Pkl.Core.Runtime.PklRuntimeBridge."
+       "global::DripSharp.Brine.Runtime.PklRuntimeBridge."
        "MapOfEntriesLoose"
        arguments)
 
@@ -894,7 +894,7 @@
       (= key
          "executable:org.pkl.core.StackFrameTransformer#andThen(org.pkl.core.StackFrameTransformer)")
       (invoke
-       (raw "global::Pkl.Core.StackFrameTransformerExtensions.AndThen")
+       (raw "global::DripSharp.Brine.StackFrameTransformerExtensions.AndThen")
        (into [target-node] arguments))
 
       (and (= "replace" (.getSimpleName (.getExecutable element)))
@@ -1219,7 +1219,7 @@
           (pkl-runtime-call "SplitArray" arguments)
           (generic-call
            destination-context
-           (raw "global::Pkl.Core.Runtime.PklRuntimeBridge.SplitArray")
+           (raw "global::DripSharp.Brine.Runtime.PklRuntimeBridge.SplitArray")
            [component]
            arguments)))
 
@@ -1247,7 +1247,7 @@
       (result-generic-call
        destination-context
        element
-       "global::Pkl.Core.Runtime.PklRuntimeBridge."
+       "global::DripSharp.Brine.Runtime.PklRuntimeBridge."
        "CreateEconomicMap"
        arguments)
 
@@ -1259,7 +1259,7 @@
       (result-generic-call
        destination-context
        element
-       "global::Pkl.Core.Runtime.GraalCollections."
+       "global::DripSharp.Brine.Runtime.GraalCollections."
        "EconomicSet.Create"
        arguments)
 
@@ -1271,7 +1271,7 @@
       (result-generic-call
        destination-context
        element
-       "global::Pkl.Core.Runtime.PklRuntimeBridge."
+       "global::DripSharp.Brine.Runtime.PklRuntimeBridge."
        "EmptyEconomicMap"
        [])
 
@@ -1349,7 +1349,7 @@
         (generic-call
          destination-context
          (raw
-          "global::Pkl.Core.Util.Paguro.RrbTree<object>.GenericNodeArray")
+          "global::DripSharp.Brine.Util.Paguro.RrbTree<object>.GenericNodeArray")
          [element-type]
          arguments))
 
@@ -1375,7 +1375,7 @@
            (= "resolveUri"
               (.getSimpleName (.getExecutable element))))
       (invoke
-       (raw "global::Pkl.Core.Util.IoUtils.Resolve")
+       (raw "global::DripSharp.Brine.Util.IoUtils.Resolve")
        (into [(raw "this")] arguments))
 
       (and (instance? CtSuperAccess target)
@@ -1650,21 +1650,21 @@
            (str
             " : this(__outer, "
             "annotation is null ? null : "
-            "global::Pkl.Core.Runtime.VmUtils.ReadMember(annotation, global::Pkl.Core.Runtime.Identifier.CONVERT) "
-            "is global::Pkl.Core.Runtime.VmFunction convertFunc ? "
+            "global::DripSharp.Brine.Runtime.VmUtils.ReadMember(annotation, global::DripSharp.Brine.Runtime.Identifier.CONVERT) "
+            "is global::DripSharp.Brine.Runtime.VmFunction convertFunc ? "
             "(global::System.Func<string, global::System.Uri, object>)((rawValue, workingDirUri) => "
             "__outer.HandleBadValue(() => __outer.HandleImports(convertFunc.Apply(rawValue), workingDirUri))) : null, "
             "annotation is null ? null : "
-            "global::Pkl.Core.Runtime.VmUtils.ReadMember(annotation, global::Pkl.Core.Runtime.Identifier.TRANSFORM_ALL) "
-            "is global::Pkl.Core.Runtime.VmFunction transformAllFunc ? "
+            "global::DripSharp.Brine.Runtime.VmUtils.ReadMember(annotation, global::DripSharp.Brine.Runtime.Identifier.TRANSFORM_ALL) "
+            "is global::DripSharp.Brine.Runtime.VmFunction transformAllFunc ? "
             "(global::System.Func<global::System.Collections.Generic.IList<object>, global::System.Uri, object?>)"
             "((values, workingDirUri) => __outer.HandleBadValue(() => __outer.HandleImports("
-            "transformAllFunc.Apply(global::Pkl.Core.Runtime.VmList.CreateFromIterable(values)), workingDirUri))) : null, "
+            "transformAllFunc.Apply(global::DripSharp.Brine.Runtime.VmList.CreateFromIterable(values)), workingDirUri))) : null, "
             "annotation is null ? (bool?)null : "
-            "global::Pkl.Core.Runtime.VmUtils.ReadMember(annotation, global::Pkl.Core.Runtime.Identifier.MULTIPLE) "
+            "global::DripSharp.Brine.Runtime.VmUtils.ReadMember(annotation, global::DripSharp.Brine.Runtime.Identifier.MULTIPLE) "
             "is bool multipleValue ? multipleValue : (bool?)null, "
             "annotation is null ? null : hasMetavar ? "
-            "CommandSpecParser.ExportNullableString(annotation, global::Pkl.Core.Runtime.Identifier.METAVAR) : null, "
+            "CommandSpecParser.ExportNullableString(annotation, global::DripSharp.Brine.Runtime.Identifier.METAVAR) : null, "
             "annotation is null ? null : OptionBehavior.ExportCompletionCandidates(annotation))"))
 
           :else

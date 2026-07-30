@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Destination-specific bridges between translated Java call sites and the
-// focused Pkl.Core runtime substrate. Generic Java compatibility source must
+// focused Brine Pkl runtime substrate. Generic Java compatibility source must
 // not acquire compile-time product dependencies from these capabilities.
 #nullable enable
 
-namespace Pkl.Core.Runtime;
+namespace DripSharp.Brine.Runtime;
 
 internal static class PklRuntimeBridge
 {
@@ -28,17 +28,17 @@ internal static class PklRuntimeBridge
     internal static int[][] SplitArray(int[] source, int index) =>
         new[] { source[..index], source[index..] };
 
-    internal static global::Pkl.Core.Pair<object, object> ObjectPair<F, S>(
-        global::Pkl.Core.Pair<F, S> pair) =>
+    internal static global::DripSharp.Brine.Pair<object, object> ObjectPair<F, S>(
+        global::DripSharp.Brine.Pair<F, S> pair) =>
         new(pair.GetFirst(), pair.GetSecond());
 
-    internal static global::Pkl.Core.PClassInfo<object> PClassInfoAsObject<T>(
-        global::Pkl.Core.PClassInfo<T>? classInfo) =>
+    internal static global::DripSharp.Brine.PClassInfo<object> PClassInfoAsObject<T>(
+        global::DripSharp.Brine.PClassInfo<T>? classInfo) =>
         classInfo is null ? null! : classInfo.AsObject();
 
-    internal static global::Pkl.Core.Util.Paguro.RrbTree<TOuter>.MutRrbt<T>
+    internal static global::DripSharp.Brine.Util.Paguro.RrbTree<TOuter>.MutRrbt<T>
         MutableConcat<TOuter, T>(
-        global::Pkl.Core.Util.Paguro.RrbTree<TOuter>.MutRrbt<T> target,
+        global::DripSharp.Brine.Util.Paguro.RrbTree<TOuter>.MutRrbt<T> target,
         global::System.Collections.Generic.IEnumerable<T>? values)
     {
         if (values is not null)
@@ -73,8 +73,8 @@ internal static class PklRuntimeBridge
             }
             var rawType = rawValue.GetType();
             if (!rawType.IsGenericType || !typeof(V).IsGenericType ||
-                rawType.GetGenericTypeDefinition() != typeof(global::Pkl.Core.PClassInfo<>) ||
-                typeof(V).GetGenericTypeDefinition() != typeof(global::Pkl.Core.PClassInfo<>))
+                rawType.GetGenericTypeDefinition() != typeof(global::DripSharp.Brine.PClassInfo<>) ||
+                typeof(V).GetGenericTypeDefinition() != typeof(global::DripSharp.Brine.PClassInfo<>))
             {
                 result[key] = (V)rawValue;
                 continue;
@@ -98,13 +98,13 @@ internal static class PklRuntimeBridge
     }
 
     internal static bool PClassInfoEquals<T>(
-        global::Pkl.Core.PClassInfo<T> left, object? right)
+        global::DripSharp.Brine.PClassInfo<T> left, object? right)
     {
         if (global::System.Object.ReferenceEquals(left, right)) return true;
         if (right is null) return false;
         var rightType = right.GetType();
         if (!rightType.IsGenericType ||
-            rightType.GetGenericTypeDefinition() != typeof(global::Pkl.Core.PClassInfo<>))
+            rightType.GetGenericTypeDefinition() != typeof(global::DripSharp.Brine.PClassInfo<>))
             return false;
         var rightName = rightType.GetMethod("GetQualifiedName")!.Invoke(right, null) as string;
         return global::System.String.Equals(
@@ -119,7 +119,7 @@ internal static class PklRuntimeBridge
                type.Name.StartsWith("Leaf`", global::System.StringComparison.Ordinal) &&
                type.DeclaringType?.IsGenericType == true &&
                type.DeclaringType.Name.StartsWith("RrbTree`", global::System.StringComparison.Ordinal) &&
-               type.Namespace == "Pkl.Core.Util.Paguro";
+               type.Namespace == "DripSharp.Brine.Util.Paguro";
     }
 
     internal static global::System.Net.WebProxy NewWebProxy(

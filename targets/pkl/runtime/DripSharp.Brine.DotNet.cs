@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Idiomatic .NET configuration binding and deterministic C# schema generation
-// for Pkl.Core. This is durable destination product code; translated Java
+// for Brine's Pkl surface. This is durable destination product code; translated Java
 // output remains disposable.
 #nullable enable
 
@@ -17,7 +17,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Pkl.Core;
+namespace DripSharp.Brine;
 
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Enum |
                 AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Parameter,
@@ -1593,20 +1593,20 @@ file static class PklGeneratedModelSemantics
         var name = LocalAliasSymbol(alias);
         var literals = StringLiteralValues(alias.GetAliasedType());
         ValidateAliasMemberCollisions(alias, name, literals);
-        output.Append("[global::Pkl.Core.PklName(\"").Append(Escape(alias.GetSimpleName())).Append("\")]\n");
-        output.Append("[global::Pkl.Core.PklQualifiedName(\"").Append(Escape(alias.GetQualifiedName()))
+        output.Append("[global::DripSharp.Brine.PklName(\"").Append(Escape(alias.GetSimpleName())).Append("\")]\n");
+        output.Append("[global::DripSharp.Brine.PklQualifiedName(\"").Append(Escape(alias.GetQualifiedName()))
             .Append("\")]\n");
         if (literals is not null)
         {
             output.Append("public enum ").Append(name).Append("\n{\n");
             foreach (var value in literals)
-                output.Append("    [global::Pkl.Core.PklName(\"").Append(Escape(value)).Append("\")]\n")
+                output.Append("    [global::DripSharp.Brine.PklName(\"").Append(Escape(value)).Append("\")]\n")
                     .Append("    ").Append(ToIdentifier(value)).Append(",\n");
             output.Append("}\n\n");
             return;
         }
 
-        output.Append("[global::Pkl.Core.PklTypeAlias]\npublic readonly partial record struct ")
+        output.Append("[global::DripSharp.Brine.PklTypeAlias]\npublic readonly partial record struct ")
             .Append(name).Append(TypeParameters(alias.GetTypeParameters())).Append('(')
             .Append(TypeName(alias.GetAliasedType())).Append(" Value)\n{\n");
         EmitAliasValueSemantics(output, name + TypeArguments(alias.GetTypeParameters()));
@@ -1651,9 +1651,9 @@ file static class PklGeneratedModelSemantics
     {
         EmitDocs(output, pClass.GetDocComment());
         EmitDeprecation(output, pClass.GetAnnotations());
-        output.Append("[global::Pkl.Core.PklName(\"").Append(Escape(moduleClass ? moduleName : pClass.GetSimpleName()))
+        output.Append("[global::DripSharp.Brine.PklName(\"").Append(Escape(moduleClass ? moduleName : pClass.GetSimpleName()))
             .Append("\")]\n");
-        output.Append("[global::Pkl.Core.PklQualifiedName(\"").Append(Escape(pClass.GetQualifiedName()))
+        output.Append("[global::DripSharp.Brine.PklQualifiedName(\"").Append(Escape(pClass.GetQualifiedName()))
             .Append("\")]\n");
         var typeParameters = moduleClass ? "" : TypeParameters(pClass.GetTypeParameters());
         output.Append("public ");
@@ -1671,8 +1671,8 @@ file static class PklGeneratedModelSemantics
             var property = entry.Value;
             EmitDocs(output, property.GetInheritedDocComment(), "    ");
             EmitDeprecation(output, property.GetAnnotations(), "    ");
-            output.Append("    [global::Pkl.Core.PklName(\"").Append(Escape(property.GetSimpleName())).Append("\")]\n")
-                .Append("    [global::Pkl.Core.PklRequired]\n")
+            output.Append("    [global::DripSharp.Brine.PklName(\"").Append(Escape(property.GetSimpleName())).Append("\")]\n")
+                .Append("    [global::DripSharp.Brine.PklRequired]\n")
                 .Append("    public ");
             if (HasInheritedProperty(pClass, property.GetSimpleName())) output.Append("new ");
             output.Append(TypeName(property.GetType())).Append(' ')
@@ -1726,7 +1726,7 @@ file static class PklGeneratedModelSemantics
         {
             var property = allProperties[index].Value;
             if (index != 0) output.Append(", ");
-            output.Append("[global::Pkl.Core.PklName(\"").Append(Escape(property.GetSimpleName()))
+            output.Append("[global::DripSharp.Brine.PklName(\"").Append(Escape(property.GetSimpleName()))
                 .Append("\")] ").Append(TypeName(property.GetType())).Append(' ')
                 .Append(ParameterIdentifier(property));
         }
@@ -1867,22 +1867,22 @@ file static class PklGeneratedModelSemantics
         if (!options.EmitGeneratedLoaders) return;
         var hiding = hidesBaseMembers ? "new " : "";
         output.Append(indent).Append("public static ").Append(hiding)
-            .Append("global::Pkl.Core.IPklGeneratedLoader<").Append(typeName)
+            .Append("global::DripSharp.Brine.IPklGeneratedLoader<").Append(typeName)
             .Append("> PklLoader { get; } = new GeneratedLoader();\n\n")
-            .Append(indent).Append("private sealed class GeneratedLoader : global::Pkl.Core.IPklGeneratedLoader<")
+            .Append(indent).Append("private sealed class GeneratedLoader : global::DripSharp.Brine.IPklGeneratedLoader<")
             .Append(typeName).Append(">\n").Append(indent).Append("{\n")
             .Append(indent).Append("    public ").Append(typeName)
-            .Append(" Load(object? value, global::Pkl.Core.ConfigBinder binder) => ")
+            .Append(" Load(object? value, global::DripSharp.Brine.ConfigBinder binder) => ")
             .Append("binder.BindGenerated<").Append(typeName).Append(">(value);\n")
             .Append(indent).Append("}\n\n")
             .Append(indent).Append("public static ").Append(hiding).Append(typeName)
-            .Append(" FromPkl(object? value, global::Pkl.Core.ConfigBinder? binder = null) =>\n")
-            .Append(indent).Append("    (binder ?? new global::Pkl.Core.ConfigBinder()).BindGenerated<")
+            .Append(" FromPkl(object? value, global::DripSharp.Brine.ConfigBinder? binder = null) =>\n")
+            .Append(indent).Append("    (binder ?? new global::DripSharp.Brine.ConfigBinder()).BindGenerated<")
             .Append(typeName).Append(">(value);\n");
         if (moduleClass)
             output.Append("\n").Append(indent).Append("public static ").Append(hiding).Append(typeName)
-                .Append(" Load(global::Pkl.Core.Evaluator evaluator, global::Pkl.Core.ModuleSource source, ")
-                .Append("global::Pkl.Core.ConfigBinder? binder = null) =>\n")
+                .Append(" Load(global::DripSharp.Brine.Evaluator evaluator, global::DripSharp.Brine.ModuleSource source, ")
+                .Append("global::DripSharp.Brine.ConfigBinder? binder = null) =>\n")
                 .Append(indent).Append("    FromPkl(evaluator.Evaluate(source), binder);\n");
     }
 
@@ -1915,10 +1915,10 @@ file static class PklGeneratedModelSemantics
             "pkl.base#Boolean" => "bool",
             "pkl.base#Int" => "long",
             "pkl.base#Float" or "pkl.base#Number" => "double",
-            "pkl.base#Duration" => "global::Pkl.Core.Duration",
-            "pkl.base#DurationUnit" => "global::Pkl.Core.DurationUnit",
-            "pkl.base#DataSize" => "global::Pkl.Core.DataSize",
-            "pkl.base#DataSizeUnit" => "global::Pkl.Core.DataSizeUnit",
+            "pkl.base#Duration" => "global::DripSharp.Brine.Duration",
+            "pkl.base#DurationUnit" => "global::DripSharp.Brine.DurationUnit",
+            "pkl.base#DataSize" => "global::DripSharp.Brine.DataSize",
+            "pkl.base#DataSizeUnit" => "global::DripSharp.Brine.DataSizeUnit",
             "pkl.base#Regex" => "global::System.Text.RegularExpressions.Regex",
             "pkl.base#Bytes" => "byte[]",
             "pkl.base#Collection" => $"global::System.Collections.Generic.IReadOnlyCollection<{Argument(arguments, 0)}>",
@@ -1927,7 +1927,7 @@ file static class PklGeneratedModelSemantics
             "pkl.base#Set" => $"global::System.Collections.Generic.IReadOnlySet<{Argument(arguments, 0)}>",
             "pkl.base#Map" or "pkl.base#Mapping" =>
                 $"global::System.Collections.Generic.IReadOnlyDictionary<{Argument(arguments, 0)}, {Argument(arguments, 1)}>",
-            "pkl.base#Pair" => $"global::Pkl.Core.Pair<{Argument(arguments, 0)}, {Argument(arguments, 1)}>",
+            "pkl.base#Pair" => $"global::DripSharp.Brine.Pair<{Argument(arguments, 0)}, {Argument(arguments, 1)}>",
             "pkl.base#Any" or "pkl.base#Dynamic" => "object?",
             "pkl.base#Typed" or "pkl.base#NonNull" => "object",
             "pkl.base#Null" => "object?",

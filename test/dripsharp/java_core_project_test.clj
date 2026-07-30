@@ -188,14 +188,14 @@
         (is (some #(str/includes? %
                                  "NodeInfo(\"&&\")")
                   sources))
-        (is (some #(str/includes? % "StdLibModule.LoadModule(global::Pkl.Core.PClassInfo<object>.pklProjectUri")
+        (is (some #(str/includes? % "StdLibModule.LoadModule(global::DripSharp.Brine.PClassInfo<object>.pklProjectUri")
                   sources))
-        (is (some #(str/includes? % "StdLibModule.LoadModule(global::Pkl.Core.PClassInfo<object>.pklSemverUri")
+        (is (some #(str/includes? % "StdLibModule.LoadModule(global::DripSharp.Brine.PClassInfo<object>.pklSemverUri")
                   sources))
-        (is (some #(str/includes? % "StdLibModule.LoadModule(global::Pkl.Core.PClassInfo<object>.pklSettingsUri")
+        (is (some #(str/includes? % "StdLibModule.LoadModule(global::DripSharp.Brine.PClassInfo<object>.pklSettingsUri")
                   sources))
         (is (not-any? #(str/includes? % "global::System.Func.Identity<") sources))
-        (let [source-root (paths/resolve-path project-root "src" "Pkl" "Core")
+        (let [source-root (paths/resolve-path project-root "src" "DripSharp" "Brine")
               evaluator-builder (slurp (str (paths/resolve-path source-root
                                                                  "EvaluatorBuilder.cs")))
               module-source (slurp (str (paths/resolve-path source-root
@@ -229,7 +229,7 @@
                                                 "FileSystemManager.cs")))
               loading-runtime (slurp (str (paths/resolve-path
                                             source-root "Runtime" "Substrate"
-                                            "Pkl.Core.Loading.cs")))
+                                            "DripSharp.Brine.Loading.cs")))
               java-compat (generated-java-compat-source project-root)
               identifier (slurp (str (paths/resolve-path source-root
                                                            "Runtime" "Identifier.cs")))
@@ -241,10 +241,10 @@
                                                "Runtime" "VmExceptionBuilder.cs")))
               substrate (slurp (str (paths/resolve-path
                                       source-root "Runtime" "Substrate"
-                                      "Pkl.Core.Substrate.cs")))
+                                      "DripSharp.Brine.Substrate.cs")))
               runtime-bridge (slurp (str (paths/resolve-path
                                            source-root "Runtime" "Substrate"
-                                           "Pkl.Core.RuntimeBridge.cs")))
+                                           "DripSharp.Brine.RuntimeBridge.cs")))
               json-writer (slurp (str (paths/resolve-path
                                         source-root "Util" "Json" "JsonWriter.cs")))
               http-client (slurp (str (paths/resolve-path source-root
@@ -295,11 +295,11 @@
                            "Standard"))))
           (testing "nested declarations are fully resolved in C# base clauses"
             (is (str/includes? message
-                               "global::Pkl.Core.Messaging.Message.Response"))
+                               "global::DripSharp.Brine.Messaging.Message.Response"))
             (is (not (str/includes? message "interface Response : Client, Response")))
             (is (str/includes?
                  imports-parser
-                 "global::Pkl.Core.Ast.Builder.ImportsAndReadsParser.Entry")))
+                 "global::DripSharp.Brine.Ast.Builder.ImportsAndReadsParser.Entry")))
           (testing "selected enum constants retain their upstream ordinals"
             (is (str/includes?
                  message
@@ -329,11 +329,11 @@
             (is (str/includes?
                  reflect-nodes
                  (str "declaredTypeFactory.Create("
-                      "global::Pkl.Core.Util.Pair<object, object>.Of<")))
+                      "global::DripSharp.Brine.Util.Pair<object, object>.Of<")))
             (is (str/includes?
                  reflect-nodes
                  (str "functionTypeFactory2.Create("
-                      "global::Pkl.Core.Util.Pair<object, object>.Of<")))
+                      "global::DripSharp.Brine.Util.Pair<object, object>.Of<")))
             (is (not (str/includes?
                       reflect-nodes
                       "declaredTypeFactory).Create(default!)")))
@@ -346,14 +346,14 @@
             (is (str/includes? package-uri "JavaCompat.StringSplit(path"))
             (is (str/includes? module-keys "JavaCompat.CastDictionary<string"))
             (is (str/includes? module-keys
-                               "Pkl.Core.Util.IoUtils.Resolve(this, baseUri, importUri)"))
+                               "DripSharp.Brine.Util.IoUtils.Resolve(this, baseUri, importUri)"))
             (is (str/includes?
                  module-key
                  "return this.ResolveUri(this.GetUri(), uri);"))
             (is (not-any?
                  #(str/includes?
                    %
-                   "((global::Pkl.Core.Runtime.ReaderBase)")
+                   "((global::DripSharp.Brine.Runtime.ReaderBase)")
                  sources))
             (is (str/includes?
                  module-cache
@@ -369,10 +369,10 @@
             (is (not (str/includes? evaluator-settings "NoCache.Value")))
             (is (str/includes?
                  evaluator-settings
-                 "(bool?)(((global::Pkl.Core.Composite)pSettings).Get(\"noCache\"))"))
+                 "(bool?)(((global::DripSharp.Brine.Composite)pSettings).Get(\"noCache\"))"))
             (is (not (str/includes?
                       evaluator-settings
-                      "(bool)(((global::Pkl.Core.Composite)pSettings).Get(\"noCache\")!)")))
+                      "(bool)(((global::DripSharp.Brine.Composite)pSettings).Get(\"noCache\")!)")))
             (is (str/includes?
                  evaluator-settings
                  "global::System.Object.ReferenceEquals(this, obj!)"))
@@ -417,7 +417,7 @@
             (is (not (str/includes?
                       pclass-info
                       "MapGet(PClassInfo<object>.pooledPklBaseClassInfos, className)).AsObject()")))
-            (is (not (str/includes? java-compat "global::Pkl.Core")))
+            (is (not (str/includes? java-compat "global::DripSharp.Brine")))
             (is (not (str/includes? java-compat "DRIPSHARP_PKL_CORE")))
             (is (str/includes? substrate
                                "internal SourceSection CreateSection(int line)"))
@@ -450,11 +450,11 @@
             (is (str/includes?
                  identifier
                  (str "public sealed partial class Identifier : "
-                      "global::System.IComparable<global::Pkl.Core.Runtime.Identifier>")))
+                      "global::System.IComparable<global::DripSharp.Brine.Runtime.Identifier>")))
             (is (str/includes?
                  member-lookup-suggestions
                  (str "public sealed partial class Candidate : "
-                      "global::System.IComparable<global::Pkl.Core.Runtime."
+                      "global::System.IComparable<global::DripSharp.Brine.Runtime."
                       "MemberLookupSuggestions.Candidate>")))
             (is (str/includes? java-compat
                                "values.OrderBy(value => value, Comparer<T>.Create(JavaCompare))"))
@@ -494,7 +494,7 @@
                  (str "JavaCompat.SortList(result, "
                       "global::DripSharp.Runtime.JavaCompat.ToComparison("
                       "global::DripSharp.Runtime.JavaCompat.NaturalOrder"
-                      "<global::Pkl.Core.Runtime.Identifier>()))")))
+                      "<global::DripSharp.Brine.Runtime.Identifier>()))")))
             (is (str/includes? security-managers "JavaCompat.RealPath"))
             (is (str/includes? security-managers "JavaCompat.NormalizePath"))
             (is (str/includes? security-managers "JavaCompat.PathStartsWith"))

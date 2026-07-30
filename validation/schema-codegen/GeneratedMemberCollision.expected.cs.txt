@@ -3,27 +3,27 @@
 
 namespace Pinned.Generated;
 
-[global::Pkl.Core.PklName("contract.generatedMemberCollision")]
-[global::Pkl.Core.PklQualifiedName("contract.generatedMemberCollision#ModuleClass")]
+[global::DripSharp.Brine.PklName("contract.generatedMemberCollision")]
+[global::DripSharp.Brine.PklQualifiedName("contract.generatedMemberCollision#ModuleClass")]
 public sealed partial class GeneratedMemberCollision
 {
-    [global::Pkl.Core.PklName("pklLoader")]
-    [global::Pkl.Core.PklRequired]
+    [global::DripSharp.Brine.PklName("pklLoader")]
+    [global::DripSharp.Brine.PklRequired]
     public string PklLoader { get; }
 
-    [global::Pkl.Core.PklName("generatedLoader")]
-    [global::Pkl.Core.PklRequired]
+    [global::DripSharp.Brine.PklName("generatedLoader")]
+    [global::DripSharp.Brine.PklRequired]
     public string GeneratedLoader { get; }
 
-    [global::Pkl.Core.PklName("fromPkl")]
-    [global::Pkl.Core.PklRequired]
+    [global::DripSharp.Brine.PklName("fromPkl")]
+    [global::DripSharp.Brine.PklRequired]
     public string FromPkl { get; }
 
-    [global::Pkl.Core.PklName("load")]
-    [global::Pkl.Core.PklRequired]
+    [global::DripSharp.Brine.PklName("load")]
+    [global::DripSharp.Brine.PklRequired]
     public string Load { get; }
 
-    public GeneratedMemberCollision([global::Pkl.Core.PklName("pklLoader")] string pklPklLoader, [global::Pkl.Core.PklName("generatedLoader")] string pklGeneratedLoader, [global::Pkl.Core.PklName("fromPkl")] string pklFromPkl, [global::Pkl.Core.PklName("load")] string pklLoad)
+    public GeneratedMemberCollision([global::DripSharp.Brine.PklName("pklLoader")] string pklPklLoader, [global::DripSharp.Brine.PklName("generatedLoader")] string pklGeneratedLoader, [global::DripSharp.Brine.PklName("fromPkl")] string pklFromPkl, [global::DripSharp.Brine.PklName("load")] string pklLoad)
     {
         PklLoader = pklPklLoader;
         GeneratedLoader = pklGeneratedLoader;

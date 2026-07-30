@@ -1,6 +1,6 @@
 {:schema-version 1
  :profile "pkl-core-value-model"
- :product-family :pkl
+ :product-family :brine
  :baseline-target :pkl
  :baseline-profile :core
  :project-root "research/pkl"

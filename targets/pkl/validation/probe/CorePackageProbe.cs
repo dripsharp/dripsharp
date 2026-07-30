@@ -6,9 +6,9 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using Pkl.Core;
+using DripSharp.Brine;
 
-/** Package-only .NET probe for independently normalized Pkl.Core observations. */
+/** Package-only .NET probe for independently normalized DripSharp.Brine observations. */
 static class CorePackageProbe
 {
     private static readonly Encoding JavaUtf8 = Encoding.GetEncoding(

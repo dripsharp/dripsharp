@@ -137,12 +137,12 @@
         oracle (oracle-file root)
         boundary-message "MessagePack is excluded from the DripSharp product target."
         boundary-payload
-        (str "Pkl.Core.PklBugException: An unexpected error has occurred.\n"
+        (str "DripSharp.Brine.PklBugException: An unexpected error has occurred.\n"
              "https://github.com/apple/pkl/issues/new\n\n"
              "–– Pkl Error ––\n" boundary-message "\n\n"
              "System.NotSupportedException: " boundary-message "\n"
-             "   at Pkl.Core.Runtime.ExcludedMessagePackPacker.ToByteArray()\n"
-             " ---> Pkl.Core.Runtime.VmBugException: " boundary-message "\n"
+             "   at DripSharp.Brine.Runtime.ExcludedMessagePackPacker.ToByteArray()\n"
+             " ---> DripSharp.Brine.Runtime.VmBugException: " boundary-message "\n"
              " ---> System.NotSupportedException: " boundary-message "\n"
              "   at Program.EvaluateCase(String caseId)")
         boundary-rows (assoc-in (good-rows) [1 :payload-base64]
@@ -186,11 +186,11 @@
 (deftest package-runner-source-is-confined-to-the-fresh-consumer
   (let [root (temp-directory)
         project (write! (.resolve root "Runner.csproj")
-                        "<Project><ItemGroup><PackageReference Include=\"Pkl.Core\" Version=\"1.0.0\" /></ItemGroup></Project>")
+                        "<Project><ItemGroup><PackageReference Include=\"DripSharp.Brine\" Version=\"1.0.0\" /></ItemGroup></Project>")
         source (write! (.resolve root "Program.cs")
                        "static class Program { const string TestClass = \"org.pkl.core.runtime.VmUtilsTest\"; }")
         runtime-path (write! (.resolve root "RuntimePath.cs")
-                             "const string source = \"runtime/Pkl.Core.RuntimeBridge.cs\";")
+                             "const string source = \"runtime/DripSharp.Brine.RuntimeBridge.cs\";")
         outside-root (temp-directory)
         outside (write! (.resolve outside-root "Program.cs") "static class Program { }")]
     (is (= [] (:forbidden (#'runner/verify-source-isolation! root project source))))

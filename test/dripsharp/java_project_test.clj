@@ -46,9 +46,9 @@
   (let [workspace (paths/workspace-root)
         contracts
         {"targets/pkl/destinations/parser.edn"
-         ["Pkl.Parser" pkl-non-affiliation-disclaimer]
+         ["DripSharp.Brine.Parser" pkl-non-affiliation-disclaimer]
          "targets/pkl/destinations/core.edn"
-         ["Pkl.Core" pkl-non-affiliation-disclaimer]
+         ["DripSharp.Brine" pkl-non-affiliation-disclaimer]
          "targets/pdfcube/destinations/io.edn"
          ["PdfCube.IO" pdfbox-non-affiliation-disclaimer]
          "targets/pdfcube/destinations/fontbox.edn"
@@ -59,7 +59,7 @@
          ["PdfCube.PdfBox" pdfbox-non-affiliation-disclaimer]
          "targets/pdfcube/destinations/preflight.edn"
          ["PdfCube.Preflight" pdfbox-non-affiliation-disclaimer]}]
-    (is (= #{"Pkl.Parser" "Pkl.Core"
+    (is (= #{"DripSharp.Brine.Parser" "DripSharp.Brine"
              "PdfCube.IO" "PdfCube.FontBox" "PdfCube.XmpBox"
              "PdfCube.PdfBox" "PdfCube.Preflight"}
            (set (map (comp first val) contracts))))
@@ -579,7 +579,7 @@
     (is (fn? (get-in pkl [:rules :resolved-mappings
                           :type-policy :decorate-node])))
     (is (= :pkl (:id pkl)))
-    (is (= :pkl (:product-family pkl)))
+    (is (= :brine (:product-family pkl)))
     (is (identical?
          (get-in shared [:rules :structural-declarations :emit-root-node])
          (get-in pkl [:rules :structural-declarations :emit-root-node])))
@@ -672,22 +672,22 @@
         (is (not-any? #(re-find #"#error DRIPSHARP_|NotImplementedException|TODO" %)
                       sources))
         (is (some #(str/includes? %
-                                  "GenericParserError(string msg, global::Pkl.Parser.Syntax.Generic.FullSpan span) : base(msg)")
+                                  "GenericParserError(string msg, global::DripSharp.Brine.Parser.Syntax.Generic.FullSpan span) : base(msg)")
                   sources))
         (is (some #(str/includes? % "global::DripSharp.Runtime.JavaCompat.CodePointAt")
                   sources))
         (is (some #(str/includes? % "global::DripSharp.Runtime.JavaCompat.SubList")
                   sources))
         (is (some #(str/includes? %
-                                  "JavaCompat.CastList<global::Pkl.Parser.Syntax.Identifier>(base.children)")
+                                  "JavaCompat.CastList<global::DripSharp.Brine.Parser.Syntax.Identifier>(base.children)")
                   sources))
         (is (some #(str/includes? %
-                                  "public abstract T Accept<T>(global::Pkl.Parser.ParserVisitor<T> visitor);")
+                                  "public abstract T Accept<T>(global::DripSharp.Brine.Parser.ParserVisitor<T> visitor);")
                   sources))
         (is (some #(str/includes? % "public virtual string Text(char[] source)")
                   sources))
         (is (some #(str/includes? %
-                                  "public override global::System.Collections.Generic.IList<global::Pkl.Parser.Syntax.StringPart> GetParts()")
+                                  "public override global::System.Collections.Generic.IList<global::DripSharp.Brine.Parser.Syntax.StringPart> GetParts()")
                   sources))
         (is (some #(str/includes? % "public override string ToString()")
                   sources))
@@ -731,9 +731,10 @@
              project
              "<DefineConstants>$(DefineConstants);DRIPSHARP_INTERNAL_JAVA_COMPAT</DefineConstants>"))
         (is (str/includes? project "<Authors>Vibeformer</Authors>"))
-        (is (str/includes? project "<Title>Pkl parser for .NET</Title>"))
+        (is (str/includes? project "<Title>Brine Parser — Pkl for .NET</Title>"))
         (is (str/includes? project pkl-non-affiliation-disclaimer))
-        (is (str/includes? project "<PackageTags>pkl parser dotnet dripsharp</PackageTags>"))
+        (is (str/includes? project
+                           "<PackageTags>brine pkl parser dotnet dripsharp</PackageTags>"))
         (is (str/includes? project
                            "<PackageProjectUrl>https://github.com/isaksky/pkl-net</PackageProjectUrl>"))
         (is (str/includes? project

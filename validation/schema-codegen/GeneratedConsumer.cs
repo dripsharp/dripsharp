@@ -9,7 +9,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Contract.Main;
-using Pkl.Core;
+using DripSharp.Brine;
 using Poly = Com.Example.PolymorphicModuleTest;
 using PolyLib = Com.Example.Lib;
 using OverrideFixture = Com.Example.OverriddenProperty;
@@ -357,9 +357,9 @@ static class GeneratedConsumer
                ",regex-string=" + binder.Bind<string>(regex) +
                ",duration=" + seconds.ToString(CultureInfo.InvariantCulture) + ":" +
                    nanos.ToString(CultureInfo.InvariantCulture) +
-               ",version=" + binder.Bind<Pkl.Core.Version>(semanticVersion) +
+               ",version=" + binder.Bind<DripSharp.Brine.Version>(semanticVersion) +
                ",version-string=" + binder.Bind<string>(semanticVersion) +
-               ",parsed-version=" + binder.Bind<Pkl.Core.Version>("2.3.4-beta+5") +
+               ",parsed-version=" + binder.Bind<DripSharp.Brine.Version>("2.3.4-beta+5") +
                ",duration-unit=" + binder.Bind<DurationUnit>("min").GetSymbol() +
                ",data-size-unit=" + binder.Bind<DataSizeUnit>("gb").GetSymbol() + "]";
     }
@@ -428,10 +428,10 @@ static class GeneratedConsumer
         ObserveBindingFailure(writer, "binding/duration-overflow", "Duration->TimeSpan",
             () => binder.Bind<TimeSpan>(Duration.OfSeconds(double.PositiveInfinity)));
         ObserveBindingFailure(writer, "binding/version-overflow", "VersionObject->Version",
-            () => binder.Bind<Pkl.Core.Version>(SemanticVersion(999_999_999_999_999, 0, 0,
+            () => binder.Bind<DripSharp.Brine.Version>(SemanticVersion(999_999_999_999_999, 0, 0,
                 PNull.GetInstance(), PNull.GetInstance())));
         ObserveBindingFailure(writer, "binding/invalid-version", "String->Version",
-            () => binder.Bind<Pkl.Core.Version>("not-a-version"));
+            () => binder.Bind<DripSharp.Brine.Version>("not-a-version"));
         ObserveBindingFailure(writer, "binding/invalid-unit", "String->DurationUnit",
             () => binder.Bind<DurationUnit>("fortnight"));
         var custom = new ConfigBinder(new ConfigBinderOptions().AddConversion<long, string>((_, _) =>
@@ -573,11 +573,11 @@ static class GeneratedConsumer
             "$", typeof(Regex), "invalid regular expression");
         ExpectBindFailure(() => binder.Bind<TimeSpan>(Duration.OfSeconds(double.PositiveInfinity)),
             "$", typeof(TimeSpan), "outside the TimeSpan range");
-        ExpectBindFailure(() => binder.Bind<Pkl.Core.Version>(
+        ExpectBindFailure(() => binder.Bind<DripSharp.Brine.Version>(
                 SemanticVersion(999_999_999_999_999, 0, 0, PNull.GetInstance(), PNull.GetInstance())),
             "$.major", typeof(int), "numeric overflow");
-        ExpectBindFailure(() => binder.Bind<Pkl.Core.Version>("not-a-version"),
-            "$", typeof(Pkl.Core.Version), "invalid semantic version");
+        ExpectBindFailure(() => binder.Bind<DripSharp.Brine.Version>("not-a-version"),
+            "$", typeof(DripSharp.Brine.Version), "invalid semantic version");
         ExpectBindFailure(() => binder.Bind<DurationUnit>("fortnight"),
             "$", typeof(DurationUnit), "not a Pkl duration unit");
         var failedCustom = new ConfigBinder(new ConfigBinderOptions().AddConversion<long, string>((_, _) =>

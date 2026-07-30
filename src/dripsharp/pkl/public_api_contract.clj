@@ -65,143 +65,143 @@
     "doc/targets/pkl/product-goal.md#User-Approved Product Exclusions:Build, benchmark, and test infrastructure as shipped product surface."})
 
 (def ^:private native-config-owners
-  #{"Pkl.Core.PklNameAttribute"
-    "Pkl.Core.PklQualifiedNameAttribute"
-    "Pkl.Core.PklIgnoreAttribute"
-    "Pkl.Core.PklRequiredAttribute"
-    "Pkl.Core.PklTypeAliasAttribute"
-    "Pkl.Core.PklBindException"
-    "Pkl.Core.IPklGeneratedLoader`1"
-    "Pkl.Core.ConfigBinderOptions"
-    "Pkl.Core.ConfigBinder"
-    "Pkl.Core.Config"
-    "Pkl.Core.NoSuchChildException"
-    "Pkl.Core.ConfigEvaluatorBuilder"
-    "Pkl.Core.ConfigEvaluator"})
+  #{"DripSharp.Brine.PklNameAttribute"
+    "DripSharp.Brine.PklQualifiedNameAttribute"
+    "DripSharp.Brine.PklIgnoreAttribute"
+    "DripSharp.Brine.PklRequiredAttribute"
+    "DripSharp.Brine.PklTypeAliasAttribute"
+    "DripSharp.Brine.PklBindException"
+    "DripSharp.Brine.IPklGeneratedLoader`1"
+    "DripSharp.Brine.ConfigBinderOptions"
+    "DripSharp.Brine.ConfigBinder"
+    "DripSharp.Brine.Config"
+    "DripSharp.Brine.NoSuchChildException"
+    "DripSharp.Brine.ConfigEvaluatorBuilder"
+    "DripSharp.Brine.ConfigEvaluator"})
 
 (def ^:private native-codegen-owners
-  #{"Pkl.Core.CSharpGenerationException"
-    "Pkl.Core.CSharpGeneratorOptions"
-    "Pkl.Core.CSharpGenerator"})
+  #{"DripSharp.Brine.CSharpGenerationException"
+    "DripSharp.Brine.CSharpGeneratorOptions"
+    "DripSharp.Brine.CSharpGenerator"})
 
 (def native-owner-decisions
-  {"Pkl.Core.IPklPair"
+  {"DripSharp.Brine.IPklPair"
    {:behavior-family "value.pair"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/Pair.java"
     :dotnet-adaptation "Pair cross-generic equality is internal implementation behavior behind the public Pair API; the helper interface is not product API or an exclusion."}
-   "Pkl.Core.PklAnsiBuilder"
+   "DripSharp.Brine.PklAnsiBuilder"
    {:behavior-family "diagnostics.rendering"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/AnsiStringBuilder.java"
     :dotnet-adaptation "ANSI state is internal diagnostic-rendering behavior used by the runtime; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklAnsiCode"
+   "DripSharp.Brine.PklAnsiCode"
    {:behavior-family "diagnostics.rendering"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/AnsiStringBuilder.java"
     :dotnet-adaptation "ANSI codes are internal diagnostic-rendering state; the helper enum is not product API or an exclusion."}
-   "Pkl.Core.PklClassInfos"
+   "DripSharp.Brine.PklClassInfos"
    {:behavior-family "schema.class-info"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/PClassInfo.java"
     :dotnet-adaptation "Exact class checks remain internal behavior behind the authoritative public PClassInfo API; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklCommandArgument"
+   "DripSharp.Brine.PklCommandArgument"
    {:behavior-family "cli.options"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
     :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
-   "Pkl.Core.PklCommandBooleanFlag"
+   "DripSharp.Brine.PklCommandBooleanFlag"
    {:behavior-family "cli.options"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
     :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
-   "Pkl.Core.PklCommandCountedFlag"
+   "DripSharp.Brine.PklCommandCountedFlag"
    {:behavior-family "cli.options"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
     :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
-   "Pkl.Core.PklCommandFlag"
+   "DripSharp.Brine.PklCommandFlag"
    {:behavior-family "cli.options"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
     :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
-   "Pkl.Core.PklCommandOption"
+   "DripSharp.Brine.PklCommandOption"
    {:behavior-family "cli.options"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
     :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
-   "Pkl.Core.PklCommandOptionException"
+   "DripSharp.Brine.PklCommandOptionException"
    {:behavior-family "cli.options"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
     :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
-   "Pkl.Core.PklCommandSpec"
+   "DripSharp.Brine.PklCommandSpec"
    {:behavior-family "cli.options"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliCommandRunner.kt"
     :dotnet-adaptation "The only non-test upstream consumer is the excluded CLI command runner; no native command facade is shipped."}
-   "Pkl.Core.PklExceptions"
+   "DripSharp.Brine.PklExceptions"
    {:behavior-family "diagnostics.exceptions"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/Exceptions.java"
     :dotnet-adaptation "Root-cause traversal remains internal diagnostic behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklGlob"
+   "DripSharp.Brine.PklGlob"
    {:behavior-family "loading.glob"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/GlobResolver.java"
     :dotnet-adaptation "Glob compilation remains internal behavior behind globbed import and read evaluation; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklHttp"
+   "DripSharp.Brine.PklHttp"
    {:behavior-family "loading.http"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/HttpUtils.java"
     :dotnet-adaptation "HTTP URI and response checks remain internal loading behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklImportGraphs"
+   "DripSharp.Brine.PklImportGraphs"
    {:behavior-family "analysis.import-graph"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/ImportGraphUtils.java"
     :dotnet-adaptation "Import-cycle discovery remains internal behavior behind Analyzer and ImportGraph; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklParserUtilities"
+   "DripSharp.Brine.PklParserUtilities"
    {:behavior-family "parser.imports-reads"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/ast/builder/ImportsAndReadsParser.java"
     :dotnet-adaptation "Import/read discovery remains internal parser and analysis behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklPath"
+   "DripSharp.Brine.PklPath"
    {:behavior-family "loading.path-resolution"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/PathResolvers.java"
     :dotnet-adaptation "Platform path resolution remains internal loading behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklStrings"
+   "DripSharp.Brine.PklStrings"
    {:behavior-family "runtime.strings"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/StringUtils.java"
     :dotnet-adaptation "Code-point offset conversion remains internal parser/runtime behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklTextEscaper"
+   "DripSharp.Brine.PklTextEscaper"
    {:behavior-family "rendering.text-escaping"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/ArrayCharEscaper.java"
     :dotnet-adaptation "Character escaping remains internal renderer behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklTextEscaper$Builder"
+   "DripSharp.Brine.PklTextEscaper$Builder"
    {:behavior-family "rendering.text-escaping"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/ArrayCharEscaper.java"
     :dotnet-adaptation "Character-escape construction remains internal renderer behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklUris"
+   "DripSharp.Brine.PklUris"
    {:behavior-family "loading.uri"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/util/IoUtils.java"
     :dotnet-adaptation "URI normalization and resolution remain internal loading behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklValuePathPart"
+   "DripSharp.Brine.PklValuePathPart"
    {:behavior-family "binding.value-path"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/stdlib/PathSpecParser.java"
     :dotnet-adaptation "Value-path matching remains internal conversion behavior; the helper record is not product API or an exclusion."}
-   "Pkl.Core.PklValuePathPartKind"
+   "DripSharp.Brine.PklValuePathPartKind"
    {:behavior-family "binding.value-path"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/stdlib/PathSpecParser.java"
     :dotnet-adaptation "Value-path matching remains internal conversion behavior; the helper enum is not product API or an exclusion."}
-   "Pkl.Core.PklValuePaths"
+   "DripSharp.Brine.PklValuePaths"
    {:behavior-family "binding.value-path"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/stdlib/PathConverterSupport.java"
     :dotnet-adaptation "Value-path parsing and matching remain internal conversion behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklValueRenderer"
+   "DripSharp.Brine.PklValueRenderer"
    {:behavior-family "runtime.value-rendering"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/runtime/VmValueRenderer.java"
     :dotnet-adaptation "VM value rendering remains internal runtime and diagnostic behavior; the helper is not product API or an exclusion."}
-   "Pkl.Core.PklTestReporter"
+   "DripSharp.Brine.PklTestReporter"
    {:behavior-family "cli.test-reporting"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliTestRunner.kt"
     :dotnet-adaptation "Upstream report formatting is consumed by excluded CLI and Gradle products; no native reporter facade is shipped."}
-   "Pkl.Core.PklTestReporters"
+   "DripSharp.Brine.PklTestReporters"
    {:behavior-family "cli.test-reporting"
     :upstream-provenance "research/pkl/pkl-cli/src/main/kotlin/org/pkl/cli/CliTestRunner.kt"
     :dotnet-adaptation "Upstream report formatting is consumed by excluded CLI and Gradle products; no native reporter facade is shipped."}
-   "Pkl.Core.Module.AssemblyModuleKeyFactory"
+   "DripSharp.Brine.Module.AssemblyModuleKeyFactory"
    {:behavior-family "loading.assembly"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/module/ModuleKeyFactories.java"
     :dotnet-adaptation "The concrete .NET assembly factory stays internal behind ModuleKeyFactories.CreateAssembly and its independently consumed ModuleKeyFactory contract."}
-   "Pkl.Core.Resource.EmbeddedResourceReader"
+   "DripSharp.Brine.Resource.EmbeddedResourceReader"
    {:behavior-family "loading.embedded-resource"
     :upstream-provenance "research/pkl/pkl-core/src/main/java/org/pkl/core/resource/ResourceReaders.java"
     :dotnet-adaptation "The concrete embedded reader stays internal behind ResourceReaders.CreateEmbeddedResources and its independently consumed ResourceReader contract."}
-   "Pkl.Core.StackFrameTransformerExtensions"
+   "DripSharp.Brine.StackFrameTransformerExtensions"
    {:classification "product-api-native"
     :area "core"
     :behavior-family "diagnostics.stack-frames"
@@ -462,7 +462,12 @@
   [row]
   (let [segments (str/split (:owner row) #"[.]")]
     (when (and (<= 3 (count segments)) (= ["org" "pkl"] (subvec segments 0 2)))
-      (str/join "." (concat ["Pkl"] (map pascal (subvec segments 2)))))))
+      (let [[root suffix]
+            (case (nth segments 2)
+              "core" [["DripSharp" "Brine"] (subvec segments 3)]
+              "parser" [["DripSharp" "Brine" "Parser"] (subvec segments 3)]
+              [["DripSharp" "Brine"] (subvec segments 2)])]
+        (str/join "." (concat root (map pascal suffix)))))))
 
 (defn- target-shape
   [row policy]
@@ -473,9 +478,9 @@
           (and (= "org.pkl.core.StackFrameTransformer" (:owner row))
                (= "method" kind)
                (= "andThen" name))]
-      {:dotnet-assembly (if (= "pkl-parser" (:source-module row)) "Pkl.Parser" "Pkl.Core")
+      {:dotnet-assembly (if (= "pkl-parser" (:source-module row)) "DripSharp.Brine.Parser" "DripSharp.Brine")
        :dotnet-owner (if stack-frame-composition?
-                       "Pkl.Core.StackFrameTransformerExtensions"
+                       "DripSharp.Brine.StackFrameTransformerExtensions"
                        (dotnet-owner row))
        :dotnet-kind (case kind
                       "property" "property"
@@ -883,14 +888,14 @@
              (native-owner-decisions (:owner row)))
 
       (target-keys (package-broad-key row))
-      {:classification "product-api-current" :area (if (= "Pkl.Parser" (:assembly row))
+      {:classification "product-api-current" :area (if (= "DripSharp.Brine.Parser" (:assembly row))
                                                      "parser" "core")
        :behavior-family "translated.public-api"
        :upstream-provenance "joined-by-executable-target-shape"
        :dotnet-adaptation "Exact package metadata is pinned by PackageSurface.tsv."}
 
       (product-owners owner)
-      {:classification "product-api-native" :area (if (= "Pkl.Parser" (:assembly row))
+      {:classification "product-api-native" :area (if (= "DripSharp.Brine.Parser" (:assembly row))
                                                     "parser" "core")
        :behavior-family "translated.native-public-api"
        :upstream-provenance "derived-from-approved-product-type"
@@ -1545,11 +1550,11 @@
 (defn strategy
   "Returns the Pkl-owned public selection and compiled-contract lifecycle.
   Product-neutral orchestration loads this strategy only for destinations that
-  explicitly select the Pkl product family."
+  explicitly select the Brine product family."
   []
   {:schema-version 1
    :id :pkl-public-api
-   :product-family :pkl
+   :product-family :brine
    :read! generation-surface!
    :validate-selected! validate-selected-surface!
    :validate-generated! validate-generated-surface!

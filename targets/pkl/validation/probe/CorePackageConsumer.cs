@@ -7,14 +7,14 @@ using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Pkl.Core;
-using Pkl.Core.EvaluatorSettings;
-using Pkl.Core.Module;
-using Pkl.Core.Packages;
-using Pkl.Core.Project;
-using Pkl.Core.Resource;
-using Pkl.Core.Settings;
-using PklHttpClient = Pkl.Core.Http.HttpClient;
+using DripSharp.Brine;
+using DripSharp.Brine.EvaluatorSettings;
+using DripSharp.Brine.Module;
+using DripSharp.Brine.Packages;
+using DripSharp.Brine.Project;
+using DripSharp.Brine.Resource;
+using DripSharp.Brine.Settings;
+using PklHttpClient = DripSharp.Brine.Http.HttpClient;
 
 static class Check
 {
@@ -211,7 +211,7 @@ static class PackageConsumer
         Check.That(evaluateOutputValue.Target is not null, "output-value evaluator entry target");
         Check.That(evaluateExpression.Target is not null, "expression evaluator entry target");
 
-        Console.WriteLine("Independent Pkl.Core package consumer passed.");
+        Console.WriteLine("Independent Brine Pkl package consumer passed.");
     }
 
     static void VerifyEvaluatorContextIsolation()
@@ -414,7 +414,7 @@ static class PackageConsumer
     sealed class TextModuleKey(Uri uri) : ModuleKey
     {
         public Uri GetUri() => uri;
-        public ResolvedModuleKey Resolve(Pkl.Core.SecurityManager securityManager) =>
+        public ResolvedModuleKey Resolve(DripSharp.Brine.SecurityManager securityManager) =>
             new TextResolvedModuleKey(this);
         public bool HasHierarchicalUris() => false;
         public bool IsGlobbable() => false;

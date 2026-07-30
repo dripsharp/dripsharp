@@ -79,7 +79,7 @@
     (thunk)))
 
 (defn pkl-test-surface-strategy []
-  {:schema-version 1 :id :pkl-test-surface :product-family :pkl
+  {:schema-version 1 :id :pkl-test-surface :product-family :brine
    :read! (fn [_ _] nil)
    :validate-selected! (fn [_ surface _] surface)
    :validate-generated! (fn [_ _] nil)
@@ -419,7 +419,7 @@
                                          'dripsharp.harness-test/pkl-test-surface-strategy}
                                         :fixture true)
                                        (assoc-in [:package :id]
-                                                 "Pkl.Core.Fixture")))
+                                                 "DripSharp.Brine.Fixture")))
             :build-resolved-closure-fn
             (fn [_ _ seeds]
               (swap! captured assoc :seeds seeds)

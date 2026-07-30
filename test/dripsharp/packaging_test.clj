@@ -13,7 +13,7 @@
            [java.util.zip ZipEntry ZipOutputStream]))
 
 (def package
-  {:id "Pkl.Parser"
+  {:id "DripSharp.Brine.Parser"
    :version "0.0.0-development"
    :title "Pkl parser for .NET"
    :description "Disposable parser package."
@@ -26,7 +26,7 @@
    :repository-commit "0123456789abcdef0123456789abcdef01234567"})
 
 (def core-package
-  {:id "Pkl.Core"
+  {:id "DripSharp.Brine"
    :version "0.0.0-development"
    :title "Pkl for .NET"
    :description "Disposable core package."
@@ -75,14 +75,14 @@
        "<repository type=\"" (:repository-type core-package) "\" url=\""
        (:repository-url core-package) "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />"
        "<dependencies><group targetFramework=\"net8.0\">"
-       "<dependency id=\"Pkl.Parser\" version=\"0.0.0-development\" exclude=\"Build,Analyzers\" />"
+       "<dependency id=\"DripSharp.Brine.Parser\" version=\"0.0.0-development\" exclude=\"Build,Analyzers\" />"
        "</group></dependencies>"
        "</metadata></package>"))
 
 (defn- archive! [entries]
   (let [directory (Files/createTempDirectory "dripsharp-package-test"
                                              (make-array FileAttribute 0))
-        archive (.resolve directory "Pkl.Parser.0.0.0-development.nupkg")]
+        archive (.resolve directory "DripSharp.Brine.Parser.0.0.0-development.nupkg")]
     (with-open [output (ZipOutputStream. (Files/newOutputStream archive
                                                                 (make-array OpenOption 0)))]
       (doseq [[name contents] entries]
@@ -122,7 +122,7 @@
 
 (defn- package-archive! [entries]
   (let [nuspec-name (first (filter #(str/ends-with? % ".nuspec") (keys entries)))
-        metadata (if (= "Pkl.Core.nuspec" nuspec-name) core-package package)]
+        metadata (if (= "DripSharp.Brine.nuspec" nuspec-name) core-package package)]
     (archive! (merge {"[Content_Types].xml" (content-types)
                       "_rels/.rels" (relationships nuspec-name)
                       "package/services/metadata/core-properties/core-properties.psmdcp"
@@ -146,11 +146,11 @@
 
 (defn- reproducibility-fixture [^Path root divergent?]
   (let [verification-count (atom 0)
-        project-root (.resolve root "generated/pkl-parser")
+        project-root (.resolve root "generated/brine/src/DripSharp.Brine.Parser")
         source-root (.resolve project-root "src")
-        project-file (.resolve project-root "Pkl.Parser.csproj")
-        generated-source (.resolve project-root "src/Pkl/Parser/Parser.cs")
-        assembly (.resolve project-root "bin/Release/net8.0/Pkl.Parser.dll")
+        project-file (.resolve project-root "DripSharp.Brine.Parser.csproj")
+        generated-source (.resolve project-root "src/DripSharp/Brine/Parser/Parser.cs")
+        assembly (.resolve project-root "bin/Release/net8.0/DripSharp.Brine.Parser.dll")
         configuration
         {:mechanical-source
          {:repository "https://github.com/apple/pkl.git"
@@ -167,7 +167,7 @@
          :translator "DripSharp"
          :translator-version "0.1.0"
          :verified-files 1}
-        destination {:project {:assembly-name "Pkl.Parser"
+        destination {:project {:assembly-name "DripSharp.Brine.Parser"
                                :target-framework "net8.0"}
                      :package package}
         verify-fn
@@ -182,9 +182,9 @@
                   "</Project>\n"))
             (write-file! generated-source
                          (str mechanical-header
-                              "#nullable enable\nnamespace Pkl.Parser;\n"))
+                              "#nullable enable\nnamespace DripSharp.Brine.Parser;\n"))
             (let [artifacts
-                  [{:file "src/Pkl/Parser/Parser.cs"
+                  [{:file "src/DripSharp/Brine/Parser/Parser.cs"
                     :upstream-source "org/pkl/parser/Parser.java"
                     :mechanical-source-header mechanical-header}]
                   ledger
@@ -231,10 +231,10 @@
                   output (Paths/get (nth command (inc output-index))
                                     (make-array String 0))
                   packed (package-archive!
-                          {"Pkl.Parser.nuspec" (nuspec)
-                           "lib/net8.0/Pkl.Parser.dll" (Files/readString assembly)})
+                          {"DripSharp.Brine.Parser.nuspec" (nuspec)
+                           "lib/net8.0/DripSharp.Brine.Parser.dll" (Files/readString assembly)})
                   artifact (.resolve output
-                                     "Pkl.Parser.0.0.0-development.nupkg")]
+                                     "DripSharp.Brine.Parser.0.0.0-development.nupkg")]
               (Files/createDirectories output (make-array FileAttribute 0))
               (Files/move packed artifact
                           (into-array StandardCopyOption
@@ -268,7 +268,7 @@
             :translator "DripSharp"
             :translator-version "0.1.0"
             :verified-files 1}
-           (get-in proof [:summary :mechanical-source-headers "Pkl.Parser"])
+           (get-in proof [:summary :mechanical-source-headers "DripSharp.Brine.Parser"])
            (get-in proof [:packages 0 :mechanical-source-headers])))
     (is (= {:files 1
             :mechanical-lines 9
@@ -278,10 +278,10 @@
             :authored-lines 0
             :total-lines 9
             :authored-fraction 0.0}
-           (get-in proof [:summary :authorship "Pkl.Parser"])
+           (get-in proof [:summary :authorship "DripSharp.Brine.Parser"])
            (get-in proof [:packages 0 :authorship :totals])
            (get-in proof [:inspection :authorship :totals])))
-    (is (= ["src/Pkl/Parser/Parser.cs"]
+    (is (= ["src/DripSharp/Brine/Parser/Parser.cs"]
            (get-in proof [:inspection :authorship :source-paths])))
     (is (= {:include "src/**/*.cs"
             :source-inventory-sha256
@@ -319,8 +319,8 @@
         emission (get-in (verify-fn {}) [:generation :emission])
         unlisted (write-file!
                   (paths/resolve-path (:source-root emission)
-                                      "Pkl/Parser/Unlisted.cs")
-                  "namespace Pkl.Parser;\n")
+                                      "DripSharp/Brine/Parser/Unlisted.cs")
+                  "namespace DripSharp.Brine.Parser;\n")
         _ unlisted
         inventory-error
         (try
@@ -359,7 +359,7 @@
           (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :invalid-authorship-ledger
            (:kind (ex-data inventory-error))))
-    (is (= ["src/Pkl/Parser/Unlisted.cs"]
+    (is (= ["src/DripSharp/Brine/Parser/Unlisted.cs"]
            (:missing (ex-data inventory-error))))
     (is (= :package-consumption-failed
            (:kind (ex-data assembly-input-error))))
@@ -564,22 +564,22 @@
       (is (= ["NOTICE.txt"] (:missing (ex-data error)))))))
 
 (deftest package-inspection-requires-exact-release-layout
-  (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
-                                    "lib/net8.0/Pkl.Parser.dll" "assembly"})
-        inspection (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")]
-    (is (= "lib/net8.0/Pkl.Parser.dll" (:assembly-entry inspection)))
+  (let [artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" (nuspec)
+                                    "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
+        inspection (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")]
+    (is (= "lib/net8.0/DripSharp.Brine.Parser.dll" (:assembly-entry inspection)))
     (is (= 5 (count (:entries inspection)))))
   (doseq [[label entries]
           [["missing OPC envelope"
-            {"Pkl.Parser.nuspec" (nuspec)
-             "lib/net8.0/Pkl.Parser.dll" "assembly"}]
+            {"DripSharp.Brine.Parser.nuspec" (nuspec)
+             "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"}]
            ["unexpected package payload"
-            {"Pkl.Parser.nuspec" (nuspec)
-             "lib/net8.0/Pkl.Parser.dll" "assembly"
+            {"DripSharp.Brine.Parser.nuspec" (nuspec)
+             "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"
              "tools/install.ps1" "unexpected"}]]]
     (let [artifact ((if (= label "missing OPC envelope") archive! package-archive!) entries)
           error (try
-                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                   nil
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (testing label
@@ -593,10 +593,10 @@
            ["namespace-shadowed metadata"
             (str/replace (nuspec) "<metadata>"
                          "<metadata xmlns=\"https://example.test/shadow\">")]]]
-    (let [artifact (package-archive! {"Pkl.Parser.nuspec" wrong-namespace
-                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
+    (let [artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" wrong-namespace
+                                      "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
           error (try
-                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                   nil
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (testing label
@@ -611,33 +611,33 @@
             #(str/replace % "application/octet" "application/x-shadow")]
            ["nuspec relationship"
             "_rels/.rels"
-            #(str/replace % "/Pkl.Parser.nuspec" "/Shadow.nuspec")]
+            #(str/replace % "/DripSharp.Brine.Parser.nuspec" "/Shadow.nuspec")]
            ["mirrored core metadata"
             "package/services/metadata/core-properties/core-properties.psmdcp"
             #(str/replace % (:description package) "misleading description")]]]
-    (let [base {"Pkl.Parser.nuspec" (nuspec)
-                "lib/net8.0/Pkl.Parser.dll" "assembly"}
+    (let [base {"DripSharp.Brine.Parser.nuspec" (nuspec)
+                "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"}
           artifact (package-archive!
                     (assoc base entry
                            (alter (get (merge {"[Content_Types].xml" (content-types)
-                                               "_rels/.rels" (relationships "Pkl.Parser.nuspec")
+                                               "_rels/.rels" (relationships "DripSharp.Brine.Parser.nuspec")
                                                "package/services/metadata/core-properties/core-properties.psmdcp"
                                                (core-properties package)}
                                               base)
                                        entry))))
           error (try
-                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                   nil
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (testing label
         (is (= :package-consumption-failed (:kind (ex-data error))))))))
 
 (deftest package-inspection-rejects-generated-source
-  (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
-                                    "lib/net8.0/Pkl.Parser.dll" "assembly"
+  (let [artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" (nuspec)
+                                    "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"
                                     "src/Parser.cs" "generated source"})
         error (try
-                (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (testing "translator and generated-source implementation details cannot ship"
@@ -646,13 +646,13 @@
 
 (deftest package-inspection-rejects-ambiguous-or-unsafe-archive-paths
   (doseq [[shadow-path expected-key]
-          [["pkl.parser.nuspec" :case-collisions]
-           ["metadata/../Pkl.Parser.nuspec" :unsafe]]]
-    (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
+          [["dripsharp.brine.parser.nuspec" :case-collisions]
+           ["metadata/../DripSharp.Brine.Parser.nuspec" :unsafe]]]
+    (let [artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" (nuspec)
                                       shadow-path "shadow metadata"
-                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
+                                      "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
           error (try
-                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                   nil
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (testing (str "archive entry " shadow-path " cannot shadow package metadata")
@@ -660,14 +660,14 @@
         (is (seq (expected-key (ex-data error))))))))
 
 (deftest package-inspection-pins-dependency-closure-without-bundling-it
-  (let [artifact (package-archive! {"Pkl.Core.nuspec" (core-nuspec)
-                                    "lib/net8.0/Pkl.Core.dll" "assembly"})
-        renamed (.resolve (.getParent artifact) "Pkl.Core.0.0.0-development.nupkg")
+  (let [artifact (package-archive! {"DripSharp.Brine.nuspec" (core-nuspec)
+                                    "lib/net8.0/DripSharp.Brine.dll" "assembly"})
+        renamed (.resolve (.getParent artifact) "DripSharp.Brine.0.0.0-development.nupkg")
         _ (Files/move artifact renamed (make-array java.nio.file.CopyOption 0))
         inspection (packaging/inspect-package!
-                    renamed core-package "net8.0" "Pkl.Core"
-                    [{:id "Pkl.Parser" :version "0.0.0-development"}])]
-    (is (= [{:id "Pkl.Parser" :version "0.0.0-development"}]
+                    renamed core-package "net8.0" "DripSharp.Brine"
+                    [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}])]
+    (is (= [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}]
            (:dependencies inspection)))))
 
 (deftest package-inspection-pins-file-license-and-notice-payloads
@@ -696,12 +696,12 @@
                      "<Default Extension=\"txt\" ContentType=\"application/octet\" /></Types>")
         artifact
         (archive!
-         {"Pkl.Parser.nuspec" file-nuspec
-          "lib/net8.0/Pkl.Parser.dll" "assembly"
+         {"DripSharp.Brine.Parser.nuspec" file-nuspec
+          "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"
           "LICENSE.txt" license
           "NOTICE.txt" notice
           "[Content_Types].xml" content-types-with-text
-          "_rels/.rels" (relationships "Pkl.Parser.nuspec")
+          "_rels/.rels" (relationships "DripSharp.Brine.Parser.nuspec")
           "package/services/metadata/core-properties/core-properties.psmdcp"
           (core-properties file-package)})
         files [{:kind :license :path "LICENSE.txt"
@@ -710,12 +710,12 @@
                 :sha256 (sha256-text notice)}]
         inspection
         (packaging/inspect-package!
-         artifact file-package "net8.0" "Pkl.Parser" [] files)]
+         artifact file-package "net8.0" "DripSharp.Brine.Parser" [] files)]
     (is (= files (:package-files inspection)))
     (let [error
           (try
             (packaging/inspect-package!
-             artifact file-package "net8.0" "Pkl.Parser" []
+             artifact file-package "net8.0" "DripSharp.Brine.Parser" []
              (assoc-in files [1 :sha256] (apply str (repeat 64 "0"))))
             nil
             (catch clojure.lang.ExceptionInfo caught caught))]
@@ -752,7 +752,7 @@
              "\" url=\"" (:repository-url package)
              "\" commit=\"" (:repository-commit package) "\" />"
              "<dependencies><group targetFramework=\"net8.0\">"
-             "<dependency id=\"Pkl.Parser\" version=\"0.0.0-development\" "
+             "<dependency id=\"DripSharp.Brine.Parser\" version=\"0.0.0-development\" "
              "exclude=\"Build,Analyzers\" />"
              "</group></dependencies>"
              "</metadata></package>")
@@ -762,11 +762,11 @@
          "</Types>"
          "<Default Extension=\"txt\" ContentType=\"application/octet\" /></Types>")
         base-entries
-        {"Pkl.Core.nuspec" nuspec
-         "lib/net8.0/Pkl.Core.dll" "assembly"
+        {"DripSharp.Brine.nuspec" nuspec
+         "lib/net8.0/DripSharp.Brine.dll" "assembly"
          "LICENSE.txt" license
          "[Content_Types].xml" content-types-with-text
-         "_rels/.rels" (relationships "Pkl.Core.nuspec")
+         "_rels/.rels" (relationships "DripSharp.Brine.nuspec")
          "package/services/metadata/core-properties/core-properties.psmdcp"
          (core-properties package)}
         artifact (archive! (assoc base-entries "NOTICE.txt" notice))
@@ -774,15 +774,15 @@
         (mapv (fn [{:keys [kind package-path sha256]}]
                 {:kind kind :path package-path :sha256 sha256})
               (:legal-files destination))
-        dependencies [{:id "Pkl.Parser" :version "0.0.0-development"}]
+        dependencies [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}]
         inspection
         (packaging/inspect-package!
-         artifact package "net8.0" "Pkl.Core" dependencies expected-files)
+         artifact package "net8.0" "DripSharp.Brine" dependencies expected-files)
         missing-notice (archive! base-entries)
         error
         (try
           (packaging/inspect-package!
-           missing-notice package "net8.0" "Pkl.Core"
+           missing-notice package "net8.0" "DripSharp.Brine"
            dependencies expected-files)
           nil
           (catch clojure.lang.ExceptionInfo caught caught))]
@@ -794,34 +794,34 @@
     (is (some #{"NOTICE.txt"} (:expected (ex-data error))))))
 
 (deftest package-inspection-rejects-a-bundled-project-dependency-assembly
-  (let [artifact (package-archive! {"Pkl.Core.nuspec" (core-nuspec)
-                                    "lib/net8.0/Pkl.Core.dll" "assembly"
-                                    "lib/net8.0/Pkl.Parser.dll" "leaked dependency"})
-        renamed (.resolve (.getParent artifact) "Pkl.Core.0.0.0-development.nupkg")
+  (let [artifact (package-archive! {"DripSharp.Brine.nuspec" (core-nuspec)
+                                    "lib/net8.0/DripSharp.Brine.dll" "assembly"
+                                    "lib/net8.0/DripSharp.Brine.Parser.dll" "leaked dependency"})
+        renamed (.resolve (.getParent artifact) "DripSharp.Brine.0.0.0-development.nupkg")
         _ (Files/move artifact renamed (make-array java.nio.file.CopyOption 0))
         error (try
                 (packaging/inspect-package!
-                 renamed core-package "net8.0" "Pkl.Core"
-                 [{:id "Pkl.Parser" :version "0.0.0-development"}])
+                 renamed core-package "net8.0" "DripSharp.Brine"
+                 [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}])
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :package-consumption-failed (:kind (ex-data error))))
-    (is (= ["lib/net8.0/Pkl.Core.dll" "lib/net8.0/Pkl.Parser.dll"]
+    (is (= ["lib/net8.0/DripSharp.Brine.Parser.dll" "lib/net8.0/DripSharp.Brine.dll"]
            (:assemblies (ex-data error))))))
 
 (deftest package-inspection-rejects-assemblies-outside-the-configured-library-path
-  (let [artifact (package-archive! {"Pkl.Parser.nuspec" (nuspec)
-                                    "lib/net8.0/Pkl.Parser.dll" "assembly"
-                                    "lib/net9.0/Pkl.Parser.dll" "other target"
-                                    "ref/net8.0/Pkl.Parser.dll" "reference assembly"})
+  (let [artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" (nuspec)
+                                    "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"
+                                    "lib/net9.0/DripSharp.Brine.Parser.dll" "other target"
+                                    "ref/net8.0/DripSharp.Brine.Parser.dll" "reference assembly"})
         error (try
-                (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :package-consumption-failed (:kind (ex-data error))))
-    (is (= ["lib/net8.0/Pkl.Parser.dll"
-            "lib/net9.0/Pkl.Parser.dll"
-            "ref/net8.0/Pkl.Parser.dll"]
+    (is (= ["lib/net8.0/DripSharp.Brine.Parser.dll"
+            "lib/net9.0/DripSharp.Brine.Parser.dll"
+            "ref/net8.0/DripSharp.Brine.Parser.dll"]
            (:assemblies (ex-data error))))))
 
 (deftest package-inspection-requires-one-exact-repository-element
@@ -835,10 +835,10 @@
                                                 "\" commit=\"0123456789abcdef0123456789abcdef01234567\" />")
                                            (str "<repository type=\"svn\" url=\"https://wrong.test/repo\" "
                                                 "commit=\"0123456789abcdef0123456789abcdef01234567\" />")))
-        artifact (package-archive! {"Pkl.Parser.nuspec" misleading-nuspec
-                                    "lib/net8.0/Pkl.Parser.dll" "assembly"})
+        artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" misleading-nuspec
+                                    "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
         error (try
-                (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :package-consumption-failed (:kind (ex-data error))))
@@ -854,10 +854,10 @@
                            (str "<title>" (:title package) "</title>")
                            (str "<title>" (:title package) "</title>"
                                 "<title>misleading duplicate</title>"))
-          artifact (package-archive! {"Pkl.Parser.nuspec" duplicate-title
-                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" duplicate-title
+                                      "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
           error (try
-                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                   nil
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (is (= :package-consumption-failed (:kind (ex-data error))))
@@ -867,10 +867,10 @@
     (let [wrong-framework (str/replace (nuspec)
                                        "targetFramework=\"net8.0\""
                                        "targetFramework=\"net9.0\"")
-          artifact (package-archive! {"Pkl.Parser.nuspec" wrong-framework
-                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" wrong-framework
+                                      "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
           error (try
-                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                   nil
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (is (= :package-consumption-failed (:kind (ex-data error))))
@@ -881,10 +881,10 @@
                              (nuspec)
                              "https://licenses.nuget.org/Apache-2.0"
                              "https://example.test/Apache-2.0")
-          artifact (package-archive! {"Pkl.Parser.nuspec" wrong-license-url
-                                      "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          artifact (package-archive! {"DripSharp.Brine.Parser.nuspec" wrong-license-url
+                                      "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
           error (try
-                  (packaging/inspect-package! artifact package "net8.0" "Pkl.Parser")
+                  (packaging/inspect-package! artifact package "net8.0" "DripSharp.Brine.Parser")
                   nil
                   (catch clojure.lang.ExceptionInfo caught caught))]
       (is (= :package-consumption-failed (:kind (ex-data error))))
@@ -899,16 +899,16 @@
                        (str "<authors>" (:authors package) "</authors>"
                             "<copyright>" copyright "</copyright>"))
           artifact
-          (package-archive! {"Pkl.Parser.nuspec" with-copyright
-                             "lib/net8.0/Pkl.Parser.dll" "assembly"})
+          (package-archive! {"DripSharp.Brine.Parser.nuspec" with-copyright
+                             "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
           inspection
           (packaging/inspect-package!
-           artifact copyrighted "net8.0" "Pkl.Parser")
+           artifact copyrighted "net8.0" "DripSharp.Brine.Parser")
           error
           (try
             (packaging/inspect-package!
              artifact (assoc copyrighted :copyright "wrong")
-             "net8.0" "Pkl.Parser")
+             "net8.0" "DripSharp.Brine.Parser")
             nil
             (catch clojure.lang.ExceptionInfo caught caught))]
       (is (= [] (:dependencies inspection)))
@@ -924,12 +924,12 @@
     (testing "the nuspec cannot omit the configured disclaimer"
       (let [artifact
             (package-archive!
-             {"Pkl.Parser.nuspec" (nuspec)
-              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+             {"DripSharp.Brine.Parser.nuspec" (nuspec)
+              "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
             error
             (try
               (packaging/inspect-package!
-               artifact expected-package "net8.0" "Pkl.Parser")
+               artifact expected-package "net8.0" "DripSharp.Brine.Parser")
               nil
               (catch clojure.lang.ExceptionInfo caught caught))]
         (is (= :package-consumption-failed (:kind (ex-data error))))
@@ -944,12 +944,12 @@
              (str "<description>" description "</description>"))
             artifact
             (package-archive!
-             {"Pkl.Parser.nuspec" with-disclaimer
-              "lib/net8.0/Pkl.Parser.dll" "assembly"})
+             {"DripSharp.Brine.Parser.nuspec" with-disclaimer
+              "lib/net8.0/DripSharp.Brine.Parser.dll" "assembly"})
             error
             (try
               (packaging/inspect-package!
-               artifact expected-package "net8.0" "Pkl.Parser")
+               artifact expected-package "net8.0" "DripSharp.Brine.Parser")
               nil
               (catch clojure.lang.ExceptionInfo caught caught))]
         (is (= :package-consumption-failed (:kind (ex-data error))))
@@ -983,13 +983,13 @@
                          "exclude=\"Build,Analyzers\""
                          "exclude=\"Build\" include=\"All\"")]]]
     (let [core? (= label "dependency asset override")
-          artifact (package-archive! {(if core? "Pkl.Core.nuspec" "Pkl.Parser.nuspec") altered
+          artifact (package-archive! {(if core? "DripSharp.Brine.nuspec" "DripSharp.Brine.Parser.nuspec") altered
                                       (if core?
-                                        "lib/net8.0/Pkl.Core.dll"
-                                        "lib/net8.0/Pkl.Parser.dll") "assembly"})
+                                        "lib/net8.0/DripSharp.Brine.dll"
+                                        "lib/net8.0/DripSharp.Brine.Parser.dll") "assembly"})
           artifact (if core?
                      (let [renamed (.resolve (.getParent artifact)
-                                             "Pkl.Core.0.0.0-development.nupkg")]
+                                             "DripSharp.Brine.0.0.0-development.nupkg")]
                        (Files/move artifact renamed
                                    (make-array java.nio.file.CopyOption 0))
                        renamed)
@@ -997,9 +997,9 @@
           error (try
                   (packaging/inspect-package!
                    artifact (if core? core-package package) "net8.0"
-                   (if core? "Pkl.Core" "Pkl.Parser")
+                   (if core? "DripSharp.Brine" "DripSharp.Brine.Parser")
                    (if core?
-                     [{:id "Pkl.Parser" :version "0.0.0-development"}]
+                     [{:id "DripSharp.Brine.Parser" :version "0.0.0-development"}]
                      []))
                   nil
                   (catch clojure.lang.ExceptionInfo caught caught))]
@@ -1012,14 +1012,14 @@
         project (write-file!
                  (.resolve root "Consumer.csproj")
                  (str "<Project><ItemGroup>"
-                      "<PackageReference Include=\"Pkl.Core\" Version=\"0.0.0-development\" />"
+                      "<PackageReference Include=\"DripSharp.Brine\" Version=\"0.0.0-development\" />"
                       "</ItemGroup></Project>"))
         assets (write-file!
                 (.resolve root "obj/project.assets.json")
-                "{\"libraries\":{\"Pkl.Core/0.0.0-development\":{\"type\":\"package\"},\"Pkl.Parser/0.0.0-development\":{\"type\":\"package\"}}}")
+                "{\"libraries\":{\"DripSharp.Brine/0.0.0-development\":{\"type\":\"package\"},\"DripSharp.Brine.Parser/0.0.0-development\":{\"type\":\"package\"}}}")
         packages (.resolve root "packages")
         package-files (into {}
-                            (for [id ["Pkl.Parser" "Pkl.Core"]
+                            (for [id ["DripSharp.Brine.Parser" "DripSharp.Brine"]
                                   :let [version "0.0.0-development"
                                         lower (.toLowerCase ^String id)
                                         file (write-file!
@@ -1031,10 +1031,10 @@
         identities (mapv (fn [id]
                            {:id id :version "0.0.0-development"
                             :sha256 (sha256 (get package-files id))})
-                         ["Pkl.Parser" "Pkl.Core"])
+                         ["DripSharp.Brine.Parser" "DripSharp.Brine"])
         proof (packaging/inspect-consumer-dependencies!
                project assets packages (second identities) identities)]
-    (is (= ["Pkl.Core" "0.0.0-development"] (:package-reference proof)))
+    (is (= ["DripSharp.Brine" "0.0.0-development"] (:package-reference proof)))
     (is (= identities (:packages proof)))))
 
 (deftest independent-consumer-dependency-proof-rejects-project-reference
@@ -1043,13 +1043,13 @@
         project (write-file!
                  (.resolve root "Consumer.csproj")
                  (str "<Project><ItemGroup>"
-                      "<PackageReference Include=\"Pkl.Core\" Version=\"0.0.0-development\" />"
-                      "<ProjectReference Include=\"../generated/Pkl.Core.csproj\" />"
+                      "<PackageReference Include=\"DripSharp.Brine\" Version=\"0.0.0-development\" />"
+                      "<ProjectReference Include=\"../generated/DripSharp.Brine.csproj\" />"
                       "</ItemGroup></Project>"))
         error (try
                 (packaging/inspect-consumer-dependencies!
                  project (.resolve root "obj/project.assets.json") (.resolve root "packages")
-                 {:id "Pkl.Core" :version "0.0.0-development"} [])
+                 {:id "DripSharp.Brine" :version "0.0.0-development"} [])
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :package-consumption-failed (:kind (ex-data error))))
@@ -1061,19 +1061,20 @@
         project (write-file!
                  (.resolve root "Consumer.csproj")
                  (str "<Project><ItemGroup>"
-                      "<PackageReference Include=\"Pkl.Core\" Version=\"0.0.0-development\" />"
+                      "<PackageReference Include=\"DripSharp.Brine\" Version=\"0.0.0-development\" />"
                       "</ItemGroup></Project>"))
         assets (write-file!
                 (.resolve root "obj/project.assets.json")
-                "{\"libraries\":{\"Pkl.Core/0.0.0-development\":{\"type\":\"package\"}}}")
+                "{\"libraries\":{\"DripSharp.Brine/0.0.0-development\":{\"type\":\"package\"}}}")
         packages (.resolve root "packages")
         artifact (write-file!
                   (.resolve packages
-                            "pkl.core/0.0.0-development/pkl.core.0.0.0-development.nupkg")
+                            "dripsharp.brine/0.0.0-development/dripsharp.brine.0.0.0-development.nupkg")
                   "restored package")
-        identity {:id "Pkl.Core" :version "0.0.0-development"
+        identity {:id "DripSharp.Brine" :version "0.0.0-development"
                   :sha256 (sha256 artifact)}]
-    (write-file! (.resolve packages "pkl.core/0.0.1/pkl.core.0.0.1.nupkg")
+    (write-file! (.resolve packages
+                           "dripsharp.brine/0.0.1/dripsharp.brine.0.0.1.nupkg")
                  "unexpected version")
     (let [version-error (try
                           (packaging/inspect-consumer-dependencies!
@@ -1083,8 +1084,9 @@
       (is (= :package-consumption-failed (:kind (ex-data version-error))))
       (is (= ["0.0.0-development"] (:expected (ex-data version-error))))
       (is (= ["0.0.0-development" "0.0.1"] (:actual (ex-data version-error)))))
-    (Files/delete (.resolve packages "pkl.core/0.0.1/pkl.core.0.0.1.nupkg"))
-    (Files/delete (.resolve packages "pkl.core/0.0.1"))
+    (Files/delete (.resolve packages
+                            "dripsharp.brine/0.0.1/dripsharp.brine.0.0.1.nupkg"))
+    (Files/delete (.resolve packages "dripsharp.brine/0.0.1"))
     (let [hash-error (try
                        (packaging/inspect-consumer-dependencies!
                         project assets packages (assoc identity :sha256 "wrong")
@@ -1098,41 +1100,41 @@
 (deftest package-assembly-inspection-binds-generated-package-identities
   (let [root (Files/createTempDirectory "dripsharp-assembly-inspection"
                                         (make-array FileAttribute 0))
-        packed (archive! {"lib/net8.0/Pkl.Core.dll" "verified assembly"})
-        artifact (.resolve root "Pkl.Core.0.0.0-development.nupkg")
+        packed (archive! {"lib/net8.0/DripSharp.Brine.dll" "verified assembly"})
+        artifact (.resolve root "DripSharp.Brine.0.0.0-development.nupkg")
         _ (Files/move packed artifact (make-array java.nio.file.CopyOption 0))
-        verified-assembly (write-file! (.resolve root "bin/Pkl.Core.dll")
+        verified-assembly (write-file! (.resolve root "bin/DripSharp.Brine.dll")
                                        "verified assembly")
         dependency-artifact
-        (write-file! (.resolve root "Pkl.Parser.0.0.0-development.nupkg")
+        (write-file! (.resolve root "DripSharp.Brine.Parser.0.0.0-development.nupkg")
                      "dependency package")
         request (atom nil)
         run-command! (fn [value]
                        (reset! request value)
-                       {:output (str "Assembly identity inspection passed: Pkl.Core, "
+                       {:output (str "Assembly identity inspection passed: DripSharp.Brine, "
                                      "Version=0.0.0.0, Culture=neutral, PublicKeyToken=null; "
-                                     "dependency references [Pkl.Parser, Version=0.0.0.0, "
+                                     "dependency references [DripSharp.Brine.Parser, Version=0.0.0.0, "
                                      "Culture=neutral, PublicKeyToken=null]\n"
                                      "Embedded resource inspection passed: 1\n"
                                      "Public surface inspection passed: 3 types, 7 members, "
                                      "SHA-256 " (apply str (repeat 64 "a")) "\n")})
         proof (#'packaging/inspect-package-assembly!
-               run-command! root artifact "lib/net8.0/Pkl.Core.dll" "Pkl.Core"
+               run-command! root artifact "lib/net8.0/DripSharp.Brine.dll" "DripSharp.Brine"
                verified-assembly
-               ["Pkl.Parser" "Pkl.Core"]
-               [{:assembly-name "Pkl.Parser"
-                 :package-id "Pkl.Parser"
+               ["DripSharp.Brine.Parser" "DripSharp.Brine"]
+               [{:assembly-name "DripSharp.Brine.Parser"
+                 :package-id "DripSharp.Brine.Parser"
                  :version "0.0.0-development"
                  :target-framework "net8.0"}]
                ["org.pkl.core.Release.properties"])
         inspector-arguments (vec (drop-while #(not= "--" %) (:command @request)))]
-    (is (= ["--" (str artifact) "lib/net8.0/Pkl.Core.dll" "Pkl.Core"
-            "2" "Pkl.Parser" "Pkl.Core" "1" "Pkl.Parser"
-            (str dependency-artifact) "lib/net8.0/Pkl.Parser.dll"
+    (is (= ["--" (str artifact) "lib/net8.0/DripSharp.Brine.dll" "DripSharp.Brine"
+            "2" "DripSharp.Brine.Parser" "DripSharp.Brine" "1" "DripSharp.Brine.Parser"
+            (str dependency-artifact) "lib/net8.0/DripSharp.Brine.Parser.dll"
             "org.pkl.core.Release.properties"]
            inspector-arguments))
-    (is (= {:name "Pkl.Core" :version "0.0.0.0"
-            :dependency-assemblies ["Pkl.Parser"]}
+    (is (= {:name "DripSharp.Brine" :version "0.0.0.0"
+            :dependency-assemblies ["DripSharp.Brine.Parser"]}
            (:assembly-identity proof)))
     (is (= {:sha256 (sha256 verified-assembly)
             :verified-assembly (str verified-assembly)}
@@ -1143,14 +1145,14 @@
 (deftest package-assembly-inspection-rejects-substituted-build-output
   (let [root (Files/createTempDirectory "dripsharp-assembly-substitution"
                                         (make-array FileAttribute 0))
-        packed (archive! {"lib/net8.0/Pkl.Core.dll" "substituted assembly"})
-        artifact (.resolve root "Pkl.Core.0.0.0-development.nupkg")
+        packed (archive! {"lib/net8.0/DripSharp.Brine.dll" "substituted assembly"})
+        artifact (.resolve root "DripSharp.Brine.0.0.0-development.nupkg")
         _ (Files/move packed artifact (make-array java.nio.file.CopyOption 0))
-        verified-assembly (write-file! (.resolve root "bin/Pkl.Core.dll")
+        verified-assembly (write-file! (.resolve root "bin/DripSharp.Brine.dll")
                                        "verified assembly")
         error (try
                 (#'packaging/verify-packaged-assembly!
-                 artifact "lib/net8.0/Pkl.Core.dll" verified-assembly)
+                 artifact "lib/net8.0/DripSharp.Brine.dll" verified-assembly)
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
     (is (= :package-consumption-failed (:kind (ex-data error))))

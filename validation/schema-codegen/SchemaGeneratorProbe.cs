@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using Pkl.Core;
+using DripSharp.Brine;
 
 /** Package-only schema traversal and deterministic C# generation probe. */
 static class SchemaGeneratorProbe
@@ -201,12 +201,12 @@ static class SchemaGeneratorProbe
             "public readonly partial record struct Email(string Value)",
             "public readonly partial record struct Transform<Input, Output>(global::System.Delegate Value)",
             "global::System.Collections.Generic.IReadOnlyDictionary<string, long>",
-            "global::Pkl.Core.Pair<string, long>",
+            "global::DripSharp.Brine.Pair<string, long>",
             "[global::System.Obsolete(\"Use contract.next.\")]",
             "[global::System.Obsolete(\"Use ApplicationService.\")]",
             "[global::System.Obsolete(\"Use displayName.\")]",
-            "[global::Pkl.Core.PklName(\"first-name\")]",
-            "[global::Pkl.Core.PklQualifiedName(\"contract.main#Service\")]",
+            "[global::DripSharp.Brine.PklName(\"first-name\")]",
+            "[global::DripSharp.Brine.PklQualifiedName(\"contract.main#Service\")]",
             "IPklGeneratedLoader<Main>",
             "public override bool Equals(object? obj)",
             "public override int GetHashCode()",
@@ -222,7 +222,7 @@ static class SchemaGeneratorProbe
         {
             "namespace Com.Example.PolymorphicModuleTest;",
             "public abstract partial class Dessert",
-            "[global::Pkl.Core.PklQualifiedName(\"com.example.PolymorphicModuleTest#Strudel\")]",
+            "[global::DripSharp.Brine.PklQualifiedName(\"com.example.PolymorphicModuleTest#Strudel\")]",
             "public sealed partial class Strudel : Dessert",
             "global::System.Collections.Generic.IReadOnlyList<Dessert> Desserts",
             "global::System.Collections.Generic.IReadOnlyList<global::Com.Example.Lib.Airplane> Planes"

@@ -849,14 +849,17 @@
 
 (defn- product-identity-fragments
   [target family destination]
-  (let [leading
+  (let [family-name (str/lower-case (name family))
+        identity-fragment
         (fn [value]
           (when (non-blank-string? value)
-            (first (str/split value #"[.]"))))]
+            (let [segments (str/split value #"[.]")]
+              (or (some #(when (= family-name (str/lower-case %)) %) segments)
+                  (first segments)))))]
     (->> (concat
           [(name target)]
           (when-not (= :java-library family) [(name family)])
-          (map leading
+          (map identity-fragment
                (concat
                 [(get-in destination [:package :id])
                  (get-in destination [:project :assembly-name])

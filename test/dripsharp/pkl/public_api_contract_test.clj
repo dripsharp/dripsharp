@@ -82,7 +82,7 @@
 
     (testing "native helper decisions come from authoritative upstream usage"
       (let [decisions contract/native-owner-decisions
-            command-owners (filter #(str/starts-with? % "Pkl.Core.PklCommand")
+            command-owners (filter #(str/starts-with? % "DripSharp.Brine.PklCommand")
                                    (keys decisions))
             internal-owners (->> decisions
                                  (remove #(= "product-api-native"
@@ -103,7 +103,7 @@
         (is (empty? (set/intersection internal-owners
                                       (set (map :owner @package)))))
         (is (contains? (set (map :owner @package))
-                       "Pkl.Core.StackFrameTransformerExtensions"))))
+                       "DripSharp.Brine.StackFrameTransformerExtensions"))))
 
     (testing "all four product areas have surface or behavior rows"
       (is (every? #(pos? (get (:areas summary) % 0))
@@ -185,7 +185,7 @@
     (is (empty? @controls))))
 
 (deftest generated-to-compiled-comparator-rejects-absent-collapsed-and-unmapped-members
-  (let [destination {:assembly "Pkl.Core" :owner "Pkl.Core.Example"
+  (let [destination {:assembly "DripSharp.Brine" :owner "DripSharp.Brine.Example"
                      :kind "method" :name "Parse" :parameter-count "1"}
         evidence (fn [key signature]
                    {:declaration-key key
@@ -194,7 +194,7 @@
         metadata {:schema-version 2
                   :rows [(evidence "executable:Example#parse(string)" "Parse(String)")
                          (evidence "executable:Example#parse(uri)" "Parse(URI)")]}
-        actual-row {:assembly "Pkl.Core" :owner "Pkl.Core.Example"
+        actual-row {:assembly "DripSharp.Brine" :owner "DripSharp.Brine.Example"
                     :kind "method" :name "Parse" :parameter-count "1"}]
     (is (= {:matched 2 :distinct-shapes 1}
            (contract/compare-generated-package-surface
@@ -209,11 +209,11 @@
                    [:mismatch :kind])))))
 
 (deftest package-boundary-rejects-implementation-and-java-shaped-metadata
-  (let [product-row {:assembly "Pkl.Core" :owner "Pkl.Core.Evaluator"
+  (let [product-row {:assembly "DripSharp.Brine" :owner "DripSharp.Brine.Evaluator"
                      :signature "System.String Evaluate()"}
-        implementation-row {:assembly "Pkl.Core" :owner "Pkl.Core.Runtime.VmContext"
-                            :signature "Pkl.Core.Runtime.VmContext Get()"}
-        mutable-row {:assembly "Pkl.Core" :owner "Pkl.Core.Evaluator"
+        implementation-row {:assembly "DripSharp.Brine" :owner "DripSharp.Brine.Runtime.VmContext"
+                            :signature "DripSharp.Brine.Runtime.VmContext Get()"}
+        mutable-row {:assembly "DripSharp.Brine" :owner "DripSharp.Brine.Evaluator"
                      :signature "System.Collections.Generic.IList<System.String> Get()"}]
     (is (= {:approved 1}
            (contract/validate-package-boundary!
@@ -354,9 +354,9 @@
     (is (= {:rows 2744 :keys 2679} summary))
     (is (= 2679 (count lines)))
     (is (= (sort lines) lines))
-    (is (some #(str/includes? % "Pkl.Core\tPkl.Core.ConfigBinder\tmethod\tBind")
+    (is (some #(str/includes? % "DripSharp.Brine\tDripSharp.Brine.ConfigBinder\tmethod\tBind")
               lines))
-    (is (some #(str/includes? % "Pkl.Core\tPkl.Core.CSharpGenerator\tmethod\tGenerate")
+    (is (some #(str/includes? % "DripSharp.Brine\tDripSharp.Brine.CSharpGenerator\tmethod\tGenerate")
               lines))
-    (is (some #(str/includes? % "Pkl.Parser\tPkl.Parser.Parser\tmethod\tParseModule")
+    (is (some #(str/includes? % "DripSharp.Brine.Parser\tDripSharp.Brine.Parser.Parser\tmethod\tParseModule")
               lines))))

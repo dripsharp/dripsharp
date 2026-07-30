@@ -252,9 +252,9 @@
    "java.lang.Double" ["double" :dotnet.type/double]
    "java.lang.AbstractStringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
    "java.lang.StringBuilder" ["global::System.Text.StringBuilder" :dotnet.type/string-builder]
-   "java.lang.Appendable" ["global::Pkl.Core.Runtime.JavaAppendable" :pkl-core.type/appendable]
+   "java.lang.Appendable" ["global::DripSharp.Brine.Runtime.JavaAppendable" :pkl-core.type/appendable]
    "java.lang.System" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
-   "java.lang.Thread" ["global::Pkl.Core.Runtime.JavaThread" :pkl-core.type/thread]
+   "java.lang.Thread" ["global::DripSharp.Brine.Runtime.JavaThread" :pkl-core.type/thread]
    "java.lang.invoke.VarHandle" ["object" :dotnet.type/var-handle-marker]
    "java.math.BigInteger" ["global::System.Numerics.BigInteger" :dotnet.type/big-integer]
    "java.math.BigDecimal" ["decimal" :dotnet.type/decimal]
@@ -292,7 +292,7 @@
    "java.io.ObjectInputStream" ["global::System.IO.BinaryReader" :dotnet.type/binary-reader]
    "java.io.OutputStreamWriter" ["global::System.IO.StreamWriter" :dotnet.type/stream-writer]
    "java.io.FileWriter" ["global::System.IO.StreamWriter" :dotnet.type/stream-writer]
-   "java.io.BufferedWriter" ["global::Pkl.Core.Runtime.JavaBufferedWriter" :pkl-core.type/buffered-writer]
+   "java.io.BufferedWriter" ["global::DripSharp.Brine.Runtime.JavaBufferedWriter" :pkl-core.type/buffered-writer]
    "java.io.File" ["string" :dotnet.type/path]
    "java.io.Flushable" ["global::System.IDisposable" :dotnet.type/disposable]
    "java.io.UnsupportedEncodingException" ["global::System.ArgumentException" :dotnet.type/argument-exception]
@@ -316,45 +316,45 @@
    "java.net.InetSocketAddress" ["global::System.Net.IPEndPoint" :dotnet.type/ip-endpoint]
    "java.net.SocketAddress" ["global::System.Net.EndPoint" :dotnet.type/endpoint]
    "java.net.Proxy" ["global::System.Net.WebProxy" :dotnet.type/web-proxy]
-   "java.net.Proxy$Type" ["global::Pkl.Core.Runtime.JavaProxyType" :pkl-core.type/proxy-type]
-   "java.net.ProxySelector" ["global::Pkl.Core.Runtime.JavaProxySelector" :pkl-core.type/proxy-selector]
-   "java.net.JarURLConnection" ["global::Pkl.Core.Runtime.JavaJarConnection" :pkl-core.type/jar-connection]
-   "java.net.URLConnection" ["global::Pkl.Core.Runtime.JavaUrlConnection" :pkl-core.type/url-connection]
+   "java.net.Proxy$Type" ["global::DripSharp.Brine.Runtime.JavaProxyType" :pkl-core.type/proxy-type]
+   "java.net.ProxySelector" ["global::DripSharp.Brine.Runtime.JavaProxySelector" :pkl-core.type/proxy-selector]
+   "java.net.JarURLConnection" ["global::DripSharp.Brine.Runtime.JavaJarConnection" :pkl-core.type/jar-connection]
+   "java.net.URLConnection" ["global::DripSharp.Brine.Runtime.JavaUrlConnection" :pkl-core.type/url-connection]
    "java.net.URISyntaxException" ["global::System.UriFormatException" :dotnet.type/uri-format-exception]
-   "java.net.http.HttpClient" ["global::Pkl.Core.Runtime.JavaHttpClient" :pkl-core.type/http-client]
-   "java.net.http.HttpClient$Builder" ["global::Pkl.Core.Runtime.JavaHttpClient.Builder" :pkl-core.type/http-client-builder]
-   "java.net.http.HttpClient$Redirect" ["global::Pkl.Core.Runtime.JavaHttpRedirect" :pkl-core.type/http-redirect]
-   "java.net.http.HttpClient$Version" ["global::Pkl.Core.Runtime.JavaHttpVersion" :pkl-core.type/http-version]
-   "java.net.http.HttpRequest" ["global::Pkl.Core.Runtime.JavaHttpRequest" :pkl-core.type/http-request]
-   "java.net.http.HttpRequest$Builder" ["global::Pkl.Core.Runtime.JavaHttpRequest.Builder" :pkl-core.type/http-request-builder]
+   "java.net.http.HttpClient" ["global::DripSharp.Brine.Runtime.JavaHttpClient" :pkl-core.type/http-client]
+   "java.net.http.HttpClient$Builder" ["global::DripSharp.Brine.Runtime.JavaHttpClient.Builder" :pkl-core.type/http-client-builder]
+   "java.net.http.HttpClient$Redirect" ["global::DripSharp.Brine.Runtime.JavaHttpRedirect" :pkl-core.type/http-redirect]
+   "java.net.http.HttpClient$Version" ["global::DripSharp.Brine.Runtime.JavaHttpVersion" :pkl-core.type/http-version]
+   "java.net.http.HttpRequest" ["global::DripSharp.Brine.Runtime.JavaHttpRequest" :pkl-core.type/http-request]
+   "java.net.http.HttpRequest$Builder" ["global::DripSharp.Brine.Runtime.JavaHttpRequest.Builder" :pkl-core.type/http-request-builder]
    "java.net.http.HttpRequest$BodyPublisher" ["object" :pkl-core.type/http-body-publisher]
-   "java.net.http.HttpRequest$BodyPublishers" ["global::Pkl.Core.Runtime.JavaHttpBodyPublishers" :pkl-core.type/http-body-publishers]
-   "java.net.http.HttpHeaders" ["global::Pkl.Core.Runtime.JavaHttpHeaders" :pkl-core.type/http-headers]
-   "java.net.http.HttpResponse" ["global::Pkl.Core.Runtime.JavaHttpResponse" :pkl-core.type/http-response]
-   "java.net.http.HttpResponse$BodyHandler" ["global::Pkl.Core.Runtime.JavaHttpBodyHandler" :pkl-core.type/http-body-handler]
-   "java.net.http.HttpResponse$BodyHandlers" ["global::Pkl.Core.Runtime.JavaHttpBodyHandlers" :pkl-core.type/http-body-handlers]
+   "java.net.http.HttpRequest$BodyPublishers" ["global::DripSharp.Brine.Runtime.JavaHttpBodyPublishers" :pkl-core.type/http-body-publishers]
+   "java.net.http.HttpHeaders" ["global::DripSharp.Brine.Runtime.JavaHttpHeaders" :pkl-core.type/http-headers]
+   "java.net.http.HttpResponse" ["global::DripSharp.Brine.Runtime.JavaHttpResponse" :pkl-core.type/http-response]
+   "java.net.http.HttpResponse$BodyHandler" ["global::DripSharp.Brine.Runtime.JavaHttpBodyHandler" :pkl-core.type/http-body-handler]
+   "java.net.http.HttpResponse$BodyHandlers" ["global::DripSharp.Brine.Runtime.JavaHttpBodyHandlers" :pkl-core.type/http-body-handlers]
    "java.net.http.HttpTimeoutException" ["global::System.Threading.Tasks.TaskCanceledException" :dotnet.type/http-timeout]
    "java.nio.CharBuffer" ["string" :dotnet.type/string]
    "java.nio.charset.Charset" ["global::System.Text.Encoding" :dotnet.type/encoding]
-   "java.nio.charset.CharsetDecoder" ["global::Pkl.Core.Runtime.JavaCharsetDecoder" :pkl-core.type/charset-decoder]
-   "java.nio.charset.CharsetEncoder" ["global::Pkl.Core.Runtime.JavaCharsetEncoder" :pkl-core.type/charset-encoder]
+   "java.nio.charset.CharsetDecoder" ["global::DripSharp.Brine.Runtime.JavaCharsetDecoder" :pkl-core.type/charset-decoder]
+   "java.nio.charset.CharsetEncoder" ["global::DripSharp.Brine.Runtime.JavaCharsetEncoder" :pkl-core.type/charset-encoder]
    "java.nio.charset.CharacterCodingException" ["global::System.Text.DecoderFallbackException" :dotnet.type/decoder-exception]
    "java.nio.charset.StandardCharsets" ["global::DripSharp.Runtime.JavaStandardCharsets" :pkl-core.type/standard-charsets]
    "java.security.GeneralSecurityException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
    "java.security.NoSuchAlgorithmException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
-   "java.security.SecureRandom" ["global::Pkl.Core.Runtime.JavaSecureRandom" :pkl-core.type/secure-random]
-   "java.security.MessageDigest" ["global::Pkl.Core.Runtime.JavaMessageDigest" :pkl-core.type/message-digest]
-   "java.security.DigestInputStream" ["global::Pkl.Core.Runtime.JavaDigestInputStream" :pkl-core.type/digest-input-stream]
-   "java.security.DigestOutputStream" ["global::Pkl.Core.Runtime.JavaDigestOutputStream" :pkl-core.type/digest-output-stream]
-   "java.security.KeyStore" ["global::Pkl.Core.Runtime.JavaKeyStore" :pkl-core.type/key-store]
+   "java.security.SecureRandom" ["global::DripSharp.Brine.Runtime.JavaSecureRandom" :pkl-core.type/secure-random]
+   "java.security.MessageDigest" ["global::DripSharp.Brine.Runtime.JavaMessageDigest" :pkl-core.type/message-digest]
+   "java.security.DigestInputStream" ["global::DripSharp.Brine.Runtime.JavaDigestInputStream" :pkl-core.type/digest-input-stream]
+   "java.security.DigestOutputStream" ["global::DripSharp.Brine.Runtime.JavaDigestOutputStream" :pkl-core.type/digest-output-stream]
+   "java.security.KeyStore" ["global::DripSharp.Brine.Runtime.JavaKeyStore" :pkl-core.type/key-store]
    "java.security.KeyStore$LoadStoreParameter" ["object" :pkl-core.type/key-store-load-parameter]
    "java.security.cert.Certificate" ["global::System.Security.Cryptography.X509Certificates.X509Certificate2" :dotnet.type/x509-certificate]
    "java.security.cert.X509Certificate" ["global::System.Security.Cryptography.X509Certificates.X509Certificate2" :dotnet.type/x509-certificate]
    "java.security.cert.CertificateException" ["global::System.Security.Cryptography.CryptographicException" :dotnet.type/cryptographic-exception]
-   "javax.net.ssl.SSLContext" ["global::Pkl.Core.Runtime.JavaSslContext" :pkl-core.type/ssl-context]
+   "javax.net.ssl.SSLContext" ["global::DripSharp.Brine.Runtime.JavaSslContext" :pkl-core.type/ssl-context]
    "javax.net.ssl.SSLException" ["global::System.Net.Http.HttpRequestException" :dotnet.type/http-request-exception]
    "javax.net.ssl.SSLHandshakeException" ["global::System.Security.Authentication.AuthenticationException" :dotnet.type/authentication-exception]
-   "javax.net.ssl.TrustManagerFactory" ["global::Pkl.Core.Runtime.JavaTrustManagerFactory" :pkl-core.type/trust-manager-factory]
+   "javax.net.ssl.TrustManagerFactory" ["global::DripSharp.Brine.Runtime.JavaTrustManagerFactory" :pkl-core.type/trust-manager-factory]
    "javax.net.ssl.TrustManager" ["object" :pkl-core.type/trust-manager]
    "javax.net.ssl.KeyManager" ["object" :pkl-core.type/key-manager]
    "java.nio.file.Path" ["string" :dotnet.type/path]
@@ -367,28 +367,28 @@
    "java.nio.file.DirectoryStream" ["global::DripSharp.Runtime.JavaDirectoryStream" :dotnet.type/directory-stream]
    "java.nio.file.DirectoryStream$Filter" ["global::System.Predicate" :dotnet.type/predicate]
    "java.nio.file.FileStore" ["global::System.IO.DriveInfo" :dotnet.type/drive-info]
-   "java.nio.file.FileSystem" ["global::Pkl.Core.Runtime.JavaFileSystem" :pkl-core.type/file-system]
-   "java.nio.file.FileSystems" ["global::Pkl.Core.Runtime.JavaFileSystems" :pkl-core.type/file-systems]
-   "java.nio.file.FileVisitResult" ["global::Pkl.Core.Runtime.JavaFileVisitResult" :pkl-core.type/file-visit-result]
+   "java.nio.file.FileSystem" ["global::DripSharp.Brine.Runtime.JavaFileSystem" :pkl-core.type/file-system]
+   "java.nio.file.FileSystems" ["global::DripSharp.Brine.Runtime.JavaFileSystems" :pkl-core.type/file-systems]
+   "java.nio.file.FileVisitResult" ["global::DripSharp.Brine.Runtime.JavaFileVisitResult" :pkl-core.type/file-visit-result]
    "java.nio.file.PathMatcher" ["global::System.Predicate<string>" :pkl-core.type/path-matcher]
    "java.nio.file.Paths" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
-   "java.nio.file.SimpleFileVisitor" ["global::Pkl.Core.Runtime.JavaSimpleFileVisitor" :pkl-core.type/file-visitor]
-   "java.nio.file.StandardCopyOption" ["global::Pkl.Core.Runtime.JavaCopyOption" :pkl-core.type/copy-option]
-   "java.nio.file.WatchService" ["global::Pkl.Core.Runtime.JavaWatchService" :pkl-core.type/watch-service]
+   "java.nio.file.SimpleFileVisitor" ["global::DripSharp.Brine.Runtime.JavaSimpleFileVisitor" :pkl-core.type/file-visitor]
+   "java.nio.file.StandardCopyOption" ["global::DripSharp.Brine.Runtime.JavaCopyOption" :pkl-core.type/copy-option]
+   "java.nio.file.WatchService" ["global::DripSharp.Brine.Runtime.JavaWatchService" :pkl-core.type/watch-service]
    "java.nio.file.AccessDeniedException" ["global::System.UnauthorizedAccessException" :dotnet.type/unauthorized]
    "java.nio.file.NotDirectoryException" ["global::System.IO.DirectoryNotFoundException" :dotnet.type/directory-not-found]
-   "java.nio.file.FileSystemAlreadyExistsException" ["global::Pkl.Core.Runtime.JavaFileSystemAlreadyExistsException" :dotnet.type/file-system-already-exists]
+   "java.nio.file.FileSystemAlreadyExistsException" ["global::DripSharp.Brine.Runtime.JavaFileSystemAlreadyExistsException" :dotnet.type/file-system-already-exists]
    "java.nio.file.FileSystemNotFoundException" ["global::System.IO.IOException" :dotnet.type/io-exception]
    "java.nio.file.attribute.PosixFilePermission" ["global::System.IO.UnixFileMode" :dotnet.type/unix-file-mode]
    "java.nio.file.attribute.UserPrincipalLookupService" ["object" :pkl-core.type/user-principal-lookup]
-   "java.nio.file.spi.FileSystemProvider" ["global::Pkl.Core.Runtime.JavaFileSystemProvider" :pkl-core.type/file-system-provider]
-   "java.nio.file.spi.FileTypeDetector" ["global::Pkl.Core.Runtime.JavaFileTypeDetector" :pkl-core.type/file-type-detector]
+   "java.nio.file.spi.FileSystemProvider" ["global::DripSharp.Brine.Runtime.JavaFileSystemProvider" :pkl-core.type/file-system-provider]
+   "java.nio.file.spi.FileTypeDetector" ["global::DripSharp.Brine.Runtime.JavaFileTypeDetector" :pkl-core.type/file-type-detector]
    "java.nio.file.NoSuchFileException" ["global::DripSharp.Runtime.NoSuchFileException" :dotnet.type/no-such-file-exception]
    "java.time.Duration" ["global::System.TimeSpan" :dotnet.type/time-span]
    "java.time.LocalDateTime" ["global::System.DateTime" :dotnet.type/date-time]
    "java.time.Month" ["int" :dotnet.type/month-number]
-   "java.time.temporal.TemporalUnit" ["global::Pkl.Core.Runtime.JavaTemporalUnit" :pkl-core.type/temporal-unit]
-   "java.time.temporal.ChronoUnit" ["global::Pkl.Core.Runtime.JavaTemporalUnit" :pkl-core.type/temporal-unit]
+   "java.time.temporal.TemporalUnit" ["global::DripSharp.Brine.Runtime.JavaTemporalUnit" :pkl-core.type/temporal-unit]
+   "java.time.temporal.ChronoUnit" ["global::DripSharp.Brine.Runtime.JavaTemporalUnit" :pkl-core.type/temporal-unit]
    "java.lang.Iterable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "java.util.Collection" ["global::System.Collections.Generic.ICollection" :dotnet.type/collection]
    "java.util.List" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
@@ -405,7 +405,7 @@
    "java.util.AbstractSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
    "java.util.Map" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
    "java.util.HashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/dictionary]
-   "java.util.IdentityHashMap" ["global::Pkl.Core.Runtime.JavaIdentityDictionary" :pkl-core.type/identity-map]
+   "java.util.IdentityHashMap" ["global::DripSharp.Brine.Runtime.JavaIdentityDictionary" :pkl-core.type/identity-map]
    "java.util.LinkedHashMap" ["global::DripSharp.Runtime.JavaLinkedHashMap" :dotnet.type/linked-dictionary]
    "java.util.WeakHashMap" ["global::System.Collections.Generic.Dictionary" :dotnet.type/weak-map]
    "java.util.TreeMap" ["global::System.Collections.Generic.SortedDictionary" :dotnet.type/sorted-dictionary]
@@ -417,14 +417,14 @@
    "java.util.ArrayDeque" ["global::DripSharp.Runtime.JavaDeque" :dotnet.type/deque]
    "java.util.ServiceLoader" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/service-loader]
    "java.util.Spliterator" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
-   "java.util.Optional" ["global::Pkl.Core.Runtime.JavaOptional" :pkl-core.type/optional]
+   "java.util.Optional" ["global::DripSharp.Brine.Runtime.JavaOptional" :pkl-core.type/optional]
    "java.util.Random" ["global::DripSharp.Runtime.JavaRandom" :dotnet.type/random]
    "java.util.Properties" ["global::DripSharp.Runtime.JavaProperties" :dotnet.type/properties]
    "java.util.NoSuchElementException" ["global::System.InvalidOperationException" :dotnet.type/invalid-operation]
    "java.util.Arrays" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
-   "java.util.Base64" ["global::Pkl.Core.Runtime.JavaBase64" :pkl-core.type/base64]
-   "java.util.Base64$Encoder" ["global::Pkl.Core.Runtime.JavaBase64Encoder" :pkl-core.type/base64-encoder]
-   "java.util.Base64$Decoder" ["global::Pkl.Core.Runtime.JavaBase64Decoder" :pkl-core.type/base64-decoder]
+   "java.util.Base64" ["global::DripSharp.Brine.Runtime.JavaBase64" :pkl-core.type/base64]
+   "java.util.Base64$Encoder" ["global::DripSharp.Brine.Runtime.JavaBase64Encoder" :pkl-core.type/base64-encoder]
+   "java.util.Base64$Decoder" ["global::DripSharp.Brine.Runtime.JavaBase64Decoder" :pkl-core.type/base64-decoder]
    "java.util.Collections" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.Objects" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
    "java.util.ResourceBundle" ["global::DripSharp.Runtime.JavaResourceBundle" :dotnet.type/resource-bundle]
@@ -436,10 +436,10 @@
    "java.util.function.BiConsumer" ["global::System.Action" :dotnet.type/action]
    "java.util.function.BiFunction" ["global::System.Func" :dotnet.type/func]
    "java.util.function.BiPredicate" ["global::DripSharp.Runtime.JavaBiPredicate" :dotnet.type/bi-predicate]
-   "java.util.function.BinaryOperator" ["global::Pkl.Core.Runtime.JavaBinaryOperator" :pkl-core.type/binary-operator]
+   "java.util.function.BinaryOperator" ["global::DripSharp.Brine.Runtime.JavaBinaryOperator" :pkl-core.type/binary-operator]
    "java.util.function.IntFunction" ["global::DripSharp.Runtime.JavaIntFunction" :dotnet.type/int-function]
    "java.util.function.IntConsumer" ["global::System.Action<int>" :dotnet.type/int-consumer]
-   "java.util.function.LongFunction" ["global::Pkl.Core.Runtime.JavaLongFunction" :pkl-core.type/long-function]
+   "java.util.function.LongFunction" ["global::DripSharp.Brine.Runtime.JavaLongFunction" :pkl-core.type/long-function]
    "java.util.function.LongConsumer" ["global::System.Action<long>" :dotnet.type/long-consumer]
    "java.util.function.LongPredicate" ["global::System.Predicate<long>" :dotnet.type/long-predicate]
    "java.util.function.ToIntFunction" ["global::DripSharp.Runtime.JavaToIntFunction" :dotnet.type/to-int-function]
@@ -453,9 +453,9 @@
    "java.text.Format" ["global::DripSharp.Runtime.JavaFormat" :dotnet.type/format]
    "java.text.MessageFormat" ["global::DripSharp.Runtime.JavaMessageFormat" :dotnet.type/message-format]
    "java.text.DecimalFormatSymbols" ["global::System.Globalization.NumberFormatInfo" :dotnet.type/number-format]
-   "java.util.zip.ZipEntry" ["global::Pkl.Core.Runtime.JavaZipEntry" :pkl-core.type/zip-entry]
-   "java.util.zip.ZipInputStream" ["global::Pkl.Core.Runtime.JavaZipInputStream" :pkl-core.type/zip-input-stream]
-   "java.util.zip.ZipOutputStream" ["global::Pkl.Core.Runtime.JavaZipOutputStream" :pkl-core.type/zip-output-stream]
+   "java.util.zip.ZipEntry" ["global::DripSharp.Brine.Runtime.JavaZipEntry" :pkl-core.type/zip-entry]
+   "java.util.zip.ZipInputStream" ["global::DripSharp.Brine.Runtime.JavaZipInputStream" :pkl-core.type/zip-input-stream]
+   "java.util.zip.ZipOutputStream" ["global::DripSharp.Brine.Runtime.JavaZipOutputStream" :pkl-core.type/zip-output-stream]
    "java.util.regex.Matcher" ["global::DripSharp.Runtime.JavaRegexMatcher" :dotnet.type/regex-matcher]
    "java.util.regex.MatchResult" ["global::DripSharp.Runtime.JavaRegexMatcher" :dotnet.type/regex-matcher]
    "java.util.regex.Pattern" ["global::System.Text.RegularExpressions.Regex" :dotnet.type/regex]
@@ -463,15 +463,15 @@
    "java.util.concurrent.ConcurrentHashMap" ["global::System.Collections.Concurrent.ConcurrentDictionary" :dotnet.type/concurrent-dictionary]
    "java.util.concurrent.Future" ["global::DripSharp.Runtime.JavaFuture" :dotnet.type/future]
    "java.util.concurrent.ExecutionException" ["global::System.AggregateException" :dotnet.type/execution-exception]
-   "java.util.concurrent.Executors" ["global::Pkl.Core.Runtime.JavaConcurrency" :pkl-core.type/concurrency]
-   "java.util.concurrent.ExecutorService" ["global::Pkl.Core.Runtime.JavaScheduledExecutor" :pkl-core.type/executor]
-   "java.util.concurrent.ThreadFactory" ["global::System.Func<global::System.Action, global::Pkl.Core.Runtime.JavaThread>" :pkl-core.type/thread-factory]
-   "java.util.concurrent.ScheduledExecutorService" ["global::Pkl.Core.Runtime.JavaScheduledExecutor" :pkl-core.type/scheduled-executor]
+   "java.util.concurrent.Executors" ["global::DripSharp.Brine.Runtime.JavaConcurrency" :pkl-core.type/concurrency]
+   "java.util.concurrent.ExecutorService" ["global::DripSharp.Brine.Runtime.JavaScheduledExecutor" :pkl-core.type/executor]
+   "java.util.concurrent.ThreadFactory" ["global::System.Func<global::System.Action, global::DripSharp.Brine.Runtime.JavaThread>" :pkl-core.type/thread-factory]
+   "java.util.concurrent.ScheduledExecutorService" ["global::DripSharp.Brine.Runtime.JavaScheduledExecutor" :pkl-core.type/scheduled-executor]
    "java.util.concurrent.ScheduledFuture" ["global::System.Threading.Tasks.Task" :dotnet.type/task]
    "java.util.concurrent.TimeUnit" ["global::DripSharp.Runtime.JavaTimeUnit" :dotnet.type/time-unit]
-   "java.util.concurrent.atomic.AtomicBoolean" ["global::Pkl.Core.Runtime.JavaAtomicBoolean" :pkl-core.type/atomic-boolean]
-   "java.util.concurrent.atomic.AtomicLong" ["global::Pkl.Core.Runtime.JavaAtomicLong" :pkl-core.type/atomic-long]
-   "java.util.concurrent.atomic.AtomicReference" ["global::Pkl.Core.Runtime.JavaAtomicReference" :pkl-core.type/atomic-reference]
+   "java.util.concurrent.atomic.AtomicBoolean" ["global::DripSharp.Brine.Runtime.JavaAtomicBoolean" :pkl-core.type/atomic-boolean]
+   "java.util.concurrent.atomic.AtomicLong" ["global::DripSharp.Brine.Runtime.JavaAtomicLong" :pkl-core.type/atomic-long]
+   "java.util.concurrent.atomic.AtomicReference" ["global::DripSharp.Brine.Runtime.JavaAtomicReference" :pkl-core.type/atomic-reference]
    "org.organicdesign.fp.collections.BaseList" ["global::System.Collections.Generic.IList" :dotnet.type/list-interface]
    "org.organicdesign.fp.collections.BaseMap" ["global::System.Collections.Generic.IDictionary" :dotnet.type/map-interface]
    "org.organicdesign.fp.collections.BaseSet" ["global::System.Collections.Generic.ISet" :dotnet.type/set-interface]
@@ -502,49 +502,49 @@
    "org.organicdesign.fp.function.Fn1" ["global::System.Func" :dotnet.type/func]
    "org.organicdesign.fp.indent.IndentUtils" ["global::DripSharp.Runtime.JavaCompat" :dotnet.type/java-compat]
    "org.organicdesign.fp.indent.Indented" ["object" :dotnet.type/marker]
-   "org.organicdesign.fp.oneOf.Option" ["global::Pkl.Core.Runtime.JavaOptional" :pkl-core.type/optional]
-   "org.organicdesign.fp.tuple.Tuple2" ["global::Pkl.Core.Runtime.JavaTuple2" :pkl-core.type/tuple2]
-   "org.organicdesign.fp.tuple.Tuple4" ["global::Pkl.Core.Runtime.JavaTuple4" :pkl-core.type/tuple4]
+   "org.organicdesign.fp.oneOf.Option" ["global::DripSharp.Brine.Runtime.JavaOptional" :pkl-core.type/optional]
+   "org.organicdesign.fp.tuple.Tuple2" ["global::DripSharp.Brine.Runtime.JavaTuple2" :pkl-core.type/tuple2]
+   "org.organicdesign.fp.tuple.Tuple4" ["global::DripSharp.Brine.Runtime.JavaTuple4" :pkl-core.type/tuple4]
    "org.organicdesign.fp.xform.Xform" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
    "org.organicdesign.fp.xform.Transformable" ["global::System.Collections.Generic.IEnumerable" :dotnet.type/enumerable]
-   "org.msgpack.core.MessageBufferPacker" ["global::Pkl.Core.Runtime.ExcludedMessagePackPacker" :excluded.messagepack/packer]
-   "org.msgpack.core.MessagePacker" ["global::Pkl.Core.Runtime.ExcludedMessagePackPacker" :excluded.messagepack/packer]
-   "org.msgpack.core.MessageUnpacker" ["global::Pkl.Core.Runtime.ExcludedMessagePackUnpacker" :excluded.messagepack/unpacker]
-   "org.msgpack.core.MessagePack" ["global::Pkl.Core.Runtime.ExcludedMessagePack" :excluded.messagepack/factory]
+   "org.msgpack.core.MessageBufferPacker" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackPacker" :excluded.messagepack/packer]
+   "org.msgpack.core.MessagePacker" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackPacker" :excluded.messagepack/packer]
+   "org.msgpack.core.MessageUnpacker" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackUnpacker" :excluded.messagepack/unpacker]
+   "org.msgpack.core.MessagePack" ["global::DripSharp.Brine.Runtime.ExcludedMessagePack" :excluded.messagepack/factory]
    "org.msgpack.core.MessagePackException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
    "org.msgpack.core.MessageTypeException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
    "org.msgpack.core.MessageInsufficientBufferException" ["global::System.NotSupportedException" :excluded.messagepack/exception]
-   "org.msgpack.value.Value" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ExtensionValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.FloatValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.NilValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.NumberValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.RawValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.TimestampValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableArrayValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableBinaryValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableBooleanValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableFloatValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableIntegerValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableMapValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableNilValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableRawValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableStringValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ImmutableTimestampValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.ArrayValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.BinaryValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.BooleanValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.IntegerValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.MapValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.StringValue" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.msgpack.value.impl.ImmutableStringValueImpl" ["global::Pkl.Core.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
-   "org.pkl.executor.spi.v1.ExecutorSpi" ["global::Pkl.Core.Service.IExecutorSpi" :pkl-core.type/executor-spi]
-   "org.pkl.executor.spi.v1.ExecutorSpiException" ["global::Pkl.Core.Service.ExecutorSpiException" :pkl-core.type/executor-spi-exception]
-   "org.pkl.executor.spi.v1.ExecutorSpiOptions" ["global::Pkl.Core.Service.ExecutorSpiOptions" :pkl-core.type/executor-spi-options]
-   "org.pkl.executor.spi.v1.ExecutorSpiOptions2" ["global::Pkl.Core.Service.ExecutorSpiOptions2" :pkl-core.type/executor-spi-options-2]
-   "org.pkl.executor.spi.v1.ExecutorSpiOptions3" ["global::Pkl.Core.Service.ExecutorSpiOptions3" :pkl-core.type/executor-spi-options-3]
-   "org.pkl.executor.spi.v1.ExecutorSpiOptions4" ["global::Pkl.Core.Service.ExecutorSpiOptions4" :pkl-core.type/executor-spi-options-4]
+   "org.msgpack.value.Value" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ExtensionValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.FloatValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.NilValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.NumberValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.RawValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.TimestampValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableArrayValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableBinaryValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableBooleanValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableFloatValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableIntegerValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableMapValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableNilValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableRawValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableStringValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ImmutableTimestampValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.ArrayValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.BinaryValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.BooleanValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.IntegerValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.MapValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.StringValue" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.msgpack.value.impl.ImmutableStringValueImpl" ["global::DripSharp.Brine.Runtime.ExcludedMessagePackValue" :excluded.messagepack/value]
+   "org.pkl.executor.spi.v1.ExecutorSpi" ["global::DripSharp.Brine.Service.IExecutorSpi" :pkl-core.type/executor-spi]
+   "org.pkl.executor.spi.v1.ExecutorSpiException" ["global::DripSharp.Brine.Service.ExecutorSpiException" :pkl-core.type/executor-spi-exception]
+   "org.pkl.executor.spi.v1.ExecutorSpiOptions" ["global::DripSharp.Brine.Service.ExecutorSpiOptions" :pkl-core.type/executor-spi-options]
+   "org.pkl.executor.spi.v1.ExecutorSpiOptions2" ["global::DripSharp.Brine.Service.ExecutorSpiOptions2" :pkl-core.type/executor-spi-options-2]
+   "org.pkl.executor.spi.v1.ExecutorSpiOptions3" ["global::DripSharp.Brine.Service.ExecutorSpiOptions3" :pkl-core.type/executor-spi-options-3]
+   "org.pkl.executor.spi.v1.ExecutorSpiOptions4" ["global::DripSharp.Brine.Service.ExecutorSpiOptions4" :pkl-core.type/executor-spi-options-4]
    "org.jspecify.annotations.Nullable" ["object" :dotnet.annotation/nullable]
    "org.jspecify.annotations.NonNull" ["object" :dotnet.annotation/non-null]
    "org.jspecify.annotations.NullMarked" ["object" :dotnet.annotation/null-marked]})
@@ -562,20 +562,20 @@
 
 (defn- derived-external-type-mapping
   "Maps resolved external product/substrate identities without reconstructing
-  source syntax. Parser types target the separately generated Pkl.Parser
+  source syntax. Parser types target the separately generated DripSharp.Brine.Parser
   package; Truffle and Graal identities target explicit compatibility owners
   pending their native product implementations. Compile-time annotations are
   erased only after their exact resolved package identity is known."
   [qualified-name]
-  (or (dotted-external-type "org.pkl.parser" "Pkl.Parser" qualified-name
+  (or (dotted-external-type "org.pkl.parser" "DripSharp.Brine.Parser" qualified-name
                             :dotnet.type/pkl-parser-package pascal)
-      (dotted-external-type "com.oracle.truffle" "Pkl.Core.Runtime.Truffle" qualified-name
+      (dotted-external-type "com.oracle.truffle" "DripSharp.Brine.Runtime.Truffle" qualified-name
                             :pkl-core.type/truffle-substrate)
-      (dotted-external-type "org.graalvm.collections" "Pkl.Core.Runtime.GraalCollections" qualified-name
+      (dotted-external-type "org.graalvm.collections" "DripSharp.Brine.Runtime.GraalCollections" qualified-name
                             :pkl-core.type/graal-collections-substrate)
-      (dotted-external-type "org.graalvm.polyglot" "Pkl.Core.Runtime.Polyglot" qualified-name
+      (dotted-external-type "org.graalvm.polyglot" "DripSharp.Brine.Runtime.Polyglot" qualified-name
                             :pkl-core.type/polyglot-substrate)
-      (dotted-external-type "org.snakeyaml.engine.v2" "Pkl.Core.Runtime.SnakeYaml" qualified-name
+      (dotted-external-type "org.snakeyaml.engine.v2" "DripSharp.Brine.Runtime.SnakeYaml" qualified-name
                             :pkl-core.type/snakeyaml-substrate)
       (when (or (str/starts-with? qualified-name "com.google.errorprone.annotations.")
                 (str/starts-with? qualified-name "java.lang.annotation."))
@@ -828,7 +828,7 @@
                                 "java.util.ServiceLoader" "global::System.Collections.Generic.IEnumerable<object>"
                                 "java.util.stream.Stream" "global::System.Collections.Generic.IEnumerable<object>"
                                 "java.nio.file.DirectoryStream" "global::DripSharp.Runtime.JavaDirectoryStream<string>"
-                                "org.organicdesign.fp.tuple.Tuple2" "global::Pkl.Core.Runtime.JavaTuple2<object, object>"
+                                "org.organicdesign.fp.tuple.Tuple2" "global::DripSharp.Brine.Runtime.JavaTuple2<object, object>"
                                 "org.organicdesign.fp.collections.UnmodIterable" "global::System.Collections.Generic.IEnumerable<object>"
                                 "org.organicdesign.fp.collections.UnmodSortedIterable" "global::System.Collections.Generic.IEnumerable<object>"}
                                (.getQualifiedName reference))]
@@ -950,14 +950,14 @@
      :pkl-core.type/property-function]
 
     (= "org.pkl.core.StackFrameTransformer" (.getQualifiedName reference))
-    [(raw "global::Pkl.Core.StackFrameTransformer")
+    [(raw "global::DripSharp.Brine.StackFrameTransformer")
      :pkl-core.type/stack-frame-transformer]
 
     (and (= "org.pkl.core.runtime.VmCollection$Builder" (.getQualifiedName reference))
          (some #(instance? CtWildcardReference %)
                (.getActualTypeArguments reference)))
-    [(generic-node "global::Pkl.Core.Runtime.VmCollection.Builder"
-                   [(raw "global::Pkl.Core.Runtime.VmCollection")])
+    [(generic-node "global::DripSharp.Brine.Runtime.VmCollection.Builder"
+                   [(raw "global::DripSharp.Brine.Runtime.VmCollection")])
      :pkl-core.type/vm-collection-builder-bound]
 
     (instance? CtArrayTypeReference reference)
@@ -1115,7 +1115,7 @@
              (= "andThen" (.getSimpleName ^CtMethod element)))]
     {:assembly (get-in ctx [:configuration :project :assembly-name])
      :owner (if stack-frame-composition?
-              "Pkl.Core.StackFrameTransformerExtensions"
+              "DripSharp.Brine.StackFrameTransformerExtensions"
               (destination-owner-name ctx element))
      :kind (case kind
              :type "type"
@@ -1213,7 +1213,7 @@
     (let [escaped (-> (str short-name)
                       (str/replace "\\" "\\\\")
                       (str/replace "\"" "\\\""))]
-      (raw (str "[global::Pkl.Core.Runtime.Truffle.api.nodes.NodeInfo(\""
+      (raw (str "[global::DripSharp.Brine.Runtime.Truffle.api.nodes.NodeInfo(\""
                 escaped "\")]\n")))))
 
 (defn- attach-declaration [ctx node element kind owner name signature rule]
@@ -1703,12 +1703,12 @@
                              (.getType method))
         return-type (or (case signature-adaptation
                           :nullable-module-key
-                          (raw "global::Pkl.Core.Module.ModuleKey?")
+                          (raw "global::DripSharp.Brine.Module.ModuleKey?")
                           :nullable-resource
                           (raw "object?")
                           :read-only-path-elements
                           (raw (str "global::System.Collections.Generic.IReadOnlyList<"
-                                    "global::Pkl.Core.Module.PathElement>"))
+                                    "global::DripSharp.Brine.Module.PathElement>"))
                           :idiomatic-byte-array
                           (raw "byte[]")
                           nil)
@@ -1912,9 +1912,9 @@
           rrb-nested-split?
           (let [element-name (type-parameter-name
                               (first (.getFormalCtTypeParameters owner-type)))]
-            (raw (str "global::Pkl.Core.Runtime.JavaTuple2<"
-                      "global::Pkl.Core.Util.Paguro.RrbTree<" element-name ">, "
-                      "global::Pkl.Core.Util.Paguro.RrbTree<" element-name ">>")))
+            (raw (str "global::DripSharp.Brine.Runtime.JavaTuple2<"
+                      "global::DripSharp.Brine.Util.Paguro.RrbTree<" element-name ">, "
+                      "global::DripSharp.Brine.Util.Paguro.RrbTree<" element-name ">>")))
 
           (and (= "org.pkl.core.ast.builder.AstBuilder" (.getQualifiedName owner-type))
                (= "visitModifier" (.getSimpleName method)))
@@ -1923,12 +1923,12 @@
           :else nil)
         return-type (or (case signature-adaptation
                           :nullable-module-key
-                          (raw "global::Pkl.Core.Module.ModuleKey?")
+                          (raw "global::DripSharp.Brine.Module.ModuleKey?")
                           :nullable-resource
                           (raw "object?")
                           :read-only-path-elements
                           (raw (str "global::System.Collections.Generic.IReadOnlyList<"
-                                    "global::Pkl.Core.Module.PathElement>"))
+                                    "global::DripSharp.Brine.Module.PathElement>"))
                           :idiomatic-byte-array
                           (raw "byte[]")
                           :nullable-object-enumerator
@@ -1987,12 +1987,12 @@
           ;; construction generated from the selected Java declaration, but
           ;; retain the receive thread so close/failure can quiesce it.
           (raw
-           "{\nlock (this.@lock) {\nif (this.closed) throw global::DripSharp.Runtime.JavaCompat.NewInvalidOperationException(\"External reader process has already been closed.\");\nif (this.process is not null) {\nif (!this.process.IsAlive()) throw new global::Pkl.Core.Externalreader.ExternalReaderProcessException(global::Pkl.Core.Util.ErrorMessages.Create(\"externalReaderAlreadyTerminated\"));\nif (this.transport is null) throw new global::System.Exception(\"Assertion failed\");\nreturn this.transport;\n}\nvar command = new global::System.Collections.Generic.List<string> { this.spec.Executable };\nif (this.spec.Arguments is not null) command.AddRange(this.spec.Arguments);\nvar builder = new global::DripSharp.Runtime.JavaProcessBuilder(command);\nif (this.spec.WorkingDir is not null) builder.Directory(this.spec.WorkingDir);\nbuilder.RedirectError(global::DripSharp.Runtime.JavaProcessRedirect.INHERIT);\ntry {\nthis.process = builder.Start();\n} catch (global::System.IO.IOException error) {\nthrow new global::Pkl.Core.Externalreader.ExternalReaderProcessException(error);\n}\nthis.transport = global::Pkl.Core.Messaging.MessageTransports.Stream(new global::Pkl.Core.Externalreader.ExternalReaderMessagePackDecoder(this.process.GetInputStream()), new global::Pkl.Core.Externalreader.ExternalReaderMessagePackEncoder(this.process.GetOutputStream()), this.Log);\nthis.StartDestinationTransportThread(this.transport);\nreturn this.transport;\n}\n}")
+           "{\nlock (this.@lock) {\nif (this.closed) throw global::DripSharp.Runtime.JavaCompat.NewInvalidOperationException(\"External reader process has already been closed.\");\nif (this.process is not null) {\nif (!this.process.IsAlive()) throw new global::DripSharp.Brine.Externalreader.ExternalReaderProcessException(global::DripSharp.Brine.Util.ErrorMessages.Create(\"externalReaderAlreadyTerminated\"));\nif (this.transport is null) throw new global::System.Exception(\"Assertion failed\");\nreturn this.transport;\n}\nvar command = new global::System.Collections.Generic.List<string> { this.spec.Executable };\nif (this.spec.Arguments is not null) command.AddRange(this.spec.Arguments);\nvar builder = new global::DripSharp.Runtime.JavaProcessBuilder(command);\nif (this.spec.WorkingDir is not null) builder.Directory(this.spec.WorkingDir);\nbuilder.RedirectError(global::DripSharp.Runtime.JavaProcessRedirect.INHERIT);\ntry {\nthis.process = builder.Start();\n} catch (global::System.IO.IOException error) {\nthrow new global::DripSharp.Brine.Externalreader.ExternalReaderProcessException(error);\n}\nthis.transport = global::DripSharp.Brine.Messaging.MessageTransports.Stream(new global::DripSharp.Brine.Externalreader.ExternalReaderMessagePackDecoder(this.process.GetInputStream()), new global::DripSharp.Brine.Externalreader.ExternalReaderMessagePackEncoder(this.process.GetOutputStream()), this.Log);\nthis.StartDestinationTransportThread(this.transport);\nreturn this.transport;\n}\n}")
 
           (= "executable:org.pkl.core.externalreader.ExternalReaderProcessImpl#runTransport(org.pkl.core.messaging.MessageTransport)"
              (spoon/declaration-key method))
           (raw
-           "{\nglobal::System.Exception failure;\ntry {\ntransport.Start((message) => { throw new global::Pkl.Core.Messaging.ProtocolException(global::DripSharp.Runtime.JavaCompat.Concat(\"Unexpected incoming one-way message: \", message)); }, (message) => { throw new global::Pkl.Core.Messaging.ProtocolException(global::DripSharp.Runtime.JavaCompat.Concat(\"Unexpected incoming request message: \", message)); });\nfailure = new global::System.IO.EndOfStreamException(\"External reader process closed its output stream.\");\n} catch (global::System.Exception error) {\nfailure = error;\n}\nthis.FinishDestinationTransport(transport, failure);\n}")
+           "{\nglobal::System.Exception failure;\ntry {\ntransport.Start((message) => { throw new global::DripSharp.Brine.Messaging.ProtocolException(global::DripSharp.Runtime.JavaCompat.Concat(\"Unexpected incoming one-way message: \", message)); }, (message) => { throw new global::DripSharp.Brine.Messaging.ProtocolException(global::DripSharp.Runtime.JavaCompat.Concat(\"Unexpected incoming request message: \", message)); });\nfailure = new global::System.IO.EndOfStreamException(\"External reader process closed its output stream.\");\n} catch (global::System.Exception error) {\nfailure = error;\n}\nthis.FinishDestinationTransport(transport, failure);\n}")
 
           (= "executable:org.pkl.core.externalreader.ExternalReaderProcessImpl#close()"
              (spoon/declaration-key method))
@@ -2001,7 +2001,7 @@
           (= "executable:org.pkl.core.messaging.MessageTransports$AbstractMessageTransport#accept(org.pkl.core.messaging.Message)"
              (spoon/declaration-key method))
           (raw
-           "{\nthis.Log(\"Received message: {0}\", message);\nif (message is global::Pkl.Core.Messaging.Message.OneWay oneWay) {\nthis.oneWayHandler(oneWay);\n} else if (message is global::Pkl.Core.Messaging.Message.Request request) {\nthis.requestHandler(request);\n} else if (message is global::Pkl.Core.Messaging.Message.Response response) {\nvar handler = this.TakeResponseHandler(response.RequestId);\nif (handler is null) throw new global::Pkl.Core.Messaging.ProtocolException(global::Pkl.Core.Util.ErrorMessages.Create(\"unknownRequestId\", message.GetType().Name, response.RequestId));\nhandler(response);\n}\n}")
+           "{\nthis.Log(\"Received message: {0}\", message);\nif (message is global::DripSharp.Brine.Messaging.Message.OneWay oneWay) {\nthis.oneWayHandler(oneWay);\n} else if (message is global::DripSharp.Brine.Messaging.Message.Request request) {\nthis.requestHandler(request);\n} else if (message is global::DripSharp.Brine.Messaging.Message.Response response) {\nvar handler = this.TakeResponseHandler(response.RequestId);\nif (handler is null) throw new global::DripSharp.Brine.Messaging.ProtocolException(global::DripSharp.Brine.Util.ErrorMessages.Create(\"unknownRequestId\", message.GetType().Name, response.RequestId));\nhandler(response);\n}\n}")
 
           (= "executable:org.pkl.core.messaging.MessageTransports$AbstractMessageTransport#close()"
              (spoon/declaration-key method))
@@ -2015,12 +2015,12 @@
           (= "executable:org.pkl.core.FileOutputImpl#getText()"
              (spoon/declaration-key method))
           (raw
-           "{\ntry {\nreturn this.evaluator.EvaluateOutputText(this.fileOutput);\n} catch (global::Pkl.Core.Runtime.Polyglot.PolyglotException e) {\nif (e.IsCancelled()) throw new global::Pkl.Core.PklException(\"The evaluator is no longer available\", e);\nthrow new global::Pkl.Core.PklBugException(e);\n} catch (global::System.ObjectDisposedException e) {\nthrow new global::Pkl.Core.PklException(\"The evaluator is no longer available\", e);\n}\n}")
+           "{\ntry {\nreturn this.evaluator.EvaluateOutputText(this.fileOutput);\n} catch (global::DripSharp.Brine.Runtime.Polyglot.PolyglotException e) {\nif (e.IsCancelled()) throw new global::DripSharp.Brine.PklException(\"The evaluator is no longer available\", e);\nthrow new global::DripSharp.Brine.PklBugException(e);\n} catch (global::System.ObjectDisposedException e) {\nthrow new global::DripSharp.Brine.PklException(\"The evaluator is no longer available\", e);\n}\n}")
 
           (= "executable:org.pkl.core.FileOutputImpl#getBytes()"
              (spoon/declaration-key method))
           (raw
-           "{\ntry {\nreturn global::DripSharp.Runtime.JavaCompat.ToUnsignedBytes(this.evaluator.EvaluateOutputBytes(this.fileOutput));\n} catch (global::Pkl.Core.Runtime.Polyglot.PolyglotException e) {\nif (e.IsCancelled()) throw new global::Pkl.Core.PklException(\"The evaluator is no longer available\", e);\nthrow new global::Pkl.Core.PklBugException(e);\n} catch (global::System.ObjectDisposedException e) {\nthrow new global::Pkl.Core.PklException(\"The evaluator is no longer available\", e);\n}\n}")
+           "{\ntry {\nreturn global::DripSharp.Runtime.JavaCompat.ToUnsignedBytes(this.evaluator.EvaluateOutputBytes(this.fileOutput));\n} catch (global::DripSharp.Brine.Runtime.Polyglot.PolyglotException e) {\nif (e.IsCancelled()) throw new global::DripSharp.Brine.PklException(\"The evaluator is no longer available\", e);\nthrow new global::DripSharp.Brine.PklBugException(e);\n} catch (global::System.ObjectDisposedException e) {\nthrow new global::DripSharp.Brine.PklException(\"The evaluator is no longer available\", e);\n}\n}")
 
           (= "executable:org.pkl.core.EvaluatorImpl#doEvaluate(java.util.function.Supplier)"
              (spoon/declaration-key method))
@@ -2030,12 +2030,12 @@
           ;; context first, and only then resolve the timeout race and surface
           ;; the stable public Pkl diagnostic.
           (raw
-           "{\nglobal::Pkl.Core.EvaluatorImpl.TimeoutTask? timeoutTask = null;\nthis.logger.Clear();\nif (this.timeout is not null) {\nif (this.timeoutExecutor is null) throw new global::System.Exception(\"Assertion failed\");\ntimeoutTask = new global::Pkl.Core.EvaluatorImpl.TimeoutTask(this);\nthis.timeoutExecutor.Schedule(timeoutTask, global::DripSharp.Runtime.JavaCompat.DurationToMillis(this.timeout.Value), global::DripSharp.Runtime.JavaTimeUnit.MILLISECONDS);\n}\nthis.polyglotContext.Enter();\nT? evalResult = default;\nglobal::System.Exception? failure = null;\ntry {\nevalResult = supplier();\n} catch (global::System.Exception error) {\nfailure = error;\n} finally {\ntry {\nthis.polyglotContext.Leave();\n} catch (global::System.InvalidOperationException) {\n}\n}\nif (failure is not null) {\nvar cancelled = this.polyglotContext.IsCancellationRequested && (failure is global::DripSharp.Runtime.JavaCancellationException || failure is global::System.Threading.ThreadInterruptedException || failure is global::System.OperationCanceledException || failure is global::System.ObjectDisposedException || (failure is global::Pkl.Core.Runtime.Polyglot.PolyglotException polyglotFailure && polyglotFailure.IsCancelled()));\nif (cancelled) {\nthis.HandleTimeout(timeoutTask);\nthrow new global::Pkl.Core.PklException(\"Evaluation was cancelled because the evaluator was closed.\", failure);\n}\nif (failure is global::Pkl.Core.Runtime.VmStackOverflowException stackOverflow) {\nif (global::Pkl.Core.Runtime.VmUtils.IsPklBug(stackOverflow)) {\nthrow (new global::Pkl.Core.Runtime.VmExceptionBuilder()).Bug(\"Stack overflow\").WithCause(stackOverflow.InnerException).Build().ToPklException(this.frameTransformer, this.color);\n}\nthis.HandleTimeout(timeoutTask);\nthrow stackOverflow.ToPklException(this.frameTransformer, this.color);\n}\nif (failure is global::Pkl.Core.Runtime.VmException vmFailure) {\nthis.HandleTimeout(timeoutTask);\nthrow vmFailure.ToPklException(this.frameTransformer, this.color);\n}\nif (failure is global::Pkl.Core.PklException pklFailure) throw pklFailure;\nif (failure is global::System.TypeInitializationException initializationFailure) {\nif (initializationFailure.InnerException is not global::Pkl.Core.Runtime.VmException initializationVmFailure) throw new global::Pkl.Core.PklBugException(initializationFailure);\nvar pklException = initializationVmFailure.ToPklException(this.frameTransformer, this.color);\nvar error = global::DripSharp.Runtime.JavaCompat.NewTypeInitializationException(pklException);\nglobal::DripSharp.Runtime.JavaCompat.SetStackTrace(error, global::DripSharp.Runtime.JavaCompat.GetStackTrace(initializationFailure));\nthrow new global::Pkl.Core.PklBugException(error);\n}\nthrow new global::Pkl.Core.PklBugException(failure);\n}\nthis.HandleTimeout(timeoutTask);\nreturn evalResult!;\n}")
+           "{\nglobal::DripSharp.Brine.EvaluatorImpl.TimeoutTask? timeoutTask = null;\nthis.logger.Clear();\nif (this.timeout is not null) {\nif (this.timeoutExecutor is null) throw new global::System.Exception(\"Assertion failed\");\ntimeoutTask = new global::DripSharp.Brine.EvaluatorImpl.TimeoutTask(this);\nthis.timeoutExecutor.Schedule(timeoutTask, global::DripSharp.Runtime.JavaCompat.DurationToMillis(this.timeout.Value), global::DripSharp.Runtime.JavaTimeUnit.MILLISECONDS);\n}\nthis.polyglotContext.Enter();\nT? evalResult = default;\nglobal::System.Exception? failure = null;\ntry {\nevalResult = supplier();\n} catch (global::System.Exception error) {\nfailure = error;\n} finally {\ntry {\nthis.polyglotContext.Leave();\n} catch (global::System.InvalidOperationException) {\n}\n}\nif (failure is not null) {\nvar cancelled = this.polyglotContext.IsCancellationRequested && (failure is global::DripSharp.Runtime.JavaCancellationException || failure is global::System.Threading.ThreadInterruptedException || failure is global::System.OperationCanceledException || failure is global::System.ObjectDisposedException || (failure is global::DripSharp.Brine.Runtime.Polyglot.PolyglotException polyglotFailure && polyglotFailure.IsCancelled()));\nif (cancelled) {\nthis.HandleTimeout(timeoutTask);\nthrow new global::DripSharp.Brine.PklException(\"Evaluation was cancelled because the evaluator was closed.\", failure);\n}\nif (failure is global::DripSharp.Brine.Runtime.VmStackOverflowException stackOverflow) {\nif (global::DripSharp.Brine.Runtime.VmUtils.IsPklBug(stackOverflow)) {\nthrow (new global::DripSharp.Brine.Runtime.VmExceptionBuilder()).Bug(\"Stack overflow\").WithCause(stackOverflow.InnerException).Build().ToPklException(this.frameTransformer, this.color);\n}\nthis.HandleTimeout(timeoutTask);\nthrow stackOverflow.ToPklException(this.frameTransformer, this.color);\n}\nif (failure is global::DripSharp.Brine.Runtime.VmException vmFailure) {\nthis.HandleTimeout(timeoutTask);\nthrow vmFailure.ToPklException(this.frameTransformer, this.color);\n}\nif (failure is global::DripSharp.Brine.PklException pklFailure) throw pklFailure;\nif (failure is global::System.TypeInitializationException initializationFailure) {\nif (initializationFailure.InnerException is not global::DripSharp.Brine.Runtime.VmException initializationVmFailure) throw new global::DripSharp.Brine.PklBugException(initializationFailure);\nvar pklException = initializationVmFailure.ToPklException(this.frameTransformer, this.color);\nvar error = global::DripSharp.Runtime.JavaCompat.NewTypeInitializationException(pklException);\nglobal::DripSharp.Runtime.JavaCompat.SetStackTrace(error, global::DripSharp.Runtime.JavaCompat.GetStackTrace(initializationFailure));\nthrow new global::DripSharp.Brine.PklBugException(error);\n}\nthrow new global::DripSharp.Brine.PklBugException(failure);\n}\nthis.HandleTimeout(timeoutTask);\nreturn evalResult!;\n}")
 
           (= "executable:org.pkl.core.EvaluatorImpl#handleTimeout(org.pkl.core.EvaluatorImpl$TimeoutTask)"
              (spoon/declaration-key method))
           (raw
-           "{\nif (timeoutTask is null || timeoutTask.Cancel()) return;\nif (this.timeout is null) throw new global::System.Exception(\"Assertion failed\");\nthis.timeoutExecutor?.WaitFor(timeoutTask);\nthrow new global::Pkl.Core.PklException(global::Pkl.Core.Util.ErrorMessages.Create(\"evaluationTimedOut\", global::DripSharp.Runtime.JavaCompat.DurationGetSeconds(this.timeout.Value) + global::DripSharp.Runtime.JavaCompat.DurationGetNano(this.timeout.Value) / 1.0E9D));\n}")
+           "{\nif (timeoutTask is null || timeoutTask.Cancel()) return;\nif (this.timeout is null) throw new global::System.Exception(\"Assertion failed\");\nthis.timeoutExecutor?.WaitFor(timeoutTask);\nthrow new global::DripSharp.Brine.PklException(global::DripSharp.Brine.Util.ErrorMessages.Create(\"evaluationTimedOut\", global::DripSharp.Runtime.JavaCompat.DurationGetSeconds(this.timeout.Value) + global::DripSharp.Runtime.JavaCompat.DurationGetNano(this.timeout.Value) / 1.0E9D));\n}")
 
           (= "executable:org.pkl.core.EvaluatorImpl$TimeoutTask#cancel()"
              (spoon/declaration-key method))
@@ -2047,12 +2047,12 @@
           (= "executable:org.pkl.core.PClassInfo#equals(java.lang.Object)"
              (spoon/declaration-key method))
           (sequence-node
-           [(raw "{\nreturn global::Pkl.Core.Runtime.PklRuntimeBridge.PClassInfoEquals(this, obj);\n}")])
+           [(raw "{\nreturn global::DripSharp.Brine.Runtime.PklRuntimeBridge.PClassInfoEquals(this, obj);\n}")])
 
           (= "executable:org.pkl.core.Pair#equals(java.lang.Object)"
              (spoon/declaration-key method))
           (raw
-           "{\nif (global::System.Object.ReferenceEquals(this, obj)) return true;\nreturn global::Pkl.Core.PairEquality.EqualsPair(this.first, this.second, obj);\n}")
+           "{\nif (global::System.Object.ReferenceEquals(this, obj)) return true;\nreturn global::DripSharp.Brine.PairEquality.EqualsPair(this.first, this.second, obj);\n}")
 
           (= "executable:org.pkl.core.runtime.VmBytes#export()"
              (spoon/declaration-key method))
@@ -2065,7 +2065,7 @@
           ;; Preserve that spelling only for local-dependency resource URIs,
           ;; where Resource.uri makes the original Java form observable.
           (raw
-           "{\nvar assetPath = packageAssetUri.GetAssetPath().Substring(1);\nvar resolvedPath = global::DripSharp.Runtime.JavaCompat.PathResolve(this.path, assetPath);\nvar normalized = global::Pkl.Core.Util.IoUtils.ToNormalizedPathString(resolvedPath);\ntry {\nvar relativeUri = global::DripSharp.Runtime.JavaCompat.NewUri(null, null, normalized, null);\nreturn global::DripSharp.Runtime.JavaCompat.ResolveLocalDependencyUri(projectBaseUri, relativeUri);\n} catch (global::System.UriFormatException) {\nthrow global::Pkl.Core.PklBugException.UnreachableCode();\n}\n}")
+           "{\nvar assetPath = packageAssetUri.GetAssetPath().Substring(1);\nvar resolvedPath = global::DripSharp.Runtime.JavaCompat.PathResolve(this.path, assetPath);\nvar normalized = global::DripSharp.Brine.Util.IoUtils.ToNormalizedPathString(resolvedPath);\ntry {\nvar relativeUri = global::DripSharp.Runtime.JavaCompat.NewUri(null, null, normalized, null);\nreturn global::DripSharp.Runtime.JavaCompat.ResolveLocalDependencyUri(projectBaseUri, relativeUri);\n} catch (global::System.UriFormatException) {\nthrow global::DripSharp.Brine.PklBugException.UnreachableCode();\n}\n}")
 
           (= "executable:org.pkl.core.project.ProjectDeps#equals(java.lang.Object)"
              (spoon/declaration-key method))
@@ -2073,7 +2073,7 @@
           ;; their actual key/value types on CLR so lookup uses the canonical
           ;; package-URI comparer instead of erased object-map identity.
           (raw
-           "{\nif (global::System.Object.ReferenceEquals(this, o)) return true;\nif (o is not global::Pkl.Core.Project.ProjectDeps that) return false;\nreturn global::DripSharp.Runtime.JavaCompat.EconomicMapEquals(this.resolvedDependencies, that.resolvedDependencies);\n}")
+           "{\nif (global::System.Object.ReferenceEquals(this, o)) return true;\nif (o is not global::DripSharp.Brine.Project.ProjectDeps that) return false;\nreturn global::DripSharp.Runtime.JavaCompat.EconomicMapEquals(this.resolvedDependencies, that.resolvedDependencies);\n}")
 
           (= "executable:org.pkl.core.project.Project#findImportCycle(org.pkl.core.ModuleSource)"
              (spoon/declaration-key method))
@@ -2082,7 +2082,7 @@
           ;; standalone project analyzer; other schemes proceed to the supplied
           ;; evaluator instead of failing before evaluation starts.
           (raw
-           "{\nvar scheme = global::DripSharp.Runtime.JavaCompat.UriScheme(moduleSource.GetUri());\nif (!global::DripSharp.Runtime.JavaCompat.EqualsIgnoreCase(scheme, \"file\") && !global::DripSharp.Runtime.JavaCompat.EqualsIgnoreCase(scheme, \"package\")) {\nreturn new global::System.Collections.Generic.List<global::System.Collections.Generic.IList<global::System.Uri>>();\n}\nvar builder = Project.EvaluatorBuilder();\nvar analyzer = new global::Pkl.Core.Analyzer(global::Pkl.Core.StackFrameTransformers.DefaultTransformer, builder.GetColor(), global::Pkl.Core.SecurityManagers.DefaultManager, global::DripSharp.Runtime.JavaCompat.ToReadOnly<global::System.Collections.Generic.IReadOnlyCollection<global::Pkl.Core.Module.ModuleKeyFactory>>(global::DripSharp.Runtime.JavaCompat.ToListValues(builder.GetModuleKeyFactories())), builder.GetModuleCacheDir(), builder.GetProjectDependencies(), builder.GetHttpClient(), builder.GetTraceMode());\nvar importGraph = analyzer.ImportGraph(moduleSource.GetUri());\nvar ret = global::Pkl.Core.Util.ImportGraphUtils.FindImportCycles(importGraph);\nreturn global::DripSharp.Runtime.JavaCompat.ToListValues(global::DripSharp.Runtime.JavaCompat.Filter(ret, cycle => global::DripSharp.Runtime.JavaCompat.Any(cycle, uri => global::DripSharp.Runtime.JavaCompat.EqualsIgnoreCase(global::DripSharp.Runtime.JavaCompat.UriScheme(uri), scheme))));\n}")
+           "{\nvar scheme = global::DripSharp.Runtime.JavaCompat.UriScheme(moduleSource.GetUri());\nif (!global::DripSharp.Runtime.JavaCompat.EqualsIgnoreCase(scheme, \"file\") && !global::DripSharp.Runtime.JavaCompat.EqualsIgnoreCase(scheme, \"package\")) {\nreturn new global::System.Collections.Generic.List<global::System.Collections.Generic.IList<global::System.Uri>>();\n}\nvar builder = Project.EvaluatorBuilder();\nvar analyzer = new global::DripSharp.Brine.Analyzer(global::DripSharp.Brine.StackFrameTransformers.DefaultTransformer, builder.GetColor(), global::DripSharp.Brine.SecurityManagers.DefaultManager, global::DripSharp.Runtime.JavaCompat.ToReadOnly<global::System.Collections.Generic.IReadOnlyCollection<global::DripSharp.Brine.Module.ModuleKeyFactory>>(global::DripSharp.Runtime.JavaCompat.ToListValues(builder.GetModuleKeyFactories())), builder.GetModuleCacheDir(), builder.GetProjectDependencies(), builder.GetHttpClient(), builder.GetTraceMode());\nvar importGraph = analyzer.ImportGraph(moduleSource.GetUri());\nvar ret = global::DripSharp.Brine.Util.ImportGraphUtils.FindImportCycles(importGraph);\nreturn global::DripSharp.Runtime.JavaCompat.ToListValues(global::DripSharp.Runtime.JavaCompat.Filter(ret, cycle => global::DripSharp.Runtime.JavaCompat.Any(cycle, uri => global::DripSharp.Runtime.JavaCompat.EqualsIgnoreCase(global::DripSharp.Runtime.JavaCompat.UriScheme(uri), scheme))));\n}")
 
           (= "executable:org.pkl.core.project.Project#load(org.pkl.core.Evaluator,org.pkl.core.ModuleSource)"
              (spoon/declaration-key method))
@@ -2090,7 +2090,7 @@
           ;; the catchable cycle signal used by the JVM implementation.
           ;; Analyze first so project cycles retain the upstream diagnostics.
           (raw
-           "{\nvar cycles = Project.FindImportCycle(moduleSource);\nvar onlyDirectSelfCycle = global::DripSharp.Runtime.JavaCompat.ListCount(cycles) == 1 && global::DripSharp.Runtime.JavaCompat.ListCount(global::DripSharp.Runtime.JavaCompat.ListGet(global::DripSharp.Runtime.JavaCompat.ToListValues(cycles), 0)) == 1;\nif (!global::DripSharp.Runtime.JavaCompat.ListIsEmpty(cycles) && !onlyDirectSelfCycle) {\nglobal::Pkl.Core.Runtime.VmException vmException;\nif (global::DripSharp.Runtime.JavaCompat.ListCount(cycles) == 1) {\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesSingle\", Project.RenderCycle(global::DripSharp.Runtime.JavaCompat.ListGet(global::DripSharp.Runtime.JavaCompat.ToListValues(cycles), 0))).Build();\n} else {\nvar renderedCycles = Project.RenderMultipleCycles(cycles);\nvmException = (new global::Pkl.Core.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesMultiple\", renderedCycles).Build();\n}\nthrow vmException.ToPklException(global::Pkl.Core.StackFrameTransformers.DefaultTransformer, false);\n}\ntry {\nvar output = evaluator.EvaluateOutputValueAs<global::Pkl.Core.PObject>(moduleSource, global::Pkl.Core.PClassInfo<object>.Project);\nreturn Project.ParseProject(output);\n} catch (global::System.UriFormatException e) {\nthrow new global::Pkl.Core.PklException(e.Message, e);\n}\n}")
+           "{\nvar cycles = Project.FindImportCycle(moduleSource);\nvar onlyDirectSelfCycle = global::DripSharp.Runtime.JavaCompat.ListCount(cycles) == 1 && global::DripSharp.Runtime.JavaCompat.ListCount(global::DripSharp.Runtime.JavaCompat.ListGet(global::DripSharp.Runtime.JavaCompat.ToListValues(cycles), 0)) == 1;\nif (!global::DripSharp.Runtime.JavaCompat.ListIsEmpty(cycles) && !onlyDirectSelfCycle) {\nglobal::DripSharp.Brine.Runtime.VmException vmException;\nif (global::DripSharp.Runtime.JavaCompat.ListCount(cycles) == 1) {\nvmException = (new global::DripSharp.Brine.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesSingle\", Project.RenderCycle(global::DripSharp.Runtime.JavaCompat.ListGet(global::DripSharp.Runtime.JavaCompat.ToListValues(cycles), 0))).Build();\n} else {\nvar renderedCycles = Project.RenderMultipleCycles(cycles);\nvmException = (new global::DripSharp.Brine.Runtime.VmExceptionBuilder()).EvalError(\"cannotHaveCircularProjectDependenciesMultiple\", renderedCycles).Build();\n}\nthrow vmException.ToPklException(global::DripSharp.Brine.StackFrameTransformers.DefaultTransformer, false);\n}\ntry {\nvar output = evaluator.EvaluateOutputValueAs<global::DripSharp.Brine.PObject>(moduleSource, global::DripSharp.Brine.PClassInfo<object>.Project);\nreturn Project.ParseProject(output);\n} catch (global::System.UriFormatException e) {\nthrow new global::DripSharp.Brine.PklException(e.Message, e);\n}\n}")
 
           (= "executable:org.pkl.core.Pair#iterator()"
              (spoon/declaration-key method))
@@ -2107,19 +2107,19 @@
 
           (= "executable:org.pkl.core.util.paguro.RrbTree#empty()"
              (spoon/declaration-key method))
-          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<T>.ImRrbt<T>(global::System.Array.Empty<T>(), 0, new global::Pkl.Core.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
+          (raw "{\nreturn new global::DripSharp.Brine.Util.Paguro.RrbTree<T>.ImRrbt<T>(global::System.Array.Empty<T>(), 0, new global::DripSharp.Brine.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
 
           (= "executable:org.pkl.core.util.paguro.RrbTree#emptyMutable()"
              (spoon/declaration-key method))
-          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<T>.MutRrbt<T>(global::System.Array.Empty<T>(), 0, 0, new global::Pkl.Core.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
+          (raw "{\nreturn new global::DripSharp.Brine.Util.Paguro.RrbTree<T>.MutRrbt<T>(global::System.Array.Empty<T>(), 0, 0, new global::DripSharp.Brine.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>()), 0);\n}")
 
           (= "executable:org.pkl.core.util.paguro.RrbTree#emptyLeaf()"
              (spoon/declaration-key method))
-          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>());\n}")
+          (raw "{\nreturn new global::DripSharp.Brine.Util.Paguro.RrbTree<T>.Leaf<T>(global::System.Array.Empty<T>());\n}")
 
           (= "executable:org.pkl.core.util.paguro.RrbTree#genericNodeArray(int)"
              (spoon/declaration-key method))
-          (raw "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<T>.Node<T>[size];\n}")
+          (raw "{\nreturn new global::DripSharp.Brine.Util.Paguro.RrbTree<T>.Node<T>[size];\n}")
 
           (= "executable:org.pkl.core.util.paguro.RrbTree$MutRrbt#mt()"
              (spoon/declaration-key method))
@@ -2131,10 +2131,10 @@
                  (first (.getFormalCtTypeParameters
                          (.getDeclaringType owner-type))))]
             (raw
-             (str "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<"
+             (str "{\nreturn new global::DripSharp.Brine.Util.Paguro.RrbTree<"
                   root-name ">.MutRrbt<" element-name
                   ">(global::System.Array.Empty<" element-name
-                  ">(), 0, 0, new global::Pkl.Core.Util.Paguro.RrbTree<"
+                  ">(), 0, 0, new global::DripSharp.Brine.Util.Paguro.RrbTree<"
                   element-name ">.Leaf<" element-name
                   ">(global::System.Array.Empty<" element-name
                   ">()), 0);\n}")))
@@ -2149,10 +2149,10 @@
                  (first (.getFormalCtTypeParameters
                          (.getDeclaringType owner-type))))]
             (raw
-             (str "{\nreturn new global::Pkl.Core.Util.Paguro.RrbTree<"
+             (str "{\nreturn new global::DripSharp.Brine.Util.Paguro.RrbTree<"
                   root-name ">.ImRrbt<" element-name
                   ">(global::System.Array.Empty<" element-name
-                  ">(), 0, new global::Pkl.Core.Util.Paguro.RrbTree<"
+                  ">(), 0, new global::DripSharp.Brine.Util.Paguro.RrbTree<"
                   element-name ">.Leaf<" element-name
                   ">(global::System.Array.Empty<" element-name
                   ">()), 0);\n}")))
@@ -2163,12 +2163,12 @@
 
           (= "executable:org.pkl.core.PClassInfo#forValue(java.lang.Object)"
              (spoon/declaration-key method))
-          (raw "{\nreturn global::Pkl.Core.PClassInfo<object>.ForValueCompat(value);\n}")
+          (raw "{\nreturn global::DripSharp.Brine.PClassInfo<object>.ForValueCompat(value);\n}")
 
           (= "executable:org.pkl.core.runtime.VmList#repeat(long)"
              (spoon/declaration-key method))
           (raw
-           "{\nif (n == 0) return global::Pkl.Core.Runtime.VmList.EMPTY;\nif (n == 1) return this;\nglobal::Pkl.Core.Runtime.VmCollection.CheckPositive(n);\nvar remaining = n;\nvar result = global::Pkl.Core.Util.Paguro.RrbTree<object>.Empty<object>();\nvar factor = this.rrbt;\nwhile (remaining > 0) {\nif ((remaining & 1L) != 0) result = result.Join(factor);\nremaining >>= 1;\nif (remaining > 0) factor = factor.Join(factor);\n}\nreturn global::Pkl.Core.Runtime.VmList.Create(result);\n}")
+           "{\nif (n == 0) return global::DripSharp.Brine.Runtime.VmList.EMPTY;\nif (n == 1) return this;\nglobal::DripSharp.Brine.Runtime.VmCollection.CheckPositive(n);\nvar remaining = n;\nvar result = global::DripSharp.Brine.Util.Paguro.RrbTree<object>.Empty<object>();\nvar factor = this.rrbt;\nwhile (remaining > 0) {\nif ((remaining & 1L) != 0) result = result.Join(factor);\nremaining >>= 1;\nif (remaining > 0) factor = factor.Join(factor);\n}\nreturn global::DripSharp.Brine.Runtime.VmList.Create(result);\n}")
 
           :else translated-body)
         declaration
@@ -2452,17 +2452,17 @@
         (cond
           rrb-im-empty?
           (raw
-           (str "new global::Pkl.Core.Util.Paguro.RrbTree<"
+           (str "new global::DripSharp.Brine.Util.Paguro.RrbTree<"
                 root-parameter-name ">.ImRrbt<" owner-parameter-name
                 ">(global::System.Array.Empty<" owner-parameter-name
-                ">(), 0, new global::Pkl.Core.Util.Paguro.RrbTree<"
+                ">(), 0, new global::DripSharp.Brine.Util.Paguro.RrbTree<"
                 owner-parameter-name ">.Leaf<" owner-parameter-name
                 ">(global::System.Array.Empty<" owner-parameter-name
                 ">()), 0)"))
 
           rrb-leaf-empty?
           (raw
-           (str "new global::Pkl.Core.Util.Paguro.RrbTree<"
+           (str "new global::DripSharp.Brine.Util.Paguro.RrbTree<"
                 root-parameter-name ">.Leaf<" root-parameter-name
                 ">(global::System.Array.Empty<" root-parameter-name ">())"))
 
@@ -2483,12 +2483,12 @@
         (cond
           rrb-im-empty?
           (raw
-           (str "global::Pkl.Core.Util.Paguro.RrbTree<"
+           (str "global::DripSharp.Brine.Util.Paguro.RrbTree<"
                 root-parameter-name ">.ImRrbt<" owner-parameter-name ">"))
 
           rrb-leaf-empty?
           (raw
-           (str "global::Pkl.Core.Util.Paguro.RrbTree<"
+           (str "global::DripSharp.Brine.Util.Paguro.RrbTree<"
                 root-parameter-name ">.Leaf<" root-parameter-name ">"))
 
           :else
@@ -2979,7 +2979,7 @@
            "public global::System.Collections.Generic.IEnumerable<E> Drop(long count) => global::System.Linq.Enumerable.Skip(this, checked((int)count));\n"
            "public global::System.Collections.Generic.IEnumerable<E> Take(long count) => global::System.Linq.Enumerable.Take(this, checked((int)count));\n"
            "public global::System.Collections.Generic.IEnumerable<E> SubList(int fromIndex, int toIndex) => global::System.Linq.Enumerable.Take(global::System.Linq.Enumerable.Skip(this, fromIndex), toIndex - fromIndex);\n"
-           "public global::Pkl.Core.Util.Paguro.RrbTree<E> Concat(global::System.Collections.Generic.IEnumerable<E> values) { global::Pkl.Core.Util.Paguro.RrbTree<E> result = this; foreach (var value in values) result = result.Append(value); return result; }\n"
+           "public global::DripSharp.Brine.Util.Paguro.RrbTree<E> Concat(global::System.Collections.Generic.IEnumerable<E> values) { global::DripSharp.Brine.Util.Paguro.RrbTree<E> result = this; foreach (var value in values) result = result.Append(value); return result; }\n"
            "public int LastIndexOf(object item) { for (var i = this.Size() - 1; i >= 0; i--) if (global::System.Object.Equals(this.Get(i), item)) return i; return -1; }\n"
            "public E[] ToArray() => global::System.Linq.Enumerable.ToArray(this);\n"
            "public global::System.Collections.Generic.ISet<E> ToImSet() => new global::System.Collections.Generic.HashSet<E>(this);\n"
@@ -3026,7 +3026,7 @@
                      (= "AnyNodes" (some-> type .getDeclaringType .getSimpleName)))
                 (some #(= "receiverClassNode" (.getSimpleName ^CtField %))
                       (.getFields type)))
-        [(raw "protected GetClass() { this.receiverClassNode = global::Pkl.Core.Ast.@Internal.GetClassNodeGen.Create(this.GetReceiverNode()); }")])
+        [(raw "protected GetClass() { this.receiverClassNode = global::DripSharp.Brine.Ast.@Internal.GetClassNodeGen.Create(this.GetReceiverNode()); }")])
       (when disposable?
         [(raw (if (and (instance? CtInterface type)
                        (not (some #(= "close" (.getSimpleName ^CtMethod %))
@@ -3035,8 +3035,8 @@
                 "public void Dispose() => this.Close();"))])
       (when wrapper?
         [(raw (str
-               "global::Pkl.Core.Runtime.Truffle.api.nodes.Node global::Pkl.Core.Runtime.Truffle.api.instrumentation.InstrumentableNode.WrapperNode.GetDelegateNode() => this.GetDelegateNode();\n"
-               "global::Pkl.Core.Runtime.Truffle.api.instrumentation.ProbeNode global::Pkl.Core.Runtime.Truffle.api.instrumentation.InstrumentableNode.WrapperNode.GetProbeNode() => this.GetProbeNode();"))])
+               "global::DripSharp.Brine.Runtime.Truffle.api.nodes.Node global::DripSharp.Brine.Runtime.Truffle.api.instrumentation.InstrumentableNode.WrapperNode.GetDelegateNode() => this.GetDelegateNode();\n"
+               "global::DripSharp.Brine.Runtime.Truffle.api.instrumentation.ProbeNode global::DripSharp.Brine.Runtime.Truffle.api.instrumentation.InstrumentableNode.WrapperNode.GetProbeNode() => this.GetProbeNode();"))])
       (when (= "org.pkl.core.util.paguro.RrbTree$Node" (.getQualifiedName type))
         [(raw "public string IndentedStr(int indent);")])
       (when (= "org.pkl.core.util.paguro.RrbTree$ImRrbt" (.getQualifiedName type))
@@ -3045,21 +3045,21 @@
                (first (.getFormalCtTypeParameters type)))]
           [(raw
             (str
-             "public new global::Pkl.Core.Util.Paguro.RrbTree<" element-name
+             "public new global::DripSharp.Brine.Util.Paguro.RrbTree<" element-name
              ">.ImRrbt<" element-name
-             "> SubList(int fromIndex, int toIndex) { var result = global::Pkl.Core.Util.Paguro.RrbTree<"
+             "> SubList(int fromIndex, int toIndex) { var result = global::DripSharp.Brine.Util.Paguro.RrbTree<"
              element-name ">.Empty<" element-name
              ">(); foreach (var value in global::System.Linq.Enumerable.Take(global::System.Linq.Enumerable.Skip(this, fromIndex), toIndex - fromIndex)) result = result.Append(value); return result; }\n"
-             "public global::Pkl.Core.Util.Paguro.RrbTree<" element-name
+             "public global::DripSharp.Brine.Util.Paguro.RrbTree<" element-name
              ">.ImRrbt<" element-name
-             "> Reverse() { var result = global::Pkl.Core.Util.Paguro.RrbTree<"
+             "> Reverse() { var result = global::DripSharp.Brine.Util.Paguro.RrbTree<"
              element-name ">.Empty<" element-name
              ">(); foreach (var value in global::System.Linq.Enumerable.Reverse(this)) result = result.Append(value); return result; }"))]))
       (when (or (= "org.pkl.core.util.paguro.RrbTree$Relaxed" (.getQualifiedName type))
                 (= "org.pkl.core.util.paguro.RrbTree.Relaxed" (.getQualifiedName type))
                 (and (= "Relaxed" (.getSimpleName type))
                      (= "RrbTree" (some-> type .getDeclaringType .getSimpleName))))
-        [(raw "internal static int[] MakeSizeArray<TItem>(global::Pkl.Core.Util.Paguro.RrbTree<TItem>.Node<TItem>[] newNodes) { var result = new int[newNodes.Length]; var total = 0; for (var i = 0; i < newNodes.Length; i++) { total += newNodes[i].Size(); result[i] = total; } return result; }")])
+        [(raw "internal static int[] MakeSizeArray<TItem>(global::DripSharp.Brine.Util.Paguro.RrbTree<TItem>.Node<TItem>[] newNodes) { var result = new int[newNodes.Length]; var total = 0; for (var i = 0; i < newNodes.Length; i++) { total += newNodes[i].Size(); result[i] = total; } return result; }")])
       (iterator-bridge-members ctx type)
       (iterable-bridge-members ctx type)
       (collection-iterable-bridge-members ctx type)
@@ -3355,7 +3355,7 @@
                  and-then :method qualified "AndThen" (.getSignature and-then)
                  :dotnet.declaration/stack-frame-transformer-extension)]
             (sequence-node
-             [(raw "public delegate global::Pkl.Core.StackFrame StackFrameTransformer(global::Pkl.Core.StackFrame frame);\n\n")
+             [(raw "public delegate global::DripSharp.Brine.StackFrame StackFrameTransformer(global::DripSharp.Brine.StackFrame frame);\n\n")
               extension]))
 
           functional-method
@@ -3610,10 +3610,10 @@
 (def ^:private digest-file util/sha256-file)
 
 (defn- core-destination? [configuration]
-  (= "Pkl.Core" (get-in configuration [:package :id])))
+  (= "DripSharp.Brine" (get-in configuration [:package :id])))
 
 (defn- legal-destination? [configuration]
-  (contains? #{"Pkl.Parser" "Pkl.Core"}
+  (contains? #{"DripSharp.Brine.Parser" "DripSharp.Brine"}
              (get-in configuration [:package :id])))
 
 (defn- validate-pkl-legal-configuration! [configuration]
@@ -3679,13 +3679,13 @@
   (let [configuration (validate-configuration! configuration)]
     (when (core-destination? configuration)
       (let [expected {:profile core-profile
-                      :product-family :pkl
+                      :product-family :brine
                       :project-root "research/pkl"
                       :revision source-revision
                       :gradle-project ":pkl-core"}
             actual (select-keys profile (keys expected))]
         (when-not (= expected actual)
-          (fail! "Pkl.Core generation profile differs from its pinned source contract"
+          (fail! "DripSharp.Brine generation profile differs from its pinned source contract"
                  {:kind :invalid-pkl-core-profile
                   :expected expected
                   :actual actual}))))
@@ -3728,7 +3728,7 @@
    (mapv
     (fn [relative]
       {:source relative
-       :destination (str "Pkl/Core/Runtime/Substrate/"
+       :destination (str "DripSharp/Brine/Runtime/Substrate/"
                          (.getFileName (paths/path relative)))
        :strategy :reviewable-product-runtime-source
        :missing-kind :missing-runtime-source
@@ -3745,7 +3745,7 @@
   (let [base (java-library/rule-bundle)]
     (-> base
         (assoc :id :pkl
-               :product-family :pkl
+               :product-family :brine
                :orchestration
                {:validate-profile! validate-profile!
                 :validate-project-input! validate-project-input!})

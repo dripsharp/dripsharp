@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Isak Sky
 // SPDX-License-Identifier: Apache-2.0
-
+// Idiomatic .NET value-model adapters for Brine's Pkl surface.
 #nullable enable
 using System;
 using System.Collections;
@@ -11,7 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
-namespace Pkl.Core;
+namespace DripSharp.Brine;
 
 public sealed partial class Pair<F, S> { }
 

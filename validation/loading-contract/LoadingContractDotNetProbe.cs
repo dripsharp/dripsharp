@@ -18,17 +18,17 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Pkl.Core;
-using Pkl.Core.EvaluatorSettings;
-using Pkl.Core.Externalreader;
-using Pkl.Core.Http;
-using Pkl.Core.Module;
-using Pkl.Core.Packages;
-using Pkl.Core.Project;
-using Pkl.Core.Resource;
-using Pkl.Core.Settings;
-using PklHttpClient = Pkl.Core.Http.HttpClient;
-using StackFrame = Pkl.Core.StackFrame;
+using DripSharp.Brine;
+using DripSharp.Brine.EvaluatorSettings;
+using DripSharp.Brine.Externalreader;
+using DripSharp.Brine.Http;
+using DripSharp.Brine.Module;
+using DripSharp.Brine.Packages;
+using DripSharp.Brine.Project;
+using DripSharp.Brine.Resource;
+using DripSharp.Brine.Settings;
+using PklHttpClient = DripSharp.Brine.Http.HttpClient;
+using StackFrame = DripSharp.Brine.StackFrame;
 
 /** Package-only .NET probe for the loader, package, and policy contract. */
 static class LoadingContractDotNetProbe
@@ -177,7 +177,7 @@ static class LoadingContractDotNetProbe
             ["birds"] = dependency
         };
         var metadata = new DependencyMetadata(
-            "catalog", packageUri, Pkl.Core.Version.Parse("1.2.3"),
+            "catalog", packageUri, DripSharp.Brine.Version.Parse("1.2.3"),
             new Uri("https://example.test/birds@1.2.3.zip"), checksums, dependencies,
             null, null, null, null, null, new List<string> { "Pkl" }, null, "birds",
             new List<PObject>());
@@ -1184,7 +1184,7 @@ static class LoadingContractDotNetProbe
         Project project = Project.LoadFromPath(projectFile);
         Project fromSource = Project.Load(ModuleSource.PathFromPath(projectFile));
         Require(project.Equals(fromSource), "path and ModuleSource project loading must agree");
-        Pkl.Core.Project.Package package = project.GetPackage()!;
+        DripSharp.Brine.Project.Package package = project.GetPackage()!;
         Require(package.Name == "contract-project" && package.Version.ToString() == "1.2.3" &&
             package.Authors.Count == 1 && package.ApiTests.Count == 1 && package.Exclude.Count >= 3 &&
             package.Website is not null && package.Documentation is not null &&
@@ -2018,7 +2018,7 @@ static class LoadingContractDotNetProbe
         Require(unsafeRejected && !File.Exists(Path.Combine(work, "escape.pkl")),
             "archive traversal must be rejected before extraction");
 
-        Pkl.Core.Http.HttpClient http = Pkl.Core.Http.HttpClient.CreateBuilder().Build();
+        DripSharp.Brine.Http.HttpClient http = DripSharp.Brine.Http.HttpClient.CreateBuilder().Build();
         http.Dispose();
         http.Dispose();
         bool httpDisposed = true;

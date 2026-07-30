@@ -17,10 +17,10 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Pkl.Core;
-using Pkl.Core.Project;
-using Pkl.Core.Util;
-using PklHttpClient = Pkl.Core.Http.HttpClient;
+using DripSharp.Brine;
+using DripSharp.Brine.Project;
+using DripSharp.Brine.Util;
+using PklHttpClient = DripSharp.Brine.Http.HttpClient;
 
 static class Program
 {
@@ -174,7 +174,7 @@ static class Program
         Require(Directory.Exists(fixtureModulePath),
             $"language-snippet module-path fixtures are missing: {fixtureModulePath}");
         using var fixtureModulePathResolver =
-            new Pkl.Core.Module.ModulePathResolver(new[] { fixtureModulePath });
+            new DripSharp.Brine.Module.ModulePathResolver(new[] { fixtureModulePath });
         EvaluatorBuilder builder = EvaluatorBuilder.Preconfigured()
             .SetLogger(Loggers.Writer(logWriter))
             .SetStackFrameTransformer(frame => frame)
@@ -184,15 +184,15 @@ static class Program
             .SetHttpClient(CreateTestHttpClient(packageBuild, testPort))
             .SetPowerAssertionsEnabled(true)
             .SetTimeout(timeout);
-        var moduleKeyFactories = new List<Pkl.Core.Module.ModuleKeyFactory>
+        var moduleKeyFactories = new List<DripSharp.Brine.Module.ModuleKeyFactory>
         {
-            Pkl.Core.Module.ModuleKeyFactories.CreateModulePath(fixtureModulePathResolver)
+            DripSharp.Brine.Module.ModuleKeyFactories.CreateModulePath(fixtureModulePathResolver)
         };
         moduleKeyFactories.AddRange(builder.GetModuleKeyFactories());
         builder.SetModuleKeyFactories(moduleKeyFactories);
-        var resourceReaders = new List<Pkl.Core.Resource.ResourceReader>
+        var resourceReaders = new List<DripSharp.Brine.Resource.ResourceReader>
         {
-            Pkl.Core.Resource.ResourceReaders.ModulePath(fixtureModulePathResolver)
+            DripSharp.Brine.Resource.ResourceReaders.ModulePath(fixtureModulePathResolver)
         };
         resourceReaders.AddRange(builder.GetResourceReaders());
         builder.SetResourceReaders(resourceReaders);

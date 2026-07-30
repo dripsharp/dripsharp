@@ -65,16 +65,16 @@
         hash-a (apply str (repeat 64 "a"))
         hash-b (apply str (repeat 64 "b"))
         packages [{:resource-proof
-                   {:assembly-identity {:name "Pkl.Parser"}
+                   {:assembly-identity {:name "DripSharp.Brine.Parser"}
                     :assembly-artifact {:sha256 hash-a}}}
                   {:resource-proof
-                   {:assembly-identity {:name "Pkl.Core"}
+                   {:assembly-identity {:name "DripSharp.Brine"}
                     :assembly-artifact {:sha256 hash-b}}}]
         proof (provenance/write-packed-assembly-manifest! output packages)]
-    (is (= [{:name "Pkl.Core" :sha256 hash-b}
-            {:name "Pkl.Parser" :sha256 hash-a}]
+    (is (= [{:name "DripSharp.Brine" :sha256 hash-b}
+            {:name "DripSharp.Brine.Parser" :sha256 hash-a}]
            (:assemblies proof)))
-    (is (= (str "Pkl.Core\t" hash-b "\nPkl.Parser\t" hash-a "\n")
+    (is (= (str "DripSharp.Brine\t" hash-b "\nDripSharp.Brine.Parser\t" hash-a "\n")
            (Files/readString output)))))
 
 (deftest to-fixed-contract-pins-binary-rounding-and-the-complete-digit-range

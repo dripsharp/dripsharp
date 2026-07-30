@@ -26,19 +26,19 @@
  :notice-appendix
  "\n---\nDripSharp translation appendix\n\nThis package is an independent mechanical translation of the above software to C#/.NET, produced by DripSharp. It is not developed, endorsed, or supported by Apple Inc. or the Pkl project.\n"
  :packages
- {"Pkl.Parser" {:version "0.0.0-development"}
-  "Pkl.Core" {:version "0.0.0-development"}}
+ {"DripSharp.Brine.Parser" {:version "0.0.0-development"}
+  "DripSharp.Brine" {:version "0.0.0-development"}}
  :profiles
  {:parser
   {:profile "pkl-parser"
    :source-module "pkl-parser"
-   :package-id "Pkl.Parser"
+   :package-id "DripSharp.Brine.Parser"
    :source-counts {:ordinary 50 :generated 0}
    :public-contract-rows 958}
   :core
   {:profile "pkl-core-value-model"
    :source-module "pkl-core"
-   :package-id "Pkl.Core"
+   :package-id "DripSharp.Brine"
    :source-counts {:ordinary 582 :generated 141}
    :public-contract-rows 1200}}
  :contracts

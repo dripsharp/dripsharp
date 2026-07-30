@@ -1,6 +1,6 @@
 {:schema-version 1
  :profile "pkl-parser"
- :product-family :pkl
+ :product-family :brine
  :baseline-target :pkl
  :baseline-profile :parser
  :project-root "research/pkl"

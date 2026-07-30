@@ -1,6 +1,6 @@
 {:schema-version 4
  :target :pkl
- :product-family :pkl
+ :product-family :brine
  :contracts
  {:product-goal "doc/targets/pkl/product-goal.md"
   :port-scope "doc/targets/pkl/port-scope.md"
@@ -50,19 +50,19 @@
  :mapping-overlays []
  :runtime-assets
  [{:id :pkl/dotnet
-   :path "runtime/Pkl.Core.DotNet.cs"
+   :path "runtime/DripSharp.Brine.DotNet.cs"
    :capabilities #{:pkl/runtime}}
   {:id :pkl/loading
-   :path "runtime/Pkl.Core.Loading.cs"
+   :path "runtime/DripSharp.Brine.Loading.cs"
    :capabilities #{:pkl/runtime}}
   {:id :pkl/runtime-bridge
-   :path "runtime/Pkl.Core.RuntimeBridge.cs"
+   :path "runtime/DripSharp.Brine.RuntimeBridge.cs"
    :capabilities #{:pkl/runtime}}
   {:id :pkl/substrate
-   :path "runtime/Pkl.Core.Substrate.cs"
+   :path "runtime/DripSharp.Brine.Substrate.cs"
    :capabilities #{:pkl/runtime}}
   {:id :pkl/value-model-dotnet
-   :path "runtime/Pkl.Core.ValueModel.DotNet.cs"
+   :path "runtime/DripSharp.Brine.ValueModel.DotNet.cs"
    :capabilities #{:pkl/runtime}}]
  :validation-contracts
  [{:id :pkl-differential

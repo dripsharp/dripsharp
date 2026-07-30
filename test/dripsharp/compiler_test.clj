@@ -8,29 +8,29 @@
 (deftest historical-declaration-failures-map-to-spoon-rules
   (let [root (Files/createTempDirectory "dripsharp-compiler-map"
                                         (make-array FileAttribute 0))
-        file (paths/resolve-path root "src/Pkl/Parser/Syntax/Expr.cs")
+        file (paths/resolve-path root "src/DripSharp/Brine/Parser/Syntax/Expr.cs")
         text "public class SingleLineStringLiteralExpr\n{\n  public object GetParts() => null;\n}\n"
         _ (Files/createDirectories (.getParent file) (make-array FileAttribute 0))
         _ (Files/writeString file text (make-array OpenOption 0))
         class-start (.indexOf text "SingleLineStringLiteralExpr")
         method-start (.indexOf text "GetParts")
         mappings
-        [{:file "src/Pkl/Parser/Syntax/Expr.cs"
+        [{:file "src/DripSharp/Brine/Parser/Syntax/Expr.cs"
           :destination {:start class-start :end (+ class-start 27)}
           :source {:frontend-class "spoon.support.reflect.declaration.CtClassImpl"
                    :location {:file "research/pkl/pkl-parser/src/main/java/org/pkl/parser/syntax/Expr.java"
                               :line 123 :column 29}
                    :rule :java.declaration/class}}
-         {:file "src/Pkl/Parser/Syntax/Expr.cs"
+         {:file "src/DripSharp/Brine/Parser/Syntax/Expr.cs"
           :destination {:start method-start :end (+ method-start 8)}
           :source {:frontend-class "spoon.support.reflect.declaration.CtMethodImpl"
                    :location {:file "research/pkl/pkl-parser/src/main/java/org/pkl/parser/syntax/Expr.java"
                               :line 148 :column 29}
                    :rule :java.declaration/method}}]
         output (str file "(1,14): error CS0534: 'SingleLineStringLiteralExpr' does not implement inherited abstract member "
-                    "[" root "/Pkl.Parser.csproj]\n"
+                    "[" root "/DripSharp.Brine.Parser.csproj]\n"
                     file "(3,17): warning CS0114: 'GetParts()' hides inherited member "
-                    "[" root "/Pkl.Parser.csproj]\n")
+                    "[" root "/DripSharp.Brine.Parser.csproj]\n")
         diagnostics (compiler/parse-diagnostics output)
         mapped (compiler/map-diagnostics root {:mappings mappings} diagnostics)]
     (testing "historical Roslyn declaration diagnostics retain exact codes"
@@ -51,7 +51,7 @@
 (deftest clean-build-rejects-trailing-source-map-edn
   (let [root (Files/createTempDirectory "dripsharp-compiler-source-map"
                                         (make-array FileAttribute 0))
-        project-file (paths/resolve-path root "Pkl.Core.csproj")
+        project-file (paths/resolve-path root "DripSharp.Brine.csproj")
         source-map (paths/resolve-path root "source-map.edn")
         _ (Files/writeString project-file "<Project />" (make-array OpenOption 0))
         _ (Files/writeString source-map
@@ -64,7 +64,7 @@
             :profile "pkl-core-value-model"
             :generate-fn
             (fn [_]
-              {:destination {:package {:id "Pkl.Core"}
+              {:destination {:package {:id "DripSharp.Brine"}
                              :output {:source-map-file "source-map.edn"}}
                :emission {:project-root root :project-file project-file}})
             :run-command! (fn [_] (throw (ex-info "must not run" {})))})
@@ -75,7 +75,7 @@
 (deftest explicit-profile-is-cleanly-generated-and-built-in-release
   (let [root (Files/createTempDirectory "dripsharp-compiler-profile"
                                         (make-array FileAttribute 0))
-        project-file (paths/resolve-path root "Pkl.Core.csproj")
+        project-file (paths/resolve-path root "DripSharp.Brine.csproj")
         source-map (paths/resolve-path root "source-map.edn")
         generated-options (atom nil)
         command (atom nil)
@@ -90,7 +90,7 @@
           :generate-fn
           (fn [options]
             (reset! generated-options options)
-            {:destination {:package {:id "Pkl.Core"}
+            {:destination {:package {:id "DripSharp.Brine"}
                            :output {:source-map-file "source-map.edn"}}
              :emission {:project-root root :project-file project-file}})
           :run-command!

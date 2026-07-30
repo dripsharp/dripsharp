@@ -708,7 +708,7 @@
                (language-runner/verify-source-isolation!
                 consumer-root project source)
                (catch clojure.lang.ExceptionInfo error
-                 (fail! "Package Pkl.Core corpus consumer crosses the shared package isolation boundary"
+                 (fail! "DripSharp.Brine package corpus consumer crosses the shared package isolation boundary"
                         {:kind :pkl-core-corpus-source-isolation
                          :cause-kind (:kind (ex-data error))})))
         project-text (Files/readString project StandardCharsets/UTF_8)
@@ -718,10 +718,10 @@
          "assembly-reference" #"<Reference\b"
          "source-include" #"<Compile\b"
          "generated-source" #"(?i)target/generated|(?i)generated-source"
-         "internal-runtime-namespace" #"Pkl[.]Core[.]Runtime"
-         "internal-messaging-namespace" #"Pkl[.]Core[.]Messaging"
+         "internal-runtime-namespace" #"DripSharp[.]Brine[.]Runtime"
+         "internal-messaging-namespace" #"DripSharp[.]Brine[.]Messaging"
          "excluded-yaml-surface"
-         #"(?i)(?:Pkl[.]Core[.]Yaml|SnakeYaml|Yaml(?:Parser|Renderer))"
+         #"(?i)(?:DripSharp[.]Brine[.]Yaml|SnakeYaml|Yaml(?:Parser|Renderer))"
          "excluded-binary-surface" #"(?i)PklBinary|MessagePack"}
         forbidden
         (->> forbidden-patterns
@@ -731,7 +731,7 @@
                        label)))
              sort vec)]
     (when (seq forbidden)
-      (fail! "Package Pkl.Core corpus consumer crosses a forbidden source boundary"
+      (fail! "DripSharp.Brine package corpus consumer crosses a forbidden source boundary"
              {:kind :pkl-core-corpus-source-isolation
               :project (str project) :source (str source) :forbidden forbidden}))
     (assoc base :forbidden [])))
@@ -822,7 +822,7 @@
 
 (defn- consumer-project-file
   [consumer-root]
-  (paths/resolve-path consumer-root "Pkl.Core.PackageConsumer.csproj"))
+  (paths/resolve-path consumer-root "DripSharp.Brine.PackageConsumer.csproj"))
 
 (defn- install-package-runner!
   [root consumer-root project source runner-source]
@@ -837,7 +837,7 @@
       (let [input (paths/resolve-path fixture-root file)
             output (paths/resolve-path consumer-root file)]
         (when-not (paths/regular-file? input)
-          (fail! "Package Pkl.Core corpus fixture is missing"
+          (fail! "DripSharp.Brine package corpus fixture is missing"
                  {:kind :missing-pkl-core-corpus-input :path (str input)}))
         (Files/copy input output
                     (into-array StandardCopyOption
@@ -852,7 +852,7 @@
                              "\" LogicalName=\"" logical-name "\" />\n")))
                "  </ItemGroup>\n")]
       (when-not (str/includes? project-text closing)
-        (fail! "Package Pkl.Core consumer project is malformed"
+        (fail! "DripSharp.Brine package consumer project is malformed"
                {:kind :malformed-pkl-core-corpus-consumer-project
                 :path (str project)}))
       (write-text! project (str/replace project-text closing (str resources closing))))))
@@ -949,7 +949,7 @@
                  :directory consumer-root
                  :timeout-ms process-timeout-ms}))]
          (when-not (paths/regular-file? runner-source)
-           (fail! "Package Pkl.Core corpus runner source is missing"
+           (fail! "DripSharp.Brine package corpus runner source is missing"
                   {:kind :missing-pkl-core-corpus-input :path (str runner-source)}))
          (package-provenance/write-packed-assembly-manifest!
           assembly-manifest (:packages package-proof))

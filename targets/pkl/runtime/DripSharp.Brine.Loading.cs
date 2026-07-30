@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Isak Sky
 // SPDX-License-Identifier: Apache-2.0
 
-// Idiomatic .NET assembly module and embedded-resource loading for Pkl.Core.
+// Idiomatic .NET assembly module and embedded-resource loading for Brine's Pkl surface.
 // This is durable destination product code; translated Java output remains
 // disposable. The shared index deliberately performs no Pkl evaluation.
 #nullable enable
@@ -14,7 +14,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
-namespace Pkl.Core
+namespace DripSharp.Brine
 {
     internal static class DotNetBytes
     {
@@ -43,7 +43,7 @@ namespace Pkl.Core
     }
 }
 
-namespace Pkl.Core.Runtime
+namespace DripSharp.Brine.Runtime
 {
     internal sealed class ReaderBaseAdapter : ReaderBase
     {
@@ -77,7 +77,7 @@ namespace Pkl.Core.Runtime
     }
 }
 
-namespace Pkl.Core
+namespace DripSharp.Brine
 {
     internal sealed partial record class CommandSpec
     {
@@ -91,7 +91,7 @@ namespace Pkl.Core
     }
 }
 
-namespace Pkl.Core.Util
+namespace DripSharp.Brine.Util
 {
     internal sealed partial class GlobResolver
     {
@@ -118,7 +118,7 @@ namespace Pkl.Core.Util
     }
 }
 
-namespace Pkl.Core
+namespace DripSharp.Brine
 {
     public sealed partial record class Platform
     {
@@ -140,7 +140,7 @@ namespace Pkl.Core
     }
 }
 
-namespace Pkl.Core.Http
+namespace DripSharp.Brine.Http
 {
     internal sealed partial class RequestRewritingClient
     {
@@ -155,7 +155,7 @@ namespace Pkl.Core.Http
     }
 }
 
-namespace Pkl.Core.Util.Json
+namespace DripSharp.Brine.Util.Json
 {
     internal static class JsonHandlerBridge
     {
@@ -192,7 +192,7 @@ namespace Pkl.Core.Util.Json
     }
 }
 
-namespace Pkl.Core.Http
+namespace DripSharp.Brine.Http
 {
     internal sealed partial class JdkHttpClient
     {
@@ -210,7 +210,7 @@ namespace Pkl.Core.Http
     }
 }
 
-namespace Pkl.Core.Module
+namespace DripSharp.Brine.Module
 {
     public partial interface ModuleKey
     {
@@ -227,7 +227,7 @@ namespace Pkl.Core.Module
             throw new NotSupportedException();
         public bool HasFragmentPaths() => false;
         public Uri ResolveUri(Uri baseUri, Uri uri) =>
-            Pkl.Core.Util.IoUtils.Resolve(this, baseUri, uri);
+            DripSharp.Brine.Util.IoUtils.Resolve(this, baseUri, uri);
     }
 
     public partial interface ResolvedModuleKey
@@ -296,15 +296,15 @@ namespace Pkl.Core.Module
         public sealed partial class TreePathElement
         {
             public IReadOnlyList<PathElement> Children =>
-                Pkl.Core.DotNetCollections.ReadOnly(GetChildrenValues());
+                DripSharp.Brine.DotNetCollections.ReadOnly(GetChildrenValues());
         }
     }
 
     public sealed partial class ProjectDependenciesManager
     {
-        public IReadOnlyDictionary<string, Pkl.Core.Packages.Dependency> Dependencies =>
-            Pkl.Core.DotNetCollections.ReadOnly(GetDependencies());
-        public Pkl.Core.Project.DeclaredDependencies DeclaredDependencies =>
+        public IReadOnlyDictionary<string, DripSharp.Brine.Packages.Dependency> Dependencies =>
+            DripSharp.Brine.DotNetCollections.ReadOnly(GetDependencies());
+        public DripSharp.Brine.Project.DeclaredDependencies DeclaredDependencies =>
             GetDeclaredDependencies();
         public Uri ProjectBaseUri => GetProjectBaseUri();
         public Uri ProjectDependenciesFileUri => GetProjectDepsFileUri();
@@ -401,11 +401,11 @@ namespace Pkl.Core.Module
     }
 }
 
-namespace Pkl.Core.Resource
+namespace DripSharp.Brine.Resource
 {
     public sealed partial record class Resource
     {
-        internal Resource(Uri uri, sbyte[] bytes) : this(uri, Pkl.Core.DotNetBytes.Unsigned(bytes)) { }
+        internal Resource(Uri uri, sbyte[] bytes) : this(uri, DripSharp.Brine.DotNetBytes.Unsigned(bytes)) { }
 
         public string Text => GetText();
         public string Base64 => GetBase64();
@@ -428,7 +428,7 @@ namespace Pkl.Core.Resource
             throw new NotSupportedException();
         public bool HasFragmentPaths() => false;
         public Uri ResolveUri(Uri baseUri, Uri uri) =>
-            Pkl.Core.Util.IoUtils.Resolve(this, baseUri, uri);
+            DripSharp.Brine.Util.IoUtils.Resolve(this, baseUri, uri);
     }
 
     public sealed partial class ResourceReaders
@@ -442,7 +442,7 @@ namespace Pkl.Core.Resource
         /// <summary>
         /// Creates a caller-owned reader for manifest resources in a .NET
         /// assembly. The resource-prefix mapping matches
-        /// <see cref="Pkl.Core.Module.ModuleKeyFactories.CreateAssembly"/>.
+        /// <see cref="DripSharp.Brine.Module.ModuleKeyFactories.CreateAssembly"/>.
         /// </summary>
         public static ResourceReader CreateEmbeddedResources(
             Assembly assembly,
@@ -502,7 +502,7 @@ namespace Pkl.Core.Resource
     }
 }
 
-namespace Pkl.Core.Http
+namespace DripSharp.Brine.Http
 {
     public partial interface HttpClient
     {
@@ -589,7 +589,7 @@ namespace Pkl.Core.Http
 
         private static HttpResponseMessage CloneResponse(HttpResponseMessage response)
         {
-            if (Pkl.Core.Util.HttpUtils.IsRedirectStatusCode((int)response.StatusCode))
+            if (DripSharp.Brine.Util.HttpUtils.IsRedirectStatusCode((int)response.StatusCode))
                 return response;
 
             var clone = new HttpResponseMessage(response.StatusCode)
@@ -611,7 +611,7 @@ namespace Pkl.Core.Http
     }
 }
 
-namespace Pkl.Core.Packages
+namespace DripSharp.Brine.Packages
 {
     public sealed partial class Checksums
     {
@@ -621,7 +621,7 @@ namespace Pkl.Core.Packages
     public abstract partial class Dependency
     {
         public PackageUri PackageUri => GetPackageUri();
-        public Pkl.Core.Version Version => GetVersion();
+        public DripSharp.Brine.Version Version => GetVersion();
 
         public sealed partial class LocalDependency
         {
@@ -637,7 +637,7 @@ namespace Pkl.Core.Packages
     public sealed partial class PackageUri
     {
         public Uri Uri => GetUri();
-        public Pkl.Core.Version Version => GetVersion();
+        public DripSharp.Brine.Version Version => GetVersion();
         public Checksums? Checksums => GetChecksums();
         public Uri MetadataRequestUri => GetMetadataRequestUri();
         public string DisplayName => GetDisplayName();
@@ -647,7 +647,7 @@ namespace Pkl.Core.Packages
     {
         public Uri Uri => GetUri();
         public PackageUri PackageUri => GetPackageUri();
-        public Pkl.Core.Version Version => GetVersion();
+        public DripSharp.Brine.Version Version => GetVersion();
         public string AssetPath => GetAssetPath();
     }
 
@@ -655,15 +655,15 @@ namespace Pkl.Core.Packages
     {
         public string Name => GetName();
         public PackageUri PackageUri => packageUri;
-        public Pkl.Core.Version Version => GetVersion();
+        public DripSharp.Brine.Version Version => GetVersion();
         public Uri PackageArchiveUri => GetPackageZipUrl();
         public Checksums PackageArchiveChecksums => GetPackageZipChecksums();
         public IReadOnlyDictionary<string, Dependency.RemoteDependency> Dependencies =>
-            Pkl.Core.DotNetCollections.ReadOnly(GetDependencies());
-        public IReadOnlyList<Pkl.Core.PObject> Annotations =>
-            Pkl.Core.DotNetCollections.ReadOnly(GetAnnotations());
+            DripSharp.Brine.DotNetCollections.ReadOnly(GetDependencies());
+        public IReadOnlyList<DripSharp.Brine.PObject> Annotations =>
+            DripSharp.Brine.DotNetCollections.ReadOnly(GetAnnotations());
         public IReadOnlyList<string>? Authors => GetAuthors() is { } values
-            ? Pkl.Core.DotNetCollections.ReadOnly(values)
+            ? DripSharp.Brine.DotNetCollections.ReadOnly(values)
             : null;
     }
 
@@ -671,9 +671,9 @@ namespace Pkl.Core.Packages
     {
         public byte[] GetAssetBytes(
             PackageAssetUri uri, bool allowDirectories = false, Checksums? checksums = null) =>
-            Pkl.Core.DotNetBytes.Unsigned(GetBytes(uri, allowDirectories, checksums));
+            DripSharp.Brine.DotNetBytes.Unsigned(GetBytes(uri, allowDirectories, checksums));
 
-        public IReadOnlyList<Pkl.Core.Module.PathElement> GetElements(
+        public IReadOnlyList<DripSharp.Brine.Module.PathElement> GetElements(
             PackageAssetUri uri, Checksums? checksums = null) =>
             ListElements(uri, checksums);
     }
@@ -687,117 +687,117 @@ namespace Pkl.Core.Packages
     }
 }
 
-namespace Pkl.Core.Project
+namespace DripSharp.Brine.Project
 {
     public sealed partial record class DeclaredDependencies
     {
-        public IReadOnlyDictionary<string, Pkl.Core.Packages.Dependency.RemoteDependency>
+        public IReadOnlyDictionary<string, DripSharp.Brine.Packages.Dependency.RemoteDependency>
             RemoteDependenciesReadOnly =>
-                Pkl.Core.DotNetCollections.ReadOnly(GetRemoteDependencies());
+                DripSharp.Brine.DotNetCollections.ReadOnly(GetRemoteDependencies());
         public IReadOnlyDictionary<string, DeclaredDependencies> LocalDependenciesReadOnly =>
-            Pkl.Core.DotNetCollections.ReadOnly(GetLocalDependencies());
+            DripSharp.Brine.DotNetCollections.ReadOnly(GetLocalDependencies());
     }
 
     public sealed partial class Project
     {
         public Package? PackageMetadata => GetPackage();
         public DeclaredDependencies DeclaredDependencies => GetDependencies();
-        public Pkl.Core.EvaluatorSettings.PklEvaluatorSettings EvaluatorConfiguration =>
+        public DripSharp.Brine.EvaluatorSettings.PklEvaluatorSettings EvaluatorConfiguration =>
             GetEvaluatorSettings();
-        public Pkl.Core.EvaluatorSettings.PklEvaluatorSettings ResolvedEvaluatorConfiguration =>
+        public DripSharp.Brine.EvaluatorSettings.PklEvaluatorSettings ResolvedEvaluatorConfiguration =>
             GetResolvedEvaluatorSettings();
         public Uri ProjectFileUri => GetProjectFileUri();
         public string ProjectDirectory => GetProjectDir();
         public IReadOnlyList<string> Tests =>
-            Pkl.Core.DotNetCollections.ReadOnly(GetTests());
+            DripSharp.Brine.DotNetCollections.ReadOnly(GetTests());
         public IReadOnlyDictionary<string, Project> LocalProjectDependencies =>
-            Pkl.Core.DotNetCollections.ReadOnly(GetLocalProjectDependencies());
-        public IReadOnlyList<Pkl.Core.PObject> Annotations =>
-            Pkl.Core.DotNetCollections.ReadOnly(GetAnnotations());
+            DripSharp.Brine.DotNetCollections.ReadOnly(GetLocalProjectDependencies());
+        public IReadOnlyList<DripSharp.Brine.PObject> Annotations =>
+            DripSharp.Brine.DotNetCollections.ReadOnly(GetAnnotations());
 
         public partial class EvaluatorSettings
         {
             public IReadOnlyDictionary<string, string>? ExternalProperties =>
                 GetExternalProperties() is { } values
-                    ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                    ? DripSharp.Brine.DotNetCollections.ReadOnly(values)
                     : null;
             public IReadOnlyDictionary<string, string>? Environment =>
-                GetEnv() is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+                GetEnv() is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
             public IReadOnlyList<Regex>? AllowedModules =>
                 GetAllowedModules() is { } values
-                    ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                    ? DripSharp.Brine.DotNetCollections.ReadOnly(values)
                     : null;
             public IReadOnlyList<Regex>? AllowedResources =>
                 GetAllowedResources() is { } values
-                    ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                    ? DripSharp.Brine.DotNetCollections.ReadOnly(values)
                     : null;
             public IReadOnlyList<string>? ModulePaths =>
                 GetModulePath() is { } values
-                    ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                    ? DripSharp.Brine.DotNetCollections.ReadOnly(values)
                     : null;
         }
     }
 }
 
-namespace Pkl.Core.EvaluatorSettings
+namespace DripSharp.Brine.EvaluatorSettings
 {
     public sealed partial record class PklEvaluatorSettings
     {
         public IReadOnlyDictionary<string, string>? ExternalPropertiesReadOnly =>
-            ExternalProperties is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+            ExternalProperties is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
         public IReadOnlyDictionary<string, string>? Environment =>
-            Env is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+            Env is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
         public IReadOnlyList<Regex>? AllowedModulesReadOnly =>
-            AllowedModules is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+            AllowedModules is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
         public IReadOnlyList<Regex>? AllowedResourcesReadOnly =>
-            AllowedResources is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+            AllowedResources is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
         public IReadOnlyList<string>? ModulePaths =>
-            ModulePath is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+            ModulePath is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
         public IReadOnlyDictionary<string, ExternalReader>? ExternalModuleReadersReadOnly =>
             ExternalModuleReaders is { } values
-                ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                ? DripSharp.Brine.DotNetCollections.ReadOnly(values)
                 : null;
         public IReadOnlyDictionary<string, ExternalReader>? ExternalResourceReadersReadOnly =>
             ExternalResourceReaders is { } values
-                ? Pkl.Core.DotNetCollections.ReadOnly(values)
+                ? DripSharp.Brine.DotNetCollections.ReadOnly(values)
                 : null;
         public Http? HttpSettings => HttpValue;
 
         public sealed partial record class Http
         {
             public IReadOnlyDictionary<Uri, Uri>? RewritesReadOnly =>
-                Rewrites is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+                Rewrites is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
         }
 
         public sealed partial record class Proxy
         {
             public IReadOnlyList<string>? NoProxyReadOnly =>
-                NoProxy is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+                NoProxy is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
         }
 
         public sealed partial record class ExternalReader
         {
             public IReadOnlyList<string>? ArgumentsReadOnly =>
-                Arguments is { } values ? Pkl.Core.DotNetCollections.ReadOnly(values) : null;
+                Arguments is { } values ? DripSharp.Brine.DotNetCollections.ReadOnly(values) : null;
         }
     }
 }
 
-namespace Pkl.Core.Settings
+namespace DripSharp.Brine.Settings
 {
     public sealed partial record class PklSettings
     {
         public Editor EditorSettings => GetEditor();
-        public Pkl.Core.EvaluatorSettings.PklEvaluatorSettings.Http? HttpSettings => Http;
+        public DripSharp.Brine.EvaluatorSettings.PklEvaluatorSettings.Http? HttpSettings => Http;
     }
 }
 
-namespace Pkl.Core.Externalreader
+namespace DripSharp.Brine.Externalreader
 {
     public partial interface ExternalReaderProcess
     {
         public static ExternalReaderProcess Start(
-            Pkl.Core.EvaluatorSettings.PklEvaluatorSettings.ExternalReader specification) =>
+            DripSharp.Brine.EvaluatorSettings.PklEvaluatorSettings.ExternalReader specification) =>
             Of(specification);
     }
 
@@ -811,16 +811,16 @@ namespace Pkl.Core.Externalreader
     }
 }
 
-namespace Pkl.Core.Util
+namespace DripSharp.Brine.Util
 {
     internal sealed partial class IoUtils
     {
         internal static Uri Resolve(
-            Pkl.Core.Module.ModuleKey reader, Uri baseUri, Uri importUri) =>
+            DripSharp.Brine.Module.ModuleKey reader, Uri baseUri, Uri importUri) =>
             ResolveProductReader(reader.HasFragmentPaths(), baseUri, importUri);
 
         internal static Uri Resolve(
-            Pkl.Core.Resource.ResourceReader reader, Uri baseUri, Uri importUri) =>
+            DripSharp.Brine.Resource.ResourceReader reader, Uri baseUri, Uri importUri) =>
             ResolveProductReader(reader.HasFragmentPaths(), baseUri, importUri);
 
         private static Uri ResolveProductReader(
@@ -839,7 +839,7 @@ namespace Pkl.Core.Util
     }
 }
 
-namespace Pkl.Core
+namespace DripSharp.Brine
 {
     internal static class DotNetLoading
     {
