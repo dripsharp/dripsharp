@@ -1124,6 +1124,8 @@
         (paths/resolve-path workspace "hostile-custom-import.targets")
         hostile-code-analysis-targets
         (paths/resolve-path workspace "hostile-code-analysis.targets")
+        hostile-language-targets
+        (paths/resolve-path workspace "hostile-language.targets")
         hostile-user-extensions
         (paths/resolve-path workspace "hostile-user-extensions")
         hostile-extensions32
@@ -1205,6 +1207,8 @@
                 (str hostile-custom-props)
                 "CustomBeforeMicrosoftCommonTargets"
                 (str hostile-custom-targets)
+                "LanguageTargets"
+                (str hostile-language-targets)
                 "MSBuildSDKsPath"
                 "/host-controlled/nonexistent-msbuild-sdks"
                 "MSBuildExtensionsPath"
@@ -1278,6 +1282,11 @@
        workspace "hostile-code-analysis.targets"
        (str "<Project><Target Name=\"RejectAmbientCodeAnalysisTargets\" "
             "AfterTargets=\"Build\"><Error Text=\"Ambient CodeAnalysisTargets "
+            "was loaded\" /></Target></Project>\n"))
+      (write!
+       workspace "hostile-language.targets"
+       (str "<Project><Target Name=\"RejectAmbientLanguageTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient LanguageTargets "
             "was loaded\" /></Target></Project>\n"))
       (write!
        hostile-user-extensions
@@ -1485,6 +1494,7 @@
                  "CustomBeforeMicrosoftCSharpTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
+                 "LanguageTargets"
                  "MSBuildExtensionsPath"
                  "MSBuildExtensionsPath32"
                  "MSBuildExtensionsPath64"
@@ -1510,6 +1520,7 @@
                  "CustomBeforeMicrosoftCSharpTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
+                 "LanguageTargets"
                  "MSBuildExtensionsPath"
                  "MSBuildExtensionsPath32"
                  "MSBuildExtensionsPath64"
