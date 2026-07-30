@@ -1145,6 +1145,11 @@
             "BeforeTargets=\"Build\"><Error Text=\"Ambient 32-bit MSBuild "
             "extension was loaded\" /></Target></Project>\n"))
       (write!
+       workspace "Directory.Build.rsp"
+       (str "-p:CustomAfterMicrosoftCommonTargets=\""
+            hostile-custom-targets
+            "\"\n"))
+      (write!
        workspace "global.json"
        "{\"sdk\":{\"version\":\"99.0.100\",\"rollForward\":\"disable\"}}\n")
       (write!
@@ -1254,6 +1259,8 @@
         (is (not (.startsWith artifacts-path (paths/absolute product))))
         (is (not (.startsWith packages-path (paths/absolute product))))
         (is (some #{"--no-restore"} dotnet-command))
+        (is (some #{"-noAutoResponse"} dotnet-command))
+        (is (some #{"-noAutoResponse"} restore-command))
         (is (some #{"-p:ImportDirectoryBuildProps=false"} dotnet-command))
         (is (some #{"-p:ImportDirectoryBuildTargets=false"} dotnet-command))
         (is (some #{"-p:ImportDirectoryBuildProps=false"} restore-command))

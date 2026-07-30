@@ -792,6 +792,7 @@
         restore-command
         (cond->
          ["dotnet" "restore" (str project-file)
+          "-noAutoResponse"
           "--verbosity" "minimal"
           "--configfile" (str restore-config)
           "--packages" (str packages-root)
@@ -811,6 +812,7 @@
         command
         (cond->
          ["dotnet" "build" (str project-file)
+          "-noAutoResponse"
           "--nologo"
           "--configuration" "Release"
           "--verbosity:minimal"
