@@ -521,10 +521,11 @@
      "a 40- or 64-character lowercase revision"
      #(and (string? %)
            (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" %))))
-    (when-let [notice (:notice-reference mechanical-source)]
-      (validation/check! context [:mechanical-source :notice-reference]
-                         notice "a non-blank single-line string"
-                         single-line?)))
+    (validation/check!
+     context [:mechanical-source :notice-reference]
+     (:notice-reference mechanical-source)
+     "nil or a non-blank single-line string"
+     #(or (nil? %) (single-line? %))))
   (let [surface (:public-surface configuration)]
     (validation/check!
      (destination-context "Destination public surface")

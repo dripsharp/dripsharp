@@ -454,6 +454,24 @@
         (project-emission/read-configuration
          (paths/workspace-root)
          "targets/rawhttp/destinations/core.edn")]
+    (is (= configuration
+           (project-emission/validate-configuration! configuration)))
+    (doseq [value [false 0 [] {}]]
+      (testing (str "notice reference rejects " (pr-str value))
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc-in configuration
+                           [:mechanical-source :notice-reference]
+                           value))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:mechanical-source :notice-reference]
+                 (:path (ex-data error))))
+          (is (= "nil or a non-blank single-line string"
+                 (:expected (ex-data error)))))))
     (doseq [field [:repository :notice-reference]
             separator
             ["\u0000" "\u000B" "\u000C" "\r" "\n"
