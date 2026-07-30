@@ -9,7 +9,8 @@
             [dripsharp.target-execution :as target-execution]
             [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file CopyOption FileVisitOption Files OpenOption Path]
+           [java.nio.file CopyOption FileVisitOption Files LinkOption OpenOption
+            Path]
            [java.nio.file.attribute FileAttribute]
            [java.util Locale]
            [java.util.zip ZipEntry ZipOutputStream]))
@@ -660,6 +661,114 @@
                                  (make-array java.nio.file.LinkOption 0))))
           (is (not (Files/exists (.resolve output-root record-name)
                                  (make-array java.nio.file.LinkOption 0))))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest failed-release-preparation-rolls-back-created-assets
+  (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
+        selected-platforms (subvec (:platforms inventory) 0 2)
+        platform-ids (mapv :id selected-platforms)
+        version "0.1.0-alpha.1"
+        asset-names
+        (mapv #(alpha-release/asset-filename inventory version %)
+              selected-platforms)
+        record-name
+        (str (:asset-prefix inventory) "-" version "-release.edn")
+        {:keys [workspace contract commit staging]}
+        (release-fixture! inventory)
+        options
+        {:workspace-root workspace
+         :target-contract contract
+         :inventory inventory
+         :authorized-tag (str "v" version)
+         :product-commit commit
+         :platform-ids platform-ids
+         :framework-assemblies #{"System.Runtime.dll"}}]
+    (try
+      (testing "a later build failure removes an earlier completed ZIP"
+        (let [output-root (paths/resolve-path workspace "failed-build")
+              calls (atom [])
+              build! (fake-build! calls)
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc
+                  options
+                  :output-root output-root
+                  :build-fn
+                  (fn [build]
+                    (if (= (second platform-ids)
+                           (get-in build [:platform :id]))
+                      (throw
+                       (ex-info "Synthetic later-platform build failure"
+                                {:kind :synthetic-build-failure
+                                 :reason :synthetic-build-failure}))
+                      (build! build))))))]
+          (is (= :synthetic-build-failure (:reason result)))
+          (is (= [(first platform-ids)]
+                 (mapv :platform @calls)))
+          (doseq [asset asset-names]
+            (is (not (Files/exists
+                      (.resolve output-root asset)
+                      (make-array LinkOption 0)))))
+          (is (not (Files/exists
+                    (.resolve output-root record-name)
+                    (make-array LinkOption 0))))))
+      (testing "a later output race is preserved while earlier output rolls back"
+        (let [output-root (paths/resolve-path workspace "racing-output")
+              conflicting-asset (.resolve output-root (second asset-names))
+              calls (atom [])
+              build! (fake-build! calls)
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc
+                  options
+                  :output-root output-root
+                  :build-fn
+                  (fn [build]
+                    (let [result (build! build)]
+                      (when (= (second platform-ids)
+                               (get-in build [:platform :id]))
+                        (write! output-root (second asset-names)
+                                "concurrent output\n"))
+                      result)))))]
+          (is (= :release-output-exists (:reason result)))
+          (is (= (str conflicting-asset) (:path result)))
+          (is (= "concurrent output\n" (slurp (str conflicting-asset))))
+          (is (not (Files/exists
+                    (.resolve output-root (first asset-names))
+                    (make-array LinkOption 0))))
+          (is (not (Files/exists
+                    (.resolve output-root record-name)
+                    (make-array LinkOption 0))))))
+      (testing "a final proved-state failure removes every completed ZIP"
+        (let [output-root (paths/resolve-path workspace "failed-final-proof")
+              managed-path (ffirst (generated-files inventory))
+              calls (atom [])
+              build! (fake-build! calls)
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc
+                  options
+                  :output-root output-root
+                  :build-fn
+                  (fn [build]
+                    (let [result (build! build)]
+                      (when (= (second platform-ids)
+                               (get-in build [:platform :id]))
+                        (write! staging managed-path
+                                "changed after release builds\n"))
+                      result)))))]
+          (is (= :proved-state-mismatch (:reason result)))
+          (doseq [asset asset-names]
+            (is (not (Files/exists
+                      (.resolve output-root asset)
+                      (make-array LinkOption 0)))))
+          (is (not (Files/exists
+                    (.resolve output-root record-name)
+                    (make-array LinkOption 0))))))
       (finally
         (delete-tree! workspace)))))
 

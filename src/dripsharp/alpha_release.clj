@@ -12,8 +12,8 @@
             [dripsharp.process :as process]
             [dripsharp.util :as util])
   (:import [java.nio.charset StandardCharsets]
-           [java.nio.file FileVisitOption Files LinkOption OpenOption Path
-            StandardOpenOption]
+           [java.nio.file CopyOption FileAlreadyExistsException FileVisitOption
+            Files LinkOption OpenOption Path StandardOpenOption]
            [java.nio.file.attribute FileAttribute FileTime]
            [java.util Locale]
            [java.util.zip Deflater ZipEntry ZipFile ZipOutputStream]))
@@ -780,31 +780,56 @@
                 (contains? (:managed expected) file) :managed
                 :else :native)}]))))
 
-(defn- write-zip!
-  [output files]
-  (when (Files/exists output (make-array LinkOption 0))
-    (fail! "Release asset already exists"
+(defn- ensure-output-available!
+  [output]
+  (when (Files/exists output
+                      (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+    (fail! "Release output already exists"
            {:reason :release-output-exists
-            :path (str output)}))
+            :path (str output)})))
+
+(defn- create-output!
+  [output suffix write-temporary!]
+  (ensure-output-available! output)
   (Files/createDirectories (.getParent output)
                            (make-array FileAttribute 0))
-  (with-open [raw
-              (Files/newOutputStream
-               output
-               (into-array
-                OpenOption [StandardOpenOption/CREATE_NEW
-                            StandardOpenOption/WRITE]))
-              archive (doto (ZipOutputStream. raw)
-                        (.setLevel Deflater/BEST_COMPRESSION))]
-    (doseq [[file {:keys [source]}] files]
-      (let [entry (doto (ZipEntry. file)
-                    (.setLastModifiedTime fixed-zip-time)
-                    (.setLastAccessTime fixed-zip-time)
-                    (.setCreationTime fixed-zip-time))]
-        (.putNextEntry archive entry)
-        (Files/copy ^Path source archive)
-        (.closeEntry archive))))
-  output)
+  (let [temporary
+        (Files/createTempFile
+         (.getParent output) ".dripsharp-alpha-" suffix
+         (make-array FileAttribute 0))]
+    (try
+      (write-temporary! temporary)
+      (try
+        (Files/move temporary output (make-array CopyOption 0))
+        (catch FileAlreadyExistsException _
+          (fail! "Release output already exists"
+                 {:reason :release-output-exists
+                  :path (str output)})))
+      output
+      (finally
+        (Files/deleteIfExists temporary)))))
+
+(defn- write-zip!
+  [output files]
+  (create-output!
+   output ".zip"
+   (fn [temporary]
+     (with-open [raw
+                 (Files/newOutputStream
+                  temporary
+                  (into-array
+                   OpenOption [StandardOpenOption/TRUNCATE_EXISTING
+                               StandardOpenOption/WRITE]))
+                 archive (doto (ZipOutputStream. raw)
+                           (.setLevel Deflater/BEST_COMPRESSION))]
+       (doseq [[file {:keys [source]}] files]
+         (let [entry (doto (ZipEntry. file)
+                       (.setLastModifiedTime fixed-zip-time)
+                       (.setLastAccessTime fixed-zip-time)
+                       (.setCreationTime fixed-zip-time))]
+           (.putNextEntry archive entry)
+           (Files/copy ^Path source archive)
+           (.closeEntry archive)))))))
 
 (defn- zip-records
   [artifact]
@@ -959,26 +984,17 @@
    output-root
    (str (:asset-prefix inventory) "-" version "-release.edn")))
 
-(defn- ensure-output-available!
-  [output]
-  (when (Files/exists output
-                      (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
-    (fail! "Release output already exists"
-           {:reason :release-output-exists
-            :path (str output)})))
-
 (defn- write-record!
   [output record]
-  (ensure-output-available! output)
-  (Files/createDirectories (.getParent output)
-                           (make-array FileAttribute 0))
-  (Files/writeString
-   output
-   (str (pr-str (canonical record)) "\n")
-   StandardCharsets/UTF_8
-   (into-array OpenOption [StandardOpenOption/CREATE_NEW
-                           StandardOpenOption/WRITE]))
-  output)
+  (create-output!
+   output ".edn"
+   (fn [temporary]
+     (Files/writeString
+      temporary
+      (str (pr-str (canonical record)) "\n")
+      StandardCharsets/UTF_8
+      (into-array OpenOption [StandardOpenOption/TRUNCATE_EXISTING
+                              StandardOpenOption/WRITE])))))
 
 (defn- release-notes
   [inventory version product-commit assets]
@@ -1046,6 +1062,7 @@
         framework-assemblies
         (set (or framework-assemblies
                  (framework-assembly-names! workspace-root run-command!)))
+        created-outputs (atom [])
         temp-root
         (Files/createTempDirectory
          (str "dripsharp-" (name (:product-family inventory)) "-alpha-")
@@ -1079,6 +1096,7 @@
                        filename (asset-filename inventory version platform)
                        artifact (get artifact-files (:id platform))
                        _ (write-zip! artifact files)
+                       _ (swap! created-outputs conj artifact)
                        verification
                        (verify-asset!
                         {:artifact artifact
@@ -1135,5 +1153,12 @@
         (write-record! record-file record)
         (assoc record
                :record-path (str record-file)))
+      (catch Throwable error
+        (doseq [output (reverse @created-outputs)]
+          (try
+            (Files/deleteIfExists output)
+            (catch Throwable cleanup-error
+              (.addSuppressed error cleanup-error))))
+        (throw error))
       (finally
         (delete-temp-tree! temp-root)))))
