@@ -175,6 +175,33 @@
           (is (= "a 40- or 64-character lowercase Git identity"
                  (:expected (ex-data error)))))))))
 
+(deftest destination-package-symbols-must-be-absent-or-snupkg
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")]
+    (is (not (contains? (:package configuration) :symbols)))
+    (is (= configuration
+           (project-emission/validate-configuration! configuration)))
+    (is (= :snupkg
+           (get-in
+            (project-emission/validate-configuration!
+             (assoc-in configuration [:package :symbols] :snupkg))
+            [:package :symbols])))
+    (doseq [value [nil false]]
+      (testing (str "a key-present " (pr-str value)
+                    " package symbol format is malformed")
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc-in configuration [:package :symbols] value))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:package :symbols] (:path (ex-data error))))
+          (is (= ":snupkg" (:expected (ex-data error)))))))))
+
 (deftest destination-authors-must-be-a-single-line-publisher
   (let [configuration
         (project-emission/read-configuration

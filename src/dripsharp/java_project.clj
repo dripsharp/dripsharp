@@ -358,10 +358,11 @@
            package-paths
            (str "paths backed by configured :notice legal files; missing "
                 missing))))))
-  (when-let [symbols (get-in configuration [:package :symbols])]
-    (validation/check!
-     (destination-context "Destination package symbol format")
-     [:package :symbols] symbols ":snupkg" #{:snupkg}))
+  (when (contains? (:package configuration) :symbols)
+    (let [symbols (get-in configuration [:package :symbols])]
+      (validation/check!
+       (destination-context "Destination package symbol format")
+       [:package :symbols] symbols ":snupkg" #{:snupkg})))
   (doseq [key [:project-directory :source-directory :resource-directory
                :project-file :source-map-file :diagnostics-file :manifest-file
                :public-metadata-file :annotation-decisions-file]]
