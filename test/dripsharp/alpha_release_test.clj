@@ -526,6 +526,54 @@
       (finally
         (delete-tree! workspace)))))
 
+(deftest release-preparation-rejects-proved-product-output-roots
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        {:keys [workspace contract commit product staging]}
+        (release-fixture! inventory)
+        platform (first (:platforms inventory))
+        version "0.1.0-alpha.1"
+        filename (alpha-release/asset-filename inventory version platform)
+        record-name
+        (str (:asset-prefix inventory) "-" version "-release.edn")]
+    (try
+      (doseq [[protected-kind protected-root nested?]
+              [[:product-repository product false]
+               [:product-repository product true]
+               [:proved-staging staging false]
+               [:proved-staging staging true]]]
+        (testing (str (name protected-kind)
+                      (when nested? " descendant"))
+          (let [output-root
+                (if nested?
+                  (.resolve ^Path protected-root "alpha-release")
+                  protected-root)
+                build-calls (atom [])
+                result
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag (str "v" version)
+                    :product-commit commit
+                    :platform-ids [(:id platform)]
+                    :output-root output-root
+                    :build-fn (fake-build! build-calls)
+                    :framework-assemblies #{"System.Runtime.dll"}}))]
+            (is (= :protected-release-output (:reason result)))
+            (is (= protected-kind (:protected-kind result)))
+            (is (= (str protected-root) (:protected-root result)))
+            (is (= (str output-root) (:path result)))
+            (is (empty? @build-calls))
+            (is (not (Files/exists
+                      (.resolve ^Path output-root filename)
+                      (make-array LinkOption 0))))
+            (is (not (Files/exists
+                      (.resolve ^Path output-root record-name)
+                      (make-array LinkOption 0)))))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest release-preparation-rejects-output-root-symlink-substitution
   (let [[_ inventory] (actual-contract-and-inventory :pkl)
         {:keys [workspace contract commit]}

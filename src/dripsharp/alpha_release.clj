@@ -486,9 +486,21 @@
     value))
 
 (defn- safe-output-root!
-  [workspace-root output-root]
+  [workspace-root target-contract output-root]
   (let [root (paths/absolute workspace-root)
         output (paths/absolute output-root)
+        protected-root
+        (some
+         (fn [[protected-kind relative]]
+           (let [protected
+                 (paths/absolute (paths/resolve-path root relative))]
+             (when (.startsWith output protected)
+               {:kind protected-kind
+                :path protected})))
+         [[:product-repository
+           (get-in target-contract [:publication :submodule-path])]
+          [:proved-staging
+           (get-in target-contract [:publication :staging-path])]])
         git-metadata-components
         (when (.startsWith output root)
           (->> (.relativize root output)
@@ -523,6 +535,13 @@
               :root (str root)
               :path (str output)
               :symbolic-links linked-components}))
+    (when protected-root
+      (fail! "Release output root must not write inside proved product state"
+             {:reason :protected-release-output
+              :root (str root)
+              :path (str output)
+              :protected-kind (:kind protected-root)
+              :protected-root (str (:path protected-root))}))
     (when (and (Files/exists output (make-array LinkOption 0))
                (not (Files/isDirectory
                      output
@@ -1362,6 +1381,7 @@
         output-root
         (safe-output-root!
          workspace-root
+         target-contract
          (or output-root
              (paths/resolve-path
               workspace-root "target/releases" version
@@ -1422,7 +1442,8 @@
                         framework-assemblies)
                        filename (asset-filename inventory version platform)
                        artifact (get artifact-files (:id platform))
-                       _ (safe-output-root! workspace-root output-root)
+                       _ (safe-output-root!
+                          workspace-root target-contract output-root)
                        _ (write-zip! artifact files)
                        ownership (output-ownership artifact)
                        _ (swap! created-outputs conj ownership)
@@ -1457,7 +1478,8 @@
                        {:reason :proved-state-changed
                         :before (:proved-source-sha256 initial-state)
                         :after (:proved-source-sha256 final-state)}))
-            _ (safe-output-root! workspace-root output-root)
+            _ (safe-output-root!
+               workspace-root target-contract output-root)
             _ (ensure-owned-outputs! @created-outputs)
             github-release
             {:repository
@@ -1484,7 +1506,7 @@
              [:tag-or-release-creation-requires-authorization
               :asset-upload-requires-authorization
               :push-requires-authorization]}]
-        (safe-output-root! workspace-root output-root)
+        (safe-output-root! workspace-root target-contract output-root)
         (write-record! record-file record)
         (assoc record
                :record-path (str record-file)))
