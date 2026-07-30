@@ -1126,6 +1126,8 @@
         (paths/resolve-path workspace "hostile-custom-import.targets")
         hostile-code-analysis-targets
         (paths/resolve-path workspace "hostile-code-analysis.targets")
+        hostile-csharp-design-time-targets
+        (paths/resolve-path workspace "hostile-csharp-design-time.targets")
         hostile-language-targets
         (paths/resolve-path workspace "hostile-language.targets")
         hostile-net-build-extension-targets
@@ -1193,6 +1195,8 @@
                 (str hostile-before-target-framework-inference-targets)
                 "CodeAnalysisTargets"
                 (str hostile-code-analysis-targets)
+                "CSharpDesignTimeTargetsPath"
+                (str hostile-csharp-design-time-targets)
                 "CscToolExe" "false"
                 "CscToolPath" "/usr/bin"
                 "CustomAfterDirectoryBuildProps"
@@ -1304,6 +1308,11 @@
        (str "<Project><Target Name=\"RejectAmbientCodeAnalysisTargets\" "
             "AfterTargets=\"Build\"><Error Text=\"Ambient CodeAnalysisTargets "
             "was loaded\" /></Target></Project>\n"))
+      (write!
+       workspace "hostile-csharp-design-time.targets"
+       (str "<Project><Target Name=\"RejectAmbientCSharpDesignTimeTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "CSharpDesignTimeTargetsPath was loaded\" /></Target></Project>\n"))
       (write!
        workspace "hostile-language.targets"
        (str "<Project><Target Name=\"RejectAmbientLanguageTargets\" "
@@ -1519,6 +1528,7 @@
                  "BeforeMicrosoftNETSdkTargets"
                  "BeforeTargetFrameworkInferenceTargets"
                  "CodeAnalysisTargets"
+                 "CSharpDesignTimeTargetsPath"
                  "CscToolExe"
                  "CscToolPath"
                  "DOTNET_STARTUP_HOOKS"
@@ -1549,6 +1559,7 @@
                  "BeforeMicrosoftNETSdkTargets"
                  "BeforeTargetFrameworkInferenceTargets"
                  "CodeAnalysisTargets"
+                 "CSharpDesignTimeTargetsPath"
                  "CscToolExe"
                  "CscToolPath"
                  "DOTNET_STARTUP_HOOKS"

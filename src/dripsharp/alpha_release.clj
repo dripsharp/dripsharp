@@ -61,6 +61,7 @@
     "BeforeMicrosoftNETSdkTargets"
     "BeforeTargetFrameworkInferenceTargets"
     "CodeAnalysisTargets"
+    "CSharpDesignTimeTargetsPath"
     "CscToolExe"
     "CscToolPath"
     "DOTNET_STARTUP_HOOKS"
