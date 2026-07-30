@@ -84,6 +84,7 @@
     "MSBuildSDKsPath"
     "MSBuildUserExtensionsPath"
     "MsTestToolsTargets"
+    "NuGetRestoreTargets"
     "ReportingServicesTargets"
     "VSTestTargets"})
 

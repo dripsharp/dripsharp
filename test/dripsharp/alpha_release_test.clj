@@ -1136,6 +1136,8 @@
         (paths/resolve-path workspace "hostile-net-build-extension.targets")
         hostile-ms-test-tools-targets
         (paths/resolve-path workspace "hostile-ms-test-tools.targets")
+        hostile-nuget-restore-targets
+        (paths/resolve-path workspace "hostile-nuget-restore.targets")
         hostile-reporting-services-targets
         (paths/resolve-path workspace "hostile-reporting-services.targets")
         hostile-vs-test-targets
@@ -1233,6 +1235,8 @@
                 (str hostile-net-build-extension-targets)
                 "MsTestToolsTargets"
                 (str hostile-ms-test-tools-targets)
+                "NuGetRestoreTargets"
+                (str hostile-nuget-restore-targets)
                 "ReportingServicesTargets"
                 (str hostile-reporting-services-targets)
                 "VSTestTargets"
@@ -1342,6 +1346,11 @@
        (str "<Project><Target Name=\"RejectAmbientMsTestToolsTargets\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient "
             "MsTestToolsTargets was loaded\" /></Target></Project>\n"))
+      (write!
+       workspace "hostile-nuget-restore.targets"
+       (str "<Project><Target Name=\"RejectAmbientNuGetRestoreTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "NuGetRestoreTargets was loaded\" /></Target></Project>\n"))
       (write!
        workspace "hostile-reporting-services.targets"
        (str "<Project><Target Name=\"RejectAmbientReportingServicesTargets\" "
@@ -1569,6 +1578,7 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"
                  "MsTestToolsTargets"
+                 "NuGetRestoreTargets"
                  "ReportingServicesTargets"
                  "VSTestTargets"}
                (:unset-environment restore-request)))
@@ -1602,6 +1612,7 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"
                  "MsTestToolsTargets"
+                 "NuGetRestoreTargets"
                  "ReportingServicesTargets"
                  "VSTestTargets"}
                (:unset-environment dotnet-request)))
