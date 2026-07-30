@@ -1128,6 +1128,8 @@
         (paths/resolve-path workspace "hostile-code-analysis.targets")
         hostile-csharp-design-time-targets
         (paths/resolve-path workspace "hostile-csharp-design-time.targets")
+        hostile-il-link-targets
+        (paths/resolve-path workspace "hostile-il-link.targets")
         hostile-language-targets
         (paths/resolve-path workspace "hostile-language.targets")
         hostile-net-build-extension-targets
@@ -1221,6 +1223,8 @@
                 (str hostile-custom-props)
                 "CustomBeforeMicrosoftCommonTargets"
                 (str hostile-custom-targets)
+                "ILLinkTargetsPath"
+                (str hostile-il-link-targets)
                 "LanguageTargets"
                 (str hostile-language-targets)
                 "MicrosoftNETBuildExtensionsTargets"
@@ -1313,6 +1317,11 @@
        (str "<Project><Target Name=\"RejectAmbientCSharpDesignTimeTargets\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient "
             "CSharpDesignTimeTargetsPath was loaded\" /></Target></Project>\n"))
+      (write!
+       workspace "hostile-il-link.targets"
+       (str "<Project><Target Name=\"RejectAmbientILLinkTargetsPath\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "ILLinkTargetsPath was loaded\" /></Target></Project>\n"))
       (write!
        workspace "hostile-language.targets"
        (str "<Project><Target Name=\"RejectAmbientLanguageTargets\" "
@@ -1542,6 +1551,7 @@
                  "CustomBeforeMicrosoftCSharpTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
+                 "ILLinkTargetsPath"
                  "LanguageTargets"
                  "MicrosoftNETBuildExtensionsTargets"
                  "MSBuildExtensionsPath"
@@ -1573,6 +1583,7 @@
                  "CustomBeforeMicrosoftCSharpTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
+                 "ILLinkTargetsPath"
                  "LanguageTargets"
                  "MicrosoftNETBuildExtensionsTargets"
                  "MSBuildExtensionsPath"

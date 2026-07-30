@@ -75,6 +75,7 @@
     "CustomBeforeMicrosoftCSharpTargets"
     "CustomBeforeMicrosoftCommonProps"
     "CustomBeforeMicrosoftCommonTargets"
+    "ILLinkTargetsPath"
     "LanguageTargets"
     "MicrosoftNETBuildExtensionsTargets"
     "MSBuildExtensionsPath"
