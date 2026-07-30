@@ -1159,7 +1159,9 @@
               request
               :environment
               (merge
-               {"CodeAnalysisTargets"
+               {"BeforeMicrosoftNETSdkTargets"
+                (str hostile-custom-targets)
+                "CodeAnalysisTargets"
                 (str hostile-code-analysis-targets)
                 "CscToolExe" "false"
                 "CscToolPath" "/usr/bin"
@@ -1422,7 +1424,8 @@
         (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
                   restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"CodeAnalysisTargets"
+        (is (= #{"BeforeMicrosoftNETSdkTargets"
+                 "CodeAnalysisTargets"
                  "CscToolExe"
                  "CscToolPath"
                  "DOTNET_STARTUP_HOOKS"
@@ -1442,7 +1445,8 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
-        (is (= #{"CodeAnalysisTargets"
+        (is (= #{"BeforeMicrosoftNETSdkTargets"
+                 "CodeAnalysisTargets"
                  "CscToolExe"
                  "CscToolPath"
                  "DOTNET_STARTUP_HOOKS"
