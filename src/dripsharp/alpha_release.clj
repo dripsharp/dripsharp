@@ -110,6 +110,13 @@
             :value value}))
   value)
 
+(defn- case-insensitive-collisions
+  [values identity-fn]
+  (into
+   (sorted-map)
+   (filter (fn [[_ entries]] (< 1 (count entries))))
+   (group-by #(str/lower-case (identity-fn %)) values)))
+
 (defn- forbidden-file?
   [value]
   (let [lower (str/lower-case value)]
@@ -298,21 +305,16 @@
                      {:reason :invalid-release-inventory
                       :asset asset}))))
         (let [file-groups
-              (group-by
-               :file
-               (concat
-                (map #(assoc % :inventory-kind :product)
-                     assemblies)
-                (map #(assoc % :inventory-kind :managed)
-                     managed)
-                (map #(assoc % :inventory-kind :native)
-                     native-assets)))
-              collisions
-              (into (sorted-map)
-                    (filter (fn [[_ entries]] (< 1 (count entries))))
-                    file-groups)]
+              (concat
+               (map #(assoc % :inventory-kind :product)
+                    assemblies)
+               (map #(assoc % :inventory-kind :managed)
+                    managed)
+               (map #(assoc % :inventory-kind :native)
+                    native-assets))
+              collisions (case-insensitive-collisions file-groups :file)]
           (when (seq collisions)
-            (fail! "Release dependency file names collide"
+            (fail! "Release dependency file names collide case-insensitively"
                    {:reason :dependency-name-collision
                     :platform id
                     :collisions collisions})))))
@@ -680,12 +682,7 @@
            framework-assemblies]}]
   (let [records (zip-records artifact)
         names (mapv :name records)
-        duplicate-names
-        (->> names frequencies
-             (filter (fn [[_ count]] (< 1 count)))
-             (map key)
-             sort
-             vec)
+        name-collisions (case-insensitive-collisions names identity)
         unsafe
         (filterv
          #(or (:directory? %)
@@ -701,10 +698,10 @@
         actual (set names)
         missing (set/difference expected-all actual)
         unexpected (set/difference actual expected-all)]
-    (when (seq duplicate-names)
-      (fail! "Release asset contains duplicate entries"
+    (when (seq name-collisions)
+      (fail! "Release asset contains case-insensitively colliding entries"
              {:reason :dependency-name-collision
-              :entries duplicate-names}))
+              :collisions name-collisions}))
     (when (seq unsafe)
       (fail! "Release asset contains directories or unsafe paths"
              {:reason :unsafe-release-path

@@ -490,6 +490,45 @@
                   (failure
                    #(alpha-release/validate-inventory!
                      contract colliding)))))))
+      (testing "typed inventory rejects case-insensitive dependency-name collisions"
+        (let [colliding
+              (update
+               inventory :managed-dependencies conj
+               {:file "dripsharp.pdfcarton.dll"
+                :package-id "dripsharp.pdfcarton"
+                :version "1.0.0"})
+              result
+              (failure
+               #(alpha-release/validate-inventory!
+                 contract colliding))]
+          (is (= :dependency-name-collision (:reason result)))
+          (is (= #{"DripSharp.PdfCarton.dll"
+                   "dripsharp.pdfcarton.dll"}
+                 (set
+                  (map :file
+                       (get-in
+                        result
+                        [:collisions "dripsharp.pdfcarton.dll"])))))))
+      (testing "downloaded ZIPs reject case-insensitive entry collisions"
+        (let [entries
+              (assoc expected
+                     "dripsharp.pdfcarton.dll"
+                     "case-only collision")
+              asset (zip! (.resolve root "case-collision.asset") entries)
+              result
+              (failure
+               #(alpha-release/verify-asset!
+                 {:artifact asset
+                  :inventory inventory
+                  :platform platform
+                  :expected-hashes (hashes entries)
+                  :framework-assemblies #{"System.Runtime.dll"}}))]
+          (is (= :dependency-name-collision (:reason result)))
+          (is (= ["DripSharp.PdfCarton.dll"
+                  "dripsharp.pdfcarton.dll"]
+                 (get-in
+                  result
+                  [:collisions "dripsharp.pdfcarton.dll"])))))
       (finally
         (delete-tree! root)))))
 
