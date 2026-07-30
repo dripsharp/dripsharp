@@ -1130,6 +1130,8 @@
         (paths/resolve-path workspace "hostile-language.targets")
         hostile-net-build-extension-targets
         (paths/resolve-path workspace "hostile-net-build-extension.targets")
+        hostile-ms-test-tools-targets
+        (paths/resolve-path workspace "hostile-ms-test-tools.targets")
         hostile-reporting-services-targets
         (paths/resolve-path workspace "hostile-reporting-services.targets")
         hostile-user-extensions
@@ -1219,6 +1221,8 @@
                 (str hostile-language-targets)
                 "MicrosoftNETBuildExtensionsTargets"
                 (str hostile-net-build-extension-targets)
+                "MsTestToolsTargets"
+                (str hostile-ms-test-tools-targets)
                 "ReportingServicesTargets"
                 (str hostile-reporting-services-targets)
                 "MSBuildSDKsPath"
@@ -1311,6 +1315,11 @@
             "BeforeTargets=\"Build\"><Error Text=\"Ambient "
             "MicrosoftNETBuildExtensionsTargets was loaded\" />"
             "</Target></Project>\n"))
+      (write!
+       workspace "hostile-ms-test-tools.targets"
+       (str "<Project><Target Name=\"RejectAmbientMsTestToolsTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "MsTestToolsTargets was loaded\" /></Target></Project>\n"))
       (write!
        workspace "hostile-reporting-services.targets"
        (str "<Project><Target Name=\"RejectAmbientReportingServicesTargets\" "
@@ -1530,6 +1539,7 @@
                  "MSBuildExtensionsPath64"
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"
+                 "MsTestToolsTargets"
                  "ReportingServicesTargets"}
                (:unset-environment restore-request)))
         (is (= #{"AfterMicrosoftNetSdkProps"
@@ -1559,6 +1569,7 @@
                  "MSBuildExtensionsPath64"
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"
+                 "MsTestToolsTargets"
                  "ReportingServicesTargets"}
                (:unset-environment dotnet-request)))
         (is (str/blank?

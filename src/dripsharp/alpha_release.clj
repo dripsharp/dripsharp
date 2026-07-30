@@ -81,6 +81,7 @@
     "MSBuildExtensionsPath64"
     "MSBuildSDKsPath"
     "MSBuildUserExtensionsPath"
+    "MsTestToolsTargets"
     "ReportingServicesTargets"})
 
 (def ^:private isolated-nuget-config
