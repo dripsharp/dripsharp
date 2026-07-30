@@ -102,11 +102,14 @@ following before assembling assets:
 * The product repository's managed source state exactly matches the freshly
   proved generated staging state.
 * Every build uses `Release` configuration.
+* Each build restores dependencies into an isolated preparation-owned package
+  root.
 * The managed and native binary output matches the target-owned inventory
   exactly and contains no framework assemblies or dependency-name collisions.
 * The entry assembly dependency file selects the declared runtime target and
   binds every managed DLL and native asset to its exact package ID, version,
-  and runtime or package path.
+  and runtime or package path. Each packaged dependency's bytes must also match
+  that exact regular, contained, non-symbolic restored package asset.
 
 Without the optional platform list, assembly produces one deterministic,
 versioned target-framework/platform ZIP for every declared platform variant.

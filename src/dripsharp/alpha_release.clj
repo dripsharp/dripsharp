@@ -701,7 +701,8 @@
     (paths/resolve-path product project (str assembly ".csproj"))))
 
 (defn- default-build!
-  [{:keys [product inventory platform build-output run-command!]}]
+  [{:keys [product inventory platform build-output packages-root
+           run-command!]}]
   (let [project-file (entry-project product inventory)
         runtime-identifier (:runtime-identifier platform)
         artifacts-path
@@ -715,6 +716,7 @@
           "--no-incremental"
           "--artifacts-path" (str artifacts-path)
           "--output" (str build-output)
+          (str "-p:RestorePackagesPath=" packages-root)
           "-p:RestoreIgnoreFailedSources=true"
           "-p:CopyLocalLockFileAssemblies=true"
           "-p:DebugType=None"
@@ -805,6 +807,56 @@
   [{:keys [package-id version]}]
   (str package-id "/" version))
 
+(defn- restored-package-file!
+  [packages-root library-path asset-path platform dependency asset-kind]
+  (let [{:keys [package-id version]} dependency
+        expected-library-path
+        (str (portable-lower-case package-id) "/"
+             (portable-lower-case version))]
+    (when-not (and (= expected-library-path library-path)
+                   (relative-components library-path)
+                   (relative-components asset-path))
+      (fail! "Release dependency has an invalid restored package path"
+             {:reason :release-dependency-evidence-mismatch
+              :platform (:id platform)
+              :asset-kind asset-kind
+              :dependency dependency
+              :expected-library-path expected-library-path
+              :actual-library-path library-path
+              :asset-path asset-path}))
+    (let [root (paths/absolute packages-root)
+          file (paths/absolute
+                (paths/resolve-path root library-path asset-path))
+          linked-paths
+          (when (.startsWith file root)
+            (->> (iterate #(.getParent ^Path %) file)
+                 (take-while #(and % (.startsWith ^Path % root)))
+                 (filter #(Files/isSymbolicLink ^Path %))
+                 reverse
+                 (mapv str)))]
+      (when (seq linked-paths)
+        (fail! "Restored release dependency path contains symbolic links"
+               {:reason :symbolic-link-restored-package-asset
+                :platform (:id platform)
+                :asset-kind asset-kind
+                :dependency dependency
+                :packages-root (str root)
+                :path (str file)
+                :symbolic-links linked-paths}))
+      (when-not (and (.startsWith file root)
+                     (Files/isRegularFile
+                      file
+                      (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+                     (paths/real-contained? root file))
+        (fail! "Restored release dependency asset is missing or escaped"
+               {:reason :missing-restored-package-asset
+                :platform (:id platform)
+                :asset-kind asset-kind
+                :dependency dependency
+                :packages-root (str root)
+                :path (str file)}))
+      file)))
+
 (defn- read-dependency-file!
   [file platform]
   (try
@@ -820,10 +872,11 @@
         error)))))
 
 (defn- package-evidence!
-  [target libraries platform dependency asset-kind]
+  [target libraries files packages-root platform dependency asset-kind]
   (let [{:keys [file package-id version package-path]} dependency
         coordinate (dependency-coordinate dependency)
         library (get libraries coordinate)
+        library-path (get library "path")
         section (case asset-kind
                   :managed "runtime"
                   :native "native")
@@ -848,14 +901,34 @@
               :expected-path (or package-path file)
               :actual-paths paths
               :library-type (get library "type")}))
-    (cond-> {:file file
-             :package-id package-id
-             :version version}
-      (= :managed asset-kind) (assoc :runtime-path expected-path)
-      (= :native asset-kind) (assoc :package-path expected-path))))
+    (let [restored
+          (restored-package-file!
+           packages-root library-path expected-path platform dependency
+           asset-kind)
+          output (first (get files file))
+          restored-sha256 (util/sha256-file restored)
+          output-sha256 (util/sha256-file output)]
+      (when-not (= restored-sha256 output-sha256)
+        (fail! "Release dependency bytes differ from the exact restored package asset"
+               {:reason :release-dependency-byte-mismatch
+                :platform (:id platform)
+                :asset-kind asset-kind
+                :dependency dependency
+                :restored-package-path
+                (str library-path "/" expected-path)
+                :expected-sha256 restored-sha256
+                :actual-sha256 output-sha256}))
+      (cond-> {:file file
+               :package-id package-id
+               :version version
+               :restored-package-path
+               (str library-path "/" expected-path)
+               :sha256 restored-sha256}
+        (= :managed asset-kind) (assoc :runtime-path expected-path)
+        (= :native asset-kind) (assoc :package-path expected-path)))))
 
 (defn- dependency-evidence!
-  [files inventory platform]
+  [files packages-root inventory platform]
   (let [filename (dependency-file-name inventory)
         dependency-files (get files filename)]
     (when-not (= 1 (count dependency-files))
@@ -881,14 +954,17 @@
       {:filename filename
        :runtime-target target-name
        :managed
-       (mapv #(package-evidence! target libraries platform % :managed)
+       (mapv #(package-evidence!
+               target libraries files packages-root platform % :managed)
              (:managed-dependencies inventory))
        :native
-       (mapv #(package-evidence! target libraries platform % :native)
+       (mapv #(package-evidence!
+               target libraries files packages-root platform % :native)
              (:native-assets platform))})))
 
 (defn- inspect-build-output!
-  [build-root build-output inventory platform framework-assemblies]
+  [build-root build-output packages-root inventory platform
+   framework-assemblies]
   (let [expected (expected-files inventory platform)
         expected-all (apply set/union #{} (vals expected))
         direct (direct-files build-root build-output platform)
@@ -941,7 +1017,7 @@
                  (contains? (:managed expected) file) :managed
                  :else :native)}]))
      :dependency-evidence
-     (dependency-evidence! by-name inventory platform)}))
+     (dependency-evidence! by-name packages-root inventory platform)}))
 
 (defn- ensure-output-available!
   [output]
@@ -1301,6 +1377,8 @@
              (fn [platform]
                (let [build-output
                      (paths/resolve-path temp-root (:id platform) "output")
+                     packages-root
+                     (paths/resolve-path temp-root (:id platform) "packages")
                      _ (Files/createDirectories
                         build-output (make-array FileAttribute 0))
                      build
@@ -1312,6 +1390,7 @@
                        :platform platform
                        :configuration "Release"
                        :build-output build-output
+                       :packages-root packages-root
                        :run-command! run-command!})]
                  (when-not (= "Release" (:configuration build))
                    (fail! "Alpha-release build did not use Release configuration"
@@ -1320,7 +1399,7 @@
                            :actual (:configuration build)}))
                  (let [{:keys [files dependency-evidence]}
                        (inspect-build-output!
-                        temp-root build-output inventory platform
+                        temp-root build-output packages-root inventory platform
                         framework-assemblies)
                        filename (asset-filename inventory version platform)
                        artifact (get artifact-files (:id platform))

@@ -197,18 +197,35 @@
 
 (defn- fake-build!
   [calls]
-  (fn [{:keys [inventory platform configuration build-output]}]
+  (fn [{:keys [inventory platform configuration build-output packages-root]}]
     (swap! calls conj
            {:platform (:id platform)
             :runtime-identifier (:runtime-identifier platform)
             :configuration configuration})
-    (doseq [file
-            (concat (map :file (:product-assemblies inventory))
-                    (map :file (:managed-dependencies inventory))
-                    (map :file (:native-assets platform)))]
-      (write! build-output file
-              (str (:product-family inventory) "\t"
-                   (:id platform) "\t" file "\n")))
+    (let [content
+          (fn [file]
+            (str (:product-family inventory) "\t"
+                 (:id platform) "\t" file "\n"))]
+      (doseq [file
+              (concat (map :file (:product-assemblies inventory))
+                      (map :file (:managed-dependencies inventory))
+                      (map :file (:native-assets platform)))]
+        (write! build-output file (content file)))
+      (doseq [{:keys [file package-id version]}
+              (:managed-dependencies inventory)]
+        (write!
+         packages-root
+         (str (str/lower-case package-id) "/"
+              (str/lower-case version) "/lib/"
+              (:target-framework inventory) "/" file)
+         (content file)))
+      (doseq [{:keys [file package-id version package-path]}
+              (:native-assets platform)]
+        (write!
+         packages-root
+         (str (str/lower-case package-id) "/"
+              (str/lower-case version) "/" package-path)
+         (content file))))
     ;; These are normal build byproducts, never selected release inputs.
     (write! build-output "ignored.pdb" "symbols\n")
     (write! build-output "ignored.xml" "documentation\n")
@@ -232,6 +249,15 @@
             [(str package-id "/" version)
              {"native" {package-path {}}}])
           packages (concat managed native)
+          library-paths
+          (into
+           {}
+           (for [{:keys [package-id version]}
+                 (concat (:managed-dependencies inventory)
+                         (:native-assets platform))]
+             [(str package-id "/" version)
+              (str (str/lower-case package-id) "/"
+                   (str/lower-case version))]))
           dependency-file
           (str (subs (:entry-assembly inventory)
                      0 (- (count (:entry-assembly inventory)) 4))
@@ -245,7 +271,9 @@
          "libraries"
          (into {}
                (map (fn [[coordinate _]]
-                      [coordinate {"type" "package"}]))
+                      [coordinate
+                       {"type" "package"
+                        "path" (get library-paths coordinate)}]))
                packages)})))
     {:configuration configuration}))
 
@@ -666,6 +694,15 @@
         (is (= #{"win-x64" "win-arm64" "linux-x64" "linux-arm64"
                  "osx-x64" "osx-arm64"}
                (set (map :runtime-identifier @calls))))
+        (doseq [dependency
+                (mapcat
+                 (fn [asset]
+                   (concat
+                    (get-in asset [:dependency-evidence :managed])
+                    (get-in asset [:dependency-evidence :native])))
+                 (:assets first))]
+          (is (string? (:restored-package-path dependency)))
+          (is (re-matches #"[0-9a-f]{64}" (:sha256 dependency))))
         (is (not-any?
              (fn [command]
                (or (= "gh" (first command))
@@ -805,6 +842,105 @@
       (finally
         (delete-tree! workspace)))))
 
+(deftest release-preparation-binds-dependency-bytes-to-restored-assets
+  (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)
+        platform (first (filter #(= "osx-arm64" (:id %))
+                                (:platforms inventory)))
+        base-build! (fake-build! (atom []))
+        managed-restored
+        "skiasharp/4.150.1/lib/net10.0/SkiaSharp.dll"
+        cases
+        [{:name :managed-byte-mismatch
+          :reason :release-dependency-byte-mismatch
+          :asset-kind :managed
+          :mutate!
+          (fn [{:keys [build-output]}]
+            (write! build-output "SkiaSharp.dll"
+                    "substituted managed bytes\n"))}
+         {:name :native-byte-mismatch
+          :reason :release-dependency-byte-mismatch
+          :asset-kind :native
+          :mutate!
+          (fn [{:keys [build-output]}]
+            (write! build-output "libSkiaSharp.dylib"
+                    "substituted native bytes\n"))}
+         {:name :missing-restored-asset
+          :reason :missing-restored-package-asset
+          :asset-kind :managed
+          :mutate!
+          (fn [{:keys [packages-root]}]
+            (Files/delete
+             (paths/resolve-path packages-root managed-restored)))}
+         {:name :linked-restored-asset
+          :reason :symbolic-link-restored-package-asset
+          :asset-kind :managed
+          :mutate!
+          (fn [{:keys [build-output packages-root]}]
+            (let [restored
+                  (paths/resolve-path packages-root managed-restored)
+                  output
+                  (paths/resolve-path build-output "SkiaSharp.dll")]
+              (Files/delete restored)
+              (Files/createSymbolicLink
+               restored
+               (.relativize (.getParent restored) output)
+               (make-array FileAttribute 0))))}
+         {:name :escaped-library-path
+          :reason :release-dependency-evidence-mismatch
+          :asset-kind :managed
+          :mutate!
+          (fn [{:keys [build-output]}]
+            (let [dependency-file
+                  (paths/resolve-path
+                   build-output "DripSharp.PdfCarton.Preflight.deps.json")
+                  document
+                  (.readValue json-mapper (.toFile dependency-file)
+                              java.util.Map)]
+              (.put
+               ^java.util.Map
+               (get document "libraries")
+               "SkiaSharp/4.150.1"
+               {"type" "package"
+                "path" "../../outside"})
+              (.writeValue json-mapper (.toFile dependency-file)
+                           document)))}]]
+    (try
+      (doseq [{:keys [name reason asset-kind mutate!]} cases]
+        (testing (clojure.core/name name)
+          (let [output-root
+                (paths/resolve-path
+                 workspace
+                 (str "dependency-bytes-" (clojure.core/name name)))
+                result
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit commit
+                    :platform-ids [(:id platform)]
+                    :output-root output-root
+                    :build-fn
+                    (fn [build]
+                      (let [result (base-build! build)]
+                        (mutate! build)
+                        result))
+                    :framework-assemblies #{"System.Runtime.dll"}}))]
+            (is (= reason (:reason result)))
+            (is (= asset-kind (:asset-kind result)))
+            (is (not
+                 (Files/exists
+                  (paths/resolve-path
+                   output-root
+                   (alpha-release/asset-filename
+                    inventory "0.1.0-alpha.1" platform))
+                  (make-array LinkOption 0)))))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest portable-brine-assembly-produces-one-versioned-framework-asset
   (let [[_ inventory] (actual-contract-and-inventory :pkl)
         {:keys [workspace contract commit]}
@@ -865,12 +1001,22 @@
                            @commands))
             artifacts-index (.indexOf dotnet-command "--artifacts-path")
             artifacts-path
-            (paths/absolute (nth dotnet-command (inc artifacts-index)))]
+            (paths/absolute (nth dotnet-command (inc artifacts-index)))
+            packages-option
+            (first
+             (filter #(str/starts-with?
+                       % "-p:RestorePackagesPath=")
+                     dotnet-command))
+            packages-path
+            (paths/absolute
+             (subs packages-option
+                   (count "-p:RestorePackagesPath=")))]
         (is (= #{"DripSharp.Brine.dll"
                  "DripSharp.Brine.Parser.dll"}
                (set (keys (:entries (first (:assets prepared)))))))
         (is (not (neg? artifacts-index)))
         (is (not (.startsWith artifacts-path (paths/absolute product))))
+        (is (not (.startsWith packages-path (paths/absolute product))))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
                          "--untracked-files=all"))))
