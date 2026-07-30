@@ -509,6 +509,49 @@
                        (get-in
                         result
                         [:collisions "dripsharp.pdfcarton.dll"])))))))
+      (testing "typed inventory rejects Windows-illegal filenames"
+        (doseq [file ["CON.dll" "nul.DLL" "COM1.dll" "lpt9.dll"]]
+          (let [package-id (subs file 0 (- (count file) 4))
+                malformed
+                (update
+                 inventory :managed-dependencies conj
+                 {:file file
+                  :package-id package-id
+                  :version "1.0.0"})
+                result
+                (failure
+                 #(alpha-release/validate-inventory!
+                   contract malformed))]
+            (is (= :invalid-release-inventory (:reason result)))
+            (is (= file (:file result))))))
+      (testing "typed inventory rejects Windows-illegal relative path components"
+        (doseq [path ["runtimes/win:x64/native/libSkiaSharp.dll"
+                      "runtimes/CON/native/libSkiaSharp.dll"
+                      "runtimes/win-x64./native/libSkiaSharp.dll"
+                      "runtimes/win-x64/native*/libSkiaSharp.dll"
+                      "runtimes/win-x64\u0085/native/libSkiaSharp.dll"]]
+          (let [malformed
+                (assoc-in inventory
+                          [:platforms 0 :native-assets 0 :package-path]
+                          path)
+                result
+                (failure
+                 #(alpha-release/validate-inventory!
+                   contract malformed))]
+            (is (= :invalid-release-inventory (:reason result)))
+            (is (= path (:path result))))))
+      (testing "typed inventory rejects Windows-illegal product project paths"
+        (let [path "src/CON"
+              malformed
+              (assoc-in inventory
+                        [:product-assemblies 0 :project]
+                        path)
+              result
+              (failure
+               #(alpha-release/validate-inventory!
+                 contract malformed))]
+          (is (= :invalid-release-inventory (:reason result)))
+          (is (= path (:path result)))))
       (testing "downloaded ZIPs reject case-insensitive entry collisions"
         (let [entries
               (assoc expected

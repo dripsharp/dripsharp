@@ -64,12 +64,32 @@
   [value]
   (and (string? value)
        (not (str/blank? value))
-       (not (re-find #"[\u0000\r\n]" value))))
+       (not
+        (re-find
+         #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
+         value))))
+
+(defn- windows-reserved-path-component?
+  [component]
+  (let [basename (first (str/split component #"\." 2))]
+    (boolean
+     (re-matches
+      #"(?i:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])"
+      basename))))
+
+(defn- portable-path-component?
+  [component]
+  (and (non-blank-string? component)
+       (not (contains? #{"." ".."} component))
+       (not (re-find #"[<>:\"|?*\u0000-\u001F]" component))
+       (not (re-find #"[. ]$" component))
+       (not (windows-reserved-path-component? component))))
 
 (defn- simple-file!
   [subject value]
   (when-not (and (non-blank-string? value)
                  (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]*" value)
+                 (not (windows-reserved-path-component? value))
                  (not (str/includes? value "/"))
                  (not (str/includes? value "\\")))
     (fail! (str subject " must be one portable file name")
@@ -85,9 +105,7 @@
              (not (str/starts-with? value "/"))
              (not (re-find #"^[A-Za-z]:" value)))
     (let [components (str/split value #"/" -1)]
-      (when (every? #(and (non-blank-string? %)
-                          (not (contains? #{"." ".."} %)))
-                    components)
+      (when (every? portable-path-component? components)
         components))))
 
 (defn- relative-path!
