@@ -536,17 +536,30 @@
         record-name
         (str (:asset-prefix inventory) "-" version "-release.edn")]
     (try
-      (doseq [[protected-kind protected-root nested?]
-              [[:product-repository product false]
-               [:product-repository product true]
-               [:proved-staging staging false]
-               [:proved-staging staging true]]]
+      (doseq [[protected-kind protected-root nested? case-variant?]
+              [[:product-repository product false false]
+               [:product-repository product true false]
+               [:product-repository product false true]
+               [:product-repository product true true]
+               [:proved-staging staging false false]
+               [:proved-staging staging true false]
+               [:proved-staging staging false true]
+               [:proved-staging staging true true]]]
         (testing (str (name protected-kind)
+                      (when case-variant? " case variant")
                       (when nested? " descendant"))
-          (let [output-root
-                (if nested?
-                  (.resolve ^Path protected-root "alpha-release")
+          (let [protected-output-root
+                (if case-variant?
+                  (paths/resolve-path
+                   workspace
+                   (.toUpperCase
+                    ^String (util/portable-path workspace protected-root)
+                    Locale/ROOT))
                   protected-root)
+                output-root
+                (if nested?
+                  (.resolve ^Path protected-output-root "alpha-release")
+                  protected-output-root)
                 build-calls (atom [])
                 result
                 (failure
@@ -571,6 +584,30 @@
             (is (not (Files/exists
                       (.resolve ^Path output-root record-name)
                       (make-array LinkOption 0)))))))
+      (testing "unrelated case-variant prefix sibling"
+        (let [output-root
+              (paths/resolve-path
+               workspace "PRODUCTS"
+               (str (.toUpperCase
+                     ^String (name (:product-family inventory))
+                     Locale/ROOT)
+                    "-RELEASE"))
+              build-calls (atom [])
+              result
+              (alpha-release/prepare!
+               {:workspace-root workspace
+                :target-contract contract
+                :inventory inventory
+                :authorized-tag (str "v" version)
+                :product-commit commit
+                :platform-ids [(:id platform)]
+                :output-root output-root
+                :build-fn (fake-build! build-calls)
+                :framework-assemblies #{"System.Runtime.dll"}})]
+          (is (= 1 (count @build-calls)))
+          (is (= (str output-root)
+                 (str (.getParent
+                       ^Path (paths/absolute (:record-path result))))))))
       (finally
         (delete-tree! workspace)))))
 

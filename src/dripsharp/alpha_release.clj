@@ -156,6 +156,20 @@
   [value]
   (.toLowerCase ^String value Locale/ROOT))
 
+(defn- case-insensitive-path-prefix?
+  [^Path path ^Path prefix]
+  (let [components
+        (fn [^Path value]
+          (mapv #(portable-lower-case (str %))
+                (iterator-seq (.iterator value))))
+        path-components (components path)
+        prefix-components (components prefix)]
+    (and (= (portable-lower-case (str (.getRoot path)))
+            (portable-lower-case (str (.getRoot prefix))))
+         (<= (count prefix-components) (count path-components))
+         (= prefix-components
+            (subvec path-components 0 (count prefix-components))))))
+
 (defn- case-insensitive-collisions
   [values identity-fn]
   (into
@@ -494,7 +508,7 @@
          (fn [[protected-kind relative]]
            (let [protected
                  (paths/absolute (paths/resolve-path root relative))]
-             (when (.startsWith output protected)
+             (when (case-insensitive-path-prefix? output protected)
                {:kind protected-kind
                 :path protected})))
          [[:product-repository
