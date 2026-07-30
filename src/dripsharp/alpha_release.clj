@@ -71,6 +71,24 @@
          #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
          value))))
 
+(defn- nuget-package-id?
+  [value]
+  (and (string? value)
+       (<= (count value) 100)
+       (boolean
+        (re-matches
+         #"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
+         value))))
+
+(defn- exact-package-version?
+  [value]
+  (and (string? value)
+       (<= (count value) 64)
+       (boolean
+        (re-matches
+         #"[0-9]+(?:\.[0-9]+){0,3}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+         value))))
+
 (defn- windows-reserved-path-component?
   [component]
   (let [basename (first (str/split component #"\." 2))]
@@ -297,7 +315,8 @@
         (simple-file! "Managed dependency file" file)
         (when-not (and (dll-file? file)
                        (= file (str package-id ".dll"))
-                       (non-blank-string? version))
+                       (nuget-package-id? package-id)
+                       (exact-package-version? version))
           (fail! "Managed dependency must name its exact non-framework package DLL"
                  {:reason :invalid-release-inventory
                   :dependency dependency}))))
@@ -332,8 +351,8 @@
             (relative-path! "Native dependency package path" package-path)
             (when-not (and (native-file? file)
                            (= file (last (relative-components package-path)))
-                           (non-blank-string? package-id)
-                           (non-blank-string? version))
+                           (nuget-package-id? package-id)
+                           (exact-package-version? version))
               (fail! "Native asset must identify one exact package runtime file"
                      {:reason :invalid-release-inventory
                       :asset asset}))))

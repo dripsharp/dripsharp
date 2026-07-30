@@ -300,6 +300,51 @@
              #(map :package-id (:native-assets %))
              (:platforms pdfcarton)))))))
 
+(deftest release-inventory-rejects-malformed-dependency-package-coordinates
+  (let [[contract inventory] (actual-contract-and-inventory :pdfcube)]
+    (doseq [package-id ["Bad..Package" "Bad-.Package" "Bad-"]]
+      (let [file (str package-id ".dll")
+            malformed
+            (assoc-in inventory
+                      [:managed-dependencies 0]
+                      {:file file
+                       :package-id package-id
+                       :version "1.0.0"})
+            result
+            (failure
+             #(alpha-release/validate-inventory! contract malformed))]
+        (is (= :invalid-release-inventory (:reason result)))
+        (is (= package-id
+               (get-in result [:dependency :package-id])))))
+    (doseq [package-id ["Bad Package" "Bad/Package" "Bad..Package" "Bad-"]]
+      (let [malformed
+            (assoc-in inventory
+                      [:platforms 4 :native-assets 0 :package-id]
+                      package-id)
+            result
+            (failure
+             #(alpha-release/validate-inventory! contract malformed))]
+        (is (= :invalid-release-inventory (:reason result)))
+        (is (= package-id (get-in result [:asset :package-id])))))
+    (doseq [version ["4.150.1 " "../outside" "1..0" "1.0.0-"
+                     "1.0.0+" (str "1." (apply str (repeat 63 "0")))]]
+      (doseq [path [[:managed-dependencies 0 :version]
+                    [:platforms 4 :native-assets 0 :version]]]
+        (let [malformed (assoc-in inventory path version)
+              result
+              (failure
+               #(alpha-release/validate-inventory! contract malformed))]
+          (is (= :invalid-release-inventory (:reason result))))))
+    (is
+     (map?
+      (alpha-release/validate-inventory!
+       contract
+       (-> inventory
+           (assoc-in [:managed-dependencies 0 :version]
+                     "1.2.3-alpha.1+build-7")
+           (assoc-in [:platforms 4 :native-assets 0 :version]
+                     "1.2.3-alpha.1+build-7")))))))
+
 (deftest release-request-requires-an-exact-length-product-commit
   (let [authorized-tag "v0.1.0-alpha.1"
         sha1 (apply str (repeat 40 "a"))
