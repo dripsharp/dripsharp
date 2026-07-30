@@ -1067,6 +1067,10 @@
         (release-fixture! inventory)
         requests (atom [])
         restore-config-content (atom nil)
+        hostile-custom-props
+        (paths/resolve-path workspace "hostile-custom-import.props")
+        hostile-custom-targets
+        (paths/resolve-path workspace "hostile-custom-import.targets")
         run-command!
         (fn [request]
           (swap! requests conj request)
@@ -1087,7 +1091,15 @@
               request
               :environment
               (merge
-               {"MSBuildSDKsPath"
+               {"CustomAfterMicrosoftCommonProps"
+                (str hostile-custom-props)
+                "CustomAfterMicrosoftCommonTargets"
+                (str hostile-custom-targets)
+                "CustomBeforeMicrosoftCommonProps"
+                (str hostile-custom-props)
+                "CustomBeforeMicrosoftCommonTargets"
+                (str hostile-custom-targets)
+                "MSBuildSDKsPath"
                 "/host-controlled/nonexistent-msbuild-sdks"
                 "MSBuildExtensionsPath"
                 "/host-controlled/nonexistent-msbuild-extensions"}
@@ -1100,6 +1112,16 @@
                   "/host-controlled/fallback-packages"})
                (:environment request))))))]
     (try
+      (write!
+       workspace "hostile-custom-import.props"
+       (str "<Project><Import "
+            "Project=\"/host-controlled/nonexistent-custom-import.props\" "
+            "/></Project>\n"))
+      (write!
+       workspace "hostile-custom-import.targets"
+       (str "<Project><Target Name=\"RejectAmbientCustomImport\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient Microsoft.Common "
+            "custom import was loaded\" /></Target></Project>\n"))
       (write!
        workspace "global.json"
        "{\"sdk\":{\"version\":\"99.0.100\",\"rollForward\":\"disable\"}}\n")
@@ -1202,9 +1224,19 @@
                   restore-command))
         (is (some #{"-p:RestoreAdditionalProjectSources="} restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"MSBuildExtensionsPath" "MSBuildSDKsPath"}
+        (is (= #{"CustomAfterMicrosoftCommonProps"
+                 "CustomAfterMicrosoftCommonTargets"
+                 "CustomBeforeMicrosoftCommonProps"
+                 "CustomBeforeMicrosoftCommonTargets"
+                 "MSBuildExtensionsPath"
+                 "MSBuildSDKsPath"}
                (:unset-environment restore-request)))
-        (is (= #{"MSBuildExtensionsPath" "MSBuildSDKsPath"}
+        (is (= #{"CustomAfterMicrosoftCommonProps"
+                 "CustomAfterMicrosoftCommonTargets"
+                 "CustomBeforeMicrosoftCommonProps"
+                 "CustomBeforeMicrosoftCommonTargets"
+                 "MSBuildExtensionsPath"
+                 "MSBuildSDKsPath"}
                (:unset-environment dotnet-request)))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
