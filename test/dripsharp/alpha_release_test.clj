@@ -742,6 +742,37 @@
           (is (not (Files/exists
                     (.resolve output-root record-name)
                     (make-array LinkOption 0))))))
+      (testing "a replaced earlier output is preserved during rollback"
+        (let [output-root (paths/resolve-path workspace "replaced-output")
+              replaced-asset (.resolve output-root (first asset-names))
+              replacement "replacement owned by another actor\n"
+              calls (atom [])
+              build! (fake-build! calls)
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc
+                  options
+                  :output-root output-root
+                  :build-fn
+                  (fn [build]
+                    (if (= (second platform-ids)
+                           (get-in build [:platform :id]))
+                      (do
+                        (write! output-root (first asset-names) replacement)
+                        (throw
+                         (ex-info "Synthetic failure after replacement"
+                                  {:kind :synthetic-build-failure
+                                   :reason :synthetic-build-failure})))
+                      (build! build))))))]
+          (is (= :synthetic-build-failure (:reason result)))
+          (is (= replacement (slurp (str replaced-asset))))
+          (is (not (Files/exists
+                    (.resolve output-root (second asset-names))
+                    (make-array LinkOption 0))))
+          (is (not (Files/exists
+                    (.resolve output-root record-name)
+                    (make-array LinkOption 0))))))
       (testing "a final proved-state failure removes every completed ZIP"
         (let [output-root (paths/resolve-path workspace "failed-final-proof")
               managed-path (ffirst (generated-files inventory))

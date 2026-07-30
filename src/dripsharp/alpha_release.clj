@@ -14,7 +14,7 @@
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file CopyOption FileAlreadyExistsException FileVisitOption
             Files LinkOption OpenOption Path StandardOpenOption]
-           [java.nio.file.attribute FileAttribute FileTime]
+           [java.nio.file.attribute BasicFileAttributes FileAttribute FileTime]
            [java.util Locale]
            [java.util.zip Deflater ZipEntry ZipFile ZipOutputStream]))
 
@@ -831,6 +831,38 @@
            (Files/copy ^Path source archive)
            (.closeEntry archive)))))))
 
+(defn- output-ownership
+  [output]
+  (let [attributes
+        (Files/readAttributes
+         output BasicFileAttributes
+         (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))]
+    {:path output
+     :file-key (.fileKey attributes)
+     :size (.size attributes)
+     :sha256 (util/sha256-file output)}))
+
+(defn- owned-output?
+  [{:keys [^Path path file-key size sha256]}]
+  (when (and (Files/exists
+              path (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+             (not (Files/isSymbolicLink path)))
+    (let [attributes
+          (Files/readAttributes
+           path BasicFileAttributes
+           (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+          current-key (.fileKey attributes)]
+      (and (.isRegularFile attributes)
+           (or (not (and file-key current-key))
+               (= file-key current-key))
+           (= size (.size attributes))
+           (= sha256 (util/sha256-file path))))))
+
+(defn- delete-owned-output!
+  [ownership]
+  (when (owned-output? ownership)
+    (Files/deleteIfExists (:path ownership))))
+
 (defn- zip-records
   [artifact]
   (with-open [archive (ZipFile. (str artifact))]
@@ -1096,7 +1128,8 @@
                        filename (asset-filename inventory version platform)
                        artifact (get artifact-files (:id platform))
                        _ (write-zip! artifact files)
-                       _ (swap! created-outputs conj artifact)
+                       _ (swap! created-outputs conj
+                                (output-ownership artifact))
                        verification
                        (verify-asset!
                         {:artifact artifact
@@ -1156,7 +1189,7 @@
       (catch Throwable error
         (doseq [output (reverse @created-outputs)]
           (try
-            (Files/deleteIfExists output)
+            (delete-owned-output! output)
             (catch Throwable cleanup-error
               (.addSuppressed error cleanup-error))))
         (throw error))
