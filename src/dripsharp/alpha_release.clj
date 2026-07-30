@@ -743,8 +743,9 @@
            run-command!]}]
   (let [project-file (entry-project product inventory)
         runtime-identifier (:runtime-identifier platform)
+        build-directory (.getParent ^Path build-output)
         artifacts-path
-        (paths/resolve-path (.getParent ^Path build-output) "artifacts")
+        (paths/resolve-path build-directory "artifacts")
         command
         (cond->
          ["dotnet" "build" (str project-file)
@@ -774,7 +775,7 @@
      :runtime-identifier runtime-identifier
      :result
      (run-command! {:command command
-                    :directory product})}))
+                    :directory build-directory})}))
 
 (defn- direct-files
   [build-root directory platform]

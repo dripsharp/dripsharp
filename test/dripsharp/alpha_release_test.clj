@@ -1065,12 +1065,15 @@
   (let [[_ inventory] (actual-contract-and-inventory :pkl)
         {:keys [workspace contract product commit]}
         (release-fixture! inventory)
-        commands (atom [])
+        requests (atom [])
         run-command!
         (fn [request]
-          (swap! commands conj (:command request))
+          (swap! requests conj request)
           (process/run! request))]
     (try
+      (write!
+       workspace "global.json"
+       "{\"sdk\":{\"version\":\"99.0.100\",\"rollForward\":\"disable\"}}\n")
       (write!
        workspace "Directory.Build.props"
        (str "<Project><Target Name=\"RejectUnprovedAncestorProps\" "
@@ -1091,9 +1094,13 @@
               :output-root (paths/resolve-path workspace "release")
               :run-command! run-command!
               :framework-assemblies #{"System.Runtime.dll"}})
-            dotnet-command
-            (first (filter #(= ["dotnet" "build"] (subvec % 0 2))
-                           @commands))
+            dotnet-request
+            (first
+             (filter #(= ["dotnet" "build"]
+                         (subvec (:command %) 0 2))
+                     @requests))
+            dotnet-command (:command dotnet-request)
+            build-directory (paths/absolute (:directory dotnet-request))
             artifacts-index (.indexOf dotnet-command "--artifacts-path")
             artifacts-path
             (paths/absolute (nth dotnet-command (inc artifacts-index)))
@@ -1110,6 +1117,10 @@
                  "DripSharp.Brine.Parser.dll"}
                (set (keys (:entries (first (:assets prepared)))))))
         (is (not (neg? artifacts-index)))
+        (is (not (.startsWith build-directory
+                              (paths/absolute workspace))))
+        (is (not (.startsWith build-directory
+                              (paths/absolute product))))
         (is (not (.startsWith artifacts-path (paths/absolute product))))
         (is (not (.startsWith packages-path (paths/absolute product))))
         (is (some #{"-p:ImportDirectoryBuildProps=false"} dotnet-command))
