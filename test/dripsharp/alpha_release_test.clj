@@ -298,6 +298,47 @@
       (finally
         (delete-tree! workspace)))))
 
+(deftest release-preparation-rejects-symbolic-link-output-roots
+  (doseq [linked-path [:leaf :ancestor]]
+    (testing (name linked-path)
+      (let [[_ inventory] (actual-contract-and-inventory :pkl)
+            {:keys [workspace contract commit]}
+            (release-fixture! inventory)
+            substitute
+            (paths/resolve-path workspace
+                                (str "substitute-release-" (name linked-path)))
+            link (paths/resolve-path workspace
+                                     (str "release-" (name linked-path)))
+            output-root (if (= :leaf linked-path)
+                          link
+                          (.resolve link "nested"))
+            build-calls (atom [])]
+        (try
+          (Files/createDirectories substitute
+                                   (make-array FileAttribute 0))
+          (Files/createSymbolicLink link substitute
+                                    (make-array FileAttribute 0))
+          (let [result
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit commit
+                    :platform-ids ["portable"]
+                    :output-root output-root
+                    :build-fn (fake-build! build-calls)
+                    :framework-assemblies #{"System.Runtime.dll"}}))]
+            (is (= :symbolic-link-release-output (:reason result)))
+            (is (= [(str (.relativize workspace link))]
+                   (:symbolic-links result)))
+            (is (empty? @build-calls))
+            (is (empty? (with-open [files (Files/list substitute)]
+                          (vec (.toArray files))))))
+          (finally
+            (delete-tree! workspace)))))))
+
 (deftest assembly-includes-managed-and-native-assets-and-repeats-deterministically
   (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
         {:keys [workspace contract commit]}
@@ -425,7 +466,6 @@
               :inventory inventory
               :authorized-tag "0.1.0-alpha.2"
               :product-commit commit
-              :output-root (paths/resolve-path workspace "release")
               :build-fn (fake-build! (atom []))
               :framework-assemblies #{"System.Runtime.dll"}})
             _ (is (= 1 (count (:assets prepared))))

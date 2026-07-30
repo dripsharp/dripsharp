@@ -447,6 +447,39 @@
               :path relative}))
     value))
 
+(defn- safe-output-root!
+  [workspace-root output-root]
+  (let [root (paths/absolute workspace-root)
+        output (paths/absolute output-root)
+        linked-components
+        (when (.startsWith output root)
+          (->> (iterate #(.getParent ^Path %) output)
+               (take-while #(and % (not= root %)))
+               (filter #(Files/isSymbolicLink ^Path %))
+               (map #(util/portable-path root ^Path %))
+               reverse
+               vec))]
+    (when-not (.startsWith output root)
+      (fail! "Release output root must remain inside the workspace"
+             {:reason :release-output-path-escape
+              :root (str root)
+              :path (str output)}))
+    (when (seq linked-components)
+      (fail! "Release output root path contains symbolic links"
+             {:reason :symbolic-link-release-output
+              :root (str root)
+              :path (str output)
+              :symbolic-links linked-components}))
+    (when (and (Files/exists output (make-array LinkOption 0))
+               (not (Files/isDirectory
+                     output
+                     (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))))
+      (fail! "Release output root exists but is not a directory"
+             {:reason :invalid-release-output-root
+              :root (str root)
+              :path (str output)}))
+    output))
+
 (defn- git-clean!
   [run-command! product]
   (let [status
@@ -939,7 +972,8 @@
         (exact-product-state! workspace-root target-contract product-commit
                               run-command!)
         output-root
-        (paths/absolute
+        (safe-output-root!
+         workspace-root
          (or output-root
              (paths/resolve-path
               workspace-root "target/releases" version
