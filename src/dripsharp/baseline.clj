@@ -80,6 +80,17 @@
        (not (str/includes? value "\t"))
        (project-xml/valid-text? value)))
 
+(defn- normalized-portable-relative-path?
+  [value]
+  (when (non-blank-single-line-xml-path? value)
+    (let [components (str/split value #"/" -1)]
+      (and (not (str/includes? value "\\"))
+           (not (str/starts-with? value "/"))
+           (not (re-find #"^[A-Za-z]:" value))
+           (every? #(and (non-blank-string? %)
+                         (not (contains? #{"." ".."} %)))
+                   components)))))
+
 (defn- exact-keys?
   [value required allowed]
   (and (map? value)
@@ -178,7 +189,7 @@
                                                 legal-entry-required-keys
                                                 legal-entry-allowed-keys)
                                    (contains? #{:license :notice} (:kind entry))
-                                   (every? #(non-blank-single-line-xml-path?
+                                   (every? #(normalized-portable-relative-path?
                                              (get entry %))
                                            [:source :destination :package-path])
                                    (sha256? (:sha256 entry))

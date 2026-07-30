@@ -101,7 +101,7 @@
           (is (= :invalid-target-baseline (:kind (ex-data error))))
           (is (= :rawhttp (:target (ex-data error)))))))))
 
-(deftest baseline-legal-file-paths-must-be-single-line-and-xml-safe
+(deftest baseline-legal-file-paths-must-be-normalized-portable-and-xml-safe
   (let [record (baseline/read-baseline :rawhttp)]
     (doseq [field [:source :destination :package-path]
             separator
@@ -114,6 +114,27 @@
                  :rawhttp
                  (assoc-in record [:legal-sets :upstream 0 field]
                            (str "Legal/LICENSE.txt" separator "forged")))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-target-baseline (:kind (ex-data error))))
+          (is (= :rawhttp (:target (ex-data error)))))))
+    (doseq [field [:source :destination :package-path]
+            unsafe-path
+            ["/LICENSE"
+             "../LICENSE"
+             "legal/../LICENSE"
+             "./LICENSE"
+             "legal//LICENSE"
+             "legal/"
+             "C:/LICENSE"
+             "legal\\LICENSE"]]
+      (testing (str (name field) " rejects " (pr-str unsafe-path))
+        (let [error
+              (try
+                (baseline/validate-record!
+                 :rawhttp
+                 (assoc-in record [:legal-sets :upstream 0 field]
+                           unsafe-path))
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
           (is (= :invalid-target-baseline (:kind (ex-data error))))
