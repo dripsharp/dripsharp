@@ -329,6 +329,38 @@
                (:kind (ex-data error))))
         (is (= "Apache-2.0" (:license-expression (ex-data error))))))))
 
+(deftest destination-resource-notice-attribution-must-be-absent-or-exact
+  (let [configuration
+        (project-emission/read-configuration
+         (paths/workspace-root)
+         "targets/pkl/destinations/parser.edn")
+        absent (dissoc configuration :resource-notice-attribution)
+        empty-contract
+        (assoc configuration :resource-notice-attribution
+               {:legal-sets [] :package-paths []})
+        populated-contract
+        (assoc configuration :resource-notice-attribution
+               {:legal-sets [:core] :package-paths ["NOTICE.txt"]})]
+    (is (= absent
+           (project-emission/validate-configuration! absent)))
+    (is (= empty-contract
+           (project-emission/validate-configuration! empty-contract)))
+    (is (= populated-contract
+           (project-emission/validate-configuration! populated-contract)))
+    (doseq [[label value] [[:nil nil] [:false false]]]
+      (testing (name label)
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc configuration :resource-notice-attribution value))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:resource-notice-attribution]
+                 (:path (ex-data error))))
+          (is (= "a map" (:expected (ex-data error)))))))))
+
 (deftest destination-legal-file-paths-must-be-normalized-and-portable
   (let [configuration
         (project-emission/read-configuration

@@ -308,10 +308,11 @@
          {:license-expression license-expression
           :legal-files legal-files}
          "a license expression or exactly one pinned :license legal file"))))
-  (when-let [attribution (:resource-notice-attribution configuration)]
+  (when (contains? configuration :resource-notice-attribution)
     (let [context
           (destination-context
            "Production-resource NOTICE attribution contract")
+          attribution (:resource-notice-attribution configuration)
           legal-sets (:legal-sets attribution)
           package-paths (:package-paths attribution)
           configured-notice-paths
