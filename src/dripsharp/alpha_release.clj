@@ -80,7 +80,8 @@
     "MSBuildExtensionsPath32"
     "MSBuildExtensionsPath64"
     "MSBuildSDKsPath"
-    "MSBuildUserExtensionsPath"})
+    "MSBuildUserExtensionsPath"
+    "ReportingServicesTargets"})
 
 (def ^:private isolated-nuget-config
   (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"

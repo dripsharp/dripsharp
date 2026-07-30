@@ -1130,6 +1130,8 @@
         (paths/resolve-path workspace "hostile-language.targets")
         hostile-net-build-extension-targets
         (paths/resolve-path workspace "hostile-net-build-extension.targets")
+        hostile-reporting-services-targets
+        (paths/resolve-path workspace "hostile-reporting-services.targets")
         hostile-user-extensions
         (paths/resolve-path workspace "hostile-user-extensions")
         hostile-extensions32
@@ -1217,6 +1219,8 @@
                 (str hostile-language-targets)
                 "MicrosoftNETBuildExtensionsTargets"
                 (str hostile-net-build-extension-targets)
+                "ReportingServicesTargets"
+                (str hostile-reporting-services-targets)
                 "MSBuildSDKsPath"
                 "/host-controlled/nonexistent-msbuild-sdks"
                 "MSBuildExtensionsPath"
@@ -1307,6 +1311,11 @@
             "BeforeTargets=\"Build\"><Error Text=\"Ambient "
             "MicrosoftNETBuildExtensionsTargets was loaded\" />"
             "</Target></Project>\n"))
+      (write!
+       workspace "hostile-reporting-services.targets"
+       (str "<Project><Target Name=\"RejectAmbientReportingServicesTargets\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient "
+            "ReportingServicesTargets was loaded\" /></Target></Project>\n"))
       (write!
        hostile-user-extensions
        "Current/Microsoft.Common.targets/ImportBefore/RejectAmbientUserExtension.targets"
@@ -1520,7 +1529,8 @@
                  "MSBuildExtensionsPath32"
                  "MSBuildExtensionsPath64"
                  "MSBuildSDKsPath"
-                 "MSBuildUserExtensionsPath"}
+                 "MSBuildUserExtensionsPath"
+                 "ReportingServicesTargets"}
                (:unset-environment restore-request)))
         (is (= #{"AfterMicrosoftNetSdkProps"
                  "AfterMicrosoftNETSdkTargets"
@@ -1548,7 +1558,8 @@
                  "MSBuildExtensionsPath32"
                  "MSBuildExtensionsPath64"
                  "MSBuildSDKsPath"
-                 "MSBuildUserExtensionsPath"}
+                 "MSBuildUserExtensionsPath"
+                 "ReportingServicesTargets"}
                (:unset-environment dotnet-request)))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
