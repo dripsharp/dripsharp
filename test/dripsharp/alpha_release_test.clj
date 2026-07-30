@@ -1066,9 +1066,20 @@
         {:keys [workspace contract product commit]}
         (release-fixture! inventory)
         requests (atom [])
+        restore-config-content (atom nil)
         run-command!
         (fn [request]
           (swap! requests conj request)
+          (when (= ["dotnet" "restore"]
+                   (subvec (:command request)
+                           0 (min 2 (count (:command request)))))
+            (let [config-index (.indexOf (:command request) "--configfile")]
+              (reset! restore-config-content
+                      (slurp (nth (:command request) (inc config-index)))))
+            (write!
+             (paths/absolute (:directory request))
+             "NuGet.Config"
+             "<configuration><packageSources>"))
           (process/run! request))]
     (try
       (write!
@@ -1099,11 +1110,30 @@
              (filter #(= ["dotnet" "build"]
                          (subvec (:command %) 0 2))
                      @requests))
+            restore-request
+            (first
+             (filter #(= ["dotnet" "restore"]
+                         (subvec (:command %) 0 2))
+                     @requests))
             dotnet-command (:command dotnet-request)
+            restore-command (:command restore-request)
             build-directory (paths/absolute (:directory dotnet-request))
+            restore-directory (paths/absolute (:directory restore-request))
             artifacts-index (.indexOf dotnet-command "--artifacts-path")
             artifacts-path
             (paths/absolute (nth dotnet-command (inc artifacts-index)))
+            restore-artifacts-index
+            (.indexOf restore-command "--artifacts-path")
+            restore-artifacts-path
+            (paths/absolute
+             (nth restore-command (inc restore-artifacts-index)))
+            config-index (.indexOf restore-command "--configfile")
+            config-path
+            (paths/absolute (nth restore-command (inc config-index)))
+            restore-packages-index (.indexOf restore-command "--packages")
+            restore-packages-path
+            (paths/absolute
+             (nth restore-command (inc restore-packages-index)))
             packages-option
             (first
              (filter #(str/starts-with?
@@ -1117,14 +1147,39 @@
                  "DripSharp.Brine.Parser.dll"}
                (set (keys (:entries (first (:assets prepared)))))))
         (is (not (neg? artifacts-index)))
+        (is (not (neg? restore-artifacts-index)))
+        (is (not (neg? config-index)))
+        (is (not (neg? restore-packages-index)))
+        (is (= build-directory restore-directory))
+        (is (= artifacts-path restore-artifacts-path))
+        (is (= packages-path restore-packages-path))
+        (is (= "NuGet.Config" (str (.getFileName config-path))))
+        (is (= "restore-config"
+               (str (.getFileName (.getParent config-path)))))
+        (is (=
+             (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+                  "<configuration>\n"
+                  "  <packageSources>\n"
+                  "    <clear />\n"
+                  "    <add key=\"nuget.org\" "
+                  "value=\"https://api.nuget.org/v3/index.json\" "
+                  "protocolVersion=\"3\" />\n"
+                  "  </packageSources>\n"
+                  "</configuration>\n")
+             @restore-config-content))
+        (is (not= config-path
+                  (paths/resolve-path build-directory "NuGet.Config")))
         (is (not (.startsWith build-directory
                               (paths/absolute workspace))))
         (is (not (.startsWith build-directory
                               (paths/absolute product))))
         (is (not (.startsWith artifacts-path (paths/absolute product))))
         (is (not (.startsWith packages-path (paths/absolute product))))
+        (is (some #{"--no-restore"} dotnet-command))
         (is (some #{"-p:ImportDirectoryBuildProps=false"} dotnet-command))
         (is (some #{"-p:ImportDirectoryBuildTargets=false"} dotnet-command))
+        (is (some #{"-p:ImportDirectoryBuildProps=false"} restore-command))
+        (is (some #{"-p:ImportDirectoryBuildTargets=false"} restore-command))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
                          "--untracked-files=all"))))

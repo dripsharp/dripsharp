@@ -50,6 +50,17 @@
 (def ^:private json-mapper
   (ObjectMapper.))
 
+(def ^:private isolated-nuget-config
+  (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+       "<configuration>\n"
+       "  <packageSources>\n"
+       "    <clear />\n"
+       "    <add key=\"nuget.org\" "
+       "value=\"https://api.nuget.org/v3/index.json\" "
+       "protocolVersion=\"3\" />\n"
+       "  </packageSources>\n"
+       "</configuration>\n"))
+
 (defn- fail!
   [message data]
   (throw (ex-info message (assoc data :kind :alpha-release-failed))))
@@ -742,10 +753,38 @@
   [{:keys [product inventory platform build-output packages-root
            run-command!]}]
   (let [project-file (entry-project product inventory)
+        _ (when-not (paths/regular-file? project-file)
+            (fail! "Release entry project is missing from the product commit"
+                   {:reason :missing-entry-project
+                    :path (str project-file)}))
         runtime-identifier (:runtime-identifier platform)
         build-directory (.getParent ^Path build-output)
         artifacts-path
         (paths/resolve-path build-directory "artifacts")
+        restore-config-directory
+        (paths/resolve-path build-directory "restore-config")
+        restore-config
+        (paths/resolve-path restore-config-directory "NuGet.Config")
+        _ (Files/createDirectories
+           restore-config-directory (make-array FileAttribute 0))
+        _ (Files/writeString
+           restore-config isolated-nuget-config StandardCharsets/UTF_8
+           (into-array OpenOption [StandardOpenOption/CREATE_NEW
+                                   StandardOpenOption/WRITE]))
+        restore-command
+        (cond->
+         ["dotnet" "restore" (str project-file)
+          "--verbosity" "minimal"
+          "--configfile" (str restore-config)
+          "--packages" (str packages-root)
+          "--artifacts-path" (str artifacts-path)
+          "-p:ImportDirectoryBuildProps=false"
+          "-p:ImportDirectoryBuildTargets=false"]
+          runtime-identifier
+          (into ["--runtime" runtime-identifier]))
+        restore-result
+        (run-command! {:command restore-command
+                       :directory build-directory})
         command
         (cond->
          ["dotnet" "build" (str project-file)
@@ -753,10 +792,10 @@
           "--configuration" "Release"
           "--verbosity:minimal"
           "--no-incremental"
+          "--no-restore"
           "--artifacts-path" (str artifacts-path)
           "--output" (str build-output)
           (str "-p:RestorePackagesPath=" packages-root)
-          "-p:RestoreIgnoreFailedSources=true"
           "-p:CopyLocalLockFileAssemblies=true"
           "-p:ImportDirectoryBuildProps=false"
           "-p:ImportDirectoryBuildTargets=false"
@@ -767,12 +806,9 @@
           runtime-identifier
           (into ["--runtime" runtime-identifier
                  "--self-contained" "false"]))]
-    (when-not (paths/regular-file? project-file)
-      (fail! "Release entry project is missing from the product commit"
-             {:reason :missing-entry-project
-              :path (str project-file)}))
     {:configuration "Release"
      :runtime-identifier runtime-identifier
+     :restore-result restore-result
      :result
      (run-command! {:command command
                     :directory build-directory})}))
