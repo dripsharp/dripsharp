@@ -801,6 +801,7 @@
           (str "-p:RestoreSources=" nuget-org-v3-source)
           (str "-p:MSBuildUserExtensionsPath=" user-extensions-path)
           "-p:RestoreAdditionalProjectSources="
+          "-p:RestoreAdditionalProjectFallbackFolders="
           "-p:RestoreFallbackFolders="
           "-p:ImportDirectoryPackagesProps=false"
           "-p:ImportDirectoryBuildProps=false"
@@ -824,6 +825,7 @@
           "--output" (str build-output)
           (str "-p:RestorePackagesPath=" packages-root)
           (str "-p:MSBuildUserExtensionsPath=" user-extensions-path)
+          "-p:RestoreAdditionalProjectFallbackFolders="
           "-p:CopyLocalLockFileAssemblies=true"
           "-p:ImportDirectoryPackagesProps=false"
           "-p:ImportDirectoryBuildProps=false"

@@ -1112,7 +1112,9 @@
                 "MSBuildExtensionsPath64"
                 "/host-controlled/nonexistent-msbuild-extensions64"
                 "MSBuildUserExtensionsPath"
-                (str hostile-user-extensions)}
+                (str hostile-user-extensions)
+                "RestoreAdditionalProjectFallbackFolders"
+                "/host-controlled/additional-fallback-packages"}
                (when restore?
                  {"RestoreSources"
                   "/host-controlled/alternate-package-source"
@@ -1273,6 +1275,10 @@
         (is (some #{"-p:RestoreSources=https://api.nuget.org/v3/index.json"}
                   restore-command))
         (is (some #{"-p:RestoreAdditionalProjectSources="} restore-command))
+        (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
+                  dotnet-command))
+        (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
+                  restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
         (is (= #{"CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
