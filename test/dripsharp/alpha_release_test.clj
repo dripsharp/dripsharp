@@ -597,6 +597,72 @@
       (finally
         (delete-tree! workspace)))))
 
+(deftest release-preparation-preflights-every-selected-output
+  (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
+        selected-platforms (subvec (:platforms inventory) 0 2)
+        platform-ids (mapv :id selected-platforms)
+        version "0.1.0-alpha.1"
+        first-asset
+        (alpha-release/asset-filename
+         inventory version (first selected-platforms))
+        conflicting-asset
+        (alpha-release/asset-filename
+         inventory version (second selected-platforms))
+        record-name
+        (str (:asset-prefix inventory) "-" version "-release.edn")
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)
+        build-calls (atom [])
+        options
+        {:workspace-root workspace
+         :target-contract contract
+         :inventory inventory
+         :authorized-tag (str "v" version)
+         :product-commit commit
+         :platform-ids platform-ids
+         :build-fn (fake-build! build-calls)
+         :framework-assemblies #{"System.Runtime.dll"}}]
+    (try
+      (testing "a regular later-platform asset is preserved"
+        (let [output-root (paths/resolve-path workspace "regular-asset")
+              conflict (write! output-root conflicting-asset "prior asset\n")
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc options :output-root output-root)))]
+          (is (= :release-output-exists (:reason result)))
+          (is (= (str conflict) (:path result)))
+          (is (= "prior asset\n" (slurp (str conflict))))
+          (is (empty? @build-calls))
+          (is (not (Files/exists (.resolve output-root first-asset)
+                                 (make-array java.nio.file.LinkOption 0))))
+          (is (not (Files/exists (.resolve output-root record-name)
+                                 (make-array java.nio.file.LinkOption 0))))))
+      (testing "a symbolic-link later-platform asset is preserved"
+        (let [output-root (paths/resolve-path workspace "linked-asset")
+              substitute (write! workspace "substitute-asset.zip"
+                                 "external asset\n")
+              conflict (.resolve output-root conflicting-asset)
+              _ (Files/createDirectories output-root
+                                         (make-array FileAttribute 0))
+              _ (Files/createSymbolicLink
+                 conflict substitute (make-array FileAttribute 0))
+              result
+              (failure
+               #(alpha-release/prepare!
+                 (assoc options :output-root output-root)))]
+          (is (= :release-output-exists (:reason result)))
+          (is (= (str conflict) (:path result)))
+          (is (Files/isSymbolicLink conflict))
+          (is (= "external asset\n" (slurp (str substitute))))
+          (is (empty? @build-calls))
+          (is (not (Files/exists (.resolve output-root first-asset)
+                                 (make-array java.nio.file.LinkOption 0))))
+          (is (not (Files/exists (.resolve output-root record-name)
+                                 (make-array java.nio.file.LinkOption 0))))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest release-verification-rejects-forbidden-missing-unexpected-and-framework-files
   (let [[contract inventory] (actual-contract-and-inventory :pdfcube)
         platform

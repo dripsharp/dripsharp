@@ -959,17 +959,17 @@
    output-root
    (str (:asset-prefix inventory) "-" version "-release.edn")))
 
-(defn- ensure-record-available!
+(defn- ensure-output-available!
   [output]
   (when (Files/exists output
                       (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
-    (fail! "Release preparation record already exists"
+    (fail! "Release output already exists"
            {:reason :release-output-exists
             :path (str output)})))
 
 (defn- write-record!
   [output record]
-  (ensure-record-available! output)
+  (ensure-output-available! output)
   (Files/createDirectories (.getParent output)
                            (make-array FileAttribute 0))
   (Files/writeString
@@ -1031,7 +1031,18 @@
               workspace-root "target/releases" version
               (name (:product-family inventory)))))
         record-file (release-record-file output-root inventory version)
-        _ (ensure-record-available! record-file)
+        artifact-files
+        (into
+         {}
+         (map
+          (fn [platform]
+            [(:id platform)
+             (paths/resolve-path
+              output-root
+              (asset-filename inventory version platform))]))
+         platforms)
+        _ (doseq [output (cons record-file (vals artifact-files))]
+            (ensure-output-available! output))
         framework-assemblies
         (set (or framework-assemblies
                  (framework-assembly-names! workspace-root run-command!)))
@@ -1066,7 +1077,7 @@
                        (inspect-build-output!
                         build-output inventory platform framework-assemblies)
                        filename (asset-filename inventory version platform)
-                       artifact (paths/resolve-path output-root filename)
+                       artifact (get artifact-files (:id platform))
                        _ (write-zip! artifact files)
                        verification
                        (verify-asset!
