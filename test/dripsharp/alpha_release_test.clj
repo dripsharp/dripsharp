@@ -300,6 +300,29 @@
              #(map :package-id (:native-assets %))
              (:platforms pdfcarton)))))))
 
+(deftest release-request-requires-an-exact-length-product-commit
+  (let [authorized-tag "v0.1.0-alpha.1"
+        sha1 (apply str (repeat 40 "a"))
+        sha256 (apply str (repeat 64 "b"))]
+    (is (= sha1
+           (:product-commit
+            (alpha-release/validate-request! authorized-tag sha1))))
+    (is (= sha256
+           (:product-commit
+            (alpha-release/validate-request! authorized-tag sha256))))
+    (doseq [commit
+            [(apply str (repeat 39 "a"))
+             (apply str (repeat 41 "a"))
+             (apply str (repeat 63 "a"))
+             (apply str (repeat 65 "a"))
+             (apply str (repeat 40 "A"))
+             (str (apply str (repeat 39 "a")) "g")]]
+      (let [result
+            (failure
+             #(alpha-release/validate-request! authorized-tag commit))]
+        (is (= :invalid-product-commit (:reason result)))
+        (is (= commit (:product-commit result)))))))
+
 (deftest release-inventory-rejects-symbolic-link-substitution
   (let [[_ inventory] (actual-contract-and-inventory :pkl)
         workspace (temp-directory)
@@ -1563,6 +1586,19 @@
             :proof-fn (fn [_] (reset! proved? true))
             :release-fn (fn [_] :unexpected)}))]
     (is (= :invalid-alpha-tag (:reason result)))
+    (is (false? @proved?)))
+  (let [proved? (atom false)
+        product-commit (apply str (repeat 41 "a"))
+        result
+        (failure
+         #(target-execution/prepare-alpha-release!
+           {:target :pkl
+            :authorized-tag "v0.1.0-alpha.1"
+            :product-commit product-commit
+            :proof-fn (fn [_] (reset! proved? true))
+            :release-fn (fn [_] :unexpected)}))]
+    (is (= :invalid-product-commit (:reason result)))
+    (is (= product-commit (:product-commit result)))
     (is (false? @proved?)))
   (let [proved? (atom false)
         result

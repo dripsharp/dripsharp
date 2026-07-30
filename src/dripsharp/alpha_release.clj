@@ -183,7 +183,7 @@
 (defn- exact-commit!
   [commit]
   (when-not (and (string? commit)
-                 (re-matches #"[0-9a-f]{40,64}" commit))
+                 (re-matches #"(?:[0-9a-f]{40}|[0-9a-f]{64})" commit))
     (fail! "Release target must be one exact lowercase product commit"
            {:reason :invalid-product-commit
             :product-commit commit}))
