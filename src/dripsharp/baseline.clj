@@ -21,6 +21,28 @@
   consumers use the preflighted record instead of reopening configuration."
   {})
 
+(def ^:private baseline-required-keys
+  #{:schema-version :target :upstream :artifacts :legal-sets :packages :profiles})
+(def ^:private baseline-allowed-keys
+  (into baseline-required-keys [:notice-appendix :contracts]))
+(def ^:private upstream-required-keys
+  #{:name :version :repository :revision :license :java-language-version})
+(def ^:private upstream-allowed-keys
+  (conj upstream-required-keys :notice-reference))
+(def ^:private legal-entry-required-keys
+  #{:kind :source :destination :package-path :sha256})
+(def ^:private legal-entry-allowed-keys
+  (conj legal-entry-required-keys :source-sha256))
+(def ^:private package-required-keys #{:version})
+(def ^:private package-allowed-keys
+  (conj package-required-keys :assembly-version))
+(def ^:private profile-required-keys
+  #{:profile :source-module :package-id :source-counts :public-contract-rows})
+(def ^:private profile-allowed-keys
+  (into profile-required-keys
+        [:maven-selector :source-project-id :source-project-dependencies]))
+(def ^:private source-count-required-keys #{:ordinary :generated})
+
 (defn target-key
   [target]
   (let [target (if (keyword? target) target (keyword (str target)))]
@@ -50,6 +72,12 @@
         (re-find
          #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
          value))))
+
+(defn- exact-keys?
+  [value required allowed]
+  (and (map? value)
+       (every? #(contains? value %) required)
+       (every? allowed (keys value))))
 
 (defn- sha256?
   [value]
@@ -99,6 +127,11 @@
   (when-not (keyword? expected-target)
     (invalid! "Target baseline requires a keyword target identity"
               {:target expected-target}))
+  (when-not
+   (exact-keys? record baseline-required-keys baseline-allowed-keys)
+    (invalid! "Target baseline has invalid top-level fields"
+              {:target expected-target
+               :actual (when (map? record) (set (keys record)))}))
   (let [expected-target expected-target
         upstream (:upstream record)
         packages (:packages record)
@@ -111,7 +144,7 @@
     (when-not (= expected-target (:target record))
       (invalid! "Target baseline identifies the wrong target"
                 {:expected expected-target :actual (:target record)}))
-    (when-not (and (map? upstream)
+    (when-not (and (exact-keys? upstream upstream-required-keys upstream-allowed-keys)
                    (every? #(non-blank-single-line? (get upstream %))
                            [:name :version :repository :revision :license])
                    (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}"
@@ -134,7 +167,10 @@
                       (and (vector? entries)
                            (every?
                             (fn [entry]
-                              (and (contains? #{:license :notice} (:kind entry))
+                              (and (exact-keys? entry
+                                                legal-entry-required-keys
+                                                legal-entry-allowed-keys)
+                                   (contains? #{:license :notice} (:kind entry))
                                    (every? #(non-blank-string? (get entry %))
                                            [:source :destination :package-path])
                                    (sha256? (:sha256 entry))
@@ -149,7 +185,7 @@
                    (every? non-blank-string? (keys packages))
                    (every?
                     (fn [[_ package]]
-                      (and (map? package)
+                      (and (exact-keys? package package-required-keys package-allowed-keys)
                            (non-blank-string? (:version package))
                            (or (nil? (:assembly-version package))
                                (non-blank-string? (:assembly-version package)))))
@@ -164,11 +200,11 @@
       (every?
        (fn [[_ profile]]
          (let [counts (:source-counts profile)]
-           (and (map? profile)
+           (and (exact-keys? profile profile-required-keys profile-allowed-keys)
                 (every? #(non-blank-string? (get profile %))
                         [:profile :source-module :package-id])
                 (contains? packages (:package-id profile))
-                (map? counts)
+                (exact-keys? counts source-count-required-keys source-count-required-keys)
                 (= #{:ordinary :generated} (set (keys counts)))
                 (every? #(and (integer? %) (not (neg? %))) (vals counts))
                 (pos-int? (:public-contract-rows profile))

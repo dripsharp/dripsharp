@@ -55,6 +55,34 @@
                       (set (keys (:source-counts %))))
                   (vals (:profiles record)))))))
 
+(deftest baseline-contract-rejects-undeclared-fields
+  (let [record (baseline/read-baseline :rawhttp)
+        package-id (first (keys (:packages record)))
+        profile-id (first (keys (:profiles record)))]
+    (doseq [[subject changed]
+            [["baseline"
+              (assoc record :unreviewed true)]
+             ["upstream identity"
+              (assoc-in record [:upstream :unreviewed] true)]
+             ["legal-file contract"
+              (assoc-in record [:legal-sets :upstream 0 :unreviewed] true)]
+             ["package contract"
+              (assoc-in record [:packages package-id :unreviewed] true)]
+             ["profile contract"
+              (assoc-in record [:profiles profile-id :unreviewed] true)]
+             ["source-count contract"
+              (assoc-in record
+                        [:profiles profile-id :source-counts :unreviewed]
+                        0)]]]
+      (testing subject
+        (let [error
+              (try
+                (baseline/validate-record! :rawhttp changed)
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-target-baseline (:kind (ex-data error))))
+          (is (= :rawhttp (:target (ex-data error)))))))))
+
 (deftest baseline-upstream-attribution-metadata-must-be-single-line
   (let [record (baseline/read-baseline :rawhttp)]
     (doseq [field [:name :version :repository :license :notice-reference]
