@@ -188,17 +188,32 @@
               (assoc-in configuration [:legal-files 0 :source]
                         "research/pkl/LICENSE\nforged")
               [:legal-files 0 :source]
-              "a non-blank single-line string"]
+              "a non-blank single-line XML-compatible string"]
              [:multiline-destination
               (assoc-in configuration [:legal-files 0 :destination]
                         "LICENSE\nforged")
               [:legal-files 0 :destination]
-              "a non-blank single-line string"]
+              "a non-blank single-line XML-compatible string"]
              [:multiline-package-path
               (assoc-in configuration [:legal-files 0 :package-path]
                         "LICENSE\nforged")
               [:legal-files 0 :package-path]
-              "a non-blank single-line string"]
+              "a non-blank single-line XML-compatible string"]
+             [:xml-illegal-source
+              (assoc-in configuration [:legal-files 0 :source]
+                        (str "research/pkl/LICENSE" (char 1)))
+              [:legal-files 0 :source]
+              "a non-blank single-line XML-compatible string"]
+             [:xml-illegal-destination
+              (assoc-in configuration [:legal-files 0 :destination]
+                        (str "LICENSE" (char 0xFFFE)))
+              [:legal-files 0 :destination]
+              "a non-blank single-line XML-compatible string"]
+             [:xml-illegal-package-path
+              (assoc-in configuration [:legal-files 0 :package-path]
+                        (str "LICENSE" (char 0xD800)))
+              [:legal-files 0 :package-path]
+              "a non-blank single-line XML-compatible string"]
              [:escaping-source
               (assoc-in configuration [:legal-files 0 :source] "../LICENSE")
               [:legal-files 0 :source]
@@ -224,7 +239,16 @@
             (is (= #{:kind :source :destination :package-path :sha256}
                    (set (get-in (ex-data error)
                                 [:expected :required-keys]))))
-            (is (str/includes? (:expected (ex-data error)) expected))))))))
+            (is (str/includes? (:expected (ex-data error)) expected))))))
+    (let [supplementary (String. (Character/toChars 0x1F680))
+          candidate
+          (reduce (fn [result field]
+                    (update-in result [:legal-files 0 field]
+                               str supplementary))
+                  configuration
+                  [:source :destination :package-path])]
+      (is (= candidate
+             (project-emission/validate-configuration! candidate))))))
 
 (deftest mechanical-source-attribution-metadata-must-be-single-line
   (let [configuration

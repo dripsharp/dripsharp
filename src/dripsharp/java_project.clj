@@ -89,13 +89,14 @@
         field-path value "a safe relative path"))
      value)))
 
-(defn- non-blank-single-line?
+(defn- non-blank-single-line-xml-text?
   [value]
   (and (string? value)
        (not (str/blank? value))
        (not (re-find
              #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
-             value))))
+             value))
+       (project-xml/valid-text? value)))
 
 (defn- sha256?
   [value]
@@ -229,8 +230,8 @@
                    [:package-path "legal file package path"]]]
             (validation/check! context [:legal-files index field]
                                (get legal-file field)
-                               "a non-blank single-line string"
-                               non-blank-single-line?)
+                               "a non-blank single-line XML-compatible string"
+                               non-blank-single-line-xml-text?)
             (relative-path! (get legal-file field)
                             label
                             [:legal-files index field]))
