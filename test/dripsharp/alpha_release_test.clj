@@ -1163,11 +1163,19 @@
                 (str hostile-code-analysis-targets)
                 "CscToolExe" "false"
                 "CscToolPath" "/usr/bin"
+                "CustomAfterDirectoryBuildProps"
+                (str hostile-custom-props)
+                "CustomAfterDirectoryBuildTargets"
+                (str hostile-custom-targets)
                 "CustomAfterMicrosoftCommonProps"
                 (str hostile-custom-props)
                 "DOTNET_STARTUP_HOOKS"
                 "/host-controlled/nonexistent-startup-hook.dll"
                 "CustomAfterMicrosoftCommonTargets"
+                (str hostile-custom-targets)
+                "CustomBeforeDirectoryBuildProps"
+                (str hostile-custom-props)
+                "CustomBeforeDirectoryBuildTargets"
                 (str hostile-custom-targets)
                 "CustomBeforeMicrosoftCommonProps"
                 (str hostile-custom-props)
@@ -1414,8 +1422,12 @@
                  "CscToolExe"
                  "CscToolPath"
                  "DOTNET_STARTUP_HOOKS"
+                 "CustomAfterDirectoryBuildProps"
+                 "CustomAfterDirectoryBuildTargets"
                  "CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
+                 "CustomBeforeDirectoryBuildProps"
+                 "CustomBeforeDirectoryBuildTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "MSBuildExtensionsPath"
@@ -1428,8 +1440,12 @@
                  "CscToolExe"
                  "CscToolPath"
                  "DOTNET_STARTUP_HOOKS"
+                 "CustomAfterDirectoryBuildProps"
+                 "CustomAfterDirectoryBuildTargets"
                  "CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
+                 "CustomBeforeDirectoryBuildProps"
+                 "CustomBeforeDirectoryBuildTargets"
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "MSBuildExtensionsPath"
