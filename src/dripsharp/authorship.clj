@@ -371,6 +371,20 @@
         policy (validate-spdx-policy! policy)
         {:keys [path sha256]} (:repository-notice policy)
         notice (paths/absolute (paths/resolve-path workspace-root path))
+        case-insensitive-matches
+        (with-open [entries (Files/list workspace-root)]
+          (->> (.toArray entries)
+               (map #(str (.getFileName ^Path %)))
+               (filter #(= (str/lower-case path)
+                           (str/lower-case %)))
+               sort
+               vec))
+        _ (when-not (= [path] case-insensitive-matches)
+            (fail! "Repository legal notice path is absent or case-ambiguous"
+                   {:path path
+                    :decision (:decision policy)
+                    :matches case-insensitive-matches
+                    :reason :repository-notice-path-spelling}))
         _ (when (and (paths/real-contained? workspace-root notice)
                      (Files/isSymbolicLink notice))
             (fail! "Repository legal notice must not be a symbolic link"

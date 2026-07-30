@@ -227,7 +227,18 @@
                  (:kind (ex-data nested-notice))))
           (is (= "legal/LICENSE"
                  (get-in (ex-data nested-notice)
-                         [:policy :repository-notice :path])))))
+                         [:policy :repository-notice :path]))))
+        (let [wrong-case
+              (caught
+               #(authorship/verify-repository-notice!
+                 root
+                 (assoc-in policy [:repository-notice :path] "license")))]
+          (is (= :invalid-authorship-ledger
+                 (:kind (ex-data wrong-case))))
+          (is (= :repository-notice-path-spelling
+                 (:reason (ex-data wrong-case))))
+          (is (= "license" (:path (ex-data wrong-case))))
+          (is (= ["LICENSE"] (:matches (ex-data wrong-case))))))
       (finally
         (delete-tree! root)))))
 
