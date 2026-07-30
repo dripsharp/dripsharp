@@ -6,7 +6,8 @@
   files that the re-baseline workflow may write."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [dripsharp.paths :as paths])
+            [dripsharp.paths :as paths]
+            [dripsharp.project-xml :as project-xml])
   (:import [java.io PushbackReader StringReader]))
 
 (def baseline-files
@@ -72,6 +73,12 @@
         (re-find
          #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
          value))))
+
+(defn- non-blank-single-line-xml-path?
+  [value]
+  (and (non-blank-single-line? value)
+       (not (str/includes? value "\t"))
+       (project-xml/valid-text? value)))
 
 (defn- exact-keys?
   [value required allowed]
@@ -171,7 +178,8 @@
                                                 legal-entry-required-keys
                                                 legal-entry-allowed-keys)
                                    (contains? #{:license :notice} (:kind entry))
-                                   (every? #(non-blank-single-line? (get entry %))
+                                   (every? #(non-blank-single-line-xml-path?
+                                             (get entry %))
                                            [:source :destination :package-path])
                                    (sha256? (:sha256 entry))
                                    (or (nil? (:source-sha256 entry))

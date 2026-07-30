@@ -101,11 +101,11 @@
           (is (= :invalid-target-baseline (:kind (ex-data error))))
           (is (= :rawhttp (:target (ex-data error)))))))))
 
-(deftest baseline-legal-file-paths-must-be-single-line
+(deftest baseline-legal-file-paths-must-be-single-line-and-xml-safe
   (let [record (baseline/read-baseline :rawhttp)]
     (doseq [field [:source :destination :package-path]
             separator
-            ["\u0000" "\u000B" "\u000C" "\r" "\n"
+            ["\u0000" "\u0001" "\t" "\u000B" "\u000C" "\r" "\n"
              "\u0085" "\u2028" "\u2029"]]
       (testing (str (name field) " rejects " (pr-str separator))
         (let [error
@@ -117,7 +117,16 @@
                 nil
                 (catch clojure.lang.ExceptionInfo caught caught))]
           (is (= :invalid-target-baseline (:kind (ex-data error))))
-          (is (= :rawhttp (:target (ex-data error)))))))))
+          (is (= :rawhttp (:target (ex-data error)))))))
+    (let [supplementary (String. (Character/toChars 0x1F680))
+          candidate
+          (reduce (fn [result field]
+                    (update-in result [:legal-sets :upstream 0 field]
+                               str supplementary))
+                  record
+                  [:source :destination :package-path])]
+      (is (= candidate
+             (baseline/validate-record! :rawhttp candidate))))))
 
 (deftest rawhttp-license-input-and-package-file-are-pinned
   (let [workspace (paths/workspace-root)

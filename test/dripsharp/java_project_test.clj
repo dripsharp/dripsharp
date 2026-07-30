@@ -188,32 +188,47 @@
               (assoc-in configuration [:legal-files 0 :source]
                         "research/pkl/LICENSE\nforged")
               [:legal-files 0 :source]
-              "a non-blank single-line XML-compatible string"]
+              "a non-blank single-line XML-safe path"]
              [:multiline-destination
               (assoc-in configuration [:legal-files 0 :destination]
                         "LICENSE\nforged")
               [:legal-files 0 :destination]
-              "a non-blank single-line XML-compatible string"]
+              "a non-blank single-line XML-safe path"]
              [:multiline-package-path
               (assoc-in configuration [:legal-files 0 :package-path]
                         "LICENSE\nforged")
               [:legal-files 0 :package-path]
-              "a non-blank single-line XML-compatible string"]
+              "a non-blank single-line XML-safe path"]
+             [:xml-normalized-tab-source
+              (assoc-in configuration [:legal-files 0 :source]
+                        "research/pkl/LICENSE\tforged")
+              [:legal-files 0 :source]
+              "a non-blank single-line XML-safe path"]
+             [:xml-normalized-tab-destination
+              (assoc-in configuration [:legal-files 0 :destination]
+                        "LICENSE\tforged")
+              [:legal-files 0 :destination]
+              "a non-blank single-line XML-safe path"]
+             [:xml-normalized-tab-package-path
+              (assoc-in configuration [:legal-files 0 :package-path]
+                        "LICENSE\tforged")
+              [:legal-files 0 :package-path]
+              "a non-blank single-line XML-safe path"]
              [:xml-illegal-source
               (assoc-in configuration [:legal-files 0 :source]
                         (str "research/pkl/LICENSE" (char 1)))
               [:legal-files 0 :source]
-              "a non-blank single-line XML-compatible string"]
+              "a non-blank single-line XML-safe path"]
              [:xml-illegal-destination
               (assoc-in configuration [:legal-files 0 :destination]
                         (str "LICENSE" (char 0xFFFE)))
               [:legal-files 0 :destination]
-              "a non-blank single-line XML-compatible string"]
+              "a non-blank single-line XML-safe path"]
              [:xml-illegal-package-path
               (assoc-in configuration [:legal-files 0 :package-path]
                         (str "LICENSE" (char 0xD800)))
               [:legal-files 0 :package-path]
-              "a non-blank single-line XML-compatible string"]
+              "a non-blank single-line XML-safe path"]
              [:escaping-source
               (assoc-in configuration [:legal-files 0 :source] "../LICENSE")
               [:legal-files 0 :source]
