@@ -725,7 +725,7 @@
                                 "runtime/DripSharp.JavaRegexUnicodeData.cs")
             upstream
             (first (:production-resources (:discovery (fixture/models))))]
-        (is (str/includes? project "<TargetFramework>net8.0</TargetFramework>"))
+        (is (str/includes? project "<TargetFramework>net10.0</TargetFramework>"))
         (is (str/includes? project "<Nullable>enable</Nullable>"))
         (is (str/includes?
              project

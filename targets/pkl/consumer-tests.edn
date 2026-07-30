@@ -2,7 +2,7 @@
  :project
  {:directory "tests/DripSharp.Brine.Tests"
   :assembly-name "DripSharp.Brine.Tests"
-  :target-framework "net8.0"
+  :target-framework "net10.0"
   :packages
   [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
    {:id "xunit" :version "2.9.3"}

@@ -356,7 +356,7 @@
               :framework-assemblies #{"System.Runtime.dll"}})
             _ (is (= 1 (count (:assets prepared))))
             asset (first (:assets prepared))]
-        (is (= "DripSharp.Brine-0.1.0-alpha.2-net8.0-portable.zip"
+        (is (= "DripSharp.Brine-0.1.0-alpha.2-net10.0-portable.zip"
                (:filename asset)))
         (is (= #{"DripSharp.Brine.dll"
                  "DripSharp.Brine.Parser.dll"}
