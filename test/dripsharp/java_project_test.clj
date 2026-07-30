@@ -293,6 +293,24 @@
          "targets/pkl/destinations/parser.edn")
         notices
         (filterv #(= :notice (:kind %)) (:legal-files configuration))]
+    (testing "an omitted license expression preserves the pinned-file mechanism"
+      (is (= configuration
+             (project-emission/validate-configuration! configuration))))
+    (doseq [value [nil false]]
+      (testing (str "a key-present " (pr-str value)
+                    " license expression is malformed")
+        (let [error
+              (try
+                (project-emission/validate-configuration!
+                 (assoc-in configuration [:package :license-expression] value))
+                nil
+                (catch clojure.lang.ExceptionInfo caught caught))]
+          (is (= :invalid-destination-configuration
+                 (:kind (ex-data error))))
+          (is (= [:package :license-expression]
+                 (:path (ex-data error))))
+          (is (= "a non-blank XML-compatible string"
+                 (:expected (ex-data error)))))))
     (doseq [[label candidate]
             [[:omitted-legal-files
               (dissoc configuration :legal-files)]

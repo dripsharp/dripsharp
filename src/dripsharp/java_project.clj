@@ -213,16 +213,17 @@
      "a 40- or 64-character lowercase Git identity"
      #(and (string? %)
            (boolean (re-matches #"[0-9a-f]{40}|[0-9a-f]{64}" %)))))
-  (when-let [license (get-in configuration [:package :license-expression])]
-    (validation/check!
-     (destination-context "Destination package license expression"
-                          {:section :package
-                           :setting :license-expression})
-     [:package :license-expression] license
-     "a non-blank XML-compatible string"
-     #(and (string? %)
-           (not (str/blank? %))
-           (project-xml/valid-text? %))))
+  (when (contains? (:package configuration) :license-expression)
+    (let [license (get-in configuration [:package :license-expression])]
+      (validation/check!
+       (destination-context "Destination package license expression"
+                            {:section :package
+                             :setting :license-expression})
+       [:package :license-expression] license
+       "a non-blank XML-compatible string"
+       #(and (string? %)
+             (not (str/blank? %))
+             (project-xml/valid-text? %)))))
   (when-let [copyright (get-in configuration [:package :copyright])]
     (validation/check!
      (destination-context "Destination package copyright"
