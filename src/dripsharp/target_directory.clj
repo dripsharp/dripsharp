@@ -562,8 +562,9 @@
                                   {:profile profile
                                    :available (vec (sort legal-sets))})]
           (validation/check! context path sets
-                             "a vector without duplicate identities"
+                             "a nonempty vector without duplicate identities"
                              #(and (vector? %)
+                                   (seq %)
                                    (= (count %) (count (distinct %)))))
           (doseq [[index legal-set] (map-indexed vector sets)]
             (validation/check! context (conj path index) legal-set
@@ -571,7 +572,22 @@
           (validation/check! context path sets
                              (str "a selection from "
                                   (vec (sort legal-sets)))
-                             #(set/subset? (set %) legal-sets))))
+                             #(set/subset? (set %) legal-sets))
+          (let [selected-entries
+                (mapcat #(get-in baseline-record [:legal-sets %]) sets)
+                license-entries
+                (filter #(= :license (:kind %)) selected-entries)
+                notice-entries
+                (filter #(= :notice (:kind %)) selected-entries)]
+            (validation/check!
+             context path license-entries
+             "a selection containing exactly one pinned LICENSE input"
+             #(= 1 (count %)))
+            (when (get-in baseline-record [:upstream :notice-reference])
+              (validation/check!
+               context path notice-entries
+               "a selection containing at least one pinned NOTICE input"
+               seq)))))
       (doseq [[profile notice-sets] resource-notice-legal-sets]
         (let [path [:legal-policy :resource-notice-legal-sets profile]
               selected (set (get profile-legal-sets profile))

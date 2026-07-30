@@ -574,6 +574,59 @@
                (failure-data
                 #(target-directory/read-target root :acme)))))))))
 
+(deftest profile-legal-file-selection-fails-closed
+  (in-target-workspace
+   (fn [root]
+     (testing "profiles cannot consistently omit all legal inputs"
+       (create-target-workspace! root)
+       (update-edn!
+        root "targets/acme/legal/policy.edn"
+        (fn [policy]
+          (-> policy
+              (assoc-in [:profile-legal-sets "acme-core"] [])
+              (assoc-in [:resource-notice-legal-sets "acme-core"] []))))
+       (update-edn! root "targets/acme/destinations/core.edn"
+                    assoc :baseline-legal-sets [])
+       (update-edn! root "targets/acme/validation/contract.edn"
+                    assoc-in [:package-contract :legal-sets] [])
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :profile-legal-sets "acme-core"]
+                (:path failure)))))
+     (testing "profiles require exactly one pinned LICENSE input"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/baseline.edn"
+                    update-in [:legal-sets :upstream]
+                    #(vec (remove (fn [entry]
+                                    (= :license (:kind entry)))
+                                  %)))
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :profile-legal-sets "acme-core"]
+                (:path failure)))
+         (is (= "a selection containing exactly one pinned LICENSE input"
+                (:expected failure)))))
+     (testing "profiles retain a declared upstream NOTICE input"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/baseline.edn"
+                    update-in [:legal-sets :upstream]
+                    #(vec (remove (fn [entry]
+                                    (= :notice (:kind entry)))
+                                  %)))
+       (update-edn! root "targets/acme/legal/policy.edn"
+                    assoc-in
+                    [:resource-notice-legal-sets "acme-core"]
+                    [])
+       (let [failure
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :invalid-target-directory (:kind failure)))
+         (is (= [:legal-policy :profile-legal-sets "acme-core"]
+                (:path failure)))
+         (is (= "a selection containing at least one pinned NOTICE input"
+                (:expected failure))))))))
+
 (deftest package-attribution-policy-fails-closed
   (in-target-workspace
    (fn [root]
@@ -698,10 +751,13 @@
      (testing "resource NOTICE sets must contain pinned NOTICE input"
        (write-edn! root "targets/acme/legal/policy.edn" (legal-policy))
        (update-edn! root "targets/acme/baseline.edn"
-                    update-in [:legal-sets :upstream]
-                    #(vec (remove (fn [entry]
-                                    (= :notice (:kind entry)))
-                                  %)))
+                    (fn [baseline]
+                      (-> baseline
+                          (update :upstream dissoc :notice-reference)
+                          (update-in [:legal-sets :upstream]
+                                     #(vec (remove (fn [entry]
+                                                     (= :notice (:kind entry)))
+                                                   %))))))
        (let [failure
              (failure-data #(target-directory/read-target root :acme))]
          (is (= :invalid-target-directory (:kind failure)))
