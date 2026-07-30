@@ -258,16 +258,29 @@
 
 (defn- product-projects
   [target-contract]
-  (into
-   {}
-   (for [[profile-id profile] (:profiles target-contract)]
-     [(get-in profile [:destination :configuration :project :assembly-name])
-      {:profile profile-id
-       :project (get-in target-contract
-                        [:publication :profile-projects profile-id])
-       :target-framework
-       (get-in profile
-               [:destination :configuration :project :target-framework])}])))
+  (let [projects
+        (mapv
+         (fn [[profile-id profile]]
+           {:assembly
+            (get-in profile
+                    [:destination :configuration :project :assembly-name])
+            :profile profile-id
+            :project (get-in target-contract
+                             [:publication :profile-projects profile-id])
+            :target-framework
+            (get-in profile
+                    [:destination :configuration :project :target-framework])})
+         (sort-by (comp str key) (:profiles target-contract)))
+        collisions (case-insensitive-collisions projects :assembly)]
+    (when (seq collisions)
+      (fail! "Generated product profiles have colliding assembly identities"
+             {:reason :duplicate-product-assembly-identity
+              :collisions collisions}))
+    (into
+     {}
+     (map (fn [{:keys [assembly] :as project}]
+            [assembly (dissoc project :assembly)]))
+     projects)))
 
 (defn validate-inventory!
   "Validates one target-owned release inventory against its normalized target

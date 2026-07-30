@@ -366,6 +366,46 @@
              #(map :package-id (:native-assets %))
              (:platforms pdfcarton)))))))
 
+(deftest release-inventory-rejects-colliding-product-assembly-identities
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        workspace (temp-directory)
+        contract (synthetic-contract workspace inventory)
+        profiles (vec (sort-by (comp str key) (:profiles contract)))
+        first-assembly
+        (get-in (second (first profiles))
+                [:destination :configuration :project :assembly-name])]
+    (try
+      (doseq [[label conflicting-assembly]
+              [["duplicate" first-assembly]
+               ["case variant" (str/lower-case first-assembly)]]]
+        (testing label
+          (let [[conflicting-profile conflicting-record] (second profiles)
+                conflicting-contract
+                (assoc-in
+                 contract
+                 [:profiles conflicting-profile]
+                 (assoc-in
+                  conflicting-record
+                  [:destination :configuration :project :assembly-name]
+                  conflicting-assembly))
+                result
+                (failure
+                 #(alpha-release/validate-inventory!
+                   conflicting-contract inventory))
+                collisions (:collisions result)
+                collision (first (vals collisions))]
+            (is (= :duplicate-product-assembly-identity (:reason result)))
+            (is (= [(str/lower-case first-assembly)] (vec (keys collisions))))
+            (is (= (set (map first profiles))
+                   (set (map :profile collision))))
+            (is (= (set (vals (get-in contract
+                                      [:publication :profile-projects])))
+                   (set (map :project collision))))
+            (is (= (set [first-assembly conflicting-assembly])
+                   (set (map :assembly collision)))))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest release-inventory-rejects-malformed-dependency-package-coordinates
   (let [[contract inventory] (actual-contract-and-inventory :pdfcube)]
     (doseq [package-id ["Bad..Package" "Bad-.Package" "Bad-"]]
