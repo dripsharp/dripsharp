@@ -59,6 +59,8 @@
     "CustomBeforeMicrosoftCommonProps"
     "CustomBeforeMicrosoftCommonTargets"
     "MSBuildExtensionsPath"
+    "MSBuildExtensionsPath32"
+    "MSBuildExtensionsPath64"
     "MSBuildSDKsPath"
     "MSBuildUserExtensionsPath"})
 

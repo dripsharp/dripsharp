@@ -1073,6 +1073,8 @@
         (paths/resolve-path workspace "hostile-custom-import.targets")
         hostile-user-extensions
         (paths/resolve-path workspace "hostile-user-extensions")
+        hostile-extensions32
+        (paths/resolve-path workspace "hostile-extensions32")
         run-command!
         (fn [request]
           (swap! requests conj request)
@@ -1105,6 +1107,10 @@
                 "/host-controlled/nonexistent-msbuild-sdks"
                 "MSBuildExtensionsPath"
                 "/host-controlled/nonexistent-msbuild-extensions"
+                "MSBuildExtensionsPath32"
+                (str hostile-extensions32)
+                "MSBuildExtensionsPath64"
+                "/host-controlled/nonexistent-msbuild-extensions64"
                 "MSBuildUserExtensionsPath"
                 (str hostile-user-extensions)}
                (when restore?
@@ -1131,6 +1137,12 @@
        "Current/Microsoft.Common.targets/ImportBefore/RejectAmbientUserExtension.targets"
        (str "<Project><Target Name=\"RejectAmbientUserExtension\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient MSBuild user "
+            "extension was loaded\" /></Target></Project>\n"))
+      (write!
+       hostile-extensions32
+       "Microsoft/VisualStudio/v18.0/CodeAnalysis/Microsoft.CodeAnalysis.targets"
+       (str "<Project><Target Name=\"RejectAmbientExtensionsPath32\" "
+            "BeforeTargets=\"Build\"><Error Text=\"Ambient 32-bit MSBuild "
             "extension was loaded\" /></Target></Project>\n"))
       (write!
        workspace "global.json"
@@ -1255,6 +1267,8 @@
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "MSBuildExtensionsPath"
+                 "MSBuildExtensionsPath32"
+                 "MSBuildExtensionsPath64"
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
@@ -1263,6 +1277,8 @@
                  "CustomBeforeMicrosoftCommonProps"
                  "CustomBeforeMicrosoftCommonTargets"
                  "MSBuildExtensionsPath"
+                 "MSBuildExtensionsPath32"
+                 "MSBuildExtensionsPath64"
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment dotnet-request)))
