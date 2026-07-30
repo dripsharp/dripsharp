@@ -90,9 +90,12 @@ typed `targets/<target>/release.edn` inventory. The inventory names every
 DripSharp product assembly, every required non-framework managed dependency,
 and each supported platform's required native runtime assets.
 
-`alpha-release-prepare <target> <authorized-alpha-tag> <product-commit>` runs
-the target's complete proof and then requires all of the following before
-assembling assets:
+```text
+alpha-release-prepare <target> <authorized-alpha-tag> <product-commit> [platform-id,...]
+```
+
+This command runs the target's complete proof and then requires all of the
+following before assembling assets:
 
 * The product submodule is clean and its `HEAD` and parent gitlink both equal
   the supplied full product commit.
@@ -102,11 +105,18 @@ assembling assets:
 * The managed and native binary output matches the target-owned inventory
   exactly and contains no framework assemblies or dependency-name collisions.
 
-Assembly produces one deterministic, versioned target-framework/platform ZIP
-for each declared platform variant. ZIP verification rejects package files,
-symbols, XML documentation, source archives, unsafe paths, and unrelated
-files. A preparation record contains dry-run GitHub release metadata with an
-exact target commit, `prerelease` set to true, and `latest` set to false.
+Without the optional platform list, assembly produces one deterministic,
+versioned target-framework/platform ZIP for every declared platform variant.
+An explicit selection must be a nonempty comma-separated list of unique, exact
+platform IDs from the target-owned inventory. Unknown, empty, malformed, or
+duplicate selections fail before the proof ladder. The preparation record,
+dry-run GitHub release notes, and asset metadata contain only the selected
+platforms and ZIPs.
+
+ZIP verification rejects package files, symbols, XML documentation, source
+archives, unsafe paths, and unrelated files. A preparation record contains
+dry-run GitHub release metadata with an exact target commit, `prerelease` set
+to true, and `latest` set to false.
 
 Preparation does not create a tag or release and does not upload an asset or
 push a ref. Those external mutations require explicit owner authorization in
