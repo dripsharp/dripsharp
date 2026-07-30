@@ -264,7 +264,7 @@
 
 (deftest assembly-includes-managed-and-native-assets-and-repeats-deterministically
   (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
-        {:keys [workspace contract commit] :as fixture}
+        {:keys [workspace contract commit]}
         (release-fixture! inventory)
         calls (atom [])
         commands (atom [])
@@ -328,6 +328,25 @@
                 :target-commitish commit
                 :prerelease true
                 :latest false
+                :notes
+                (str
+                 "# DripSharp.PdfCarton 0.1.0-alpha.1\n\n"
+                 "This is an alpha DLL prerelease for net10.0.\n\n"
+                 "- Product commit: `" commit "`\n"
+                 "- NuGet publication: none; this release contains DLL ZIP assets only.\n"
+                 "- Prepared platforms:\n"
+                 "  - `win-x64` (runtime identifier `win-x64`): "
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-win-x64.zip`\n"
+                 "  - `win-arm64` (runtime identifier `win-arm64`): "
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-win-arm64.zip`\n"
+                 "  - `linux-x64` (runtime identifier `linux-x64`): "
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-linux-x64.zip`\n"
+                 "  - `linux-arm64` (runtime identifier `linux-arm64`): "
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-linux-arm64.zip`\n"
+                 "  - `osx-x64` (runtime identifier `osx-x64`): "
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-x64.zip`\n"
+                 "  - `osx-arm64` (runtime identifier `osx-arm64`): "
+                 "`DripSharp.PdfCarton-0.1.0-alpha.1-net10.0-osx-arm64.zip`\n")
                 :assets
                 (mapv #(select-keys % [:filename :sha256])
                       (:assets first))}
@@ -361,7 +380,17 @@
         (is (= #{"DripSharp.Brine.dll"
                  "DripSharp.Brine.Parser.dll"}
                (set (keys (:entries asset)))))
-        (is (nil? (:runtime-identifier asset))))
+        (is (nil? (:runtime-identifier asset)))
+        (is (=
+             (str
+              "# DripSharp.Brine 0.1.0-alpha.2\n\n"
+              "This is an alpha DLL prerelease for net10.0.\n\n"
+              "- Product commit: `" commit "`\n"
+              "- NuGet publication: none; this release contains DLL ZIP assets only.\n"
+              "- Prepared platforms:\n"
+              "  - `portable` (portable; no runtime identifier): "
+              "`DripSharp.Brine-0.1.0-alpha.2-net10.0-portable.zip`\n")
+             (get-in prepared [:github-release :notes]))))
       (finally
         (delete-tree! workspace)))))
 

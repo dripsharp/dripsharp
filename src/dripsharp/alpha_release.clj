@@ -801,6 +801,27 @@
     (sequential? value) (mapv canonical value)
     :else value))
 
+(defn- release-notes
+  [inventory version product-commit assets]
+  (str
+   "# " (:asset-prefix inventory) " " version "\n\n"
+   "This is an alpha DLL prerelease for "
+   (:target-framework inventory) ".\n\n"
+   "- Product commit: `" product-commit "`\n"
+   "- NuGet publication: none; this release contains DLL ZIP assets only.\n"
+   "- Prepared platforms:\n"
+   (str/join
+    "\n"
+    (map
+     (fn [{:keys [platform runtime-identifier filename]}]
+       (str "  - `" platform "`"
+            (if runtime-identifier
+              (str " (runtime identifier `" runtime-identifier "`)")
+              " (portable; no runtime identifier)")
+            ": `" filename "`"))
+     assets))
+   "\n"))
+
 (defn prepare!
   "Builds and verifies every declared platform asset, then writes dry-run
   GitHub release metadata. The caller must first run the target's complete
@@ -899,6 +920,7 @@
              :target-commitish product-commit
              :prerelease true
              :latest false
+             :notes (release-notes inventory version product-commit assets)
              :assets
              (mapv #(select-keys % [:filename :sha256]) assets)}
             record
