@@ -1,4 +1,7 @@
-﻿using System.Collections.Generic;
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 namespace DripSharp.Runtime
 {

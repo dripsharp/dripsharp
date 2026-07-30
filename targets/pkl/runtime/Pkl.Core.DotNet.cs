@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Idiomatic .NET configuration binding and deterministic C# schema generation
 // for Pkl.Core. This is durable destination product code; translated Java
 // output remains disposable.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Deterministic JDK Unicode data used only by the generic Java regex boundary.
 // Regenerate with GenerateRegexUnicodeData.java; do not edit by hand.
 #nullable enable

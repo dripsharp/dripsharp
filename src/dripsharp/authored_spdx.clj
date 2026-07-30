@@ -1,10 +1,8 @@
 (ns dripsharp.authored-spdx
-  "Decision-backed repository gate for authored SPDX and package publishers."
+  "Decision-backed repository gate for authored SPDX headers."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
             [dripsharp.authorship :as authorship]
             [dripsharp.paths :as paths]
-            [dripsharp.project-xml :as project-xml]
             [dripsharp.target-directory :as target-directory])
   (:import [java.io PushbackReader StringReader]
            [java.nio.charset StandardCharsets]
@@ -18,7 +16,7 @@
 (def required-decision "pkl-c8t.2")
 (def ^:private decision-policy-keys
   #{:schema-version :decision :license-identifier :file-copyright-text
-    :repository-notice :package-publisher})
+    :repository-notice})
 
 (defn- read-single-edn!
   [path text]
@@ -191,46 +189,11 @@
 (defn- validate-decision-policy!
   [policy]
   (when-not (and (map? policy)
-                 (= decision-policy-keys (set (keys policy)))
-                 (string? (:package-publisher policy))
-                 (not (str/blank? (:package-publisher policy)))
-                 (not (re-find #"[\u0000\u000B\u000C\r\n\u0085\u2028\u2029]"
-                               (:package-publisher policy)))
-                 (project-xml/valid-text? (:package-publisher policy)))
-    (fail! "Approved legal and publisher policy is invalid"
+                 (= decision-policy-keys (set (keys policy))))
+    (fail! "Approved authored SPDX policy is invalid"
            {:expected-keys decision-policy-keys
             :policy policy}))
   policy)
-
-(defn- package-publisher-records
-  [target-contracts]
-  (->>
-   target-contracts
-   (mapcat
-    (fn [{:keys [target profiles]}]
-      (map
-       (fn [[profile {:keys [destination]}]]
-         {:target target
-          :profile profile
-          :package-id (get-in destination [:configuration :package :id])
-          :publisher (get-in destination [:configuration :package :authors])})
-       profiles)))
-   (sort-by (juxt (comp name :target) :profile))
-   vec))
-
-(defn- verify-package-publisher!
-  [target-contracts expected-publisher]
-  (let [packages (package-publisher-records target-contracts)
-        mismatches
-        (filterv #(not= expected-publisher (:publisher %)) packages)]
-    (when-not (seq packages)
-      (fail! "No distributable target packages are available for publisher verification"
-             {}))
-    (when (seq mismatches)
-      (fail! "Target package publishers differ from the approved human decision"
-             {:expected-publisher expected-publisher
-              :mismatches mismatches}))
-    (mapv #(dissoc % :publisher) packages)))
 
 (defn- consolidated-source-groups!
   [target-contracts]
@@ -278,10 +241,9 @@
     groups))
 
 (defn verify-targets!
-  "Loads target contracts and verifies one approved legal/publisher policy
-  across their complete authored source and distributable package inventories.
-  Identical shared compatibility groups are consolidated; conflicts fail
-  closed."
+  "Loads target contracts and verifies one approved SPDX policy across their
+  complete authored source inventories. Identical shared compatibility groups
+  are consolidated; conflicts fail closed."
   [workspace-root targets policy]
   (let [workspace-root (paths/absolute workspace-root)
         targets (vec targets)
@@ -301,17 +263,12 @@
       (when-not (= targets actual-targets)
         (fail! "Loaded target contracts do not match the requested targets"
                {:targets targets :actual actual-targets}))
-      (let [packages
-            (verify-package-publisher!
-             target-contracts (:package-publisher policy))]
-        (assoc
-         (authorship/verify-authored-spdx-headers!
-          workspace-root
-          (consolidated-source-groups! target-contracts)
-          (dissoc policy :package-publisher))
-         :targets targets
-         :package-publisher (:package-publisher policy)
-         :packages packages)))))
+      (assoc
+       (authorship/verify-authored-spdx-headers!
+        workspace-root
+        (consolidated-source-groups! target-contracts)
+        policy)
+       :targets targets))))
 
 (defn- read-policy!
   [workspace-root policy-path]

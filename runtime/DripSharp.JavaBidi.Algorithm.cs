@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 // Ported from: https://github.com/SixLabors/Fonts/

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Java generic erasure contract for PDFBox security handlers.
 #nullable disable
 

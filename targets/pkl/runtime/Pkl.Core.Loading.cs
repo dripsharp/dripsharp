@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Idiomatic .NET assembly module and embedded-resource loading for Pkl.Core.
 // This is durable destination product code; translated Java output remains
 // disposable. The shared index deliberately performs no Pkl evaluation.

@@ -1,4 +1,7 @@
-﻿#nullable enable
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
+#nullable enable
 
 using System.Collections;
 using System.Collections.Generic;

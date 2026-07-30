@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Focused lookup facade over the pinned generated Avalonia bidirectional trie.
 #nullable enable
 

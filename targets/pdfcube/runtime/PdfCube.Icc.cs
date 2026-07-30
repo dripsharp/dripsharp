@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Focused ICC profile parsing and color transforms for PdfCube.
 // This implementation is authored for PdfCube and uses no third-party codec.
 #nullable enable

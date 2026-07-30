@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Ordinary generated-product support for Java contracts with no direct .NET API.
 // Each JDK-area source is copied unchanged into disposable projects; these files
 // are not a second AST and contain no destination-product behavior.
@@ -327,4 +330,3 @@ internal sealed class JavaThreadLocal<T> : IDisposable
     internal void Set(T replacement) => value.Value = replacement;
     public void Dispose() => value.Dispose();
 }
-

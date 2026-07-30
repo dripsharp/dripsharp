@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Focused .NET substrate for the Truffle and Graal collection contracts used
 // by the generated Pkl.Core product. This is product runtime code, not a
 // reconstructed frontend model.

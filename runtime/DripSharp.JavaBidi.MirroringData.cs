@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Generated compatibility mirroring data; do not edit by hand.
 // from OpenJDK 25.0.2 Character.isMirrored(int).
 #nullable enable

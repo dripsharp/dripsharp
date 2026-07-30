@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Java-compatible Unicode Bidirectional Algorithm facade.
 //
 // The underlying UAX #9 implementation and generated Unicode trie are vendored

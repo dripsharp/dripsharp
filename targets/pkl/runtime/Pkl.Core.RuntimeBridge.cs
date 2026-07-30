@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // Destination-specific bridges between translated Java call sites and the
 // focused Pkl.Core runtime substrate. Generic Java compatibility source must
 // not acquire compile-time product dependencies from these capabilities.

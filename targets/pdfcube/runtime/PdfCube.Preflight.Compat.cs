@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 namespace PdfCube.Preflight.Font.Container
 {
     public interface IFontContainer

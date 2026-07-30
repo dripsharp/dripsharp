@@ -1,0 +1,8 @@
+{:schema-version 2
+ :decision "pkl-c8t.2"
+ :license-identifier "Apache-2.0"
+ :file-copyright-text "2026 Isak Sky"
+ :repository-notice
+ {:path "LICENSE"
+  :sha256
+  "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"}}

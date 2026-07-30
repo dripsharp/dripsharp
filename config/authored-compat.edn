@@ -9,8 +9,8 @@
    :charset nil
    :capability :java-compat
    :source-files 12
-   :max-source-lines 12650
-   :max-emitted-lines 12650
+   :max-source-lines 12686
+   :max-emitted-lines 12686
    :source-inventory-sha256
    "4b92c9593976f941edb72b3425c87ea37d5def1072fc9e094548e05f5af6bae6"
    :public-types
@@ -24,8 +24,8 @@
    :charset nil
    :capability :java-regex-unicode
    :source-files 1
-   :max-source-lines 80
-   :max-emitted-lines 80
+   :max-source-lines 83
+   :max-emitted-lines 83
    :source-inventory-sha256
    "beeaaa8d025ea7909aa516874316abd1357f1b11acc7362f2fccc03a54951fe8"
    :public-types
@@ -39,8 +39,8 @@
    :charset nil
    :capability :java-bidi
    :source-files 15
-   :max-source-lines 4622
-   :max-emitted-lines 4622
+   :max-source-lines 4667
+   :max-emitted-lines 4667
    :source-inventory-sha256
    "e264419d1ade473a485c5fc5bf8691c6a75c65c09b0dce365d9890fe44d993bc"
    :public-types

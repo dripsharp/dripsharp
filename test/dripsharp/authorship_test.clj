@@ -307,7 +307,6 @@
              :decision authored-spdx/required-decision
              :license-identifier "LicenseRef-Fixture"
              :file-copyright-text "2026 Fixture Owner"
-             :package-publisher "Fixture Publisher"
              :repository-notice
              {:path "LICENSE"
               :sha256
@@ -349,19 +348,6 @@
             target-contract
             (fn [target destination]
               {:target target
-               :profiles
-               (into
-                (sorted-map)
-                (map
-                 (fn [[source _]]
-                   [(str (namespace source) "-" (name source))
-                    {:destination
-                     {:configuration
-                      {:package
-                       {:id (str "Fixture." (namespace source) "."
-                                 (name source))
-                        :authors "Fixture Publisher"}}}}])
-                 destination))
                :authorship
                {:compatibility {:sources compatibility}
                 :destination {:sources destination}
@@ -388,15 +374,6 @@
             (is (= [:one :two] (:targets verification)))
             (is (= authored-spdx/policy-path
                    (:policy-file verification)))
-            (is (= "Fixture Publisher"
-                   (:package-publisher verification)))
-            (is (= [{:target :one
-                     :profile "one-runtime"
-                     :package-id "Fixture.one.runtime"}
-                    {:target :two
-                     :profile "two-runtime"
-                     :package-id "Fixture.two.runtime"}]
-                   (:packages verification)))
             (is (= ["runtime/Compatibility.cs"
                     "runtime/One.cs"
                     "runtime/Two.cs"]
@@ -413,58 +390,17 @@
                  (:expected-decision (ex-data wrong-decision))))
           (is (= "fixture-human-decision"
                  (:actual-decision (ex-data wrong-decision)))))
-        (let [missing-publisher
+        (let [unexpected-publisher
               (caught
                #(authored-spdx/verify-targets!
-                 root [:one :two] (dissoc policy :package-publisher)))]
+                 root
+                 [:one :two]
+                 (assoc policy :package-publisher "Deferred Publisher")))]
           (is (= :invalid-authored-spdx-gate
-                 (:kind (ex-data missing-publisher))))
-          (is (contains? (:expected-keys (ex-data missing-publisher))
-                         :package-publisher)))
-        (doseq [separator
-                ["\u0000" "\u0001" "\u000B" "\u000C" "\r" "\n"
-                 "\u0085" "\u2028" "\u2029" "\uFFFE"]
-                :let [publisher
-                      (str "Fixture Publisher"
-                           separator
-                           "Different Publisher")]]
-          (let [malformed-publisher
-                (caught
-                 #(authored-spdx/verify-targets!
-                   root [:one :two]
-                   (assoc policy :package-publisher publisher)))]
-            (is (= :invalid-authored-spdx-gate
-                   (:kind (ex-data malformed-publisher))))
-            (is (= publisher
-                   (get-in (ex-data malformed-publisher)
-                           [:policy :package-publisher])))))
-        (with-redefs
-         [target-directory/read-target
-          (fn [_ target]
-            (let [contract
-                  (case target
-                    :one (target-contract :one destination-one)
-                    :two (target-contract :two destination-two))]
-              (if (= :two target)
-                (assoc-in
-                 contract
-                 [:profiles "two-runtime" :destination :configuration
-                  :package :authors]
-                 "Different Publisher")
-                contract)))]
-          (let [wrong-publisher
-                (caught
-                 #(authored-spdx/verify-targets!
-                   root [:one :two] policy))]
-            (is (= :invalid-authored-spdx-gate
-                   (:kind (ex-data wrong-publisher))))
-            (is (= "Fixture Publisher"
-                   (:expected-publisher (ex-data wrong-publisher))))
-            (is (= [{:target :two
-                     :profile "two-runtime"
-                     :package-id "Fixture.two.runtime"
-                     :publisher "Different Publisher"}]
-                   (:mismatches (ex-data wrong-publisher))))))
+                 (:kind (ex-data unexpected-publisher))))
+          (is (not (contains?
+                    (:expected-keys (ex-data unexpected-publisher))
+                    :package-publisher))))
         (with-redefs
          [target-directory/read-target
           (fn [_ target]
@@ -728,7 +664,6 @@
              :decision authored-spdx/required-decision
              :license-identifier "LicenseRef-Fixture"
              :file-copyright-text "2026 Fixture Owner"
-             :package-publisher "Fixture Publisher"
              :repository-notice
              {:path "LICENSE"
               :sha256
@@ -796,7 +731,7 @@
               escaped-notice
               (caught
                #(authorship/verify-repository-notice!
-                 root (dissoc policy :package-publisher)))]
+                 root policy))]
           (is (= :invalid-authorship-ledger
                  (:kind (ex-data escaped-notice))))
           (is (= "LICENSE" (:path (ex-data escaped-notice))))
@@ -810,7 +745,7 @@
             (let [linked-notice
                   (caught
                    #(authorship/verify-repository-notice!
-                     root (dissoc policy :package-publisher)))]
+                     root policy))]
               (is (= :invalid-authorship-ledger
                      (:kind (ex-data linked-notice))))
               (is (= :symbolic-link-repository-notice

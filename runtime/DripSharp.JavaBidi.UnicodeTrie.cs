@@ -1,4 +1,7 @@
-﻿// RichTextKit
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
+// RichTextKit
 // Copyright © 2019 Topten Software. All Rights Reserved.
 // 
 // Licensed under the Apache License, Version 2.0 (the "License"); you may 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 //---------------------------------------------------------------------------------------------------
 // Vendored from AvaloniaUI/Avalonia commit
 // 0b3243e9c074d6d77f8e6fba5b718c0ef89c9d9c.

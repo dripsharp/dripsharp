@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Isak Sky
+// SPDX-License-Identifier: Apache-2.0
+
 // PdfCube adapters for pinned, source-built JBIG2 and JPEG 2000 decoders.
 #nullable enable
 

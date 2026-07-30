@@ -9,8 +9,8 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 6108
-   :max-emitted-lines 6108
+   :max-source-lines 6111
+   :max-emitted-lines 6111
    :source-inventory-sha256
    "d74a7aaab15a468fa94e0ed7711a26ef0757f21cd7c2ac8a95403f9fe7dbdb6f"
    :public-types
@@ -24,8 +24,8 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 120
-   :max-emitted-lines 120
+   :max-source-lines 123
+   :max-emitted-lines 123
    :source-inventory-sha256
    "f6794d89a5290f828bd60432979e75266b7ef5ae143829363735c05e9f0d13b6"
    :public-types
@@ -39,8 +39,8 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 752
-   :max-emitted-lines 752
+   :max-source-lines 755
+   :max-emitted-lines 755
    :source-inventory-sha256
    "791904516ade546b35e485d39962d044c29e81dd44a5c89483abe769bdccb287"
    :public-types
@@ -54,8 +54,8 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 19
-   :max-emitted-lines 19
+   :max-source-lines 22
+   :max-emitted-lines 22
    :source-inventory-sha256
    "9e0a3bb3fc3e029d86ac713bfea3bc31feac775fc87726c1355801e6820379eb"
    :public-types
@@ -69,8 +69,8 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 127
-   :max-emitted-lines 127
+   :max-source-lines 130
+   :max-emitted-lines 130
    :source-inventory-sha256
    "396f3d07a85f349ee7fa5b26a67b9cc7dd9749b74cb43056ec14198d48ac8df0"
    :public-types
@@ -84,8 +84,8 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 62
-   :max-emitted-lines 62
+   :max-source-lines 65
+   :max-emitted-lines 65
    :source-inventory-sha256
    "304e899e18a0e15293bd67b3647a408af87535027528f370acb3e51725ba7461"
    :public-types
@@ -99,8 +99,8 @@
    :charset nil
    :capability nil
    :source-files 1
-   :max-source-lines 44
-   :max-emitted-lines 44
+   :max-source-lines 47
+   :max-emitted-lines 47
    :source-inventory-sha256
    "78d975493b1ff693cf916bf2e99068a08fee61faa7a4afb479369851c20f15dc"
    :public-types
