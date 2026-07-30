@@ -1,4 +1,5 @@
 .beads/issues.jsonl
+.DS_Store
 .cpcache/
 .clj-kondo/
 .lsp/

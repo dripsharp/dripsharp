@@ -10,3 +10,6 @@
 [submodule "research/SkiaSharp"]
 	path = research/SkiaSharp
 	url = https://github.com/mono/SkiaSharp.git
+[submodule "products/brine"]
+	path = products/brine
+	url = https://github.com/dripsharp/brine.git
