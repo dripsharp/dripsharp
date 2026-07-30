@@ -1070,17 +1070,28 @@
         run-command!
         (fn [request]
           (swap! requests conj request)
-          (when (= ["dotnet" "restore"]
+          (let [restore?
+                (= ["dotnet" "restore"]
                    (subvec (:command request)
-                           0 (min 2 (count (:command request)))))
-            (let [config-index (.indexOf (:command request) "--configfile")]
-              (reset! restore-config-content
-                      (slurp (nth (:command request) (inc config-index)))))
-            (write!
-             (paths/absolute (:directory request))
-             "NuGet.Config"
-             "<configuration><packageSources>"))
-          (process/run! request))]
+                           0 (min 2 (count (:command request)))))]
+            (when restore?
+              (let [config-index (.indexOf (:command request) "--configfile")]
+                (reset! restore-config-content
+                        (slurp (nth (:command request) (inc config-index)))))
+              (write!
+               (paths/absolute (:directory request))
+               "NuGet.Config"
+               "<configuration><packageSources>"))
+            (process/run!
+             (cond-> request
+               restore?
+               (assoc :environment
+                      {"RestoreSources"
+                       "/host-controlled/alternate-package-source"
+                       "RestoreAdditionalProjectSources"
+                       "/host-controlled/additional-package-source"
+                       "RestoreFallbackFolders"
+                       "/host-controlled/fallback-packages"})))))]
     (try
       (write!
        workspace "global.json"
@@ -1180,6 +1191,10 @@
         (is (some #{"-p:ImportDirectoryBuildTargets=false"} dotnet-command))
         (is (some #{"-p:ImportDirectoryBuildProps=false"} restore-command))
         (is (some #{"-p:ImportDirectoryBuildTargets=false"} restore-command))
+        (is (some #{"-p:RestoreSources=https://api.nuget.org/v3/index.json"}
+                  restore-command))
+        (is (some #{"-p:RestoreAdditionalProjectSources="} restore-command))
+        (is (some #{"-p:RestoreFallbackFolders="} restore-command))
         (is (str/blank?
              (git-output product "status" "--porcelain=v1"
                          "--untracked-files=all"))))

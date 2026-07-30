@@ -50,13 +50,16 @@
 (def ^:private json-mapper
   (ObjectMapper.))
 
+(def ^:private nuget-org-v3-source
+  "https://api.nuget.org/v3/index.json")
+
 (def ^:private isolated-nuget-config
   (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
        "<configuration>\n"
        "  <packageSources>\n"
        "    <clear />\n"
        "    <add key=\"nuget.org\" "
-       "value=\"https://api.nuget.org/v3/index.json\" "
+       "value=\"" nuget-org-v3-source "\" "
        "protocolVersion=\"3\" />\n"
        "  </packageSources>\n"
        "</configuration>\n"))
@@ -778,6 +781,9 @@
           "--configfile" (str restore-config)
           "--packages" (str packages-root)
           "--artifacts-path" (str artifacts-path)
+          (str "-p:RestoreSources=" nuget-org-v3-source)
+          "-p:RestoreAdditionalProjectSources="
+          "-p:RestoreFallbackFolders="
           "-p:ImportDirectoryBuildProps=false"
           "-p:ImportDirectoryBuildTargets=false"]
           runtime-identifier
