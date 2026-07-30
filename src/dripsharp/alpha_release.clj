@@ -484,6 +484,15 @@
   [workspace-root output-root]
   (let [root (paths/absolute workspace-root)
         output (paths/absolute output-root)
+        git-metadata-components
+        (when (.startsWith output root)
+          (->> (.relativize root output)
+               .iterator
+               iterator-seq
+               (map str)
+               (keep #(when (= ".git" (portable-lower-case %))
+                        ".git"))
+               vec))
         linked-components
         (when (.startsWith output root)
           (->> (iterate #(.getParent ^Path %) output)
@@ -497,6 +506,12 @@
              {:reason :release-output-path-escape
               :root (str root)
               :path (str output)}))
+    (when (seq git-metadata-components)
+      (fail! "Release output root must not traverse Git metadata"
+             {:reason :git-metadata-release-output
+              :root (str root)
+              :path (str output)
+              :components git-metadata-components}))
     (when (seq linked-components)
       (fail! "Release output root path contains symbolic links"
              {:reason :symbolic-link-release-output
@@ -1249,9 +1264,6 @@
         platforms (select-platforms! inventory platform-ids)
         {:keys [version product-commit]}
         (validate-request! authorized-tag product-commit)
-        initial-state
-        (exact-product-state! workspace-root target-contract product-commit
-                              run-command!)
         output-root
         (safe-output-root!
          workspace-root
@@ -1259,6 +1271,9 @@
              (paths/resolve-path
               workspace-root "target/releases" version
               (name (:product-family inventory)))))
+        initial-state
+        (exact-product-state! workspace-root target-contract product-commit
+                              run-command!)
         record-file (release-record-file output-root inventory version)
         artifact-files
         (into

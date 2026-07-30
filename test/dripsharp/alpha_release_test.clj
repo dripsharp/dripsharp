@@ -466,6 +466,38 @@
           (finally
             (delete-tree! workspace)))))))
 
+(deftest release-preparation-rejects-git-metadata-output-roots
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        {:keys [workspace contract commit]}
+        (release-fixture! inventory)]
+    (try
+      (doseq [relative
+              [".git/alpha-release"
+               "products/brine/.git/alpha-release"
+               "nested/.GIT/alpha-release"]]
+        (testing relative
+          (let [output-root (paths/resolve-path workspace relative)
+                build-calls (atom [])
+                result
+                (failure
+                 #(alpha-release/prepare!
+                   {:workspace-root workspace
+                    :target-contract contract
+                    :inventory inventory
+                    :authorized-tag "v0.1.0-alpha.1"
+                    :product-commit commit
+                    :platform-ids ["portable"]
+                    :output-root output-root
+                    :build-fn (fake-build! build-calls)
+                    :framework-assemblies #{"System.Runtime.dll"}}))]
+            (is (= :git-metadata-release-output (:reason result)))
+            (is (= [".git"] (:components result)))
+            (is (empty? @build-calls))
+            (is (not (Files/exists output-root
+                                   (make-array LinkOption 0)))))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest release-preparation-rejects-output-root-symlink-substitution
   (let [[_ inventory] (actual-contract-and-inventory :pkl)
         {:keys [workspace contract commit]}
