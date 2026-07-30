@@ -892,17 +892,39 @@
             (util/digest-input "SHA-256" input)))})
      (enumeration-seq (.entries archive)))))
 
+(defn- safe-artifact-path!
+  [artifact-root artifact]
+  (let [root (paths/absolute artifact-root)
+        artifact (paths/absolute artifact)
+        linked-paths
+        (when (.startsWith artifact root)
+          (->> (iterate #(.getParent ^Path %) artifact)
+               (take-while #(and % (.startsWith ^Path % root)))
+               (filter #(Files/isSymbolicLink ^Path %))
+               reverse
+               (mapv str)))]
+    (when (seq linked-paths)
+      (fail! "Downloaded release asset path contains symbolic links"
+             {:reason :symbolic-link-release-asset
+              :root (str root)
+              :path (str artifact)
+              :symbolic-links linked-paths}))
+    (when-not (and (.startsWith artifact root)
+                   (paths/real-contained? root artifact))
+      (fail! "Downloaded release asset is missing or escaped its download root"
+             {:reason :release-asset-path-escape
+              :root (str root)
+              :path (str artifact)}))
+    artifact))
+
 (defn verify-asset!
   "Verifies that a ZIP is exactly the product, managed dependency, and
   platform-native inventory. Any framework assembly, forbidden artifact, path,
   duplicate, missing entry, unexpected entry, or byte mismatch fails."
-  [{:keys [artifact inventory platform expected-hashes
+  [{:keys [artifact-root artifact inventory platform expected-hashes
            framework-assemblies]}]
-  (when (Files/isSymbolicLink ^Path artifact)
-    (fail! "Downloaded release asset is a symbolic link"
-           {:reason :symbolic-link-release-asset
-            :path (str artifact)}))
-  (let [records (zip-records artifact)
+  (let [artifact (safe-artifact-path! artifact-root artifact)
+        records (zip-records artifact)
         names (mapv :name records)
         name-collisions (case-insensitive-collisions names identity)
         unsafe
@@ -1149,7 +1171,8 @@
                                 (output-ownership artifact))
                        verification
                        (verify-asset!
-                        {:artifact artifact
+                        {:artifact-root output-root
+                         :artifact artifact
                          :inventory inventory
                          :platform platform
                          :expected-hashes

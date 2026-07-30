@@ -990,7 +990,8 @@
                   (keys
                    (:entries
                     (alpha-release/verify-asset!
-                     {:artifact asset
+                     {:artifact-root root
+                      :artifact asset
                       :inventory inventory
                       :platform platform
                       :expected-hashes (hashes expected)
@@ -1004,7 +1005,8 @@
                    (:reason
                     (failure
                      #(alpha-release/verify-asset!
-                       {:artifact asset
+                       {:artifact-root root
+                        :artifact asset
                         :inventory inventory
                         :platform platform
                         :expected-hashes (hashes entries)
@@ -1019,7 +1021,8 @@
               result
               (failure
                #(alpha-release/verify-asset!
-                 {:artifact asset
+                 {:artifact-root root
+                  :artifact asset
                   :inventory inventory
                   :platform platform
                   :expected-hashes (hashes entries)
@@ -1037,7 +1040,8 @@
               result
               (failure
                #(alpha-release/verify-asset!
-                 {:artifact asset
+                 {:artifact-root root
+                  :artifact asset
                   :inventory inventory
                   :platform platform
                   :expected-hashes (hashes entries)
@@ -1053,7 +1057,8 @@
                 result
                 (failure
                  #(alpha-release/verify-asset!
-                   {:artifact asset
+                   {:artifact-root root
+                    :artifact asset
                     :inventory inventory
                     :platform platform
                     :expected-hashes (hashes entries)
@@ -1114,7 +1119,8 @@
                   asset-result
                   (failure
                    #(alpha-release/verify-asset!
-                     {:artifact asset
+                     {:artifact-root root
+                      :artifact asset
                       :inventory inventory
                       :platform platform
                       :expected-hashes (hashes entries)
@@ -1129,7 +1135,8 @@
                   framework-result
                   (failure
                    #(alpha-release/verify-asset!
-                     {:artifact framework-asset
+                     {:artifact-root root
+                      :artifact framework-asset
                       :inventory inventory
                       :platform platform
                       :expected-hashes (hashes framework-entries)
@@ -1204,7 +1211,8 @@
               result
               (failure
                #(alpha-release/verify-asset!
-                 {:artifact asset
+                 {:artifact-root root
+                  :artifact asset
                   :inventory inventory
                   :platform platform
                   :expected-hashes (hashes entries)
@@ -1225,20 +1233,32 @@
                        (:platforms inventory)))
         root (temp-directory)
         expected (expected-entry-map inventory platform)
-        substitute (zip! (.resolve root "substitute.zip") expected)
-        artifact (.resolve root "downloaded.zip")]
+        substitute-root (.resolve root "substitute")
+        substitute
+        (zip! (.resolve substitute-root "downloaded.zip") expected)
+        artifact (.resolve root "downloaded.zip")
+        linked-root (.resolve root "linked-download")
+        linked-artifact (.resolve linked-root "downloaded.zip")]
     (try
-      (Files/createSymbolicLink artifact (.getFileName substitute)
+      (Files/createSymbolicLink artifact (.relativize root substitute)
                                 (make-array FileAttribute 0))
-      (is (= :symbolic-link-release-asset
-             (:reason
+      (Files/createSymbolicLink linked-root (.getFileName substitute-root)
+                                (make-array FileAttribute 0))
+      (doseq [[candidate expected-links]
+              [[artifact [(str artifact)]]
+               [linked-artifact [(str linked-root)]]]]
+        (let [result
               (failure
                #(alpha-release/verify-asset!
-                 {:artifact artifact
+                 {:artifact-root root
+                  :artifact candidate
                   :inventory inventory
                   :platform platform
                   :expected-hashes (hashes expected)
-                  :framework-assemblies #{"System.Runtime.dll"}})))))
+                  :framework-assemblies #{"System.Runtime.dll"}}))]
+          (is (= :symbolic-link-release-asset (:reason result)))
+          (is (= (str candidate) (:path result)))
+          (is (= expected-links (:symbolic-links result)))))
       (finally
         (delete-tree! root)))))
 
