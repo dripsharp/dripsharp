@@ -661,6 +661,8 @@
   [{:keys [product inventory platform build-output run-command!]}]
   (let [project-file (entry-project product inventory)
         runtime-identifier (:runtime-identifier platform)
+        artifacts-path
+        (paths/resolve-path (.getParent ^Path build-output) "artifacts")
         command
         (cond->
          ["dotnet" "build" (str project-file)
@@ -668,6 +670,7 @@
           "--configuration" "Release"
           "--verbosity:minimal"
           "--no-incremental"
+          "--artifacts-path" (str artifacts-path)
           "--output" (str build-output)
           "-p:RestoreIgnoreFailedSources=true"
           "-p:CopyLocalLockFileAssemblies=true"

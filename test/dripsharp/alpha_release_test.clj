@@ -113,11 +113,31 @@
      "namespace Generated.Consumer.Tests;\n"]]
    (mapcat
     (fn [{:keys [file project]}]
-      (let [assembly (subs file 0 (- (count file) 4))]
+      (let [assembly (subs file 0 (- (count file) 4))
+            project-references
+            (when (= file (:entry-assembly inventory))
+              (for [{dependency-file :file
+                     dependency-project :project}
+                    (:product-assemblies inventory)
+                    :when (not= file dependency-file)
+                    :let [dependency-assembly
+                          (subs dependency-file
+                                0 (- (count dependency-file) 4))
+                          dependency-directory
+                          (last (str/split dependency-project #"/"))]]
+                (str "<ProjectReference Include=\"../"
+                     dependency-directory "/" dependency-assembly
+                     ".csproj\" />")))]
         [[(str project "/" assembly ".csproj")
-          (str "<Project><PropertyGroup><TargetFramework>"
+          (str "<Project Sdk=\"Microsoft.NET.Sdk\">"
+               "<PropertyGroup><TargetFramework>"
                (:target-framework inventory)
-               "</TargetFramework></PropertyGroup></Project>\n")]
+               "</TargetFramework></PropertyGroup>"
+               (when (seq project-references)
+                 (str "<ItemGroup>"
+                      (str/join "" project-references)
+                      "</ItemGroup>"))
+               "</Project>\n")]
          [(str project "/Generated.cs")
           (str "namespace " assembly ";\n")]]))
     (:product-assemblies inventory))))
@@ -489,6 +509,43 @@
               "  - `portable` (portable; no runtime identifier): "
               "`DripSharp.Brine-0.1.0-alpha.2-net10.0-portable.zip`\n")
              (get-in prepared [:github-release :notes]))))
+      (finally
+        (delete-tree! workspace)))))
+
+(deftest default-release-build-keeps-product-checkout-clean
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        {:keys [workspace contract product commit]}
+        (release-fixture! inventory)
+        commands (atom [])
+        run-command!
+        (fn [request]
+          (swap! commands conj (:command request))
+          (process/run! request))]
+    (try
+      (let [prepared
+            (alpha-release/prepare!
+             {:workspace-root workspace
+              :target-contract contract
+              :inventory inventory
+              :authorized-tag "v0.1.0-alpha.1"
+              :product-commit commit
+              :output-root (paths/resolve-path workspace "release")
+              :run-command! run-command!
+              :framework-assemblies #{"System.Runtime.dll"}})
+            dotnet-command
+            (first (filter #(= ["dotnet" "build"] (subvec % 0 2))
+                           @commands))
+            artifacts-index (.indexOf dotnet-command "--artifacts-path")
+            artifacts-path
+            (paths/absolute (nth dotnet-command (inc artifacts-index)))]
+        (is (= #{"DripSharp.Brine.dll"
+                 "DripSharp.Brine.Parser.dll"}
+               (set (keys (:entries (first (:assets prepared)))))))
+        (is (not (neg? artifacts-index)))
+        (is (not (.startsWith artifacts-path (paths/absolute product))))
+        (is (str/blank?
+             (git-output product "status" "--porcelain=v1"
+                         "--untracked-files=all"))))
       (finally
         (delete-tree! workspace)))))
 
