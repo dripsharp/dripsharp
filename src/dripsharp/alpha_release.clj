@@ -779,6 +779,8 @@
         (paths/resolve-path build-directory "user-extensions")
         dotnet-cli-home
         (paths/resolve-path build-directory "dotnet-cli-home")
+        nuget-scratch-path
+        (paths/resolve-path build-directory "nuget-scratch")
         nuget-plugins-path
         (paths/resolve-path build-directory "nuget-plugins")
         restore-config-directory
@@ -792,6 +794,8 @@
         _ (Files/createDirectories
            dotnet-cli-home (make-array FileAttribute 0))
         _ (Files/createDirectories
+           nuget-scratch-path (make-array FileAttribute 0))
+        _ (Files/createDirectories
            nuget-plugins-path (make-array FileAttribute 0))
         _ (Files/writeString
            restore-config isolated-nuget-config StandardCharsets/UTF_8
@@ -802,6 +806,7 @@
          "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
          "DOTNET_NOLOGO" "1"
          "DOTNET_SKIP_FIRST_TIME_EXPERIENCE" "1"
+         "NUGET_SCRATCH" (str nuget-scratch-path)
          "NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
          "NUGET_PLUGIN_PATHS" (str nuget-plugins-path)}
         restore-command

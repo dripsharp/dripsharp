@@ -1078,6 +1078,8 @@
         (paths/resolve-path workspace "hostile-extensions32")
         hostile-dotnet-cli-home
         (paths/resolve-path workspace "hostile-dotnet-cli-home")
+        hostile-nuget-scratch
+        (paths/resolve-path workspace "hostile-nuget-scratch")
         run-command!
         (fn [request]
           (swap! requests conj request)
@@ -1141,6 +1143,8 @@
                 "0"
                 "DOTNET_SKIP_FIRST_TIME_EXPERIENCE"
                 "0"
+                "NUGET_SCRATCH"
+                (str hostile-nuget-scratch)
                 "NUGET_NETCORE_PLUGIN_PATHS"
                 "/host-controlled/netcore-nuget-plugin"
                 "NUGET_PLUGIN_PATHS"
@@ -1180,6 +1184,8 @@
             "extension was loaded\" /></Target></Project>\n"))
       (Files/createDirectories
        hostile-dotnet-cli-home (make-array FileAttribute 0))
+      (Files/createDirectories
+       hostile-nuget-scratch (make-array FileAttribute 0))
       (write!
        workspace "Directory.Build.rsp"
        (str "-p:CustomAfterMicrosoftCommonTargets=\""
@@ -1257,6 +1263,8 @@
                    (count "-p:MSBuildUserExtensionsPath=")))
             dotnet-cli-home
             (paths/resolve-path build-directory "dotnet-cli-home")
+            nuget-scratch-path
+            (paths/resolve-path build-directory "nuget-scratch")
             nuget-plugins-path
             (paths/resolve-path build-directory "nuget-plugins")
             isolated-environment
@@ -1264,6 +1272,7 @@
              "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
              "DOTNET_NOLOGO" "1"
              "DOTNET_SKIP_FIRST_TIME_EXPERIENCE" "1"
+             "NUGET_SCRATCH" (str nuget-scratch-path)
              "NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
              "NUGET_PLUGIN_PATHS" (str nuget-plugins-path)}]
         (is (= #{"DripSharp.Brine.dll"
@@ -1291,8 +1300,14 @@
         (is (.startsWith dotnet-cli-home build-directory))
         (is (not (.startsWith dotnet-cli-home
                               (paths/absolute workspace))))
+        (is (.startsWith nuget-scratch-path build-directory))
+        (is (not (.startsWith nuget-scratch-path
+                              (paths/absolute workspace))))
         (is
          (with-open [entries (Files/list hostile-dotnet-cli-home)]
+           (empty? (iterator-seq (.iterator entries)))))
+        (is
+         (with-open [entries (Files/list hostile-nuget-scratch)]
            (empty? (iterator-seq (.iterator entries)))))
         (is (= [{:path nuget-plugins-path
                  :directory? true
