@@ -777,6 +777,8 @@
         (paths/resolve-path build-directory "artifacts")
         user-extensions-path
         (paths/resolve-path build-directory "user-extensions")
+        dotnet-cli-home
+        (paths/resolve-path build-directory "dotnet-cli-home")
         nuget-plugins-path
         (paths/resolve-path build-directory "nuget-plugins")
         restore-config-directory
@@ -788,13 +790,19 @@
         _ (Files/createDirectories
            user-extensions-path (make-array FileAttribute 0))
         _ (Files/createDirectories
+           dotnet-cli-home (make-array FileAttribute 0))
+        _ (Files/createDirectories
            nuget-plugins-path (make-array FileAttribute 0))
         _ (Files/writeString
            restore-config isolated-nuget-config StandardCharsets/UTF_8
            (into-array OpenOption [StandardOpenOption/CREATE_NEW
                                    StandardOpenOption/WRITE]))
-        nuget-plugin-environment
-        {"NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
+        isolated-environment
+        {"DOTNET_CLI_HOME" (str dotnet-cli-home)
+         "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
+         "DOTNET_NOLOGO" "1"
+         "DOTNET_SKIP_FIRST_TIME_EXPERIENCE" "1"
+         "NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
          "NUGET_PLUGIN_PATHS" (str nuget-plugins-path)}
         restore-command
         (cond->
@@ -819,7 +827,7 @@
         restore-result
         (run-command! {:command restore-command
                        :directory build-directory
-                       :environment nuget-plugin-environment
+                       :environment isolated-environment
                        :unset-environment isolated-msbuild-environment})
         command
         (cond->
@@ -853,7 +861,7 @@
      :result
      (run-command! {:command command
                     :directory build-directory
-                    :environment nuget-plugin-environment
+                    :environment isolated-environment
                     :unset-environment isolated-msbuild-environment})}))
 
 (defn- direct-files

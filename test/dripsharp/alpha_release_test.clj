@@ -1076,6 +1076,8 @@
         (paths/resolve-path workspace "hostile-user-extensions")
         hostile-extensions32
         (paths/resolve-path workspace "hostile-extensions32")
+        hostile-dotnet-cli-home
+        (paths/resolve-path workspace "hostile-dotnet-cli-home")
         run-command!
         (fn [request]
           (swap! requests conj request)
@@ -1131,6 +1133,14 @@
                 "/host-controlled/nonexistent-msbuild-extensions64"
                 "MSBuildUserExtensionsPath"
                 (str hostile-user-extensions)
+                "DOTNET_CLI_HOME"
+                (str hostile-dotnet-cli-home)
+                "DOTNET_CLI_TELEMETRY_OPTOUT"
+                "0"
+                "DOTNET_NOLOGO"
+                "0"
+                "DOTNET_SKIP_FIRST_TIME_EXPERIENCE"
+                "0"
                 "NUGET_NETCORE_PLUGIN_PATHS"
                 "/host-controlled/netcore-nuget-plugin"
                 "NUGET_PLUGIN_PATHS"
@@ -1168,6 +1178,8 @@
        (str "<Project><Target Name=\"RejectAmbientExtensionsPath32\" "
             "BeforeTargets=\"Build\"><Error Text=\"Ambient 32-bit MSBuild "
             "extension was loaded\" /></Target></Project>\n"))
+      (Files/createDirectories
+       hostile-dotnet-cli-home (make-array FileAttribute 0))
       (write!
        workspace "Directory.Build.rsp"
        (str "-p:CustomAfterMicrosoftCommonTargets=\""
@@ -1243,10 +1255,16 @@
             (paths/absolute
              (subs user-extensions-option
                    (count "-p:MSBuildUserExtensionsPath=")))
+            dotnet-cli-home
+            (paths/resolve-path build-directory "dotnet-cli-home")
             nuget-plugins-path
             (paths/resolve-path build-directory "nuget-plugins")
-            nuget-plugin-environment
-            {"NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
+            isolated-environment
+            {"DOTNET_CLI_HOME" (str dotnet-cli-home)
+             "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
+             "DOTNET_NOLOGO" "1"
+             "DOTNET_SKIP_FIRST_TIME_EXPERIENCE" "1"
+             "NUGET_NETCORE_PLUGIN_PATHS" (str nuget-plugins-path)
              "NUGET_PLUGIN_PATHS" (str nuget-plugins-path)}]
         (is (= #{"DripSharp.Brine.dll"
                  "DripSharp.Brine.Parser.dll"}
@@ -1268,8 +1286,14 @@
         (is (= "NuGet.Config" (str (.getFileName config-path))))
         (is (= "restore-config"
                (str (.getFileName (.getParent config-path)))))
-        (is (= nuget-plugin-environment (:environment restore-request)))
-        (is (= nuget-plugin-environment (:environment dotnet-request)))
+        (is (= isolated-environment (:environment restore-request)))
+        (is (= isolated-environment (:environment dotnet-request)))
+        (is (.startsWith dotnet-cli-home build-directory))
+        (is (not (.startsWith dotnet-cli-home
+                              (paths/absolute workspace))))
+        (is
+         (with-open [entries (Files/list hostile-dotnet-cli-home)]
+           (empty? (iterator-seq (.iterator entries)))))
         (is (= [{:path nuget-plugins-path
                  :directory? true
                  :entries []}
