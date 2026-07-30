@@ -21,7 +21,7 @@
 (def ^:private generated-publication-keys
   #{:kind :repository-slug :repository-url :default-branch
     :submodule-path :staging-path :profile-projects :managed-paths
-    :publication-mode})
+    :consumer-tests :publication-mode})
 
 (defn- fail!
   [message data]
@@ -101,7 +101,8 @@
                 :expected value
                 :actual (get publication field)})))
     (let [managed-paths (:managed-paths publication)
-          profile-projects (:profile-projects publication)]
+          profile-projects (:profile-projects publication)
+          consumer-tests (:consumer-tests publication)]
       (when-not (and (vector? managed-paths)
                      (seq managed-paths)
                      (= (count managed-paths)
@@ -129,7 +130,13 @@
           (fail! "Published profile project is outside managed paths"
                  {:reason :unmanaged-profile-project
                   :profile profile
-                  :path project-path}))))
+                  :path project-path})))
+      (when-not (and (some #{"tests"} managed-paths)
+                     (map? consumer-tests))
+        (fail! "Generated product publication has no managed consumer tests"
+               {:reason :invalid-consumer-tests
+                :managed-paths managed-paths
+                :consumer-tests consumer-tests})))
     publication))
 
 (defn- command-result

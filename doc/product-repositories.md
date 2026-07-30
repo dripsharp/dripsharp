@@ -53,10 +53,12 @@ Publication follows this order:
 1. Generate the complete product family into its disposable staging directory.
 2. Run the required compilation, packaging, consumption, and conformance
    checks against that staged output.
-3. Require the destination product submodule to be clean, then synchronize
+3. Restore, build, and run the focused generated consumer test suite against
+   that complete staged family.
+4. Require the destination product submodule to be clean, then synchronize
    only its declared managed paths.
-4. Review and commit the generated change in the product repository.
-5. Update the parent repository's submodule gitlink only after the product
+5. Review and commit the generated change in the product repository.
+6. Update the parent repository's submodule gitlink only after the product
    repository commit exists.
 
 `product-sync <target>` runs the target's complete required proof before the
@@ -71,6 +73,14 @@ changes, when a managed path escapes the declared product root, or when another
 product submodule would be modified. Manual patches to generated C# are not a
 durable fix: the corresponding translator, mapping, runtime input, or target
 contract must change in `dripsharp/dripsharp`, followed by regeneration.
+
+Each generated product repository contains one focused public-API test project
+under `tests/`. Its project references resolve only to that checkout's `src/`
+tree, and its `tests/README.md` records clean restore, build, and test commands.
+Target-owned checksums, fixture attribution, and generated `SHA256SUMS` files
+make the suite deterministic. Comprehensive translator, differential,
+conformance, packaging, and large-corpus gates remain in
+`dripsharp/dripsharp` and run before this focused suite and synchronization.
 
 ## GitHub Alpha-Release Assets
 
@@ -114,7 +124,7 @@ The Pkl product family uses this mapping:
 | Default branch | `master` |
 | Product project | `src/DripSharp.Brine` |
 | Parser project | `src/DripSharp.Brine.Parser` |
-| Managed repository files | `src/`, `LICENSE`, `NOTICE`, `README.md` |
+| Managed repository files | `src/`, `tests/`, `LICENSE`, `NOTICE`, `README.md` |
 
 The Brine repository contains both generated projects. Splitting the parser
 into a second repository is not part of this model.
@@ -134,7 +144,7 @@ The Apache PDFBox-derived product family uses this mapping:
 | Fonts project | `src/DripSharp.PdfCarton.Fonts` |
 | XMP project | `src/DripSharp.PdfCarton.Xmp` |
 | Preflight project | `src/DripSharp.PdfCarton.Preflight` |
-| Managed repository files | `src/`, `LICENSE`, `NOTICE`, `README.md` |
+| Managed repository files | `src/`, `tests/`, `LICENSE`, `NOTICE`, `README.md` |
 
 The PdfCarton repository contains all five generated projects as one versioned
 product family. Repository creation remains an explicit owner action and is not

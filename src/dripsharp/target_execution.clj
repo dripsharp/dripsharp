@@ -6,6 +6,7 @@
             [dripsharp.alpha-release :as alpha-release]
             [dripsharp.baseline :as baseline]
             [dripsharp.compiler :as compiler]
+            [dripsharp.consumer-tests :as consumer-tests]
             [dripsharp.differential :as differential]
             [dripsharp.harness :as harness]
             [dripsharp.java-project :as java-project]
@@ -166,6 +167,7 @@
           :target :validation :read-target-fn
           :generate-fn :verify-fn :pack-fn :package-fn
           :differential-fn :proof-fn :synchronize-fn :prepare-fn
+          :consumer-tests-fn
           :release-fn :build-fn :framework-assemblies :inventory
           :branch :commit-message :pull-request-title :pull-request-body
           :authorized-tag :product-commit :output-root))
@@ -186,14 +188,23 @@
             (base-emit-project-fn
              (assoc emit-options :rule-bundle bundle))))]
     (binding [baseline/*target-records* (:baseline-records execution)]
-      (generate-fn
-       (merge
-        (stage-options options)
-        {:workspace-root (:workspace-root execution)
-         :profile profile
-         :read-profile-fn (:read-profile execution)
-         :read-destination-fn (:read-destination execution)}
-        {:emit-project-fn emit-project-fn})))))
+      (let [generation
+            (generate-fn
+             (merge
+              (stage-options options)
+              {:workspace-root (:workspace-root execution)
+               :profile profile
+               :read-profile-fn (:read-profile execution)
+               :read-destination-fn (:read-destination execution)}
+              {:emit-project-fn emit-project-fn}))]
+        (if (= :generated-repository
+               (get-in execution [:contract :publication :kind]))
+          (assoc generation
+                 :consumer-tests
+                 (consumer-tests/emit!
+                  {:workspace-root (:workspace-root execution)
+                   :target-contract (:contract execution)}))
+          generation)))))
 
 (defn generate!
   [{:keys [generate-fn] :as options}]
@@ -420,6 +431,11 @@
   (let [execution (plan (assoc options :profile nil))
         _ (generated-publication! execution)
         proof (publication-proof! execution options)
+        consumer-test-verification
+        ((or (:consumer-tests-fn options) consumer-tests/verify!)
+         {:workspace-root (:workspace-root execution)
+          :target-contract (:contract execution)
+          :run-command! (:run-command! options)})
         synchronize-fn
         (or (:synchronize-fn options) product-repository/synchronize!)
         synchronization
@@ -430,6 +446,7 @@
            (assoc :run-command! (:run-command! options))))]
     {:target (:target execution)
      :proof proof
+     :consumer-tests consumer-test-verification
      :synchronization synchronization}))
 
 (defn prepare-publication!
@@ -439,6 +456,11 @@
   (let [execution (plan (assoc options :profile nil))
         _ (generated-publication! execution)
         proof (publication-proof! execution options)
+        consumer-test-verification
+        ((or (:consumer-tests-fn options) consumer-tests/verify!)
+         {:workspace-root (:workspace-root execution)
+          :target-contract (:contract execution)
+          :run-command! (:run-command! options)})
         prepare-fn (or (:prepare-fn options) product-repository/prepare!)
         preparation
         (prepare-fn
@@ -452,6 +474,7 @@
            (assoc :run-command! (:run-command! options))))]
     {:target (:target execution)
      :proof proof
+     :consumer-tests consumer-test-verification
      :preparation preparation}))
 
 (defn prepare-alpha-release!

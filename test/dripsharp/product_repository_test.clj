@@ -67,7 +67,8 @@
    :submodule-path "products/brine"
    :staging-path "target/generated/brine"
    :profile-projects {"pkl-core" "src/DripSharp.Brine"}
-   :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+   :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+   :consumer-tests {:schema-version 1}
    :publication-mode :pull-request})
 
 (defn- target-contract
@@ -123,6 +124,9 @@
                   "Brine notice\n")
         _ (write! workspace "target/generated/brine/README.md"
                   "# Brine\n")
+        _ (write! workspace
+                  "target/generated/brine/tests/DripSharp.Brine.Tests/ConsumerTests.cs"
+                  "namespace DripSharp.Brine.Tests;\n")
         _ (write! workspace "target/generated/brine/proof-only.txt"
                   "not published\n")]
     {:workspace workspace
@@ -149,18 +153,13 @@
   (let [brine (:publication (target-directory/read-target :pkl))
         pdfcarton (:publication (target-directory/read-target :pdfcube))
         rawhttp (:publication (target-directory/read-target :rawhttp))]
-    (is (= {:kind :generated-repository
-            :repository-slug "dripsharp/brine"
-            :repository-url "https://github.com/dripsharp/brine.git"
-            :default-branch "master"
-            :submodule-path "products/brine"
-            :staging-path "target/generated/brine"
-            :profile-projects
-            {"pkl-parser" "src/DripSharp.Brine.Parser"
-             "pkl-core-value-model" "src/DripSharp.Brine"}
-            :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
-            :publication-mode :pull-request}
-           brine))
+    (is (= ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+           (:managed-paths brine)))
+    (is (= "DripSharp.Brine.Tests"
+           (get-in brine [:consumer-tests :project :assembly-name])))
+    (is (= #{"pkl-parser" "pkl-core-value-model"}
+           (set (keys (get-in brine
+                              [:consumer-tests :assembly-tests])))))
     (is (= "target/generated/pdfcarton" (:staging-path pdfcarton)))
     (is (= "products/pdfcarton" (:submodule-path pdfcarton)))
     (is (= #{"src/DripSharp.PdfCarton"
@@ -179,7 +178,8 @@
             (product-repository/synchronize!
              {:workspace-root workspace :target-contract contract})]
         (is (= ["LICENSE" "NOTICE" "README.md"
-                "src/DripSharp.Brine/Generated.cs"]
+                "src/DripSharp.Brine/Generated.cs"
+                "tests/DripSharp.Brine.Tests/ConsumerTests.cs"]
                (:changes first)))
         (is (= "namespace DripSharp.Brine;\n"
                (slurp (str (.resolve brine
@@ -212,6 +212,25 @@
           (is (= :dirty-checkout (:reason result)))
           (is (= "old readme\n"
                  (slurp (str (.resolve brine "README.md"))))))
+        (finally
+          (delete-tree! workspace)))))
+  (testing "manual changes under managed tests are rejected"
+    (let [{:keys [workspace brine contract] :as fixture} (fixture!)]
+      (try
+        (product-repository/synchronize!
+         {:workspace-root workspace :target-contract contract})
+        (commit-synchronization! fixture)
+        (write! brine
+                "tests/DripSharp.Brine.Tests/ConsumerTests.cs"
+                "namespace Manual.Product.Fix;\n")
+        (let [result
+              (failure
+               #(product-repository/synchronize!
+                 {:workspace-root workspace :target-contract contract}))]
+          (is (= :dirty-checkout (:reason result)))
+          (is (str/includes?
+               (:status result)
+               "tests/DripSharp.Brine.Tests/ConsumerTests.cs")))
         (finally
           (delete-tree! workspace)))))
   (testing "changes in another generated product are rejected"
@@ -323,6 +342,14 @@
           (fn [options]
             (swap! calls conj [:proof options])
             :proved)
+          :consumer-tests-fn
+          (fn [options]
+            (swap! calls conj
+                   [:consumer-tests
+                    (get-in options
+                            [:target-contract :publication
+                             :consumer-tests :project :assembly-name])])
+            :consumer-tests-passed)
           :synchronize-fn
           (fn [options]
             (swap! calls conj
@@ -332,9 +359,11 @@
             :synchronized)})]
     (is (= [[:proof {:workspace-root (paths/workspace-root)
                      :target :pkl}]
+            [:consumer-tests "DripSharp.Brine.Tests"]
             [:sync "target/generated/brine"]]
            @calls))
     (is (= :proved (:proof result)))
+    (is (= :consumer-tests-passed (:consumer-tests result)))
     (is (= :synchronized (:synchronization result))))
   (let [called? (atom false)
         result

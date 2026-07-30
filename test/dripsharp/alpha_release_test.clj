@@ -98,7 +98,8 @@
       :submodule-path (str "products/" product-id)
       :staging-path (str "target/generated/" product-id)
       :profile-projects profile-projects
-      :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+      :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+      :consumer-tests {:schema-version 1}
       :publication-mode :pull-request}}))
 
 (defn- generated-files
@@ -106,7 +107,9 @@
   (into
    [["LICENSE" "Apache License\n"]
     ["NOTICE" "Generated product notice\n"]
-    ["README.md" "# Generated product\n"]]
+    ["README.md" "# Generated product\n"]
+    ["tests/GeneratedConsumerTests.cs"
+     "namespace Generated.Consumer.Tests;\n"]]
    (mapcat
     (fn [{:keys [file project]}]
       (let [assembly (subs file 0 (- (count file) 4))]

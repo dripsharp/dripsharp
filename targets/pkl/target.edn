@@ -1,4 +1,4 @@
-{:schema-version 5
+{:schema-version 6
  :target :pkl
  :product-family :brine
  :contracts
@@ -78,7 +78,8 @@
   :profile-projects
   {"pkl-parser" "src/DripSharp.Brine.Parser"
    "pkl-core-value-model" "src/DripSharp.Brine"}
-  :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+  :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+  :consumer-tests "consumer-tests.edn"
   :publication-mode :pull-request}
  :proof
  {:role :product

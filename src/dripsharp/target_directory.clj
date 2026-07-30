@@ -18,7 +18,7 @@
   (:import [java.io PushbackReader StringReader]
            [java.nio.file Files LinkOption]))
 
-(def schema-version 5)
+(def schema-version 6)
 (def legal-policy-schema-version 4)
 (def mapping-overlay-schema-version 1)
 
@@ -89,10 +89,28 @@
 (def ^:private generated-publication-keys
   #{:kind :repository-slug :repository-url :default-branch
     :submodule-path :staging-path :profile-projects :managed-paths
-    :publication-mode})
+    :consumer-tests :publication-mode})
 
 (def ^:private conformance-publication-keys
   #{:kind})
+
+(def ^:private consumer-test-keys
+  #{:schema-version :project :assembly-tests :fixtures})
+
+(def ^:private consumer-test-project-keys
+  #{:directory :assembly-name :target-framework :packages})
+
+(def ^:private consumer-test-package-keys
+  #{:id :version})
+
+(def ^:private consumer-test-source-keys
+  #{:source :destination :sha256})
+
+(def ^:private consumer-test-fixture-keys
+  (into consumer-test-source-keys #{:license :attribution}))
+
+(def ^:private consumer-test-package-ids
+  #{"Microsoft.NET.Test.Sdk" "xunit" "xunit.runner.visualstudio"})
 
 (defn- fail!
   [message data]
@@ -1441,8 +1459,145 @@
   [parent child]
   (starts-with-components? child (relative-components parent)))
 
+(defn- sha256?
+  [value]
+  (and (string? value)
+       (boolean (re-matches #"[0-9a-f]{64}" value))))
+
+(defn- validate-consumer-test-file!
+  [target-root subject path entry expected-keys required-prefix]
+  (exact-keys! subject path expected-keys entry)
+  (let [{:keys [source destination sha256]} entry
+        source-file (target-file! target-root subject required-prefix source)]
+    (relative-path! (str subject " destination") destination)
+    (validation/check!
+     (validation-context subject)
+     (conj path :sha256) sha256 "a lowercase SHA-256 digest" sha256?)
+    (let [actual (util/sha256-file source-file)]
+      (when-not (= sha256 actual)
+        (fail! (str subject " checksum changed")
+               {:path source
+                :expected sha256
+                :actual actual
+                :reason :consumer-test-source-checksum-mismatch}))))
+  entry)
+
+(defn- load-consumer-tests!
+  [target-root target family path profiles managed-paths]
+  (when-not (some #{"tests"} managed-paths)
+    (fail! "Generated product consumer tests require managed tests/"
+           {:target target
+            :managed-paths managed-paths
+            :reason :unmanaged-consumer-tests}))
+  (when-not (= "consumer-tests.edn" path)
+    (fail! "Consumer-test contract must use its canonical target path"
+           {:target target
+            :path path
+            :expected "consumer-tests.edn"}))
+  (let [file (target-file! target-root "Consumer-test contract" [] path)
+        contract (read-edn! "Consumer-test contract" file)
+        context (validation-context "Consumer-test contract"
+                                    {:target target})]
+    (exact-keys! "Consumer-test contract" [:publication :consumer-tests]
+                 consumer-test-keys contract)
+    (validation/check! context [:publication :consumer-tests :schema-version]
+                       (:schema-version contract) "the integer 1" #{1})
+    (let [{:keys [directory assembly-name target-framework packages]}
+          (:project contract)
+          product-frameworks
+          (set
+           (map #(get-in %
+                         [:destination :configuration :project
+                          :target-framework])
+                (vals profiles)))
+          expected-assembly
+          (str "DripSharp."
+               (case family
+                 :brine "Brine"
+                 :pdfcarton "PdfCarton"
+                 (->> (str/split (name family) #"-")
+                      (map str/capitalize)
+                      (apply str)))
+               ".Tests")]
+      (when-not (= 1 (count product-frameworks))
+        (fail! "Consumer-test project requires one family target framework"
+               {:target target
+                :target-frameworks (vec (sort product-frameworks))}))
+      (exact-keys! "Consumer-test project"
+                   [:publication :consumer-tests :project]
+                   consumer-test-project-keys (:project contract))
+      (relative-path! "Consumer-test project directory" directory)
+      (validation/check!
+       context [:publication :consumer-tests :project :directory]
+       directory "a path below managed tests/"
+       #(starts-with-components? % ["tests"]))
+      (validation/check!
+       context [:publication :consumer-tests :project :assembly-name]
+       assembly-name expected-assembly #{expected-assembly})
+      (validation/check!
+       context [:publication :consumer-tests :project :target-framework]
+       target-framework (first product-frameworks) product-frameworks)
+      (distinct-vector! "Consumer-test package references"
+                        [:publication :consumer-tests :project :packages]
+                        packages :id)
+      (doseq [[index package] (map-indexed vector packages)]
+        (exact-keys! "Consumer-test package reference"
+                     [:publication :consumer-tests :project :packages index]
+                     consumer-test-package-keys package)
+        (validation/check!
+         context
+         [:publication :consumer-tests :project :packages index :id]
+         (:id package) "an approved test package identity"
+         consumer-test-package-ids)
+        (validation/check!
+         context
+         [:publication :consumer-tests :project :packages index :version]
+         (:version package) "a numeric stable package version"
+         #(and (non-blank-string? %)
+               (boolean (re-matches #"[0-9]+(?:\.[0-9]+){2}" %)))))
+      (when-not (= consumer-test-package-ids (set (map :id packages)))
+        (fail! "Consumer-test project must declare the exact test package set"
+               {:target target
+                :expected (vec (sort consumer-test-package-ids))
+                :actual (vec (sort (map :id packages)))})))
+    (let [assembly-tests (:assembly-tests contract)
+          profile-ids (set (keys profiles))]
+      (validation/check!
+       context [:publication :consumer-tests :assembly-tests]
+       assembly-tests "a map covering every published profile exactly once"
+       #(and (map? %) (= profile-ids (set (keys %)))))
+      (doseq [[profile-id entry] assembly-tests]
+        (validate-consumer-test-file!
+         target-root "Consumer-test assembly source"
+         [:publication :consumer-tests :assembly-tests profile-id]
+         entry consumer-test-source-keys ["consumer-tests"])))
+    (let [fixtures (:fixtures contract)]
+      (distinct-vector! "Consumer-test fixtures"
+                        [:publication :consumer-tests :fixtures]
+                        fixtures :destination)
+      (doseq [[index fixture] (map-indexed vector fixtures)]
+        (validate-consumer-test-file!
+         target-root "Consumer-test fixture"
+         [:publication :consumer-tests :fixtures index]
+         fixture consumer-test-fixture-keys ["consumer-tests" "fixtures"])
+        (doseq [field [:license :attribution]]
+          (validation/check!
+           context
+           [:publication :consumer-tests :fixtures index field]
+           (get fixture field) "a non-blank single-line value"
+           non-blank-string?))))
+    (let [destinations
+          (concat
+           (map :destination (vals (:assembly-tests contract)))
+           (map :destination (:fixtures contract)))]
+      (when-not (= (count destinations) (count (distinct destinations)))
+        (fail! "Consumer-test output paths must be distinct"
+               {:target target
+                :destinations (vec destinations)})))
+    contract))
+
 (defn- load-publication!
-  [target family publication profiles proof]
+  [target-root target family publication profiles proof]
   (let [context (validation-context "Target publication contract"
                                     {:target target})
         kind (:kind publication)]
@@ -1480,6 +1635,7 @@
               staging-path (:staging-path publication)
               profile-projects (:profile-projects publication)
               managed-paths (:managed-paths publication)
+              consumer-tests-path (:consumer-tests publication)
               publication-mode (:publication-mode publication)
               profile-ids (set (keys profiles))]
           (validation/check! context [:publication :repository-slug]
@@ -1543,7 +1699,11 @@
                         :output :project-directory])
                [:publication :profile-projects profile-id]
                (str staging-under-target "/" project-path))))
-          publication))
+          (assoc publication
+                 :consumer-tests
+                 (load-consumer-tests!
+                  target-root target family consumer-tests-path profiles
+                  managed-paths))))
 
       (fail! "Target publication contract has an unsupported kind"
              {:target target
@@ -1873,7 +2033,8 @@
                               profiles validations)
                  _ (validate-authorship-evidence! target profiles proof)
                  publication
-                 (load-publication! target family (:publication manifest)
+                 (load-publication! target-root target family
+                                    (:publication manifest)
                                     profiles proof)
                  selected-destinations
                  (set (map #(get-in % [:descriptor :destination])

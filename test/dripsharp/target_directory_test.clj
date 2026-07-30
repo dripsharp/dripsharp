@@ -1,5 +1,6 @@
 (ns dripsharp.target-directory-test
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dripsharp.java-mapping-registry :as mapping-registry]
             [dripsharp.target-directory :as target-directory]
@@ -194,7 +195,7 @@
 
 (defn- target-manifest
   []
-  {:schema-version 5
+  {:schema-version 6
    :target :acme
    :product-family :acme
    :contracts
@@ -244,7 +245,8 @@
     :submodule-path "products/acme"
     :staging-path "target/generated/acme"
     :profile-projects {"acme-core" "src/Acme.Core"}
-    :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+    :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+    :consumer-tests "consumer-tests.edn"
     :publication-mode :pull-request}
    :proof
    {:role :product
@@ -254,6 +256,27 @@
       :profiles ["acme-core"]
       :validation-contracts [:acme-core]
       :resource-class :high-memory}]}})
+
+(def ^:private acme-consumer-source
+  "using Xunit;\nnamespace DripSharp.Acme.Tests;\npublic sealed class ConsumerTests { [Fact] public void Constructs() { } }\n")
+
+(defn- consumer-tests
+  []
+  {:schema-version 1
+   :project
+   {:directory "tests/DripSharp.Acme.Tests"
+    :assembly-name "DripSharp.Acme.Tests"
+    :target-framework "net10.0"
+    :packages
+    [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
+     {:id "xunit" :version "2.9.3"}
+     {:id "xunit.runner.visualstudio" :version "3.1.4"}]}
+   :assembly-tests
+   {"acme-core"
+    {:source "consumer-tests/ConsumerTests.cs"
+     :destination "ConsumerTests.cs"
+     :sha256 (util/sha256-text acme-consumer-source)}}
+   :fixtures []})
 
 (defn- public-type-proof
   []
@@ -351,6 +374,8 @@
             "final class AcmeOracle {}\n"]
            ["targets/acme/validation/probe/AcmeProbe.cs"
             "namespace Acme.Probe;\n"]
+           ["targets/acme/consumer-tests/ConsumerTests.cs"
+            acme-consumer-source]
            ["targets/acme/validation/canonical.tsv"
             (str "DRIPSHARP_DIFFERENTIAL_OBSERVATIONS_V1\n"
                  "basic\tidentity\tok\n")]]]
@@ -362,6 +387,7 @@
            ["targets/acme/third-party.edn" (third-party-authorship)]
            ["targets/acme/baseline.edn" (baseline-record)]
            ["targets/acme/legal/policy.edn" (legal-policy)]
+           ["targets/acme/consumer-tests.edn" (consumer-tests)]
            ["targets/acme/profiles/core.edn" (generation-profile)]
            ["targets/acme/destinations/core.edn" (destination)]
            ["targets/acme/mappings/core.edn" (mapping-overlay)]
@@ -456,6 +482,37 @@
               (:kind
                (failure-data
                 #(target-directory/read-target root :acme)))))))))
+
+(deftest consumer-test-contracts-fail-closed
+  (in-target-workspace
+   (fn [root]
+     (testing "checksum-pinned assembly sources reject changes"
+       (create-target-workspace! root)
+       (write-text! root
+                    "targets/acme/consumer-tests/ConsumerTests.cs"
+                    "namespace Manual.Product.Fix;\n")
+       (let [result
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :consumer-test-source-checksum-mismatch
+                (:reason result)))
+         (is (= "consumer-tests/ConsumerTests.cs"
+                (:path result)))))
+     (testing "every published assembly requires a focused source"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/consumer-tests.edn"
+                    assoc :assembly-tests {})
+       (is (= :invalid-target-directory
+              (:kind
+               (failure-data
+                #(target-directory/read-target root :acme))))))
+     (testing "tests must remain a managed publication path"
+       (create-target-workspace! root)
+       (update-edn! root "targets/acme/target.edn"
+                    assoc-in [:publication :managed-paths]
+                    ["src" "LICENSE" "NOTICE" "README.md"])
+       (let [result
+             (failure-data #(target-directory/read-target root :acme))]
+         (is (= :unmanaged-consumer-tests (:reason result))))))))
 
 (deftest target-contract-edn-files-require-exactly-one-form
   (in-target-workspace
@@ -1191,21 +1248,27 @@
            (fn [{:keys [verify-fn] :as options}]
              {:stage :pack
               :verification (verify-fn options)})]
-       (is
-        (=
-         [{:id :acme-required-proof
-           :resource-class :high-memory
-           :result
-           {:stage :pack
-            :verification
-            {:stage :verify
-             :generation {:stage :generate :profile "acme-core"}}}}]
-         (target-execution/proof!
-          {:workspace-root root
-           :target :acme
-           :generate-fn generate-fn
-           :verify-fn verify-fn
-           :pack-fn pack-fn})))))))
+       (let [result
+             (target-execution/proof!
+              {:workspace-root root
+               :target :acme
+               :generate-fn generate-fn
+               :verify-fn verify-fn
+               :pack-fn pack-fn})
+             generation
+             (get-in result
+                     [0 :result :verification :generation])]
+         (is (= :acme-required-proof (get-in result [0 :id])))
+         (is (= :high-memory (get-in result [0 :resource-class])))
+         (is (= :pack (get-in result [0 :result :stage])))
+         (is (= :verify
+                (get-in result [0 :result :verification :stage])))
+         (is (= {:stage :generate :profile "acme-core"}
+                (select-keys generation [:stage :profile])))
+         (is (str/ends-with?
+              (str (get-in generation
+                           [:consumer-tests :project-file]))
+              "tests/DripSharp.Acme.Tests/DripSharp.Acme.Tests.csproj")))))))
 
 (deftest conforming-unregistered-target-drives-every-generic-stage
   (in-target-workspace

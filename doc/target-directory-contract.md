@@ -14,11 +14,11 @@ to the product-neutral directory loader.
 
 ## Manifest
 
-`targets/<target-id>/target.edn` uses schema version 5 and has exactly these
+`targets/<target-id>/target.edn` uses schema version 6 and has exactly these
 keys:
 
 ```clojure
-{:schema-version 5
+{:schema-version 6
  :target :example
  :product-family :example
 
@@ -84,7 +84,8 @@ keys:
   :submodule-path "products/example"
   :staging-path "target/generated/example"
   :profile-projects {"example-core" "src/Example.Core"}
-  :managed-paths ["src" "LICENSE" "NOTICE" "README.md"]
+  :managed-paths ["src" "tests" "LICENSE" "NOTICE" "README.md"]
+  :consumer-tests "consumer-tests.edn"
   :publication-mode :pull-request}
 
  :proof
@@ -124,7 +125,41 @@ agree with the profile destination's generated project directory after the
 `target/` staging prefix is removed. `:managed-paths` is a nonempty,
 non-overlapping vector of top-level repository paths. This keeps generated
 and proved output outside the product checkout and gives synchronization an
-exact copy boundary.
+exact copy boundary. Generated product publications must manage `tests/` and
+reference the canonical target-owned `consumer-tests.edn` contract.
+
+The consumer-test contract has this exact shape:
+
+```clojure
+{:schema-version 1
+ :project
+ {:directory "tests/DripSharp.Example.Tests"
+  :assembly-name "DripSharp.Example.Tests"
+  :target-framework "<the product family's target framework>"
+  :packages
+  [{:id "Microsoft.NET.Test.Sdk" :version "17.14.1"}
+   {:id "xunit" :version "2.9.3"}
+   {:id "xunit.runner.visualstudio" :version "3.1.4"}]}
+ :assembly-tests
+ {"example-core"
+  {:source "consumer-tests/CoreConsumerTests.cs"
+   :destination "CoreConsumerTests.cs"
+   :sha256 "<lowercase SHA-256>"}}
+ :fixtures
+ [{:source "consumer-tests/fixtures/example.txt"
+   :destination "Fixtures/example.txt"
+   :sha256 "<lowercase SHA-256>"
+   :license "Apache-2.0"
+   :attribution "Authored for the generated consumer suite."}]}
+```
+
+The assembly-test map covers every published profile exactly once. Test sources
+and fixtures remain target-owned, checksum-pinned inputs. Generation derives
+project references from `:profile-projects`, emits repository-local restore,
+build, and test instructions, records fixture attribution, and inventories the
+generated `tests/` tree in `SHA256SUMS`. Every project in a generated product
+family must agree on one target framework, and the consumer test project uses
+that exact framework.
 
 A target that exists only as permanent translator conformance instead uses
 the exact variant:
