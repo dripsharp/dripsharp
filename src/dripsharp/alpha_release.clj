@@ -343,6 +343,11 @@
   [target-contract]
   (let [target-root (:target-directory target-contract)
         file (paths/resolve-path target-root "release.edn")]
+    (when (Files/isSymbolicLink file)
+      (fail! "Target release inventory is a symbolic link"
+             {:reason :symbolic-link-release-inventory
+              :target (:target target-contract)
+              :path (str file)}))
     (when-not (and (paths/regular-file? file)
                    (paths/real-contained? target-root file))
       (fail! "Target release inventory is missing or escaped"

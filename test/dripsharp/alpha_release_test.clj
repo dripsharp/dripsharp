@@ -278,6 +278,25 @@
              #(map :package-id (:native-assets %))
              (:platforms pdfcarton)))))))
 
+(deftest release-inventory-rejects-symbolic-link-substitution
+  (let [[_ inventory] (actual-contract-and-inventory :pkl)
+        workspace (temp-directory)
+        contract (synthetic-contract workspace inventory)
+        target-root (:target-directory contract)
+        substitute
+        (write! target-root "substitute-release.edn"
+                (str (pr-str inventory) "\n"))
+        release-file (paths/resolve-path target-root "release.edn")]
+    (try
+      (Files/createSymbolicLink release-file (.getFileName substitute)
+                                (make-array FileAttribute 0))
+      (let [result
+            (failure #(alpha-release/read-inventory! contract))]
+        (is (= :symbolic-link-release-inventory (:reason result)))
+        (is (= (str release-file) (:path result))))
+      (finally
+        (delete-tree! workspace)))))
+
 (deftest assembly-includes-managed-and-native-assets-and-repeats-deterministically
   (let [[_ inventory] (actual-contract-and-inventory :pdfcube)
         {:keys [workspace contract commit]}
