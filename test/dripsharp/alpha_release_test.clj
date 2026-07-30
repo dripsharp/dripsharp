@@ -1157,7 +1157,9 @@
               request
               :environment
               (merge
-               {"CustomAfterMicrosoftCommonProps"
+               {"CscToolExe" "false"
+                "CscToolPath" "/usr/bin"
+                "CustomAfterMicrosoftCommonProps"
                 (str hostile-custom-props)
                 "DOTNET_STARTUP_HOOKS"
                 "/host-controlled/nonexistent-startup-hook.dll"
@@ -1399,7 +1401,9 @@
         (is (some #{"-p:RestoreAdditionalProjectFallbackFolders="}
                   restore-command))
         (is (some #{"-p:RestoreFallbackFolders="} restore-command))
-        (is (= #{"DOTNET_STARTUP_HOOKS"
+        (is (= #{"CscToolExe"
+                 "CscToolPath"
+                 "DOTNET_STARTUP_HOOKS"
                  "CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
                  "CustomBeforeMicrosoftCommonProps"
@@ -1410,7 +1414,9 @@
                  "MSBuildSDKsPath"
                  "MSBuildUserExtensionsPath"}
                (:unset-environment restore-request)))
-        (is (= #{"DOTNET_STARTUP_HOOKS"
+        (is (= #{"CscToolExe"
+                 "CscToolPath"
+                 "DOTNET_STARTUP_HOOKS"
                  "CustomAfterMicrosoftCommonProps"
                  "CustomAfterMicrosoftCommonTargets"
                  "CustomBeforeMicrosoftCommonProps"
